@@ -120,7 +120,7 @@ impl EvmTxField {
 #[repr(i32)]
 pub enum SvmTxField {
     TransactionIndex = 0,
-    Signatures = 1,
+    Signature = 1,
     FeePayer = 2,
     Success = 3,
     Err = 4,
@@ -130,6 +130,7 @@ pub enum SvmTxField {
     RecentBlockhash = 8,
     Version = 9,
     TokenBalances = 10,
+    AllSignatures = 11,
 }
 
 impl SvmTxField {
@@ -138,7 +139,7 @@ impl SvmTxField {
         use SvmTxField::*;
         match self {
             TransactionIndex => "transactionIndex",
-            Signatures => "signatures",
+            Signature => "signature",
             FeePayer => "feePayer",
             Success => "success",
             Err => "err",
@@ -148,6 +149,7 @@ impl SvmTxField {
             RecentBlockhash => "recentBlockhash",
             Version => "version",
             TokenBalances => "tokenBalances",
+            AllSignatures => "allSignatures",
         }
     }
 }
@@ -270,7 +272,8 @@ fn svm_tx_col(field: SvmTxField, txs: &[solana_simple::Transaction]) -> Option<A
     use SvmTxField::*;
     match field {
         TransactionIndex => None,
-        Signatures => str_list_from(txs, |t| {
+        Signature => base58_col(txs, |t| t.transaction_id),
+        AllSignatures => str_list_from(txs, |t| {
             t.signatures
                 .as_ref()
                 .map(|signatures| signatures.iter().map(|s| s.to_string()).collect())
@@ -324,8 +327,8 @@ fn decode_svm_field(
                 .map(|(&i, &m)| (m & bit != 0).then_some(i as i64))
                 .collect(),
         ),
-        Signatures | AccountKeys => Column::StrVec(str_list_cells(col, len)),
-        FeePayer | Err | RecentBlockhash | Version => {
+        AllSignatures | AccountKeys => Column::StrVec(str_list_cells(col, len)),
+        Signature | FeePayer | Err | RecentBlockhash | Version => {
             Column::Str(bytes_cells(col, len, |b| Ok(Some(utf8(b))))?)
         }
         Success => Column::Bool(bool_cells(col, len)),
@@ -352,9 +355,9 @@ fn decode_svm_columns(
     )
 }
 
-/// Account-activity columns: `mint`, `preOwner`, `postOwner`,
-/// `preTokenBalance`, `postTokenBalance`. `account` is the key's third
-/// component (see `insert_svm_account_activity`), not a column.
+/// Account-activity columns: `mint`, `owner`, `decimals`, `preAmount`,
+/// `postAmount`. `account` is the key's third component (see
+/// `insert_svm_account_activity`), not a column.
 const TOKEN_BALANCE_FIELDS: usize = 5;
 
 /// One materialised token-balance row, read directly by slot off the
@@ -369,10 +372,10 @@ fn token_balance_row(
     SvmTokenBalanceOut {
         account: Some(key.2.to_string()),
         mint: cell(0),
-        pre_owner: cell(1),
-        post_owner: cell(2),
-        pre_token_balance: amount(3),
-        post_token_balance: amount(4),
+        owner: cell(1),
+        decimals: table.u64_cell(2, slot).map(|v| v as u8),
+        pre_amount: amount(3),
+        post_amount: amount(4),
     }
 }
 
@@ -639,14 +642,19 @@ impl TransactionStore {
         if rows.is_empty() {
             return;
         }
-        let key_col = |f: fn(&solana_simple::AccountActivity) -> Option<String>| -> Option<AnyCol> {
-            let values: Vec<Option<String>> = rows.iter().map(f).collect();
-            crate::field_table::var_from(&values, |v| v.as_deref().map(str::as_bytes))
-        };
+        let pubkey_col =
+            |f: fn(&solana_simple::AccountActivity) -> Option<String>| -> Option<AnyCol> {
+                let values: Vec<Option<String>> = rows.iter().map(f).collect();
+                crate::field_table::var_from(&values, |v| v.as_deref().map(str::as_bytes))
+            };
         let cols = vec![
-            key_col(|r| r.mint.map(|mint| mint.to_string())),
-            key_col(|r| r.pre_owner.map(|owner| owner.to_string())),
-            key_col(|r| r.post_owner.map(|owner| owner.to_string())),
+            pubkey_col(|r| r.mint.map(|mint| mint.to_string())),
+            // The wire splits the owner so an in-transaction `SetAuthority`
+            // stays visible; the payload carries the owner the account ended
+            // with, falling back to the one it entered with when the account
+            // was closed during the transaction.
+            pubkey_col(|r| r.post_owner.or(r.pre_owner).map(|owner| owner.to_string())),
+            crate::field_table::u64_from(&rows, |r| r.token_decimals.map(u64::from)),
             crate::field_table::u64_from(&rows, |r| r.pre_token_balance),
             crate::field_table::u64_from(&rows, |r| r.post_token_balance),
         ];
@@ -896,7 +904,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn account_activity_materialises_the_split_owner_and_typed_amounts() {
+    async fn account_activity_materialises_the_resolved_owner_and_typed_amounts() {
         let store = TransactionStore::new_svm();
         store.insert_svm_txs(vec![raw_svm_tx(5, 0)]);
         // The token account changed hands mid-transaction, which the split
@@ -908,6 +916,7 @@ mod tests {
             mint: Some(svm_key(0xA1)),
             pre_owner: Some(svm_key(0xB1)),
             post_owner: Some(svm_key(0xB2)),
+            token_decimals: Some(6),
             pre_token_balance: Some(10),
             post_token_balance: Some(u64::MAX),
             ..Default::default()
@@ -930,16 +939,18 @@ mod tests {
             (
                 balance.account,
                 balance.mint,
-                balance.pre_owner,
-                balance.post_owner,
-                balance.pre_token_balance.map(|v| v.get_u64().1),
-                balance.post_token_balance.map(|v| v.get_u64().1),
+                balance.owner,
+                balance.decimals,
+                balance.pre_amount.map(|v| v.get_u64().1),
+                balance.post_amount.map(|v| v.get_u64().1),
             ),
             (
                 Some(svm_key(1).to_string()),
                 Some(svm_key(0xA1).to_string()),
-                Some(svm_key(0xB1).to_string()),
+                // The account changed hands mid-transaction; the payload
+                // carries the owner it ended with.
                 Some(svm_key(0xB2).to_string()),
+                Some(6),
                 Some(10),
                 // Raw amounts are u64 on-chain; the store must not lose the top
                 // of the range on the way to JS.
@@ -1077,7 +1088,7 @@ mod tests {
             svm_names,
             vec![
                 "transactionIndex",
-                "signatures",
+                "signature",
                 "feePayer",
                 "success",
                 "err",
@@ -1087,6 +1098,7 @@ mod tests {
                 "recentBlockhash",
                 "version",
                 "tokenBalances",
+                "allSignatures",
             ]
         );
     }

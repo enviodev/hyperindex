@@ -4,7 +4,6 @@ type cfg = {
   /** Optional bearer token for the HyperSync server. */
   apiToken?: string,
   httpReqTimeoutMillis?: int,
-  maxNumRetries?: int,
   retryBaseMs?: int,
   retryCeilingMs?: int,
 }
@@ -286,11 +285,6 @@ let make = (
       url,
       ?apiToken,
       ?httpReqTimeoutMillis,
-      // Retries are handled internally by the indexer, not the binary client:
-      // a rate limit has to reach SourceManager, which backs off, surfaces the
-      // throttling in the TUI and can fail over, rather than being slept on
-      // inside a single napi call.
-      maxNumRetries: 0,
       ?retryBaseMs,
       ?retryCeilingMs,
     },

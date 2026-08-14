@@ -1511,10 +1511,7 @@ mod tests {
     fn merge_report_only_still_overwrites() {
         let persistent = evm_page(vec![hashed_evm_block(11, 0x11)]);
         let page = evm_page(vec![hashed_evm_block(11, 0xbb)]);
-        let mismatch = persistent
-            .merge(&page, 0, true)
-            .unwrap()
-            .expect("mismatch");
+        let mismatch = persistent.merge(&page, 0, true).unwrap().expect("mismatch");
         assert_eq!(mismatch.block_number, 11);
         // Detect-only mode converges to the received hash, so the same
         // mismatch doesn't re-report on the next page.
@@ -1561,10 +1558,7 @@ mod tests {
         // what it observed and nothing else is reset: blocks it did not cover
         // keep their hashes and converge as later pages re-observe them.
         let page = evm_page(vec![hashed_evm_block(10, 0xaa)]);
-        let mismatch = persistent
-            .merge(&page, 0, true)
-            .unwrap()
-            .expect("mismatch");
+        let mismatch = persistent.merge(&page, 0, true).unwrap().expect("mismatch");
         assert_eq!(mismatch.block_number, 10);
         assert_eq!(
             (

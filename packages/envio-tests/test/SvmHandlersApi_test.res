@@ -21,7 +21,7 @@ chains:
                 - source
                 - destination
               field_selection:
-                transaction_fields: [signatures]
+                transaction_fields: [signature]
 `
 
 let check = handlers => InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
@@ -124,10 +124,10 @@ expectType<TypeEqual<SvmInstructionBlock["time"], number | undefined>>(true);
 
 expectType<TypeEqual<SvmLog, { readonly kind: string; readonly message: string }>>(true);
 expectType<TypeEqual<SvmTokenBalance["mint"], string | undefined>>(true);
-expectType<TypeEqual<SvmTokenBalance["preOwner"], string | undefined>>(true);
-expectType<TypeEqual<SvmTokenBalance["postOwner"], string | undefined>>(true);
-expectType<TypeEqual<SvmTokenBalance["preTokenBalance"], bigint | undefined>>(true);
-expectType<TypeEqual<SvmTokenBalance["postTokenBalance"], bigint | undefined>>(true);
+expectType<TypeEqual<SvmTokenBalance["owner"], string | undefined>>(true);
+expectType<TypeEqual<SvmTokenBalance["decimals"], number | undefined>>(true);
+expectType<TypeEqual<SvmTokenBalance["preAmount"], bigint | undefined>>(true);
+expectType<TypeEqual<SvmTokenBalance["postAmount"], bigint | undefined>>(true);
 `)
   )
 
@@ -158,12 +158,12 @@ expectType<
   >
 >(true);
 
-// The configured instruction selects the signatures transaction field;
+// The configured instruction selects the signature transaction field;
 // unselected fields carry the FieldNotSelected sentinel.
 type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
   ? true
   : false;
-expectType<TypeEqual<SvmTransaction["signatures"], readonly string[]>>(true);
+expectType<TypeEqual<SvmTransaction["signature"], string>>(true);
 expectType<IsNotSelected<SvmTransaction["feePayer"]>>(true);
 `)
   )

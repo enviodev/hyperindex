@@ -48,12 +48,16 @@ pub fn field_names<F: Copy>(
 pub struct SvmTokenBalanceOut {
     pub account: Option<String>,
     pub mint: Option<String>,
-    /// Owner before the transaction; absent when the account was opened in it.
-    pub pre_owner: Option<String>,
-    /// Owner after the transaction; absent when it was closed in it.
-    pub post_owner: Option<String>,
-    pub pre_token_balance: Option<BigInt>,
-    pub post_token_balance: Option<BigInt>,
+    /// Owner at the end of the transaction, falling back to the owner it had
+    /// on entry when the account was closed during it. The wire splits the two
+    /// so that an in-transaction `SetAuthority` stays visible; they differ only
+    /// then, so the payload carries the one owner handlers actually ask for.
+    pub owner: Option<String>,
+    pub decimals: Option<u8>,
+    /// Raw amount in base units — `amount` is SPL's word for the integer, and
+    /// keeps token units distinct from lamports.
+    pub pre_amount: Option<BigInt>,
+    pub post_amount: Option<BigInt>,
 }
 
 /// One materialised field across all rows: struct-of-arrays, one entry per row,

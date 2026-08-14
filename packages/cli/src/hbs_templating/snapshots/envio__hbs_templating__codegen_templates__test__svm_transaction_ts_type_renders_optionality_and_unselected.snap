@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 3451
 expression: generated
 ---
 {
@@ -13,8 +12,8 @@ expression: generated
    * ```
    */
   readonly transactionIndex: FieldNotSelected<"Field 'transactionIndex' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
-  /** The signatures field. */
-  readonly signatures: readonly string[];
+  /** The signature field. */
+  readonly signature: string;
   /** The feePayer field. */
   readonly feePayer: string;
   /**
@@ -73,6 +72,15 @@ expression: generated
    * ```
    */
   readonly version: FieldNotSelected<"Field 'version' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  /**
+   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+   * ```yaml
+   * field_selection:
+   *   transaction_fields:
+   *     - allSignatures
+   * ```
+   */
+  readonly allSignatures: FieldNotSelected<"Field 'allSignatures' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
   /** The tokenBalances field. */
-  readonly tokenBalances: readonly { readonly account?: string; readonly mint?: string; readonly owner?: string; readonly preAmount?: string; readonly postAmount?: string }[];
+  readonly tokenBalances: readonly { readonly account?: string; readonly mint?: string; readonly owner?: string; readonly decimals?: number; readonly preAmount?: bigint; readonly postAmount?: bigint }[];
 }

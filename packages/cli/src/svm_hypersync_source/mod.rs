@@ -373,6 +373,7 @@ impl SvmHyperSyncClient {
                 "mint",
                 "pre_owner",
                 "post_owner",
+                "token_decimals",
                 "pre_token_balance",
                 "post_token_balance",
             ])

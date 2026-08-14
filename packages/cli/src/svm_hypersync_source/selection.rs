@@ -121,7 +121,8 @@ pub struct SvmOnEventRegistrationInput {
 fn transaction_field_column(field: &str) -> Result<Option<&'static str>> {
     Ok(match field {
         "transactionIndex" | "tokenBalances" => None,
-        "signatures" => Some("signatures"),
+        "signature" => Some("transaction_id"),
+        "allSignatures" => Some("signatures"),
         "feePayer" => Some("fee_payer"),
         "success" => Some("success"),
         "err" => Some("err"),
@@ -732,7 +733,7 @@ mod tests {
     #[test]
     fn field_unions_and_flags() {
         let mut a = reg(0, PROG_A, Some("0x21"), 1, false);
-        a.transaction_fields = vec!["signatures".to_string(), "transactionIndex".to_string()];
+        a.transaction_fields = vec!["signature".to_string(), "transactionIndex".to_string()];
         a.block_fields = vec!["height".to_string(), "slot".to_string()];
         a.include_logs = true;
         let mut b = reg(1, PROG_A, Some("0x22"), 1, false);
@@ -747,7 +748,7 @@ mod tests {
             ),
             (
                 vec!["slot", "blockhash", "block_time", "block_height"],
-                vec!["slot", "transaction_index", "signatures"],
+                vec!["slot", "transaction_index", "transaction_id"],
                 true,
                 true,
             )

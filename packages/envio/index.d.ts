@@ -1029,16 +1029,18 @@ export type SvmInstructionBlock = {
 export type SvmTokenBalance = {
   readonly account?: string;
   readonly mint?: string;
-  /** Owner before the transaction. Absent when the token account was opened
-   * during it — split from the post owner so an in-transaction
-   * `SetAuthority(AccountOwner)` stays visible. */
-  readonly preOwner?: string;
-  /** Owner after the transaction. Absent when it was closed during it. */
-  readonly postOwner?: string;
-  /** Raw token amount before the transaction, in base units. */
-  readonly preTokenBalance?: bigint;
-  /** Raw token amount after the transaction, in base units. */
-  readonly postTokenBalance?: bigint;
+  /** Owner at the end of the transaction, falling back to the owner on entry
+   * when the account was closed during it. Pre and post owners differ only
+   * when a `SetAuthority(AccountOwner)` runs mid-transaction. */
+  readonly owner?: string;
+  /** Mint decimals, for scaling the raw amounts below. */
+  readonly decimals?: number;
+  /** Raw amount in base units before the transaction. Absent when the token
+   * account was created during it. */
+  readonly preAmount?: bigint;
+  /** Raw amount in base units after the transaction. Absent when the token
+   * account was closed during it. */
+  readonly postAmount?: bigint;
 };
 
 export type SvmLog = {
