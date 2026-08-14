@@ -154,7 +154,7 @@ let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
   )
 
 let makeChainState = (~source: Source.t, ~knownHeight) => {
-  let chainConfig = Config.load().chainMap->ChainMap.get(chainId)
+  let chainConfig = TestConfig.make(~chainId=1337).chainMap->ChainMap.get(chainId)
   let store = addressStore()
   let fetchState = FetchState.make(
     ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
