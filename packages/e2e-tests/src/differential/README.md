@@ -52,6 +52,36 @@ Two annotations control how a case is judged:
 Closing a gap is therefore: implement it, drop the `knownGap` line, and both
 `diffServe.ts` and the live suite flip from "known gap" to a hard assertion.
 
+### What the recorded transport oracle says
+
+Several of these behaviors are not what you would guess, and the snapshots —
+not intuition — are the spec:
+
+- **gzip is narrower than a stock compression middleware.** gzip is the only
+  encoding Hasura implements; a missing `Accept-Encoding` *or* a bare `*` is
+  treated as identity-only rather than permission to compress; and when both
+  identity and gzip are acceptable, bodies under 700 bytes are left
+  uncompressed. Only an explicit `identity;q=0` forces gzip regardless of
+  size. No `Vary` header is sent at all.
+- **Error responses get neither compression nor `x-request-id`.** Both are set
+  in `logSuccessAndResp`; the error path (`logErrorAndResp`) sets only
+  content-length and the JSON content type. So an error carries no request id
+  even when the client supplied one — serve has to reproduce that asymmetry,
+  not just start emitting the header everywhere.
+- **Hasura does not execute query-over-GET.** `GET /v1/graphql` is wired to
+  the Automatic Persisted Queries handler, which in the OSS build is
+  `throw400 NotSupported "PersistedQueryNotSupported"`, turned into HTTP 200
+  by the route's `allMod200`. The query string is never read, so every GET
+  answers identically. The parity target is that fixed error body, not a GET
+  execution path.
+- **A malformed batch element is reported positionally.** A batch that fails
+  to parse answers with a single error object (not an array) whose path is
+  indexed to the offending element — `$[0]`, where serve reports `$`.
+- **Prometheus metrics are not in CE.** `/v1/metrics` 404s on
+  `hasura/graphql-engine:v2.43.0` (`server_type: "ce"`); it is an EE feature.
+  Serve's metrics endpoint is therefore a requirement in its own right, with
+  no CE oracle to match — hence `recordOnly` on that probe.
+
 ## Running
 
 **Fast loop (Rust iteration — no Hasura/Docker needed):** the oracle
@@ -72,6 +102,18 @@ for the limited-phase cases, and `--filter <substr>` / `--verbose N` to
 narrow down a failure.
 
 **Full suite (needs Postgres 5433 + Hasura 8080 live — CI runs this):**
+
+Bring up the same Hasura CI runs against, pointed at the local Postgres
+(host networking, so `localhost:5433` resolves from inside the container):
+
+```sh
+docker run -d --name hasura-diff --network host \
+  -e HASURA_GRAPHQL_DATABASE_URL='postgres://postgres:testing@localhost:5433/envio-dev' \
+  -e HASURA_GRAPHQL_ADMIN_SECRET=testing \
+  -e HASURA_GRAPHQL_UNAUTHORIZED_ROLE=public \
+  -e HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true \
+  -e PORT=8080 hasura/graphql-engine:v2.43.0
+```
 
 ```sh
 pnpm --filter e2e-tests record:differential   # refresh Hasura oracle snapshots
@@ -136,14 +178,6 @@ live Hasura v2.43 (`pnpm record:differential` after the fixture edits):
   stored as re-serialized parsed JSON, which hides float-formatting
   differences (e.g. `1.0` vs `1`); record raw response bytes alongside so
   float-formatting parity is verifiable.
-- **`corpus/18-transport.ts` has never been recorded** — the transport probes
-  (gzip, batching, GET, `x-request-id`, and the two `recordOnly` endpoint
-  probes) were authored without a live Hasura to record against, so they
-  have no oracle snapshots yet and `diffServe.ts` reports them as "no oracle
-  snapshot". The next `pnpm record:differential` against live Hasura v2.43
-  produces them; until then the live suite
-  (`differential-test-live`) is the only place these gaps are checked. This
-  supersedes the GET item that used to be listed here.
 - **Auth-matrix corpus cases** — only public/admin/admin-wrong are covered;
   record combinations of `X-Hasura-Role` with and without a valid admin
   secret (and unknown roles) to pin the full role-resolution matrix.

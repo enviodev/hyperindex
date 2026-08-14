@@ -1,0 +1,25 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query A { User(order_by: {id: asc}, limit: 1) { id } }\nquery B { Token(order_by: {id: asc}, limit: 1) { id } }",
+  "operationName": "B",
+  "transport": {
+   "method": "GET"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "PersistedQueryNotSupported",
+    "extensions": {
+     "path": "$",
+     "code": "not-supported"
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __typename }",
+  "transport": {
+   "compareHeaders": [
+    "x-request-id"
+   ]
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null,
+  "x-request-id": "<uuid>"
+ },
+ "body": {
+  "data": {
+   "__typename": "query_root"
+  }
+ }
+}

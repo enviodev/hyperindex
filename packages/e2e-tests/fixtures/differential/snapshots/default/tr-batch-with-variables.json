@@ -1,0 +1,35 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "rawBody": "[{\"query\":\"query ($limit: Int!) { User(order_by: {id: asc}, limit: $limit) { id } }\",\"variables\":{\"limit\":2}},{\"query\":\"query ($limit: Int!) { User(order_by: {id: asc}, limit: $limit) { id } }\",\"variables\":{\"limit\":1}}]"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": [
+  {
+   "data": {
+    "User": [
+     {
+      "id": "user \"quoted\" 🚀"
+     },
+     {
+      "id": "user-1"
+     }
+    ]
+   }
+  },
+  {
+   "data": {
+    "User": [
+     {
+      "id": "user \"quoted\" 🚀"
+     }
+    ]
+   }
+  }
+ ]
+}

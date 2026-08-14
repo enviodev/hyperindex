@@ -18,8 +18,11 @@ import { startServe, stopServe, type ServeProcess } from "./serveProcess.js";
 
 const fixtureDir = new URL("../../fixtures/differential/", import.meta.url);
 
-const defaultCases = allCases.filter((c) =>
-  (c.phases ?? ["default"]).includes("default")
+// Transport probes exercise the HTTP envelope, which the prepared-statement
+// setting cannot affect; differential.test.ts covers them.
+const defaultCases = allCases.filter(
+  (c) =>
+    (c.phases ?? ["default"]).includes("default") && c.transport === undefined
 );
 
 describe.sequential("differential (non-prepared / pooler-safe path)", () => {

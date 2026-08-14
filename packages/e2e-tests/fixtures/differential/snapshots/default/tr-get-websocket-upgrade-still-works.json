@@ -1,0 +1,30 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __typename }",
+  "transport": {
+   "method": "GET",
+   "path": "/v1/graphql",
+   "requestHeaders": {
+    "Connection": "Upgrade",
+    "Upgrade": "websocket",
+    "Sec-WebSocket-Version": "13",
+    "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+    "Sec-WebSocket-Protocol": "graphql-transport-ws"
+   },
+   "compareHeaders": [
+    "upgrade",
+    "sec-websocket-protocol"
+   ]
+  }
+ },
+ "status": 101,
+ "headers": {
+  "contentEncoding": null,
+  "upgrade": "websocket",
+  "sec-websocket-protocol": "graphql-transport-ws"
+ },
+ "body": {
+  "nonJsonBody": ""
+ }
+}

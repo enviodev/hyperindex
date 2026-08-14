@@ -1,0 +1,27 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($limit: Int!) { User(order_by: {id: asc}, limit: $limit) { id } }",
+  "variables": {
+   "limit": 1
+  },
+  "transport": {
+   "method": "GET"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "PersistedQueryNotSupported",
+    "extensions": {
+     "path": "$",
+     "code": "not-supported"
+    }
+   }
+  ]
+ }
+}

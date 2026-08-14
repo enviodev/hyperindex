@@ -14,20 +14,29 @@
 
 import { defineCases } from "../corpus.js";
 
-/**
- * Deterministic, and a few KB on the small fixture — comfortably past any
- * minimum-size threshold a compression layer might apply.
- */
+/** A few KB on the small fixture — comfortably over Hasura's 700-byte cutoff. */
 const LIST_QUERY = `{ User(order_by: {id: asc}) { id address gravatar_id updatesCountOnUserForTesting accountType } Token(order_by: {id: asc}) { id tokenId collection_id owner_id } raw_events(order_by: {serial: asc}) { chain_id event_id event_name contract_name block_number log_index src_address block_hash block_timestamp block_fields transaction_fields params serial } }`;
+
+/** Well under the cutoff, so compression is skipped when it is optional. */
+const SMALL_QUERY = `{ User_by_pk(id: "user-1") { id address } }`;
 
 export default defineCases([
   // -------------------------------------------------------------------------
   // gzip response compression.
   //
-  // Hasura compresses when the client offers gzip; serve has no compression
-  // layer at all, so the same response costs ~2.4x the egress. `contentEncoding`
-  // in the snapshot is what pins this — bodies match either way, since the
-  // probe decompresses before comparing.
+  // serve has no compression layer at all, so the same response costs ~2.4x
+  // the egress. `contentEncoding` in the snapshot is what pins this — bodies
+  // match either way, since the probe decompresses before comparing.
+  //
+  // Hasura's negotiation is narrower than a stock compression middleware's
+  // (Hasura/Server/Compression.hs, recorded behavior in the cases below):
+  // gzip is the only supported encoding; a missing Accept-Encoding or a bare
+  // `*` is treated as identity-only, NOT as permission to compress; and when
+  // both identity and gzip are acceptable, responses under 700 bytes are left
+  // uncompressed. Only when identity is explicitly rejected
+  // (`identity;q=0`) is gzip applied regardless of size. A stock middleware
+  // dropped in without these rules over-compresses on every one of those
+  // edges, so each is pinned here.
   {
     name: "tr-gzip-accept-gzip",
     query: LIST_QUERY,
@@ -46,8 +55,19 @@ export default defineCases([
       compareHeaders: ["vary"],
     },
   },
-  // Guards the other direction once compression lands: a client that asks
-  // for no encoding must still get an identity body.
+  // Forced compression: rejecting identity bypasses the size cutoff, so even
+  // a tiny body comes back gzipped.
+  {
+    name: "tr-gzip-identity-rejected-small-body",
+    query: SMALL_QUERY,
+    knownGap: "serve sends no content-encoding: no compression layer",
+    transport: {
+      requestHeaders: { "Accept-Encoding": "gzip, identity;q=0" },
+      compareHeaders: ["vary"],
+    },
+  },
+  // The cases below already match, and must keep matching after a
+  // compression layer lands — they are what a stock middleware gets wrong.
   {
     name: "tr-gzip-accept-identity",
     query: LIST_QUERY,
@@ -61,12 +81,49 @@ export default defineCases([
     query: LIST_QUERY,
     transport: { compareHeaders: ["vary"] },
   },
-  // An error response takes a different path out of the server than a data
-  // response; it must not skip the encoding negotiation.
+  // A bare `*` is permission to send anything, but Hasura conservatively
+  // reads it as identity-only.
+  {
+    name: "tr-gzip-accept-star",
+    query: LIST_QUERY,
+    transport: {
+      requestHeaders: { "Accept-Encoding": "*" },
+      compareHeaders: ["vary"],
+    },
+  },
+  {
+    name: "tr-gzip-explicitly-refused",
+    query: LIST_QUERY,
+    transport: {
+      requestHeaders: { "Accept-Encoding": "gzip;q=0" },
+      compareHeaders: ["vary"],
+    },
+  },
+  // gzip is the only encoding Hasura implements: br is offered by most
+  // browsers and must not be answered with it.
+  {
+    name: "tr-gzip-brotli-only-unsupported",
+    query: LIST_QUERY,
+    transport: {
+      requestHeaders: { "Accept-Encoding": "br" },
+      compareHeaders: ["vary"],
+    },
+  },
+  // Under the 700-byte cutoff with compression merely optional.
+  {
+    name: "tr-gzip-below-size-cutoff",
+    query: SMALL_QUERY,
+    transport: {
+      requestHeaders: { "Accept-Encoding": "gzip" },
+      compareHeaders: ["vary"],
+    },
+  },
+  // Error responses leave the server through logErrorAndResp, which sets
+  // neither the encoding header nor x-request-id — so an error body is never
+  // compressed, whatever its size or the request's Accept-Encoding.
   {
     name: "tr-gzip-error-response",
     query: `{ User { nonexistentField } }`,
-    knownGap: "serve sends no content-encoding: no compression layer",
     transport: { requestHeaders: { "Accept-Encoding": "gzip" } },
   },
 
@@ -129,11 +186,11 @@ export default defineCases([
       ]),
     },
   },
-  // Auth is resolved once for the request, not per element.
+  // Auth is resolved before the body is parsed, so a bad secret answers the
+  // same whatever the body's shape — this already matches.
   {
     name: "tr-batch-admin-secret-wrong",
     role: "admin-wrong",
-    knownGap: "serve rejects an array body as parse-failed instead of executing it",
     transport: {
       rawBody: JSON.stringify([
         { query: `{ User(order_by: {id: asc}, limit: 1) { id } }` },
@@ -152,7 +209,10 @@ export default defineCases([
       ]),
     },
   },
-  // Malformed batches: shapes a client can plausibly send by accident.
+  // Malformed batches: shapes a client can plausibly send by accident. A
+  // batch that fails to parse answers with a single error object rather than
+  // an array, and the error path is indexed to the offending element —
+  // `$[0]`, not the `$` serve reports for the whole body.
   {
     name: "tr-batch-element-not-an-object",
     knownGap: "serve rejects an array body as parse-failed instead of executing it",
@@ -165,6 +225,7 @@ export default defineCases([
   },
   {
     name: "tr-batch-nested-array",
+    knownGap: "serve reports the parse error at path $ instead of $[0]",
     transport: { rawBody: `[[{"query":"{ __typename }"}]]` },
   },
 
@@ -174,46 +235,58 @@ export default defineCases([
   // serve routes every GET on /v1/graphql into the WebSocket upgrade
   // extractor, so a health check or a curl gets HTTP 400 "Connection header
   // did not include 'upgrade'" instead of anything GraphQL-shaped.
+  //
+  // Hasura does NOT execute query-over-GET: the OSS build wires GET
+  // /v1/graphql to the Automatic Persisted Queries handler, which is
+  // `throw400 NotSupported "PersistedQueryNotSupported"` (Hasura/App.hs), and
+  // the route's allMod200 turns that into HTTP 200. The query string is never
+  // looked at, so every GET below — query, variables, operationName, none,
+  // admin secret, subscription — answers identically. The parity target is
+  // therefore that fixed 200 error body, not a GET execution path.
   {
     name: "tr-get-query",
     query: `{ User(order_by: {id: asc}, limit: 2) { id } }`,
-    knownGap: "serve 400s every GET: the route is WebSocket-upgrade-only",
+    knownGap:
+      "serve 400s every GET with a non-JSON body; Hasura answers 200 PersistedQueryNotSupported",
     transport: { method: "GET" },
   },
   {
     name: "tr-get-query-with-variables",
     query: `query ($limit: Int!) { User(order_by: {id: asc}, limit: $limit) { id } }`,
     variables: { limit: 1 },
-    knownGap: "serve 400s every GET: the route is WebSocket-upgrade-only",
+    knownGap:
+      "serve 400s every GET with a non-JSON body; Hasura answers 200 PersistedQueryNotSupported",
     transport: { method: "GET" },
   },
   {
     name: "tr-get-operation-name",
     query: `query A { User(order_by: {id: asc}, limit: 1) { id } }\nquery B { Token(order_by: {id: asc}, limit: 1) { id } }`,
     operationName: "B",
-    knownGap: "serve 400s every GET: the route is WebSocket-upgrade-only",
+    knownGap:
+      "serve 400s every GET with a non-JSON body; Hasura answers 200 PersistedQueryNotSupported",
     transport: { method: "GET" },
   },
   // The bare-GET case from the gap report: a health check or a browser
   // hitting the endpoint by hand.
   {
     name: "tr-get-no-query",
-    knownGap: "serve 400s every GET: the route is WebSocket-upgrade-only",
+    knownGap:
+      "serve 400s every GET with a non-JSON body; Hasura answers 200 PersistedQueryNotSupported",
     transport: { method: "GET", path: "/v1/graphql" },
   },
   {
     name: "tr-get-admin-secret",
     query: `{ User(order_by: {id: asc}, limit: 1) { id } }`,
     role: "admin",
-    knownGap: "serve 400s every GET: the route is WebSocket-upgrade-only",
+    knownGap:
+      "serve 400s every GET with a non-JSON body; Hasura answers 200 PersistedQueryNotSupported",
     transport: { method: "GET" },
   },
-  // Hasura rejects a mutation/subscription over GET (it is not a safe
-  // method); pins that the eventual GET path keeps that restriction.
   {
     name: "tr-get-subscription-rejected",
     query: `subscription { User(order_by: {id: asc}, limit: 1) { id } }`,
-    knownGap: "serve 400s every GET: the route is WebSocket-upgrade-only",
+    knownGap:
+      "serve 400s every GET with a non-JSON body; Hasura answers 200 PersistedQueryNotSupported",
     transport: { method: "GET" },
   },
   // A real WebSocket upgrade on the same route must keep working — the GET
@@ -240,6 +313,11 @@ export default defineCases([
   //
   // Hasura emits one per response and echoes a client-supplied value; serve
   // emits none, so a support ticket cannot be joined to a log line.
+  //
+  // It is set in logSuccessAndResp only (Hasura/Server/App.hs), so error
+  // responses carry NO x-request-id — not even one the client supplied. serve
+  // must reproduce that asymmetry, not just start emitting the header
+  // everywhere.
   {
     name: "tr-request-id-generated",
     query: `{ __typename }`,
@@ -255,10 +333,20 @@ export default defineCases([
       compareHeaders: ["x-request-id"],
     },
   },
+  // Already matching, and must keep matching: an error response carries no
+  // request id even though the client sent one.
   {
     name: "tr-request-id-on-error",
     query: `{ User { nonexistentField } }`,
-    knownGap: "serve emits no x-request-id",
+    transport: {
+      requestHeaders: { "X-Request-Id": "differential-fixed-request-id" },
+      compareHeaders: ["x-request-id"],
+    },
+  },
+  {
+    name: "tr-request-id-on-access-denied",
+    query: `{ __typename }`,
+    role: "admin-wrong",
     transport: { compareHeaders: ["x-request-id"] },
   },
 

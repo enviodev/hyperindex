@@ -1,0 +1,24 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}, limit: 2) { id } }",
+  "transport": {
+   "method": "GET"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "PersistedQueryNotSupported",
+    "extensions": {
+     "path": "$",
+     "code": "not-supported"
+    }
+   }
+  ]
+ }
+}

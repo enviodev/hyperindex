@@ -1,0 +1,21 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "method": "GET",
+   "path": "/v1/version",
+   "compareHeaders": [
+    "content-type"
+   ]
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null,
+  "content-type": "application/json; charset=utf-8"
+ },
+ "body": {
+  "server_type": "ce",
+  "version": "v2.43.0"
+ }
+}
