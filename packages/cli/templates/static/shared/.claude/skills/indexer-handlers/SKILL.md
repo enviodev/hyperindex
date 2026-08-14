@@ -32,8 +32,8 @@ indexer.onEvent(
     // event.chainId        — chain ID
     // event.srcAddress     — emitting contract address (checksummed)
     // event.logIndex       — log index within block
-    // event.block          — { number, timestamp, hash }
-    // event.transaction    — transaction fields (configure via `fields` or field_selection)
+    // event.block          — block fields; `number` always, others via `fields`
+    // event.transaction    — transaction fields selected via `fields`
   },
 );
 ```
@@ -42,6 +42,18 @@ The first argument is the options object — `contract` and `event` names plus
 optional `wildcard` / `where` / `fields` (see `indexer-wildcard`,
 `indexer-filters` and `indexer-transactions` skills). The second argument is the
 handler.
+
+`fields` names the block and transaction fields this handler reads, and is the
+recommended way to select them:
+
+```ts
+indexer.onEvent(
+  { contract: "MyContract", event: "Transfer", fields: { transaction: ["hash"] } },
+  async ({ event, context }) => {
+    event.transaction.hash; // string
+  },
+);
+```
 
 ## Context API
 

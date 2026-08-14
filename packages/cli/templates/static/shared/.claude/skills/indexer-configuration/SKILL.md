@@ -85,33 +85,18 @@ events:
 
 ## field_selection
 
-Request additional transaction/block fields globally or per event:
+Prefer selecting transaction/block fields in the handler's `fields` option — it
+keeps the selection next to the code that reads it. `field_selection` is the
+config-wide alternative, at the root level (sibling to `contracts` and `chains`)
+or under an event entry:
 
 ```yaml
-# Global (root level — applies to all events)
 field_selection:
-  transaction_fields:
-    - hash
-    - from
-    - to
-  block_fields:
-    - number
-    - timestamp
-
-contracts:
-  - name: MyContract
-    events:
-      # Per-event (overrides global for this event)
-      - event: Transfer(address indexed from, address indexed to, uint256 value)
-        field_selection:
-          transaction_fields:
-            - hash
-            - from
-            - to
-            - gasPrice
+  transaction_fields: [hash, from]
+  block_fields: [timestamp]
 ```
 
-Global `field_selection` is at the root level (sibling to `contracts` and `chains`). Per-event `field_selection` is directly under the event entry. A handler can override both with the inline `fields` option. See `indexer-transactions` skill for full field lists.
+See the `indexer-transactions` skill for the `fields` option and full field lists.
 
 ## Environment Variables
 

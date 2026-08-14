@@ -1,61 +1,24 @@
 ---
 name: indexer-transactions
 description: >-
-  Use when needing transaction-level data in handlers. Configure field_selection
-  to include transaction fields on events, and access via event.transaction.
-  No native transaction handler — access through event handlers.
+  Use when needing transaction- or block-level data in handlers. Select the
+  fields a handler reads with the `fields` option, and access via
+  event.transaction / event.block. No native transaction handler — access
+  through event handlers.
 metadata:
   managed-by: envio
 ---
 
-# Transaction Data
+# Transaction and Block Data
 
-The Envio Indexer does not have a native transaction handler (`onTransaction`). Transaction data is accessed through event handlers via `field_selection` in config.yaml.
+There is no native transaction handler (`onTransaction`). Transaction and block
+data reach handlers through `event.transaction` / `event.block`, and both carry
+only the fields that handler selected.
 
-## Configuring Transaction Fields
+## Selecting Fields
 
-By default, `event.transaction` is empty. Select needed fields explicitly:
-
-```yaml
-contracts:
-  - name: MyContract
-    events:
-      - event: Transfer(indexed address from, indexed address to, uint256 value)
-        field_selection:
-          transaction_fields:
-            - hash
-            - from
-            - to
-            - gasUsed
-            - value
-```
-
-Or globally for all events:
-
-```yaml
-field_selection:
-  transaction_fields:
-    - hash
-    - from
-    - to
-```
-
-## Accessing in Handlers
-
-```ts
-indexer.onEvent({ contract: "MyContract", event: "Transfer" }, async ({ event, context }) => {
-  const txHash = event.transaction.hash;
-  const txFrom = event.transaction.from;
-  const gasUsed = event.transaction.gasUsed;
-});
-```
-
-## Selecting Fields in the Handler
-
-`fields` names a registration's block and transaction fields inline, **replacing**
-`field_selection` for that registration — including fields config.yaml selected
-but this list omits. `block.number` is always readable; everything else has to be
-listed. EVM only, on `indexer.onEvent` and `indexer.contractRegister`.
+Name them in the handler's `fields` option — the recommended way, on
+`indexer.onEvent` and `indexer.contractRegister`:
 
 ```ts
 indexer.onEvent(
@@ -65,18 +28,38 @@ indexer.onEvent(
     fields: { transaction: ["hash", "from"], block: ["timestamp"] },
   },
   async ({ event, context }) => {
-    const hash = event.transaction.hash; // string
-    const gas: bigint = event.transaction.gasUsed; // Type error: not selected
+    event.transaction.hash; // string
+    event.block.timestamp; // number
+    event.transaction.gasUsed; // Type error: not selected
   },
 );
 ```
 
-Write the selection inline, or in a variable declared `as const` — a variable
+Reading a field you didn't list is a compile error, so the selection and the
+handler can't drift. `block.number` is always readable; everything else has to
+be listed.
+
+Two handlers on one event can select different sets. Read only what you listed —
+anything else is a type error, and its value is not guaranteed.
+
+Write the selection inline, or in a variable declared `as const`. A variable
 typed `EvmFieldsSelection` is rejected, because it no longer says which fields
 this registration picked.
 
-Two handlers on one event can select different sets. Read only what you listed:
-anything else is a type error, and its value is not guaranteed.
+## Selecting Fields in config.yaml
+
+`field_selection` selects fields for every handler of an event (or, at the root
+level, of every event). Prefer the `fields` option above: it keeps the selection
+next to the code that reads it, and lets two handlers on one event differ.
+
+```yaml
+field_selection:
+  transaction_fields: [hash, from]
+  block_fields: [timestamp]
+```
+
+A handler's `fields` **replaces** `field_selection` for that registration —
+including fields config.yaml selected but the list omits.
 
 ## Available Transaction Fields
 
@@ -84,8 +67,6 @@ anything else is a type error, and its value is not guaranteed.
 
 ## Available Block Fields
 
-Block fields are also configurable via `block_fields`. Default: `number`, `timestamp`, `hash`.
-
-Additional: `parentHash`, `nonce`, `sha3Uncles`, `logsBloom`, `transactionsRoot`, `stateRoot`, `receiptsRoot`, `miner`, `difficulty`, `totalDifficulty`, `extraData`, `size`, `gasLimit`, `gasUsed`, `uncles`, `baseFeePerGas`, `blobGasUsed`, `excessBlobGas`, `parentBeaconBlockRoot`, `withdrawalsRoot`, `l1BlockNumber`, `sendCount`, `sendRoot`, `mixHash`
+Always readable: `number`. Selectable: `timestamp`, `hash`, `parentHash`, `nonce`, `sha3Uncles`, `logsBloom`, `transactionsRoot`, `stateRoot`, `receiptsRoot`, `miner`, `difficulty`, `totalDifficulty`, `extraData`, `size`, `gasLimit`, `gasUsed`, `uncles`, `baseFeePerGas`, `blobGasUsed`, `excessBlobGas`, `parentBeaconBlockRoot`, `withdrawalsRoot`, `l1BlockNumber`, `sendCount`, `sendRoot`, `mixHash`
 
 > If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

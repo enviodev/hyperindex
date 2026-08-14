@@ -430,6 +430,46 @@ if (0) {
   // that, leaving `fields: {}` with global-scope completions instead of the two
   // knobs. No type assertion catches it, so the language service is asked
   // directly.
+  // The example the `indexer-transactions` skill ships to user projects. Skills
+  // are prose, so nothing else compiles them; this keeps the recommended snippet
+  // honest as the option evolves.
+  it("compiles the fields example the transactions skill documents", _ =>
+    check(`
+import { indexer } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+if (0) {
+  indexer.onEvent(
+    {
+      contract: "Token",
+      event: "Transfer",
+      fields: { transaction: ["hash", "from"], block: ["timestamp"] },
+    },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.transaction.hash, string>>(true);
+      expectType<TypeEqual<typeof event.block.timestamp, number>>(true);
+      expectType<TypeEqual<typeof event.block.number, number>>(true);
+      // @ts-expect-error - gasUsed is not selected
+      event.transaction.gasUsed satisfies bigint;
+    },
+  );
+
+  // The wildcard skill's example selects the field it reads.
+  indexer.onEvent(
+    {
+      contract: "Token",
+      event: "Transfer",
+      wildcard: true,
+      fields: { transaction: ["hash"] },
+    },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.transaction.hash, string>>(true);
+    },
+  );
+}
+`)
+  )
+
   it("offers the fields knobs and field names to an editor", t => {
     let completions = handlers =>
       InternalTestIndexer.completionsAt(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)
