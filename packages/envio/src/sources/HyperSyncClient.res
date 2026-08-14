@@ -236,12 +236,12 @@ module Registration = {
         }),
         // Capitalized to match the Rust BlockField/TransactionField string
         // enums.
-        blockFields: event.selectedBlockFields
+        blockFields: reg.fieldSelection.blockFields
         ->Utils.Set.toArray
-        ->Array.map(name => (name :> string)->Utils.String.capitalize),
-        transactionFields: event.selectedTransactionFields
+        ->Array.map(Utils.String.capitalize),
+        transactionFields: reg.fieldSelection.transactionFields
         ->Utils.Set.toArray
-        ->Array.map(name => (name :> string)->Utils.String.capitalize),
+        ->Array.map(Utils.String.capitalize),
       }
     })
   }

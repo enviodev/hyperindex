@@ -21,10 +21,6 @@ let makeEventConfig = (
   ~selectedBlockFields: array<Internal.svmBlockField>=[],
   ~selectedTransactionFields: array<Internal.svmTransactionField>=[],
 ): Internal.svmInstructionEventConfig => {
-  let selectedTransactionFields =
-    Utils.Set.fromArray(selectedTransactionFields)->(
-      Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
-    )
   {
     id: "0x21",
     name: "CreateMetadataAccountV3",
@@ -35,13 +31,17 @@ let makeEventConfig = (
     discriminator: Some("0x21"),
     discriminatorByteLen: 1,
     includeLogs: false,
-    selectedTransactionFields,
-    transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
-    selectedBlockFields: Utils.Set.fromArray(selectedBlockFields),
-    blockFieldMask: Svm.eventBlockFieldMask(
-      Utils.Set.fromArray(
+    fieldSelection: Internal.makeFieldSelection(
+      ~blockFields=Utils.Set.fromArray(
         selectedBlockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>),
       ),
+      ~transactionFields=Utils.Set.fromArray(
+        selectedTransactionFields->(
+          Utils.magic: array<Internal.svmTransactionField> => array<string>
+        ),
+      ),
+      ~blockMaskFn=Svm.eventBlockFieldMask,
+      ~transactionMaskFn=Svm.eventTransactionFieldMask,
     ),
     accountFilters: [],
     isInner: None,
@@ -196,12 +196,23 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       )
 
       let item = switch response.parsedQueueItems {
-      | [Internal.Event({blockNumber, logIndex, transactionIndex, payload, onEventRegistration})] =>
+      | [
+          Internal.Event({
+            blockNumber,
+            logIndex,
+            orderPath,
+            transactionIndex,
+            payload,
+            onEventRegistration,
+          }),
+        ] =>
         let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
         Some({
           "blockNumber": blockNumber,
-          // tx * 65536 + depth-weighted instruction address offset.
+          // A slot orders by (transactionIndex, instructionAddress); the pair
+          // rides the item as (logIndex, orderPath).
           "logIndex": logIndex,
+          "orderPath": orderPath,
           "transactionIndex": transactionIndex,
           // `block` is omitted here; it's materialised from the store at batch
           // prep, which this test doesn't run.
@@ -218,7 +229,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       }).toEqual({
         "item": Some({
           "blockNumber": slot,
-          "logIndex": 965 * 65536 + 2,
+          "logIndex": 965,
+          "orderPath": [1],
           "transactionIndex": 965,
           "block": None,
           "params": Some(
