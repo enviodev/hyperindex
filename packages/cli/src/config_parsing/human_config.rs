@@ -1269,7 +1269,7 @@ pub mod svm {
     #[strum(serialize_all = "camelCase")]
     pub enum SvmTransactionField {
         TransactionIndex,
-        Signatures,
+        Signature,
         FeePayer,
         Success,
         Err,
@@ -1278,6 +1278,7 @@ pub mod svm {
         AccountKeys,
         RecentBlockhash,
         Version,
+        AllSignatures,
     }
 
     /// Selectable block field names (camelCase), matching the public
@@ -1702,7 +1703,7 @@ chains:
                 - position: 0
                   values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
               field_selection:
-                transaction_fields: [signatures, feePayer]
+                transaction_fields: [signature, feePayer]
 "#;
 
         #[test]
@@ -1747,7 +1748,7 @@ chains:
                             }])),
                             field_selection: Some(SvmFieldSelection {
                                 transaction_fields: Some(vec![
-                                    SvmTransactionField::Signatures,
+                                    SvmTransactionField::Signature,
                                     SvmTransactionField::FeePayer,
                                 ]),
                                 block_fields: None,

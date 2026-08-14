@@ -2714,8 +2714,9 @@ fn field_type_to_ts_type(
 }
 
 const SVM_TOKEN_BALANCES_TS: &str = "readonly { readonly account?: string; readonly mint?: \
-                                     string; readonly owner?: string; readonly preAmount?: \
-                                     string; readonly postAmount?: string }[]";
+                                     string; readonly owner?: string; readonly decimals?: \
+                                     number; readonly preAmount?: bigint; readonly postAmount?: \
+                                     bigint }[]";
 
 /// One selected field line of a generated `.d.ts` record: a doc comment plus the
 /// `readonly` property with its real type.
@@ -2783,7 +2784,7 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
         .map(|field| {
             let (ts_type, optional) = match field {
                 SvmTransactionField::TransactionIndex => ("number", false),
-                SvmTransactionField::Signatures => ("readonly string[]", false),
+                SvmTransactionField::Signature => ("string", false),
                 SvmTransactionField::FeePayer => ("string", false),
                 SvmTransactionField::Success => ("boolean", false),
                 SvmTransactionField::Err => ("string", true),
@@ -2795,6 +2796,7 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
                 SvmTransactionField::AccountKeys => ("readonly string[]", false),
                 SvmTransactionField::RecentBlockhash => ("string", false),
                 SvmTransactionField::Version => ("string", true),
+                SvmTransactionField::AllSignatures => ("readonly string[]", false),
             };
             SvmTransactionFieldSpec {
                 name: field.to_string(),
@@ -3744,7 +3746,7 @@ type GlobalCounter @crossChain {
 
     #[test]
     fn svm_transaction_ts_type_renders_optionality_and_unselected() {
-        // Selected required fields (`signatures`, `feePayer`) and always-present
+        // Selected required fields (`signature`, `feePayer`) and always-present
         // `tokenBalances` have no `| undefined`; nullable selected field (`err`,
         // null on a successful tx) is `string | undefined`; unselected fields
         // get the `@deprecated` hint + `FieldNotSelected`, matching the EVM
@@ -3752,7 +3754,7 @@ type GlobalCounter @crossChain {
         let generated = svm_transaction_ts_type(
             &svm_transaction_field_specs(),
             &[
-                "signatures".to_string(),
+                "signature".to_string(),
                 "feePayer".to_string(),
                 "err".to_string(),
                 "tokenBalances".to_string(),
