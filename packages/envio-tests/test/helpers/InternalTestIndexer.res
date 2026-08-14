@@ -60,8 +60,6 @@ let writeModule = (~kind, ~site, ~source) => {
 // per test file; parse-only calls are unrestricted.
 let ranTestAt: ref<option<string>> = ref(None)
 
-// What an editor offers at the `/*HERE*/` marker in `handlers`, checked
-// against the same generated types a project would have.
 let completionsAt = (~schema=?, ~env=?, ~files=?, ~handlers, ~configYaml): array<string> => {
   let {indexerTypes} = Core.fromUserApi(~schema?, ~env?, ~files?, ~withIndexerTypes=true, configYaml)
   switch indexerTypes->Null.toOption {

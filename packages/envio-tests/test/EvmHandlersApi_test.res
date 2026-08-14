@@ -439,18 +439,12 @@ indexer.onEvent(${source}, async () => {});
 `)
     t.expect((
       at(`{ contract: "Token", event: "Transfer", fields: { /*HERE*/ } }`),
-      at(`{ contract: "Token", event: "Transfer", fields: { block: ["/*HERE*/"] } }`)->Array.slice(
-        ~start=0,
-        ~end=4,
-      ),
-      at(`{ contract: "Token", event: "Transfer", fields: { transaction: ["/*HERE*/"] } }`)->Array.slice(
-        ~start=0,
-        ~end=4,
-      ),
+      at(`{ contract: "Token", event: "Transfer", fields: { block: ["/*HERE*/"] } }`),
+      at(`{ contract: "Token", event: "Transfer", fields: { transaction: ["/*HERE*/"] } }`),
     )).toEqual((
       ["block", "transaction"],
-      ["baseFeePerGas", "blobGasUsed", "difficulty", "excessBlobGas"],
-      ["accessList", "authorizationList", "blobVersionedHashes", "contractAddress"],
+      Evm.blockFields->Array.toSorted(String.compare),
+      Evm.transactionFields->Array.toSorted(String.compare),
     ))
   })
 
