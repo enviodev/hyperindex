@@ -4,6 +4,10 @@ type sources = {handlers?: string, test?: string}
 @module("./TypeChecker.ts")
 external checkSources: (string, sources) => array<string> = "checkSources"
 
+// Member names an editor offers at the `/*HERE*/` marker of `handlers`.
+@module("./TypeChecker.ts")
+external completionsAtUnsafe: (string, string) => array<string> = "completionsAt"
+
 type parsed = {config: Config.t}
 
 @module("node:fs") external mkdirSync: (string, {..}) => unit = "mkdirSync"
@@ -55,6 +59,14 @@ let writeModule = (~kind, ~site, ~source) => {
 // runs tests owns the process. Under `pool: "forks"` that means one such fixture
 // per test file; parse-only calls are unrestricted.
 let ranTestAt: ref<option<string>> = ref(None)
+
+let completionsAt = (~schema=?, ~env=?, ~files=?, ~handlers, ~configYaml): array<string> => {
+  let {indexerTypes} = Core.fromUserApi(~schema?, ~env?, ~files?, ~withIndexerTypes=true, configYaml)
+  switch indexerTypes->Null.toOption {
+  | Some(typesDts) => completionsAtUnsafe(typesDts, handlers)
+  | None => JsError.throwWithMessage("Config parsed without generated indexer types.")
+  }
+}
 
 // Parse the same YAML a user supplies, then cross the public JSON boundary used
 // at runtime. `handlers` and `test` are ordinary user modules — the same source

@@ -21,7 +21,12 @@ let blockFields = ["height", "id", "time"]
 
 // Fuel has no per-event block field selection: every event materialises the
 // full (height, time, id) trio, matching what the source always queries.
-let fullBlockFieldMask = BlockStore.makeMaskFn(blockFields)(Utils.Set.fromArray(blockFields))
+let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)
+
+// Fuel keeps the transaction inline on the event payload rather than in the
+// per-chain store, so there is nothing to select and no field code to hold.
+let transactionFields = []
+let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 
 let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
     delete fields.id
