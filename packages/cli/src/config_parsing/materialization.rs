@@ -571,7 +571,9 @@ enum Container {
     /// A list, and whether one of its elements can be null. Independent of
     /// whether the list itself can be: a list a branch leaves unset is a
     /// nullable list of values that are always there.
-    List { nullable_elements: bool },
+    List {
+        nullable_elements: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -719,7 +721,9 @@ enum Typing {
     Known(Ty),
     /// A YAML integer, which becomes whichever numeric type it meets. Nullable
     /// once a sibling branch selects null for the same column.
-    Number { nullable: bool },
+    Number {
+        nullable: bool,
+    },
     /// A YAML `null`, with nothing yet to take a type from.
     Null,
 }
@@ -763,22 +767,11 @@ impl Typing {
 /// One typing that holds both. A number takes the other side's numeric type;
 /// `null` makes the other side nullable.
 fn unify(a: &Typing, b: &Typing) -> Result<Typing> {
-    let cannot = || {
-        anyhow!(
-            "cannot unify {} with {}",
-            a.describe(),
-            b.describe()
-        )
-    };
+    let cannot = || anyhow!("cannot unify {} with {}", a.describe(), b.describe());
     let (a, b) = match (a, b) {
         (Typing::Null, Typing::Null) => return Ok(Typing::Null),
         (Typing::Null, other) | (other, Typing::Null) => return Ok(other.clone().or_null()),
-        (
-            Typing::Number { nullable: left },
-            Typing::Number {
-                nullable: right,
-            },
-        ) => {
+        (Typing::Number { nullable: left }, Typing::Number { nullable: right }) => {
             return Ok(Typing::Number {
                 nullable: *left || *right,
             })
@@ -913,7 +906,16 @@ impl Typed {
             }
         }
         match typing {
-            Typing::Null => Ok(CExpr::LitNull),
+            // `unify` is the wrong judge here: merging types answers "what
+            // holds both", and null merged with anything widens it to nullable
+            // — right for settling a column's type across branches, wrong for
+            // asking whether a value fits a slot that already has a type.
+            Typing::Null if target.nullable => Ok(CExpr::LitNull),
+            Typing::Null => Err(anyhow!(
+                "{} is never null, so comparing it to null can never be true. Compare it to a \
+                 value, or filter a field that can be missing.",
+                target.describe()
+            )),
             Typing::Number { .. } if !target.is_list() => {
                 let text = match &expr {
                     CExpr::LitInt { value } => value.to_string(),
@@ -2388,7 +2390,10 @@ pub fn compile(
     let mut entity_access = BTreeMap::new();
 
     for (table_name, table) in &tables.0 {
-        entity_access.insert(table_name.clone(), EntityAccess::materialized(table_name, table));
+        entity_access.insert(
+            table_name.clone(),
+            EntityAccess::materialized(table_name, table),
+        );
 
         let compiled = compile_table(table_name, table, &ctx, &mut demand)
             .with_context(|| format!("in `tables.{table_name}`"))?;
@@ -2591,12 +2596,13 @@ fn compile_table(
             // because each branch resolves the paths against its own event.
             Some(declared) => {
                 for (existing, incoming) in declared.iter_mut().zip(shapes) {
-                    existing.typing = unify(&existing.typing, &incoming.typing).with_context(|| {
-                        format!(
-                            "`{}` has a different type for different events",
-                            existing.name
-                        )
-                    })?;
+                    existing.typing =
+                        unify(&existing.typing, &incoming.typing).with_context(|| {
+                            format!(
+                                "`{}` has a different type for different events",
+                                existing.name
+                            )
+                        })?;
                 }
             }
         }
@@ -2755,13 +2761,11 @@ fn compile_table(
 
     let fields = declared
         .iter()
-        .map(|shape| {
-            SchemaField {
-                name: shape.name.clone(),
-                gql_type: shape.ty.to_gql(shape.name == "id"),
-                derived_from: shape.derived_from.clone(),
-                description: shape.description.clone(),
-            }
+        .map(|shape| SchemaField {
+            name: shape.name.clone(),
+            gql_type: shape.ty.to_gql(shape.name == "id"),
+            derived_from: shape.derived_from.clone(),
+            description: shape.description.clone(),
         })
         .collect();
 
@@ -2824,9 +2828,9 @@ fn compile_relation(
         }
 
         for (event_ref, filter) in events {
-            let contract = contracts.get(&event_ref.contract).ok_or_else(|| {
-                anyhow!("contract `{}` is not configured", event_ref.contract)
-            })?;
+            let contract = contracts
+                .get(&event_ref.contract)
+                .ok_or_else(|| anyhow!("contract `{}` is not configured", event_ref.contract))?;
             let event = contract
                 .events
                 .iter()

@@ -518,6 +518,24 @@ describe("tables: where conditions", () => {
         _gt: Transfer`,
       "`eventName` only supports `_eq`/`_neq`/`_in`",
     ),
+    // `_eq: null` asks for the rows where a value isn't there, so a field that
+    // is always there makes it a condition nothing can satisfy.
+    (
+      "rejects a null comparison on a field that is never null",
+      `      eventName: Transfer
+      params:
+        from:
+          _eq: null`,
+      "in `where.params.from`: String is never null, so comparing it to null can never be true. Compare it to a value, or filter a field that can be missing.",
+    ),
+    (
+      "rejects a null among the values of an `_in` on a field that is never null",
+      `      eventName: Transfer
+      params:
+        from:
+          _in: [srcAddress, null]`,
+      "in `where.params.from`: String is never null, so comparing it to null can never be true. Compare it to a value, or filter a field that can be missing.",
+    ),
     // An address literal is normalized to the casing the decoder writes, so
     // one that isn't an address at all has no casing to be given.
     (
