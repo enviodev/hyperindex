@@ -243,16 +243,33 @@ async fn handle_connection(
                 // A Cap'n Proto query body lands here too, and reads as a
                 // malformed JSON one — the source has to be built with the
                 // `Json` serialization format.
-                let page = serde_json::from_str(&request.body)
-                    .context("expected a JSON query body")
-                    .and_then(|query: Value| build_page(spec.as_ref(), &query, height));
-                match page {
-                    Ok(body) => {
-                        write_response(&mut stream, 200, "application/octet-stream", &body).await?
-                    }
-                    Err(e) => {
-                        write_response(&mut stream, 400, "text/plain", format!("{e:#}").as_bytes())
+                match spec.as_ref().and_then(raw_reply) {
+                    // A spec carrying a status answers at the HTTP level
+                    // instead of with a page: rate limiting and
+                    // payload-too-large are statuses the client acts on.
+                    Some(raw) => {
+                        write_response_with(&mut stream, raw.status, &raw.headers, raw.body.as_bytes())
                             .await?
+                    }
+                    None => {
+                        let page = serde_json::from_str(&request.body)
+                            .context("expected a JSON query body")
+                            .and_then(|query: Value| build_page(spec.as_ref(), &query, height));
+                        match page {
+                            Ok(body) => {
+                                write_response(&mut stream, 200, "application/octet-stream", &body)
+                                    .await?
+                            }
+                            Err(e) => {
+                                write_response(
+                                    &mut stream,
+                                    400,
+                                    "text/plain",
+                                    format!("{e:#}").as_bytes(),
+                                )
+                                .await?
+                            }
+                        }
                     }
                 }
             }
@@ -261,17 +278,72 @@ async fn handle_connection(
     }
 }
 
+/// A response spec that answers at the HTTP level: `{"status": 429, "headers":
+/// {"x-ratelimit-reset": "3"}, "body": "..."}`.
+struct RawReply {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: String,
+}
+
+fn raw_reply(spec: &Value) -> Option<RawReply> {
+    let status = spec.get("status")?.as_u64()? as u16;
+    let headers = spec
+        .get("headers")
+        .and_then(Value::as_object)
+        .map(|headers| {
+            headers
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(RawReply {
+        status,
+        headers,
+        body: spec
+            .get("body")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
 async fn write_response(
     stream: &mut TcpStream,
     status: u16,
     content_type: &str,
     body: &[u8],
 ) -> Result<()> {
-    let head = format!(
-        "HTTP/1.1 {status} {}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\r\n",
+    write_response_with(
+        stream,
+        status,
+        &[("Content-Type".to_string(), content_type.to_string())],
+        body,
+    )
+    .await
+}
+
+async fn write_response_with(
+    stream: &mut TcpStream,
+    status: u16,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> Result<()> {
+    let mut head = format!(
+        "HTTP/1.1 {status} {}\r\nContent-Length: {}\r\n",
         if status == 200 { "OK" } else { "ERROR" },
         body.len()
     );
+    for (name, value) in headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
+    head.push_str("\r\n");
     stream.write_all(head.as_bytes()).await?;
     stream.write_all(body).await?;
     stream.flush().await?;

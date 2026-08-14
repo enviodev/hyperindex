@@ -40,6 +40,14 @@ let make = (~height=?) =>
 let pushResponse = (server, page: page) =>
   server->pushResponseJson(page->JSON.stringifyAny->Option.getOrThrow)
 
+// A reply given at the HTTP level instead of as a page — the statuses the
+// client acts on itself (429 rate limited, 413 payload too large).
+type rawReply = {status: int, headers?: dict<string>, body?: string}
+
+/// Queue an HTTP-level reply for the next query.
+let pushRawReply = (server, reply: rawReply) =>
+  server->pushResponseJson(reply->JSON.stringifyAny->Option.getOrThrow)
+
 /// The query bodies received so far, oldest first, draining them.
 let takeQueries = server => server->takeQueriesJson->Array.map(body => body->JSON.parseOrThrow)
 
