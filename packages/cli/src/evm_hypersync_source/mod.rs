@@ -8,7 +8,7 @@ use napi_derive::napi;
 use crate::address_store::{AddressSet, AddressStore, SetCache};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_store::BlockStore;
-use crate::request_stats::RequestStat;
+use crate::request_stats::{rate_limited_err, RequestStat};
 use crate::transaction_store::TransactionStore;
 
 mod config;
@@ -36,8 +36,7 @@ fn init_logger(log_level: Option<&str>) {
 }
 
 fn make_rate_limit_err(info: &hypersync_client::RateLimitInfo) -> napi::Error {
-    let reset_ms = info.suggested_wait_secs().unwrap_or(1) * 1000;
-    napi::Error::from_reason(format!("RATE_LIMITED:{reset_ms}"))
+    rate_limited_err(info.suggested_wait_secs().unwrap_or(1) * 1000)
 }
 
 #[napi]

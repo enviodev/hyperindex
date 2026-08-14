@@ -71,15 +71,17 @@ async function record(context: SvmOnSlotContext, e: FlowEvent): Promise<void> {
     });
     for (const b of e.tokenBalances) {
       if (!b.account) continue;
-      const pre = BigInt(b.preAmount ?? "0");
-      const post = BigInt(b.postAmount ?? "0");
+      const pre = b.preTokenBalance ?? 0n;
+      const post = b.postTokenBalance ?? 0n;
       context.TokenDelta.set({
         id: `${txSig}:${b.account}`,
         txSig,
         slot: e.slot,
         account: b.account,
         mint: b.mint ?? "",
-        owner: b.owner,
+        // The post owner is the account's owner after the transaction; it is
+        // absent only when the account was closed in it.
+        owner: b.postOwner ?? b.preOwner,
         preAmount: pre,
         postAmount: post,
         delta: post - pre,

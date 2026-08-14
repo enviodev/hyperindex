@@ -42,9 +42,16 @@ type svmInstructionParams = {
 type svmTokenBalance = {
   account?: SvmTypes.Pubkey.t,
   mint?: SvmTypes.Pubkey.t,
-  owner?: SvmTypes.Pubkey.t,
-  preAmount?: string,
-  postAmount?: string,
+  /** Owner before the transaction. Absent when the token account was opened
+   during it — split from the post owner so an in-transaction
+   `SetAuthority(AccountOwner)` stays visible. */
+  preOwner?: SvmTypes.Pubkey.t,
+  /** Owner after the transaction. Absent when it was closed during it. */
+  postOwner?: SvmTypes.Pubkey.t,
+  /** Raw token amount before the transaction, in base units. */
+  preTokenBalance?: bigint,
+  /** Raw token amount after the transaction, in base units. */
+  postTokenBalance?: bigint,
 }
 
 type svmTransaction = {

@@ -13,6 +13,17 @@ pub(crate) fn source_behind_head_err(block_number: i64) -> napi::Error {
     napi::Error::from_reason(format!("{SOURCE_BEHIND_HEAD_PREFIX}{block_number}"))
 }
 
+/// Marks a rate-limited backend response, with the milliseconds until the
+/// window resets following the prefix. ReScript maps it back to
+/// `Source.RateLimited` so SourceManager owns the wait — it surfaces the
+/// throttling in the TUI and can fail over, neither of which the native
+/// client's own in-place sleep could do. Keep in sync with `HyperSync.res`.
+pub(crate) const RATE_LIMITED_PREFIX: &str = "RATE_LIMITED:";
+
+pub(crate) fn rate_limited_err(reset_ms: u64) -> napi::Error {
+    napi::Error::from_reason(format!("{RATE_LIMITED_PREFIX}{reset_ms}"))
+}
+
 /// Marks a napi error's reason as a structured native-failure envelope (the
 /// `{message, requestStats}` JSON follows). ReScript decodes the timings only
 /// when the reason starts with this exact prefix, so an unrelated error message

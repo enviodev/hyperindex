@@ -40,6 +40,10 @@ impl From<SvmClientConfig> for hypersync_client_solana::config::ClientConfig {
                 .filter(|v| *v >= 0)
                 .map(|v| v as u64)
                 .unwrap_or(default.retry_ceiling_ms),
+            // A sleep inside the client is invisible to the indexer: it holds
+            // the request open while SourceManager's backoff, failover and TUI
+            // throttling all sit idle. Surface the 429 instead.
+            proactive_rate_limit_sleep: false,
         }
     }
 }

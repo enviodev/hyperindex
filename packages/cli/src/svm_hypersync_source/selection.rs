@@ -4,10 +4,65 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use hypersync_client_solana::simple_types as simple;
 use hypersync_solana_net_types::query as net;
+use hypersync_solana_net_types::types::Address;
 use napi_derive::napi;
 
 use super::mod_helpers::hex_to_bytes;
+use super::types::required;
 use crate::address_store::StoreInner;
+
+/// One instruction call with the fields routing and item building read, lifted
+/// out of the client's all-`Option` row once per instruction: base58 is
+/// rendered here rather than at every account comparison, and a column this
+/// crate always selects is proven present before routing rather than defaulted.
+pub(crate) struct InstructionCall {
+    pub slot: u64,
+    pub transaction_index: u32,
+    pub instruction_address: Vec<u32>,
+    /// The invoked program's account, base58.
+    pub executing_account: String,
+    /// The instruction's account arguments, base58.
+    pub account_arguments: Vec<String>,
+    pub data: Vec<u8>,
+    pub d1: Option<Vec<u8>>,
+    pub d2: Option<Vec<u8>>,
+    pub d4: Option<Vec<u8>>,
+    pub d8: Option<Vec<u8>>,
+    pub is_inner: bool,
+    /// Success of the PARENT transaction, not of this invocation.
+    pub tx_success: bool,
+}
+
+impl TryFrom<&simple::InstructionCall> for InstructionCall {
+    type Error = anyhow::Error;
+
+    fn try_from(i: &simple::InstructionCall) -> Result<Self> {
+        Ok(Self {
+            slot: required(i.slot, "instruction.slot")?,
+            transaction_index: required(i.transaction_index, "instruction.transaction_index")?,
+            instruction_address: required(
+                i.instruction_address.clone(),
+                "instruction.instruction_address",
+            )?,
+            executing_account: required(i.executing_account, "instruction.executing_account")?
+                .to_string(),
+            account_arguments: required(
+                i.account_arguments.as_ref(),
+                "instruction.account_arguments",
+            )?
+            .iter()
+            .map(|account| account.to_string())
+            .collect(),
+            data: required(i.data.clone(), "instruction.data")?,
+            d1: i.d1.clone(),
+            d2: i.d2.clone(),
+            d4: i.d4.clone(),
+            d8: i.d8.clone(),
+            is_inner: required(i.is_inner, "instruction.is_inner")?,
+            tx_success: required(i.tx_success, "instruction.tx_success")?,
+        })
+    }
+}
 
 #[napi(object)]
 #[derive(Clone)]
@@ -62,7 +117,7 @@ pub struct SvmOnEventRegistrationInput {
 
 /// Maps a selected transaction field to the extra query column it needs.
 /// `transactionIndex` is always fetched as the store key, and `tokenBalances`
-/// lives in a separate table, so neither adds a transaction column.
+/// lives in the account_activity table, so neither adds a transaction column.
 fn transaction_field_column(field: &str) -> Result<Option<&'static str>> {
     Ok(match field {
         "transactionIndex" | "tokenBalances" => None,
@@ -110,7 +165,7 @@ pub(crate) struct Registration {
     pub include_logs: bool,
     pub account_filters: Vec<Vec<(usize, Vec<String>)>>,
     pub transaction_columns: Vec<&'static str>,
-    pub needs_token_balances: bool,
+    pub needs_account_activity: bool,
     pub block_columns: Vec<&'static str>,
 }
 
@@ -152,10 +207,10 @@ impl Registration {
             })
             .collect::<Result<Vec<_>>>()?;
         let mut transaction_columns = Vec::new();
-        let mut needs_token_balances = false;
+        let mut needs_account_activity = false;
         for field in &input.transaction_fields {
             if field == "tokenBalances" {
-                needs_token_balances = true;
+                needs_account_activity = true;
             }
             if let Some(column) = transaction_field_column(field)? {
                 if !transaction_columns.contains(&column) {
@@ -191,7 +246,7 @@ impl Registration {
             include_logs: input.include_logs,
             account_filters,
             transaction_columns,
-            needs_token_balances,
+            needs_account_activity,
             block_columns,
         })
     }
@@ -209,12 +264,12 @@ impl Registration {
     /// in the store) and registered at or before the instruction's slot.
     fn matches_scope(
         &self,
-        instr: &simple::Instruction,
+        instr: &InstructionCall,
         address: &InstructionAddress,
         force_wildcard: bool,
         store: &StoreInner,
     ) -> bool {
-        self.program_id == instr.program_id
+        self.program_id == instr.executing_account
             && crate::registration_start_block::has_started(self.start_block, address.slot)
             && (self.is_wildcard
                 || ((force_wildcard || address.contract_name == Some(self.contract_name.as_str()))
@@ -226,7 +281,7 @@ impl Registration {
                 || self.account_filters.iter().any(|group| {
                     group.iter().all(|(position, values)| {
                         instr
-                            .accounts
+                            .account_arguments
                             .get(*position)
                             .is_some_and(|account| values.contains(account))
                     })
@@ -243,6 +298,11 @@ impl Registration {
     }
 }
 
+/// Parse one position's account-filter values into the wire pubkey type.
+fn parse_accounts(values: Option<Vec<String>>, position: usize) -> Result<Vec<Address>> {
+    super::query::parse_values(values, &format!("a{position}"))
+}
+
 /// One instruction selection of a built query, before conversion to the wire
 /// type; `PartialEq` so identical selections from same-signature
 /// registrations are deduplicated.
@@ -256,10 +316,18 @@ struct BuiltInstructionSelection {
 }
 
 impl BuiltInstructionSelection {
-    fn into_net(self) -> net::InstructionSelection {
+    fn into_net(self) -> Result<net::InstructionSelection> {
         let mut selection = net::InstructionSelection {
-            program_id: vec![self.program_id],
+            executing_account: vec![self
+                .program_id
+                .parse()
+                .map_err(|e| anyhow::anyhow!("{e}"))
+                .with_context(|| format!("parse program id {:?}", self.program_id))?],
             is_inner: self.is_inner,
+            // Instructions of a failed transaction had their state changes
+            // rolled back, so they never reach a handler. Filtering them
+            // server-side keeps them off the wire entirely.
+            tx_success: Some(true),
             ..Default::default()
         };
         if let Some(d) = self.discriminator_hex {
@@ -272,17 +340,17 @@ impl BuiltInstructionSelection {
             }
         }
         let [a0, a1, a2, a3, a4, a5, a6, a7, a8, a9] = self.accounts;
-        selection.a0 = a0.unwrap_or_default();
-        selection.a1 = a1.unwrap_or_default();
-        selection.a2 = a2.unwrap_or_default();
-        selection.a3 = a3.unwrap_or_default();
-        selection.a4 = a4.unwrap_or_default();
-        selection.a5 = a5.unwrap_or_default();
-        selection.a6 = a6.unwrap_or_default();
-        selection.a7 = a7.unwrap_or_default();
-        selection.a8 = a8.unwrap_or_default();
-        selection.a9 = a9.unwrap_or_default();
-        selection
+        selection.a0 = parse_accounts(a0, 0)?;
+        selection.a1 = parse_accounts(a1, 1)?;
+        selection.a2 = parse_accounts(a2, 2)?;
+        selection.a3 = parse_accounts(a3, 3)?;
+        selection.a4 = parse_accounts(a4, 4)?;
+        selection.a5 = parse_accounts(a5, 5)?;
+        selection.a6 = parse_accounts(a6, 6)?;
+        selection.a7 = parse_accounts(a7, 7)?;
+        selection.a8 = parse_accounts(a8, 8)?;
+        selection.a9 = parse_accounts(a9, 9)?;
+        Ok(selection)
     }
 }
 
@@ -296,7 +364,7 @@ pub(crate) struct BuiltSelection {
     /// transaction record is actually read (then it carries the
     /// slot/transaction_index store key too).
     pub transaction_columns: Vec<&'static str>,
-    pub needs_token_balances: bool,
+    pub needs_account_activity: bool,
     pub needs_logs: bool,
     /// The selection's registrations sorted by index, for routing.
     pub registrations: Vec<Arc<Registration>>,
@@ -335,7 +403,7 @@ impl SelectionBuilder {
         // timestamps).
         let mut block_columns = vec!["slot", "blockhash", "block_time"];
         let mut transaction_columns: Vec<&'static str> = Vec::new();
-        let mut needs_token_balances = false;
+        let mut needs_account_activity = false;
         let mut needs_logs = false;
         let mut registrations = Vec::with_capacity(registration_indexes.len());
 
@@ -356,7 +424,7 @@ impl SelectionBuilder {
                     transaction_columns.push(column);
                 }
             }
-            needs_token_balances = needs_token_balances || reg.needs_token_balances;
+            needs_account_activity = needs_account_activity || reg.needs_account_activity;
             needs_logs = needs_logs || reg.include_logs;
 
             // Placeholder configs carry no real program — skip rather than
@@ -401,10 +469,10 @@ impl SelectionBuilder {
             instruction_selections: selections
                 .into_iter()
                 .map(BuiltInstructionSelection::into_net)
-                .collect(),
+                .collect::<Result<Vec<_>>>()?,
             block_columns,
             transaction_columns,
-            needs_token_balances,
+            needs_account_activity,
             needs_logs,
             registrations,
         })
@@ -419,7 +487,7 @@ impl SelectionBuilder {
 /// registration matched.
 pub(crate) fn route_instruction(
     registrations: &[Arc<Registration>],
-    instr: &simple::Instruction,
+    instr: &InstructionCall,
     address: &InstructionAddress,
     client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
     store: &StoreInner,
@@ -498,12 +566,20 @@ mod tests {
         }
     }
 
-    fn instruction(program_id: &str, data: &[u8]) -> simple::Instruction {
-        simple::Instruction {
-            program_id: program_id.to_string(),
+    fn instruction(program_id: &str, data: &[u8]) -> InstructionCall {
+        InstructionCall {
+            slot: 0,
+            transaction_index: 0,
+            instruction_address: vec![0],
+            executing_account: program_id.to_string(),
+            account_arguments: vec![],
             data: data.to_vec(),
-            is_committed: true,
-            ..Default::default()
+            d1: None,
+            d2: None,
+            d4: None,
+            d8: None,
+            is_inner: false,
+            tx_success: true,
         }
     }
 
@@ -544,11 +620,11 @@ mod tests {
         store: &AddressStore,
         set: &AddressSet,
         built: &BuiltSelection,
-        instr: &simple::Instruction,
+        instr: &InstructionCall,
     ) -> Vec<i64> {
         let address_store = store.handle();
         let address_store = address_store.read().unwrap();
-        let key = instr.program_id.as_bytes();
+        let key = instr.executing_account.as_bytes();
         let address = InstructionAddress {
             key,
             contract_name: set.cache().owner_of(key),
@@ -576,20 +652,17 @@ mod tests {
             &[0, 1],
             &[],
         );
-        let views: Vec<(Vec<String>, Vec<String>, Vec<String>)> = built
+        let views: Vec<(Vec<Address>, Vec<String>, Vec<String>)> = built
             .instruction_selections
             .iter()
-            .map(|s| (s.program_id.clone(), s.d1.clone(), s.d8.clone()))
+            .map(|s| (s.executing_account.clone(), s.d1.clone(), s.d8.clone()))
             .collect();
+        let prog_a = PROG_A.parse::<Address>().unwrap();
         assert_eq!(
             views,
             vec![
-                (vec![PROG_A.to_string()], vec!["0x21".to_string()], vec![]),
-                (
-                    vec![PROG_A.to_string()],
-                    vec![],
-                    vec!["0x0102030405060708".to_string()]
-                ),
+                (vec![prog_a], vec!["0x21".to_string()], vec![]),
+                (vec![prog_a], vec![], vec!["0x0102030405060708".to_string()]),
             ]
         );
     }
@@ -608,7 +681,7 @@ mod tests {
             }],
         ];
         let (_store, _set, built) = build(&[input], &[0], &[]);
-        let views: Vec<(Vec<String>, Vec<String>)> = built
+        let views: Vec<(Vec<Address>, Vec<Address>)> = built
             .instruction_selections
             .iter()
             .map(|s| (s.a1.clone(), s.a2.clone()))
@@ -616,9 +689,24 @@ mod tests {
         assert_eq!(
             views,
             vec![
-                (vec![ACCOUNT_1.to_string()], vec![]),
-                (vec![], vec![ACCOUNT_2.to_string()]),
+                (vec![ACCOUNT_1.parse().unwrap()], vec![]),
+                (vec![], vec![ACCOUNT_2.parse().unwrap()]),
             ]
+        );
+    }
+
+    #[test]
+    fn every_selection_filters_out_failed_transactions() {
+        // The instructions of a failed transaction were rolled back, so they
+        // are filtered server-side rather than dropped after the fetch.
+        let (_store, _set, built) = build(&[reg(0, PROG_A, Some("0x21"), 1, false)], &[0], &[]);
+        assert_eq!(
+            built
+                .instruction_selections
+                .iter()
+                .map(|s| s.tx_success)
+                .collect::<Vec<_>>(),
+            vec![Some(true)]
         );
     }
 
@@ -654,7 +742,7 @@ mod tests {
             (
                 built.block_columns.clone(),
                 built.transaction_columns.clone(),
-                built.needs_token_balances,
+                built.needs_account_activity,
                 built.needs_logs,
             ),
             (
@@ -675,7 +763,7 @@ mod tests {
         assert_eq!(
             (
                 built.transaction_columns.clone(),
-                built.needs_token_balances
+                built.needs_account_activity
             ),
             (vec![], true)
         );
@@ -819,9 +907,9 @@ mod tests {
         }]];
         let (store, set, built) = build(&[filtered], &[0], &[]);
         let mut matching = instruction(PROG_A, &[0x21]);
-        matching.accounts = vec![ACCOUNT_2.to_string(), ACCOUNT_1.to_string()];
+        matching.account_arguments = vec![ACCOUNT_2.to_string(), ACCOUNT_1.to_string()];
         let mut rejected = instruction(PROG_A, &[0x21]);
-        rejected.accounts = vec![ACCOUNT_1.to_string(), ACCOUNT_2.to_string()];
+        rejected.account_arguments = vec![ACCOUNT_1.to_string(), ACCOUNT_2.to_string()];
         assert_eq!(
             (
                 route_indexes(&store, &set, &built, &matching),

@@ -110,18 +110,20 @@ module QueryTypes = {
 
   type fieldSelection = {block?: array<blockField>, transaction?: array<transactionField>}
 
-  /** Filter for selecting instructions. All non-empty fields are AND-ed: an
-   instruction must match at least one value in every non-empty field.
+  /** Filter for selecting instruction calls. All non-empty fields are AND-ed:
+   an instruction must match at least one value in every non-empty field.
 
    Discriminator filters (d1..d8) take hex-encoded byte prefixes ("0x" optional).
    Account filters (a0..a9) take base58 pubkey strings. */
   type instructionSelection = {
-    programId?: array<string>,
+    executingAccount?: array<string>,
     d1?: array<string>,
     d2?: array<string>,
     d4?: array<string>,
     d8?: array<string>,
     isInner?: bool,
+    /** Success of the parent transaction; absent matches both. */
+    txSuccess?: bool,
   }
 
   // The `get` query surface, used only for block-data range queries; event
@@ -129,7 +131,7 @@ module QueryTypes = {
   type query = {
     fromSlot: int,
     toSlot?: int,
-    instructions?: array<instructionSelection>,
+    instructionCalls?: array<instructionSelection>,
     includeAllBlocks?: bool,
     fields?: fieldSelection,
     maxNumBlocks?: int,
@@ -155,24 +157,29 @@ module ResponseTypes = {
     extraAccounts: array<string>,
   }
 
-  type instruction = {
+  type instructionCall = {
     slot: int,
     transactionIndex: int,
     instructionAddress: array<int>,
-    programId: string,
-    accounts: array<string>,
+    /** The invoked program's account. */
+    executingAccount: string,
+    accountArguments: array<string>,
     data: string,
     d1?: string,
     d2?: string,
     d4?: string,
     d8?: string,
     isInner: bool,
-    isCommitted: bool,
+    /** Success of the parent transaction, not of this invocation. */
+    txSuccess: bool,
+    /** Per-invocation failure reason (e.g. "custom program error: 0x1"). */
+    error?: string,
+    computeUnitsConsumed?: bigint,
   }
 
   type queryResponseData = {
     blocks: array<block>,
-    instructions: array<instruction>,
+    instructionCalls: array<instructionCall>,
   }
 
   type queryResponse = {
@@ -268,7 +275,6 @@ let make = (
   ~url,
   ~apiToken=?,
   ~httpReqTimeoutMillis=?,
-  ~maxNumRetries=?,
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
   ~eventRegistrations=[],
@@ -280,7 +286,11 @@ let make = (
       url,
       ?apiToken,
       ?httpReqTimeoutMillis,
-      ?maxNumRetries,
+      // Retries are handled internally by the indexer, not the binary client:
+      // a rate limit has to reach SourceManager, which backs off, surfaces the
+      // throttling in the TUI and can fail over, rather than being slept on
+      // inside a single napi call.
+      maxNumRetries: 0,
       ?retryBaseMs,
       ?retryCeilingMs,
     },

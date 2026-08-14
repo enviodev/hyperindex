@@ -124,6 +124,10 @@ expectType<TypeEqual<SvmInstructionBlock["time"], number | undefined>>(true);
 
 expectType<TypeEqual<SvmLog, { readonly kind: string; readonly message: string }>>(true);
 expectType<TypeEqual<SvmTokenBalance["mint"], string | undefined>>(true);
+expectType<TypeEqual<SvmTokenBalance["preOwner"], string | undefined>>(true);
+expectType<TypeEqual<SvmTokenBalance["postOwner"], string | undefined>>(true);
+expectType<TypeEqual<SvmTokenBalance["preTokenBalance"], bigint | undefined>>(true);
+expectType<TypeEqual<SvmTokenBalance["postTokenBalance"], bigint | undefined>>(true);
 `)
   )
 

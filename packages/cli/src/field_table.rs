@@ -464,6 +464,14 @@ impl StoreCol {
         }
     }
 
+    /// Numeric counterpart of `var_cell`. Panics on a non-`U64` column.
+    fn u64_cell(&self, slot: usize) -> u64 {
+        match self {
+            StoreCol::U64(v) => v[slot],
+            _ => panic!("expected a u64 column"),
+        }
+    }
+
     /// Raw bytes of a byte-backed cell (hash comparison). `Fixed` carries no
     /// per-slot validity, so the caller must have checked the row's mask bit.
     fn cell_bytes(&self, slot: usize) -> Option<&[u8]> {
@@ -804,6 +812,15 @@ impl Table<(u64, u32, Box<str>)> {
         self.cols[field]
             .as_ref()
             .and_then(|c| c.var_cell(slot as usize))
+    }
+
+    /// One numeric field at `slot`, or `None` if it was never populated for
+    /// that row.
+    pub(crate) fn u64_cell(&self, field: usize, slot: u32) -> Option<u64> {
+        if self.masks[slot as usize] & (1u64 << field) == 0 {
+            return None;
+        }
+        self.cols[field].as_ref().map(|c| c.u64_cell(slot as usize))
     }
 }
 

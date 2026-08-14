@@ -48,9 +48,12 @@ pub fn field_names<F: Copy>(
 pub struct SvmTokenBalanceOut {
     pub account: Option<String>,
     pub mint: Option<String>,
-    pub owner: Option<String>,
-    pub pre_amount: Option<String>,
-    pub post_amount: Option<String>,
+    /// Owner before the transaction; absent when the account was opened in it.
+    pub pre_owner: Option<String>,
+    /// Owner after the transaction; absent when it was closed in it.
+    pub post_owner: Option<String>,
+    pub pre_token_balance: Option<BigInt>,
+    pub post_token_balance: Option<BigInt>,
 }
 
 /// One materialised field across all rows: struct-of-arrays, one entry per row,
