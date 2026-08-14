@@ -1666,21 +1666,28 @@ impl UserDefinedFieldType {
         }
     }
 
+    fn strip_non_null(&self) -> &Self {
+        match self {
+            Self::NonNullType(inner) => inner.as_ref(),
+            other => other,
+        }
+    }
+
     /// Returns the name of the entity when @derivedFrom derivtive is used
     /// Returns None in the case that it does not conform to the correct
-    /// structure of a derived entity
+    /// structure of a derived entity.
+    ///
+    /// How the field is written carries no meaning: a derived field is computed
+    /// from the other side of the relation, so every shape The Graph accepts —
+    /// including the one-to-one `Registration @derivedFrom(...)` — describes the
+    /// same lookup, and is stored and generated as a list either way.
     fn get_name_of_derived_from_entity(&self) -> Option<String> {
-        match self {
-            Self::NonNullType(f) => match f.as_ref() {
-                Self::ListType(f) => match f.as_ref() {
-                    Self::NonNullType(f) => match f.as_ref() {
-                        Self::Single(GqlScalar::Custom(name)) => Some(name.clone()),
-                        _ => None,
-                    },
-                    _ => None,
-                },
-                _ => None,
-            },
+        let item = match self.strip_non_null() {
+            Self::ListType(item) => item.strip_non_null(),
+            single => single,
+        };
+        match item {
+            Self::Single(GqlScalar::Custom(name)) => Some(name.clone()),
             _ => None,
         }
     }
@@ -2584,6 +2591,50 @@ type NumericChild {
         "#;
         let schema = Schema::from_string(schema_str).unwrap();
         assert_eq!(schema.entities.len(), 2);
+    }
+
+    // The Graph accepts every list nullability on @derivedFrom; a derived field
+    // is computed either way, so all five spellings describe the same field.
+    #[test]
+    fn accepts_every_derived_from_list_nullability() {
+        let schema_str = r#"
+type Parent {
+  id: ID!
+  strict: [Child!]! @derivedFrom(field: "parent")
+  nullableList: [Child!] @derivedFrom(field: "parent")
+  nullableItems: [Child]! @derivedFrom(field: "parent")
+  nullableBoth: [Child] @derivedFrom(field: "parent")
+  oneToOne: Child @derivedFrom(field: "parent")
+}
+type Child {
+  id: ID!
+  parent: Parent!
+}
+        "#;
+        let schema = Schema::from_string(schema_str).unwrap();
+        let parent = schema.entities.get("Parent").unwrap();
+
+        let derived: Vec<(String, FieldType)> = parent
+            .get_fields()
+            .iter()
+            .filter(|field| field.field_type.is_derived_from())
+            .map(|field| (field.name.clone(), field.field_type.clone()))
+            .collect();
+        let expected = FieldType::DerivedFromField {
+            entity_name: "Child".to_string(),
+            derived_from_field: "parent".to_string(),
+        };
+
+        assert_eq!(
+            derived,
+            vec![
+                ("strict".to_string(), expected.clone()),
+                ("nullableList".to_string(), expected.clone()),
+                ("nullableItems".to_string(), expected.clone()),
+                ("nullableBoth".to_string(), expected.clone()),
+                ("oneToOne".to_string(), expected),
+            ]
+        );
     }
 
     #[test]
