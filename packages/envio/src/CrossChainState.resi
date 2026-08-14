@@ -15,6 +15,7 @@ let make: (
 // Accessors.
 let chainStates: t => dict<ChainState.t>
 let isRealtime: t => bool
+let isCaughtUp: t => bool
 let isInReorgThreshold: t => bool
 let targetBufferSize: t => int
 
@@ -31,10 +32,13 @@ let createBatch: (
 ) => Batch.t
 let enterReorgThreshold: t => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
+let markCaughtUpIfSettled: t => unit
+let markCaughtUpOnResume: t => unit
+let markReady: (t, ~readyAt: Date.t) => unit
 
 // Fetch control.
 let priorityOrder: t => array<ChainState.t>
 let checkAndFetch: (
   t,
-  ~dispatchChain: (~chain: ChainMap.Chain.t, ~action: FetchState.nextQuery) => promise<unit>,
+  ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
 ) => promise<unit>

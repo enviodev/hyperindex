@@ -6,16 +6,15 @@
 // transform of the item between the source and the batch.
 let itemKey = (item: Internal.item): string =>
   switch item {
-  | Internal.Event({chain, blockNumber, logIndex}) =>
-    `${chain
-      ->ChainMap.Chain.toChainId
-      ->Int.toString}:${blockNumber->Int.toString}:${logIndex->Int.toString}`
+  | Internal.Event({chainId, blockNumber, logIndex}) =>
+    `${chainId
+      ->ChainId.toString}:${blockNumber->Int.toString}:${logIndex->Int.toString}`
   | Internal.Block(_) => ""
   }
 
 // `index` is the item's position in its chain's `simulate` array, reported back
 // so a user finds it without echoing its fields.
-type entry = {chainId: int, index: int, key: string}
+type entry = {chainId: ChainId.t, index: int, key: string}
 
 type t = {mutable unprocessed: array<entry>}
 
@@ -25,18 +24,12 @@ let makeFromConfig = (config: Config.t): option<t> => {
     ->ChainMap.values
     ->Array.flatMap(chainConfig =>
       switch chainConfig.sourceConfig {
-      | Config.CustomSources(sources) =>
-        sources->Array.flatMap(source =>
-          source.simulateItems
-          ->Option.getOr([])
-          ->Array.mapWithIndex(
-            (item, index) => {
-              chainId: chainConfig.id,
-              index,
-              key: itemKey(item),
-            },
-          )
-        )
+      | Config.SimulateSourceConfig({items}) =>
+        items->Array.mapWithIndex((item, index) => {
+          chainId: chainConfig.id,
+          index,
+          key: itemKey(item),
+        })
       | _ => []
       }
     )
@@ -52,17 +45,20 @@ let recordProcessed = (t: t, ~batch: Batch.t) => {
 }
 
 // Unrouted item indices grouped by chain, in the order chains were first seen.
-let unroutedByChain = (t: t): array<(int, array<int>)> => {
+let unroutedByChain = (t: t): array<(ChainId.t, array<int>)> => {
   let indicesByChain = Dict.make()
   let chainOrder = []
   t.unprocessed->Array.forEach(entry => {
-    let key = entry.chainId->Int.toString
+    let key = entry.chainId->ChainId.toString
     if indicesByChain->Dict.get(key)->Option.isNone {
       chainOrder->Array.push(entry.chainId)->ignore
     }
     indicesByChain->Utils.Dict.push(key, entry.index)
   })
-  chainOrder->Array.map(chainId => (chainId, indicesByChain->Dict.getUnsafe(chainId->Int.toString)))
+  chainOrder->Array.map(chainId => (
+    chainId,
+    indicesByChain->Dict.getUnsafe(chainId->ChainId.toString),
+  ))
 }
 
 let failureMessage = (t: t): option<string> =>
@@ -74,7 +70,7 @@ let failureMessage = (t: t): option<string> =>
     let lines =
       byChain
       ->Array.map(((chainId, indices)) =>
-        `  - chain ${chainId->Int.toString}: ${indices
+        `  - chain ${chainId->ChainId.toString}: ${indices
           ->Array.map(index => index->Int.toString)
           ->Array.join(", ")}`
       )

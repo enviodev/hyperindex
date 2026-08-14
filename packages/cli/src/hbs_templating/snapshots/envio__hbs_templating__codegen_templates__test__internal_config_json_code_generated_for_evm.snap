@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 2753
 expression: json
 ---
 {
@@ -121,16 +120,14 @@ expression: json
         },
         {
           "name": "related",
-          "type": "entity",
-          "linkedEntity": "RelatedEntity",
-          "entity": "RelatedEntity"
+          "type": "string",
+          "linkedEntity": "RelatedEntity"
         },
         {
           "name": "optionalRelated",
-          "type": "entity",
+          "type": "string",
           "isNullable": true,
-          "linkedEntity": "RelatedEntity",
-          "entity": "RelatedEntity"
+          "linkedEntity": "RelatedEntity"
         },
         {
           "name": "tags",

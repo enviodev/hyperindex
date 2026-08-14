@@ -42,14 +42,24 @@ type svmInstructionParams = {
 type svmTokenBalance = {
   account?: SvmTypes.Pubkey.t,
   mint?: SvmTypes.Pubkey.t,
+  /** Owner at the end of the transaction, falling back to the owner on entry
+   when the account was closed during it. Pre and post owners differ only when
+   a `SetAuthority(AccountOwner)` runs mid-transaction. */
   owner?: SvmTypes.Pubkey.t,
-  preAmount?: string,
-  postAmount?: string,
+  /** Mint decimals, for scaling the raw amounts below. */
+  decimals?: int,
+  /** Raw amount in base units before the transaction. Absent when the token
+   account was created during it. */
+  preAmount?: bigint,
+  /** Raw amount in base units after the transaction. Absent when the token
+   account was closed during it. */
+  postAmount?: bigint,
 }
 
 type svmTransaction = {
   transactionIndex?: int,
-  signatures: array<string>,
+  /** The transaction's identifying signature (`allSignatures[0]`). */
+  signature: string,
   feePayer?: SvmTypes.Pubkey.t,
   success?: bool,
   err?: string,
@@ -58,6 +68,9 @@ type svmTransaction = {
   accountKeys: array<SvmTypes.Pubkey.t>,
   recentBlockhash?: string,
   version?: string,
+  /** Every signature on the transaction, in message order; the first is
+   `signature`. Longer than one element only for a multi-signer transaction. */
+  allSignatures: array<string>,
   tokenBalances?: array<svmTokenBalance>,
 }
 
@@ -186,7 +199,8 @@ and effectOptions<'input, 'output> = {
   rateLimit: rateLimit,
   /** Whether the effect should be cached. */
   cache?: bool,
-  /** Whether the effect's cache is shared across all chains. Defaults to `true`.
+  /** Whether the effect's cache is shared across all chains. Defaults to `true`,
+   or to `false` when config.yaml sets `disable_default_cross_chain: true`.
    Set to `false` to isolate the cache (and rate limiting) per chain and enable
    `context.chain.id` inside the handler. */
   crossChain?: bool,
@@ -196,8 +210,8 @@ and effectContext = {
   log: logger,
   effect: 'input 'output. (effect<'input, 'output>, 'input) => promise<'output>,
   mutable cache: bool,
-  /** The chain the effect was called on. Only available on effects created with
-   `crossChain: false`; accessing it on a cross-chain effect throws. */
+  /** The chain the effect was called on. Only available on chain-scoped
+   effects; accessing it on a cross-chain effect throws. */
   chain: effectChain,
 }
 and effectArgs<'input> = {
@@ -259,10 +273,9 @@ let createEffect = (
     | Some(true) => true
     | _ => false
     },
-    crossChain: switch options.crossChain {
-    | Some(false) => false
-    | _ => true
-    },
+    // Left unresolved: the config's `defaultCrossChain` fills it in when the
+    // effect didn't state one, and the config isn't available here.
+    crossChain: options.crossChain,
     rateLimit: switch options.rateLimit {
     | Disable => None
     | Enable({calls, per}) =>

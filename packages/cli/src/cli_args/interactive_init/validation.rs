@@ -26,8 +26,8 @@ pub fn is_valid_folder_name(name: &str) -> bool {
 pub fn is_valid_foldername_inquire_validator(name: &str) -> Result<Validation, CustomUserError> {
     if !is_valid_folder_name(name) {
         Ok(Validation::Invalid(
-            "Invalid folder name. The folder name cannot contain any of the following \
-             special characters: / \\ : * ? \" ' < > |"
+            "Invalid folder name. The folder name cannot contain any of the following special \
+             characters: / \\ : * ? \" ' < > |"
                 .into(),
         ))
     } else {

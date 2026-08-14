@@ -1,6 +1,6 @@
 use super::{
     chain_helpers::get_max_reorg_depth_from_id,
-    entity_parsing::{Entity, GraphQLEnum, Schema},
+    entity_parsing::{ClickHouseEntityStorage, Entity, GqlScalar, GraphQLEnum, Schema},
     env_interpolation::interpolate_config_variables,
     human_config::{
         self,
@@ -16,7 +16,7 @@ use super::{
 };
 use crate::utils::dotenv::{self, EnvMap};
 use crate::{
-    config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
+    config_parsing::human_config::evm::RpcTransactionField,
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
     evm::abi::AbiOrNestedAbi,
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
@@ -90,7 +90,7 @@ impl EnvState {
                                 dotenv::Error::Io(_, _) => (),
                                 _ => println!(
                                     "Warning: Failed loading .env file with unexpected error: \
-                                         {err}"
+                                     {err}"
                                 ),
                             };
                             self.maybe_dotenv = Some(EnvMap::new());
@@ -281,7 +281,8 @@ pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
     let pkg_dir = envio_package_dir.ok_or_else(|| {
         anyhow!(
             "envio version is not a release ({VERSION}) and no envio_package_dir was supplied. \
-             Run via the NAPI host (which resolves it from import.meta.url) or pass an explicit path."
+             Run via the NAPI host (which resolves it from import.meta.url) or pass an explicit \
+             path."
         )
     })?;
 
@@ -299,15 +300,55 @@ pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
     Ok(format!("file:{}", pkg.to_string_lossy()))
 }
 
+/// Widest scalar the internal chain-id columns need. Derived once from the
+/// maximum active chain id and carried through the public config, so a resume
+/// against a schema built for the other mode is rejected rather than silently
+/// truncating ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChainIdMode {
+    Int32,
+    Int64,
+}
+
+/// Chain ids cross the Rust → JSON → JS boundary as plain numbers, so an id
+/// above `Number.MAX_SAFE_INTEGER` can't round-trip losslessly.
+pub const MAX_SAFE_CHAIN_ID: u64 = 9_007_199_254_740_991;
+
+impl ChainIdMode {
+    /// Skipped chains count: codegen emits a `chainId` case for every chain in
+    /// config.yaml regardless of `skip`, so a skipped wide id still has to be
+    /// representable. Including them also keeps the mode — and therefore the
+    /// physical column types — stable when a chain is skipped and unskipped.
+    fn resolve(chains: &ChainMap) -> Result<Self> {
+        let max_id = chains.values().map(|chain| chain.id).max().unwrap_or(0);
+        if max_id > MAX_SAFE_CHAIN_ID {
+            return Err(anyhow!(
+                "Chain id {max_id} is above the maximum supported chain id {MAX_SAFE_CHAIN_ID} \
+                 (Number.MAX_SAFE_INTEGER)."
+            ));
+        }
+        Ok(if max_id <= i32::MAX as u64 {
+            Self::Int32
+        } else {
+            Self::Int64
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct SystemConfig {
     pub name: String,
     pub schema_path: String,
     pub parsed_project_paths: ParsedProjectPaths,
     pub chains: ChainMap,
+    pub chain_id_mode: ChainIdMode,
     pub contracts: ContractMap,
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
+    // False when `disable_default_cross_chain: true` — entities and effect
+    // caches are then per-chain unless they opt back in.
+    pub default_cross_chain: bool,
     pub schema: Schema,
     pub field_selection: FieldSelection,
     pub enable_raw_events: bool,
@@ -354,9 +395,8 @@ impl Storage {
         }
         if !postgres_enabled && !clickhouse_enabled {
             return Err(anyhow!(
-                "At least one storage backend must be enabled. Please set `postgres: true` \
-                 in the `storage` config (or omit the `storage` section entirely to use the \
-                 default)."
+                "At least one storage backend must be enabled. Please set `postgres: true` in the \
+                 `storage` config (or omit the `storage` section entirely to use the default)."
             ));
         }
         Ok(Self {
@@ -379,6 +419,11 @@ impl Storage {
         })
     }
 }
+
+/// Largest BigInt precision ClickHouse still stores as a numeric `Decimal`;
+/// above this (or with no precision) it falls back to `String`. Kept in sync
+/// with the BigInt branch of `getClickHouseFieldType` in ClickHouse.res.
+const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
 
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
@@ -405,19 +450,87 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                 .collect::<Vec<_>>()
                 .join("\n");
             return Err(anyhow!(
-                "Schema validation failed:\n\
-                 \n\
-                 Entities with no storage backend (no @storage directive, and no backend is marked `default: true` in config.yaml):\n\
-                 {listed}\n\
-                 \n\
-                 Fixes:\n  \
-                 - Set `default: true` on a backend under `storage:` in config.yaml to include these entities automatically. Example:\n      \
-                 storage:\n        \
-                 postgres:\n          \
-                 default: true\n  \
-                 - Or add @storage(postgres: true) and/or @storage(clickhouse: true) to the entities listed above. Example:\n      \
-                 type {example} @storage(postgres: true) {{ ... }}"
+                "Schema validation failed:\n\nEntities with no storage backend (no @storage \
+                     directive, and no backend is marked `default: true` in \
+                     config.yaml):\n{listed}\n\nFixes:\n  - Set `default: true` on a backend \
+                     under `storage:` in config.yaml to include these entities automatically. \
+                     Example:\n      storage:\n        postgres:\n          default: true\n  - Or \
+                     add @storage(postgres: true) and/or @storage(clickhouse: true) to the \
+                     entities listed above. Example:\n      type {example} @storage(postgres: \
+                     true) {{ ... }}"
             ));
+        }
+    }
+
+    // ClickHouse stores a BigInt whose precision is unset (or above its Decimal
+    // ceiling) as a String, which sorts lexicographically — wrong for anything
+    // in the sorting key. See the BigInt branch of `getClickHouseFieldType` in
+    // ClickHouse.res.
+    //
+    // Which column that applies to depends on `@storage(clickhouse: {orderBy})`:
+    // without it the sorting key is `id`, with it the listed fields replace `id`
+    // (see `makeCreateHistoryTableQuery`). Unlike the parse-time
+    // `validate_clickhouse_order_by_fields`, the schema is available here, so a
+    // relation in the sorting key can be resolved to the id it actually stores.
+    let bigint_stored_as_string =
+        |precision: Option<u32>| !precision.is_some_and(|p| p <= CLICKHOUSE_DECIMAL_MAX_PRECISION);
+    for entity in &entities {
+        let uses_clickhouse = if entity.has_storage_directive() {
+            entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
+        } else {
+            clickhouse_default
+        };
+        if !uses_clickhouse {
+            continue;
+        }
+
+        let order_by = match entity.clickhouse.as_ref() {
+            Some(ClickHouseEntityStorage::Options(options)) => options.order_by.as_deref(),
+            _ => None,
+        };
+
+        match order_by {
+            Some(order_by_fields) => {
+                for field_name in order_by_fields {
+                    // Existence, nullability and array-ness are already rejected
+                    // at parse time; a miss here just means nothing to resolve.
+                    let Some(field) = entity.get_field(field_name) else {
+                        continue;
+                    };
+                    let stored =
+                        schema.resolve_stored_scalar(&field.field_type.get_underlying_scalar())?;
+                    if let GqlScalar::BigInt(precision) = stored {
+                        if bigint_stored_as_string(precision) {
+                            return Err(anyhow!(
+                                "Invalid storage for `{}`. `clickhouse.orderBy` sorts by \
+                                 `{field_name}`, which stores a BigInt that ClickHouse keeps as a \
+                                 String (sorted lexicographically, not numerically) unless a \
+                                 precision is set. Add `@config(precision: N)` with N <= \
+                                 {CLICKHOUSE_DECIMAL_MAX_PRECISION} to the BigInt it stores so it \
+                                 sorts as a numeric Decimal.",
+                                entity.name
+                            ));
+                        }
+                    }
+                }
+            }
+            // No custom orderBy, so `id` is the sorting key.
+            None => {
+                if let Ok(GqlScalar::BigInt(precision)) = entity.get_id_scalar() {
+                    if bigint_stored_as_string(precision) {
+                        return Err(anyhow!(
+                            "Invalid storage for `{}`. Its `id` is a BigInt, which ClickHouse \
+                             stores as a String (sorted lexicographically, not numerically) \
+                             unless a precision is set. Since `id` is ClickHouse's sorting key, \
+                             add `@config(precision: N)` with N <= \
+                             {CLICKHOUSE_DECIMAL_MAX_PRECISION} so the id stores as a numeric \
+                             Decimal, or set `@storage(clickhouse: {{orderBy: [...]}})` to sort \
+                             by other fields.",
+                            entity.name
+                        ));
+                    }
+                }
+            }
         }
     }
 
@@ -446,13 +559,64 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
         .collect::<Vec<_>>()
         .join("\n");
     Err(anyhow!(
-        "Schema validation failed:\n\
-         \n\
-         Entities using storages not enabled in config.yaml:\n\
-         {listed}\n\
-         \n\
-         Fixes:\n  \
-         - Remove the unsupported storage from @storage on these entities, or enable it under `storage:` in config.yaml."
+        "Schema validation failed:\n\nEntities using storages not enabled in \
+         config.yaml:\n{listed}\n\nFixes:\n  - Remove the unsupported storage from @storage on \
+         these entities, or enable it under `storage:` in config.yaml."
+    ))
+}
+
+/// Whether an entity ends up in Postgres, mirroring how `EntityJson.storage` is
+/// emitted: a `@storage` directive is taken literally, otherwise the entity
+/// follows the backends marked `default` in config.yaml.
+fn is_stored_in_postgres(entity: &Entity, storage: &Storage) -> bool {
+    if entity.has_storage_directive() {
+        entity.postgres == Some(true)
+    } else {
+        storage.postgres.is_some_and(|b| b.entity_default)
+    }
+}
+
+/// A `@derivedFrom` relationship is served by joining the two entities in
+/// Postgres, and it is backed by an index on the referenced entity's table. If
+/// that entity isn't in Postgres there is no table to join or index, so catch
+/// it here rather than letting table creation (or the end-of-backfill index
+/// pass) fail on an entity it can't resolve.
+pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut invalid: Vec<String> = Vec::new();
+    for entity in entities {
+        if !is_stored_in_postgres(entity, storage) {
+            continue;
+        }
+        for field in &entity.fields {
+            let Some(derived) = field.get_derived_from_field() else {
+                continue;
+            };
+            let target = &derived.derived_from_entity;
+            let is_target_in_postgres = schema
+                .entities
+                .get(target)
+                .is_some_and(|e| is_stored_in_postgres(e, storage));
+            if !is_target_in_postgres {
+                invalid.push(format!(
+                    "  - `{}`.`{}` derives from `{}`, which is not stored in postgres.",
+                    entity.name, field.name, target
+                ));
+            }
+        }
+    }
+
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    let listed = invalid.join("\n");
+    Err(anyhow!(
+        "Schema validation failed:\n\n@derivedFrom relationships between entities that don't \
+         share the postgres storage:\n{listed}\n\nFixes:\n  - Add postgres to the @storage \
+         directive of the referenced entities, or\n  - Remove the @derivedFrom fields listed \
+         above."
     ))
 }
 
@@ -551,59 +715,164 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
 
     if !empty.is_empty() {
         return Err(anyhow!(
-            "Schema validation failed:\n\
-             \n\
-             Entity fields that would create an empty database column name:\n\
-             {}\n\
-             \n\
-             Fixes:\n  \
-             - Rename the listed fields in schema.graphql.",
+            "Schema validation failed:\n\nEntity fields that would create an empty database \
+             column name:\n{}\n\nFixes:\n  - Rename the listed fields in schema.graphql.",
             empty.join("\n")
         ));
     }
     if !reserved.is_empty() {
         return Err(anyhow!(
-            "Schema validation failed:\n\
-             \n\
-             Entity fields that would create database columns with the reserved `envio_` prefix:\n\
-             {}\n\
-             \n\
-             Fixes:\n  \
-             - Rename the listed fields in schema.graphql. Column names starting with `envio_` \
-             are reserved for internal indexer columns (eg `envio_change` in entity history \
-             tables).",
+            "Schema validation failed:\n\nEntity fields that would create database columns with \
+             the reserved `envio_` prefix:\n{}\n\nFixes:\n  - Rename the listed fields in \
+             schema.graphql. Column names starting with `envio_` are reserved for internal \
+             indexer columns (eg `envio_change` in entity history tables).",
             reserved.join("\n")
         ));
     }
     if !too_long.is_empty() {
         return Err(anyhow!(
-            "Schema validation failed:\n\
-             \n\
-             Entity fields that would create database column names longer than {MAX_PG_IDENTIFIER_LENGTH} \
-             characters (Postgres truncates longer identifiers, which can cause collisions and \
-             broken GraphQL field mappings):\n\
-             {}\n\
-             \n\
-             Fixes:\n  \
-             - Shorten the listed fields in schema.graphql so the resulting column names fit \
-             within {MAX_PG_IDENTIFIER_LENGTH} characters.",
+            "Schema validation failed:\n\nEntity fields that would create database column names \
+             longer than {MAX_PG_IDENTIFIER_LENGTH} characters (Postgres truncates longer \
+             identifiers, which can cause collisions and broken GraphQL field \
+             mappings):\n{}\n\nFixes:\n  - Shorten the listed fields in schema.graphql so the \
+             resulting column names fit within {MAX_PG_IDENTIFIER_LENGTH} characters.",
             too_long.join("\n")
         ));
     }
     if !collisions.is_empty() {
         return Err(anyhow!(
-            "Schema validation failed:\n\
-             \n\
-             Multiple entity fields map to the same database column:\n\
-             {}\n\
-             \n\
-             Fixes:\n  \
-             - Rename the conflicting fields in schema.graphql so they map to distinct columns. \
-             Note that entity reference fields get an `_id` suffix, and `column_name_format: \
-             snake_case` converts field names to snake_case.",
+            "Schema validation failed:\n\nMultiple entity fields map to the same database \
+             column:\n{}\n\nFixes:\n  - Rename the conflicting fields in schema.graphql so they \
+             map to distinct columns. Note that entity reference fields get an `_id` suffix, and \
+             `column_name_format: snake_case` converts field names to snake_case.",
             collisions.join("\n")
         ));
     }
+    Ok(())
+}
+
+/// The chain-id column appended to per-chain entity tables, spelled for the
+/// backend's configured `column_name_format`.
+pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static str {
+    match format {
+        human_config::ColumnNameFormat::Original => "chainId",
+        human_config::ColumnNameFormat::SnakeCase => "chain_id",
+    }
+}
+
+/// Every spelling `chain_id_column_name` can produce, plus the `chainId` name
+/// the appended field keeps on the API surface.
+pub const RESERVED_CHAIN_ID_FIELD_NAMES: [&str; 2] = ["chainId", "chain_id"];
+
+/// Whether an entity's rows are shared across chains. With the default
+/// cross-chain mode every entity is; otherwise only those carrying
+/// `@crossChain`.
+pub fn entity_is_cross_chain(entity: &Entity, default_cross_chain: bool) -> bool {
+    default_cross_chain || entity.cross_chain
+}
+
+/// `@crossChain` only means something when entities are per-chain by default.
+/// Left silently accepted it would read as "this entity is special" while
+/// changing nothing, so reject it instead of ignoring it.
+pub fn validate_cross_chain_directives(
+    default_cross_chain: bool,
+    schema: &Schema,
+) -> anyhow::Result<()> {
+    if !default_cross_chain {
+        return Ok(());
+    }
+    let mut annotated: Vec<&str> = schema
+        .entities
+        .values()
+        .filter(|entity| entity.cross_chain)
+        .map(|entity| entity.name.as_str())
+        .collect();
+    annotated.sort_unstable();
+
+    let Some(first) = annotated.first() else {
+        return Ok(());
+    };
+    Err(anyhow!(
+        "@crossChain on `{first}` has no effect because entities are cross-chain by default. Set \
+         `disable_default_cross_chain: true` in config.yaml to make entities per-chain, or remove \
+         the directive."
+    ))
+}
+
+/// A reference stores only the referenced entity's id, so a cross-chain entity
+/// pointing at a per-chain one has no chain with which to resolve it. The other
+/// combinations are unambiguous: a per-chain entity resolves a per-chain
+/// reference within its own chain, and a cross-chain id is global. A
+/// `@derivedFrom` is the mirror of a reference on the other entity, so checking
+/// the references alone covers both.
+pub fn validate_cross_chain_relationships(
+    schema: &Schema,
+    default_cross_chain: bool,
+) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut invalid: Vec<String> = vec![];
+    for entity in &entities {
+        if !entity_is_cross_chain(entity, default_cross_chain) {
+            continue;
+        }
+        for (field, related) in entity.get_related_entities(schema)? {
+            if field.get_derived_from_field().is_some()
+                || entity_is_cross_chain(related, default_cross_chain)
+            {
+                continue;
+            }
+            invalid.push(format!(
+                "  - `{}`.`{}` references `{}`, which is per-chain.",
+                entity.name, field.name, related.name
+            ));
+        }
+    }
+
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "Schema validation failed:\n\nCross-chain entities referencing per-chain \
+         entities:\n{}\n\nA reference stores only the referenced entity's id, and a per-chain id \
+         needs a chain to resolve. Fixes:\n  - Make the referenced entities cross-chain with \
+         `@crossChain`, or\n  - Remove `@crossChain` from the entities listed above so they \
+         resolve the reference within their own chain.",
+        invalid.join("\n")
+    ))
+}
+
+/// Per-chain entities get a chain-id field appended, so no schema field may
+/// claim its name. Both spellings are reserved whatever the backends and their
+/// `column_name_format` are, so the name a user may give a field never depends
+/// on where the entity happens to be stored. Cross-chain entities get nothing
+/// appended and keep both names free.
+pub fn validate_chain_id_field_names(
+    schema: &Schema,
+    default_cross_chain: bool,
+) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    for entity in &entities {
+        if entity_is_cross_chain(entity, default_cross_chain) {
+            continue;
+        }
+        for gql_field in entity.get_fields() {
+            if RESERVED_CHAIN_ID_FIELD_NAMES.contains(&gql_field.name.as_str()) {
+                return Err(anyhow!(
+                    "`{entity}.{field}` is not allowed, since envio sets `chainId` on every \
+                     per-chain entity for you. Either rename the field, or add `@crossChain` to \
+                     `{entity}` — its rows are then shared across chains and the field is yours \
+                     to set.",
+                    entity = entity.name,
+                    field = gql_field.name
+                ));
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -651,15 +920,10 @@ pub fn validate_clickhouse_nullable_arrays(
     }
 
     Err(anyhow!(
-        "Schema validation failed:\n\
-         \n\
-         Nullable array fields are not supported by ClickHouse storage:\n\
-         {}\n\
-         \n\
-         Fixes:\n  \
-         - Make the field required and explicitly set an empty array instead of null. For \
-         example, change the type from `[String!]` to `[String!]!` in schema.graphql, and \
-         assign `[]` instead of `null`/`undefined` in your handlers.",
+        "Schema validation failed:\n\nNullable array fields are not supported by ClickHouse \
+         storage:\n{}\n\nFixes:\n  - Make the field required and explicitly set an empty array \
+         instead of null. For example, change the type from `[String!]` to `[String!]!` in \
+         schema.graphql, and assign `[]` instead of `null`/`undefined` in your handlers.",
         offending.join("\n")
     ))
 }
@@ -777,9 +1041,14 @@ impl SystemConfig {
         let mut contracts: ContractMap = HashMap::new();
 
         let base_config = human_config.get_base_config();
+        let default_cross_chain = !base_config.disable_default_cross_chain.unwrap_or(false);
         let storage = Storage::resolve(base_config.storage.as_ref())?;
         validate_entity_storage(&storage, &schema)?;
+        validate_relationship_storage(&storage, &schema)?;
         validate_db_column_names(&storage, &schema)?;
+        validate_cross_chain_directives(default_cross_chain, &schema)?;
+        validate_chain_id_field_names(&schema, default_cross_chain)?;
+        validate_cross_chain_relationships(&schema, default_cross_chain)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
         let final_project_paths = source.project_paths().clone();
@@ -790,13 +1059,13 @@ impl SystemConfig {
                 // TODO: Add similar validation for Fuel
                 validation::validate_deserialized_config_yaml(evm_config)?;
 
-                let has_rpc_sync_src = evm_config.chains.iter().any(evm_chain_has_rpc_sync_src);
+                let has_rpc_src = evm_config.chains.iter().any(evm_chain_has_rpc_src);
 
                 //Add all global contracts
                 if let Some(global_contracts) = &evm_config.contracts {
                     for g_contract in global_contracts {
-                        let contract_has_rpc_sync_src = evm_config.chains.iter().any(|chain| {
-                            evm_chain_has_rpc_sync_src(chain)
+                        let contract_has_rpc_src = evm_config.chains.iter().any(|chain| {
+                            evm_chain_has_rpc_src(chain)
                                 && chain.contracts.as_ref().is_some_and(|contracts| {
                                     contracts
                                         .iter()
@@ -807,7 +1076,7 @@ impl SystemConfig {
                             g_contract.config.events.clone(),
                             &g_contract.config.abi_file_path,
                             source,
-                            contract_has_rpc_sync_src,
+                            contract_has_rpc_src,
                         )
                         .context(format!(
                             "Failed parsing abi types for events in global contract {}",
@@ -829,7 +1098,7 @@ impl SystemConfig {
                 }
 
                 for network in &evm_config.chains {
-                    let network_has_rpc_sync_src = evm_chain_has_rpc_sync_src(network);
+                    let network_has_rpc_src = evm_chain_has_rpc_src(network);
                     for contract in network.contracts.clone().unwrap_or_default() {
                         //Add values for local contract
                         match contract.config {
@@ -838,7 +1107,7 @@ impl SystemConfig {
                                     l_contract.events,
                                     &l_contract.abi_file_path,
                                     source,
-                                    network_has_rpc_sync_src,
+                                    network_has_rpc_src,
                                 )
                                 .context(format!(
                                     "Failed parsing abi types for events in contract {} on \
@@ -925,8 +1194,10 @@ impl SystemConfig {
                             block_fields: None,
                         },
                     ),
-                    has_rpc_sync_src,
+                    has_rpc_src,
                 )?;
+
+                let chain_id_mode = ChainIdMode::resolve(&chains)?;
 
                 Ok(SystemConfig {
                     name: base_config.name.clone(),
@@ -936,9 +1207,11 @@ impl SystemConfig {
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
+                    chain_id_mode,
                     contracts,
                     rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
                     save_full_history: evm_config.save_full_history.unwrap_or(false),
+                    default_cross_chain,
                     schema,
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
@@ -1074,6 +1347,8 @@ impl SystemConfig {
                         .context("Failed inserting chain at chains map")?;
                 }
 
+                let chain_id_mode = ChainIdMode::resolve(&chains)?;
+
                 Ok(SystemConfig {
                     name: base_config.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -1082,9 +1357,11 @@ impl SystemConfig {
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
+                    chain_id_mode,
                     contracts,
                     rollback_on_reorg: false,
                     save_full_history: false,
+                    default_cross_chain,
                     schema,
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
@@ -1215,6 +1492,8 @@ impl SystemConfig {
                 // keep it off for now.
                 let uses_hypersync = svm_config.chains.iter().any(|n| n.experimental.is_some());
 
+                let chain_id_mode = ChainIdMode::resolve(&chains)?;
+
                 Ok(SystemConfig {
                     name: svm_config.base.name.clone(),
                     parsed_project_paths: final_project_paths,
@@ -1224,9 +1503,11 @@ impl SystemConfig {
                         .clone()
                         .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
                     chains,
+                    chain_id_mode,
                     contracts,
                     rollback_on_reorg: uses_hypersync,
                     save_full_history: false,
+                    default_cross_chain,
                     schema,
                     field_selection: FieldSelection::svm(),
                     enable_raw_events: false,
@@ -1243,9 +1524,9 @@ impl SystemConfig {
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
         let human_config_string =
             std::fs::read_to_string(&project_paths.config).context(format!(
-                "Failed to resolve config path {0} (--config {1} resolved relative to \
-                 --directory {2}). Make sure the file exists. Note that --config and \
-                 ENVIO_CONFIG are interpreted relative to --directory.",
+                "Failed to resolve config path {0} (--config {1} resolved relative to --directory \
+                 {2}). Make sure the file exists. Note that --config and ENVIO_CONFIG are \
+                 interpreted relative to --directory.",
                 project_paths.config.to_str().unwrap_or("{unknown}"),
                 project_paths.config_relative_to_root().display(),
                 project_paths.project_root.display(),
@@ -1278,8 +1559,8 @@ impl SystemConfig {
 
         let config_discriminant: human_config::ConfigDiscriminant =
             serde_yaml::from_str(&human_config_string).context(
-                "Failed to deserialize config. The config.yaml file is either not a valid \
-                 yaml or the \"ecosystem\" field is not a string.",
+                "Failed to deserialize config. The config.yaml file is either not a valid yaml or \
+                 the \"ecosystem\" field is not a string.",
             )?;
 
         let ecosystem = match config_discriminant.ecosystem.as_deref() {
@@ -1299,8 +1580,7 @@ impl SystemConfig {
             Ecosystem::Evm => {
                 let evm_config: EvmConfig =
                     serde_yaml::from_str(&human_config_string).context(format!(
-                        "Failed to deserialize config. Visit the docs for more information \
-                         {}",
+                        "Failed to deserialize config. Visit the docs for more information {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
                 HumanConfig::Evm(evm_config)
@@ -1308,8 +1588,7 @@ impl SystemConfig {
             Ecosystem::Fuel => {
                 let fuel_config: FuelConfig =
                     serde_yaml::from_str(&human_config_string).context(format!(
-                        "Failed to deserialize config. Visit the docs for more information \
-                         {}",
+                        "Failed to deserialize config. Visit the docs for more information {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
                 HumanConfig::Fuel(fuel_config)
@@ -1317,8 +1596,7 @@ impl SystemConfig {
             Ecosystem::Svm => {
                 let svm_config: human_config::svm::HumanConfig =
                     serde_yaml::from_str(&human_config_string).context(format!(
-                        "Failed to deserialize config. Visit the docs for more information \
-                         {}",
+                        "Failed to deserialize config. Visit the docs for more information {}",
                         links::DOC_CONFIGURATION_FILE
                     ))?;
                 HumanConfig::Svm(svm_config)
@@ -1378,15 +1656,14 @@ fn default_rpc_for(chain: &EvmChain) -> For {
     }
 }
 
-fn evm_chain_has_rpc_sync_src(chain: &EvmChain) -> bool {
-    let default_for = default_rpc_for(chain);
-    let is_sync =
-        |source_for: &Option<For>| matches!(source_for.as_ref().unwrap_or(&default_for), For::Sync);
-
+/// Whether any of a chain's data reaches the indexer over RPC. Every RPC counts,
+/// whatever it's `for`: a fallback or realtime source parses events with the
+/// same field registry a sync one does, so a field RPC can't deliver would go
+/// missing for whichever blocks that source served.
+fn evm_chain_has_rpc_src(chain: &EvmChain) -> bool {
     match &chain.rpc {
-        Some(RpcSelection::Single(rpc)) => is_sync(&rpc.source_for),
-        Some(RpcSelection::List(rpcs)) => rpcs.iter().any(|rpc| is_sync(&rpc.source_for)),
-        Some(RpcSelection::Url(_)) => default_for == For::Sync,
+        Some(RpcSelection::Single(_)) | Some(RpcSelection::Url(_)) => true,
+        Some(RpcSelection::List(rpcs)) => !rpcs.is_empty(),
         None => false,
     }
 }
@@ -1637,8 +1914,8 @@ fn resolve_program_schema(
     if let Some(idl_path) = program.idl.as_deref() {
         if any_instruction_carries_schema {
             return Err(anyhow!(
-                "Program '{}': `idl` is mutually exclusive with per-instruction \
-                 `accounts`/`args` overrides. Use one or the other.",
+                "Program '{}': `idl` is mutually exclusive with per-instruction `accounts`/`args` \
+                 overrides. Use one or the other.",
                 program.name
             ));
         }
@@ -1699,8 +1976,8 @@ fn resolve_instruction_layout(
     }
     if instr.accounts.is_some() != instr.args.is_some() {
         return Err(anyhow!(
-            "Instruction '{}': `accounts` and `args` must be provided together \
-             (or both omitted to fall back to a bundled/IDL schema).",
+            "Instruction '{}': `accounts` and `args` must be provided together (or both omitted \
+             to fall back to a bundled/IDL schema).",
             instr.name
         ));
     }
@@ -1936,15 +2213,15 @@ impl Contract {
             if let Some(existing) = seen_by_name.insert(&event.name, event) {
                 if existing.sighash == event.sighash {
                     return Err(anyhow!(
-                        "Contract {name} defines the event \"{}\" more than once. \
-                         Please remove the duplicate.",
+                        "Contract {name} defines the event \"{}\" more than once. Please remove \
+                         the duplicate.",
                         event.name,
                     ));
                 }
                 return Err(anyhow!(
-                    "Contract {name} has two events named \"{}\". Give one of them a \
-                     unique name with the \"name\" field so the generated code and \
-                     the indexer's routing can tell them apart.",
+                    "Contract {name} has two events named \"{}\". Give one of them a unique name \
+                     with the \"name\" field so the generated code and the indexer's routing can \
+                     tell them apart.",
                     event.name,
                 ));
             }
@@ -1981,9 +2258,9 @@ impl Contract {
                 {
                     return Err(anyhow!(
                         "Contract {name} has two events the indexer can't tell apart: \
-                         \"{existing}\" and \"{}\". They match the same on-chain data, so \
-                         the indexer can't decide which one a log belongs to. Please remove \
-                         one of them.",
+                         \"{existing}\" and \"{}\". They match the same on-chain data, so the \
+                         indexer can't decide which one a log belongs to. Please remove one of \
+                         them.",
                         event.name,
                     ));
                 }
@@ -2157,8 +2434,8 @@ impl Event {
         let parse_event_sig = |sig: &str| -> Result<AlloyEvent> {
             crate::config_parsing::abi_compat::parse_event_signature_to_alloy(sig).map_err(|err| {
                 anyhow!(
-                    "Unable to parse event signature {} due to the following error: {}. \
-                     Please refer to our docs on how to correctly define a human readable ABI.",
+                    "Unable to parse event signature {} due to the following error: {}. Please \
+                     refer to our docs on how to correctly define a human readable ABI.",
                     sig,
                     err
                 )
@@ -2215,7 +2492,7 @@ impl Event {
         events_config: Vec<EvmEventConfig>,
         abi_file_path: &Option<String>,
         source: &dyn ConfigSource,
-        has_rpc_sync_src: bool,
+        has_rpc_src: bool,
     ) -> Result<(Vec<Self>, EvmAbi)> {
         let abi_from_file = EvmAbi::from_source(abi_file_path, source)?;
 
@@ -2251,7 +2528,7 @@ impl Event {
                     Some(ref selection_config) => {
                         Some(FieldSelection::try_from_config_field_selection(
                             selection_config.clone(),
-                            has_rpc_sync_src,
+                            has_rpc_src,
                         )?)
                     }
                     None => None,
@@ -2553,7 +2830,7 @@ impl FieldSelection {
     pub fn try_from_config_field_selection(
         field_selection_cfg: human_config::evm::FieldSelection,
         // For validating transaction field selection with rpc
-        has_rpc_sync_src: bool,
+        has_rpc_src: bool,
     ) -> Result<Self> {
         use human_config::evm::BlockField;
         use human_config::evm::TransactionField;
@@ -2580,7 +2857,15 @@ impl FieldSelection {
             ));
         }
 
-        if has_rpc_sync_src {
+        // Every block field is derivable from `eth_getBlockByNumber`, so only
+        // transactions have an RPC-unavailable set: the two whose complex array
+        // shape has no parser in `RpcSource`'s field registry.
+        //
+        // The runtime re-checks this over every registration in
+        // `HandlerRegister.validateRpcFieldSelection`, which is the only check
+        // an inline `fields` selection reaches. This one runs at codegen, so a
+        // `config.yaml` selection fails before a project is even built.
+        if has_rpc_src {
             let invalid_rpc_tx_fields: Vec<_> = transaction_fields
                 .iter()
                 .filter(|&field| RpcTransactionField::try_from(field.clone()).is_err())
@@ -2592,19 +2877,6 @@ impl FieldSelection {
                     "The following selected transaction_fields are unavailable for indexing via \
                      RPC: {}",
                     invalid_rpc_tx_fields.iter().join(", ")
-                ));
-            }
-
-            let invalid_rpc_block_fields: Vec<_> = block_fields
-                .iter()
-                .filter(|&field| RpcBlockField::try_from(field.clone()).is_err())
-                .cloned()
-                .collect();
-
-            if !invalid_rpc_block_fields.is_empty() {
-                return Err(anyhow!(
-                    "The following selected block_fields are unavailable for indexing via RPC: {}",
-                    invalid_rpc_block_fields.iter().join(", ")
                 ));
             }
         }
@@ -2850,94 +3122,6 @@ mod test {
     }
 
     #[test]
-    fn test_get_nested_contract_abi() {
-        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
-        let project_root = test_dir.as_str();
-        let config_dir = "configs/nested-abi.yaml";
-        let project_paths = ParsedProjectPaths::new(project_root, config_dir)
-            .expect("Failed creating parsed_paths");
-
-        let config =
-            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
-
-        let contract_name = "Contract3".to_string();
-
-        let contract_abi = match &config
-            .get_contract(&contract_name)
-            .expect("Failed getting contract")
-            .abi
-        {
-            super::Abi::Evm(abi) => abi.typed.clone(),
-            super::Abi::Fuel(_) => panic!("Fuel abi should not be parsed"),
-            super::Abi::Svm(_) => panic!("Svm abi should not be parsed"),
-        };
-
-        let expected_abi_string = r#"
-                [
-                {
-                    "anonymous": false,
-                    "inputs": [
-                    {
-                        "indexed": false,
-                        "name": "id",
-                        "type": "uint256"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "owner",
-                        "type": "address"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "displayName",
-                        "type": "string"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "imageUrl",
-                        "type": "string"
-                    }
-                    ],
-                    "name": "NewGravatar",
-                    "type": "event"
-                },
-                {
-                    "anonymous": false,
-                    "inputs": [
-                    {
-                        "indexed": false,
-                        "name": "id",
-                        "type": "uint256"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "owner",
-                        "type": "address"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "displayName",
-                        "type": "string"
-                    },
-                    {
-                        "indexed": false,
-                        "name": "imageUrl",
-                        "type": "string"
-                    }
-                    ],
-                    "name": "UpdatedGravatar",
-                    "type": "event"
-                }
-                ]
-    "#;
-
-        let expected_abi: alloy_json_abi::JsonAbi =
-            serde_json::from_str(expected_abi_string).unwrap();
-
-        assert_eq!(expected_abi, contract_abi);
-    }
-
-    #[test]
     fn normalize_event_signature_handles_formatting_issues() {
         // Trailing semicolon
         assert_eq!(
@@ -2977,10 +3161,12 @@ mod test {
         // A custom event signature whose tuple components are named must not
         // require an ABI file. Selector should match the canonical tuple-only
         // signature (component names stripped per ABI spec).
-        let event_string = "ConsumeBoostVial(address from, uint256 playerId, (uint40 a, uint24 b, uint16 c, uint16 d, uint8 e) playerBoostInfo)";
+        let event_string = "ConsumeBoostVial(address from, uint256 playerId, (uint40 a, uint24 b, \
+                            uint16 c, uint16 d, uint8 e) playerBoostInfo)";
         let parsed = Event::get_abi_event(event_string, &None).unwrap();
 
-        let canonical = "ConsumeBoostVial(address from, uint256 playerId, (uint40,uint24,uint16,uint16,uint8) playerBoostInfo)";
+        let canonical = "ConsumeBoostVial(address from, uint256 playerId, \
+                         (uint40,uint24,uint16,uint16,uint8) playerBoostInfo)";
         let canonical_parsed = Event::get_abi_event(canonical, &None).unwrap();
 
         // Selector is computed from the canonical (unnamed) signature so the
@@ -3230,9 +3416,9 @@ mod test {
     // --- validate_entity_storage: per-entity storage routing checks ---
 
     mod entity_storage_validation {
-        use super::super::{validate_entity_storage, Storage};
+        use super::super::{validate_entity_storage, validate_relationship_storage, Storage};
         use crate::config_parsing::entity_parsing::{
-            ClickHouseEntityStorage, ClickHouseTableOptions, Entity, Schema,
+            ClickHouseEntityStorage, ClickHouseTableOptions, Entity, Field, FieldType, Schema,
         };
         use crate::config_parsing::human_config::ColumnNameFormat;
 
@@ -3253,6 +3439,7 @@ mod test {
                 description: None,
                 postgres,
                 clickhouse: clickhouse.map(ClickHouseEntityStorage::Enabled),
+                cross_chain: false,
             }
         }
 
@@ -3322,6 +3509,64 @@ mod test {
             }]);
             assert!(validate_entity_storage(&postgres_only(), &schema).is_err());
             assert!(validate_entity_storage(&multi(false, false), &schema).is_ok());
+        }
+
+        // A @derivedFrom is served by joining the two entities in Postgres and
+        // backed by an index on the referenced table, so both sides have to be
+        // there.
+        fn derived_from(name: &str, target: &str, field: &str) -> Field {
+            Field {
+                name: name.to_string(),
+                field_type: FieldType::DerivedFromField {
+                    entity_name: target.to_string(),
+                    derived_from_field: field.to_string(),
+                },
+                description: None,
+            }
+        }
+
+        #[test]
+        fn derived_from_within_postgres_ok() {
+            let schema = make_schema(vec![
+                Entity {
+                    fields: vec![derived_from("orders", "Order", "trader")],
+                    ..entity("Trader", Some(true), None)
+                },
+                entity("Order", Some(true), None),
+            ]);
+            assert!(validate_relationship_storage(&multi(false, false), &schema).is_ok());
+        }
+
+        #[test]
+        fn derived_from_clickhouse_only_entity_rejected() {
+            let schema = make_schema(vec![
+                Entity {
+                    fields: vec![derived_from("orders", "Order", "trader")],
+                    ..entity("Trader", Some(true), None)
+                },
+                entity("Order", None, Some(true)),
+            ]);
+            let err = validate_relationship_storage(&multi(false, false), &schema)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(
+                    "`Trader`.`orders` derives from `Order`, which is not stored in postgres."
+                ),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn derived_from_ignored_when_owner_is_not_in_postgres() {
+            let schema = make_schema(vec![
+                Entity {
+                    fields: vec![derived_from("orders", "Order", "trader")],
+                    ..entity("Trader", None, Some(true))
+                },
+                entity("Order", None, Some(true)),
+            ]);
+            assert!(validate_relationship_storage(&multi(false, false), &schema).is_ok());
         }
     }
 
@@ -3558,7 +3803,7 @@ type Foo {
                         "UpdateMetadataAccountV2",
                         Some("0x0f"),
                         1,
-                        to_strings(&["signatures"]),
+                        to_strings(&["signature"]),
                         false,
                         1
                     ),

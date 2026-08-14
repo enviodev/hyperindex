@@ -1,15 +1,41 @@
+// A per-chain entity's rows must never dedup or merge across chains, so both
+// the load-group key and the storage query carry the scope.
+let scopeKeySuffix = (scope: Internal.chainScope) =>
+  switch scope {
+  | CrossChain => ""
+  | Chain(chainId) => `.${chainId->ChainId.toString}`
+  }
+
+// Narrows a query to the scope's chain. Cross-chain entities have no chain-id
+// column, so their filter is left untouched.
+let scopeFilter = (filter: EntityFilter.t, ~table: Table.table, ~scope: Internal.chainScope) =>
+  switch (scope, table->Table.getChainIdField) {
+  | (Chain(chainId), Some(field)) =>
+    EntityFilter.And({
+      filters: [
+        filter,
+        Eq({
+          fieldName: field.fieldName,
+          fieldValue: chainId->(Utils.magic: ChainId.t => unknown),
+        }),
+      ],
+    })
+  | _ => filter
+  }
+
 let loadById = (
   ~loadManager,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
+  ~scope: Internal.chainScope,
   ~indexerState,
   ~shouldGroup,
   ~item,
   ~ecosystem,
   ~entityId,
 ) => {
-  let key = `${entityConfig.name}.get`
-  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig)
+  let key = `${entityConfig.name}.get${scope->scopeKeySuffix}`
+  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
 
   let load = async (idsToLoad, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
@@ -25,7 +51,7 @@ let loadById = (
           ~filter=EntityFilter.In({
             fieldName: Table.idFieldName,
             fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
-          }),
+          })->scopeFilter(~table=entityConfig.table, ~scope),
         )
       )->(Utils.magic: array<unknown> => array<Internal.entity>)
     } catch {
@@ -226,7 +252,7 @@ let loadEffect = (
   // the storage-load metric stays stable.
   let key = switch scope {
   | CrossChain => `${effectName}.effect`
-  | Chain(chainId) => `${effectName}.effect.${chainId->Int.toString}`
+  | Chain(chainId) => `${effectName}.effect.${chainId->ChainId.toString}`
   }
 
   let load = async (args, ~onError) => {
@@ -327,17 +353,20 @@ let loadByFilter = (
   ~loadManager,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
+  ~scope: Internal.chainScope,
   ~indexerState,
   ~shouldGroup,
   ~item,
   ~ecosystem,
   ~filter: EntityFilter.t,
 ) => {
-  let key = filter->EntityFilter.toOperationKey(~entityName=entityConfig.name)
-  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig)
+  let key =
+    filter->EntityFilter.toOperationKey(~entityName=entityConfig.name) ++ scope->scopeKeySuffix
+  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
 
   let load = async (filters: array<EntityFilter.t>, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
+
     let timerRef =
       indexerState->IndexerState.startStorageLoad(~storage=storage.name, ~operation=key)
 
@@ -345,8 +374,15 @@ let loadByFilter = (
 
     filters->Array.forEach(filter => inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter))
 
+    // Any non-derived field can be filtered on, so the columns this query reads
+    // are indexed on demand before it runs rather than promised by the schema.
+    // Inside the load timing: waiting on the build is time the handler spends
+    // waiting for this operation, and it's the only thing that explains an
+    // occasional very slow getWhere.
+    await storage.ensureQueryIndexes(~table=entityConfig.table, ~filters)
+
     // Loading a superset of rows via a merged query is safe: every loaded
-    // entity is matched against all registered indices, not only the
+    // entity is matched against all registered indexes, not only the
     // query's own filter.
     let queries = filters->EntityFilter.merge
 
@@ -354,9 +390,12 @@ let loadByFilter = (
     ->Array.map(async filter => {
       try {
         let entities =
-          (await storage.loadOrThrow(~table=entityConfig.table, ~filter))->(
-            Utils.magic: array<unknown> => array<Internal.entity>
-          )
+          (
+            await storage.loadOrThrow(
+              ~table=entityConfig.table,
+              ~filter=filter->scopeFilter(~table=entityConfig.table, ~scope),
+            )
+          )->(Utils.magic: array<unknown> => array<Internal.entity>)
 
         entities->Array.forEach(entity => {
           inMemTable->InMemoryTable.Entity.initValue(

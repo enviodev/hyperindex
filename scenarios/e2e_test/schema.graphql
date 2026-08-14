@@ -2,7 +2,7 @@
 # in introspection. Only string descriptions ("""...""" or "...") are exposed.
 
 "An ERC-20 transfer event"
-type Transfer @storage(postgres: true, clickhouse: true) {
+type Transfer @crossChain @storage(postgres: true, clickhouse: true) {
   "Composite ID built from chainId-block-logIndex"
   id: ID!
   "Sender address"
@@ -18,7 +18,7 @@ type Transfer @storage(postgres: true, clickhouse: true) {
 }
 
 "An on-chain account participating in transfers"
-type Account @storage(postgres: true) {
+type Account @crossChain @storage(postgres: true) {
   "The account's Ethereum address"
   id: ID!
   "All transfers sent from this account"
@@ -27,7 +27,7 @@ type Account @storage(postgres: true) {
 
 # Override the global multi-storage default: this entity only lives in
 # Postgres. ClickHouse will not receive writes for it.
-type TransferPgOnly @storage(postgres: true) {
+type TransferPgOnly @crossChain @storage(postgres: true) {
   id: ID!
   from: String!
   value: BigInt!
@@ -35,8 +35,32 @@ type TransferPgOnly @storage(postgres: true) {
 
 # Mirror override: this entity only lives in ClickHouse, so it is
 # absent from the Postgres-backed `pgUserEntities` (and from Hasura).
-type TransferChOnly @storage(clickhouse: true) {
+type TransferChOnly @crossChain @storage(clickhouse: true) {
   id: ID!
   from: String!
   value: BigInt!
+}
+
+# NUMERIC[] columns are created as TEXT[] when Hasura is enabled, so Hasura
+# returns the elements as strings rather than numbers that lose precision.
+# https://github.com/enviodev/hyperindex/issues/788
+type NumericArrays @crossChain @storage(postgres: true) {
+  id: ID!
+  bigInts: [BigInt!]!
+  bigDecimals: [BigDecimal!]!
+}
+
+# Per-chain entities: their tables carry a chain-id column in the primary key,
+# spelled per backend (snake_case in Postgres, original in ClickHouse). The
+# relationship between them must join on the chain too, or Hasura would resolve
+# it to another chain's row with the same id.
+type ChainTransfer @storage(postgres: true, clickhouse: true) {
+  id: ID!
+  from: String! @index
+  value: BigInt!
+}
+
+type ChainAccount @storage(postgres: true) {
+  id: ID!
+  transfers: [ChainTransfer!]! @derivedFrom(field: "from")
 }

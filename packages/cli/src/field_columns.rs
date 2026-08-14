@@ -48,9 +48,16 @@ pub fn field_names<F: Copy>(
 pub struct SvmTokenBalanceOut {
     pub account: Option<String>,
     pub mint: Option<String>,
+    /// Owner at the end of the transaction, falling back to the owner it had
+    /// on entry when the account was closed during it. The wire splits the two
+    /// so that an in-transaction `SetAuthority` stays visible; they differ only
+    /// then, so the payload carries the one owner handlers actually ask for.
     pub owner: Option<String>,
-    pub pre_amount: Option<String>,
-    pub post_amount: Option<String>,
+    pub decimals: Option<u8>,
+    /// Raw amount in base units — `amount` is SPL's word for the integer, and
+    /// keeps token units distinct from lamports.
+    pub pre_amount: Option<BigInt>,
+    pub post_amount: Option<BigInt>,
 }
 
 /// One materialised field across all rows: struct-of-arrays, one entry per row,
@@ -115,6 +122,28 @@ unsafe fn set_col<T: ToNapiValue>(
 pub struct Columns {
     pub len: usize,
     pub columns: Vec<(&'static str, Column)>,
+}
+
+/// Reading materialised columns back out, for the store tests across this crate.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::{Column, Columns};
+
+    pub(crate) fn column<'a>(cols: &'a Columns, name: &str) -> Option<&'a Column> {
+        cols.columns
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, c)| c)
+    }
+
+    /// The string column `name`, one entry per materialised row (`None` where
+    /// the store had no row, or the row no value).
+    pub(crate) fn str_column(cols: &Columns, name: &str) -> Vec<Option<String>> {
+        match column(cols, name) {
+            Some(Column::Str(values)) => values.clone(),
+            _ => panic!("expected a {name} string column"),
+        }
+    }
 }
 
 impl ToNapiValue for Columns {

@@ -24,7 +24,7 @@ describe("EffectState rollback", () => {
     // Cache-derived fields, all expected to reset.
     table.idsToStore = ["a"]
     table.changesCount = 5.
-    table.dict->Dict.set("a", Set({entityId: "a", entity: "out"->Obj.magic, checkpointId: 0n}))
+    table.dict->Dict.set("a", Set({entityId: "a"->EntityId.unsafeOfString, entity: "out"->Obj.magic, checkpointId: 0n}))
 
     self->EffectState.resetForRollback
 

@@ -306,6 +306,9 @@ pub struct OnEventRegistrationInput {
     /// Whether the query for this event must be scoped to (or derived from)
     /// the contract's registered addresses.
     pub depends_on_addresses: bool,
+    /// Earliest block this registration accepts; absent is unrestricted. See
+    /// `crate::registration_start_block`.
+    pub start_block: Option<i64>,
     pub params: Vec<ParamMeta>,
     /// The registration's resolved `where` in disjunctive normal form (outer
     /// array is OR). Empty means the event is never fetched.

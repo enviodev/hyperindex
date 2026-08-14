@@ -30,12 +30,16 @@ type sourceConfig =
   | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
   | FuelSourceConfig({hypersync: string})
   | SvmSourceConfig({hypersync: option<string>, rpc: option<string>})
+  // A `simulate` run: the items the test fed in, parsed against the chain's
+  // registrations. The source itself is built with the chain's address store,
+  // like every other source, so it can apply the same gates.
+  | SimulateSourceConfig({items: array<Internal.item>, endBlock: int})
   // For tests: pass custom sources directly
   | CustomSources(array<Source.t>)
 
 type chain = {
   name: string,
-  id: int,
+  id: ChainId.t,
   startBlock: int,
   endBlock?: int,
   maxReorgDepth: int,
@@ -55,10 +59,25 @@ type sourceSync = {
   pollingInterval: int,
 }
 
+// How a backend spells column names, mirroring `column_name_format` in
+// config.yaml. Only the internal columns the runtime appends need it — user
+// field names arrive pre-resolved from the CLI.
+type columnNameFormat = | @as("original") Original | @as("snake_case") SnakeCase
+
 type storage = {
   postgres: bool,
   clickhouse: bool,
+  postgresColumnNameFormat: columnNameFormat,
+  clickhouseColumnNameFormat: columnNameFormat,
 }
+
+let chainIdFieldName = "chainId"
+
+let chainIdColumnName = format =>
+  switch format {
+  | Original => chainIdFieldName
+  | SnakeCase => "chain_id"
+  }
 
 type contractHandler = {
   name: string,
@@ -72,12 +91,23 @@ type t = {
   contractHandlers: array<contractHandler>,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
+  // False when `disable_default_cross_chain: true` in config.yaml. Entities
+  // carry their own resolved `crossChain`; this only decides the default for
+  // effects that don't state one.
+  defaultCrossChain: bool,
   storage: storage,
+  // Widest scalar the internal chain-id columns need, resolved by the CLI from
+  // the maximum active chain id. Older configs predate the field, and every id
+  // they can express fits an INTEGER.
+  chainIdMode: ChainId.mode,
   chainMap: ChainMap.t<chain>,
   defaultChain: option<chain>,
   ecosystem: Ecosystem.t,
   enableRawEvents: bool,
   maxAddrInPartition: int,
+  // Per-contract registered-address count past which a dynamic contract switches
+  // to client-side filtering. Overridable in tests.
+  clientFilterAddressThreshold: int,
   batchSize: int,
   // Slack (in blocks) below the lagged head within which a chain still counts as
   // ready to enter the reorg threshold, absorbing head advances between catch-up
@@ -95,15 +125,16 @@ module EnvioAddresses = {
   let name = "envio_addresses"
   let index = -1
 
-  let makeId = (~chainId, ~address) => {
-    chainId->Int.toString ++ "-" ++ address->Address.toString
+  let makeId = (~chainId: ChainId.t, ~address) => {
+    chainId->ChainId.toString ++ "-" ++ address->Address.toString
   }
 
   type t = {
     id: string,
-    @as("chain_id") chainId: int,
+    @as("chain_id") chainId: ChainId.t,
     @as("registration_block") registrationBlock: int,
-    // -1 when the address was registered from a block handler (no log index)
+    // Vestigial: always written as -1 and never read back. The column stays so
+    // an existing schema doesn't need a migration.
     @as("registration_log_index") registrationLogIndex: int,
     @as("contract_name") contractName: string,
   }
@@ -120,7 +151,7 @@ module EnvioAddresses = {
 
   let schema = S.schema(s => {
     id: s.matches(S.string),
-    chainId: s.matches(S.int),
+    chainId: s.matches(ChainId.schema),
     registrationBlock: s.matches(S.int),
     registrationLogIndex: s.matches(S.int),
     contractName: s.matches(S.string),
@@ -130,7 +161,7 @@ module EnvioAddresses = {
     name,
     ~fields=[
       Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-      Table.mkField("chain_id", Int32, ~fieldSchema=S.int),
+      Table.mkField("chain_id", ChainId, ~fieldSchema=ChainId.schema),
       Table.mkField("registration_block", Int32, ~fieldSchema=S.int),
       // -1 sentinel when registered from a block handler (no log index)
       Table.mkField("registration_log_index", Int32, ~fieldSchema=S.int),
@@ -149,6 +180,9 @@ module EnvioAddresses = {
     // always required to have Postgres enabled (Storage::resolve forbids
     // a Postgres-disabled global), so this is safe regardless of mode.
     storage: {postgres: true, clickhouse: false},
+    // The table already keys rows by chain through the composite `id`, so the
+    // per-chain mode must not append a second chain-id column to it.
+    crossChain: true,
   }->Internal.fromGenericEntityConfig
 }
 
@@ -182,7 +216,7 @@ let chainContractSchema = S.schema(s =>
 
 let publicConfigChainSchema = S.schema(s =>
   {
-    "id": s.matches(S.int),
+    "id": s.matches(ChainId.schema),
     "startBlock": s.matches(S.int),
     "endBlock": s.matches(S.option(S.int)),
     "maxReorgDepth": s.matches(S.option(S.int)),
@@ -341,6 +375,7 @@ let entityStorageSchema = S.schema(s =>
 let entityJsonSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
+    "crossChain": s.matches(S.option(S.bool)),
     "storage": s.matches(S.option(entityStorageSchema)),
     "properties": s.matches(S.array(propertySchema)),
     "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
@@ -387,10 +422,6 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
       let enumConfig = enumConfigsByName->Dict.get(enumName)->Option.getOrThrow
       (Table.Enum({config: enumConfig}), enumConfig.schema->S.toUnknown)
     }
-  | "entity" => {
-      let entityName = prop["entity"]->Option.getOrThrow
-      (Table.Entity({name: entityName}), S.string->S.toUnknown)
-    }
   | other => JsError.throwWithMessage("Unknown field type in entity config: " ++ other)
   }
 
@@ -416,13 +447,30 @@ let parseEnumsFromJson = (enumsJson: dict<array<string>>): array<Table.enumConfi
   )
 }
 
+// The chain-id column appended to a per-chain entity's table. It completes the
+// primary key so the same id can exist independently on every chain, and it's
+// spelled per backend because the two can be configured with different
+// `column_name_format`s.
+let makeChainIdField = (~globalStorage: storage) =>
+  Table.mkField(
+    chainIdFieldName,
+    ChainId,
+    ~fieldSchema=ChainId.schema,
+    ~isPrimaryKey=true,
+    ~isChainId=true,
+    ~postgresDbName=globalStorage.postgresColumnNameFormat->chainIdColumnName,
+    ~clickhouseDbName=globalStorage.clickhouseColumnNameFormat->chainIdColumnName,
+  )
+
 let parseEntitiesFromJson = (
   entitiesJson: array<'entityJson>,
   ~enumConfigsByName: dict<Table.enumConfig<Table.enum>>,
   ~globalStorage: storage,
+  ~defaultCrossChain: bool,
 ): array<Internal.entityConfig> => {
   entitiesJson->Array.mapWithIndex((entityJson, index) => {
     let entityName = entityJson["name"]
+    let crossChain = entityJson["crossChain"]->Option.getOr(defaultCrossChain)
 
     let fields: array<Table.fieldOrDerived> = entityJson["properties"]->Array.map(prop => {
       let (fieldType, fieldSchema, isNullable, isArray, isIndex) = getFieldTypeAndSchema(
@@ -456,7 +504,7 @@ let parseEntitiesFromJson = (
         )
       )
 
-    let compositeIndices =
+    let compositeIndexes =
       entityJson["compositeIndices"]
       ->Option.getOr([])
       ->Array.map(ci =>
@@ -470,8 +518,11 @@ let parseEntitiesFromJson = (
 
     let table = Table.mkTable(
       entityName,
-      ~fields=Array.concat(fields, derivedFields),
-      ~compositeIndices,
+      ~fields=Array.concatMany(
+        fields,
+        [crossChain ? [] : [makeChainIdField(~globalStorage)], derivedFields],
+      ),
+      ~compositeIndexes,
       ~description=?entityJson["description"],
     )
 
@@ -528,14 +579,19 @@ let parseEntitiesFromJson = (
       schema: schema->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>),
       table,
       storage,
+      crossChain,
     }->Internal.fromGenericEntityConfig
   })
 }
+
+let columnNameFormatSchema = S.enum([Original, SnakeCase])
 
 let publicConfigStorageSchema = S.schema(s =>
   {
     "postgres": s.matches(S.bool),
     "clickhouse": s.matches(S.option(S.bool)),
+    "postgresColumnNameFormat": s.matches(S.option(columnNameFormatSchema)),
+    "clickhouseColumnNameFormat": s.matches(S.option(columnNameFormatSchema)),
   }
 )
 
@@ -549,6 +605,8 @@ let publicConfigSchema = S.schema(s =>
     "rollbackOnReorg": s.matches(S.option(S.bool)),
     "saveFullHistory": s.matches(S.option(S.bool)),
     "rawEvents": s.matches(S.option(S.bool)),
+    "chainIdMode": s.matches(S.option(ChainId.modeSchema)),
+    "defaultCrossChain": s.matches(S.option(S.bool)),
     "storage": s.matches(publicConfigStorageSchema),
     "evm": s.matches(S.option(publicConfigEvmSchema)),
     "fuel": s.matches(S.option(publicConfigEcosystemSchema)),
@@ -691,7 +749,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ~contractName,
     ~events: option<array<_>>,
     ~abi,
-    ~chainId: int,
+    ~chainId: ChainId.t,
     ~addresses: array<string>,
     ~svmDefinedTypes: JSON.t=JSON.Null,
   ) => {
@@ -725,11 +783,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
           | [pid] => pid->SvmTypes.Pubkey.fromStringUnsafe
           | [] =>
             JsError.throwWithMessage(
-              `SVM program ${contractName} on chain ${chainId->Int.toString} is missing a program_id`,
+              `SVM program ${contractName} on chain ${chainId->ChainId.toString} is missing a program_id`,
             )
           | _ =>
             JsError.throwWithMessage(
-              `SVM program ${contractName} on chain ${chainId->Int.toString} has multiple addresses; a program is uniquely identified by a single program_id`,
+              `SVM program ${contractName} on chain ${chainId->ChainId.toString} has multiple addresses; a program is uniquely identified by a single program_id`,
             )
           }
           let widenedEventItem =
@@ -879,8 +937,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             | Some(existingContractName) =>
               JsError.throwWithMessage(
                 existingContractName === contract.name
-                  ? `Address ${addressString} is listed multiple times for the contract ${contract.name} on chain ${chainId->Int.toString}. Please remove the duplicate from your config.`
-                  : `Address ${addressString} on chain ${chainId->Int.toString} is configured for multiple contracts: ${existingContractName} and ${contract.name}. Indexing the same address with multiple contract definitions is not supported. Please define the events on a single contract definition instead.`,
+                  ? `Address ${addressString} is listed multiple times for the contract ${contract.name} on chain ${chainId->ChainId.toString}. Please remove the duplicate from your config.`
+                  : `Address ${addressString} on chain ${chainId->ChainId.toString} is configured for multiple contracts: ${existingContractName} and ${contract.name}. Indexing the same address with multiple contract definitions is not supported. Please define the events on a single contract definition instead.`,
               )
             | None => contractNameByAddress->Dict.set(addressString, contract.name)
             }
@@ -958,8 +1016,15 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         endBlock: ?publicChainConfig["endBlock"],
         maxReorgDepth: switch ecosystemName {
         | Ecosystem.Evm => publicChainConfig["maxReorgDepth"]->Option.getOr(200)
-
-        | Ecosystem.Fuel | Ecosystem.Svm => 0
+        // Tower BFT roots a block once 32 votes lock it in (MAX_LOCKOUT_HISTORY
+        // is 31, plus the slot itself), which is what `finalized` waits for — so
+        // 32 is the protocol's own bound on how far a fork can be replaced. That
+        // bound counts *blocks* while the threshold here is measured in slot
+        // numbers, and skipped slots make the slot distance the larger of the
+        // two, so the default keeps a wide margin over it. Slots are ~0.4s, so
+        // even this spans well under two minutes of chain.
+        | Ecosystem.Svm => publicChainConfig["maxReorgDepth"]->Option.getOr(200)
+        | Ecosystem.Fuel => 0
         },
         blockLag: publicChainConfig["blockLag"]->Option.getOr(0),
         contracts,
@@ -970,7 +1035,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   let chainMap =
     chains
     ->Array.map(chain => {
-      (ChainMap.Chain.makeUnsafe(~chainId=chain.id), chain)
+      (chain.id, chain)
     })
     ->ChainMap.fromArrayUnsafe
 
@@ -986,12 +1051,20 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   let globalStorage: storage = {
     postgres: publicConfig["storage"]["postgres"],
     clickhouse: publicConfig["storage"]["clickhouse"]->Option.getOr(false),
+    postgresColumnNameFormat: publicConfig["storage"]["postgresColumnNameFormat"]->Option.getOr(
+      Original,
+    ),
+    clickhouseColumnNameFormat: publicConfig["storage"]["clickhouseColumnNameFormat"]->Option.getOr(
+      Original,
+    ),
   }
+
+  let defaultCrossChain = publicConfig["defaultCrossChain"]->Option.getOr(true)
 
   let userEntities =
     publicConfig["entities"]
     ->Option.getOr([])
-    ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage)
+    ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage, ~defaultCrossChain)
 
   let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
 
@@ -1027,12 +1100,15 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
+    defaultCrossChain,
     storage: globalStorage,
+    chainIdMode: publicConfig["chainIdMode"]->Option.getOr(Int32),
     chainMap,
     defaultChain: chains->Array.get(0),
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
     ecosystem,
     maxAddrInPartition,
+    clientFilterAddressThreshold: Env.clientFilterAddressThreshold,
     batchSize: publicConfig["fullBatchSize"]->Option.getOr(5000),
     reorgThresholdReadyTolerance: 100,
     lowercaseAddresses,
@@ -1092,15 +1168,14 @@ let normalizeSimulateAddress = (config: t, address: Address.t): Address.t =>
 // returns that chain's per-chain event config (matters for where-callback
 // probe detection, which runs with the chain's real id). Without `chainId`,
 // falls back to the first chain that declares this event.
-let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<int>=?) => {
+let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<ChainId.t>=?) => {
   let chains = switch chainId {
   | Some(chainId) =>
-    let chain = ChainMap.Chain.makeUnsafe(~chainId)
-    switch config.chainMap->ChainMap.get(chain) {
+    switch config.chainMap->ChainMap.get(chainId) {
     | chainConfig => [chainConfig]
     | exception _ =>
       JsError.throwWithMessage(
-        `Chain ${chainId->Int.toString} is not configured. Add it to config.yaml or pass a configured chain.`,
+        `Chain ${chainId->ChainId.toString} is not configured. Add it to config.yaml or pass a configured chain.`,
       )
     }
   | None => config.chainMap->ChainMap.values
@@ -1122,14 +1197,12 @@ let shouldSaveHistory = (config, ~isInReorgThreshold) =>
 let shouldPruneHistory = (config, ~isInReorgThreshold) =>
   !config.shouldSaveFullHistory && (config.shouldRollbackOnReorg && isInReorgThreshold)
 
-let getChain = (config, ~chainId) => {
-  let chain = ChainMap.Chain.makeUnsafe(~chainId)
-  config.chainMap->ChainMap.has(chain)
-    ? chain
+let getChain = (config, ~chainId) =>
+  config.chainMap->ChainMap.has(chainId)
+    ? chainId
     : JsError.throwWithMessage(
-        "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
+        "No chain with id " ++ chainId->ChainId.toString ++ " found in config.yaml",
       )
-}
 
 // A CLI command payload already contains the resolved JSON; priming lets
 // downstream callers skip the NAPI `getConfigJson` round-trip. Calling
@@ -1267,7 +1340,17 @@ let diffPaths = (~stored: JSON.t, ~current: JSON.t): array<string> => {
 
   switch (stored, current) {
   | (Object(sObj), Object(cObj)) =>
-    let tiers = [["version"], ["name"], ["storage"], ["evm", "fuel", "svm"], ["entities"]]
+    // chainIdMode sits right after version: it decides the physical type of
+    // every chain-id column, so a change to it is reported on its own rather
+    // than buried under the chain diffs that always accompany it.
+    let tiers = [
+      ["version"],
+      ["chainIdMode"],
+      ["name"],
+      ["storage"],
+      ["evm", "fuel", "svm"],
+      ["entities"],
+    ]
     let firstHit = tiers->Array.reduce(None, (acc, tier) =>
       switch acc {
       | Some(_) => acc

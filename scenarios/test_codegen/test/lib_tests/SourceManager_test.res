@@ -7,10 +7,10 @@ let defaultQuery: FetchState.query = {
   fromBlock: 0,
   toBlock: None,
   isChunk: false,
-  itemsTarget: 0,
+  itemsTarget: Some(0),
   itemsEst: 0,
   selection: {FetchState.dependsOnAddresses: false, onEventRegistrations: []},
-  addressesByContractName: Dict.make(),
+  addresses: TestAddresses.setOf([]),
 }
 
 type executeQueryMock = {
@@ -85,6 +85,28 @@ let onNewBlockMock = () => {
   }
 }
 
+describe("native request failures", () => {
+  it("keeps timings and maps a wrapped HyperSync rate limit", t => {
+    let exn = try {
+      JsError.throwWithMessage(
+        `ENVIO_NATIVE_FAILURE:{"message":"RATE_LIMITED:2500","requestStats":[{"method":"getBlockHashes","seconds":0.25}]}`,
+      )
+    } catch {
+    | exn => exn
+    }
+    t.expect({
+      "requestStats": (exn->Source.unpackNativeRequestFailure).requestStats,
+      "mapped": exn->HyperSync.mapNativeFailureExn,
+    }).toEqual({
+      "requestStats": [{Source.method: "getBlockHashes", seconds: 0.25}],
+      "mapped": Source.RateLimited({
+        resetMs: 2500,
+        requestStats: [{Source.method: "getBlockHashes", seconds: 0.25}],
+      }),
+    })
+  })
+})
+
 describe("SourceManager creation", () => {
   it("Successfully creates with a sync source", t => {
     let source = MockIndexer.Source.make([]).source
@@ -116,19 +138,19 @@ describe("SourceManager creation", () => {
   })
 
   it("Fails to create without primary sources", t => {
-    t.expect(
+    t->toThrowErrorEqual(
       () => {
         SourceManager.make(~isRealtime=false, ~sources=[])
       },
-    ).toThrowError("Invalid configuration, no data-source for historical sync provided")
-    t.expect(
+     "Invalid configuration, no data-source for historical sync provided")
+    t->toThrowErrorEqual(
       () => {
         SourceManager.make(
           ~isRealtime=false,
           ~sources=[MockIndexer.Source.make([], ~sourceFor=Fallback).source],
         )
       },
-    ).toThrowError("Invalid configuration, no data-source for historical sync provided")
+     "Invalid configuration, no data-source for historical sync provided")
   })
 })
 
@@ -176,17 +198,17 @@ describe("SourceManager.getSourceRole", () => {
 
 describe("SourceManager source priority with Live sources", () => {
   let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
-  let addressesByContractName = Dict.make()
+  let addresses = TestAddresses.setOf([])
 
   let mockQuery = (): FetchState.query => {
     partitionId: "0",
-    itemsTarget: 5000,
+    itemsTarget: Some(5000),
     itemsEst: 5000,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,
     selection,
-    addressesByContractName,
+    addresses,
   }
 
   Async.it(
@@ -404,24 +426,17 @@ describe("SourceManager fetchNext", () => {
     ~latestFetchedBlockNumber,
     ~numContracts=2,
   ): FetchState.partition => {
-    let addressesByContractName = Dict.make()
     let addresses = []
-
     for i in 0 to numContracts - 1 {
       let address = Envio.TestHelpers.Addresses.mockAddresses[i]->Option.getOrThrow
       addresses->Array.push(address)
     }
 
-    addressesByContractName->Dict.set("MockContract", addresses)
-
     {
       id: partitionIndex->Int.toString,
-      latestFetchedBlock: {
-        blockNumber: latestFetchedBlockNumber,
-        blockTimestamp: latestFetchedBlockNumber * 15,
-      },
+      latestFetchedBlock:latestFetchedBlockNumber,
       selection: normalSelection,
-      addressesByContractName,
+      addresses: TestAddresses.setOf(addresses),
       mergeBlock: None,
       dynamicContract: None,
       mutPendingQueries: [],
@@ -442,7 +457,7 @@ describe("SourceManager fetchNext", () => {
     let latestFullyFetchedBlock = ref((partitions->Utils.Array.firstUnsafe).latestFetchedBlock)
 
     partitions->Array.forEach(partition => {
-      if latestFullyFetchedBlock.contents.blockNumber > partition.latestFetchedBlock.blockNumber {
+      if latestFullyFetchedBlock.contents > partition.latestFetchedBlock {
         latestFullyFetchedBlock := partition.latestFetchedBlock
       }
     })
@@ -452,6 +467,7 @@ describe("SourceManager fetchNext", () => {
       ~maxAddrInPartition=2,
       ~nextPartitionIndex=partitions->Array.length,
       ~dynamicContracts=Utils.Set.make(),
+      ~clientFilteredContracts=Utils.Set.make(),
     )
 
     {
@@ -460,14 +476,14 @@ describe("SourceManager fetchNext", () => {
       endBlock,
       buffer,
       normalSelection,
-      latestOnBlockBlockNumber: latestFullyFetchedBlock.contents.blockNumber,
+      latestOnBlockBlockNumber: latestFullyFetchedBlock.contents,
       maxOnBlockBufferSize: targetBufferSize,
-      chainId: 0,
-      contractConfigs: Dict.make(),
+      chainId: 0->ChainId.fromInt,
       blockLag: 0,
       onBlockRegistrations: [],
       knownHeight,
       firstEventBlock: None,
+      clientFilterAddressThreshold: None,
     }
   }
 
@@ -487,7 +503,7 @@ describe("SourceManager fetchNext", () => {
       fromBlock: idx * 10 + 1,
       toBlock: Some(idx * 10 + 10),
       isChunk: true,
-      itemsTarget: 5000,
+      itemsTarget: None,
       itemsEst: 5000,
       fetchedBlock: None,
     }
@@ -548,36 +564,36 @@ describe("SourceManager fetchNext", () => {
       ).toEqual([
         {
           partitionId: "2",
-          itemsTarget: 16_667,
+          itemsTarget: Some(16_667),
           itemsEst: 16_667,
           fromBlock: 2,
           toBlock: None,
           isChunk: false,
           selection: normalSelection,
-          addressesByContractName: partition2.addressesByContractName,
+          addresses: partition2.addresses,
         },
         {
           partitionId: "0",
           // Starts at block 5 vs partition "2"'s block 2, so it covers less of
           // the range to the target and gets a smaller probe.
-          itemsTarget: 11_111,
+          itemsTarget: Some(11_111),
           itemsEst: 11_111,
           fromBlock: 5,
           toBlock: None,
           isChunk: false,
           selection: normalSelection,
-          addressesByContractName: partition0.addressesByContractName,
+          addresses: partition0.addresses,
         },
         {
           partitionId: "1",
           // Starts furthest ahead (block 6), so it gets the smallest probe.
-          itemsTarget: 9_259,
+          itemsTarget: Some(9_259),
           itemsEst: 9_259,
           fromBlock: 6,
           toBlock: None,
           isChunk: false,
           selection: normalSelection,
-          addressesByContractName: partition1.addressesByContractName,
+          addresses: partition1.addresses,
         },
       ])
 
@@ -1434,17 +1450,17 @@ describe("SourceManager wait for new blocks", () => {
 })
 describe("SourceManager.executeQuery", () => {
   let selection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
-  let addressesByContractName = Dict.make()
+  let addresses = TestAddresses.setOf([])
 
   let mockQuery = (): FetchState.query => {
     partitionId: "0",
-    itemsTarget: 5000,
+    itemsTarget: Some(5000),
     itemsEst: 5000,
     fromBlock: 0,
     toBlock: None,
     isChunk: false,
     selection,
-    addressesByContractName,
+    addresses,
   }
 
   Async.it("Successfully executes the query", async t => {
@@ -1463,6 +1479,88 @@ describe("SourceManager.executeQuery", () => {
     ])
     resolveGetItemsOrThrow([])
     t.expect((await p).parsedQueueItems).toEqual([])
+  })
+
+  Async.it("calls source.onReorg before retrying an inconsistent response", async t => {
+    let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let p = sourceManager->SourceManager.executeQuery(
+      ~query={...mockQuery(), fromBlock: 10},
+      ~isRealtime=false,
+      ~knownHeight=100,
+    )
+
+    t.expect(sourceMock.reorgCallCount()).toEqual(0)
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] =>
+      // The response contains block 9 twice with different hashes: once as the
+      // range's parent guard and once as the reported latest block.
+      call.resolve([], ~latestFetchedBlockNumber=9, ~latestFetchedBlockHash="0x0a")
+    | _ => JsError.throwWithMessage("Expected the first source call")
+    }
+
+    await Utils.delay(200)
+    t.expect(sourceMock.reorgCallCount()).toEqual(1)
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([])
+    | _ => JsError.throwWithMessage("Expected the retry after cache invalidation")
+    }
+    t.expect((await p).parsedQueueItems).toEqual([])
+  })
+
+  Async.it("Retries a source that hasn't reached the queried block yet", async t => {
+    let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let p = sourceManager->SourceManager.executeQuery(
+      ~query={...mockQuery(), fromBlock: 10},
+      ~isRealtime=false,
+      ~knownHeight=100,
+    )
+
+    // Every ecosystem's source raises this instead of building its own backoff,
+    // so the retry cadence lives in one place.
+    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
+      Source.SourceBehindHead({blockNumber: 10, requestStats: []}),
+    )
+    await Utils.delay(200)
+
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([])
+    | _ => JsError.throwWithMessage("Expected a retry after the source reported being behind")
+    }
+    t.expect((await p).parsedQueueItems).toEqual([])
+  })
+
+  Async.it("counts the requests a failed getItems still made", async t => {
+    let sourceMock = MockIndexer.Source.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+    let p = sourceManager->SourceManager.executeQuery(
+      ~query={...mockQuery(), fromBlock: 10},
+      ~isRealtime=false,
+      ~knownHeight=100,
+    )
+
+    // The native client reports the timings of the requests it made before
+    // giving up, so a source failing under load still shows up in its metrics.
+    (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
+      Source.SourceBehindHead({
+        blockNumber: 10,
+        requestStats: [{Source.method: "getLogs", seconds: 0.5}],
+      }),
+    )
+    await Utils.delay(200)
+
+    switch sourceMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([])
+    | _ => JsError.throwWithMessage("Expected a retry after the source reported being behind")
+    }
+    let _ = await p
+
+    t.expect(
+      sourceManager
+      ->SourceManager.getRequestStatSamples
+      ->Array.map(({method, count, seconds}) => (method, count, seconds)),
+    ).toEqual([("getLogs", 1, 0.5)])
   })
 
   Async.it("Rethrows unknown errors", async t => {
@@ -1564,7 +1662,7 @@ describe("SourceManager.executeQuery", () => {
       )
 
       // Retries 0, 1, 2 on sync (primary)
-      for idx in 0 to 2 {
+      for _idx in 0 to 2 {
         switch syncMock.getItemsOrThrowCalls {
         | [call] => {
             handledGetItemsOrThrowCalls->Array.push({
@@ -1578,9 +1676,7 @@ describe("SourceManager.executeQuery", () => {
         | _ => JsError.throwWithMessage("Should have one pending call to syncMock")
         }
         await Promise.resolve()
-        if idx !== 2 {
-          await Utils.delay(0)
-        }
+        await Utils.delay(0)
       }
 
       // Retry 3 on fallback (sync failed, fallback is recovered secondary)

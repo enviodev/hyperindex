@@ -9,11 +9,13 @@ mod classify;
 mod client;
 mod interval;
 
-use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
+use crate::address_store::{AddressSet, AddressStore, SetCache};
+use crate::evm_hypersync_source::decode::{Decoder, LogAddress, SelectionDecoder};
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistrationInput, ParamValue,
 };
+use crate::request_stats::RequestStat;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
 use hypersync_client::format::Hex;
@@ -79,7 +81,7 @@ struct RawLog {
 
 impl RawLog {
     /// `address` is normalized (lowercase or checksummed per the client config)
-    /// so it matches both the routing index keys and the JS-side address type.
+    /// so it matches the JS-side address type.
     fn into_rpc_log(self, address: String) -> anyhow::Result<RpcLog> {
         let to_i64 = |hex: &str| -> anyhow::Result<i64> {
             parse_hex_u64(hex)?
@@ -97,10 +99,15 @@ impl RawLog {
         })
     }
 
-    fn normalized_address(&self, should_checksum: bool) -> anyhow::Result<String> {
+    /// The emitter's 20 raw bytes — the address store's key — alongside the
+    /// normalized string the JS payload carries.
+    fn address_bytes_and_string(
+        &self,
+        should_checksum: bool,
+    ) -> anyhow::Result<([u8; 20], String)> {
         let address = hypersync_client::format::Address::decode_hex(&self.address)
             .context("decode log.address hex")?;
-        Ok(encode_address(&address, should_checksum))
+        Ok((**address, encode_address(&address, should_checksum)))
     }
 
     fn to_decoder_log(&self) -> DecoderLog {
@@ -110,12 +117,6 @@ impl RawLog {
             ..Default::default()
         }
     }
-}
-
-#[napi(object)]
-pub struct RequestStat {
-    pub method: String,
-    pub seconds: f64,
 }
 
 #[napi(object)]
@@ -130,7 +131,10 @@ pub struct NextPageParams {
     /// selections and the routing index are derived internally from the
     /// registrations passed at construction.
     pub registration_indexes: Vec<i64>,
-    pub addresses_by_contract_name: HashMap<String, Vec<String>>,
+    /// Contract names to fetch address-free even though their registrations
+    /// depend on addresses (client-side filtering). Absent or empty
+    /// means every address-dependent contract is filtered server-side.
+    pub client_filtered_contracts: Option<Vec<String>>,
 }
 
 #[napi(object)]
@@ -156,6 +160,7 @@ impl EvmRpcClient {
         cfg: EvmRpcClientConfig,
         event_registrations: Vec<OnEventRegistrationInput>,
         checksum_addresses: bool,
+        address_store: &AddressStore,
     ) -> napi::Result<EvmRpcClient> {
         let http_req_timeout_millis = cfg
             .http_req_timeout_millis
@@ -165,9 +170,10 @@ impl EvmRpcClient {
             });
         let inner =
             JsonRpcClient::new(cfg.url, http_req_timeout_millis, cfg.headers).map_err(map_err)?;
-        let decoder = Decoder::from_registrations(&event_registrations, checksum_addresses)
-            .context("build decoder")
-            .map_err(map_err)?;
+        let decoder =
+            Decoder::from_registrations(&event_registrations, checksum_addresses, address_store)
+                .context("build decoder")
+                .map_err(map_err)?;
         let selection_builder = SelectionBuilder::from_registrations(&event_registrations)
             .context("build selection builder")
             .map_err(map_err)?;
@@ -229,7 +235,11 @@ impl EvmRpcClient {
     /// or a "too many logs" style response), shrinks/backs off and throws a
     /// structured retry decision (see `retry_decision_to_napi`).
     #[napi]
-    pub async fn get_next_page(&self, params: NextPageParams) -> napi::Result<NextPageResponse> {
+    pub async fn get_next_page(
+        &self,
+        params: NextPageParams,
+        address_set: &AddressSet,
+    ) -> napi::Result<NextPageResponse> {
         if params.from_block < 0 || params.to_block_ceiling < 0 {
             return Err(map_err(anyhow::anyhow!(
                 "block bounds must be non-negative, got from_block={}, to_block_ceiling={}",
@@ -253,20 +263,21 @@ impl EvmRpcClient {
             .min(to_block_ceiling)
             .max(from_block);
 
+        let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
+            params.client_filtered_contracts.unwrap_or_default(),
+        );
         let built = self
             .selection_builder
-            .build(
-                &params.registration_indexes,
-                &params.addresses_by_contract_name,
-            )
+            .build(&params.registration_indexes, address_set, &client_filtered)
             .map_err(map_err)?;
         let log_selections = built.log_selections;
-        let contract_name_by_address = std::sync::Arc::new(built.contract_name_by_address);
+        let set_cache = address_set.cache().clone();
         let selection_decoder = std::sync::Arc::new(
             self.decoder
                 .selection(
                     &params.registration_indexes,
-                    &params.addresses_by_contract_name,
+                    &client_filtered,
+                    set_cache.clone(),
                 )
                 .map_err(map_err)?,
         );
@@ -277,7 +288,7 @@ impl EvmRpcClient {
                 from_block,
                 to_block,
                 &log_selections,
-                &contract_name_by_address,
+                &set_cache,
                 &selection_decoder,
             ),
         )
@@ -377,7 +388,9 @@ impl EvmRpcClient {
             None => {
                 self.intervals.set_partition(partition_id, shrunk_interval);
                 RetryDecision::WithBackoff {
-                    message: "Failed getting data for the block range. Will try smaller block range for the next attempt.".to_string(),
+                    message: "Failed getting data for the block range. Will try smaller block \
+                              range for the next attempt."
+                        .to_string(),
                     backoff_millis: self.sync_config.backoff_millis,
                 }
             }
@@ -399,7 +412,7 @@ impl EvmRpcClient {
         from_block: u64,
         to_block: u64,
         selections: &[BuiltLogSelection],
-        contract_name_by_address: &std::sync::Arc<HashMap<String, String>>,
+        set_cache: &std::sync::Arc<SetCache>,
         selection_decoder: &std::sync::Arc<SelectionDecoder>,
     ) -> Result<(Vec<RpcEventItem>, Vec<RequestStat>), (RpcError, Vec<RequestStat>)> {
         if selections.is_empty() {
@@ -413,7 +426,7 @@ impl EvmRpcClient {
                     from_block as i64,
                     to_block as i64,
                     selection,
-                    contract_name_by_address.clone(),
+                    set_cache.clone(),
                     selection_decoder.clone(),
                 )
                 .await;
@@ -460,7 +473,7 @@ impl EvmRpcClient {
         from_block: i64,
         to_block: i64,
         selection: &BuiltLogSelection,
-        contract_name_by_address: std::sync::Arc<HashMap<String, String>>,
+        set_cache: std::sync::Arc<SetCache>,
         decoder: std::sync::Arc<SelectionDecoder>,
     ) -> Result<Vec<RpcEventItem>, RpcError> {
         // eth_getLogs topic filters: `null` matches any value at a position;
@@ -493,15 +506,26 @@ impl EvmRpcClient {
         // Decoding is CPU-bound ABI work; keep it off the libuv async thread.
         tokio::task::spawn_blocking(move || {
             let should_checksum = decoder.checksummed_addresses();
+            let address_store = decoder.lock_store();
             let mut items = Vec::new();
             for raw in raw_logs {
-                let address = raw.normalized_address(should_checksum)?;
+                let (address_key, address) = raw.address_bytes_and_string(should_checksum)?;
+                let block_number = parse_hex_u64(&raw.block_number)
+                    .context("log.blockNumber")?
+                    .try_into()
+                    .context("log.blockNumber exceeds i64::MAX")?;
+                let log_address = LogAddress {
+                    key: &address_key,
+                    contract_name: set_cache.owner_of(&address_key),
+                    block_number,
+                };
                 // Per-registration decode failures are dropped inside
                 // `route_and_decode`; only structurally malformed logs error,
                 // and those propagate like on the HyperSync path.
                 let routed = decoder.route_and_decode_napi(
                     &raw.to_decoder_log(),
-                    contract_name_by_address.get(&address).map(String::as_str),
+                    &log_address,
+                    &address_store,
                 )?;
                 if routed.is_empty() {
                     continue;

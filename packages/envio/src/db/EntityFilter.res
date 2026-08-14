@@ -176,10 +176,6 @@ let parseGetWhereOrThrow = (filter: dict<dict<unknown>>, ~entityName, ~table: Ta
       JsError.throwWithMessage(
         `The field "${apiFieldName}" on entity "${entityName}" is a derived field and cannot be used in getWhere(). Use the source entity's indexed field instead.`,
       )
-    | Some(Field({isPrimaryKey: false, isIndex: false, linkedEntity: None})) =>
-      JsError.throwWithMessage(
-        `The field "${apiFieldName}" on entity "${entityName}" does not have an index. To use it in getWhere(), add the @index directive in your schema.graphql:\n\n  ${apiFieldName}: ... @index\n\nThen run 'pnpm envio codegen' to regenerate.`,
-      )
     | Some(Field(_)) => ()
     }
 

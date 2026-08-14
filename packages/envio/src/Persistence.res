@@ -19,7 +19,7 @@ type effectCacheRecord = {
 }
 
 type initialChainState = {
-  id: int,
+  id: ChainId.t,
   startBlock: int,
   endBlock: option<int>,
   maxReorgDepth: int,
@@ -63,9 +63,19 @@ type rollback = {
   progressBlockNumberByChainId: dict<int>,
 }
 
+// One flush group: the changes an entity accumulated within a single chain
+// scope. A per-chain entity contributes one group per chain, and the scope is
+// what stamps the chain id onto the rows — it's never re-derived downstream.
 type updatedEntity = {
   entityConfig: Internal.entityConfig,
+  scope: Internal.chainScope,
   changes: array<Change.t<Internal.entity>>,
+}
+
+// An id the rollback must delete, together with the scope its row lives in.
+type rollbackRemoval = {
+  entityId: EntityId.t,
+  scope: Internal.chainScope,
 }
 
 type storage = {
@@ -89,6 +99,25 @@ type storage = {
   // Field values are serialized and rows parsed with the table's field schemas.
   @raises("StorageError")
   loadOrThrow: (~filter: EntityFilter.t, ~table: Table.table) => promise<array<unknown>>,
+  // Creates whatever indexes the filters need and aren't there yet, resolving
+  // once they're queryable. Best-effort: it resolves even when a build fails,
+  // leaving the query to run unindexed rather than failing the handler.
+  ensureQueryIndexes: (~table: Table.table, ~filters: array<EntityFilter.t>) => promise<unit>,
+  // Creates every schema-defined index still missing, without touching
+  // `ready_at`. For a resumed indexer that is already ready and so never runs
+  // `finalizeBackfill`: an index dropped or invalidated while it was down would
+  // otherwise never be rebuilt. Best-effort, and safe to run with indexing live.
+  ensureSchemaIndexes: (~entities: array<Internal.entityConfig>) => promise<unit>,
+  // Creates every schema-defined index still missing, then stamps `ready_at` on
+  // the given chains. Called once, when backfill completes. The indexes are
+  // committed one at a time so a failure part way through doesn't undo the ones
+  // already built; `ready_at` is only written once they all verify, and all
+  // chains are stamped together.
+  finalizeBackfill: (
+    ~entities: array<Internal.entityConfig>,
+    ~chainIds: array<ChainId.t>,
+    ~readyAt: Date.t,
+  ) => promise<unit>,
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,
@@ -100,11 +129,12 @@ type storage = {
   pruneStaleEntityHistory: (
     ~entityName: string,
     ~entityIndex: int,
+    ~chainIdColumn: option<string>,
     ~safeCheckpointId: Internal.checkpointId,
   ) => promise<unit>,
   // Get rollback target checkpoint
   getRollbackTargetCheckpoint: (
-    ~reorgChainId: int,
+    ~reorgChainId: ChainId.t,
     ~lastKnownValidBlockNumber: int,
   ) => promise<option<Internal.checkpointId>>,
   // Get rollback progress diff
@@ -112,7 +142,7 @@ type storage = {
     ~rollbackTargetCheckpointId: Internal.checkpointId,
   ) => promise<
     array<{
-      "chain_id": int,
+      "chain_id": ChainId.t,
       "events_processed_diff": string,
       "new_progress_block_number": int,
     }>,
@@ -121,7 +151,7 @@ type storage = {
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => promise<(array<string>, array<unknown>)>,
+  ) => promise<(array<rollbackRemoval>, array<unknown>)>,
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,
@@ -240,7 +270,7 @@ let init = {
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {
-            progress->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
+            progress->ChainId.Dict.set(c.id, c.progressBlockNumber)
           })
           Logging.info({
             "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,

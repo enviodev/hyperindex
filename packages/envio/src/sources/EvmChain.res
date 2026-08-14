@@ -40,16 +40,17 @@ let getSyncConfig = (
 }
 
 let makeSources = (
-  ~chain,
+  ~chainId,
   ~onEventRegistrations: array<Internal.evmOnEventRegistration>,
   ~hyperSync,
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
+  ~addressStore,
 ) => {
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
       EvmHyperSyncSource.make({
-        chain,
+        chainId,
         endpointUrl,
         onEventRegistrations,
         apiToken: Env.envioApiToken,
@@ -58,18 +59,20 @@ let makeSources = (
         serializationFormat: Env.hypersyncClientSerializationFormat,
         enableQueryCaching: Env.hypersyncClientEnableQueryCaching,
         logLevel: Env.hypersyncLogLevel,
+        addressStore,
       }),
     ]
   | _ => []
   }
   rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws, ?headers}) => {
     let source = RpcSource.make({
-      chain,
+      chainId,
       sourceFor,
       syncConfig: getSyncConfig(syncConfig->Option.getOr({})),
       url,
       onEventRegistrations,
       lowercaseAddresses,
+      addressStore,
       ?ws,
       ?headers,
     })

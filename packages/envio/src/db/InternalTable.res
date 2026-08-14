@@ -56,7 +56,7 @@ module Chains = {
   }
 
   type t = {
-    @as("id") id: int,
+    @as("id") id: ChainId.t,
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Null.t<int>,
     @as("max_reorg_depth") maxReorgDepth: int,
@@ -69,7 +69,7 @@ module Chains = {
   let table = mkTable(
     "envio_chains",
     ~fields=[
-      mkField((#id: field :> string), Int32, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField((#id: field :> string), ChainId, ~fieldSchema=ChainId.schema, ~isPrimaryKey),
       // Values populated from config
       mkField((#start_block: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#end_block: field :> string), Int32, ~fieldSchema=S.null(S.int), ~isNullable),
@@ -164,8 +164,24 @@ SET ${setClauses->Array.joinUnsafe(",\n    ")}
 WHERE "${(#id: field :> string)}" = $1;`
   }
 
+  // Written only once every schema-defined index is verified, so a chain is
+  // never reported ready without the indexes the schema promises. One row at a
+  // time, like `setMeta`: the id column is INTEGER or BIGINT depending on the
+  // configured `ChainId.mode`, and a bare `= $2` needs no cast either way.
+  //
+  // `IS NULL` so a chain keeps the timestamp it first caught up at, matching the
+  // sticky in-memory `ChainState.markReady`. Without it a partial recovery (eg a
+  // chain added to an already-synced indexer) would restamp the ready chains in
+  // the database while their in-memory copies kept the old value — and the next
+  // chain-metadata write would push the stale value back over the committed one.
+  let makeSetReadyAtQuery = (~pgSchema) =>
+    `UPDATE "${pgSchema}"."${table.tableName}"
+SET "${(#ready_at: field :> string)}" = $1
+WHERE "${(#id: field :> string)}" = $2
+  AND "${(#ready_at: field :> string)}" IS NULL;`
+
   type rawInitialState = {
-    id: int,
+    id: ChainId.t,
     startBlock: int,
     endBlock: Null.t<int>,
     maxReorgDepth: int,
@@ -191,7 +207,7 @@ FROM "${pgSchema}"."${table.tableName}";`
   }
 
   type rawIndexingAddress = {
-    chainId: int,
+    chainId: ChainId.t,
     address: Address.t,
     contractName: string,
     registrationBlock: int,
@@ -224,7 +240,9 @@ FROM "${pgSchema}"."${EnvioAddresses.table.tableName}";`
 
     let indexingAddressesByChainId = Dict.make()
     rawIndexingAddresses->Array.forEach(row => {
-      let key = row.chainId->Int.toString
+      // BIGINT chain ids come back as strings; normalizing here keeps the
+      // grouping key identical to the one derived from the chains rows below.
+      let key = row.chainId->ChainId.normalizeOrThrow->ChainId.toString
       let addresses = switch indexingAddressesByChainId->Dict.get(key) {
       | Some(addresses) => addresses
       | None =>
@@ -242,10 +260,14 @@ FROM "${pgSchema}"."${EnvioAddresses.table.tableName}";`
     })
 
     rawInitialStates->Array.map(rawInitialState => {
-      ...rawInitialState,
-      indexingAddresses: indexingAddressesByChainId
-      ->Dict.get(rawInitialState.id->Int.toString)
-      ->Option.getOr([]),
+      let id = rawInitialState.id->ChainId.normalizeOrThrow
+      {
+        ...rawInitialState,
+        id,
+        indexingAddresses: indexingAddressesByChainId
+        ->Dict.get(id->ChainId.toString)
+        ->Option.getOr([]),
+      }
     })
   }
 
@@ -288,7 +310,7 @@ WHERE "id" = $1;`
   }
 
   type progressedChain = {
-    chainId: int,
+    chainId: ChainId.t,
     progressBlockNumber: int,
     sourceBlockNumber: int,
     totalEventsProcessed: float,
@@ -302,7 +324,7 @@ WHERE "id" = $1;`
     progressedChains->Array.forEach(data => {
       let params = []
 
-      params->Array.push(data.chainId->(Utils.magic: int => unknown))->ignore
+      params->Array.push(data.chainId->(Utils.magic: ChainId.t => unknown))->ignore
 
       progressFields->Array.forEach(field => {
         params
@@ -386,7 +408,7 @@ module Checkpoints = {
   type t = {
     id: bigint,
     @as("chain_id")
-    chainId: int,
+    chainId: ChainId.t,
     @as("block_number")
     blockNumber: int,
     @as("block_hash")
@@ -398,7 +420,7 @@ module Checkpoints = {
   // Schema for parsing DB results where BIGINT columns come back as strings
   let dbSchema = S.object(s => {
     id: s.field("id", Utils.BigInt.schema),
-    chainId: s.field("chain_id", S.int),
+    chainId: s.field("chain_id", ChainId.schema),
     blockNumber: s.field("block_number", S.int),
     blockHash: s.field(
       "block_hash",
@@ -416,7 +438,7 @@ module Checkpoints = {
     "envio_checkpoints",
     ~fields=[
       mkField((#id: field :> string), UInt64, ~fieldSchema=S.bigint, ~isPrimaryKey),
-      mkField((#chain_id: field :> string), Int32, ~fieldSchema=S.int),
+      mkField((#chain_id: field :> string), ChainId, ~fieldSchema=ChainId.schema),
       mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#block_hash: field :> string), String, ~fieldSchema=S.null(S.string), ~isNullable),
       mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
@@ -453,9 +475,17 @@ WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
     `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->BigInt.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
   }
 
-  let makeInsertCheckpointQuery = (~pgSchema) => {
+  let makeInsertCheckpointQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = Table.getPgFieldType(
+      ~fieldType=ChainId,
+      ~pgSchema,
+      ~isArray=true,
+      ~isNumericArrayAsText=false,
+      ~isNullable=false,
+      ~chainIdMode,
+    )
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
-SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Integer: Postgres.columnType :> string)}[],$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
+SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chainIdArrayType},$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
   }
 
   let insert = (
@@ -466,8 +496,9 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
     ~checkpointBlockNumbers,
     ~checkpointBlockHashes,
     ~checkpointEventsProcessed,
+    ~chainIdMode: ChainId.mode=Int32,
   ) => {
-    let query = makeInsertCheckpointQuery(~pgSchema)
+    let query = makeInsertCheckpointQuery(~pgSchema, ~chainIdMode)
 
     // Convert bigint arrays to string arrays for postgres driver compatibility
     let checkpointIdStrings = checkpointIds->Utils.BigInt.arrayToStringArray
@@ -482,7 +513,7 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
         checkpointEventsProcessed,
       )->(
         Utils.magic: (
-          (array<string>, array<int>, array<int>, array<Null.t<string>>, array<int>)
+          (array<string>, array<ChainId.t>, array<int>, array<Null.t<string>>, array<int>)
         ) => unknown
       ),
     )
@@ -523,7 +554,7 @@ LIMIT 1;`
   let getRollbackTargetCheckpoint = (
     sql,
     ~pgSchema,
-    ~reorgChainId: int,
+    ~reorgChainId: ChainId.t,
     ~lastKnownValidBlockNumber: int,
   ) => {
     let rawResult: promise<array<{"id": string}>> =
@@ -540,7 +571,7 @@ LIMIT 1;`
 
   let makeGetRollbackProgressDiffQuery = (~pgSchema) => {
     `SELECT 
-  "${(#chain_id: field :> string)}",
+  "${(#chain_id: field :> string)}"::float8 as "${(#chain_id: field :> string)}",
   SUM("${(#events_processed: field :> string)}") as events_processed_diff,
   MIN("${(#block_number: field :> string)}") - 1 as new_progress_block_number
 FROM "${pgSchema}"."${table.tableName}"
@@ -561,7 +592,7 @@ GROUP BY "${(#chain_id: field :> string)}";`
     ->(
       Utils.magic: promise<unknown> => promise<
         array<{
-          "chain_id": int,
+          "chain_id": ChainId.t,
           "events_processed_diff": string,
           "new_progress_block_number": int,
         }>,
@@ -574,7 +605,7 @@ module RawEvents = {
   type t = Internal.rawEvent
 
   let schema = S.schema((s): t => {
-    chain_id: s.matches(S.int),
+    chain_id: s.matches(ChainId.schema),
     event_id: s.matches(S.bigint),
     event_name: s.matches(S.string),
     contract_name: s.matches(S.string),
@@ -591,7 +622,7 @@ module RawEvents = {
   let table = mkTable(
     "raw_events",
     ~fields=[
-      mkField("chain_id", Int32, ~fieldSchema=S.int),
+      mkField("chain_id", ChainId, ~fieldSchema=ChainId.schema),
       mkField("event_id", UInt64, ~fieldSchema=S.bigint),
       mkField("event_name", String, ~fieldSchema=S.string),
       mkField("contract_name", String, ~fieldSchema=S.string),

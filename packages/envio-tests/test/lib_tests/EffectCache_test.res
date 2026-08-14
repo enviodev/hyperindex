@@ -12,15 +12,15 @@ describe("Internal.EffectCache address mapping", () => {
 
   it("Maps chain scope to the chain-prefixed table name and nested file path", t => {
     t.expect((
-      Internal.EffectCache.toTableName(~effectName="foo", ~scope=Chain(1)),
-      Internal.EffectCache.toCachePath(~effectName="foo", ~scope=Chain(1)),
-      Internal.EffectCache.toTableName(~effectName="foo", ~scope=Chain(137)),
-      Internal.EffectCache.toCachePath(~effectName="foo", ~scope=Chain(137)),
+      Internal.EffectCache.toTableName(~effectName="foo", ~scope=Chain(1->ChainId.fromInt)),
+      Internal.EffectCache.toCachePath(~effectName="foo", ~scope=Chain(1->ChainId.fromInt)),
+      Internal.EffectCache.toTableName(~effectName="foo", ~scope=Chain(137->ChainId.fromInt)),
+      Internal.EffectCache.toCachePath(~effectName="foo", ~scope=Chain(137->ChainId.fromInt)),
     )).toEqual(("envio_1_effect_foo", "1/foo.tsv", "envio_137_effect_foo", "137/foo.tsv"))
   })
 
   it("Round trips every scope through table name and back", t => {
-    let cases = [("foo", Internal.CrossChain), ("foo", Chain(1)), ("bar_baz", Chain(137))]
+    let cases = [("foo", Internal.CrossChain), ("foo", Chain(1->ChainId.fromInt)), ("bar_baz", Chain(137->ChainId.fromInt))]
     t.expect(
       cases->Array.map(((effectName, scope)) =>
         Internal.EffectCache.fromTableName(Internal.EffectCache.toTableName(~effectName, ~scope))
@@ -39,7 +39,7 @@ describe("Internal.EffectCache address mapping", () => {
       Internal.EffectCache.fromTableName("envio_effect_foo"),
       Internal.EffectCache.fromTableName("envio_1_effect_foo"),
       Internal.EffectCache.fromTableName("envio_137_effect_foo"),
-    )).toEqual((Some(("foo", CrossChain)), Some(("foo", Chain(1))), Some(("foo", Chain(137)))))
+    )).toEqual((Some(("foo", CrossChain)), Some(("foo", Chain(1->ChainId.fromInt))), Some(("foo", Chain(137->ChainId.fromInt)))))
   })
 
   it("Keeps effect names that themselves contain _effect_ unambiguous", t => {
@@ -49,13 +49,13 @@ describe("Internal.EffectCache address mapping", () => {
     t.expect((
       Internal.EffectCache.fromTableName("envio_effect_1_effect_x"),
       Internal.EffectCache.fromTableName("envio_1_effect_x"),
-    )).toEqual((Some(("1_effect_x", CrossChain)), Some(("x", Chain(1)))))
+    )).toEqual((Some(("1_effect_x", CrossChain)), Some(("x", Chain(1->ChainId.fromInt)))))
   })
 
   it("Parses only canonical decimal chain ids", t => {
     t.expect(
       ["1", "137", "007", "1foo", "", "-1", "1.5"]->Array.map(Internal.EffectCache.parseChainId),
-    ).toEqual([Some(1), Some(137), None, None, None, None, None])
+    ).toEqual([Some(1->ChainId.fromInt), Some(137->ChainId.fromInt), None, None, None, None, None])
   })
 
   it("Rejects table names with a non-canonical chain id", t => {
@@ -64,8 +64,8 @@ describe("Internal.EffectCache address mapping", () => {
 
   it("Maps scope to its Prometheus label value", t => {
     t.expect((
-      Internal.EffectCache.scopeToString(CrossChain),
-      Internal.EffectCache.scopeToString(Chain(137)),
+      Internal.chainScopeToString(CrossChain),
+      Internal.chainScopeToString(Chain(137->ChainId.fromInt)),
     )).toEqual(("crossChain", "137"))
   })
 

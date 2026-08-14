@@ -22,7 +22,7 @@ if (ts.version !== EXPECTED_TS_VERSION) {
 const TSCONFIG_COMPILER_OPTIONS = {
   esModuleInterop: true,
   skipLibCheck: true,
-  target: "es2022",
+  target: "es2023",
   allowJs: true,
   resolveJsonModule: true,
   moduleDetection: "force",
@@ -34,7 +34,7 @@ const TSCONFIG_COMPILER_OPTIONS = {
   module: "ESNext",
   moduleResolution: "bundler",
   noEmit: true,
-  lib: ["es2022"],
+  lib: ["es2023"],
   types: ["node"],
 };
 
@@ -59,6 +59,7 @@ const formatHost: ts.FormatDiagnosticsHost = {
 
 const typesPath = path.join(helpersDir, "__mock_indexer_types.d.ts");
 const handlersPath = path.join(helpersDir, "__mock_indexer_handlers.ts");
+const testPath = path.join(helpersDir, "__mock_indexer_test.ts");
 
 // The virtual inputs for the current call, injected as sibling files of this
 // module so bare imports (`envio`, `ts-expect`, ...) resolve through
@@ -102,31 +103,83 @@ host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreate)
 };
 
 /**
- * Type-check `handlers` against the generated `.envio/types.d.ts` of a mock
- * config. Returns human-readable error strings; an empty array means the
- * handlers type-check cleanly.
+ * Type-check user sources against the generated `.envio/types.d.ts` of a mock
+ * config. `handlers` is handler source; `test` is a user-facing test module
+ * (importing `createTestIndexer` and vitest). Returns human-readable error
+ * strings; an empty array means everything type-checks cleanly.
  */
-export function checkHandlerTypes(typesDts: string, handlers: string): string[] {
-  virtualFiles = new Map<string, string>([
-    [typesPath, typesDts],
-    [handlersPath, handlers],
-  ]);
+export function checkSources(
+  typesDts: string,
+  sources: { handlers?: string; test?: string },
+): string[] {
+  const entries: Array<[string, string]> = [[typesPath, typesDts]];
+  if (sources.handlers !== undefined) entries.push([handlersPath, sources.handlers]);
+  if (sources.test !== undefined) entries.push([testPath, sources.test]);
+  virtualFiles = new Map<string, string>(entries);
 
   const program = ts.createProgram(
-    [typesPath, handlersPath],
+    entries.map(([fileName]) => fileName),
     compilerOptions,
     host,
     previousProgram,
   );
   previousProgram = program;
 
-  // Only diagnostics inferred in the handler source are of interest — the
+  // Only diagnostics inferred in the user sources are of interest — the
   // generated types are a `.d.ts` we trust (and skipLibCheck skips anyway). We
   // keep file-less diagnostics too, since those are global config/harness
   // errors (e.g. a missing `@types/node`) that must not be silently swallowed.
   const diagnostics = ts
     .getPreEmitDiagnostics(program)
-    .filter((d) => d.file === undefined || d.file.fileName === handlersPath);
+    .filter(
+      (d) =>
+        d.file === undefined ||
+        d.file.fileName === handlersPath ||
+        d.file.fileName === testPath,
+    );
 
   return diagnostics.map((d) => ts.formatDiagnostic(d, formatHost).trim());
+}
+
+const serviceHost: ts.LanguageServiceHost = {
+  getScriptFileNames: () => [typesPath, handlersPath],
+  // The content itself is the version, so the service re-reads exactly the
+  // fixture files that changed and keeps the rest of the graph parsed.
+  getScriptVersion: (fileName) => virtualFiles.get(fileName) ?? "",
+  getScriptSnapshot: (fileName) => {
+    const contents = host.readFile(fileName);
+    return contents === undefined ? undefined : ts.ScriptSnapshot.fromString(contents);
+  },
+  getCurrentDirectory: () => helpersDir,
+  getCompilationSettings: () => compilerOptions,
+  getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
+  fileExists: host.fileExists,
+  readFile: host.readFile,
+  readDirectory: ts.sys.readDirectory,
+  directoryExists: ts.sys.directoryExists,
+  getDirectories: ts.sys.getDirectories,
+};
+
+// Built once for the same reason `sourceFileCache` exists: a per-call service
+// (and registry) re-parses the whole lib/`envio` declaration graph every time.
+const service = ts.createLanguageService(serviceHost, ts.createDocumentRegistry());
+
+/**
+ * The member names an editor offers at the `/*HERE*\/` marker in `handlers`,
+ * sorted. Drives the language service rather than the checker, because a
+ * contextual type can type-check perfectly and still offer the editor nothing
+ * to complete — which is what an over-eager type-parameter default does.
+ */
+export function completionsAt(typesDts: string, handlers: string): string[] {
+  const marker = "/*HERE*/";
+  const position = handlers.indexOf(marker);
+  if (position === -1) throw new Error(`completionsAt source has no ${marker} marker`);
+  const text = handlers.replace(marker, "");
+  virtualFiles = new Map<string, string>([
+    [typesPath, typesDts],
+    [handlersPath, text],
+  ]);
+
+  const completions = service.getCompletionsAtPosition(handlersPath, position, {});
+  return (completions?.entries ?? []).map((entry) => entry.name).sort();
 }

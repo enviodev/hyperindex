@@ -1,9 +1,11 @@
 type logsQueryPage = {
   items: array<FuelHyperSyncClient.EventItems.item>,
   // Blocks referenced by `items`, one per height.
-  blocks: array<FuelHyperSyncClient.EventItems.block>,
   nextBlock: int,
   archiveHeight: int,
+  // Page store owning this page's raw blocks (built on the Rust side); its ids
+  // drive reorg detection when merged into the chain store.
+  blockStore: BlockStore.t,
 }
 
 module GetLogs = {
@@ -43,16 +45,20 @@ module GetLogs = {
     ~fromBlock,
     ~toBlock,
     ~registrationIndexes,
-    ~addressesByContractName,
+    ~addressSet,
+    ~clientFilteredContracts,
   ): logsQueryPage => {
     let query: FuelHyperSyncClient.EventItems.query = {
       fromBlock,
       toBlock,
       registrationIndexes,
-      addressesByContractName,
+      clientFilteredContracts,
     }
 
-    let res = switch await client->FuelHyperSyncClient.getEventItems(query) {
+    let (res, blockStore) = switch await client->FuelHyperSyncClient.getEventItems(
+      query,
+      addressSet,
+    ) {
     | res => res
     | exception exn =>
       switch exn->extractMissingParams {
@@ -66,9 +72,9 @@ module GetLogs = {
     }
     {
       items: res.items,
-      blocks: res.blocks,
       nextBlock: res.nextBlock,
       archiveHeight: res.archiveHeight->Option.getOr(0), // TODO: FIXME: Shouldn't have a default here
+      blockStore,
     }
   }
 }

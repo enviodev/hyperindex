@@ -23,6 +23,7 @@ let transferEventRegistration: HyperSyncClient.Registration.input = {
   contractName: "ERC20",
   isWildcard: false,
   dependsOnAddresses: true,
+  startBlock: None,
   params: transferParams,
   topicSelections: [
     {
@@ -38,6 +39,19 @@ let transferEventRegistration: HyperSyncClient.Registration.input = {
 
 
 
+// The chain's address index, with USDC registered for ERC20 from block 0 —
+// the client builds the query's address filter from a set of it and gates every
+// returned log against it.
+let addressStore = AddressStore.make(
+  ~ecosystem=Ecosystem.Evm,
+  ~shouldChecksum=false,
+  ~contracts=[{name: "ERC20", startBlock: None, dependsOnAddresses: true}, {name: "Unrelated", startBlock: None, dependsOnAddresses: true}],
+)
+let _ = addressStore->AddressStore.seedBatch([
+  {address: usdcAddress, contractName: "ERC20", registrationBlock: -1},
+])
+let usdcSet = addressStore->AddressStore.makeSet(~contractName="ERC20")
+
 let makeClient = (~eventRegistrations) =>
   HyperSyncClient.make(
     ~url="https://eth.hypersync.xyz",
@@ -45,6 +59,7 @@ let makeClient = (~eventRegistrations) =>
     ~httpReqTimeoutMillis=Env.hyperSyncClientTimeoutMillis,
     ~eventRegistrations,
     ~enableChecksumAddresses=false,
+    ~addressStore,
   )
 
 let fromBlock = 23_500_000
@@ -57,19 +72,15 @@ let runQuery = async (~client: HyperSyncClient.t, ~registrationIndexes=[42]) => 
       toBlock: Some(toBlock),
       maxNumLogs: 10_000,
       registrationIndexes,
-      addressesByContractName: Dict.fromArray([
-        (
-          "ERC20",
-          [usdcAddress->Address.toString->String.toLowerCase->Address.unsafeFromString],
-        ),
-      ]),
+      clientFilteredContracts: None,
     },
+    ~addressSet=usdcSet,
   )
   res
 }
 
 describe("HyperSync client getEventItems (live)", () => {
-  Async.it("returns decoded event items for a real block range", async t => {
+  Async.itWithOptions("returns decoded event items for a real block range", {retry: 3}, async t => {
     let client = makeClient(~eventRegistrations=[transferEventRegistration])
     let res = await runQuery(~client)
 
@@ -107,14 +118,14 @@ describe("HyperSync client getEventItems (live)", () => {
       })
   })
 
-  Async.it("getHeight returns a height past the queried range", async t => {
+  Async.itWithOptions("getHeight returns a height past the queried range", {retry: 3}, async t => {
     let client = makeClient(~eventRegistrations=[transferEventRegistration])
     let height = await client.getHeight()
 
     t.expect(height > toBlock).toEqual(true)
   })
 
-  Async.it("drops items whose topic0 doesn't match any registered sig", async t => {
+  Async.itWithOptions("drops items whose topic0 doesn't match any registered sig", {retry: 3}, async t => {
     // A wildcard registration whose topic0 is the Transfer sighash, so the
     // query fetches Transfer logs, but the decoder is only registered for an
     // unrelated 1-topic signature — every fetched log routes nowhere.
@@ -126,6 +137,7 @@ describe("HyperSync client getEventItems (live)", () => {
       contractName: "Unrelated",
       isWildcard: true,
       dependsOnAddresses: false,
+      startBlock: None,
       params: [],
       topicSelections: [
         {
@@ -158,6 +170,7 @@ describe("HyperSync client getHeight with corrupted token", () => {
         ~httpReqTimeoutMillis=5000,
         ~eventRegistrations=[],
         ~enableChecksumAddresses=false,
+        ~addressStore,
       )
 
       let detected = try {
@@ -170,7 +183,6 @@ describe("HyperSync client getHeight with corrupted token", () => {
 
       t.expect(detected).toEqual(true)
     },
-    ~timeout=60000,
   )
 })
 

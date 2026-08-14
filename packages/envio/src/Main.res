@@ -2,7 +2,7 @@
 // backward compatibility with consumers like RACE — new metric fields stay off
 // the HTTP response.
 type chainData = {
-  chainId: float,
+  chainId: ChainId.t,
   poweredByHyperSync: bool,
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
@@ -46,7 +46,7 @@ let toChainData = (m: Metrics.chainMetrics): chainData => {
 }
 
 let chainDataSchema = S.schema((s): chainData => {
-  chainId: s.matches(S.float),
+  chainId: s.matches(ChainId.schema),
   poweredByHyperSync: s.matches(S.bool),
   firstEventBlockNumber: s.matches(S.option(S.int)),
   latestProcessedBlock: s.matches(S.option(S.int)),
@@ -88,7 +88,7 @@ let getGlobalPersistence = () =>
 let setGlobalPersistence = (persistence: Persistence.t) =>
   EnvioGlobal.value.persistence = Some(persistence->(Utils.magic: Persistence.t => unknown))
 
-let getInitialChainState = (~chainId: int): option<Persistence.initialChainState> => {
+let getInitialChainState = (~chainId: ChainId.t): option<Persistence.initialChainState> => {
   switch getGlobalPersistence() {
   | Some(persistence) =>
     switch persistence.storageStatus {
@@ -107,7 +107,7 @@ let buildChainsObject = (~config: Config.t) => {
   config.chainMap
   ->ChainMap.values
   ->Array.forEach(chainConfig => {
-    let chainIdStr = chainConfig.id->Int.toString
+    let chainIdStr = chainConfig.id->ChainId.toString
 
     chainIds->Array.push(chainConfig.id)->ignore
 
@@ -151,10 +151,7 @@ let buildChainsObject = (~config: Config.t) => {
           | Some(state) => state->IndexerState.isRealtime
           // Before the global state is available (eg during handler
           // module load after resume), derive from persistence: every chain
-          // must have previously caught up to head or endBlock. Mirror the
-          // IndexerState.makeFromDbState path: updateSyncTimeOnRestart wipes
-          // the saved timestamps so a restart re-enters backfill.
-          | None if Env.updateSyncTimeOnRestart => false
+          // must have previously caught up to head or endBlock.
           | None =>
             config.chainMap
             ->ChainMap.values
@@ -183,8 +180,7 @@ let buildChainsObject = (~config: Config.t) => {
           get: () => {
             switch getIndexerState() {
             | Some(state) => {
-                let chain = ChainMap.Chain.makeUnsafe(~chainId=chainConfig.id)
-                let chainState = state->IndexerState.getChainState(~chain)
+                let chainState = state->IndexerState.getChainState(~chainId=chainConfig.id)
                 chainState->ChainState.contractAddresses(~contractName=contract.name)
               }
             // Before the global state is available (eg during handler
@@ -233,8 +229,8 @@ let buildChainsObject = (~config: Config.t) => {
 let getGlobalIndexer = (): 'indexer => {
   // Parse eventIdentity config to extract contractName, eventName, and options.
   // Supports two runtime formats:
-  // - From TypeScript: { contract: "X", event: "Y", wildcard?, where? }
-  // - From ReScript GADT: { event: { contract: "X", _0: "Y" }, wildcard?, where? }
+  // - From TypeScript: { contract: "X", event: "Y", wildcard?, where?, fields? }
+  // - From ReScript GADT: { event: { contract: "X", _0: "Y" }, wildcard?, where?, fields? }
   let parseIdentityConfig = (identityConfig: 'a) => {
     let raw =
       identityConfig->(
@@ -243,6 +239,7 @@ let getGlobalIndexer = (): 'indexer => {
           "event": unknown,
           "wildcard": option<bool>,
           "where": option<JSON.t>,
+          "fields": option<Internal.evmFieldsSelection>,
         }
       )
     // Detect format: if "contract" is a string, it's the TS format
@@ -259,12 +256,14 @@ let getGlobalIndexer = (): 'indexer => {
     }
     let wildcard = raw["wildcard"]
     let where = raw["where"]
-    let eventOptions: option<Internal.eventOptions<_>> = switch (wildcard, where) {
-    | (None, None) => None
-    | (wildcard, where) =>
+    let fields = raw["fields"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch (wildcard, where, fields) {
+    | (None, None, None) => None
+    | (wildcard, where, fields) =>
       Some({
         ?wildcard,
         where: ?(where->(Utils.magic: option<JSON.t> => option<_>)),
+        ?fields,
       })
     }
     (contractName, eventName, eventOptions)
@@ -292,7 +291,12 @@ let getGlobalIndexer = (): 'indexer => {
   let parseSvmIdentityConfig = (identityConfig: 'a) => {
     let raw =
       identityConfig->(
-        Utils.magic: 'a => {"program": unknown, "instruction": unknown, "where": option<JSON.t>}
+        Utils.magic: 'a => {
+          "program": unknown,
+          "instruction": unknown,
+          "where": option<JSON.t>,
+          "fields": option<Internal.evmFieldsSelection>,
+        }
       )
     let (programName, instructionName) = if typeof(raw["program"]) === #string {
       (
@@ -304,11 +308,16 @@ let getGlobalIndexer = (): 'indexer => {
       (inst["contract"], inst["_0"])
     }
     let where = raw["where"]
-    let eventOptions: option<Internal.eventOptions<_>> = switch where {
-    | None => None
-    | Some(_) =>
+    // SVM takes its selection from the config, so `fields` is carried through
+    // only to be rejected by the registration — dropping it here would leave a
+    // plain-JS caller with a silently ignored option.
+    let fields = raw["fields"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch (where, fields) {
+    | (None, None) => None
+    | (where, fields) =>
       Some({
         where: ?(where->(Utils.magic: option<JSON.t> => option<_>)),
+        ?fields,
       })
     }
     (programName, instructionName, eventOptions)
@@ -423,7 +432,7 @@ let getGlobalIndexer = (): 'indexer => {
     | "description" => Config.load().description->(Utils.magic: option<string> => unknown)
     | "chainIds" => {
         let (_, chainIds) = buildChainsObject(~config=Config.load())
-        chainIds->(Utils.magic: array<int> => unknown)
+        chainIds->(Utils.magic: array<ChainId.t> => unknown)
       }
     | "chains" => {
         let (chains, _) = buildChainsObject(~config=Config.load())

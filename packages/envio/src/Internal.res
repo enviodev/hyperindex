@@ -140,7 +140,7 @@ let evmTransactionFieldSchema = S.enum(allEvmTransactionFields)
 // position in the selection mask) and `Svm.res` `transactionFields`.
 type svmTransactionField =
   | @as("transactionIndex") TransactionIndex
-  | @as("signatures") Signatures
+  | @as("signature") Signature
   | @as("feePayer") FeePayer
   | @as("success") Success
   | @as("err") Err
@@ -150,10 +150,11 @@ type svmTransactionField =
   | @as("recentBlockhash") RecentBlockhash
   | @as("version") Version
   | @as("tokenBalances") TokenBalances
+  | @as("allSignatures") AllSignatures
 
 let allSvmTransactionFields: array<svmTransactionField> = [
   TransactionIndex,
-  Signatures,
+  Signature,
   FeePayer,
   Success,
   Err,
@@ -163,6 +164,7 @@ let allSvmTransactionFields: array<svmTransactionField> = [
   RecentBlockhash,
   Version,
   TokenBalances,
+  AllSignatures,
 ]
 let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
 
@@ -301,7 +303,7 @@ type genericEvent<'params, 'block, 'transaction> = {
   contractName: string,
   eventName: string,
   params: 'params,
-  chainId: int,
+  chainId: ChainId.t,
   srcAddress: Address.t,
   logIndex: int,
   transaction: 'transaction,
@@ -333,6 +335,11 @@ type eventPayload
 // The log's emitting address (EVM/Fuel; the program id carries it for SVM).
 @get external getPayloadSrcAddress: eventPayload => Address.t = "srcAddress"
 
+// The decoded params, read by name for the address-valued ones a `where`
+// filters on. Only those names are ever looked up, so the address type is
+// accurate at every use site.
+@get external getPayloadAddressParams: eventPayload => dict<Address.t> = "params"
+
 type genericLoaderArgs<'event, 'context> = {
   event: 'event,
   context: 'context,
@@ -356,15 +363,15 @@ type genericHandlerArgs<'event, 'context> = {
 type genericHandler<'args> = 'args => promise<unit>
 
 type entityHandlerContext<'entity> = {
-  get: string => promise<option<'entity>>,
-  getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  get: EntityId.t => promise<option<'entity>>,
+  getOrThrow: (EntityId.t, ~message: string=?) => promise<'entity>,
   getOrCreate: 'entity => promise<'entity>,
   set: 'entity => unit,
-  deleteUnsafe: string => unit,
+  deleteUnsafe: EntityId.t => unit,
 }
 
 type chainInfo = {
-  id: int,
+  id: ChainId.t,
   // True once every chain has caught up to head/endBlock and entered real-time
   // indexing mode. False while any chain is still backfilling.
   isRealtime: bool,
@@ -411,6 +418,51 @@ type indexingContract = {
   effectiveStartBlock: int,
 }
 
+// What a single registration fetches and materialises. Field names are strings
+// so every ecosystem shares one type — the typed field variants are strings at
+// runtime. Always built through `makeFieldSelection`/`unionFieldSelection`
+// below, so a set and its mask are never derived from different inputs. Unlike
+// `eventConfig`, not `private` — that would block those two constructors too,
+// since a private record can only be coerced from a distinct record type.
+type fieldSelection = {
+  blockFields: Utils.Set.t<string>,
+  transactionFields: Utils.Set.t<string>,
+  // The sets precompiled to the store selections `ChainState` materialises with.
+  blockMask: float,
+  transactionMask: float,
+}
+
+// `~blockMaskFn`/`~transactionMaskFn` are the ecosystem's `Evm`/`Svm`/`Fuel`
+// mask functions, which the ecosystem modules pass in (they depend on this
+// module, so it can't reach them).
+let makeFieldSelection = (
+  ~blockFields: Utils.Set.t<string>,
+  ~transactionFields: Utils.Set.t<string>,
+  ~blockMaskFn: Utils.Set.t<string> => float,
+  ~transactionMaskFn: Utils.Set.t<string> => float,
+): fieldSelection => {
+  blockFields,
+  transactionFields,
+  blockMask: blockMaskFn(blockFields),
+  transactionMask: transactionMaskFn(transactionFields),
+}
+
+// Two registrations merged into one dispatch off a single item, so it has to
+// carry the union of what both callbacks read. Each callback's type only claims
+// its own selection, so the extra fields are unread rather than unsound.
+//
+// The overwhelmingly common case is two registrations that never named fields
+// inline and so share their event config's sets by reference — returning those
+// unchanged keeps the merge allocation-free.
+let unionFields = (a, b) => a === b ? a : a->Utils.Set.union(b)
+
+let unionFieldSelection = (a: fieldSelection, b: fieldSelection): fieldSelection => {
+  blockFields: unionFields(a.blockFields, b.blockFields),
+  transactionFields: unionFields(a.transactionFields, b.transactionFields),
+  blockMask: FieldMask.orMask(a.blockMask, b.blockMask),
+  transactionMask: FieldMask.orMask(a.transactionMask, b.transactionMask),
+}
+
 // Definition of an event/instruction we know how to decode: identity + decode
 // schemas + chain-independent field selection. A pure function of the ABI +
 // config, shared across chains. `private` so it can only be coerced from an
@@ -422,22 +474,12 @@ type eventConfig = private {
   contractName: string,
   paramsRawEventSchema: S.schema<eventParams>,
   simulateParamsSchema: S.schema<eventParams>,
-  // Field names selected for the chain's transaction-store materialisation
-  // (camelCase, matching the ecosystem's `transactionFields`). Stored as a
-  // string set so the shared mask logic is ecosystem-agnostic; sources recover
-  // the typed view where they need it.
-  selectedTransactionFields: Utils.Set.t<string>,
-  // `selectedTransactionFields` precompiled to the transaction-store selection
-  // bitmask (bit per ecosystem field code). Materialisation reads this per item
-  // so each transaction decodes only the fields its event selected. `0.` when
-  // nothing is selected or the ecosystem carries the transaction inline (Fuel).
-  transactionFieldMask: float,
-  // Selected block fields precompiled to the block-store selection bitmask (bit
-  // per ecosystem field code). `0.` for ecosystems that carry the block fully
-  // inline (RPC/Fuel). The EVM selection always includes number/timestamp/hash,
-  // so an EVM mask always has their bits set; SVM stamps slot/time/hash inline
-  // from the response and its mask is the user's selection alone.
-  blockFieldMask: float,
+  // The `config.yaml` selection, which every registration of this event
+  // inherits unless it names its own fields inline. Held by reference, so two
+  // un-customized registrations share one set — which is what keeps a merge
+  // allocation-free and the per-source parser caches (keyed on set identity)
+  // effective.
+  fieldSelection: fieldSelection,
 }
 
 type fuelEventKind =
@@ -492,7 +534,6 @@ type onEventWhereArgs<'chain> = {chain: 'chain}
 
 type evmEventConfig = {
   ...eventConfig,
-  selectedBlockFields: Utils.Set.t<evmBlockField>,
   sighash: string,
   topicCount: int,
   paramsMetadata: array<paramMeta>,
@@ -520,10 +561,6 @@ type svmAccountFilterGroup = array<svmAccountFilter>
 
 type svmInstructionEventConfig = {
   ...eventConfig,
-  /** Block fields selected via `field_selection.block_fields` (`slot` is always
-   included and excluded from this set). Drives the block query columns;
-   precompiled to `blockFieldMask` for store materialisation. */
-  selectedBlockFields: Utils.Set.t<svmBlockField>,
   /** Base58 Solana program id this instruction belongs to. */
   programId: SvmTypes.Pubkey.t,
   /** Hex-encoded discriminator. `None` matches every instruction in the program. */
@@ -572,14 +609,22 @@ type onEventRegistration = {
   // Usually always false for wildcard events, but might be true for a wildcard
   // event with a dynamic event filter by addresses.
   dependsOnAddresses: bool,
-  // Precompiled predicate for events that filter an indexed address param by
-  // registered addresses (see `EventConfigBuilder.buildAddressFilter`); drops a
-  // decoded event whose param-address isn't registered at/before the log's
-  // block. Absent otherwise.
-  clientAddressFilter?: (eventPayload, int, dict<indexingContract>) => bool,
+  // Indexed address params this event filters on, in disjunctive normal form
+  // (OR of AND-groups), from `where: {params: {to: chain.C.addresses}}`. Every
+  // source applies this natively while routing; it's carried here for the
+  // simulate source, which has no native query boundary. Absent otherwise.
+  //
+  // Keep it optional: with every field required, ReScript compiles a
+  // `{...registration, ...}` spread into an explicit field-by-field copy, which
+  // drops the ecosystem-only fields an `evmOnEventRegistration` carries.
+  addressFilterParamGroups?: array<array<string>>,
   // Final start block: the contract/chain config value, overridden by a
   // `where.block.number._gte` when the registered `where` supplies one.
   startBlock: option<int>,
+  // The `eventConfig` selection unless the registration passed an inline
+  // `fields` option, which replaces it. Two registrations of one event can
+  // select different fields, so this is per-registration rather than shared.
+  fieldSelection: fieldSelection,
 }
 
 type evmOnEventRegistration = {
@@ -607,15 +652,13 @@ type indexingAddress = {
   registrationBlock: int,
 }
 
-type dcs = array<indexingAddress>
-
 // Duplicate the type from item to keep item properly unboxed. Runtime event
 // items carry the registration their source already resolved from the
 // ChainState-owned registration array.
 type eventItem = private {
   kind: [#0],
   onEventRegistration: onEventRegistration,
-  chain: ChainMap.Chain.t,
+  chainId: ChainId.t,
   blockNumber: int,
   logIndex: int,
   // Within-block transaction index — the key into the per-chain transaction
@@ -628,7 +671,7 @@ type eventItem = private {
 // `InternalTable`) so the ecosystem's `toRawEvent` can reference it without
 // pulling in `InternalTable`'s dependency on `Config`.
 type rawEvent = {
-  chain_id: int,
+  chain_id: ChainId.t,
   event_id: bigint,
   event_name: string,
   contract_name: string,
@@ -656,7 +699,7 @@ type onBlockRegistration = {
   // we want to use the order they are defined for sorting
   index: int,
   name: string,
-  chainId: int,
+  chainId: ChainId.t,
   startBlock: option<int>,
   endBlock: option<int>,
   interval: int,
@@ -668,7 +711,7 @@ type item =
   | @as(0)
   Event({
       onEventRegistration: onEventRegistration,
-      chain: ChainMap.Chain.t,
+      chainId: ChainId.t,
       blockNumber: int,
       logIndex: int,
       transactionIndex: int,
@@ -685,18 +728,22 @@ external getItemLogIndex: item => int = "logIndex"
 
 let getItemChainId = item =>
   switch item {
-  | Event({chain}) => chain->ChainMap.Chain.toChainId
+  | Event({chainId})
   | Block({onBlockRegistration: {chainId}}) => chainId
   }
 
-@get
-external getItemDcs: item => option<dcs> = "dcs"
-@set
-external setItemDcs: (item, dcs) => unit = "dcs"
+// The `fields` option of an EVM `onEvent`/`contractRegister` registration:
+// the block and transaction fields the handler reads. Replaces the config
+// `field_selection` for this registration.
+type evmFieldsSelection = {
+  block?: array<string>,
+  transaction?: array<string>,
+}
 
 type eventOptions<'where> = {
   wildcard?: bool,
   where?: 'where,
+  fields?: evmFieldsSelection,
 }
 
 type fuelSupplyParams = {
@@ -742,6 +789,10 @@ type genericEntityConfig<'entity> = {
   schema: S.t<'entity>,
   table: Table.table,
   storage: entityStorage,
+  // Resolved by the CLI against the config's `defaultCrossChain` and the
+  // entity's `@crossChain`. When false the table carries a chain-id column in
+  // its primary key and every row belongs to exactly one chain.
+  crossChain: bool,
 }
 type entityConfig = genericEntityConfig<entity>
 external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"
@@ -771,10 +822,11 @@ type effect = {
   handler: effectArgs => promise<effectOutput>,
   storageMeta: effectCacheStorageMeta,
   defaultShouldCache: bool,
-  // When true (the default) a single cache is shared across every chain and the
-  // handler must not read context.chain. When false the cache is isolated per
-  // chain and context.chain.id is available.
-  crossChain: bool,
+  // When true a single cache is shared across every chain and the handler must
+  // not read context.chain. When false the cache is isolated per chain and
+  // context.chain.id is available. None means the effect didn't say, and the
+  // config's `defaultCrossChain` decides.
+  crossChain: option<bool>,
   output: S.t<effectOutput>,
   input: S.t<effectInput>,
   rateLimit: option<rateLimitOptions>,
@@ -787,7 +839,27 @@ type effect = {
 @unboxed
 type chainScope =
   | @as("crossChain") CrossChain
-  | Chain(int)
+  | Chain(ChainId.t)
+
+let chainScopeToString = scope =>
+  switch scope {
+  | CrossChain => "crossChain"
+  | Chain(chainId) => chainId->ChainId.toString
+  }
+
+let chainScopeChainId = scope =>
+  switch scope {
+  | CrossChain => None
+  | Chain(chainId) => Some(chainId)
+  }
+
+// A copy of the entity carrying the chain-id column a per-chain entity's row
+// needs. Never mutates the handler's object, which stays in the in-memory table.
+let stampChainId = (entity: entity, ~fieldName, ~chainId: ChainId.t): entity =>
+  Utils.Dict.merge(
+    entity->(Utils.magic: entity => dict<unknown>),
+    Dict.fromArray([(fieldName, chainId->(Utils.magic: ChainId.t => unknown))]),
+  )->(Utils.magic: dict<unknown> => entity)
 
 let cacheTablePrefix = "envio_effect_"
 
@@ -795,27 +867,22 @@ let cacheTablePrefix = "envio_effect_"
 // canonical Postgres cache-table name and .envio/cache file path. Everything
 // that needs a cache address goes through here instead of slicing prefixes.
 //   CrossChain  ->  envio_effect_<name>        <name>.tsv
-//   Chain(1)    ->  envio_1_effect_<name>      1/<name>.tsv
-//   Chain(137)  ->  envio_137_effect_<name>    137/<name>.tsv
+//   Chain(1->ChainId.fromInt)    ->  envio_1_effect_<name>      1/<name>.tsv
+//   Chain(137->ChainId.fromInt)  ->  envio_137_effect_<name>    137/<name>.tsv
 module EffectCache = {
   let toTableName = (~effectName, ~scope) =>
     switch scope {
     | CrossChain => cacheTablePrefix ++ effectName
-    | Chain(chainId) => `envio_${chainId->Int.toString}_effect_${effectName}`
-    }
-
-  // "crossChain" or the decimal chain id. Used as the `scope` Prometheus label.
-  let scopeToString = scope =>
-    switch scope {
-    | CrossChain => "crossChain"
-    | Chain(chainId) => chainId->Int.toString
+    | Chain(chainId) => `envio_${chainId->ChainId.toString}_effect_${effectName}`
     }
 
   // Only accepts a canonical decimal chain id ("7", not "007" or "1foo") —
-  // Int.fromString alone follows parseInt semantics and accepts both.
+  // the schema's parser follows parseFloat semantics and accepts both.
   let parseChainId = str =>
-    switch Int.fromString(str) {
-    | Some(chainId) if chainId >= 0 && chainId->Int.toString === str => Some(chainId)
+    switch try Some(str->ChainId.normalizeOrThrow) catch {
+    | _ => None
+    } {
+    | Some(chainId) if chainId->ChainId.toString === str => Some(chainId)
     | _ => None
     }
 
@@ -855,7 +922,7 @@ module EffectCache = {
   let toCachePath = (~effectName, ~scope) =>
     switch scope {
     | CrossChain => effectName ++ ".tsv"
-    | Chain(chainId) => `${chainId->Int.toString}/${effectName}.tsv`
+    | Chain(chainId) => `${chainId->ChainId.toString}/${effectName}.tsv`
     }
 }
 
@@ -884,7 +951,7 @@ type reorgCheckpoint = {
   @as("id")
   checkpointId: bigint,
   @as("chain_id")
-  chainId: int,
+  chainId: ChainId.t,
   @as("block_number")
   blockNumber: int,
   @as("block_hash")

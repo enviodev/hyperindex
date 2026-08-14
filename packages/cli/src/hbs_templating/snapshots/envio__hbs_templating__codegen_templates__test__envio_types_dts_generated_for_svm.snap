@@ -1,6 +1,5 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 3481
 expression: project_template.envio_types_dts
 ---
 /**
@@ -48,10 +47,10 @@ declare module "envio" {
              * ```yaml
              * field_selection:
              *   transaction_fields:
-             *     - signatures
+             *     - signature
              * ```
              */
-            readonly signatures: FieldNotSelected<"Field 'signatures' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            readonly signature: FieldNotSelected<"Field 'signature' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
             /**
              * @deprecated Not selected for this instruction. To enable, add to config.yaml:
              * ```yaml
@@ -128,6 +127,15 @@ declare module "envio" {
              * @deprecated Not selected for this instruction. To enable, add to config.yaml:
              * ```yaml
              * field_selection:
+             *   transaction_fields:
+             *     - allSignatures
+             * ```
+             */
+            readonly allSignatures: FieldNotSelected<"Field 'allSignatures' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
              *   token_balance_fields: true
              * ```
              */
@@ -177,8 +185,8 @@ declare module "envio" {
              * ```
              */
             readonly transactionIndex: FieldNotSelected<"Field 'transactionIndex' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
-            /** The signatures field. */
-            readonly signatures: readonly string[];
+            /** The signature field. */
+            readonly signature: string;
             /**
              * @deprecated Not selected for this instruction. To enable, add to config.yaml:
              * ```yaml
@@ -255,6 +263,15 @@ declare module "envio" {
              * @deprecated Not selected for this instruction. To enable, add to config.yaml:
              * ```yaml
              * field_selection:
+             *   transaction_fields:
+             *     - allSignatures
+             * ```
+             */
+            readonly allSignatures: FieldNotSelected<"Field 'allSignatures' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
              *   token_balance_fields: true
              * ```
              */
@@ -297,6 +314,7 @@ declare module "envio" {
         };
       } };
       entities: Entities;
+      perChainEntities: never;
       enums: Enums;
     };
   }

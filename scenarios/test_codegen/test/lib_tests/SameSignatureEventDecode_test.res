@@ -25,7 +25,7 @@ let makeReg = (~name, ~params): Internal.evmOnEventRegistration =>
     ~handler=None,
     ~contractRegister=None,
     ~where=None,
-    ~chainId=1,
+    ~chainId=1->ChainId.fromInt,
     ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
   )
 
@@ -70,7 +70,7 @@ describe("Same-signature event across contracts with different param names", () 
       let decoded = await NativeDecoder.decodeLogs(
         ~eventRegistrations=allEventRegistrations,
         ~logs=[transferLog],
-        ~contractNameByAddress=Dict.fromArray([(NativeDecoder.mockAddress, contractName)]),
+        ~ownedBy=contractName,
       )
       let item = decoded[0]->Option.getUnsafe
       (item.onEventRegistrationIndex, item.params)

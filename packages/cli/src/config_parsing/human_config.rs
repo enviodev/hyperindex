@@ -71,13 +71,15 @@ pub struct BaseConfig {
     pub schema: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Optional relative path to handlers directory for auto-loading. Defaults \
-                   to 'src/handlers' if not specified."
+        description = "Optional relative path to handlers directory for auto-loading. Defaults to \
+                       'src/handlers' if not specified."
     )]
     pub handlers: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)"
+        description = "Target number of events to be processed per batch. Set it to smaller \
+                       number if you have many Effect API calls which are slow to resolve and \
+                       can't be batched. (Default: 5000)"
     )]
     pub full_batch_size: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -89,6 +91,14 @@ pub struct BaseConfig {
                        {default: true}`."
     )]
     pub storage: Option<StorageConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Make entities and effect caches per-chain instead of shared across every \
+                       chain (recommended). Sharing then becomes explicit — add `@crossChain` to \
+                       an entity in schema.graphql or `crossChain: true` to an effect. (default: \
+                       false)"
+    )]
+    pub disable_default_cross_chain: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -497,6 +507,11 @@ pub mod evm {
         pub block_fields: Option<Vec<BlockField>>,
     }
 
+    // `RpcTransactionField` is the subset an RPC-synced chain can deliver:
+    // every field `eth_getTransactionByHash` or `eth_getTransactionReceipt`
+    // returns, which is all of them except the two array-shaped ones that have
+    // no parser in the runtime's field registry (`RpcSource.res`). Kept in step
+    // with that registry by `RpcFieldSelection_test.res`.
     #[subenum(RpcTransactionField)]
     #[derive(
         Debug,
@@ -521,6 +536,7 @@ pub mod evm {
         From,
         #[subenum(RpcTransactionField)]
         To,
+        #[subenum(RpcTransactionField)]
         Gas,
         #[subenum(RpcTransactionField)]
         GasPrice,
@@ -528,31 +544,50 @@ pub mod evm {
         MaxPriorityFeePerGas,
         #[subenum(RpcTransactionField)]
         MaxFeePerGas,
+        #[subenum(RpcTransactionField)]
         CumulativeGasUsed,
+        #[subenum(RpcTransactionField)]
         EffectiveGasPrice,
+        #[subenum(RpcTransactionField)]
         GasUsed,
         #[subenum(RpcTransactionField)]
         Input,
+        #[subenum(RpcTransactionField)]
         Nonce,
         #[subenum(RpcTransactionField)]
         Value,
+        #[subenum(RpcTransactionField)]
         V,
+        #[subenum(RpcTransactionField)]
         R,
+        #[subenum(RpcTransactionField)]
         S,
         #[subenum(RpcTransactionField)]
         ContractAddress,
+        #[subenum(RpcTransactionField)]
         LogsBloom,
+        #[subenum(RpcTransactionField)]
         Root,
+        #[subenum(RpcTransactionField)]
         Status,
+        #[subenum(RpcTransactionField)]
         YParity,
         AccessList,
+        #[subenum(RpcTransactionField)]
         MaxFeePerBlobGas,
+        #[subenum(RpcTransactionField)]
         BlobVersionedHashes,
+        #[subenum(RpcTransactionField)]
         Type,
+        #[subenum(RpcTransactionField)]
         L1Fee,
+        #[subenum(RpcTransactionField)]
         L1GasPrice,
+        #[subenum(RpcTransactionField)]
         L1GasUsed,
+        #[subenum(RpcTransactionField)]
         L1FeeScalar,
+        #[subenum(RpcTransactionField)]
         GasUsedForL1,
         AuthorizationList,
         // We want to encourage the use of context.chain.id instead
@@ -563,7 +598,6 @@ pub mod evm {
         // BlockNumber,
     }
 
-    #[subenum(RpcBlockField)]
     #[derive(
         Debug,
         Serialize,
@@ -579,30 +613,21 @@ pub mod evm {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     #[strum(serialize_all = "camelCase")]
     pub enum BlockField {
-        #[subenum(RpcBlockField)]
         ParentHash,
-        #[subenum(RpcBlockField)]
         Nonce,
         Sha3Uncles,
         LogsBloom,
         TransactionsRoot,
-        #[subenum(RpcBlockField)]
         StateRoot,
         ReceiptsRoot,
-        #[subenum(RpcBlockField)]
         Miner,
-        #[subenum(RpcBlockField)]
         Difficulty,
         TotalDifficulty,
-        #[subenum(RpcBlockField)]
         ExtraData,
         Size,
-        #[subenum(RpcBlockField)]
         GasLimit,
-        #[subenum(RpcBlockField)]
         GasUsed,
         Uncles,
-        #[subenum(RpcBlockField)]
         BaseFeePerGas,
         BlobGasUsed,
         ExcessBlobGas,
@@ -649,8 +674,8 @@ pub mod evm {
         Fallback,
         #[schemars(
             description = "Use RPC for real-time indexing only. HyperSync will be used for \
-                           historical sync, then automatically switch to this RPC once synced \
-                           for lower latency."
+                           historical sync, then automatically switch to this RPC once synced for \
+                           lower latency."
         )]
         Realtime,
     }
@@ -668,11 +693,10 @@ pub mod evm {
         #[serde(rename = "for", skip_serializing_if = "Option::is_none")]
         pub source_for: Option<For>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional WebSocket endpoint URL (wss:// or ws://) for real-time block \
-                           header notifications via eth_subscribe(\"newHeads\"). Provides lower \
-                           latency than HTTP polling for detecting new blocks."
-        )]
+        #[schemars(description = "Optional WebSocket endpoint URL (wss:// or ws://) for \
+                                  real-time block header notifications via \
+                                  eth_subscribe(\"newHeads\"). Provides lower latency than HTTP \
+                                  polling for detecting new blocks.")]
         pub ws: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
@@ -734,14 +758,14 @@ pub mod evm {
         #[schemars(description = "The public blockchain chain ID.")]
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Excludes the chain from indexing and migrations. \
-                           Code generation is unaffected. \
-                           For testing, prefer using a test framework instead.")]
+        #[schemars(description = "Excludes the chain from indexing and migrations. Code \
+                                  generation is unaffected. For testing, prefer using a test \
+                                  framework instead.")]
         pub skip: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "RPC configuration for your indexer. If not specified \
-                                  otherwise, for chains supported by HyperSync, RPC serves as \
-                                  a fallback for added reliability. For others, it acts as the \
+                                  otherwise, for chains supported by HyperSync, RPC serves as a \
+                                  fallback for added reliability. For others, it acts as the \
                                   primary data-source. HyperSync offers significant performance \
                                   improvements, up to a 1000x faster than traditional RPC.")]
         pub rpc: Option<RpcSelection>,
@@ -756,8 +780,9 @@ pub mod evm {
         pub max_reorg_depth: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The number of blocks behind the chain head that the indexer should lag. \
-                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+            description = "The number of blocks behind the chain head that the indexer should \
+                           lag. Useful for avoiding reorg issues by indexing slightly behind the \
+                           tip."
         )]
         pub block_lag: Option<u32>,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
@@ -780,11 +805,9 @@ pub mod evm {
         )]
         pub abi_file_path: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional relative path to a file where handlers are registered for the \
-                           given contract. If not provided, handlers can be auto-loaded from src \
-                           directory."
-        )]
+        #[schemars(description = "Optional relative path to a file where handlers are \
+                                  registered for the given contract. If not provided, handlers \
+                                  can be auto-loaded from src directory.")]
         pub handler: Option<String>,
         #[schemars(description = "A list of events that should be indexed on this contract")]
         pub events: Vec<EventConfig>,
@@ -889,9 +912,9 @@ pub mod fuel {
         #[schemars(description = "Public chain id")]
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Excludes the chain from indexing and migrations. \
-                           Code generation is unaffected. \
-                           For testing, prefer using a test framework instead.")]
+        #[schemars(description = "Excludes the chain from indexing and migrations. Code \
+                                  generation is unaffected. For testing, prefer using a test \
+                                  framework instead.")]
         pub skip: Option<bool>,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
         pub start_block: u64,
@@ -909,8 +932,9 @@ pub mod fuel {
         pub max_reorg_depth: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The number of blocks behind the chain head that the indexer should lag. \
-                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+            description = "The number of blocks behind the chain head that the indexer should \
+                           lag. Useful for avoiding reorg issues by indexing slightly behind the \
+                           tip."
         )]
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -924,11 +948,9 @@ pub mod fuel {
         #[schemars(description = "Relative path (from config) to a json abi.")]
         pub abi_file_path: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional relative path to a file where handlers are registered for the \
-                           given contract. If not provided, handlers can be auto-loaded from src \
-                           directory."
-        )]
+        #[schemars(description = "Optional relative path to a file where handlers are \
+                                  registered for the given contract. If not provided, handlers \
+                                  can be auto-loaded from src directory.")]
         pub handler: Option<String>,
         #[schemars(description = "A list of events that should be indexed on this contract")]
         pub events: Vec<EventConfig>,
@@ -991,9 +1013,9 @@ pub mod svm {
         // )]
         // pub id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Excludes the chain from indexing and migrations. \
-                           Code generation is unaffected. \
-                           For testing, prefer using a test framework instead.")]
+        #[schemars(description = "Excludes the chain from indexing and migrations. Code \
+                                  generation is unaffected. For testing, prefer using a test \
+                                  framework instead.")]
         pub skip: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
@@ -1011,8 +1033,9 @@ pub mod svm {
         pub end_block: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The number of blocks behind the chain head that the indexer should lag. \
-                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+            description = "The number of blocks behind the chain head that the indexer should \
+                           lag. Useful for avoiding reorg issues by indexing slightly behind the \
+                           tip."
         )]
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1044,18 +1067,16 @@ pub mod svm {
         #[schemars(description = "Base58-encoded program id (32 bytes).")]
         pub program_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional relative path to a file where handlers are registered for \
-                           the given program. If not provided, handlers can be auto-loaded from \
-                           the src directory."
-        )]
+        #[schemars(description = "Optional relative path to a file where handlers are \
+                                  registered for the given program. If not provided, handlers \
+                                  can be auto-loaded from the src directory.")]
         pub handler: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional path (relative to config.yaml) to an Anchor IDL JSON \
-                           file. When present, codegen parses the IDL and derives \
-                           `accounts`/`args` for every named instruction. Mutually \
-                           exclusive with per-instruction `accounts`/`args` overrides."
+            description = "Optional path (relative to config.yaml) to an Anchor IDL JSON file. \
+                           When present, codegen parses the IDL and derives `accounts`/`args` for \
+                           every named instruction. Mutually exclusive with per-instruction \
+                           `accounts`/`args` overrides."
         )]
         pub idl: Option<String>,
         #[schemars(description = "A list of instructions that should be indexed on this program.")]
@@ -1072,9 +1093,9 @@ pub mod svm {
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Hex-encoded instruction-data prefix used as the discriminator \
-                           (\"0x\" optional). Must be 1, 2, 4, or 8 bytes after decoding. \
-                           An 8-byte value matches the standard Anchor discriminator."
+            description = "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" \
+                           optional). Must be 1, 2, 4, or 8 bytes after decoding. An 8-byte value \
+                           matches the standard Anchor discriminator."
         )]
         pub discriminator: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1094,25 +1115,25 @@ pub mod svm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Select which additional data to fetch for each matched instruction. \
-                           Each key accepts `true` (include all fields) or a list of field \
-                           names (per-field selection, not yet supported). When absent, only \
-                           the instruction itself is included."
+                           Each key accepts `true` (include all fields) or a list of field names \
+                           (per-field selection, not yet supported). When absent, only the \
+                           instruction itself is included."
         )]
         pub field_selection: Option<SvmFieldSelection>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional positional account names. The Nth entry names \
-                           account slot N on the dispatched instruction; surfaces as \
-                           `event.instruction.decoded.accounts.<name>`. Accounts beyond \
-                           the named list become `extra_accounts`."
+            description = "Optional positional account names. The Nth entry names account slot N \
+                           on the dispatched instruction; surfaces as \
+                           `event.instruction.decoded.accounts.<name>`. Accounts beyond the named \
+                           list become `extra_accounts`."
         )]
         pub accounts: Option<Vec<String>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional Borsh argument schema. Each entry names one arg and \
-                           gives its type; the decoder walks the instruction data after \
-                           the discriminator in declared order. Mutually exclusive with \
-                           the program-level `idl` field."
+            description = "Optional Borsh argument schema. Each entry names one arg and gives its \
+                           type; the decoder walks the instruction data after the discriminator \
+                           in declared order. Mutually exclusive with the program-level `idl` \
+                           field."
         )]
         pub args: Option<Vec<ArgDef>>,
     }
@@ -1263,7 +1284,7 @@ pub mod svm {
     #[strum(serialize_all = "camelCase")]
     pub enum SvmTransactionField {
         TransactionIndex,
-        Signatures,
+        Signature,
         FeePayer,
         Success,
         Err,
@@ -1272,6 +1293,7 @@ pub mod svm {
         AccountKeys,
         RecentBlockhash,
         Version,
+        AllSignatures,
     }
 
     /// Selectable block field names (camelCase), matching the public
@@ -1302,24 +1324,25 @@ pub mod svm {
     pub struct SvmFieldSelection {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Parent-transaction fields to include on each matched \
-                           instruction, as a list of field names. Omit (or pass an \
-                           empty list) to include no transaction.")]
+                                  instruction, as a list of field names. Omit (or pass an empty \
+                                  list) to include no transaction.")]
         pub transaction_fields: Option<Vec<SvmTransactionField>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Block fields to include on each matched instruction's \
-                           `block`, as a list of field names. `slot`/`time`/`hash` are \
-                           always included; this adds `height`/`parentSlot`/`parentHash`.")]
+                                  `block`, as a list of field names. `slot`/`time`/`hash` are \
+                                  always included; this adds `height`/`parentSlot`/`parentHash`.")]
         pub block_fields: Option<Vec<SvmBlockField>>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Set to `true` to include program logs scoped to each \
-                           matched instruction.")]
+        #[schemars(
+            description = "Set to `true` to include program logs scoped to each matched \
+                           instruction."
+        )]
         pub log_fields: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Set to `true` to include SPL Token / Token-2022 balance \
-                           snapshots for the parent transaction, exposed as \
-                           `transaction.tokenBalances`. Independent of \
-                           `transaction_fields`."
+            description = "Set to `true` to include SPL Token / Token-2022 balance snapshots for \
+                           the parent transaction, exposed as `transaction.tokenBalances`. \
+                           Independent of `transaction_fields`."
         )]
         pub token_balance_fields: Option<bool>,
     }
@@ -1582,42 +1605,9 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             format!("# yaml-language-server: $schema=./node_modules/envio/evm.schema.json\n{raw}");
         assert_eq!(
             out, expected,
-            "Display output must remain byte-identical for config_hash stability — header and body both."
+            "Display output must remain byte-identical for config_hash stability — header and \
+             body both."
         );
-    }
-
-    #[test]
-    fn deserializes_factory_contract_config() {
-        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test/configs/factory-contract-config.yaml");
-
-        let file_str = std::fs::read_to_string(config_path).unwrap();
-
-        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
-
-        let contracts = cfg.chains[0].contracts.as_ref().unwrap();
-        println!("{:?}", contracts[0]);
-
-        assert!(contracts[0].config.is_some());
-        assert!(contracts[1].config.is_some());
-        assert_eq!(contracts[1].address, None.into());
-    }
-
-    #[test]
-    fn deserializes_dynamic_contract_config() {
-        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test/configs/dynamic-address-config.yaml");
-
-        let file_str = std::fs::read_to_string(config_path).unwrap();
-
-        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
-
-        assert!(cfg.chains[0].contracts.as_ref().unwrap()[0]
-            .config
-            .is_some());
-        assert!(cfg.chains[1].contracts.as_ref().unwrap()[0]
-            .config
-            .is_none());
     }
 
     #[test]
@@ -1637,6 +1627,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 handlers: None,
                 full_batch_size: None,
                 storage: None,
+                disable_default_cross_chain: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
@@ -1689,6 +1680,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 handlers: None,
                 full_batch_size: None,
                 storage: None,
+                disable_default_cross_chain: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
@@ -1726,7 +1718,7 @@ chains:
                 - position: 0
                   values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
               field_selection:
-                transaction_fields: [signatures, feePayer]
+                transaction_fields: [signature, feePayer]
 "#;
 
         #[test]
@@ -1771,7 +1763,7 @@ chains:
                             }])),
                             field_selection: Some(SvmFieldSelection {
                                 transaction_fields: Some(vec![
-                                    SvmTransactionField::Signatures,
+                                    SvmTransactionField::Signature,
                                     SvmTransactionField::FeePayer,
                                 ]),
                                 block_fields: None,

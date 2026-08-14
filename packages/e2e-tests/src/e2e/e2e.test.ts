@@ -10,7 +10,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { ChildProcess } from "child_process";
+import { ChildProcess, execFile } from "child_process";
+import { promisify } from "util";
 import { config } from "../config.js";
 import {
   startBackground,
@@ -41,7 +42,27 @@ interface MetricsResult {
   stderr: string;
 }
 
-describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
+// `envio dev` brings up Postgres and Hasura through Docker, and
+// ensureClickHouse() starts a container, so without a Docker daemon there is
+// nothing to test against. Skipping keeps a local `pnpm test` usable on a
+// machine without Docker; in CI the services are always provisioned, so an
+// unreachable daemon means a broken pipeline and must fail loudly instead.
+const dockerAvailable = await (async () => {
+  try {
+    await promisify(execFile)("docker", ["info"], { timeout: 15_000 });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+if (!dockerAvailable && process.env.CI) {
+  throw new Error(
+    "Docker is unavailable, so the e2e suite cannot run. Refusing to skip it in CI."
+  );
+}
+
+describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink", () => {
   let indexerProcess: ChildProcess | null = null;
   let graphql: GraphQLClient;
   let metricsWhileRunning: MetricsResult | null = null;
@@ -345,6 +366,93 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     });
   });
 
+  // The per-chain pair. Their tables carry a chain-id column in the primary
+  // key, spelled per backend: `chain_id` in Postgres (column_name_format:
+  // snake_case) and `chainId` in ClickHouse (the default format).
+  it("gives per-chain entities a chain-id column in both backends", async () => {
+    const pgColumns = await runPgSql(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'ChainTransfer'
+        ORDER BY column_name`
+    );
+    expect(pgColumns.map((r) => r[0])).toContain("chain_id");
+
+    const pgPrimaryKey = await runPgSql(
+      `SELECT a.attname FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+        WHERE i.indrelid = '"ChainTransfer"'::regclass AND i.indisprimary
+        ORDER BY a.attname`
+    );
+    expect(pgPrimaryKey.map((r) => r[0])).toEqual(["chain_id", "id"]);
+
+    const chColumns = await queryClickHouse<
+      ClickHouseResult<{ name: string }>
+    >(
+      `SELECT name FROM system.columns
+        WHERE database = '${CH_DATABASE}' AND table = 'ChainTransfer'
+        FORMAT JSON`
+    );
+    expect(chColumns.data.map((r) => r.name)).toContain("chainId");
+  });
+
+  it("serves per-chain rows through ClickHouse deduped per (id, chain)", async () => {
+    const pgRows = await runPgSql(`SELECT count(*)::text FROM "ChainTransfer"`);
+    const pgCount = Number(pgRows[0]?.[0]);
+    expect(pgCount).toBeGreaterThan(0);
+
+    // The view dedups with LIMIT 1 BY (id, chainId); a dedup on id alone would
+    // collapse rows that differ only by chain.
+    const chRows = await queryClickHouse<
+      ClickHouseResult<{ c: string; chains: string }>
+    >(
+      `SELECT count() as c, uniqExact(chainId) as chains
+         FROM ${CH_DATABASE}.ChainTransfer FORMAT JSON`
+    );
+    expect({
+      rows: Number(chRows.data[0]?.c),
+      chains: Number(chRows.data[0]?.chains),
+    }).toEqual({ rows: pgCount, chains: 1 });
+  });
+
+  it("keeps a per-chain relationship from reaching another chain's row", async () => {
+    // Only one chain is indexed, so a second chain's row is planted directly to
+    // give the relationship something wrong to resolve to. It shares the `from`
+    // value the relationship joins on, and differs only by chain.
+    const account = await runPgSql(
+      `SELECT "id" FROM "ChainAccount" LIMIT 1`
+    );
+    const accountId = account[0]?.[0];
+    expect(accountId).toBeTruthy();
+
+    await runPgSql(
+      `INSERT INTO "ChainTransfer" ("id", "from", "value", "chain_id")
+       VALUES ('planted-other-chain', '${accountId}', 1, 999)
+       ON CONFLICT DO NOTHING`
+    );
+
+    const result = await graphql.query<{
+      ChainAccount: Array<{
+        id: string;
+        transfers: Array<{ id: string; chainId: number }>;
+      }>;
+    }>(
+      `{ ChainAccount(where: {id: {_eq: "${accountId}"}}) { id transfers { id chainId } } }`
+    );
+    const transfers = result.data?.ChainAccount[0]?.transfers ?? [];
+
+    // Removed before asserting so a failure doesn't leave the row for the
+    // tests that follow.
+    await runPgSql(
+      `DELETE FROM "ChainTransfer" WHERE "id" = 'planted-other-chain'`
+    );
+
+    expect(transfers.length).toBeGreaterThan(0);
+    expect({
+      plantedRowReached: transfers.some((tr) => tr.id === "planted-other-chain"),
+      chains: [...new Set(transfers.map((tr) => tr.chainId))],
+    }).toEqual({ plantedRowReached: false, chains: [1] });
+  });
+
   it("should be able to query GraphQL schema", async () => {
     const result = await graphql.query<{
       __schema: { queryType: { name: string } };
@@ -599,6 +707,55 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
         ],
       }
     `);
+  });
+
+  it("Hasura serves numeric arrays as strings", async () => {
+    // NUMERIC[] columns are created as TEXT[] when Hasura is enabled, because
+    // Hasura otherwise returns the elements as numbers and drops precision on
+    // large values. https://github.com/enviodev/hyperindex/issues/788
+    const result = await graphql.query<{
+      NumericArrays: Array<{ bigInts: string[]; bigDecimals: string[] }>;
+    }>(`{ NumericArrays { bigInts bigDecimals } }`);
+
+    expect(result).toEqual({
+      data: {
+        NumericArrays: [
+          {
+            bigInts: ["9007199254740993", "1000000000000000000000000000"],
+            bigDecimals: ["3.3", "123456789012345678.123456789"],
+          },
+        ],
+      },
+    });
+  });
+
+  // Overwrites events_processed, so it has to follow the tests that read it.
+  it("_meta and chain_metadata serve events processed as a number", async () => {
+    // Above int32 max, so a column type regression surfaces as an overflow.
+    await runPgSql(
+      `UPDATE public.envio_chains SET events_processed = 2147487821 WHERE id = 1`
+    );
+
+    // Both views cast to float4, which Hasura returns as a number rather than
+    // stringifying it under HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES. float4
+    // carries ~7 digits, so the round trip loses the tail of the value.
+    const meta = await graphql.query<{
+      _meta: Array<{ chainId: number; eventsProcessed: number }>;
+    }>(`{ _meta { chainId eventsProcessed } }`);
+    const chainMetadata = await graphql.query<{
+      chain_metadata: Array<{ chain_id: number; num_events_processed: number }>;
+    }>(`{ chain_metadata { chain_id num_events_processed } }`);
+
+    expect({ meta, chainMetadata }).toEqual({
+      meta: {
+        data: { _meta: [{ chainId: 1, eventsProcessed: 2147487700 }] },
+      },
+      chainMetadata: {
+        data: {
+          chain_metadata: [{ chain_id: 1, num_events_processed: 2147487700 }],
+        },
+      },
+    });
   });
 
   it("should resume with DB state on second start", async () => {

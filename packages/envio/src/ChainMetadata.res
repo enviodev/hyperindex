@@ -8,7 +8,7 @@ let stage = (state: IndexerState.t) => {
   ->Dict.valuesToArray
   ->Array.forEach(cs => {
     chainsData->Dict.set(
-      (cs->ChainState.chainConfig).id->Int.toString,
+      (cs->ChainState.chainConfig).id->ChainId.toString,
       cs->ChainState.toChainMetadata,
     )
   })

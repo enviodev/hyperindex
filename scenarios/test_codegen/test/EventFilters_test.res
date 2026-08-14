@@ -91,7 +91,7 @@ let complexTopicCases: array<topicCase> = [
 let allTopicCases = Array.concat(scalarTopicCases, complexTopicCases)
 
 let getTopicSelection = eventName => {
-  let eventConfig = getEvmEventConfig(~contractName="TestEvents", ~eventName, ~chainId=1337)
+  let eventConfig = getEvmEventConfig(~contractName="TestEvents", ~eventName, ~chainId=1337->ChainId.fromInt)
   let clientRegistration =
     HyperSyncClient.Registration.fromOnEventRegistrations([eventConfig])->Array.getUnsafe(0)
   clientRegistration.topicSelections->Array.getUnsafe(0)
@@ -228,6 +228,16 @@ describe("Test eventFilters", () => {
         HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations)
       let providerAddress = Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0)
       let providerAddressString = providerAddress->Address.toString
+      // The chain's address index, holding the one emitter these logs come from.
+      let addressStore = TestAddresses.makeStore(
+        ~onEventRegistrations=onEventRegistrations->Array.map(reg => (
+          reg :> Internal.onEventRegistration
+        )),
+        ~addresses=[
+          {address: providerAddress, contractName: "TestEvents", registrationBlock: -1},
+        ],
+        ~shouldChecksum=true,
+      )
 
       let makeEmittedLog = (~topics, ~logIndex): emittedLog => {
         address: providerAddressString,
@@ -291,16 +301,19 @@ describe("Test eventFilters", () => {
         ~checksumAddresses=true,
         ~syncConfig=EvmChain.getSyncConfig({}),
         ~eventRegistrations=nativeRegistrations,
+        ~addressStore,
       )
-      let addressesByContractName = Dict.fromArray([("TestEvents", [providerAddress])])
 
-      let page = try await client.getNextPage({
-        fromBlock: 1,
-        toBlockCeiling: 1,
-        partitionId: "topic-filter-e2e",
-        registrationIndexes: nativeRegistrations->Array.map(reg => reg.index),
-        addressesByContractName,
-      }) catch {
+      let page = try await client.getNextPage(
+        {
+          fromBlock: 1,
+          toBlockCeiling: 1,
+          partitionId: "topic-filter-e2e",
+          registrationIndexes: nativeRegistrations->Array.map(reg => reg.index),
+          clientFilteredContracts: None,
+        },
+        addressStore->AddressStore.makeSet(~contractName="TestEvents"),
+      ) catch {
       | exn =>
         mock.close()
         throw(exn)
@@ -323,7 +336,7 @@ describe("Test eventFilters", () => {
     let eventConfig = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="Transfer",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
 
     // The whitelisted addresses are checksummed (mixed-case) in the handler
@@ -377,7 +390,7 @@ describe("Test eventFilters", () => {
     let eventConfig = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="WildcardWithAddress",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
 
     t.expect(eventConfig.resolvedWhere.topicSelections).toEqual([
@@ -452,7 +465,7 @@ describe("Test eventFilters", () => {
     let eventConfig = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="EmptyFiltersArray",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
 
     t.expect(eventConfig.resolvedWhere.topicSelections).toEqual([
@@ -476,7 +489,7 @@ describe("Test eventFilters", () => {
     let eventConfig = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="EmptyFiltersArray",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
     t.expect(eventConfig.handler->Option.isSome).toBe(true)
   })
@@ -499,9 +512,9 @@ describe("Test eventFilters", () => {
       ~config,
       ~contractName="EventFiltersTest",
       ~eventName="WithExcessField",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
-    t.expect(() =>
+    t->toThrowErrorEqual(() =>
       EventConfigBuilder.buildEvmOnEventRegistration(
         ~eventConfig,
         ~isWildcard=true,
@@ -510,26 +523,26 @@ describe("Test eventFilters", () => {
         ~where=Some(
           %raw(`{params: {from: "0x0000000000000000000000000000000000000000", to: "0x0000000000000000000000000000000000000000"}}`),
         ),
-        ~chainId=137,
+        ~chainId=137->ChainId.fromInt,
         ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
       )
-    ).toThrowError(`Invalid where configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`)
+    , `Invalid where configuration. The event doesn't have an indexed parameter "to" and can't use it for filtering`)
   })
 
-  it("Registration path builds clientAddressFilter for address-filtered events only", t => {
+  it("Registration path collects address-param groups for address-filtered events only", t => {
     let wildcardWithAddress = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="WildcardWithAddress",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
     let transfer = getEvmEventConfig(
       ~contractName="EventFiltersTest",
       ~eventName="Transfer",
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
     )
     t.expect((
-      wildcardWithAddress.clientAddressFilter->Option.isSome,
-      transfer.clientAddressFilter->Option.isNone,
-    )).toEqual((true, true))
+      wildcardWithAddress.addressFilterParamGroups,
+      transfer.addressFilterParamGroups,
+    )).toEqual((Some([["to"], ["from"]]), Some([])))
   })
 })

@@ -120,7 +120,7 @@ impl EvmTxField {
 #[repr(i32)]
 pub enum SvmTxField {
     TransactionIndex = 0,
-    Signatures = 1,
+    Signature = 1,
     FeePayer = 2,
     Success = 3,
     Err = 4,
@@ -130,6 +130,7 @@ pub enum SvmTxField {
     RecentBlockhash = 8,
     Version = 9,
     TokenBalances = 10,
+    AllSignatures = 11,
 }
 
 impl SvmTxField {
@@ -138,7 +139,7 @@ impl SvmTxField {
         use SvmTxField::*;
         match self {
             TransactionIndex => "transactionIndex",
-            Signatures => "signatures",
+            Signature => "signature",
             FeePayer => "feePayer",
             Success => "success",
             Err => "err",
@@ -148,6 +149,7 @@ impl SvmTxField {
             RecentBlockhash => "recentBlockhash",
             Version => "version",
             TokenBalances => "tokenBalances",
+            AllSignatures => "allSignatures",
         }
     }
 }
@@ -270,17 +272,36 @@ fn svm_tx_col(field: SvmTxField, txs: &[solana_simple::Transaction]) -> Option<A
     use SvmTxField::*;
     match field {
         TransactionIndex => None,
-        Signatures => str_list_from(txs, |t| Some(t.signatures.clone())),
-        FeePayer => var_from(txs, |t| t.fee_payer.as_ref().map(|s| s.as_bytes())),
+        Signature => base58_col(txs, |t| t.transaction_id),
+        AllSignatures => str_list_from(txs, |t| {
+            t.signatures
+                .as_ref()
+                .map(|signatures| signatures.iter().map(|s| s.to_string()).collect())
+        }),
+        FeePayer => base58_col(txs, |t| t.fee_payer),
         Success => bool_from(txs, |t| t.success),
         Err => var_from(txs, |t| t.err.as_ref().map(|s| s.as_bytes())),
         Fee => u64_from(txs, |t| t.fee),
         ComputeUnitsConsumed => u64_from(txs, |t| t.compute_units_consumed),
-        AccountKeys => str_list_from(txs, |t| Some(t.account_keys.clone())),
-        RecentBlockhash => var_from(txs, |t| t.recent_blockhash.as_ref().map(|s| s.as_bytes())),
+        AccountKeys => str_list_from(txs, |t| {
+            t.account_keys
+                .as_ref()
+                .map(|keys| keys.iter().map(|key| key.to_string()).collect())
+        }),
+        RecentBlockhash => base58_col(txs, |t| t.recent_blockhash),
         Version => var_from(txs, |t| t.version.as_ref().map(|s| s.as_bytes())),
         TokenBalances => None,
     }
+}
+
+/// Column of base58-rendered byte newtypes (pubkeys, hashes), which the client
+/// hands over as bytes.
+fn base58_col<T: std::fmt::Display>(
+    txs: &[solana_simple::Transaction],
+    f: impl Fn(&solana_simple::Transaction) -> Option<T>,
+) -> Option<AnyCol> {
+    let rendered: Vec<Option<String>> = txs.iter().map(|t| f(t).map(|v| v.to_string())).collect();
+    var_from(&rendered, |v| v.as_deref().map(str::as_bytes))
 }
 
 /// Decode one SVM field. `token_balances` comes pre-gathered from the
@@ -306,8 +327,8 @@ fn decode_svm_field(
                 .map(|(&i, &m)| (m & bit != 0).then_some(i as i64))
                 .collect(),
         ),
-        Signatures | AccountKeys => Column::StrVec(str_list_cells(col, len)),
-        FeePayer | Err | RecentBlockhash | Version => {
+        AllSignatures | AccountKeys => Column::StrVec(str_list_cells(col, len)),
+        Signature | FeePayer | Err | RecentBlockhash | Version => {
             Column::Str(bytes_cells(col, len, |b| Ok(Some(utf8(b))))?)
         }
         Success => Column::Bool(bool_cells(col, len)),
@@ -334,10 +355,10 @@ fn decode_svm_columns(
     )
 }
 
-/// Token-balance columns: `mint`, `owner`, `preAmount`, `postAmount`.
-/// `account` is the key's third component (see `insert_svm_token_balances`),
-/// not a column.
-const TOKEN_BALANCE_FIELDS: usize = 4;
+/// Account-activity columns: `mint`, `owner`, `decimals`, `preAmount`,
+/// `postAmount`. `account` is the key's third component (see
+/// `insert_svm_account_activity`), not a column.
+const TOKEN_BALANCE_FIELDS: usize = 5;
 
 /// One materialised token-balance row, read directly by slot off the
 /// companion table's columns; `account` comes from the key, not a column.
@@ -347,12 +368,14 @@ fn token_balance_row(
     slot: u32,
 ) -> SvmTokenBalanceOut {
     let cell = |f: usize| table.var_cell(f, slot).map(utf8);
+    let amount = |f: usize| table.u64_cell(f, slot).map(bigint_u64);
     SvmTokenBalanceOut {
         account: Some(key.2.to_string()),
         mint: cell(0),
         owner: cell(1),
-        pre_amount: cell(2),
-        post_amount: cell(3),
+        decimals: table.u64_cell(2, slot).map(|v| v as u8),
+        pre_amount: amount(3),
+        post_amount: amount(4),
     }
 }
 
@@ -390,7 +413,7 @@ fn gather_token_balances(
 /// ecosystems), guarded together so merges and gathers stay atomic.
 struct Stores {
     txs: Table<(u64, u32)>,
-    token_balances: Table<(u64, u32, Box<str>)>,
+    account_activity: Table<(u64, u32, Box<str>)>,
 }
 
 #[napi]
@@ -436,7 +459,7 @@ impl TransactionStore {
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
         dst.txs.append_from(&mut src.txs);
-        dst.token_balances.append_from(&mut src.token_balances);
+        dst.account_activity.append_from(&mut src.account_activity);
     }
 
     /// Bulk-materialise transactions in columnar form, one row per
@@ -460,7 +483,8 @@ impl TransactionStore {
         // would silently truncate and misalign the result with the caller's items.
         if block_numbers.len() != transaction_indices.len() || block_numbers.len() != masks.len() {
             return Err(napi::Error::from_reason(format!(
-                "materialize column length mismatch: block_numbers={}, transaction_indices={}, masks={}",
+                "materialize column length mismatch: block_numbers={}, transaction_indices={}, \
+                 masks={}",
                 block_numbers.len(),
                 transaction_indices.len(),
                 masks.len()
@@ -486,7 +510,7 @@ impl TransactionStore {
                     let stores = self.inner.lock().unwrap();
                     (
                         stores.txs.gather_scratch(&keys, &masks),
-                        gather_token_balances(&stores.token_balances, &keys, &masks),
+                        gather_token_balances(&stores.account_activity, &keys, &masks),
                     )
                 };
                 tokio::task::block_in_place(|| {
@@ -510,7 +534,7 @@ impl TransactionStore {
             let mut stores = self.inner.lock().unwrap();
             stores.txs.prune((up_to, u32::MAX));
             stores
-                .token_balances
+                .account_activity
                 .prune((up_to, u32::MAX, Box::from("")));
         }
     }
@@ -523,12 +547,12 @@ impl TransactionStore {
             Ok(target) => {
                 stores.txs.rollback((target, u32::MAX));
                 stores
-                    .token_balances
+                    .account_activity
                     .rollback((target, u32::MAX, Box::from("")));
             }
             Err(_) => {
                 stores.txs.clear();
-                stores.token_balances.clear();
+                stores.account_activity.clear();
             }
         }
     }
@@ -544,7 +568,7 @@ impl TransactionStore {
         Self {
             inner: Mutex::new(Stores {
                 txs: Table::new(n_fields),
-                token_balances: Table::new(TOKEN_BALANCE_FIELDS),
+                account_activity: Table::new(TOKEN_BALANCE_FIELDS),
             }),
             ecosystem,
         }
@@ -578,7 +602,19 @@ impl TransactionStore {
         if txs.is_empty() {
             return;
         }
-        let keys = txs.iter().map(|t| (t.slot, t.transaction_index)).collect();
+        // A transaction row without its key has nothing to merge under; the
+        // query always selects both, so this only drops a malformed row.
+        let txs: Vec<_> = txs
+            .into_iter()
+            .filter(|t| t.slot.is_some() && t.transaction_index.is_some())
+            .collect();
+        if txs.is_empty() {
+            return;
+        }
+        let keys = txs
+            .iter()
+            .map(|t| (t.slot.unwrap(), t.transaction_index.unwrap()))
+            .collect();
         let cols = SvmTxField::VARIANTS
             .iter()
             .map(|&f| svm_tx_col(f, &txs))
@@ -586,39 +622,56 @@ impl TransactionStore {
         self.inner.lock().unwrap().txs.merge_batch(keys, cols);
     }
 
-    /// Merge one response's SVM token balances into the companion table, keyed
-    /// by (slot, transactionIndex, account). Rows missing either are dropped;
-    /// the SVM query forces `account` into the field selection whenever token
-    /// balances are requested, so a real response row always carries one. Not
-    /// exposed to JS.
-    pub(crate) fn insert_svm_token_balances(&self, mut rows: Vec<solana_simple::TokenBalance>) {
-        rows.retain(|r| r.transaction_index.is_some() && r.account.is_some());
+    /// Merge one response's SVM account activity into the companion table,
+    /// keyed by (slot, transactionIndex, account). Rows missing any key part
+    /// are dropped; the SVM query forces `account` into the field selection
+    /// whenever token balances are requested, so a real response row always
+    /// carries one. Native-only rows carry no token side and are skipped —
+    /// the store exposes the token balances of a transaction. Not exposed to
+    /// JS.
+    pub(crate) fn insert_svm_account_activity(
+        &self,
+        mut rows: Vec<solana_simple::AccountActivity>,
+    ) {
+        rows.retain(|r| {
+            r.slot.is_some()
+                && r.transaction_index.is_some()
+                && r.account.is_some()
+                && r.mint.is_some()
+        });
         if rows.is_empty() {
             return;
         }
-        let str_col = |f: fn(&solana_simple::TokenBalance) -> Option<&str>| -> Option<AnyCol> {
-            crate::field_table::var_from(&rows, |r| f(r).map(str::as_bytes))
-        };
+        let pubkey_col =
+            |f: fn(&solana_simple::AccountActivity) -> Option<String>| -> Option<AnyCol> {
+                let values: Vec<Option<String>> = rows.iter().map(f).collect();
+                crate::field_table::var_from(&values, |v| v.as_deref().map(str::as_bytes))
+            };
         let cols = vec![
-            str_col(|r| r.mint.as_deref()),
-            str_col(|r| r.owner.as_deref()),
-            str_col(|r| r.pre_amount.as_deref()),
-            str_col(|r| r.post_amount.as_deref()),
+            pubkey_col(|r| r.mint.map(|mint| mint.to_string())),
+            // The wire splits the owner so an in-transaction `SetAuthority`
+            // stays visible; the payload carries the owner the account ended
+            // with, falling back to the one it entered with when the account
+            // was closed during the transaction.
+            pubkey_col(|r| r.post_owner.or(r.pre_owner).map(|owner| owner.to_string())),
+            crate::field_table::u64_from(&rows, |r| r.token_decimals.map(u64::from)),
+            crate::field_table::u64_from(&rows, |r| r.pre_token_balance),
+            crate::field_table::u64_from(&rows, |r| r.post_token_balance),
         ];
         let keys = rows
             .into_iter()
             .map(|r| {
                 (
-                    r.slot,
+                    r.slot.unwrap(),
                     r.transaction_index.unwrap(),
-                    r.account.unwrap().into_boxed_str(),
+                    r.account.unwrap().to_string().into_boxed_str(),
                 )
             })
             .collect();
         self.inner
             .lock()
             .unwrap()
-            .token_balances
+            .account_activity
             .merge_batch(keys, cols);
     }
 }
@@ -652,18 +705,19 @@ mod tests {
 
     fn raw_svm_tx(slot: u64, index: u32) -> solana_simple::Transaction {
         solana_simple::Transaction {
-            slot,
-            transaction_index: index,
+            slot: Some(slot),
+            transaction_index: Some(index),
             ..Default::default()
         }
     }
 
-    fn column<'a>(cols: &'a Columns, name: &str) -> Option<&'a Column> {
-        cols.columns
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, c)| c)
+    /// Deterministic 32-byte pubkey; the client hands them over as bytes, so a
+    /// test value has to be a real key rather than a readable label.
+    fn svm_key(tag: u8) -> solana_simple::Address {
+        solana_simple::Address([tag; 32])
     }
+
+    use crate::field_columns::test_support::column;
 
     fn bit(field: EvmTxField) -> u64 {
         1u64 << (field as u32)
@@ -765,9 +819,9 @@ mod tests {
     async fn svm_decode_selected_only_materialises_masked_fields() {
         let store = TransactionStore::new_svm();
         let mut tx = raw_svm_tx(5, 0);
-        tx.account_keys = vec!["key1".to_string(), "key2".to_string()];
+        tx.account_keys = Some(vec![svm_key(1), svm_key(2)]);
         tx.fee = Some(5000);
-        tx.signatures = vec!["sig".to_string()];
+        tx.signatures = Some(vec![solana_simple::Signature([9; 64])]);
         store.insert_svm_txs(vec![tx]);
 
         // Select only accountKeys.
@@ -788,7 +842,7 @@ mod tests {
         assert_eq!(
             summary,
             (
-                vec![Some(vec!["key1".to_string(), "key2".to_string()])],
+                vec![Some(vec![svm_key(1).to_string(), svm_key(2).to_string()])],
                 false,
                 false
             )
@@ -799,19 +853,19 @@ mod tests {
     async fn token_balances_gather_by_key_range() {
         let store = TransactionStore::new_svm();
         store.insert_svm_txs(vec![raw_svm_tx(5, 0)]);
-        let balance = |slot, index, account: &str, mint: &str| solana_simple::TokenBalance {
-            slot,
+        let balance = |slot, index, account: u8, mint: u8| solana_simple::AccountActivity {
+            slot: Some(slot),
             transaction_index: Some(index),
-            account: Some(account.to_string()),
-            mint: Some(mint.to_string()),
+            account: Some(svm_key(account)),
+            mint: Some(svm_key(mint)),
             ..Default::default()
         };
         // Two balances (distinct accounts) on (5,0); one on a transaction with
         // no tx row (5,1).
-        store.insert_svm_token_balances(vec![
-            balance(5, 0, "acctA", "mintA"),
-            balance(5, 0, "acctB", "mintB"),
-            balance(5, 1, "acctC", "mintC"),
+        store.insert_svm_account_activity(vec![
+            balance(5, 0, 1, 0xA1),
+            balance(5, 0, 2, 0xA2),
+            balance(5, 1, 3, 0xA3),
         ]);
 
         let mask = (1u64 << (SvmTxField::TokenBalances as u32)) as f64;
@@ -833,8 +887,11 @@ mod tests {
                 assert_eq!(
                     mints,
                     vec![
-                        Some(vec![Some("mintA".to_string()), Some("mintB".to_string())]),
-                        Some(vec![Some("mintC".to_string())]),
+                        Some(vec![
+                            Some(svm_key(0xA1).to_string()),
+                            Some(svm_key(0xA2).to_string())
+                        ]),
+                        Some(vec![Some(svm_key(0xA3).to_string())]),
                         Some(vec![]),
                     ]
                 );
@@ -844,6 +901,62 @@ mod tests {
                 other.is_some()
             ),
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn account_activity_materialises_the_resolved_owner_and_typed_amounts() {
+        let store = TransactionStore::new_svm();
+        store.insert_svm_txs(vec![raw_svm_tx(5, 0)]);
+        // The token account changed hands mid-transaction, which the split
+        // pre/post owner keeps visible.
+        store.insert_svm_account_activity(vec![solana_simple::AccountActivity {
+            slot: Some(5),
+            transaction_index: Some(0),
+            account: Some(svm_key(1)),
+            mint: Some(svm_key(0xA1)),
+            pre_owner: Some(svm_key(0xB1)),
+            post_owner: Some(svm_key(0xB2)),
+            token_decimals: Some(6),
+            pre_token_balance: Some(10),
+            post_token_balance: Some(u64::MAX),
+            ..Default::default()
+        }]);
+
+        let mask = (1u64 << (SvmTxField::TokenBalances as u32)) as f64;
+        let cols = store
+            .materialize(vec![5], vec![0], vec![mask])
+            .await
+            .expect("materialize");
+
+        let balance = match column(&cols, "tokenBalances") {
+            Some(Column::TokenBalances(rows)) => rows[0].clone().expect("selected row")[0].clone(),
+            other => panic!(
+                "expected tokenBalances column, got present={}",
+                other.is_some()
+            ),
+        };
+        assert_eq!(
+            (
+                balance.account,
+                balance.mint,
+                balance.owner,
+                balance.decimals,
+                balance.pre_amount.map(|v| v.get_u64().1),
+                balance.post_amount.map(|v| v.get_u64().1),
+            ),
+            (
+                Some(svm_key(1).to_string()),
+                Some(svm_key(0xA1).to_string()),
+                // The account changed hands mid-transaction; the payload
+                // carries the owner it ended with.
+                Some(svm_key(0xB2).to_string()),
+                Some(6),
+                Some(10),
+                // Raw amounts are u64 on-chain; the store must not lose the top
+                // of the range on the way to JS.
+                Some(u64::MAX),
+            )
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -975,7 +1088,7 @@ mod tests {
             svm_names,
             vec![
                 "transactionIndex",
-                "signatures",
+                "signature",
                 "feePayer",
                 "success",
                 "err",
@@ -985,6 +1098,7 @@ mod tests {
                 "recentBlockhash",
                 "version",
                 "tokenBalances",
+                "allSignatures",
             ]
         );
     }

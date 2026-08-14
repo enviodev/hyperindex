@@ -50,8 +50,6 @@ rpc:
 
 ## Common Runtime Errors
 
-**"field not indexed"** — `getWhere` only works on `id` and fields with `@index` in `schema.graphql`.
-
 **"entity is read-only"** — Entities from `context.Entity.get()` are frozen. Spread to update: `context.Entity.set({ ...entity, field: newValue })`.
 
 **"Cannot find module 'envio'"** — Run `pnpm install`.

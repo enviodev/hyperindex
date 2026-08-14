@@ -1,28 +1,35 @@
 open Vitest
 
-let chainId = 1
-let baseChainConfig = {...Config.load().chainMap->ChainMap.values->Utils.Array.firstUnsafe, id: chainId}
+let chainId = 1->ChainId.fromInt
+let baseChainConfig = {
+  ...Config.load().chainMap->ChainMap.values->Utils.Array.firstUnsafe,
+  id: chainId,
+}
 
 // A registrations map with an onBlock config (no address partition) so
 // FetchState.make has something to index without needing real event configs.
 let registrationsByChainId: HandlerRegister.registrationsByChainId = {
   let d = Dict.make()
   d->Dict.set(
-    chainId->Int.toString,
-    ({
-      onEventRegistrations: [],
-      onBlockRegistrations: [
-        {
-          Internal.index: 0,
-          name: "chain-density-test",
-          chainId,
-          startBlock: None,
-          endBlock: None,
-          interval: 1,
-          handler: "mock onBlock handler"->(Utils.magic: string => Internal.onBlockArgs => promise<unit>),
-        },
-      ],
-    }: HandlerRegister.chainRegistrations),
+    chainId->ChainId.toString,
+    (
+      {
+        onEventRegistrations: [],
+        onBlockRegistrations: [
+          {
+            Internal.index: 0,
+            name: "chain-density-test",
+            chainId,
+            startBlock: None,
+            endBlock: None,
+            interval: 1,
+            handler: "mock onBlock handler"->(
+              Utils.magic: string => Internal.onBlockArgs => promise<unit>
+            ),
+          },
+        ],
+      }: HandlerRegister.chainRegistrations
+    ),
   )
   d
 }
@@ -44,11 +51,11 @@ let makeResumedChainState = (
   sourceBlockNumber: 1000,
 }
 
-let makeChainState = resumedChainState =>
+let makeChainState = (resumedChainState, ~reorgCheckpoints=[]) =>
   ChainState.makeFromDbState(
     baseChainConfig,
     ~resumedChainState,
-    ~reorgCheckpoints=[],
+    ~reorgCheckpoints,
     ~isInReorgThreshold=false,
     ~isRealtime=false,
     ~config=Config.load(),
@@ -70,7 +77,11 @@ describe("ChainState chain density seed (on resume)", () => {
 
   it("is None on a fresh chain with no resumed progress", t => {
     let cs = makeChainState(
-      makeResumedChainState(~progressBlockNumber=-1, ~numEventsProcessed=0., ~firstEventBlockNumber=None),
+      makeResumedChainState(
+        ~progressBlockNumber=-1,
+        ~numEventsProcessed=0.,
+        ~firstEventBlockNumber=None,
+      ),
     )
     t.expect(cs->ChainState.chainDensity).toEqual(None)
   })
@@ -94,7 +105,7 @@ describe("ChainState chain density EMA (per batch)", () => {
   let dummyFetchState = () =>
     FetchState.make(
       ~onEventRegistrations=[],
-      ~contractConfigs=Dict.make(),
+      ~addressStore=TestAddresses.makeStore(),
       ~addresses=[],
       ~startBlock=0,
       ~endBlock=None,
@@ -120,16 +131,18 @@ describe("ChainState chain density EMA (per batch)", () => {
     items: [],
     progressedChainsById: {
       let d = Dict.make()
-      d->Utils.Dict.setByInt(
+      d->ChainId.Dict.set(
         chainId,
-        ({
-          batchSize: 0,
-          progressBlockNumber,
-          sourceBlockNumber: 1000,
-          totalEventsProcessed,
-          fetchState,
-          isProgressAtHeadWhenBatchCreated: false,
-        }: Batch.chainAfterBatch),
+        (
+          {
+            batchSize: 0,
+            progressBlockNumber,
+            sourceBlockNumber: 1000,
+            totalEventsProcessed,
+            fetchState,
+            isProgressAtHeadWhenBatchCreated: false,
+          }: Batch.chainAfterBatch
+        ),
       )
       d
     },
@@ -143,7 +156,11 @@ describe("ChainState chain density EMA (per batch)", () => {
 
   it("seeds density from the first batch's own events/block (no prior density to blend)", t => {
     let cs = makeChainState(
-      makeResumedChainState(~progressBlockNumber=0, ~numEventsProcessed=0., ~firstEventBlockNumber=None),
+      makeResumedChainState(
+        ~progressBlockNumber=0,
+        ~numEventsProcessed=0.,
+        ~firstEventBlockNumber=None,
+      ),
     )
     let fetchState = dummyFetchState()
     cs->ChainState.applyBatchProgress(
@@ -156,7 +173,11 @@ describe("ChainState chain density EMA (per batch)", () => {
 
   it("stays None after a progress-only batch with no events", t => {
     let cs = makeChainState(
-      makeResumedChainState(~progressBlockNumber=0, ~numEventsProcessed=0., ~firstEventBlockNumber=None),
+      makeResumedChainState(
+        ~progressBlockNumber=0,
+        ~numEventsProcessed=0.,
+        ~firstEventBlockNumber=None,
+      ),
     )
     let fetchState = dummyFetchState()
     // Progressed 10 blocks but processed 0 events — must not seed a 0 density.
@@ -169,7 +190,11 @@ describe("ChainState chain density EMA (per batch)", () => {
 
   it("blends with the previous density weighted by the batch's block span", t => {
     let cs = makeChainState(
-      makeResumedChainState(~progressBlockNumber=0, ~numEventsProcessed=0., ~firstEventBlockNumber=None),
+      makeResumedChainState(
+        ~progressBlockNumber=0,
+        ~numEventsProcessed=0.,
+        ~firstEventBlockNumber=None,
+      ),
     )
     let fetchState = dummyFetchState()
     cs->ChainState.applyBatchProgress(

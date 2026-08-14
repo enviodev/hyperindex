@@ -4,7 +4,7 @@
 
 type pinnedEvent = {
   registrationId: string,
-  chainId: int,
+  chainId: ChainId.t,
   blockNumber: int,
   logIndex: int,
   transactionIndex: int,
@@ -20,7 +20,6 @@ type pinnedPage = {
   knownHeight: int,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,
-  latestFetchedBlockTimestamp: int,
   events: array<pinnedEvent>,
   blockHashes: array<ReorgDetection.blockData>,
   requestCounts: dict<int>,
@@ -57,7 +56,7 @@ let normalizeEvent = item =>
   switch item {
   | Internal.Event({
       onEventRegistration,
-      chain,
+      chainId,
       blockNumber,
       logIndex,
       transactionIndex,
@@ -66,7 +65,7 @@ let normalizeEvent = item =>
       let payload = payload->Evm.toPayload
       {
         registrationId: onEventRegistration.eventConfig.id,
-        chainId: chain->ChainMap.Chain.toChainId,
+        chainId,
         blockNumber,
         logIndex,
         transactionIndex,
@@ -82,13 +81,24 @@ let normalizeEvent = item =>
     JsError.throwWithMessage("RPC source contract pin unexpectedly received an onBlock item")
   }
 
+// The page's reorg hashes as a stable (blockNumber, blockHash) list, ascending
+// and deduplicated by block number.
+let storedBlockHashes = (blockStore: BlockStore.t): array<ReorgDetection.blockData> =>
+  blockStore
+  ->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=2147483647)
+  ->Array.filterMap(blockNumber =>
+    switch blockStore->BlockStore.getHash(blockNumber) {
+    | Null.Value(blockHash) => Some({ReorgDetection.blockNumber, blockHash})
+    | Null.Null => None
+    }
+  )
+
 let normalizePage = (response: Source.blockRangeFetchResponse): pinnedPage => {
   knownHeight: response.knownHeight,
   fromBlockQueried: response.fromBlockQueried,
   latestFetchedBlockNumber: response.latestFetchedBlockNumber,
-  latestFetchedBlockTimestamp: response.latestFetchedBlockTimestamp,
   events: response.parsedQueueItems->Array.map(normalizeEvent),
-  blockHashes: response.blockHashes,
+  blockHashes: response.blockStore->storedBlockHashes,
   requestCounts: response.requestStats->countRequests,
 }
 

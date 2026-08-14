@@ -23,7 +23,8 @@ type parsedWhere = {
   filterByAddresses: bool,
   // Indexed params filtered by `chain.<Contract>.addresses`, in disjunctive
   // normal form (outer array OR of AND-groups). Empty unless `filterByAddresses`.
-  // Consumed by the codegen of the event's `clientAddressFilter`.
+  // Applied natively by every source while routing; carried on the registration
+  // for the simulate source, which has no native query boundary.
   addressFilterParamGroups: array<array<string>>,
 }
 
@@ -84,7 +85,7 @@ let extractStartBlock = (
 // getter — the enclosing chainObj is a plain JS object.
 let makeChainArg = (
   ~contractName: string,
-  ~chainId: int,
+  ~chainId: ChainId.t,
   ~getAddresses: unit => array<Address.t>,
 ) => {
   let contractObj = Utils.Object.createNullObject()
@@ -124,7 +125,7 @@ let parseWhereOrThrow = {
     ~sighash,
     ~params: array<string>,
     ~contractName: string,
-    ~chainId: int,
+    ~chainId: ChainId.t,
     ~onEventBlockFilterSchema: S.t<option<unknown>>,
     ~topic1=noopGetter,
     ~topic2=noopGetter,

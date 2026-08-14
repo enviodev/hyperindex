@@ -2,7 +2,7 @@ open Vitest
 
 describe("Test makeClickHouseEntitySchema", () => {
   Async.it("Should serialize Date fields using getTime() instead of ISO string", async t => {
-    let entityConfig = MockIndexer.entityConfig(EntityWithAllTypes)
+    let entityConfig = MockIndexer.entityConfig("EntityWithAllTypes")
 
     // Create a schema using makeClickHouseEntitySchema
     let clickHouseSchema = ClickHouse.makeClickHouseEntitySchema(entityConfig.table)
@@ -162,7 +162,7 @@ ORDER BY (id)`
     Async.it(
       "Should create SQL for A entity history table",
       async t => {
-        let entityConfig = MockIndexer.entityConfig(EntityWithAllTypes)
+        let entityConfig = MockIndexer.entityConfig("EntityWithAllTypes")
         let query = ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database="test_db")
 
         let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_history_EntityWithAllTypes\` (
@@ -205,7 +205,7 @@ ORDER BY (id, envio_checkpoint_id)`
     Async.it(
       "Should add ON CLUSTER and ReplicatedMergeTree when replicated",
       async t => {
-        let entityConfig = MockIndexer.entityConfig(EntityWithAllTypes)
+        let entityConfig = MockIndexer.entityConfig("EntityWithAllTypes")
         let query = ClickHouse.makeCreateHistoryTableQuery(
           ~entityConfig,
           ~database="test_db",
@@ -276,9 +276,6 @@ storage:
   clickhouse: true
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
 `,
         ).config
@@ -343,9 +340,6 @@ storage:
     column_name_format: snake_case
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
 `,
         ).config
@@ -395,9 +389,6 @@ storage:
     column_name_format: snake_case
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
 `,
         ).config
@@ -427,7 +418,7 @@ TTL \`trade_time\` + INTERVAL 1 YEAR DELETE WHERE \`base_token_id\` != ''`)
     Async.it(
       "Should create SQL for A entity view",
       async t => {
-        let entity = MockIndexer.entityConfig(EntityWithAllTypes)
+        let entity = MockIndexer.entityConfig("EntityWithAllTypes")
         let query = ClickHouse.makeCreateViewQuery(~entityConfig=entity, ~database="test_db")
 
         let expectedQuery = `CREATE VIEW IF NOT EXISTS test_db.\`EntityWithAllTypes\` AS
@@ -448,7 +439,7 @@ WHERE \`envio_change\` = 'SET'`
     Async.it(
       "Should add ON CLUSTER when replicated",
       async t => {
-        let entity = MockIndexer.entityConfig(EntityWithAllTypes)
+        let entity = MockIndexer.entityConfig("EntityWithAllTypes")
         let query = ClickHouse.makeCreateViewQuery(
           ~entityConfig=entity,
           ~database="test_db",

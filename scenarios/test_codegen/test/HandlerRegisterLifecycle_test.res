@@ -56,7 +56,7 @@ describe("HandlerRegister — every onEvent registers separately", () => {
   })
 
   it("an invalid where throws at the registration call site", t => {
-    t.expect(() =>
+    t->toThrowErrorEqual(() =>
       HandlerRegister.setHandler(
         ~contractName="EventFiltersTest",
         ~eventName="EmptyFiltersArray",
@@ -65,7 +65,7 @@ describe("HandlerRegister — every onEvent registers separately", () => {
           ~where=%raw(`{params: {nonExistingParam: "0x0000000000000000000000000000000000000000"}}`),
         ),
       )
-    ).toThrowError(
+    , 
       `Invalid where configuration. The event doesn't have an indexed parameter "nonExistingParam" and can't use it for filtering`,
     )
   })
@@ -79,44 +79,46 @@ describe("HandlerRegister — onBlock validation at registration", () => {
     config.chainMap
     ->ChainMap.values
     ->Array.map(chainConfig => (
-      chainConfig.id->Int.toString,
-      {"id": chainConfig.id}->(Utils.magic: {"id": int} => unknown),
+      chainConfig.id->ChainId.toString,
+      {"id": chainConfig.id}->(Utils.magic: {"id": ChainId.t} => unknown),
     ))
     ->Dict.fromArray
 
   it("throws when where is not a function", t => {
-    t.expect(() =>
+    t->toThrowErrorEqual(() =>
       HandlerRegister.registerOnBlock(
         ~name="badWhere",
         ~where=%raw(`{block: {number: {_gte: 10}}}`),
         ~handler=noopBlockHandler,
         ~getChainsObject,
       )
-    ).toThrowError(
+    , 
       `\`indexer.onBlock("badWhere")\` expected \`where\` to be a function or omitted, but got object.`,
     )
   })
 
   it("throws when where returns a filter with unknown fields", t => {
-    t.expect(() =>
+    t->toThrowErrorEqual(() =>
       HandlerRegister.registerOnBlock(
         ~name="typoFilter",
         ~where=%raw(`() => ({block: {number: {_gt: 10}}})`),
         ~handler=noopBlockHandler,
         ~getChainsObject,
       )
-    ).toThrowError(`\`indexer.onBlock("typoFilter")\` \`where\` returned an invalid filter`)
+    , 
+      `\`indexer.onBlock("typoFilter")\` \`where\` returned an invalid filter: RescriptSchemaError: Failed parsing at root. Reason: Encountered disallowed excess key "_gt" on an object`,
+    )
   })
 
   it("throws when startBlock is below the chain start block", t => {
-    t.expect(() =>
+    t->toThrowErrorEqual(() =>
       HandlerRegister.registerOnBlock(
         ~name="tooEarly",
         ~where=%raw(`({chain}) => chain.id === 137 ? {block: {number: {_gte: 0}}} : false`),
         ~handler=noopBlockHandler,
         ~getChainsObject,
       )
-    ).toThrowError(
+    , 
       `The start block for onBlock handler "tooEarly" is less than the chain start block (1). This is not supported yet.`,
     )
   })

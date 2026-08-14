@@ -45,6 +45,19 @@ let rec startProcessing = async (state: IndexerState.t, ~scheduleFetch, ~schedul
     // Hand off now that no batch is in flight.
     if state->IndexerState.isResolvingReorg {
       scheduleRollback()
+    } else if (
+      !(state->IndexerState.isStopped) &&
+      // Only a genuine fetch stall when some chain still has blocks to bring in.
+      // If every chain has buffered up to its known head, the loop is idling at
+      // the tip waiting for new blocks, not bottlenecked on fetch.
+      !(
+        state
+        ->IndexerState.chainStates
+        ->Dict.valuesToArray
+        ->Array.every(ChainState.isFetchingAtHead)
+      )
+    ) {
+      state->IndexerState.markProcessingStalledOnFetch
     }
   }
 }
@@ -85,6 +98,23 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
 
   if progressedChainsById->Utils.Dict.isEmpty {
     if shouldEnterReorgThreshold {
+      scheduleFetch()
+    }
+
+    // Nothing progressed, but a backfill that reached the head and died before
+    // finalizing resumes exactly here: it still owes the schema its deferred
+    // indexes, and no batch will ever come along to notice.
+    state->IndexerState.markCaughtUpIfSettled
+    if state->IndexerState.isFinalizingIndexes {
+      await FinalizeBackfill.run(state)
+    }
+
+    // Same realtime handoff the progressed-batch path does below. IndexerLoop
+    // starts fetching before processing, so by now the chain is already parked
+    // on a pre-realtime waiter; without this it stays there, polling the sync
+    // source at the backfill interval, until that source reports a new height.
+    if !isRealtimeBeforeUpdate && state->IndexerState.isRealtime {
+      state->IndexerState.invalidateInflight
       scheduleFetch()
     }
 
@@ -142,6 +172,13 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
         // Can safely reset rollback state, since overwrite is not possible.
         state->IndexerState.clearRollback
         state->IndexerState.applyBatchProgress(~batch)
+
+        // Backfilling → FinalizingIndexes → Ready. Awaiting here holds the
+        // processing loop for the whole finalize, which is what pauses
+        // processing while the indexes are built.
+        if state->IndexerState.isFinalizingIndexes {
+          await FinalizeBackfill.run(state)
+        }
 
         if !isRealtimeBeforeUpdate && state->IndexerState.isRealtime {
           // Catching up just flipped the chain to realtime, which changes the

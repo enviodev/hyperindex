@@ -45,7 +45,7 @@ newline`->Metrics.escapeLabelValue).toBe(`weird \\"name\\",a=b \\\\ with\\nnewli
       ~name="envio_source_request_seconds_total",
       ~help="Cumulative time spent on data source requests.",
       ~kind="counter",
-      ~entries=[(`{method="getLogs"}`, 1.5), (`{method="heightSubscription"}`, 0.)],
+      ~entries=[(`{method="getLogs"}`, 1.5), (`{method="heightPush"}`, 0.)],
       ~value=v => v !== 0. ? Some(v) : None,
     )
 
@@ -69,12 +69,16 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
   it("Escapes both the effect and the scope label values", t => {
     let metrics: Metrics.t = {
       startTime: Date.fromTime(0.),
+      metricTime: Date.fromTime(0.),
+      elapsedSeconds: 0.,
       targetBufferSize: 0,
       isInReorgThreshold: false,
       rollbackEnabled: false,
       maxBatchSize: 0,
       preloadSeconds: 0.,
       processingSeconds: 0.,
+      processingStalledOnFetchSeconds: 0.,
+      processingStalledOnStorageWriteSeconds: 0.,
       rollbackSeconds: 0.,
       rollbackCount: 0,
       rollbackEventsCount: 0.,
@@ -111,18 +115,22 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
   it("Renders every metric family from a fully populated snapshot", t => {
     let metrics: Metrics.t = {
       startTime: Date.fromTime(1700000000000.),
+      metricTime: Date.fromTime(1700000123456.),
+      elapsedSeconds: 123.456,
       targetBufferSize: 5000,
       isInReorgThreshold: true,
       rollbackEnabled: true,
       maxBatchSize: 5000,
       preloadSeconds: 12.3456,
       processingSeconds: 7.891,
+      processingStalledOnFetchSeconds: 6.02,
+      processingStalledOnStorageWriteSeconds: 1.33,
       rollbackSeconds: 0.25,
       rollbackCount: 2,
       rollbackEventsCount: 42.,
       chains: [
         {
-          chainId: 1.,
+          chainId: 1->ChainId.fromInt,
           poweredByHyperSync: true,
           firstEventBlockNumber: Some(100),
           latestProcessedBlock: Some(200),
@@ -169,7 +177,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       effects: [
         {
           effect: "getMetadata",
-          scope: Internal.EffectCache.scopeToString(CrossChain),
+          scope: Internal.chainScopeToString(CrossChain),
           callSeconds: 8.4,
           callSecondsTotal: 20.9,
           callCount: 300.,
@@ -208,16 +216,30 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       sourceRequests: [
         {
           source: "HyperSync",
-          chainId: 1,
+          chainId: 1->ChainId.fromInt,
           method: "getLogs",
           count: 42,
           seconds: 33.75,
+        },
+        {
+          source: "HyperSync",
+          chainId: 1->ChainId.fromInt,
+          method: "heightPush",
+          count: 7,
+          seconds: 0.,
+        },
+        {
+          source: "HyperSync",
+          chainId: 1->ChainId.fromInt,
+          method: "heightPushIgnored",
+          count: 0,
+          seconds: 0.,
         },
       ],
       sourceHeights: [
         {
           source: "HyperSync",
-          chainId: 1,
+          chainId: 1->ChainId.fromInt,
           height: 305,
         },
       ],
@@ -227,6 +249,18 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 # TYPE envio_info gauge
 envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
+# HELP envio_process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE envio_process_start_time_seconds gauge
+envio_process_start_time_seconds 1700000000
+
+# HELP envio_process_metric_time_seconds The time these metrics were collected. Use it to tell how fresh a snapshot is, or to measure rates between two snapshots.
+# TYPE envio_process_metric_time_seconds gauge
+envio_process_metric_time_seconds 1700000123.456
+
+# HELP envio_process_elapsed_seconds How long the indexer has been running. Divide a cumulative seconds metric by this to get the share of the run it took, eg envio_processing_seconds for time spent in event handlers.
+# TYPE envio_process_elapsed_seconds gauge
+envio_process_elapsed_seconds 123.456
+
 # HELP envio_preload_seconds Cumulative time spent on preloading entities during batch processing.
 # TYPE envio_preload_seconds counter
 envio_preload_seconds 12.346
@@ -234,6 +268,14 @@ envio_preload_seconds 12.346
 # HELP envio_processing_seconds Cumulative time spent executing event handlers during batch processing.
 # TYPE envio_processing_seconds counter
 envio_processing_seconds 7.891
+
+# HELP envio_processing_stalled_on_fetch_seconds Time the indexer had nothing to process while waiting for events to be fetched. A high rate means fetching is the bottleneck: check the data-source latency and whether it can be queried with more concurrency. Waiting at the chain head for new blocks is not counted.
+# TYPE envio_processing_stalled_on_fetch_seconds counter
+envio_processing_stalled_on_fetch_seconds 6.02
+
+# HELP envio_processing_stalled_on_storage_write_seconds Time the indexer paused processing because too many changes were still waiting to be written. A high rate means storage writes are the bottleneck: check envio_storage_write_seconds and the database performance.
+# TYPE envio_processing_stalled_on_storage_write_seconds counter
+envio_processing_stalled_on_storage_write_seconds 1.33
 
 # HELP envio_progress_ready Whether the chain is fully synced to the head.
 # TYPE envio_progress_ready gauge
@@ -287,10 +329,6 @@ envio_fetching_block_range_size{chainId="1"} 250
 # TYPE envio_indexing_known_height gauge
 envio_indexing_known_height{chainId="1"} 305
 
-# HELP envio_process_start_time_seconds Start time of the process since unix epoch in seconds.
-# TYPE envio_process_start_time_seconds gauge
-envio_process_start_time_seconds 1700000000
-
 # HELP envio_indexing_concurrency The number of executing concurrent queries to the chain data-source.
 # TYPE envio_indexing_concurrency gauge
 envio_indexing_concurrency{chainId="1"} 2
@@ -327,9 +365,10 @@ envio_indexing_buffer_block{chainId="1"} 260
 # TYPE envio_indexing_end_block gauge
 envio_indexing_end_block{chainId="1"} 1000
 
-# HELP envio_source_request_total The number of requests made to data sources.
+# HELP envio_source_request_total The number of requests made to data sources. Heights pushed by a subscription stream are counted here too, under the heightPush and heightPushIgnored methods.
 # TYPE envio_source_request_total counter
 envio_source_request_total{source="HyperSync",chainId="1",method="getLogs"} 42
+envio_source_request_total{source="HyperSync",chainId="1",method="heightPush"} 7
 
 # HELP envio_source_request_seconds_total Cumulative time spent on data source requests.
 # TYPE envio_source_request_seconds_total counter

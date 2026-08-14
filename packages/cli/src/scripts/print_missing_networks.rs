@@ -107,8 +107,8 @@ impl Diff {
     pub fn print_message(&self) {
         if self.is_empty() {
             println!(
-                "All chains from the API are present in the HypersyncChain enum, and vice \
-                 versa. Nothing to update."
+                "All chains from the API are present in the HypersyncChain enum, and vice versa. \
+                 Nothing to update."
             );
         } else {
             if !self.missing_chains.is_empty() {

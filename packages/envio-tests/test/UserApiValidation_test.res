@@ -20,9 +20,6 @@ contracts:
       - event: Transfer()
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
     contracts:
       - name: ${contractName}
@@ -82,9 +79,6 @@ chains:
 name: virtual-abi
 chains:
   - id: 1
-    rpc:
-      url: https://rpc.example.test
-      for: sync
     start_block: 0
     contracts:
       - name: Token
@@ -144,8 +138,8 @@ describe("EVM config YAML", () => {
 
   ["checksum", "lowercase"]->Array.forEach(addressFormat => {
     it(`rejects invalid addresses with address_format: ${addressFormat}`, t => {
-      t.expect(() => parseAddressConfig(~addressFormat, "0xfoo")->ignore).toThrowError(
-        `Contract "ERC20" on chain 1 has invalid address "0xfoo"`,
+      t->toThrowErrorEqual(() => parseAddressConfig(~addressFormat, "0xfoo")->ignore, 
+        `Config parse error: Contract "ERC20" on chain 1 has invalid address "0xfoo". Expected a 20-byte hex string starting with 0x.`,
       )
     })
   })
@@ -315,6 +309,43 @@ chains:
     | _ => (None, None)
     }
     t.expect(columnNames).toEqual((Some("user_id"), None))
+  })
+
+  it("resolves per-entity ClickHouse table options from the storage directive", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~schema=`
+type Transfer @storage(clickhouse: {
+  partitionBy: "toYYYYMM(timestamp)",
+  orderBy: ["timestamp"],
+  ttl: "timestamp + INTERVAL 2 YEAR"
+}) {
+  id: ID!
+  timestamp: Timestamp!
+  amount: BigInt!
+}
+`,
+      ~configYaml=`
+name: clickhouse-table-options
+storage:
+  postgres:
+    default: true
+  clickhouse:
+    default: true
+chains:
+  - id: 1
+    start_block: 0
+`,
+    )
+    let transfer = config.userEntitiesByName->Dict.getUnsafe("Transfer")
+    t.expect(transfer.storage).toEqual({
+      Internal.postgres: false,
+      clickhouse: true,
+      clickhouseOptions: {
+        partitionBy: "toYYYYMM(timestamp)",
+        orderBy: ["timestamp"],
+        ttl: "timestamp + INTERVAL 2 YEAR",
+      },
+    })
   })
 })
 
@@ -698,7 +729,7 @@ chains:
       `
 name: unavailable-rpc-transaction-field
 field_selection:
-  transaction_fields: [gas]
+  transaction_fields: [accessList]
 chains:
   - id: 999999
     rpc:
@@ -706,22 +737,7 @@ chains:
       for: sync
     start_block: 0
 `,
-      "Config parse error: The following selected transaction_fields are unavailable for indexing via RPC: gas",
-    ),
-    (
-      "rejects block fields unavailable through RPC sync",
-      `
-name: unavailable-rpc-block-field
-field_selection:
-  block_fields: [sha3Uncles]
-chains:
-  - id: 999999
-    rpc:
-      url: https://rpc.example.test
-      for: sync
-    start_block: 0
-`,
-      "Config parse error: The following selected block_fields are unavailable for indexing via RPC: sha3Uncles",
+      "Config parse error: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
     ),
     (
       "rejects event fields unavailable on a local RPC contract",
@@ -738,9 +754,9 @@ chains:
         events:
           - event: Transfer()
             field_selection:
-              transaction_fields: [gas]
+              transaction_fields: [accessList]
 `,
-      "Config parse error: Failed parsing abi types for events in contract Token on network 999999: The following selected transaction_fields are unavailable for indexing via RPC: gas",
+      "Config parse error: Failed parsing abi types for events in contract Token on network 999999: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
     ),
     (
       "rejects event fields unavailable on a global contract used by RPC",
@@ -751,7 +767,7 @@ contracts:
     events:
       - event: Transfer()
         field_selection:
-          transaction_fields: [gas]
+          transaction_fields: [accessList]
 chains:
   - id: 999999
     rpc:
@@ -761,7 +777,7 @@ chains:
     contracts:
       - name: Token
 `,
-      "Config parse error: Failed parsing abi types for events in global contract Token: The following selected transaction_fields are unavailable for indexing via RPC: gas",
+      "Config parse error: Failed parsing abi types for events in global contract Token: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
     ),
     (
       "rejects duplicate contract names case-insensitively",
@@ -879,9 +895,6 @@ contracts:
       - event: Transfer(address indexed from, address indexed to, uint256 value)
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
     contracts:
       - name: ERC20
@@ -907,9 +920,6 @@ contracts:
       - event: Transfer(address indexed from, address indexed to, uint256 value)
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
     contracts:
       - name: Token
@@ -930,7 +940,7 @@ chains:
 `)
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.ecosystem.name).toEqual(Ecosystem.Fuel)
-    t.expect((chain.id, chain.startBlock)).toEqual((0, 7))
+    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("0", 7))
   })
 
   it("parses a minimal SVM config through the public boundary", t => {
@@ -943,7 +953,7 @@ chains:
 `)
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.ecosystem.name).toEqual(Ecosystem.Svm)
-    t.expect((chain.id, chain.startBlock)).toEqual((0, 8))
+    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("0", 8))
   })
 
   it("validates event field selections against only the chain that uses them", t => {
@@ -957,7 +967,7 @@ chains:
         events:
           - event: Transfer()
             field_selection:
-              transaction_fields: [gas]
+              transaction_fields: [accessList]
   - id: 999999
     rpc:
       url: https://rpc.example.test
@@ -979,7 +989,7 @@ contracts:
     events:
       - event: Transfer()
         field_selection:
-          transaction_fields: [gas]
+          transaction_fields: [accessList]
 chains:
   - id: 1
     start_block: 0
@@ -1006,7 +1016,7 @@ chains:
 `)
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.chainMap->ChainMap.values->Array.length).toBe(1)
-    t.expect(chain.id).toBe(137)
+    t.expect(chain.id->ChainId.toString).toBe("137")
     t.expect(chain.startBlock).toBe(2000)
   })
 
@@ -1085,6 +1095,67 @@ chains:
 `,
     )
     t.expect(config.userEntitiesByName->Dict.has("Token")).toBe(true)
+  })
+
+  it("resolves per-contract start blocks and leaves unset ones to the chain default", t => {
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+name: per-contract-start-block
+contracts:
+  - name: Early
+    events:
+      - event: Transfer()
+  - name: Late
+    events:
+      - event: Transfer()
+  - name: Default
+    events:
+      - event: Transfer()
+chains:
+  - id: 1
+    start_block: 1000
+    contracts:
+      - name: Early
+        address: "0x1111111111111111111111111111111111111111"
+        start_block: 500
+      - name: Late
+        address: "0x2222222222222222222222222222222222222222"
+        start_block: 1500
+      - name: Default
+        address: "0x3333333333333333333333333333333333333333"
+`)
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    let byName = chain.contracts->Array.toSorted((a, b) => String.compare(a.name, b.name))
+    t.expect(byName->Array.map(c => (c.name, c.startBlock))).toEqual([
+      ("Default", None),
+      ("Early", Some(500)),
+      ("Late", Some(1500)),
+    ])
+  })
+
+  it("keeps a contract with no address for dynamic registration", t => {
+    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+name: factory-and-dynamic
+contracts:
+  - name: Factory
+    events:
+      - event: PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)
+  - name: Pool
+    events:
+      - event: Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Factory
+        address: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+      - name: Pool
+`)
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    let byName = chain.contracts->Array.toSorted((a, b) => String.compare(a.name, b.name))
+    t.expect(byName->Array.map(c => (c.name, c.addresses->Array.length))).toEqual([
+      ("Factory", 1),
+      ("Pool", 0),
+    ])
   })
 })
 
@@ -1728,6 +1799,29 @@ chains:
     start_block: 0
 `,
       "Config parse error: Schema validation failed:\n\nMultiple entity fields map to the same database column:\n  - \`Token\`: fields \`tokenId\`, \`token_id\` all map to the \"token_id\" column.\n\nFixes:\n  - Rename the conflicting fields in schema.graphql so they map to distinct columns. Note that entity reference fields get an \`_id\` suffix, and \`column_name_format: snake_case\` converts field names to snake_case.",
+    ),
+    (
+      "rejects a derivedFrom pointing at an entity that isn't in postgres",
+      `
+type Trader @storage(postgres: true) {
+  id: ID!
+  orders: [Order!]! @derivedFrom(field: "trader")
+}
+type Order @storage(clickhouse: true) {
+  id: ID!
+  trader: Trader!
+}
+`,
+      `
+name: cross-storage-relationship
+storage:
+  postgres: true
+  clickhouse: true
+chains:
+  - id: 1
+    start_block: 0
+`,
+      "Config parse error: Schema validation failed:\n\n@derivedFrom relationships between entities that don't share the postgres storage:\n  - \`Trader\`.\`orders\` derives from \`Order\`, which is not stored in postgres.\n\nFixes:\n  - Add postgres to the @storage directive of the referenced entities, or\n  - Remove the @derivedFrom fields listed above.",
     ),
   ]->Array.forEach(((name, schema, yaml, message)) => {
     it(name, t => expectParseError(t, ~schema, yaml, message))

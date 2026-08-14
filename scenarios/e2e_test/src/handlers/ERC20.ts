@@ -1,4 +1,4 @@
-import { indexer } from "envio";
+import { indexer, BigDecimal } from "envio";
 
 // Verify that indexer.chains reads endBlock from the database, not from config.
 // E2E_EXPECTED_END_BLOCK is always required so the check runs on every start.
@@ -74,5 +74,25 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
     id,
     from: event.params.from,
     value: event.params.value,
+  });
+
+  // Per-chain entities: the same id on another chain would be a separate row,
+  // and the ChainAccount -> ChainTransfer relationship must stay within a chain.
+  context.ChainTransfer.set({
+    id,
+    from: event.params.from,
+    value: event.params.value,
+  });
+  context.ChainAccount.set({ id: event.params.from });
+
+  // Values are chosen beyond float64 precision so a regression that lets
+  // Hasura serve NUMERIC[] as numbers changes the digits, not just the type.
+  context.NumericArrays.set({
+    id: "1",
+    bigInts: [9007199254740993n, 1000000000000000000000000000n],
+    bigDecimals: [
+      new BigDecimal("3.3"),
+      new BigDecimal("123456789012345678.123456789"),
+    ],
   });
 });

@@ -10,7 +10,8 @@ describe("LoadLayer", () => {
       LoadLayer.loadById(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -38,7 +39,8 @@ describe("LoadLayer", () => {
       LoadLayer.loadById(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -73,7 +75,8 @@ describe("LoadLayer", () => {
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-          ~entityConfig=MockIndexer.entityConfig(User),
+          ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -103,7 +106,8 @@ describe("LoadLayer", () => {
       LoadLayer.loadById(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -148,7 +152,8 @@ describe("LoadLayer", () => {
       LoadLayer.loadById(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~entityId,
         ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -184,13 +189,14 @@ describe("LoadLayer", () => {
       )
 
       let indexerState = MockIndexer.InMemoryStore.make(
-        ~entities=[(MockIndexer.entityConfig(User), [user1])],
+        ~entities=[(MockIndexer.entityConfig("User"), [user1])],
       )
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-          ~entityConfig=MockIndexer.entityConfig(User),
+          ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -234,7 +240,8 @@ describe("LoadLayer", () => {
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-          ~entityConfig=MockIndexer.entityConfig(User),
+          ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -250,7 +257,8 @@ describe("LoadLayer", () => {
       await Promise.resolve()
 
       indexerState->MockIndexer.InMemoryStore.setEntity(
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         user1,
       )
 
@@ -284,14 +292,15 @@ describe("LoadLayer", () => {
       )
 
       let indexerState = MockIndexer.InMemoryStore.make(
-        ~entities=[(MockIndexer.entityConfig(User), [user1])],
+        ~entities=[(MockIndexer.entityConfig("User"), [user1])],
       )
 
       let getUser = entityId =>
         LoadLayer.loadById(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-          ~entityConfig=MockIndexer.entityConfig(User),
+          ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
           ~indexerState,
           ~entityId,
           ~item=MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem,
@@ -335,7 +344,8 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -349,7 +359,8 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -381,7 +392,8 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -419,7 +431,7 @@ describe("LoadLayer", () => {
     }
 
     let indexerState = MockIndexer.InMemoryStore.make(
-      ~entities=[(MockIndexer.entityConfig(User), [user1])],
+      ~entities=[(MockIndexer.entityConfig("User"), [user1])],
     )
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
@@ -427,7 +439,8 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -455,7 +468,7 @@ describe("LoadLayer", () => {
   })
 
   Async.it(
-    "Distributes db rows of the merged query to the matching filter indices",
+    "Distributes db rows of the merged query to the matching filter indexes",
     async t => {
       let user = (id, address): Indexer.Entities.User.t => {
         id,
@@ -469,7 +482,7 @@ describe("LoadLayer", () => {
 
       let storageMock = MockIndexer.Storage.make(
         [#loadOrThrow],
-        ~dbEntities=[(MockIndexer.entityConfig(User), [user1, user2, user("3", "0x3")])],
+        ~dbEntities=[(MockIndexer.entityConfig("User"), [user1, user2, user("3", "0x3")])],
       )
       let loadManager = LoadManager.make()
       let indexerState = MockIndexer.InMemoryStore.make()
@@ -479,7 +492,8 @@ describe("LoadLayer", () => {
         LoadLayer.loadByFilter(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-          ~entityConfig=MockIndexer.entityConfig(User),
+          ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
           ~indexerState,
           ~item,
           ~ecosystem=MockIndexer.config.ecosystem,
@@ -520,7 +534,8 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -560,7 +575,8 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -614,7 +630,7 @@ describe("LoadLayer", () => {
     }
 
     let indexerState = MockIndexer.InMemoryStore.make(
-      ~entities=[(MockIndexer.entityConfig(User), [user1, user2])],
+      ~entities=[(MockIndexer.entityConfig("User"), [user1, user2])],
     )
 
     let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
@@ -622,7 +638,8 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -637,7 +654,8 @@ describe("LoadLayer", () => {
       LoadLayer.loadByFilter(
         ~loadManager,
         ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         ~indexerState,
         ~item,
         ~ecosystem=MockIndexer.config.ecosystem,
@@ -678,7 +696,8 @@ describe("LoadLayer", () => {
     ).toEqual(2)
 
     indexerState->MockIndexer.InMemoryStore.setEntity(
-      ~entityConfig=MockIndexer.entityConfig(User),
+      ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
       {...user2, updatesCountOnUserForTesting: 0},
     )
 
@@ -714,7 +733,8 @@ describe("LoadLayer", () => {
         LoadLayer.loadByFilter(
           ~loadManager,
           ~persistence=storageMock->MockIndexer.Storage.toPersistence,
-          ~entityConfig=MockIndexer.entityConfig(User),
+          ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
           ~indexerState,
           ~item,
           ~ecosystem=MockIndexer.config.ecosystem,
@@ -737,7 +757,8 @@ describe("LoadLayer", () => {
       t.expect(storageMock.loadOrThrowCalls).toEqual(loadEntitiesByFieldSingleDbCall)
 
       indexerState->MockIndexer.InMemoryStore.setEntity(
-        ~entityConfig=MockIndexer.entityConfig(User),
+        ~entityConfig=MockIndexer.entityConfig("User"),
+        ~scope=Internal.CrossChain,
         user1,
       )
 
@@ -858,11 +879,11 @@ describe("LoadLayer effect scope isolation", () => {
       )
 
       // Two concurrent calls, same input, same chain -> handler runs once.
-      let chain1 = await Promise.all([call(~scope=Chain(1), ~input="a"), call(~scope=Chain(1), ~input="a")])
+      let chain1 = await Promise.all([call(~scope=Chain(1->ChainId.fromInt), ~input="a"), call(~scope=Chain(1->ChainId.fromInt), ~input="a")])
       // Same input on a different chain -> handler runs again (isolated cache).
-      let chain2 = await call(~scope=Chain(2), ~input="a")
+      let chain2 = await call(~scope=Chain(2->ChainId.fromInt), ~input="a")
       // Repeat on chain 1 -> served from the warm in-memory cache, no new run.
-      let chain1Again = await call(~scope=Chain(1), ~input="a")
+      let chain1Again = await call(~scope=Chain(1->ChainId.fromInt), ~input="a")
 
       t.expect((callCount.contents, chain1, chain2, chain1Again)).toEqual((
         2,
@@ -948,9 +969,9 @@ describe("LoadLayer effect scope isolation", () => {
     // chain 1 exhausts its single-call window with "a", queuing "b" until the
     // window resets. chain 2 has its own independent window, so "a" resolves
     // right away instead of waiting behind chain 1.
-    let a1 = track(call(~scope=Chain(1), ~input="a"), "chain1-a")
-    let b1 = track(call(~scope=Chain(1), ~input="b"), "chain1-b")
-    let a2 = track(call(~scope=Chain(2), ~input="a"), "chain2-a")
+    let a1 = track(call(~scope=Chain(1->ChainId.fromInt), ~input="a"), "chain1-a")
+    let b1 = track(call(~scope=Chain(1->ChainId.fromInt), ~input="b"), "chain1-b")
+    let a2 = track(call(~scope=Chain(2->ChainId.fromInt), ~input="a"), "chain2-a")
 
     let _ = await Promise.all([a1, b1, a2])
 
@@ -994,7 +1015,7 @@ describe("LoadLayer effect scope isolation", () => {
     )
 
     // Consume chain 1's single-call-per-window budget.
-    let _ = await call(~scope=Chain(1), ~input="a")
+    let _ = await call(~scope=Chain(1->ChainId.fromInt), ~input="a")
 
     // A reorg wipes the effect in-mem tables (IndexerState.beginRollbackDiff).
     indexerState->IndexerState.beginRollbackDiff(
@@ -1005,7 +1026,7 @@ describe("LoadLayer effect scope isolation", () => {
 
     // The window hasn't elapsed, so the budget must still be spent: the next
     // call is queued (not run) rather than getting a fresh budget from the reset.
-    let pending = call(~scope=Chain(1), ~input="b")
+    let pending = call(~scope=Chain(1->ChainId.fromInt), ~input="b")
     await Utils.delay(0)
     await Utils.delay(0)
     let countWhileQueued = callCount.contents

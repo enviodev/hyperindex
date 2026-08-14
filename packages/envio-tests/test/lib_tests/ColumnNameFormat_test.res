@@ -23,9 +23,6 @@ storage:
     column_name_format: original
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
 `,
 ).config
@@ -48,9 +45,6 @@ storage:
     column_name_format: snake_case
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
 `,
 ).config
@@ -86,11 +80,14 @@ describe("Storage column naming (snake_case)", () => {
     ).toBe(`CREATE TABLE IF NOT EXISTS "test_schema"."Snapshot"("id" TEXT NOT NULL, "transaction_index" INTEGER NOT NULL, "token_owner_id" TEXT NOT NULL, PRIMARY KEY("id"));`)
   })
 
-  it("creates indices with db column names", t => {
-    let query = PgStorage.makeCreateTableIndicesQuery(snapshotEntity.table, ~pgSchema="test_schema")
+  it("creates indexes with db column names", t => {
+    let definition =
+      PgStorage.getSchemaIndexes(~entities=[snapshotEntity])->Array.getUnsafe(0)
     t.expect(
-      query,
-    ).toBe(`CREATE INDEX IF NOT EXISTS "Snapshot_transaction_index" ON "test_schema"."Snapshot"("transaction_index");`)
+      definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema"),
+    ).toBe(
+      `CREATE INDEX "${definition->IndexDefinition.name}" ON "test_schema"."Snapshot"("transaction_index");`,
+    )
   })
 
   it("references db column names in the insert query", t => {
@@ -158,11 +155,12 @@ ORDER BY (id, envio_checkpoint_id)`)
 
   it("serializes ClickHouse set updates with ClickHouse column keys", t => {
     let setUpdateSchema = EntityHistory.makeSetUpdateSchema(
+      ~idSchema=snapshotEntity.table->Table.getIdSchema,
       ClickHouse.makeClickHouseEntitySchema(snapshotEntity.table),
     )
     let json =
       Change.Set({
-        entityId: "1",
+        entityId: "1"->EntityId.unsafeOfString,
         entity: snapshot1->(Utils.magic: snapshot => Internal.entity),
         checkpointId: 5n,
       })->S.reverseConvertToJsonOrThrow(setUpdateSchema)
@@ -269,6 +267,7 @@ ORDER BY (id, envio_checkpoint_id)`,
       ~table=snapshotEntity.table,
       ~itemSchema=snapshotEntity.schema->S.toUnknown,
       ~pgSchema,
+      ~setQueryCache=PgStorage.makeSetQueryCache(),
     )
 
     let rawRows = await sql->Postgres.unsafe(`SELECT * FROM "${pgSchema}"."Snapshot";`)

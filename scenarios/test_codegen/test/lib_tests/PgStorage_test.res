@@ -1,170 +1,12 @@
 open Vitest
 
 describe("Test PgStorage SQL generation functions", () => {
-  describe("makeCreateIndexQuery", () => {
-    Async.it(
-      "Should create simple index SQL",
-      async t => {
-        let query = PgStorage.makeCreateIndexQuery(
-          ~tableName="test_table",
-          ~indexFields=["field1"],
-          ~pgSchema="test_schema",
-        )
-
-        t.expect(
-          query,
-          ~message="Should generate correct single field index SQL",
-        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1" ON "test_schema"."test_table"("field1");`)
-      },
-    )
-
-    Async.it(
-      "Should create composite index SQL",
-      async t => {
-        let query = PgStorage.makeCreateIndexQuery(
-          ~tableName="test_table",
-          ~indexFields=["field1", "field2", "field3"],
-          ~pgSchema="test_schema",
-        )
-
-        t.expect(
-          query,
-          ~message="Should generate correct composite index SQL",
-        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1_field2_field3" ON "test_schema"."test_table"("field1", "field2", "field3");`)
-      },
-    )
-  })
-
-  describe("makeCreateCompositeIndexQuery", () => {
-    Async.it(
-      "Should create composite index SQL with ASC direction (default, omitted in SQL)",
-      async t => {
-        let query = PgStorage.makeCreateCompositeIndexQuery(
-          ~tableName="test_table",
-          ~indexFields=[
-            {fieldName: "field1", direction: Table.Asc},
-            {fieldName: "field2", direction: Table.Asc},
-          ],
-          ~pgSchema="test_schema",
-        )
-
-        t.expect(
-          query,
-          ~message="Should generate correct composite index SQL with ASC (default) direction",
-        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1_field2" ON "test_schema"."test_table"("field1", "field2");`)
-      },
-    )
-
-    Async.it(
-      "Should create composite index SQL with DESC direction",
-      async t => {
-        let query = PgStorage.makeCreateCompositeIndexQuery(
-          ~tableName="test_table",
-          ~indexFields=[
-            {fieldName: "field1", direction: Table.Desc},
-            {fieldName: "field2", direction: Table.Asc},
-          ],
-          ~pgSchema="test_schema",
-        )
-
-        t.expect(
-          query,
-          ~message="Should generate correct composite index SQL with DESC direction",
-        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1_desc_field2" ON "test_schema"."test_table"("field1" DESC, "field2");`)
-      },
-    )
-
-    Async.it(
-      "Should create composite index SQL with all DESC",
-      async t => {
-        let query = PgStorage.makeCreateCompositeIndexQuery(
-          ~tableName="test_table",
-          ~indexFields=[
-            {fieldName: "field1", direction: Table.Desc},
-            {fieldName: "field2", direction: Table.Desc},
-            {fieldName: "field3", direction: Table.Desc},
-          ],
-          ~pgSchema="test_schema",
-        )
-
-        t.expect(
-          query,
-          ~message="Should generate correct composite index SQL with all DESC direction",
-        ).toBe(`CREATE INDEX IF NOT EXISTS "test_table_field1_desc_field2_desc_field3_desc" ON "test_schema"."test_table"("field1" DESC, "field2" DESC, "field3" DESC);`)
-      },
-    )
-
-    Async.it(
-      "Should encode direction in index name to avoid collisions",
-      async t => {
-        let queryAsc = PgStorage.makeCreateCompositeIndexQuery(
-          ~tableName="t",
-          ~indexFields=[
-            {fieldName: "a", direction: Table.Asc},
-            {fieldName: "b", direction: Table.Asc},
-          ],
-          ~pgSchema="s",
-        )
-        let queryDesc = PgStorage.makeCreateCompositeIndexQuery(
-          ~tableName="t",
-          ~indexFields=[
-            {fieldName: "a", direction: Table.Desc},
-            {fieldName: "b", direction: Table.Desc},
-          ],
-          ~pgSchema="s",
-        )
-
-        // Index names must differ so CREATE INDEX IF NOT EXISTS doesn't skip the second
-        t.expect(
-          queryAsc,
-          ~message="Same fields with different directions must produce different index names",
-        ).not.toBe(queryDesc)
-        t.expect(
-          queryAsc->String.includes("\"t_a_b\""),
-          ~message="ASC index name has no suffix",
-        ).toBeTruthy()
-        t.expect(
-          queryDesc->String.includes("\"t_a_desc_b_desc\""),
-          ~message="DESC index name encodes direction",
-        ).toBeTruthy()
-      },
-    )
-  })
-
-  describe("makeCreateTableIndicesQuery", () => {
-    Async.it(
-      "Should create indices for A entity table",
-      async t => {
-        let query = PgStorage.makeCreateTableIndicesQuery(
-          MockIndexer.entityConfig(A).table,
-          ~pgSchema="test_schema",
-        )
-
-        let expectedIndices = `CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");`
-        t.expect(query, ~message="Indices SQL should match exactly").toBe(expectedIndices)
-      },
-    )
-
-    Async.it(
-      "Should handle table with no indices",
-      async t => {
-        let query = PgStorage.makeCreateTableIndicesQuery(
-          MockIndexer.entityConfig(B).table,
-          ~pgSchema="test_schema",
-        )
-
-        // B entity has no indexed fields, so should return empty string
-        t.expect(query, ~message="Should return empty string for table with no indices").toBe("")
-      },
-    )
-  })
-
   describe("makeCreateTableQuery", () => {
     Async.it(
       "Should create SQL for A entity table",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          MockIndexer.entityConfig(A).table,
+          MockIndexer.entityConfig("A").table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
@@ -178,7 +20,7 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should create SQL for B entity table with derived fields",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          MockIndexer.entityConfig(B).table,
+          MockIndexer.entityConfig("B").table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
@@ -192,7 +34,7 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should handle default values",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          MockIndexer.entityConfig(A).table,
+          MockIndexer.entityConfig("A").table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
@@ -210,11 +52,11 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should create complete initialization queries",
       async t => {
         let entities = [
-          MockIndexer.entityConfig(A),
-          MockIndexer.entityConfig(B),
-          MockIndexer.entityConfig(EntityWith63LenghtName______________________________________one),
-          MockIndexer.entityConfig(EntityWith63LenghtName______________________________________two),
-          MockIndexer.entityConfig(EntityWithAllTypes),
+          MockIndexer.entityConfig("A"),
+          MockIndexer.entityConfig("B"),
+          MockIndexer.entityConfig("EntityWith63LenghtName______________________________________one"),
+          MockIndexer.entityConfig("EntityWith63LenghtName______________________________________two"),
+          MockIndexer.entityConfig("EntityWithAllTypes"),
         ]
         let enums = MockIndexer.config.allEnums
 
@@ -226,7 +68,7 @@ describe("Test PgStorage SQL generation functions", () => {
           ~chainConfigs=[
             {
               name: "Chain1",
-              id: 1,
+              id: 1->ChainId.fromInt,
               startBlock: 100,
               endBlock: 200,
               maxReorgDepth: 10,
@@ -236,7 +78,7 @@ describe("Test PgStorage SQL generation functions", () => {
             },
             {
               name: "Chain137",
-              id: 137,
+              id: 137->ChainId.fromInt,
               startBlock: 0,
               maxReorgDepth: 200,
               blockLag: 0,
@@ -271,13 +113,12 @@ CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_A"("id" TEXT NOT NULL, "
 CREATE TABLE IF NOT EXISTS "test_schema"."B"("id" TEXT NOT NULL, "c_id" TEXT, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_B"("id" TEXT NOT NULL, "c_id" TEXT, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."EntityWith63LenghtName______________________________________one"("id" TEXT NOT NULL, PRIMARY KEY("id"));
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__________________________5"("id" TEXT NOT NULL, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
-CREATE TABLE IF NOT EXISTS "test_schema"."EntityWith63LenghtName______________________________________two"("id" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__________________________6"("id" TEXT NOT NULL, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."EntityWith63LenghtName______________________________________two"("id" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__________________________7"("id" TEXT NOT NULL, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."EntityWithAllTypes"("id" TEXT NOT NULL, "string" TEXT NOT NULL, "optString" TEXT, "arrayOfStrings" TEXT[] NOT NULL, "int_" INTEGER NOT NULL, "optInt" INTEGER, "arrayOfInts" INTEGER[] NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "optFloat" DOUBLE PRECISION, "arrayOfFloats" DOUBLE PRECISION[] NOT NULL, "bool" BOOLEAN NOT NULL, "optBool" BOOLEAN, "bigInt" NUMERIC NOT NULL, "optBigInt" NUMERIC, "arrayOfBigInts" TEXT[] NOT NULL, "bigDecimal" NUMERIC NOT NULL, "optBigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8) NOT NULL, "arrayOfBigDecimals" TEXT[] NOT NULL, "timestamp" TIMESTAMP WITH TIME ZONE NOT NULL, "optTimestamp" TIMESTAMP WITH TIME ZONE NULL, "json" JSONB NOT NULL, "enumField" "test_schema".AccountType NOT NULL, "optEnumField" "test_schema".AccountType, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWithAllTypes"("id" TEXT NOT NULL, "string" TEXT, "optString" TEXT, "arrayOfStrings" TEXT[], "int_" INTEGER, "optInt" INTEGER, "arrayOfInts" INTEGER[], "float_" DOUBLE PRECISION, "optFloat" DOUBLE PRECISION, "arrayOfFloats" DOUBLE PRECISION[], "bool" BOOLEAN, "optBool" BOOLEAN, "bigInt" NUMERIC, "optBigInt" NUMERIC, "arrayOfBigInts" TEXT[], "bigDecimal" NUMERIC, "optBigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8), "arrayOfBigDecimals" TEXT[], "timestamp" TIMESTAMP WITH TIME ZONE NULL, "optTimestamp" TIMESTAMP WITH TIME ZONE NULL, "json" JSONB, "enumField" "test_schema".AccountType, "optEnumField" "test_schema".AccountType, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
-CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
-CREATE INDEX IF NOT EXISTS "A_b_id" ON "test_schema"."A"("b_id");
+CREATE INDEX "${IndexDefinition.single(~tableName="A", ~column="b_id")->IndexDefinition.name}" ON "test_schema"."A"("b_id");
 CREATE VIEW "test_schema"."_meta" AS 
 SELECT 
   "id" AS "chainId",
@@ -378,10 +219,10 @@ FROM "test_schema"."envio_chains";`
     )
 
     Async.it(
-      "Should create SQL for single entity with indices",
+      "Should create SQL for single entity with indexes",
       async t => {
         // Test with just entity A which has an indexed field
-        let entities = [MockIndexer.entityConfig(A)]
+        let entities = [MockIndexer.entityConfig("A")]
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="public",
@@ -408,7 +249,7 @@ CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("id" BIGINT NOT NULL, "c
 CREATE TABLE IF NOT EXISTS "public"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE TABLE IF NOT EXISTS "public"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_history_A"("id" TEXT NOT NULL, "b_id" TEXT, "optionalStringToTestLinkedEntities" TEXT, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "public".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
-CREATE INDEX IF NOT EXISTS "A_b_id" ON "public"."A"("b_id");
+CREATE INDEX "${IndexDefinition.single(~tableName="A", ~column="b_id")->IndexDefinition.name}" ON "public"."A"("b_id");
 CREATE VIEW "public"."_meta" AS 
 SELECT 
   "id" AS "chainId",
@@ -440,6 +281,133 @@ FROM "public"."envio_chains";`
 
         t.expect(mainQuery, ~message="Single entity SQL should match expected output exactly").toBe(
           expectedMainQuery,
+        )
+      },
+    )
+  })
+
+  describe("Deferred schema indexes", () => {
+    let entities = [MockIndexer.entityConfig("A"), MockIndexer.entityConfig("B")]
+
+    Async.it(
+      "Creates no schema index during the initial DDL, but still the tables and views",
+      async t => {
+        let mainQuery =
+          PgStorage.makeInitializeTransaction(
+            ~pgSchema="test_schema",
+            ~pgUser="postgres",
+            ~entities,
+            ~enums=[],
+            ~isHasuraEnabled=false,
+            ~deferSchemaIndexes=true,
+          )
+          ->Array.get(0)
+          ->Option.getOrThrow
+
+        t.expect(
+          (
+            mainQuery->String.includes("CREATE INDEX"),
+            mainQuery->String.includes(`CREATE TABLE IF NOT EXISTS "test_schema"."A"`),
+            mainQuery->String.includes(`PRIMARY KEY("id")`),
+            mainQuery->String.includes(`CREATE VIEW "test_schema"."_meta"`),
+          ),
+          ~message="Schema indexes are absent during backfill; tables, primary keys and views are not",
+        ).toEqual((false, true, true, true))
+      },
+    )
+
+    Async.it(
+      "Describes every promised index once, with its generated name",
+      async t => {
+        let definition = IndexDefinition.single(~tableName="A", ~column="b_id")
+
+        t.expect(
+          PgStorage.getSchemaIndexes(~entities)->Array.map(definition => (
+            definition->IndexDefinition.name,
+            definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema"),
+          )),
+          ~message="The @index on A.b and B's derived relationship describe the same index",
+        ).toEqual([
+          (
+            definition->IndexDefinition.name,
+            `CREATE INDEX "${definition->IndexDefinition.name}" ON "test_schema"."A"("b_id");`,
+          ),
+        ])
+      },
+    )
+
+    // Config parsing rejects a Postgres entity deriving from one that isn't in
+    // Postgres, so every `@derivedFrom` target here is guaranteed to resolve.
+    Async.it(
+      "Emits the index backing a derived relationship on the referenced table",
+      async t => {
+        let makeEntity = (name, ~fields): Internal.entityConfig => {
+          ...MockIndexer.entityConfig("A"),
+          name,
+          table: Table.mkTable(name, ~fields),
+          storage: {postgres: true, clickhouse: false},
+        }
+        let entities = [
+          makeEntity(
+            "Trader",
+            ~fields=[
+              Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+              Table.mkDerivedFromField(
+                "orders",
+                ~derivedFromEntity="Order",
+                ~derivedFromField="trader",
+              ),
+            ],
+          ),
+          makeEntity(
+            "Order",
+            ~fields=[
+              Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+              Table.mkField("trader", String, ~linkedEntity="Trader", ~fieldSchema=S.string),
+            ],
+          ),
+        ]
+
+        t.expect(
+          PgStorage.getSchemaIndexes(~entities)->Array.map(definition => (
+            definition.IndexDefinition.tableName,
+            definition.columns->Array.map(column => column.IndexDefinition.name),
+          )),
+        ).toEqual([("Order", ["trader_id"])])
+      },
+    )
+
+    // Two long field names on one entity used to truncate to the same
+    // 63-character identifier, and the second index silently never got built.
+    Async.it(
+      "Keeps two long names distinct within Postgres' identifier limit",
+      async t => {
+        let tableName = "Entity" ++ "x"->String.repeat(50)
+        let names =
+          ["some_long_column_one", "some_long_column_two"]->Array.map(column =>
+            IndexDefinition.single(~tableName, ~column)->IndexDefinition.name
+          )
+
+        t.expect((
+          names->Array.map(String.length),
+          names->Array.getUnsafe(0) === names->Array.getUnsafe(1),
+        )).toEqual(([63, 63], false))
+      },
+    )
+
+    Async.it(
+      "Keeps composite index columns ordered with their directions",
+      async t => {
+        let definition = IndexDefinition.make(
+          ~tableName="Transfer",
+          ~columns=[
+            {name: "block_number", direction: Table.Desc},
+            {name: "log_index", direction: Table.Asc},
+          ],
+        )
+
+        t.expect(definition->IndexDefinition.makeCreateQuery(~pgSchema="s")).toBe(
+          `CREATE INDEX "${definition->IndexDefinition.name}" ON "s"."Transfer"("block_number" DESC, "log_index");`,
         )
       },
     )
@@ -544,8 +512,8 @@ FROM "public"."envio_chains";`
       async t => {
         let query = PgStorage.makeInsertUnnestSetQuery(
           ~pgSchema="test_schema",
-          ~table=MockIndexer.entityConfig(EntityWithAllNonArrayTypes).table,
-          ~itemSchema=MockIndexer.entityConfig(EntityWithAllNonArrayTypes).schema,
+          ~table=MockIndexer.entityConfig("EntityWithAllNonArrayTypes").table,
+          ~itemSchema=MockIndexer.entityConfig("EntityWithAllNonArrayTypes").schema,
           ~isRawEvents=false,
         )
 
@@ -580,8 +548,8 @@ SELECT * FROM unnest($1::INTEGER[],$2::BIGINT[],$3::TEXT[],$4::TEXT[],$5::INTEGE
       async t => {
         let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
-          ~table=MockIndexer.entityConfig(A).table,
-          ~itemSchema=MockIndexer.entityConfig(A).schema,
+          ~table=MockIndexer.entityConfig("A").table,
+          ~itemSchema=MockIndexer.entityConfig("A").schema,
           ~itemsCount=2,
         )
 
@@ -601,8 +569,8 @@ VALUES($1,$3,$5),($2,$4,$6)ON CONFLICT("id") DO UPDATE SET "b_id" = EXCLUDED."b_
       async t => {
         let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
-          ~table=MockIndexer.entityConfig(B).table,
-          ~itemSchema=MockIndexer.entityConfig(B).schema,
+          ~table=MockIndexer.entityConfig("B").table,
+          ~itemSchema=MockIndexer.entityConfig("B").schema,
           ~itemsCount=1,
         )
 
@@ -712,7 +680,7 @@ WHERE cp."block_hash" IS NOT NULL
       async t => {
         let chainConfig: Config.chain = {
           name: "Chain1",
-          id: 1,
+          id: 1->ChainId.fromInt,
           startBlock: 100,
           endBlock: 200,
           maxReorgDepth: 5,
@@ -740,7 +708,7 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false);`
       async t => {
         let chainConfig: Config.chain = {
           name: "Chain1",
-          id: 1,
+          id: 1->ChainId.fromInt,
           startBlock: 100,
           maxReorgDepth: 5,
           blockLag: 0,
@@ -768,7 +736,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false);`
       async t => {
         let chainConfig1: Config.chain = {
           name: "Chain1",
-          id: 1,
+          id: 1->ChainId.fromInt,
           startBlock: 100,
           endBlock: 200,
           maxReorgDepth: 5,
@@ -779,7 +747,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false);`
 
         let chainConfig2: Config.chain = {
           name: "Chain42",
-          id: 42,
+          id: 42->ChainId.fromInt,
           startBlock: 500,
           maxReorgDepth: 0,
           blockLag: 0,
@@ -918,7 +886,7 @@ LIMIT 1;`
         )
 
         let expectedQuery = `SELECT 
-  "chain_id",
+  "chain_id"::float8 as "chain_id",
   SUM("events_processed") as events_processed_diff,
   MIN("block_number") - 1 as new_progress_block_number
 FROM "test_schema"."envio_checkpoints"
@@ -943,7 +911,12 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
     async t => {
       let config = {
         ...MockIndexer.config,
-        storage: ({postgres: true, clickhouse: true}: Config.storage),
+        storage: ({
+    postgres: true,
+    clickhouse: true,
+    postgresColumnNameFormat: Original,
+    clickhouseColumnNameFormat: Original,
+  }: Config.storage),
       }
       let message = switch try {
         let _ = PgStorage.makeStorageFromEnv(~config)
@@ -969,7 +942,12 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
     async t => {
       let config = {
         ...MockIndexer.config,
-        storage: ({postgres: true, clickhouse: false}: Config.storage),
+        storage: ({
+    postgres: true,
+    clickhouse: false,
+    postgresColumnNameFormat: Original,
+    clickhouseColumnNameFormat: Original,
+  }: Config.storage),
       }
       // Just ensure construction succeeds without touching ClickHouse env vars.
       let _ = PgStorage.makeStorageFromEnv(~config)
@@ -993,7 +971,12 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
       setEnvVar("ENVIO_CLICKHOUSE_DATABASE", "envio_indexer")
       let config = {
         ...MockIndexer.config,
-        storage: ({postgres: true, clickhouse: true}: Config.storage),
+        storage: ({
+    postgres: true,
+    clickhouse: true,
+    postgresColumnNameFormat: Original,
+    clickhouseColumnNameFormat: Original,
+  }: Config.storage),
       }
       let result = try {
         let _ = PgStorage.makeStorageFromEnv(~config)
@@ -1049,7 +1032,7 @@ describe("ecosystem.toRawEvent", () => {
         Internal.Event({
           onEventRegistration:
             (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
-          chain: ChainMap.Chain.makeUnsafe(~chainId=137),
+          chainId: 137->ChainId.fromInt,
           blockNumber,
           logIndex,
           transactionIndex: 0,
@@ -1057,7 +1040,7 @@ describe("ecosystem.toRawEvent", () => {
         })->Internal.castUnsafeEventItem
 
       t.expect(MockIndexer.config.ecosystem.toRawEvent(eventItem)).toEqual({
-        chain_id: 137,
+        chain_id: 137->ChainId.fromInt,
         event_id: EventUtils.packEventIndex(~logIndex, ~blockNumber),
         event_name: "EventWithoutFields",
         contract_name: "ERC20",
@@ -1079,7 +1062,7 @@ describe("PgStorage.removeInvalidUtf8InPlace", () => {
     "Strips NUL bytes from raw event rows, including deep inside jsonb params and field selections",
     async t => {
       let rawEvent: InternalTable.RawEvents.t = {
-        chain_id: 1,
+        chain_id: 1->ChainId.fromInt,
         event_id: 42n,
         event_name: "Name\x00Changed",
         contract_name: "Resolver",
@@ -1098,7 +1081,7 @@ describe("PgStorage.removeInvalidUtf8InPlace", () => {
       [rawEvent]->PgStorage.removeInvalidUtf8InPlace
 
       t.expect(rawEvent).toEqual({
-        chain_id: 1,
+        chain_id: 1->ChainId.fromInt,
         event_id: 42n,
         event_name: "NameChanged",
         contract_name: "Resolver",

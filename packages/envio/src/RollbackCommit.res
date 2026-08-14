@@ -3,7 +3,7 @@
 // feature lives here plus two call sites: registration in `Main.res` and the
 // fire on a successful rollback write in `InMemoryStore.res`. Delete those
 // together with this module.
-type args = {chainId: int, rollbackToBlock: int}
+type args = {chainId: ChainId.t, rollbackToBlock: int}
 type callback = args => promise<unit>
 
 // Lives in the process-wide `EnvioGlobal` record so callbacks registered
@@ -28,7 +28,7 @@ let fire = async (~progressBlockNumberByChainId: dict<int>) => {
   let _ = await progressBlockNumberByChainId
   ->Dict.toArray
   ->Array.flatMap(((chainIdKey, rollbackToBlock)) => {
-    let args = {chainId: chainIdKey->Int.fromString->Option.getUnsafe, rollbackToBlock}
+    let args = {chainId: chainIdKey->ChainId.normalizeOrThrow, rollbackToBlock}
     callbacks->Array.map(callback => callback(args))
   })
   ->Promise.all

@@ -12,8 +12,9 @@ pub struct FromUserApiOptions {
     pub schema: Option<String>,
     pub env: Option<HashMap<String, String>>,
     pub files: Option<HashMap<String, String>>,
-    /// Also generate the `.envio/types.d.ts` contents, so a caller can
-    /// type-check handlers against the config's generated `indexer` surface.
+    /// Also generate the `.envio/types.d.ts` and `Indexer.res` contents, so a
+    /// caller can type-check handlers against the config's generated `indexer`
+    /// surface, or assert on the generated ReScript.
     pub with_indexer_types: Option<bool>,
 }
 
@@ -24,6 +25,9 @@ pub struct FromUserApiResult {
     /// The generated `.envio/types.d.ts`, present only when
     /// `with_indexer_types` was requested.
     pub indexer_types: Option<String>,
+    /// The generated `Indexer.res`, present only when `with_indexer_types` was
+    /// requested. Same production codegen output, from the same parse.
+    pub indexer_code: Option<String>,
 }
 
 fn serialize_config_result(config: anyhow::Result<SystemConfig>) -> napi::Result<String> {
@@ -70,18 +74,22 @@ pub fn from_user_api(
         .to_public_config_json(false)
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))?;
 
-    let indexer_types = if options.with_indexer_types.unwrap_or(false) {
+    let (indexer_types, indexer_code) = if options.with_indexer_types.unwrap_or(false) {
         let template = ProjectTemplate::from_config(&config).map_err(|e| {
             napi::Error::from_reason(format!("Failed generating indexer types: {e:#}"))
         })?;
-        Some(template.indexer_types_dts().to_string())
+        (
+            Some(template.indexer_types_dts().to_string()),
+            Some(template.indexer_code().to_string()),
+        )
     } else {
-        None
+        (None, None)
     };
 
     Ok(FromUserApiResult {
         config: config_json,
         indexer_types,
+        indexer_code,
     })
 }
 

@@ -4,7 +4,6 @@ type cfg = {
   /** Optional bearer token for the HyperSync server. */
   apiToken?: string,
   httpReqTimeoutMillis?: int,
-  maxNumRetries?: int,
   retryBaseMs?: int,
   retryCeilingMs?: int,
 }
@@ -25,6 +24,8 @@ module Registration = {
     contractName: string,
     programId: string,
     isWildcard: bool,
+    // Earliest slot this registration accepts; `None` is unrestricted.
+    startBlock: option<int>,
     discriminator?: string,
     discriminatorByteLen: int,
     isInner?: bool,
@@ -52,6 +53,7 @@ module Registration = {
         contractName: eventConfig.contractName,
         programId: eventConfig.programId->SvmTypes.Pubkey.toString,
         isWildcard: reg.isWildcard,
+        startBlock: reg.startBlock,
         discriminator: ?eventConfig.discriminator,
         discriminatorByteLen: eventConfig.discriminatorByteLen,
         isInner: ?eventConfig.isInner,
@@ -64,10 +66,8 @@ module Registration = {
             },
           )
         ),
-        transactionFields: eventConfig.selectedTransactionFields->Utils.Set.toArray,
-        blockFields: eventConfig.selectedBlockFields
-        ->(Utils.magic: Utils.Set.t<Internal.svmBlockField> => Utils.Set.t<string>)
-        ->Utils.Set.toArray,
+        transactionFields: reg.fieldSelection.transactionFields->Utils.Set.toArray,
+        blockFields: reg.fieldSelection.blockFields->Utils.Set.toArray,
         accounts: eventConfig.accounts,
         argsJson: ?switch eventConfig.args {
         | JSON.Null => None
@@ -107,18 +107,20 @@ module QueryTypes = {
 
   type fieldSelection = {block?: array<blockField>, transaction?: array<transactionField>}
 
-  /** Filter for selecting instructions. All non-empty fields are AND-ed: an
-   instruction must match at least one value in every non-empty field.
+  /** Filter for selecting instruction calls. All non-empty fields are AND-ed:
+   an instruction must match at least one value in every non-empty field.
 
    Discriminator filters (d1..d8) take hex-encoded byte prefixes ("0x" optional).
    Account filters (a0..a9) take base58 pubkey strings. */
   type instructionSelection = {
-    programId?: array<string>,
+    executingAccount?: array<string>,
     d1?: array<string>,
     d2?: array<string>,
     d4?: array<string>,
     d8?: array<string>,
     isInner?: bool,
+    /** Success of the parent transaction; absent matches both. */
+    txSuccess?: bool,
   }
 
   // The `get` query surface, used only for block-data range queries; event
@@ -126,7 +128,7 @@ module QueryTypes = {
   type query = {
     fromSlot: int,
     toSlot?: int,
-    instructions?: array<instructionSelection>,
+    instructionCalls?: array<instructionSelection>,
     includeAllBlocks?: bool,
     fields?: fieldSelection,
     maxNumBlocks?: int,
@@ -152,24 +154,29 @@ module ResponseTypes = {
     extraAccounts: array<string>,
   }
 
-  type instruction = {
+  type instructionCall = {
     slot: int,
     transactionIndex: int,
     instructionAddress: array<int>,
-    programId: string,
-    accounts: array<string>,
+    /** The invoked program's account. */
+    executingAccount: string,
+    accountArguments: array<string>,
     data: string,
     d1?: string,
     d2?: string,
     d4?: string,
     d8?: string,
     isInner: bool,
-    isCommitted: bool,
+    /** Success of the parent transaction, not of this invocation. */
+    txSuccess: bool,
+    /** Per-invocation failure reason (e.g. "custom program error: 0x1"). */
+    error?: string,
+    computeUnitsConsumed?: bigint,
   }
 
   type queryResponseData = {
     blocks: array<block>,
-    instructions: array<instruction>,
+    instructionCalls: array<instructionCall>,
   }
 
   type queryResponse = {
@@ -188,9 +195,13 @@ module EventItems = {
     fromSlot: int,
     // Inclusive; None queries to the end of available data.
     toSlot: option<int>,
-    maxNumInstructions: int,
+    // Absent means no server-side cap on the number of instructions returned.
+    maxNumInstructions?: int,
     registrationIndexes: array<int>,
-    addressesByContractName: dict<array<Address.t>>,
+    // Program names to fetch address-free even though their registrations
+    // depend on addresses (client-side filtering). None/empty means every
+    // address-dependent program is filtered server-side.
+    clientFilteredContracts: option<array<string>>,
   }
 
   type log = {
@@ -220,8 +231,10 @@ module EventItems = {
 
   type response = {
     nextSlot: int,
-    // One lean header per slot referenced by `items`; the full blocks live in
-    // the block store returned alongside.
+    // One lean header per returned slot, including slots no item references —
+    // reorg detection and the batch's latest timestamp read them all. The full
+    // blocks live in the block store returned alongside, which keeps only the
+    // slots items reference.
     blocks: array<ResponseTypes.block>,
     items: array<item>,
   }
@@ -232,6 +245,9 @@ type queryResponse = ResponseTypes.queryResponse
 
 type t = {
   getHeight: unit => promise<int>,
+  // Block-hash query construction, pagination, and cursor-backed skipped-slot
+  // coverage live in Rust.
+  getBlockHashes: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<RequestStat.t>)>,
   // Block-data range queries only; the store pages it returns are empty.
   get: (~query: query) => promise<(queryResponse, TransactionStore.t, BlockStore.t)>,
   // Returns the routed items plus pages of raw transactions and blocks (kept
@@ -239,6 +255,7 @@ type t = {
   // prep.
   getEventItems: (
     ~query: EventItems.query,
+    ~addressSet: AddressSet.t,
   ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
 }
 
@@ -248,16 +265,17 @@ external classFromConfig: (
   cfg,
   string,
   array<Registration.input>,
+  AddressStore.t,
 ) => t = "fromConfig"
 
 let make = (
   ~url,
   ~apiToken=?,
   ~httpReqTimeoutMillis=?,
-  ~maxNumRetries=?,
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
   ~eventRegistrations=[],
+  ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().svmHyperSyncClient->classFromConfig(
@@ -265,11 +283,11 @@ let make = (
       url,
       ?apiToken,
       ?httpReqTimeoutMillis,
-      ?maxNumRetries,
       ?retryBaseMs,
       ?retryCeilingMs,
     },
     `hyperindex/${envioVersion}`,
     eventRegistrations,
+    addressStore,
   )
 }

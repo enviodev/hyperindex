@@ -17,9 +17,6 @@ contracts:
       - event: Transfer(address indexed from, address indexed to, uint256 value)
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
     contracts:
       - name: ERC20
@@ -39,9 +36,6 @@ contracts:
       - event: Approval(address indexed owner, address indexed spender, uint256 value)
 chains:
   - id: 137
-    rpc:
-      url: https://polygon.com
-      for: sync
     start_block: 0
     contracts:
       - name: ERC20
@@ -60,17 +54,11 @@ contracts:
       - event: Approval(address indexed owner, address indexed spender, uint256 value)
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
     contracts:
       - name: ERC20
         address: "0x1111111111111111111111111111111111111111"
   - id: 137
-    rpc:
-      url: https://polygon.com
-      for: sync
     start_block: 0
     contracts:
       - name: ERC20
@@ -90,9 +78,6 @@ contracts:
       - event: Approval(address indexed owner, address indexed spender, uint256 value)
 chains:
   - id: 1
-    rpc:
-      url: https://eth.com
-      for: sync
     start_block: 0
     contracts:
       - name: ERC20
@@ -332,5 +317,25 @@ describe("HandlerRegister multiple registrations", () => {
       ),
       registrations->describeRegistrations(~eventName="Approval", ~labels=[], ~crLabels=[]),
     )).toEqual(([], [(None, None, 0)]))
+  })
+
+  // A registration matching no configured chain can never be dispatched, so it
+  // is reported at the call site instead of silently doing nothing.
+  it("throws when the event is not configured on the contract", t => {
+    HandlerRegister.resetOnEventRegistrations()
+    HandlerRegister.startRegistration(~config)
+    t->toThrowErrorEqual(
+      () => setHandler(~eventName="Nonexistent", makeHandler()),
+      `Event "Nonexistent" is not configured on contract "ERC20", so its handler would never run. Add it to your config, or remove the registration. Configured events on "ERC20": Approval, Transfer.`,
+    )
+  })
+
+  it("throws when the contract is not configured on any chain", t => {
+    HandlerRegister.resetOnEventRegistrations()
+    HandlerRegister.startRegistration(~config)
+    t->toThrowErrorEqual(
+      () => setContractRegister(~contractName="Missing", makeContractRegister()),
+      `Contract "Missing" is not configured on any chain, so its handler for "Transfer" would never run. Add it to your config, or remove the registration. Configured contracts: ERC20, ERC721.`,
+    )
   })
 })

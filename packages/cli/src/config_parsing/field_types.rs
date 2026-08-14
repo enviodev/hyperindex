@@ -18,7 +18,6 @@ pub enum Primitive {
     Json,
     Date,
     Enum(String),
-    Entity(String),
 }
 
 impl Primitive {
@@ -43,9 +42,11 @@ impl Primitive {
             Self::Number => "Number".to_string(),
             Self::Enum(enum_name) => {
                 let capitalized_enum_name = enum_name.capitalize();
-                format!("Enum({{config: Enums.{capitalized_enum_name}.config->Table.fromGenericEnumConfig}})")
+                format!(
+                    "Enum({{config: \
+                     Enums.{capitalized_enum_name}.config->Table.fromGenericEnumConfig}})"
+                )
             }
-            Self::Entity(entity_name) => format!("Entity({{name: \"{entity_name}\"}})"),
         }
     }
 }

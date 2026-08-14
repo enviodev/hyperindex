@@ -9,11 +9,12 @@ let make: (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,
   ~onEventRegistrations: array<Internal.onEventRegistration>=?,
-  ~indexingAddresses: IndexingAddresses.t,
+  ~addressStore: AddressStore.t,
   ~sourceManager: SourceManager.t,
-  ~reorgDetection: ReorgDetection.t,
   ~committedProgressBlockNumber: int,
   ~safeCheckpointTracking: option<SafeCheckpointTracking.t>=?,
+  ~shouldRollbackOnReorg: bool,
+  ~maxReorgDepth: int,
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
@@ -21,6 +22,7 @@ let make: (
   ~chainDensity: option<float>=?,
   ~blockStore: BlockStore.t=?,
   ~reorgThresholdReadyTolerance: int=?,
+  ~perChainEntities: array<Internal.entityConfig>=?,
   ~logger: Pino.t,
 ) => t
 
@@ -44,9 +46,19 @@ let makeFromDbState: (
 
 // Accessors.
 let logger: t => Pino.t
+let blockStore: t => BlockStore.t
+let entities: t => EntityTables.t
+let resetEntities: (t, ~perChainEntities: array<Internal.entityConfig>) => unit
 let sourceManager: t => SourceManager.t
 let chainConfig: t => Config.chain
-let reorgDetection: t => ReorgDetection.t
+let shouldRollbackOnReorg: t => bool
+// Reorg-scan reads over the chain's block store, for the rollback flow.
+let getReorgThresholdBlockNumbersBelow: (t, ~blockNumber: int) => array<int>
+let getLatestValidScannedBlock: (
+  t,
+  ~blockStore: BlockStore.t,
+  ~blockNumbers: array<int>,
+) => option<int>
 let safeCheckpointTracking: t => option<SafeCheckpointTracking.t>
 let isProgressAtHead: t => bool
 let committedProgressBlockNumber: t => int
@@ -69,6 +81,12 @@ let setRollbackTargetBlock: (t, ~blockNumber: int) => unit
 // Fetch-frontier reads.
 let knownHeight: t => int
 let contractAddresses: (t, ~contractName: string) => array<Address.t>
+let drainAddressesForWrite: (
+  t,
+  ~toBlockInclusive: int,
+  ~checkpointBlockNumbers: array<int>,
+) => array<AddressStore.drainedAddress>
+let hasAddressesToWrite: t => bool
 let bufferSize: t => int
 let bufferReadyCount: t => int
 let getProgressPercentage: t => float
@@ -80,13 +98,7 @@ let hasReadyItem: t => bool
 let targetBlock: (t, ~chainTargetItems: float) => int
 let blockAtProgress: (t, ~progress: float) => int
 let frontierProgress: t => float
-let getNextQuery: (
-  t,
-  ~chainTargetItems: float,
-  ~chunkItemsMultiplier: float=?,
-  ~itemsTargetFloor: int=?,
-  ~maxTargetBlock: int=?,
-) => FetchState.nextQuery
+let getNextQuery: (t, ~chainTargetItems: float, ~maxTargetBlock: int=?) => FetchState.nextQuery
 let dispatch: (
   t,
   ~executeQuery: FetchState.query => promise<unit>,
@@ -104,50 +116,42 @@ let isReadyToEnterReorgThresholdAfterBatch: (t, ~batch: Batch.t) => bool
 
 // Derived (pure).
 let hasProcessedToEndblock: t => bool
+let isDurablyCaughtUp: t => bool
 let getHighestBlockBelowThreshold: t => int
 let isActivelyIndexing: t => bool
 let isReady: t => bool
 let isFetchingAtHead: t => bool
 let isAtHeadWithoutEndBlock: t => bool
 
-// Drop over-fetched events an address-param filter rejects, before contract
-// registration runs on them. Uses the chain's current indexing addresses.
-let filterByClientAddress: (t, array<Internal.item>) => array<Internal.item>
-
 // State transitions. The chain state is mutated only through these.
 let handleQueryResult: (
   t,
   ~query: FetchState.query,
   ~newItems: array<Internal.item>,
-  ~newItemsWithDcs: array<Internal.item>,
-  ~latestFetchedBlock: FetchState.blockNumberAndTimestamp,
+  ~newRegistrations: array<AddressStore.registration>,
+  ~latestFetchedBlock: int,
   ~knownHeight: int,
   ~transactionStore: option<TransactionStore.t>,
-  ~blockStore: option<BlockStore.t>,
 ) => unit
-let materializeBatchItems: (
-  t,
-  ~items: array<Internal.item>,
-  ~ecosystem: Ecosystem.name,
-) => promise<unit>
+let materializeBatchItems: (t, ~items: array<Internal.item>) => promise<unit>
 let materializePageItems: (
   ~items: array<Internal.item>,
   ~transactionStore: option<TransactionStore.t>,
-  ~blockStore: option<BlockStore.t>,
-  ~ecosystem: Ecosystem.name,
+  ~blockStore: BlockStore.t,
 ) => promise<unit>
 let registerReorgGuard: (
   t,
-  ~blockHashes: array<ReorgDetection.blockData>,
+  ~blockStore: BlockStore.t,
   ~knownHeight: int,
 ) => ReorgDetection.reorgResult
 let prepareReorg: (t, ~eventsProcessedDiff: option<float>) => unit
+let resetPendingQueries: t => unit
 let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
-let markReady: t => unit
+let markReady: (t, ~readyAt: Date.t) => unit
 let rollback: (
   t,
   ~newProgressBlockNumber: option<int>,

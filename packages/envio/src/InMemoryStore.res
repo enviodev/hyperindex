@@ -2,11 +2,45 @@
 // mutations route through IndexerState's domain operations; the write loop and
 // capacity/flush coordination live in Writing.
 
+// The scope must match the entity's own: a cross-chain entity has one table on
+// the indexer, a per-chain entity one table per ChainState. Taking the scope
+// rather than an optional chain id keeps a dummy chain id unrepresentable.
 let getInMemTable = (
   state: IndexerState.t,
   ~entityConfig: Internal.entityConfig,
+  ~scope: Internal.chainScope,
 ): InMemoryTable.Entity.t =>
-  state->IndexerState.entities->IndexerState.EntityTables.get(~entityName=entityConfig.name)
+  switch scope {
+  | CrossChain => state->IndexerState.entities
+  | Chain(chainId) => state->IndexerState.getChainState(~chainId)->ChainState.entities
+  }->EntityTables.get(~entityName=entityConfig.name)
+
+// The scope a given entity's rows live in when reached from a handler running
+// on `chainId`.
+let entityScope = (entityConfig: Internal.entityConfig, ~chainId): Internal.chainScope =>
+  entityConfig.crossChain ? CrossChain : Chain(chainId)
+
+// The chain a row loaded from storage belongs to, taken off the row so what's
+// left matches the entity schema the handlers see. A per-chain entity whose row
+// carries no chain id would silently land in the wrong partition, so it throws.
+let takeRowScope = (
+  entity: Internal.entity,
+  ~entityConfig: Internal.entityConfig,
+): Internal.chainScope =>
+  switch entityConfig.table->Table.getChainIdField {
+  | None => CrossChain
+  | Some(field) =>
+    let row = entity->(Utils.magic: Internal.entity => dict<ChainId.t>)
+    switch row->Utils.Dict.dangerouslyGetNonOption(field.fieldName) {
+    | Some(chainId) =>
+      row->Utils.Dict.deleteInPlace(field.fieldName)
+      Chain(chainId)
+    | None =>
+      JsError.throwWithMessage(
+        `Rollback row for the per-chain entity "${entityConfig.name}" with id "${entity.id}" is missing its "${field.fieldName}" value.`,
+      )
+    }
+  }
 
 let getEffectInMemTable = (
   state: IndexerState.t,
@@ -45,7 +79,10 @@ let setEffectOutput = (
   | Some(_) => ()
   | None => inMemTable.changesCount = inMemTable.changesCount +. 1.
   }
-  inMemTable.dict->Dict.set(cacheKey, Set({entityId: cacheKey, entity: output, checkpointId}))
+  inMemTable.dict->Dict.set(
+    cacheKey,
+    Set({entityId: cacheKey->EntityId.unsafeOfString, entity: output, checkpointId}),
+  )
   if shouldCache {
     inMemTable.idsToStore->Array.push(cacheKey)->ignore
   }
@@ -58,7 +95,11 @@ let initEffectOutputFromDb = (inMemTable: EffectState.effectCacheInMemTable, ~ca
     inMemTable.changesCount = inMemTable.changesCount +. 1.
     inMemTable.dict->Dict.set(
       cacheKey,
-      Set({entityId: cacheKey, entity: output, checkpointId: Internal.loadedFromDbCheckpointId}),
+      Set({
+        entityId: cacheKey->EntityId.unsafeOfString,
+        entity: output,
+        checkpointId: Internal.loadedFromDbCheckpointId,
+      }),
     )
   }
 
@@ -101,18 +142,22 @@ let prepareRollbackDiff = async (
   let deletedEntities = Dict.make()
   let setEntities = Dict.make()
 
+  // Rollback data comes from Postgres entity history, which is kept only for
+  // Postgres-backed entities. ClickHouse-only entities have no history to
+  // restore from, so a reorg leaves them un-reverted in the sink.
   let _ = await persistence.allEntities
+  ->Array.filter(entityConfig => entityConfig.storage.postgres)
   ->Array.map(async entityConfig => {
-    let entityTable = state->getInMemTable(~entityConfig)
-
-    let (removedIds, restoredEntitiesResult) = await persistence.storage.getRollbackData(
+    let (removals, restoredEntitiesResult) = await persistence.storage.getRollbackData(
       ~entityConfig,
       ~rollbackTargetCheckpointId,
     )
 
-    removedIds->Array.forEach(entityId => {
+    removals->Array.forEach(({entityId, scope}: Persistence.rollbackRemoval) => {
       deletedEntities->Utils.Dict.push(entityConfig.name, entityId)
-      entityTable->InMemoryTable.Entity.set(
+      state
+      ->getInMemTable(~entityConfig, ~scope)
+      ->InMemoryTable.Entity.set(
         ~committedCheckpointId,
         Delete({
           entityId,
@@ -127,11 +172,14 @@ let prepareRollbackDiff = async (
       ->(Utils.magic: array<unknown> => array<Internal.entity>)
 
     restoredEntities->Array.forEach((entity: Internal.entity) => {
+      let scope = entity->takeRowScope(~entityConfig)
       setEntities->Utils.Dict.push(entityConfig.name, entity.id)
-      entityTable->InMemoryTable.Entity.set(
+      state
+      ->getInMemTable(~entityConfig, ~scope)
+      ->InMemoryTable.Entity.set(
         ~committedCheckpointId,
         Set({
-          entityId: entity.id,
+          entityId: entity.id->EntityId.unsafeOfString,
           checkpointId: rollbackDiffCheckpointId,
           entity,
         }),
@@ -146,46 +194,61 @@ let prepareRollbackDiff = async (
   }
 }
 
+// Stages the addresses registered by this batch's events for the write. They're
+// drained from each chain's address store rather than carried on the items that
+// registered them: the store is where they already live, and it knows which
+// ones the database hasn't seen yet.
 let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
-  let inMemTable = state->getInMemTable(~entityConfig=InternalTable.EnvioAddresses.entityConfig)
+  let inMemTable = state->getInMemTable(
+    ~entityConfig=InternalTable.EnvioAddresses.entityConfig,
+    ~scope=CrossChain,
+  )
   let committedCheckpointId = state->IndexerState.committedCheckpointId
 
-  let itemIdx = ref(0)
+  batch.progressedChainsById->Utils.Dict.forEach(progressedChain => {
+    let chainId = progressedChain.fetchState.chainId
+    let chainState = state->IndexerState.getChainState(~chainId)
 
-  for checkpoint in 0 to batch.checkpointIds->Array.length - 1 {
-    let checkpointId = batch.checkpointIds->Array.getUnsafe(checkpoint)
-    let chainId = batch.checkpointChainIds->Array.getUnsafe(checkpoint)
-    let checkpointEventsProcessed = batch.checkpointEventsProcessed->Array.getUnsafe(checkpoint)
-
-    for idx in 0 to checkpointEventsProcessed - 1 {
-      let item = batch.items->Array.getUnsafe(itemIdx.contents + idx)
-      switch item->Internal.getItemDcs {
-      | None => ()
-      | Some(dcs) =>
-        // Currently only events support contract registration, so we can cast to event item
-        let eventItem = item->Internal.castUnsafeEventItem
-        for dcIdx in 0 to dcs->Array.length - 1 {
-          let dc = dcs->Array.getUnsafe(dcIdx)
-          let entity: InternalTable.EnvioAddresses.t = {
-            id: InternalTable.EnvioAddresses.makeId(~chainId, ~address=dc.address),
-            chainId,
-            contractName: dc.contractName,
-            registrationBlock: eventItem.blockNumber,
-            registrationLogIndex: eventItem.logIndex,
-          }
-
-          inMemTable->InMemoryTable.Entity.set(
-            ~committedCheckpointId,
-            Set({
-              entityId: entity.id,
-              checkpointId,
-              entity: entity->InternalTable.EnvioAddresses.castToInternal,
-            }),
-          )
+    // Most batches register nothing, so the checkpoints are only collected for a
+    // chain that has something waiting.
+    if chainState->ChainState.hasAddressesToWrite {
+      // The store pairs each drained registration with a checkpoint of its own
+      // chain, so only this chain's checkpoints go in — and the index it returns
+      // points back into these two parallel arrays.
+      let checkpointIds = []
+      let checkpointBlockNumbers = []
+      for idx in 0 to batch.checkpointIds->Array.length - 1 {
+        if batch.checkpointChainIds->Array.getUnsafe(idx) === chainId {
+          checkpointIds->Array.push(batch.checkpointIds->Array.getUnsafe(idx))
+          checkpointBlockNumbers->Array.push(batch.checkpointBlockNumbers->Array.getUnsafe(idx))
         }
       }
-    }
 
-    itemIdx := itemIdx.contents + checkpointEventsProcessed
-  }
+      chainState
+      ->ChainState.drainAddressesForWrite(
+        ~toBlockInclusive=progressedChain.progressBlockNumber,
+        ~checkpointBlockNumbers,
+      )
+      ->Array.forEach(dc => {
+        let entity: InternalTable.EnvioAddresses.t = {
+          id: InternalTable.EnvioAddresses.makeId(~chainId, ~address=dc.address),
+          chainId,
+          contractName: dc.contractName,
+          registrationBlock: dc.registrationBlock,
+          // Only ever written, never read back. Kept on the table so the column
+          // doesn't need a migration.
+          registrationLogIndex: -1,
+        }
+
+        inMemTable->InMemoryTable.Entity.set(
+          ~committedCheckpointId,
+          Set({
+            entityId: entity.id->EntityId.unsafeOfString,
+            checkpointId: checkpointIds->Array.getUnsafe(dc.checkpointIdx),
+            entity: entity->InternalTable.EnvioAddresses.castToInternal,
+          }),
+        )
+      })
+    }
+  })
 }

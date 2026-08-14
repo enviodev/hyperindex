@@ -12,7 +12,8 @@ use crate::{
         field_types,
         human_config::HumanConfig,
         system_config::{
-            self, Abi, Ecosystem, EventKind, FuelEventKind, SelectedField, SystemConfig,
+            self, Abi, ChainIdMode, Ecosystem, EventKind, FuelEventKind, SelectedField,
+            SystemConfig,
         },
     },
     constants::project_paths::{ENVIO_ENV_DTS_FILE, ENVIO_TYPES_FILE},
@@ -85,14 +86,34 @@ fn generate_enums_code(gql_enums: &[GraphQlEnumTypeTemplate]) -> String {
     code
 }
 
+/// An entity's `id` rescript type and whether it is the default `string`.
+/// Foreign keys and id-keyed operations adopt this type; `ID!`/`String!` keep
+/// `string`, `Int!` is `int`, `BigInt!` is `bigint`.
+fn entity_id_type(entity: &EntityRecordTypeTemplate) -> (bool, String) {
+    entity
+        .params
+        .iter()
+        .find(|param| param.field_name.uncapitalized == "id")
+        .map(|param| match &param.field_type {
+            TypeIdent::ID | TypeIdent::String => (true, "string".to_string()),
+            other => (false, other.to_string()),
+        })
+        .unwrap_or((true, "string".to_string()))
+}
+
 fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
     let mut code = String::new();
 
+    // The default id type. `ID!`/`String!` ids and the foreign keys that
+    // reference them render as this alias; numeric ids render as int/bigint.
     writeln!(code, "type id = string").unwrap();
 
     for entity in entities {
+        let (_, id_type) = entity_id_type(entity);
+
         writeln!(code).unwrap();
         writeln!(code, "module {} = {{", entity.name.capitalized).unwrap();
+        writeln!(code, "  type id = {}", id_type).unwrap();
         writeln!(code, "  type t = {}", entity.type_code).unwrap();
         writeln!(code).unwrap();
         writeln!(
@@ -101,16 +122,38 @@ fn generate_entities_code(entities: &[EntityRecordTypeTemplate]) -> String {
             entity.get_where_filter_code
         )
         .unwrap();
+        // The shapes the chain-agnostic test-indexer operations exchange.
+        // Outside a handler there is no chain in context, so a per-chain
+        // entity's row and filter carry the chain id; a cross-chain entity's
+        // are the entity's own.
+        writeln!(code).unwrap();
+        if entity.cross_chain {
+            writeln!(code, "  type testIndexerRow = t").unwrap();
+            writeln!(code, "  type testIndexerGetWhereFilter = getWhereFilter").unwrap();
+        } else {
+            writeln!(code, "  type testIndexerRow = {{...t, chainId: int}}").unwrap();
+            writeln!(
+                code,
+                "  type testIndexerGetWhereFilter = {{...getWhereFilter, @as(\"chainId\") \
+                 chainId?: Envio.whereOperator<int>}}"
+            )
+            .unwrap();
+        }
         writeln!(code, "}}").unwrap();
     }
 
     if !entities.is_empty() {
         writeln!(code).unwrap();
-        writeln!(code, "type rec name<'entity> =").unwrap();
+        // Carries every type the name-keyed test-indexer accessor
+        // (getTestIndexerEntityOperations) needs, so its operations are typed
+        // with that entity's real id scalar and filter rather than a free
+        // variable.
+        writeln!(code, "type rec name<'entity, 'id, 'getWhereFilter> =").unwrap();
         for entity in entities {
             writeln!(
                 code,
-                "  | @as(\"{0}\") {0}: name<{0}.t>",
+                "  | @as(\"{0}\") {0}: name<{0}.testIndexerRow, {0}.id, \
+                 {0}.testIndexerGetWhereFilter>",
                 entity.name.capitalized
             )
             .unwrap();
@@ -194,9 +237,12 @@ pub struct EntityRecordTypeTemplate {
     pub type_code: String,
     pub get_where_filter_code: String,
     pub postgres_fields: Vec<field_types::Field>,
-    pub composite_indices: Vec<Vec<CompositeIndexFieldTemplate>>,
+    pub composite_indexes: Vec<Vec<CompositeIndexFieldTemplate>>,
     pub derived_fields: Vec<DerivedFieldTemplate>,
     pub params: Vec<EntityParamTypeTemplate>,
+    // False when the entity's rows belong to a single chain, so the
+    // indexer-level (chain-agnostic) test APIs have to take a chain id.
+    pub cross_chain: bool,
 }
 
 impl EntityRecordTypeTemplate {
@@ -250,8 +296,8 @@ impl EntityRecordTypeTemplate {
             .filter_map(|gql_field| gql_field.get_derived_from_field())
             .collect();
 
-        let composite_indices = entity
-            .get_composite_indices()
+        let composite_indexes = entity
+            .get_composite_indexes()
             .into_iter()
             .map(|fields| {
                 fields
@@ -289,8 +335,9 @@ impl EntityRecordTypeTemplate {
             type_code,
             get_where_filter_code,
             derived_fields,
-            composite_indices,
+            composite_indexes,
             params,
+            cross_chain: system_config::entity_is_cross_chain(entity, config.default_cross_chain),
         })
     }
 }
@@ -339,14 +386,17 @@ impl EventMod {
         let where_type_code = match self.event_filter_type.as_str() {
             "{}" => "type onEventWhere = Internal.noOnEventWhere".to_string(),
             _ => format!(
-                "type onEventWhereBlockNumber = {{_gte?: int}}\n\
-type onEventWhereBlock = {{number?: onEventWhereBlockNumber}}\n\
-type onEventWhereFilter = {{params?: SingleOrMultiple.t<whereParams>, block?: onEventWhereBlock}}\n\
-type onEventWhereChainContract = {{/** Addresses of the {contract_capitalized} contract on this chain. */ addresses: array<Address.t>}}\n\
-type onEventWhereChain = {{/** The unique identifier of the blockchain network where this event occurred. */ id: chainId, \\\"{contract_capitalized}\": onEventWhereChainContract}}\n\
-type onEventWhereArgs = {{chain: onEventWhereChain}}\n\
-@unboxed type onEventWhereResult = Filter(onEventWhereFilter) | @as(false) SkipAll | @as(true) KeepAll\n\
-type onEventWhere = onEventWhereArgs => onEventWhereResult",
+                "type onEventWhereBlockNumber = {{_gte?: int}}\ntype onEventWhereBlock = \
+                 {{number?: onEventWhereBlockNumber}}\ntype onEventWhereFilter = {{params?: \
+                 SingleOrMultiple.t<whereParams>, block?: onEventWhereBlock}}\ntype \
+                 onEventWhereChainContract = {{/** Addresses of the {contract_capitalized} \
+                 contract on this chain. */ addresses: array<Address.t>}}\ntype onEventWhereChain \
+                 = {{/** The unique identifier of the blockchain network where this event \
+                 occurred. */ id: chainId, \\\"{contract_capitalized}\": \
+                 onEventWhereChainContract}}\ntype onEventWhereArgs = {{chain: \
+                 onEventWhereChain}}\n@unboxed type onEventWhereResult = \
+                 Filter(onEventWhereFilter) | @as(false) SkipAll | @as(true) KeepAll\ntype \
+                 onEventWhere = onEventWhereArgs => onEventWhereResult",
                 contract_capitalized = self.contract_name.capitalized,
             ),
         };
@@ -953,6 +1003,11 @@ impl ProjectTemplate {
         &self.envio_types_dts
     }
 
+    /// The generated `Indexer.res` contents (the project's ReScript surface).
+    pub fn indexer_code(&self) -> &str {
+        &self.indexer_code
+    }
+
     pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
         // 1. `.envio/types.d.ts` — augments `envio` with project-derived
         //    chains/contracts/entities/enums.
@@ -968,8 +1023,8 @@ impl ProjectTemplate {
         if !gitignore_path.exists() {
             std::fs::write(
                 &gitignore_path,
-                "# Ephemeral codegen output. Add other .envio entries here as needed.\n\
-                 types.d.ts\n",
+                "# Ephemeral codegen output. Add other .envio entries here as \
+                 needed.\ntypes.d.ts\n",
             )
             .context("Failed writing .envio/.gitignore")?;
         }
@@ -978,13 +1033,11 @@ impl ProjectTemplate {
         //    `.envio/types.d.ts` into the TS program so the augmented `envio`
         //    module surface is visible to user handlers.
         let envio_env = format!(
-            "/**\n \
-             * This file is generated by HyperIndex codegen. Do not edit manually.\n \
-             * It wires project-specific types from `.envio/types.d.ts` into the `envio` module.\n \
-             * If your project's types look out of date, run `envio codegen`\n \
-             * (or your package manager's `codegen` script, e.g. `pnpm codegen`).\n \
-             */\n\
-             /// <reference path=\"./{}/{}\" />\n",
+            "/**\n * This file is generated by HyperIndex codegen. Do not edit manually.\n * It \
+             wires project-specific types from `.envio/types.d.ts` into the `envio` module.\n * \
+             If your project's types look out of date, run `envio codegen`\n * (or your package \
+             manager's `codegen` script, e.g. `pnpm codegen`).\n */\n/// <reference \
+             path=\"./{}/{}\" />\n",
             crate::constants::project_paths::ENVIO_DIR,
             ENVIO_TYPES_FILE,
         );
@@ -1026,7 +1079,10 @@ impl ProjectTemplate {
                 } else {
                     let event = event_name.unwrap_or("<EventName>");
                     format!(
-                        "{i}@deprecated(\"Not selected for this event. To enable, add to config.yaml:\\nevents:\\n  - event: {event}\\n    field_selection:\\n      {kind}:\\n        - {field}\")\n{i}{res_name}?: unit,",
+                        "{i}@deprecated(\"Not selected for this event. To enable, add to \
+                             config.yaml:\\nevents:\\n  - event: {event}\\n    \
+                             field_selection:\\n      {kind}:\\n        - \
+                             {field}\")\n{i}{res_name}?: unit,",
                         i = indent,
                         event = event,
                         kind = field_kind,
@@ -1061,7 +1117,8 @@ impl ProjectTemplate {
                     ts_selected_field(ts_name, &Self::to_envio_dts_type(&f.ts_type), indent)
                 } else {
                     let yaml_body = format!(
-                        "{i} * events:\n{i} *   - event: {event}\n{i} *     field_selection:\n{i} *       {kind}:\n{i} *         - {field}",
+                        "{i} * events:\n{i} *   - event: {event}\n{i} *     field_selection:\n{i} \
+                         *       {kind}:\n{i} *         - {field}",
                         i = indent,
                         event = event,
                         kind = field_kind,
@@ -1313,14 +1370,20 @@ impl ProjectTemplate {
             Ecosystem::Svm => "Envio.svmOnSlotArgs<handlerContext> => promise<unit>",
         };
 
-        let chain_id_type = format!(
-            "type chainId = [{}]",
-            chain_id_cases
-                .iter()
-                .map(|chain_id_case| format!("#{}", chain_id_case))
-                .collect::<Vec<_>>()
-                .join(" | "),
-        );
+        // ReScript integer polyvariants (`#137`) are int32-bound, so a config
+        // with a wider id falls back to the opaque runtime representation.
+        // TypeScript keeps its numeric literal union either way.
+        let chain_id_type = match cfg.chain_id_mode {
+            ChainIdMode::Int64 => "type chainId = ChainId.t".to_string(),
+            ChainIdMode::Int32 => format!(
+                "type chainId = [{}]",
+                chain_id_cases
+                    .iter()
+                    .map(|chain_id_case| format!("#{}", chain_id_case))
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+            ),
+        };
 
         // Generate indexer types and value
         let indexer_contract_type = r#"/** Contract configuration with name and ABI. */
@@ -1452,45 +1515,84 @@ type indexer = {{
             ),
         };
 
-        // Generate getChainById function
-        let get_chain_by_id_cases = chain_configs
-            .iter()
-            .map(|chain| {
-                format!(
-                    "  | #{} => indexer.chains.\\\"{}\"",
-                    chain.network_config.id, chain.network_config.id
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        // Generate getChainById function. `chainId` is only a polyvariant in
+        // Int32 mode, so the Int64 form looks the key up on the chains record
+        // (whose fields are already the decimal ids) instead of matching.
+        let get_chain_by_id = match cfg.chain_id_mode {
+            ChainIdMode::Int64 => r#"/** Get chain configuration by chain ID. */
+let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {
+switch indexer.chains
+->(Utils.magic: indexerChains => dict<indexerChain>)
+->Dict.get(chainId->ChainId.toString) {
+| Some(chain) => chain
+| None => JsError.throwWithMessage("Chain " ++ chainId->ChainId.toString ++ " is not configured.")
+}
+}"#
+            .to_string(),
+            ChainIdMode::Int32 => {
+                let get_chain_by_id_cases = chain_configs
+                    .iter()
+                    .map(|chain| {
+                        format!(
+                            "  | #{} => indexer.chains.\\\"{}\"",
+                            chain.network_config.id, chain.network_config.id
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
-        let get_chain_by_id = format!(
-            r#"/** Get chain configuration by chain ID with exhaustive pattern matching. */
+                format!(
+                    r#"/** Get chain configuration by chain ID with exhaustive pattern matching. */
 let getChainById = (indexer: indexer, chainId: chainId): indexerChain => {{
 switch chainId {{
 {}
 }}
 }}"#,
-            get_chain_by_id_cases
-        );
+                    get_chain_by_id_cases
+                )
+            }
+        };
 
         // Generate Enums and Entities modules
         let enums_module_code = indent(&generate_enums_code(&gql_enums));
         let entities_module_code = indent(&generate_entities_code(&entities));
 
-        // Generate handlerContext types
+        // Generate handlerContext types. String ids use the plain
+        // `handlerEntityOperations`; numeric ids use the custom-id variant.
+        let has_custom_id_entity = entities.iter().any(|entity| !entity_id_type(entity).0);
         let handler_context_entity_fields = entities
             .iter()
             .map(|entity| {
-                format!(
-                    "  \\\"{}\": handlerEntityOperations<Entities.{}.t, Entities.{}.getWhereFilter>,",
-                    entity.name.capitalized,
-                    entity.name.capitalized,
-                    entity.name.capitalized,
-                )
+                let name = &entity.name.capitalized;
+                if entity_id_type(entity).0 {
+                    format!(
+                        "  \\\"{name}\": handlerEntityOperations<Entities.{name}.t, \
+                         Entities.{name}.getWhereFilter>,",
+                    )
+                } else {
+                    format!(
+                        "  \\\"{name}\": handlerEntityOperationsWithCustomId<Entities.{name}.t, \
+                         Entities.{name}.id, Entities.{name}.getWhereFilter>,",
+                    )
+                }
             })
             .collect::<Vec<_>>()
             .join("\n");
+
+        let custom_id_handler_ops_code = if has_custom_id_entity {
+            r#"
+
+type handlerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
+  get: 'id => promise<option<'entity>>,
+  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
+  getOrCreate: 'entity => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: 'id => unit,
+}"#
+        } else {
+            ""
+        };
 
         let handler_context_code = format!(
             r#"type handlerEntityOperations<'entity, 'getWhereFilter> = {{
@@ -1500,16 +1602,23 @@ switch chainId {{
   getOrCreate: 'entity => promise<'entity>,
   set: 'entity => unit,
   deleteUnsafe: string => unit,
+}}{custom_id_handler_ops_code}
+
+/** The chain the event being handled belongs to. */
+type handlerChain = {{
+  /** The unique identifier of the blockchain network where this event occurred. */
+  id: chainId,
+  /** Whether all chains have entered real-time indexing mode (caught up to head, or reached their configured endBlock for finite-range indexers). */
+  isRealtime: bool,
 }}
 
 type handlerContext = {{
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
-  chain: Internal.chainInfo,
-{}
+  chain: handlerChain,
+{handler_context_entity_fields}
 }}"#,
-            handler_context_entity_fields
         );
 
         // Generate contract modules with event sub-modules
@@ -1546,9 +1655,9 @@ type handlerContext = {{
                         .iter()
                         .map(|event| {
                             format!(
-                                "    | @as(\"{event_name}\") {event_name}: eventIdentity<\
-                                 {event_name}.event, {event_name}.paramsConstructor, \
-                                 {event_name}.onEventWhere>",
+                                "    | @as(\"{event_name}\") {event_name}: \
+                                 eventIdentity<{event_name}.event, \
+                                 {event_name}.paramsConstructor, {event_name}.onEventWhere>",
                                 event_name = event.name,
                             )
                         })
@@ -1620,26 +1729,20 @@ type handlerContext = {{
             };
 
             format!(
-                "@tag(\"contract\")\n\
-                 type eventIdentity<'event, 'paramsConstructor, 'where> =\n\
-                 {top_constructors}\n\n\
-                 @tag(\"kind\")\n\
-                 type simulateItemConstructor<'event, 'paramsConstructor, 'where> =\n\
-                 \x20 | OnEvent({{\n\
-                 \x20     event: eventIdentity<'event, 'paramsConstructor, 'where>,\n\
-                 \x20     params{params_optional}: 'paramsConstructor,\n\
-                 \x20     block?: {block_constructor_type},\n\
-                 \x20     transaction?: {transaction_constructor_type},\n\
-                 \x20   }})\n\n\
-                 let makeSimulateItem = (\n\
-                 \x20 constructor: simulateItemConstructor<'event, 'paramsConstructor, 'where>,\n\
-                 ): {simulate_item_type} => {{\n\
-                 \x20 event: (constructor->Utils.magic)[\"event\"][\"_0\"],\n\
-                 \x20 contract: (constructor->Utils.magic)[\"event\"][\"contract\"],\n\
-                 \x20 params: (constructor->Utils.magic)[\"params\"],\n\
-                 \x20 block: (constructor->Utils.magic)[\"block\"],\n\
-                 \x20 transaction: (constructor->Utils.magic)[\"transaction\"],\n\
-                 }}"
+                "@tag(\"contract\")\ntype eventIdentity<'event, 'paramsConstructor, 'where> \
+                 =\n{top_constructors}\n\n@tag(\"kind\")\ntype simulateItemConstructor<'event, \
+                 'paramsConstructor, 'where> =\n\x20 | OnEvent({{\n\x20     event: \
+                 eventIdentity<'event, 'paramsConstructor, 'where>,\n\x20     \
+                 params{params_optional}: 'paramsConstructor,\n\x20     block?: \
+                 {block_constructor_type},\n\x20     transaction?: \
+                 {transaction_constructor_type},\n\x20   }})\n\nlet makeSimulateItem = (\n\x20 \
+                 constructor: simulateItemConstructor<'event, 'paramsConstructor, 'where>,\n): \
+                 {simulate_item_type} => {{\n\x20 event: \
+                 (constructor->Utils.magic)[\"event\"][\"_0\"],\n\x20 contract: \
+                 (constructor->Utils.magic)[\"event\"][\"contract\"],\n\x20 params: \
+                 (constructor->Utils.magic)[\"params\"],\n\x20 block: \
+                 (constructor->Utils.magic)[\"block\"],\n\x20 transaction: \
+                 (constructor->Utils.magic)[\"transaction\"],\n}}"
             )
         };
 
@@ -1754,9 +1857,9 @@ module Entities = {{
 {entities_module_code}
 }}
 
-{handler_context_code}
-
 {chain_id_type}
+
+{handler_context_code}
 
 type contractRegisterContract = {{ add: Address.t => unit }}
 
@@ -1800,26 +1903,56 @@ type contractRegisterContext = {{
             .collect::<Vec<_>>()
             .join("\n");
 
-        // Generate entity ops fields for the testIndexer type
+        // Generate entity ops fields for the testIndexer type. String ids use
+        // the plain type; numeric ids use the custom-id variant.
+        // The string-id form stays the default so entities with a plain `ID!`
+        // keep an id-argument-free shape. The custom-id form is always emitted
+        // because `getTestIndexerEntityOperations` returns it for every entity,
+        // resolving the id through the name GADT.
         let test_indexer_entity_ops_type = r#"/** Entity operations for direct access outside handlers. */
-type testIndexerEntityOperations<'entity> = {
+type testIndexerEntityOperations<'entity, 'getWhereFilter> = {
   /** Get an entity by ID. */
   get: string => promise<option<'entity>>,
   /** Get all entities. */
   getAll: unit => promise<array<'entity>>,
+  /** Get the entities matching a filter. */
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
   /** Get an entity by ID or throw if not found. */
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
   set: 'entity => unit,
+}
+
+type testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
+  /** Get an entity by ID. */
+  get: 'id => promise<option<'entity>>,
+  /** Get all entities. */
+  getAll: unit => promise<array<'entity>>,
+  /** Get the entities matching a filter. */
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
+  /** Get an entity by ID or throw if not found. */
+  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
+  /** Set (create or update) an entity. */
+  set: 'entity => unit,
 }"#;
 
+        // A per-chain entity's rows are only identified by (id, chain id), and
+        // these operations run outside any handler — so they exchange the
+        // entity plus its chain id rather than the entity alone.
         let test_indexer_entity_fields = entities
             .iter()
             .map(|entity| {
-                format!(
-                    "  \\\"{}\": testIndexerEntityOperations<Entities.{}.t>,",
-                    entity.name.capitalized, entity.name.capitalized,
-                )
+                let name = &entity.name.capitalized;
+                let row = format!("Entities.{name}.testIndexerRow");
+                let filter = format!("Entities.{name}.testIndexerGetWhereFilter");
+                if entity_id_type(entity).0 {
+                    format!("  \\\"{name}\": testIndexerEntityOperations<{row}, {filter}>,")
+                } else {
+                    format!(
+                        "  \\\"{name}\": testIndexerEntityOperationsWithCustomId<{row}, \
+                         Entities.{name}.id, {filter}>,",
+                    )
+                }
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -1854,7 +1987,7 @@ type testIndexer = {{
         // The GADT name value compiles to a string at runtime via @as decorators,
         // so @get_index can use Entities.name directly as a dictionary key
         if !entities.is_empty() {
-            let get_entity_operations = r#"@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = """#;
+            let get_entity_operations = r#"@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id, 'getWhereFilter>) => testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = """#;
 
             indexer_code = format!("{}\n\n{}", indexer_code, get_entity_operations);
         }
@@ -1935,7 +2068,9 @@ type testIndexer = {{
             // Inline chainId union for event payloads. Empty ecosystem →
             // error string so users see a useful message in tsc errors.
             let evm_chain_id_inline: String = if evm_chains_entries.is_empty() {
-                "\"EvmChainId is not available. Configure EVM chains in config.yaml and run 'envio codegen'\"".to_string()
+                "\"EvmChainId is not available. Configure EVM chains in config.yaml and run 'envio \
+                 codegen'\""
+                    .to_string()
             } else {
                 chain_configs
                     .iter()
@@ -2053,7 +2188,9 @@ type testIndexer = {{
                 format!("{{\n{}\n      }}", fuel_chains_entries.join("\n"))
             };
             let fuel_chain_id_inline: String = if fuel_chains_entries.is_empty() {
-                "\"FuelChainId is not available. Configure Fuel chains in config.yaml and run 'envio codegen'\"".to_string()
+                "\"FuelChainId is not available. Configure Fuel chains in config.yaml and run \
+                 'envio codegen'\""
+                    .to_string()
             } else {
                 chain_configs
                     .iter()
@@ -2248,7 +2385,8 @@ type testIndexer = {{
                             "            ",
                         );
                         instruction_entries.push(format!(
-                            "          \"{instr}\": {{ readonly args: {args}; readonly accounts: {accs}; readonly transaction: {tx}; readonly block: {block} }};",
+                            "          \"{instr}\": {{ readonly args: {args}; readonly accounts: \
+                             {accs}; readonly transaction: {tx}; readonly block: {block} }};",
                             instr = event.name,
                             args = args_ts,
                             accs = accounts_ts,
@@ -2307,18 +2445,16 @@ type testIndexer = {{
                         .iter()
                         .filter(|param| !param.is_derived_field)
                         .map(|param| {
+                            // Foreign keys take the referenced entity's id type
+                            // (already resolved into field_type), exposed under
+                            // the `_id` column name.
                             let ts_type = param.field_type.to_ts_type_string();
-                            let (field_name, field_type) = if param.is_entity_field {
-                                let base_type = if param.field_type.is_option() {
-                                    "string | undefined".to_string()
-                                } else {
-                                    "string".to_string()
-                                };
-                                (format!("{}_id", param.field_name.original), base_type)
+                            let field_name = if param.is_entity_field {
+                                format!("{}_id", param.field_name.original)
                             } else {
-                                (param.field_name.original.clone(), ts_type)
+                                param.field_name.original.clone()
                             };
-                            format!("    readonly \"{}\": {};", field_name, field_type)
+                            format!("    readonly \"{}\": {};", field_name, ts_type)
                         })
                         .collect();
                     format!(
@@ -2365,6 +2501,18 @@ type testIndexer = {{
                     svm_chains: &svm_chains_body,
                     svm_programs: &svm_programs_body,
                     entities: &entities_body,
+                    per_chain_entities: {
+                        let names: Vec<String> = entities
+                            .iter()
+                            .filter(|e| !e.cross_chain)
+                            .map(|e| format!("\"{}\"", e.name.capitalized))
+                            .collect();
+                        if names.is_empty() {
+                            "never".to_string()
+                        } else {
+                            names.join(" | ")
+                        }
+                    },
                     enums: &enums_body,
                 },
             ),
@@ -2424,6 +2572,7 @@ type testIndexer = {{
         let config_block = [
             ecosystem_field.as_str(),
             &format!("entities: {};", bodies.entities),
+            &format!("perChainEntities: {};", bodies.per_chain_entities),
             &format!("enums: {};", bodies.enums),
         ]
         .iter()
@@ -2438,31 +2587,17 @@ type testIndexer = {{
             .join("\n");
 
         format!(
-            "/**\n \
-             * This file is generated by HyperIndex codegen from config.yaml and schema.graphql.\n \
-             * Do not edit manually.\n \
-             * If your project's types look out of date, run `envio codegen`\n \
-             * (or your package manager's `codegen` script, e.g. `pnpm codegen`).\n \
-             */\n\
-             \n\
-             import type {{ Address, BigDecimal, SingleOrMultiple }} from \"envio\";\n\
-             \n\
-             /** Marks a block/transaction field that this event's `field_selection` doesn't include.\n \
-             * Reading such a field is a type error; the message tells you which field to add to\n \
-             * `field_selection` in config.yaml to make it available. */\n\
-             type FieldNotSelected<Message extends string> = {{ readonly __fieldNotSelected: Message }};\n\
-             \n\
-             {file_level_types}\n\
-             \n\
-             declare module \"envio\" {{\n\
-             {I2}interface Global {{\n\
-             {I4}config: {{\n\
-             {config_block}\n\
-             {I4}}};\n\
-             {I2}}}\n\
-             \n\
-             {entity_aliases}\n\
-             }}\n",
+            "/**\n * This file is generated by HyperIndex codegen from config.yaml and \
+             schema.graphql.\n * Do not edit manually.\n * If your project's types look out of \
+             date, run `envio codegen`\n * (or your package manager's `codegen` script, e.g. \
+             `pnpm codegen`).\n */\n\nimport type {{ Address, BigDecimal, SingleOrMultiple }} \
+             from \"envio\";\n\n/** Marks a block/transaction field that this event's \
+             `field_selection` doesn't include.\n * Reading such a field is a type error; the \
+             message tells you which field to add to\n * `field_selection` in config.yaml to make \
+             it available. */\ntype FieldNotSelected<Message extends string> = {{ readonly \
+             __fieldNotSelected: Message }};\n\n{file_level_types}\n\ndeclare module \"envio\" \
+             {{\n{I2}interface Global {{\n{I4}config: \
+             {{\n{config_block}\n{I4}}};\n{I2}}}\n\n{entity_aliases}\n}}\n",
             file_level_types = file_level_types,
             entity_aliases = entity_aliases,
         )
@@ -2479,6 +2614,8 @@ struct ConfigBodies<'a> {
     svm_chains: &'a str,
     svm_programs: &'a str,
     entities: &'a str,
+    // Union of the names whose rows belong to a single chain, or `never`.
+    per_chain_entities: String,
     enums: &'a str,
 }
 
@@ -2576,7 +2713,10 @@ fn field_type_to_ts_type(
     }
 }
 
-const SVM_TOKEN_BALANCES_TS: &str = "readonly { readonly account?: string; readonly mint?: string; readonly owner?: string; readonly preAmount?: string; readonly postAmount?: string }[]";
+const SVM_TOKEN_BALANCES_TS: &str = "readonly { readonly account?: string; readonly mint?: \
+                                     string; readonly owner?: string; readonly decimals?: \
+                                     number; readonly preAmount?: bigint; readonly postAmount?: \
+                                     bigint }[]";
 
 /// One selected field line of a generated `.d.ts` record: a doc comment plus the
 /// `readonly` property with its real type.
@@ -2598,7 +2738,10 @@ fn ts_unselected_field(
     indent: &str,
 ) -> String {
     format!(
-        "{indent}/**\n{indent} * @deprecated Not selected for this {noun}. To enable, add to config.yaml:\n{indent} * ```yaml\n{yaml_body}\n{indent} * ```\n{indent} */\n{indent}readonly {name}: FieldNotSelected<\"Field '{name}' is not selected for the '{owner}' {noun}. Add it under field_selection.{knob} in config.yaml.\">;"
+        "{indent}/**\n{indent} * @deprecated Not selected for this {noun}. To enable, add to \
+         config.yaml:\n{indent} * ```yaml\n{yaml_body}\n{indent} * ```\n{indent} \
+         */\n{indent}readonly {name}: FieldNotSelected<\"Field '{name}' is not selected for the \
+         '{owner}' {noun}. Add it under field_selection.{knob} in config.yaml.\">;"
     )
 }
 
@@ -2641,7 +2784,7 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
         .map(|field| {
             let (ts_type, optional) = match field {
                 SvmTransactionField::TransactionIndex => ("number", false),
-                SvmTransactionField::Signatures => ("readonly string[]", false),
+                SvmTransactionField::Signature => ("string", false),
                 SvmTransactionField::FeePayer => ("string", false),
                 SvmTransactionField::Success => ("boolean", false),
                 SvmTransactionField::Err => ("string", true),
@@ -2653,6 +2796,7 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
                 SvmTransactionField::AccountKeys => ("readonly string[]", false),
                 SvmTransactionField::RecentBlockhash => ("string", false),
                 SvmTransactionField::Version => ("string", true),
+                SvmTransactionField::AllSignatures => ("readonly string[]", false),
             };
             SvmTransactionFieldSpec {
                 name: field.to_string(),
@@ -2825,6 +2969,7 @@ mod test {
         utils::text::Capitalize,
     };
     use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
     use std::vec;
     use system_config::FieldSelection;
 
@@ -3365,6 +3510,133 @@ mod test {
     }
 
     #[test]
+    fn indexer_code_exposes_numeric_entity_id_types() {
+        // Each entity module exposes its id scalar so handler/test-indexer
+        // operations are keyed by the real type: `ID!` reuses `string`, while
+        // `Int!`/`BigInt!` render as `int`/`bigint`.
+        let yaml = r#"
+name: numeric-ids
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+    contracts:
+      - name: Token
+        address: "0x0000000000000000000000000000000000000001"
+        events:
+          - event: Transfer()
+"#;
+        let schema = r#"
+type Chain {
+  id: Int!
+}
+type BigThing {
+  id: BigInt!
+}
+type Vault {
+  id: ID!
+  chain: Chain!
+  big: BigThing!
+}
+"#;
+        let config =
+            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("numeric-id config should parse");
+        let indexer_code = super::ProjectTemplate::from_config(&config)
+            .expect("project template")
+            .indexer_code;
+
+        let expectations = [
+            // `type id` is emitted before `type t`.
+            "module Chain = {\n    type id = int\n    type t = {id: int}",
+            "module BigThing = {\n    type id = bigint\n    type t = {id: bigint}",
+            // The FK columns adopt the referenced entity's id type.
+            "module Vault = {\n    type id = string\n    type t = {id: id, chain_id: int, big_id: \
+             bigint}",
+            // Numeric ids use the custom-id operation variants...
+            "handlerEntityOperationsWithCustomId<Entities.Chain.t, Entities.Chain.id, \
+             Entities.Chain.getWhereFilter>",
+            "testIndexerEntityOperationsWithCustomId<Entities.BigThing.testIndexerRow, \
+             Entities.BigThing.id, Entities.BigThing.testIndexerGetWhereFilter>",
+            // ...while string ids stay on the plain, id-argument-free variants.
+            "handlerEntityOperations<Entities.Vault.t, Entities.Vault.getWhereFilter>",
+            "testIndexerEntityOperations<Entities.Vault.testIndexerRow, \
+             Entities.Vault.testIndexerGetWhereFilter>",
+        ];
+        for expected in expectations {
+            assert!(
+                indexer_code.contains(expected),
+                "generated indexer code missing:\n{expected}\n\n--- got ---\n{indexer_code}"
+            );
+        }
+    }
+
+    #[test]
+    fn indexer_code_widens_test_indexer_ops_for_per_chain_entities() {
+        // Outside a handler there is no chain in context, so the chain-agnostic
+        // test-indexer operations of a per-chain entity exchange the entity
+        // plus its chain id. A @crossChain entity keeps the plain shape.
+        let yaml = r#"
+name: per-chain
+disable_default_cross_chain: true
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 0
+    contracts:
+      - name: Token
+        address: "0x0000000000000000000000000000000000000001"
+        events:
+          - event: Transfer()
+"#;
+        let schema = r#"
+type Counter {
+  id: ID!
+  count: BigInt!
+}
+type GlobalCounter @crossChain {
+  id: ID!
+  count: BigInt!
+}
+"#;
+        let config =
+            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("per-chain config should parse");
+        let indexer_code = super::ProjectTemplate::from_config(&config)
+            .expect("project template")
+            .indexer_code;
+
+        let expectations = [
+            // The per-chain entity's row and filter carry the chain id...
+            "type testIndexerRow = {...t, chainId: int}",
+            "type testIndexerGetWhereFilter = {...getWhereFilter, @as(\"chainId\") chainId?: \
+             Envio.whereOperator<int>}",
+            // ...while the @crossChain one's are the entity's own.
+            "type testIndexerRow = t",
+            "type testIndexerGetWhereFilter = getWhereFilter",
+            "\"Counter\": testIndexerEntityOperations<Entities.Counter.testIndexerRow, \
+             Entities.Counter.testIndexerGetWhereFilter>,",
+            // The name GADT carries all three, so the accessor keyed by it has
+            // no free type variable left.
+            "| @as(\"Counter\") Counter: name<Counter.testIndexerRow, Counter.id, \
+             Counter.testIndexerGetWhereFilter>",
+        ];
+        for expected in expectations {
+            assert!(
+                indexer_code.contains(expected),
+                "generated indexer code missing:\n{expected}\n\n--- got ---\n{indexer_code}"
+            );
+        }
+        // The filter variable is bound by the GADT rather than left free, so
+        // the accessor types getWhere with the entity's real filter.
+        assert!(indexer_code.contains("Entities.name<'entity, 'id, 'getWhereFilter>) =>"));
+    }
+
+    #[test]
     fn internal_config_json_code_with_lowercase_contract_name() {
         let json = get_internal_config_json_helper("lowercase-contract-name.yaml");
         insta::assert_snapshot!(json);
@@ -3474,7 +3746,7 @@ mod test {
 
     #[test]
     fn svm_transaction_ts_type_renders_optionality_and_unselected() {
-        // Selected required fields (`signatures`, `feePayer`) and always-present
+        // Selected required fields (`signature`, `feePayer`) and always-present
         // `tokenBalances` have no `| undefined`; nullable selected field (`err`,
         // null on a successful tx) is `string | undefined`; unselected fields
         // get the `@deprecated` hint + `FieldNotSelected`, matching the EVM
@@ -3482,7 +3754,7 @@ mod test {
         let generated = svm_transaction_ts_type(
             &svm_transaction_field_specs(),
             &[
-                "signatures".to_string(),
+                "signature".to_string(),
                 "feePayer".to_string(),
                 "err".to_string(),
                 "tokenBalances".to_string(),
@@ -3613,8 +3885,9 @@ mod test {
     /// only available via `Enum<"Name">`.
     #[test]
     fn entities_get_aliases_enums_do_not() {
-        let file_level_types =
-            "type Enums = {\n  \"accountType\": \"ADMIN\" | \"USER\";\n};\ntype Entities = {\n  \"User\": { readonly id: string };\n};";
+        let file_level_types = "type Enums = {\n  \"accountType\": \"ADMIN\" | \
+                                \"USER\";\n};\ntype Entities = {\n  \"User\": { readonly id: \
+                                string };\n};";
         let entity_aliases = vec!["User".to_string()];
 
         let out = super::ProjectTemplate::wrap_envio_module_augmentation(
@@ -3631,6 +3904,7 @@ mod test {
                 svm_chains: "{}",
                 svm_programs: "{}",
                 entities: "Entities",
+                per_chain_entities: "never".to_string(),
                 enums: "Enums",
             },
         );
@@ -3642,6 +3916,50 @@ mod test {
             ),
             (true, false),
             "Got:\n{out}",
+        );
+    }
+
+    /// Renders the `EvmAllBlockFields` / `EvmAllTransactionFields` records that
+    /// `packages/envio/index.d.ts` declares by hand, from the config-parsing
+    /// enums. Hand-written there so the inline `fields` option types work in a
+    /// project that never ran codegen; rendered here so they can't drift.
+    fn evm_all_fields_dts() -> String {
+        let all = system_config::FieldSelection::all_evm();
+        let selection = super::FieldSelection::new(FieldSelectionOptions {
+            block_fields: all.block_fields,
+            transaction_fields: all.transaction_fields,
+        });
+        let render = |name: &str, fields: &[SelectedFieldTemplate]| {
+            let lines: Vec<String> = fields
+                .iter()
+                .map(|f| {
+                    format!(
+                        "  readonly {}: {};",
+                        f.name.camel,
+                        ProjectTemplate::to_envio_dts_type(&f.ts_type)
+                    )
+                })
+                .collect();
+            format!("export type {name} = {{\n{}\n}};", lines.join("\n"))
+        };
+        format!(
+            "{}\n\n{}",
+            render("EvmAllBlockFields", &selection.block_fields),
+            render("EvmAllTransactionFields", &selection.transaction_fields),
+        )
+    }
+
+    #[test]
+    fn evm_all_fields_dts_matches_hand_written_index_dts() {
+        let rendered = evm_all_fields_dts();
+
+        let index_dts_path = format!("{}/../envio/index.d.ts", env!("CARGO_MANIFEST_DIR"));
+        let index_dts = std::fs::read_to_string(&index_dts_path)
+            .unwrap_or_else(|e| panic!("Failed to read {index_dts_path}: {e}"));
+        assert!(
+            index_dts.contains(&rendered),
+            "packages/envio/index.d.ts is out of sync with the EVM field enums. Replace its \
+             EvmAllBlockFields/EvmAllTransactionFields declarations with:\n\n{rendered}",
         );
     }
 }

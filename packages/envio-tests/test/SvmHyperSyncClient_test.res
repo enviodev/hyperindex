@@ -10,12 +10,19 @@ describe_skip("SvmHyperSyncClient live", () => {
   let tokenMetadataProgram = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 
   Async.it("returns Token Metadata instructions for a recent slot window", async t => {
-    let client = SvmHyperSyncClient.make(~url="https://solana.hypersync.xyz")
+    let client = SvmHyperSyncClient.make(
+    ~url="https://solana.hypersync.xyz",
+    ~addressStore=AddressStore.make(
+      ~ecosystem=Ecosystem.Svm,
+      ~shouldChecksum=false,
+      ~contracts=[],
+    ),
+  )
     let height = await client.getHeight()
     let query: SvmHyperSyncClient.query = {
       fromSlot: Pervasives.max(0, height - 10_000),
       toSlot: height,
-      instructions: [{programId: [tokenMetadataProgram]}],
+      instructionCalls: [{executingAccount: [tokenMetadataProgram]}],
       maxNumInstructions: 200,
       // Default merge mode: requesting a table's columns opts the matched
       // result set into that join — no per-selection include flags needed.
@@ -29,7 +36,7 @@ describe_skip("SvmHyperSyncClient live", () => {
     let (resp, _, _) = await client.get(~query)
     // Option-typed so an empty live response fails the shape assertion below
     // instead of throwing on the index.
-    let first = resp.data.instructions->Array.get(0)
+    let first = resp.data.instructionCalls->Array.get(0)
 
     let blockTimeBySlot = Dict.make()
     resp.data.blocks->Array.forEach(b =>
@@ -41,12 +48,12 @@ describe_skip("SvmHyperSyncClient live", () => {
 
     let summary = {
       "heightLooksRecent": height > 300_000_000,
-      "hasInstructions": resp.data.instructions->Array.length > 0,
-      "firstProgramId": first->Option.mapOr("", i => i.programId),
+      "hasInstructions": resp.data.instructionCalls->Array.length > 0,
+      "firstProgramId": first->Option.mapOr("", i => i.executingAccount),
       "firstDataIsHex": first->Option.mapOr(false, i => i.data->String.startsWith("0x")),
       // Every matched instruction's slot must come with a sane blockTime —
       // `SvmHyperSyncSource` relies on this join for `instruction.block.time`.
-      "allInstructionSlotsHaveBlockTime": resp.data.instructions->Array.every(instr =>
+      "allInstructionSlotsHaveBlockTime": resp.data.instructionCalls->Array.every(instr =>
         switch blockTimeBySlot->Dict.get(instr.slot->Int.toString) {
         | Some(time) => time > 1_600_000_000
         | None => false

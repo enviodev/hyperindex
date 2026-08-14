@@ -1,5 +1,5 @@
 type chainMetrics = {
-  chainId: float,
+  chainId: ChainId.t,
   poweredByHyperSync: bool,
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
@@ -84,7 +84,7 @@ type historyPruneMetrics = {
 
 type sourceRequestMetrics = {
   source: string,
-  chainId: int,
+  chainId: ChainId.t,
   method: string,
   count: int,
   seconds: float,
@@ -92,18 +92,25 @@ type sourceRequestMetrics = {
 
 type sourceHeightMetrics = {
   source: string,
-  chainId: int,
+  chainId: ChainId.t,
   height: int,
 }
 
 type t = {
   startTime: Date.t,
+  // Wall clock when this snapshot was built, so a scrape can be dated.
+  metricTime: Date.t,
+  // Measured monotonically, not as metricTime - startTime: a wall-clock
+  // correction would otherwise skew the counter shares derived from it.
+  elapsedSeconds: float,
   targetBufferSize: int,
   isInReorgThreshold: bool,
   rollbackEnabled: bool,
   maxBatchSize: int,
   preloadSeconds: float,
   processingSeconds: float,
+  processingStalledOnFetchSeconds: float,
+  processingStalledOnStorageWriteSeconds: float,
   rollbackSeconds: float,
   rollbackCount: int,
   rollbackEventsCount: float,
@@ -191,7 +198,7 @@ let single = (b: builder, ~name, ~help, ~kind, ~value) => {
 }
 
 let renderMetrics = (b: builder, metrics: t) => {
-  let chains = metrics.chains->Array.map(m => (`{chainId="${m.chainId->Float.toString}"}`, m))
+  let chains = metrics.chains->Array.map(m => (`{chainId="${m.chainId->ChainId.toString}"}`, m))
   let handlers =
     metrics.handlers->Array.map(s => (
       `{contract="${s.contract->escapeLabelValue}",event="${s.event->escapeLabelValue}"}`,
@@ -217,7 +224,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   let sourceRequests = {
     let byLabels: dict<sourceRequestMetrics> = Dict.make()
     metrics.sourceRequests->Array.forEach(s => {
-      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->Int.toString}",method="${s.method->escapeLabelValue}"}`
+      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}",method="${s.method->escapeLabelValue}"}`
       switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
       | Some(existing) =>
         byLabels->Dict.set(
@@ -232,7 +239,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   let sources = {
     let byLabels: dict<int> = Dict.make()
     metrics.sourceHeights->Array.forEach(s => {
-      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->Int.toString}"}`
+      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}"}`
       switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
       | Some(existing) if existing >= s.height => ()
       | _ => byLabels->Dict.set(labels, s.height)
@@ -241,6 +248,24 @@ let renderMetrics = (b: builder, metrics: t) => {
     byLabels->Dict.toArray
   }
 
+  b->single(
+    ~name="envio_process_start_time_seconds",
+    ~help="Start time of the process since unix epoch in seconds.",
+    ~kind="gauge",
+    ~value=metrics.startTime->Date.getTime /. 1000.,
+  )
+  b->single(
+    ~name="envio_process_metric_time_seconds",
+    ~help="The time these metrics were collected. Use it to tell how fresh a snapshot is, or to measure rates between two snapshots.",
+    ~kind="gauge",
+    ~value=metrics.metricTime->Date.getTime /. 1000.,
+  )
+  b->single(
+    ~name="envio_process_elapsed_seconds",
+    ~help="How long the indexer has been running. Divide a cumulative seconds metric by this to get the share of the run it took, eg envio_processing_seconds for time spent in event handlers.",
+    ~kind="gauge",
+    ~value=metrics.elapsedSeconds,
+  )
   b->single(
     ~name="envio_preload_seconds",
     ~help="Cumulative time spent on preloading entities during batch processing.",
@@ -252,6 +277,18 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~help="Cumulative time spent executing event handlers during batch processing.",
     ~kind="counter",
     ~value=metrics.processingSeconds,
+  )
+  b->single(
+    ~name="envio_processing_stalled_on_fetch_seconds",
+    ~help="Time the indexer had nothing to process while waiting for events to be fetched. A high rate means fetching is the bottleneck: check the data-source latency and whether it can be queried with more concurrency. Waiting at the chain head for new blocks is not counted.",
+    ~kind="counter",
+    ~value=metrics.processingStalledOnFetchSeconds,
+  )
+  b->single(
+    ~name="envio_processing_stalled_on_storage_write_seconds",
+    ~help="Time the indexer paused processing because too many changes were still waiting to be written. A high rate means storage writes are the bottleneck: check envio_storage_write_seconds and the database performance.",
+    ~kind="counter",
+    ~value=metrics.processingStalledOnStorageWriteSeconds,
   )
   b->series(
     ~name="envio_progress_ready",
@@ -346,12 +383,6 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~entries=chains,
     ~value=m => m.sourceBlockNumber->Int.toFloat,
   )
-  b->single(
-    ~name="envio_process_start_time_seconds",
-    ~help="Start time of the process since unix epoch in seconds.",
-    ~kind="gauge",
-    ~value=metrics.startTime->Date.getTime /. 1000.,
-  )
   b->series(
     ~name="envio_indexing_concurrency",
     ~help="The number of executing concurrent queries to the chain data-source.",
@@ -414,15 +445,15 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~entries=chains,
     ~value=m => m.endBlock->Option.map(Int.toFloat),
   )
-  b->series(
+  b->seriesOpt(
     ~name="envio_source_request_total",
-    ~help="The number of requests made to data sources.",
+    ~help="The number of requests made to data sources. Heights pushed by a subscription stream are counted here too, under the heightPush and heightPushIgnored methods.",
     ~kind="counter",
     ~entries=sourceRequests,
-    ~value=s => s.count->Int.toFloat,
+    ~value=s => s.count > 0 ? Some(s.count->Int.toFloat) : None,
   )
-  // Skips a method's seconds line when it has no timing (e.g. heightSubscription,
-  // which only ever records a count).
+  // Skips a method's seconds line when it has no timing (e.g. heightPush, which
+  // only ever records a count).
   b->seriesOpt(
     ~name="envio_source_request_seconds_total",
     ~help="Cumulative time spent on data source requests.",

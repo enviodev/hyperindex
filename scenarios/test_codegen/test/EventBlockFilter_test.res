@@ -26,14 +26,14 @@ let parse = (~eventFilters: option<JSON.t>, ~probeChainId, ~onEventBlockFilterSc
   {startBlock: p.resolvedWhere.startBlock, filterByAddresses: p.filterByAddresses}
 }
 
-let parseEvm = (~eventFilters: option<JSON.t>, ~probeChainId=1) =>
+let parseEvm = (~eventFilters: option<JSON.t>, ~probeChainId=1->ChainId.fromInt) =>
   parse(
     ~eventFilters,
     ~probeChainId,
     ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
   )
 
-let parseFuel = (~eventFilters: option<JSON.t>, ~probeChainId=1) =>
+let parseFuel = (~eventFilters: option<JSON.t>, ~probeChainId=1->ChainId.fromInt) =>
   parse(
     ~eventFilters,
     ~probeChainId,
@@ -108,31 +108,39 @@ describe("parseWhereOrThrow — static `where` with block filter (EVM)", () => {
   })
 
   it("rejects `_lte` on event filters with a helpful message", t => {
-    t.expect(() =>
+    t->toThrowErrorEqual(() =>
       parseEvm(
         ~eventFilters=Some(%raw(`{block: {number: {_gte: 10, _lte: 200}}}`)),
       )->ignore
-    ).toThrowError("Only `_gte` is supported on event filters")
+    , 
+      "Invalid where configuration for ERC20. `block` filter is invalid: RescriptSchemaError: Failed parsing at root. Reason: Encountered disallowed excess key \"_lte\" on an object. Only `_gte` is supported on event filters — use `indexer.onBlock` for `_lte` or `_every`.",
+    )
   })
 
   it("rejects `_every` on event filters", t => {
-    t.expect(() =>
+    t->toThrowErrorEqual(() =>
       parseEvm(
         ~eventFilters=Some(%raw(`{block: {number: {_gte: 10, _every: 5}}}`)),
       )->ignore
-    ).toThrowError("Only `_gte` is supported on event filters")
+    , 
+      "Invalid where configuration for ERC20. `block` filter is invalid: RescriptSchemaError: Failed parsing at root. Reason: Encountered disallowed excess key \"_every\" on an object. Only `_gte` is supported on event filters — use `indexer.onBlock` for `_lte` or `_every`.",
+    )
   })
 
   it("rejects unknown top-level keys (typo catches)", t => {
-    t.expect(() =>
+    t->toThrowErrorEqual(() =>
       parseEvm(~eventFilters=Some(%raw(`{blocks: {number: {_gte: 10}}}`)))->ignore
-    ).toThrowError(`Unknown field "blocks"`)
+    , 
+      `Invalid where configuration. Unknown field "blocks". Indexed parameter filters must be nested under \`params\` and block-range filters under \`block\``,
+    )
   })
 
   it("rejects unknown fields inside `block` (typo catches)", t => {
-    t.expect(() =>
+    t->toThrowErrorEqual(() =>
       parseEvm(~eventFilters=Some(%raw(`{block: {numbre: {_gte: 10}}}`)))->ignore
-    ).toThrowError("`block` filter is invalid")
+    , 
+      "Invalid where configuration for ERC20. `block` filter is invalid: RescriptSchemaError: Failed parsing at [\"block\"]. Reason: Encountered disallowed excess key \"numbre\" on an object. Only `_gte` is supported on event filters — use `indexer.onBlock` for `_lte` or `_every`.",
+    )
   })
 })
 
@@ -146,15 +154,15 @@ describe("parseWhereOrThrow — dynamic `where` callback (EVM)", () => {
     })`)
     let {startBlock: startBlockChain137} = parseEvm(
       ~eventFilters=Some(whereFn),
-      ~probeChainId=137,
+      ~probeChainId=137->ChainId.fromInt,
     )
-    let {startBlock: startBlockChain1} = parseEvm(~eventFilters=Some(whereFn), ~probeChainId=1)
+    let {startBlock: startBlockChain1} = parseEvm(~eventFilters=Some(whereFn), ~probeChainId=1->ChainId.fromInt)
     t.expect((startBlockChain137, startBlockChain1)).toEqual((Some(5000), Some(1000)))
   })
 
   it("returns None when the callback returns `false` for this chain", t => {
     let whereFn = %raw(`({chain}) => chain.id === 137 ? {block: {number: {_gte: 5000}}} : false`)
-    let {startBlock} = parseEvm(~eventFilters=Some(whereFn), ~probeChainId=1)
+    let {startBlock} = parseEvm(~eventFilters=Some(whereFn), ~probeChainId=1->ChainId.fromInt)
     t.expect(startBlock).toEqual(None)
   })
 
@@ -172,9 +180,11 @@ describe("parseWhereOrThrow — Fuel block.height", () => {
   })
 
   it("Fuel rejects `block.number` — the block filter is keyed by height", t => {
-    t.expect(() =>
+    t->toThrowErrorEqual(() =>
       parseFuel(~eventFilters=Some(%raw(`{block: {number: {_gte: 42}}}`)))->ignore
-    ).toThrowError("`block` filter is invalid")
+    , 
+      "Invalid where configuration for ERC20. `block` filter is invalid: RescriptSchemaError: Failed parsing at [\"block\"]. Reason: Encountered disallowed excess key \"number\" on an object. Only `_gte` is supported on event filters — use `indexer.onBlock` for `_lte` or `_every`.",
+    )
   })
 })
 
@@ -243,7 +253,7 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~handler=None,
       ~contractRegister=None,
       ~where=eventFilters,
-      ~chainId=1,
+      ~chainId=1->ChainId.fromInt,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock?,
     )
@@ -293,7 +303,7 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~handler=None,
       ~contractRegister=None,
       ~where=Some(whereFn),
-      ~chainId=137,
+      ~chainId=137->ChainId.fromInt,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock=1,
     )
@@ -308,7 +318,7 @@ describe("EventConfigBuilder — where.block.number._gte overrides contract star
       ~handler=None,
       ~contractRegister=None,
       ~where=Some(whereFn),
-      ~chainId=1,
+      ~chainId=1->ChainId.fromInt,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock=1,
     )
@@ -342,7 +352,7 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
       ~handler=None,
       ~contractRegister=None,
       ~where=Some(%raw(`{block: {number: {_gte: 5000}}}`)),
-      ~chainId=1,
+      ~chainId=1->ChainId.fromInt,
       ~onEventBlockFilterSchema=Evm.make(~logger=Logging.getLogger()).onEventBlockFilterSchema,
       ~startBlock?,
     )
@@ -358,16 +368,15 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
         registrationBlock: -1,
       },
     ]
-    let contractConfigs = IndexingAddresses.makeContractConfigs(~onEventRegistrations)
     FetchState.make(
       ~onEventRegistrations,
-      ~contractConfigs,
+      ~addressStore=TestAddresses.makeStore(~onEventRegistrations),
       ~addresses,
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=3,
       ~maxOnBlockBufferSize=5000,
-      ~chainId=1,
+      ~chainId=1->ChainId.fromInt,
       ~knownHeight=10000,
     )
   }

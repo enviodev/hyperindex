@@ -21,29 +21,44 @@ let mockLog = (
   logIndex: 2,
 }
 
+// One store per test scope: the chain's registrations plus the emitters its
+// crafted logs come from.
+let makeAddressStore = (
+  ~onEventRegistrations: array<Internal.evmOnEventRegistration>,
+  ~addresses=[],
+) =>
+  TestAddresses.makeStore(
+    ~onEventRegistrations=onEventRegistrations->Array.map(reg => (
+      reg :> Internal.onEventRegistration
+    )),
+    ~addresses,
+  )
+
 describe("RpcSource - name", () => {
   it("Returns the name of the source including sanitized rpc url", t => {
     let source = RpcSource.make({
       url: "https://eth.rpc.hypersync.xyz?api_key=123",
-      chain: MockConfig.chain1337,
+      chainId: MockConfig.chain1337,
       onEventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
       lowercaseAddresses: false,
+      addressStore: TestAddresses.makeStore(),
     })
     t.expect(source.name).toBe("RPC (eth.rpc.hypersync.xyz)")
   })
 })
 
 describe("RpcSource - getHeightOrThrow", () => {
-  Async.it("Returns the current height of the chain", async t => {
+  Async.itWithOptions("Returns the current height of the chain", {retry: 3}, async t => {
     let source = RpcSource.make({
       url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
-      chain: MockConfig.chain1337,
+      chainId: MockConfig.chain1337,
       onEventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
       lowercaseAddresses: false,
+      addressStore: TestAddresses.makeStore(),
     })
     let {height} = await source.getHeightOrThrow()
     t.expect({
@@ -182,9 +197,11 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
           R,
           S,
           YParity,
+          Type,
           // Receipt fields
           GasUsed,
           EffectiveGasPrice,
+          CumulativeGasUsed,
           Status,
         ]),
       ),
@@ -204,9 +221,11 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
       "s": "0x10c1bcf56abfb5dc6dae06e1c0e441b68068fc23064364eaf0ae3e76e07b553a",
       "v": "0x1",
       "yParity": "0x1",
+      "type": 2,
       // Receipt fields
       "gasUsed": 21000n,
       "effectiveGasPrice": 17699339493n,
+      "cumulativeGasUsed": 15039647n,
       "status": 1,
     })
     },
@@ -330,6 +349,61 @@ describe("RpcSource - getEventTransactionOrThrow", () => {
         ~selectedTransactionFields=Utils.Set.fromArray([EffectiveGasPrice]),
       ),
     ).toEqual({"effectiveGasPrice": 17699339493n})
+  })
+
+  // Pre-Bedrock Optimism (blocks below 105235063) predates EIP-1559, so its
+  // receipts carry no `effectiveGasPrice`. Values are from block 1000000.
+  Async.it("Falls back to the transaction's gasPrice when the receipt omits it", async t => {
+    let transactionCalls = ref(0)
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=_ => {
+        transactionCalls := transactionCalls.contents + 1
+        Promise.resolve(%raw(`{"gasPrice": "0xf4240"}`))
+      },
+      ~getReceiptJson=_ =>
+        Promise.resolve(
+          %raw(`{"cumulativeGasUsed": "0x26aed", "gasUsed": "0x26aed", "status": "0x1"}`),
+        ),
+      ~lowercaseAddresses=false,
+    )
+
+    let transaction =
+      await mockLog()->getEventTransactionOrThrow(
+        ~selectedTransactionFields=Utils.Set.fromArray([
+          (EffectiveGasPrice: Internal.evmTransactionField),
+          GasUsed,
+          Status,
+        ]),
+      )
+    t.expect((transaction, transactionCalls.contents)).toEqual((
+      {
+        "effectiveGasPrice": 1000000n,
+        "gasUsed": 158445n,
+        "status": 1,
+      },
+      1,
+    ))
+  })
+
+  Async.it("Throws when neither effectiveGasPrice nor gasPrice is available", async t => {
+    let getEventTransactionOrThrow = RpcSource.makeThrowingGetEventTransaction(
+      ~getTransactionJson=_ => Promise.resolve(%raw(`{}`)),
+      ~getReceiptJson=_ => Promise.resolve(%raw(`{"gasUsed": "0x5208"}`)),
+      ~lowercaseAddresses=false,
+    )
+
+    let message = try {
+      let _ =
+        await mockLog()->getEventTransactionOrThrow(
+          ~selectedTransactionFields=Utils.Set.fromArray([EffectiveGasPrice]),
+        )
+      "the call to fail, but it succeeded"
+    } catch {
+    | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
+    }
+    t.expect(message).toBe(
+      `Neither "effectiveGasPrice" nor "gasPrice" is present in the RPC response for the transaction. Remove "effectiveGasPrice" from the field selection, or index this chain via HyperSync.`,
+    )
   })
 
   Async.it(
@@ -698,6 +772,87 @@ describe("RpcSource - getEventBlockOrThrow", () => {
     )
     },
   )
+
+  // `eth_getBlockByNumber` carries every block field the config can select, so
+  // none of them are RPC-unavailable. Pinned against the real mainnet response
+  // for block 21758655, trimmed of its `transactions`, `withdrawals` and
+  // `logsBloom` payloads, because the config validation is only as good as what
+  // an endpoint actually returns.
+  Async.it(
+    "Queries the block fields with no HyperSync equivalent",
+    async t => {
+      let getEventBlockOrThrow = RpcSource.makeThrowingGetEventBlock(
+        ~getBlockJson=_ =>
+          Promise.resolve(
+            %raw(`{
+              "baseFeePerGas": "0xc0f55feb",
+              "blobGasUsed": "0xc0000",
+              "excessBlobGas": "0x3e00000",
+              "parentBeaconBlockRoot": "0xaf040950a84627a7cc2dd0884a830df31986bf0a8672da50e5f8560f9cfa1233",
+              "withdrawalsRoot": "0x8cdf00ffc923f4bedfe91ec276c860451f98c8cdcfe8e2cee54fdd6c7a521009",
+              "mixHash": "0xfea0481418a65cc4b9e4c5d5960f639aa5d9b649474bf7231ce8105d63570f74",
+              "difficulty": "0x0",
+              "extraData": "0x546974616e2028746974616e6275696c6465722e78797a29",
+              "gasLimit": "0x1cf2651",
+              "gasUsed": "0x1686262",
+              "hash": "0x806a18dd9f7bb88e35e08658783c556974ea46a222f1f85a0bccb1da31bbde5f",
+              "miner": "0x4838b106fce9647bdf1e7877bf73ce8b0bad5f97",
+              "nonce": "0x0000000000000000",
+              "number": "0x14c02bf",
+              "parentHash": "0x58ebb0c939bed8e69d7e3519f579b028338613050986d0a3e8770de2c7ec2949",
+              "receiptsRoot": "0x9d845c74774f03ed99d16af07747dbfe7d1825392360b901ed1d72087819cbcf",
+              "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+              "size": "0x1be72",
+              "stateRoot": "0x26174afbfa3756ef8ef51ec7b10b74b857531bdeb4b96dd217b819c6a84b4449",
+              "timestamp": "0x679f5ccb",
+              "totalDifficulty": "0xc70d815d562d3cfa955",
+              "transactionsRoot": "0x4adb6fa9a977f828f28575406e90b48a636920f8fa05877aa5aae7cbc3afb7c6",
+              "uncles": []
+            }`),
+          ),
+        ~lowercaseAddresses=false,
+      )
+
+      let log = {
+        ...mockLog(),
+        blockNumber: 21758655,
+      }
+
+      t.expect(
+        (
+          await log->getEventBlockOrThrow(
+            ~selectedBlockFields=Utils.Set.fromArray([
+              (Sha3Uncles: evmBlockField),
+              TransactionsRoot,
+              ReceiptsRoot,
+              Size,
+              Uncles,
+              MixHash,
+              WithdrawalsRoot,
+              BlobGasUsed,
+              ExcessBlobGas,
+              ParentBeaconBlockRoot,
+              TotalDifficulty,
+            ]),
+          )
+        )->toJson,
+      ).toEqual(
+        %raw(`{
+        "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+        "transactionsRoot": "0x4adb6fa9a977f828f28575406e90b48a636920f8fa05877aa5aae7cbc3afb7c6",
+        "receiptsRoot": "0x9d845c74774f03ed99d16af07747dbfe7d1825392360b901ed1d72087819cbcf",
+        "size": 114290n,
+        "uncles": [],
+        "mixHash": "0xfea0481418a65cc4b9e4c5d5960f639aa5d9b649474bf7231ce8105d63570f74",
+        "withdrawalsRoot": "0x8cdf00ffc923f4bedfe91ec276c860451f98c8cdcfe8e2cee54fdd6c7a521009",
+        "blobGasUsed": 786432n,
+        "excessBlobGas": 65011712n,
+        "parentBeaconBlockRoot": "0xaf040950a84627a7cc2dd0884a830df31986bf0a8672da50e5f8560f9cfa1233",
+        "totalDifficulty": 58750003716598352816469n
+      }`),
+      )
+    },
+  )
 })
 
 describe("RpcSource - fieldRegistry completeness", () => {
@@ -727,28 +882,28 @@ describe("RpcSource - fieldRegistry completeness", () => {
   })
 })
 
-let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+let chainId = 1->ChainId.fromInt
 describe("RpcSource - empty selection", () => {
   Async.it("Throws UnsupportedSelection when the selection has no event configs", async t => {
     let source = RpcSource.make({
       url: "http://localhost:1",
-      chain,
+      chainId,
       onEventRegistrations: [],
       sourceFor: Sync,
       syncConfig: EvmChain.getSyncConfig({}),
       lowercaseAddresses: false,
+      addressStore: TestAddresses.makeStore(),
     })
 
     let caught = try {
       let _ = await source.getItemsOrThrow(
         ~fromBlock=0,
         ~toBlock=Some(1),
-        ~addressesByContractName=Dict.make(),
-        ~contractNameByAddress=Dict.make(),
+        ~addressSet=TestAddresses.makeStore()->AddressStore.emptySet,
         ~knownHeight=1,
         ~partitionId="0",
         ~selection={dependsOnAddresses: true, onEventRegistrations: []},
-        ~itemsTarget=5000,
+        ~itemsTarget=Some(5000),
         ~retry=0,
         ~logger=Logging.createChild(~params={"test": "RpcSource empty selection"}),
       )
@@ -778,8 +933,8 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
         Dict.fromArray([
           ("number", JSON.String("0x2710")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0xb64")),
-          ("parentHash", JSON.String("0xb63")),
+          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
         ]),
       )
 
@@ -813,14 +968,19 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
         }
       })
 
+      let addressStore = makeAddressStore(
+        ~onEventRegistrations=[eventConfig],
+        ~addresses=[{address: mockAddress, contractName: eventConfig.eventConfig.contractName, registrationBlock: -1}],
+      )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         // initialBlockInterval=ceiling=10000, backoffMultiplicative=0.8
         syncConfig: EvmChain.getSyncConfig({}),
         lowercaseAddresses: false,
+        addressStore,
       })
 
       let callGetItemsOrThrow = async (~toBlock) =>
@@ -828,9 +988,8 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
           let _ = await source.getItemsOrThrow(
             ~fromBlock=0,
             ~toBlock,
-            ~addressesByContractName=Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
-            ~contractNameByAddress=FetchState.deriveContractNameByAddress(
-              Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
+            ~addressSet=addressStore->AddressStore.makeSet(
+              ~contractName=eventConfig.eventConfig.contractName,
             ),
             ~knownHeight=1_000_000,
             ~partitionId="0",
@@ -838,7 +997,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
               dependsOnAddresses: true,
               onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
             },
-            ~itemsTarget=5000,
+            ~itemsTarget=Some(5000),
             ~retry=0,
             ~logger=Logging.createChild(~params={"test": "RpcSource response too large"}),
           )
@@ -901,8 +1060,8 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
         Dict.fromArray([
           ("number", JSON.String("0x2710")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0xb64")),
-          ("parentHash", JSON.String("0xb63")),
+          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
         ]),
       )
 
@@ -942,14 +1101,19 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
         }
       })
 
+      let addressStore = makeAddressStore(
+        ~onEventRegistrations=[eventConfig],
+        ~addresses=[{address: mockAddress, contractName: eventConfig.eventConfig.contractName, registrationBlock: -1}],
+      )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         // initialBlockInterval=ceiling=10000, backoffMultiplicative=0.8, accelerationAdditive=500
         syncConfig: EvmChain.getSyncConfig({}),
         lowercaseAddresses: false,
+        addressStore,
       })
 
       let call = async () =>
@@ -957,9 +1121,8 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
           let _ = await source.getItemsOrThrow(
             ~fromBlock=0,
             ~toBlock=Some(1_000_000),
-            ~addressesByContractName=Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
-            ~contractNameByAddress=FetchState.deriveContractNameByAddress(
-              Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
+            ~addressSet=addressStore->AddressStore.makeSet(
+              ~contractName=eventConfig.eventConfig.contractName,
             ),
             ~knownHeight=1_000_000,
             ~partitionId="0",
@@ -967,7 +1130,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
               dependsOnAddresses: true,
               onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
             },
-            ~itemsTarget=5000,
+            ~itemsTarget=Some(5000),
             ~retry=0,
             ~logger=Logging.createChild(~params={"test": "RpcSource re-grow"}),
           )
@@ -1018,8 +1181,8 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
     Dict.fromArray([
       ("number", JSON.String("0x2710")),
       ("timestamp", JSON.String("0x64")),
-      ("hash", JSON.String("0xb64")),
-      ("parentHash", JSON.String("0xb63")),
+      ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+      ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
     ]),
   )
 
@@ -1092,13 +1255,18 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
         }
       })
 
+      let addressStore = makeAddressStore(
+        ~onEventRegistrations=[eventConfig],
+        ~addresses=[{address: mockAddress, contractName: eventConfig.eventConfig.contractName, registrationBlock: -1}],
+      )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         lowercaseAddresses: false,
+        addressStore,
       })
 
       let retry = try {
@@ -1106,9 +1274,8 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
           let _ = await source.getItemsOrThrow(
             ~fromBlock=0,
             ~toBlock=Some(1_000_000),
-            ~addressesByContractName=Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
-            ~contractNameByAddress=FetchState.deriveContractNameByAddress(
-              Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
+            ~addressSet=addressStore->AddressStore.makeSet(
+              ~contractName=eventConfig.eventConfig.contractName,
             ),
             ~knownHeight=1_000_000,
             ~partitionId="0",
@@ -1116,7 +1283,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
               dependsOnAddresses: true,
               onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
             },
-            ~itemsTarget=5000,
+            ~itemsTarget=Some(5000),
             ~retry=0,
             ~logger=Logging.createChild(~params={"test": "RpcSource classify " ++ name}),
           )
@@ -1162,7 +1329,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
           ("blockNumber", JSON.String("0x64")),
           ("transactionHash", JSON.String(transactionHash)),
           ("transactionIndex", JSON.String("0x1")),
-          ("blockHash", JSON.String("0xb64")),
+          ("blockHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
           ("logIndex", JSON.String("0x2")),
           ("removed", JSON.Boolean(false)),
         ]),
@@ -1171,8 +1338,8 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
         Dict.fromArray([
           ("number", JSON.String("0x64")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0xb64")),
-          ("parentHash", JSON.String("0xb63")),
+          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
         ]),
       )
 
@@ -1186,13 +1353,18 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
         }
       )
 
+      let addressStore = makeAddressStore(
+        ~onEventRegistrations=[eventConfig],
+        ~addresses=[{address: mockAddress, contractName: eventConfig.eventConfig.contractName, registrationBlock: -1}],
+      )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         lowercaseAddresses: false,
+        addressStore,
       })
 
       let caught = try {
@@ -1201,9 +1373,8 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
             let _ = await source.getItemsOrThrow(
               ~fromBlock=0,
               ~toBlock=Some(100),
-              ~addressesByContractName=Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
-              ~contractNameByAddress=FetchState.deriveContractNameByAddress(
-                Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
+              ~addressSet=addressStore->AddressStore.makeSet(
+                ~contractName=eventConfig.eventConfig.contractName,
               ),
               ~knownHeight=100,
               ~partitionId="0",
@@ -1211,7 +1382,7 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
                 dependsOnAddresses: true,
                 onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
               },
-              ~itemsTarget=5000,
+              ~itemsTarget=Some(5000),
               ~retry,
               ~logger=Logging.createChild(~params={"test": "RpcSource missing transaction data"}),
             )
@@ -1316,7 +1487,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
             JSON.String("0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"),
           ),
           ("transactionIndex", JSON.String("0x1")),
-          ("blockHash", JSON.String("0xb64")),
+          ("blockHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
           ("logIndex", JSON.String("0x2")),
           ("removed", JSON.Boolean(false)),
         ]),
@@ -1325,8 +1496,8 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
         Dict.fromArray([
           ("number", JSON.String("0x64")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0xb64")),
-          ("parentHash", JSON.String("0xb63")),
+          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
         ]),
       )
 
@@ -1338,22 +1509,26 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
         }
       )
 
+      let addressStore = makeAddressStore(
+        ~onEventRegistrations=[eventConfig],
+        ~addresses=[{address: mockAddress, contractName: eventConfig.eventConfig.contractName, registrationBlock: -1}],
+      )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         lowercaseAddresses: false,
+        addressStore,
       })
 
       let result = try {
         let page = await source.getItemsOrThrow(
           ~fromBlock=0,
           ~toBlock=Some(100),
-          ~addressesByContractName=Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
-          ~contractNameByAddress=FetchState.deriveContractNameByAddress(
-            Dict.fromArray([(eventConfig.eventConfig.contractName, [mockAddress])]),
+          ~addressSet=addressStore->AddressStore.makeSet(
+            ~contractName=eventConfig.eventConfig.contractName,
           ),
           ~knownHeight=100,
           ~partitionId="0",
@@ -1361,7 +1536,7 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
             dependsOnAddresses: true,
             onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
           },
-          ~itemsTarget=5000,
+          ~itemsTarget=Some(5000),
           ~retry=0,
           ~logger=Logging.createChild(~params={"test": "RpcSource fan-out"}),
         )
@@ -1447,16 +1622,13 @@ describe("RpcSource - builds partition log selections end to end", () => {
       }
       let allRegistrations = [addressBound, wildcardA, wildcardB, wildcardByAddress, excluded]
       let selectedRegistrations = [addressBound, wildcardA, wildcardB, wildcardByAddress]
-      let addressesByContractName = Dict.fromArray([
-        (addressBound.eventConfig.contractName, [mockAddress]),
-      ])
 
       let blockJson = JSON.Object(
         Dict.fromArray([
           ("number", JSON.String("0x64")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0xb64")),
-          ("parentHash", JSON.String("0xb63")),
+          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
         ]),
       )
       let mock = await MockRpcServer.make(~getResult=method =>
@@ -1466,21 +1638,33 @@ describe("RpcSource - builds partition log selections end to end", () => {
         | _ => JSON.Null
         }
       )
+      let addressStore = makeAddressStore(
+        ~onEventRegistrations=allRegistrations,
+        ~addresses=[
+          {
+            address: mockAddress,
+            contractName: addressBound.eventConfig.contractName,
+            registrationBlock: -1,
+          },
+        ],
+      )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: allRegistrations,
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         lowercaseAddresses: false,
+        addressStore,
       })
 
       let (page, filters) = try {
         let page = await source.getItemsOrThrow(
           ~fromBlock=0,
           ~toBlock=Some(100),
-          ~addressesByContractName,
-          ~contractNameByAddress=FetchState.deriveContractNameByAddress(addressesByContractName),
+          ~addressSet=addressStore->AddressStore.makeSet(
+            ~contractName=addressBound.eventConfig.contractName,
+          ),
           ~knownHeight=100,
           ~partitionId="selection-e2e",
           ~selection={
@@ -1489,7 +1673,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
               (reg :> Internal.onEventRegistration)
             ),
           },
-          ~itemsTarget=5000,
+          ~itemsTarget=Some(5000),
           ~retry=0,
           ~logger=Logging.createChild(~params={"test": "RpcSource selection e2e"}),
         )
@@ -1548,36 +1732,39 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
             Dict.fromArray([
               ("number", JSON.String(requestedBlockHex)),
               ("timestamp", JSON.String("0x64")),
-              ("hash", JSON.String("0xb64")),
-              ("parentHash", JSON.String("0xb63")),
+              ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+              ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
             ]),
           )
         | _ => JSON.Null
         }
       )
 
+      // Wildcard-only selection: the partition carries no addresses.
+      let addressStore = makeAddressStore(~onEventRegistrations=[eventConfig])
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventConfig],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         lowercaseAddresses: false,
+        addressStore,
       })
 
       let result = try {
         let page = await source.getItemsOrThrow(
           ~fromBlock=0,
           ~toBlock=Some(100),
-          ~addressesByContractName=Dict.make(),
-          ~contractNameByAddress=FetchState.deriveContractNameByAddress(Dict.make()),
+          ~addressSet=addressStore->AddressStore.emptySet,
+
           ~knownHeight=100,
           ~partitionId="0",
           ~selection={
             dependsOnAddresses: false,
             onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
           },
-          ~itemsTarget=5000,
+          ~itemsTarget=Some(5000),
           ~retry=0,
           ~logger=Logging.createChild(~params={"test": "RpcSource skip-all"}),
         )
@@ -1661,7 +1848,7 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
             JSON.String("0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"),
           ),
           ("transactionIndex", JSON.String("0x1")),
-          ("blockHash", JSON.String("0xb64")),
+          ("blockHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
           ("logIndex", JSON.String("0x2")),
           ("removed", JSON.Boolean(false)),
         ]),
@@ -1670,8 +1857,8 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
         Dict.fromArray([
           ("number", JSON.String("0x64")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0xb64")),
-          ("parentHash", JSON.String("0xb63")),
+          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
         ]),
       )
 
@@ -1716,29 +1903,37 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
         }
       )
 
-      let addressesByContractName = Dict.fromArray([("ContractA", [addrA]), ("ContractB", [addrB])])
+      let addressStore = makeAddressStore(
+        ~onEventRegistrations=[eventA, eventB],
+        ~addresses=[
+          {address: addrA, contractName: "ContractA", registrationBlock: -1},
+          {address: addrB, contractName: "ContractB", registrationBlock: -1},
+        ],
+      )
       let source = RpcSource.make({
         url: mock.url,
-        chain,
+        chainId,
         onEventRegistrations: [eventA, eventB],
         sourceFor: Sync,
         syncConfig: EvmChain.getSyncConfig({}),
         lowercaseAddresses: false,
+        addressStore,
       })
 
       let result = try {
         let page = await source.getItemsOrThrow(
           ~fromBlock=0,
           ~toBlock=Some(100),
-          ~addressesByContractName,
-          ~contractNameByAddress=FetchState.deriveContractNameByAddress(addressesByContractName),
+          ~addressSet=addressStore
+          ->AddressStore.makeSet(~contractName="ContractA")
+          ->AddressSet.merge(addressStore->AddressStore.makeSet(~contractName="ContractB")),
           ~knownHeight=100,
           ~partitionId="0",
           ~selection={
             dependsOnAddresses: true,
             onEventRegistrations: [(eventA :> Internal.onEventRegistration), (eventB :> Internal.onEventRegistration)],
           },
-          ~itemsTarget=5000,
+          ~itemsTarget=Some(5000),
           ~retry=0,
           ~logger=Logging.createChild(~params={"test": "RpcSource pooled leak"}),
         )

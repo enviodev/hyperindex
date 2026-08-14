@@ -38,10 +38,17 @@ let withServer = async (handler, body) => {
 }
 
 describe("FuelHyperSyncSource - getHeightOrThrow", () => {
-  let chain = ChainMap.Chain.makeUnsafe(~chainId=0)
+  let chainId = 0->ChainId.fromInt
 
   // The native client validates that the token is a UUID before sending requests.
   let apiToken = "11111111-1111-1111-1111-111111111111"
+
+  // Height queries carry no selection, so an empty store is all the client needs.
+  let addressStore = AddressStore.make(
+    ~ecosystem=Ecosystem.Fuel,
+    ~shouldChecksum=false,
+    ~contracts=[],
+  )
 
   Async.it("Requests height via the client with auth and user agent headers", async t => {
     let capturedHeaders = ref(None)
@@ -51,10 +58,11 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
       res->endWith(`{"height": 123}`)
     }, async endpointUrl => {
       let source = FuelHyperSyncSource.make({
-        chain,
+        chainId,
         endpointUrl,
         apiToken: Some(apiToken),
         onEventRegistrations: [],
+        addressStore,
       })
       let {height} = await source.getHeightOrThrow()
 
@@ -77,10 +85,11 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
       res->endWith("Unauthorized")
     }, async endpointUrl => {
       let source = FuelHyperSyncSource.make({
-        chain,
+        chainId,
         endpointUrl,
         apiToken: Some(apiToken),
         onEventRegistrations: [],
+        addressStore,
       })
       let result = await Promise.race([
         source.getHeightOrThrow()->Promise.thenResolve(_ => "resolved"),

@@ -169,65 +169,7 @@ module QueryTypes = {
   }
 }
 
-module ResponseTypes = {
-  type withdrawal = {
-    index?: string,
-    validatorIndex?: string,
-    address?: Address.t,
-    amount?: string,
-  }
-
-  type block = {
-    number?: int,
-    hash?: string,
-    parentHash?: string,
-    nonce?: bigint,
-    sha3Uncles?: string,
-    logsBloom?: string,
-    transactionsRoot?: string,
-    stateRoot?: string,
-    receiptsRoot?: string,
-    miner?: Address.t,
-    difficulty?: bigint,
-    totalDifficulty?: bigint,
-    extraData?: string,
-    size?: bigint,
-    gasLimit?: bigint,
-    gasUsed?: bigint,
-    timestamp?: int,
-    uncles?: array<string>,
-    baseFeePerGas?: bigint,
-    blobGasUsed?: bigint,
-    excessBlobGas?: bigint,
-    parentBeaconBlockRoot?: string,
-    withdrawalsRoot?: string,
-    withdrawals?: array<withdrawal>,
-    l1BlockNumber?: int,
-    sendCount?: string,
-    sendRoot?: string,
-    mixHash?: string,
-  }
-
-  type rollbackGuard = {
-    blockNumber: int,
-    timestamp: int,
-    hash: string,
-    firstBlockNumber: int,
-    firstParentHash: string,
-  }
-}
-
 type query = QueryTypes.query
-
-type queryResponseData = {blocks: array<ResponseTypes.block>}
-
-type queryResponse = {
-  archiveHeight: option<int>,
-  nextBlock: int,
-  totalExecutionTime: int,
-  data: queryResponseData,
-  rollbackGuard: option<ResponseTypes.rollbackGuard>,
-}
 
 module Registration = {
   // One topic position of the resolved `where`: static topic values, or
@@ -254,6 +196,10 @@ module Registration = {
     contractName: string,
     isWildcard: bool,
     dependsOnAddresses: bool,
+    // Earliest block this registration accepts; `None` is unrestricted. The
+    // address store's start block is contract-wide, so it can't hold one
+    // registration back when a sibling declares no start block.
+    startBlock: option<int>,
     params: array<Internal.paramMeta>,
     topicSelections: array<topicSelectionInput>,
     // Capitalized field names matching the Rust BlockField/TransactionField
@@ -281,6 +227,7 @@ module Registration = {
         contractName: event.contractName,
         isWildcard: reg.isWildcard,
         dependsOnAddresses: reg.dependsOnAddresses,
+        startBlock: reg.startBlock,
         params: event.paramsMetadata,
         topicSelections: reg.resolvedWhere.topicSelections->Array.map((ts): topicSelectionInput => {
           topic0: ts.topic0->EvmTypes.Hex.toStrings,
@@ -290,28 +237,32 @@ module Registration = {
         }),
         // Capitalized to match the Rust BlockField/TransactionField string
         // enums.
-        blockFields: event.selectedBlockFields
+        blockFields: reg.fieldSelection.blockFields
         ->Utils.Set.toArray
-        ->Array.map(name => (name :> string)->Utils.String.capitalize),
-        transactionFields: event.selectedTransactionFields
+        ->Array.map(Utils.String.capitalize),
+        transactionFields: reg.fieldSelection.transactionFields
         ->Utils.Set.toArray
-        ->Array.map(name => (name :> string)->Utils.String.capitalize),
+        ->Array.map(Utils.String.capitalize),
       }
     })
   }
 }
 
 module EventItems = {
-  // The whole per-query input: block range, the partition's registration
-  // selection (by id), and its current addresses. Log selections, field
-  // selection, and the routing index are derived on the Rust side.
+  // The whole per-query input beside the partition's address set: block range
+  // and the registration selection (by id). Log selections, field selection,
+  // and the routing index are derived on the Rust side.
   type query = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
-    maxNumLogs: int,
+    // Absent means no server-side cap on the number of logs returned.
+    maxNumLogs?: int,
     registrationIndexes: array<int>,
-    addressesByContractName: dict<array<Address.t>>,
+    // Contract names to fetch address-free even though their registrations
+    // depend on addresses (client-side filtering). None/empty means
+    // every address-dependent contract is filtered server-side.
+    clientFilteredContracts: option<array<string>>,
   }
 
   type item = {
@@ -329,40 +280,39 @@ module EventItems = {
     params: Internal.eventParams,
   }
 
-  // The always-needed block fields, one per block number. The block's remaining
-  // fields live raw in the block store and are materialised on demand.
-  type blockHeader = {
-    number: int,
-    timestamp: int,
-    hash: string,
-  }
-
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    // One header per block number referenced by `items`.
-    blocks: array<blockHeader>,
     items: array<item>,
-    rollbackGuard: option<ResponseTypes.rollbackGuard>,
   }
 }
 
 type t = {
-  get: (~query: query) => promise<queryResponse>,
+  // Block-hash query construction and pagination live in Rust; only the
+  // aggregate response store crosses the boundary.
+  getBlockHashes: (
+    ~blockNumbers: array<int>,
+  ) => promise<(BlockStore.t, array<RequestStat.t>)>,
   // Returns the response plus page stores owning this page's raw transactions
   // and blocks.
   getEventItems: (
     ~query: EventItems.query,
+    ~addressSet: AddressSet.t,
   ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
   getHeight: unit => promise<int>,
 }
 
 @send
-external classNew: (Core.evmHyperSyncClientCtor, cfg, string, array<Registration.input>) => t =
-  "new"
+external classNew: (
+  Core.evmHyperSyncClientCtor,
+  cfg,
+  string,
+  array<Registration.input>,
+  AddressStore.t,
+) => t = "new"
 
-let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations) =>
-  Core.getAddon().evmHyperSyncClient->classNew(cfg, userAgent, eventRegistrations)
+let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations, ~addressStore) =>
+  Core.getAddon().evmHyperSyncClient->classNew(cfg, userAgent, eventRegistrations, addressStore)
 
 type logLevel = [#trace | #debug | #info | #warn | #error]
 let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
@@ -388,6 +338,7 @@ let make = (
   ~retryBackoffMs=?,
   ~retryCeilingMs=?,
   ~logLevel=#info,
+  ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
   makeWithAgent(
@@ -407,5 +358,6 @@ let make = (
     },
     ~userAgent=`hyperindex/${envioVersion}`,
     ~eventRegistrations,
+    ~addressStore,
   )
 }

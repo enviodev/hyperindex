@@ -1,13 +1,12 @@
 open Source
 
-
 // Surfaced by HyperSyncClient.getHeight (Rust) when HyperSync rejects the API
 // token. The corrupted-token test feeds the real server error through this
 // check so it can't silently drift away from what getHeightOrThrow guards on.
 let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
 
 type options = {
-  chain: ChainMap.Chain.t,
+  chainId: ChainId.t,
   endpointUrl: string,
   // The chain's registrations, indexed by their sequential `index`.
   onEventRegistrations: array<Internal.evmOnEventRegistration>,
@@ -17,11 +16,13 @@ type options = {
   serializationFormat: HyperSyncClient.serializationFormat,
   enableQueryCaching: bool,
   logLevel: HyperSyncClient.logLevel,
+  // The chain's address index; the client reads it while routing.
+  addressStore: AddressStore.t,
 }
 
 let make = (
   {
-    chain,
+    chainId,
     endpointUrl,
     onEventRegistrations,
     apiToken,
@@ -30,6 +31,7 @@ let make = (
     serializationFormat,
     enableQueryCaching,
     logLevel,
+    addressStore,
   }: options,
 ): t => {
   let name = "HyperSync"
@@ -46,13 +48,12 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     ~url=endpointUrl,
     ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(
-      onEventRegistrations,
-    ),
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~enableChecksumAddresses=!lowercaseAddresses,
     ~serializationFormat,
     ~enableQueryCaching,
     ~logLevel,
+    ~addressStore,
   ) {
   | client => client
   | exception exn =>
@@ -69,7 +70,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     Internal.Event({
       onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
-      chain,
+      chainId,
       blockNumber: item.blockNumber,
       logIndex,
       transactionIndex,
@@ -78,7 +79,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       payload: {
         contractName: onEventRegistration.eventConfig.contractName,
         eventName: onEventRegistration.eventConfig.name,
-        chainId: chain->ChainMap.Chain.toChainId,
+        chainId,
         params: item.params,
         srcAddress,
         logIndex,
@@ -89,8 +90,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
-    ~addressesByContractName,
-    ~contractNameByAddress as _,
+    ~addressSet,
     ~knownHeight,
     ~partitionId as _,
     ~selection: FetchState.selection,
@@ -109,35 +109,26 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~toBlock,
       ~maxNumLogs=itemsTarget,
       ~registrationIndexes=selection.onEventRegistrations->Array.map(reg => reg.index),
-      ~addressesByContractName,
+      ~addressSet,
+      ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
-    | HyperSync.GetLogs.Error(error) =>
+    | HyperSync.GetLogs.Error(WrongInstance) =>
+      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: []}))
+    | HyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
-            retry: switch error {
-            | WrongInstance =>
-              let backoffMillis = switch retry {
-              | 0 => 100
-              | _ => 500 * retry
-              }
-              WithBackoff({
-                message: `Block #${fromBlock->Int.toString} not found in HyperSync. HyperSync has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
-                backoffMillis,
-              })
-            | UnexpectedMissingParams({missingParams}) =>
-              ImpossibleForTheQuery({
-                message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
-                    ", ",
-                  )}`,
-              })
-            },
+            retry: ImpossibleForTheQuery({
+              message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
+                  ", ",
+                )}`,
+            }),
           }),
         ),
       )
-    | Source.RateLimited(_) as exn => throw(exn)
+    | (Source.RateLimited(_) | Source.SourceBehindHead(_)) as exn => throw(exn)
     | exn =>
       throw(
         Source.GetItemsError(
@@ -172,59 +163,14 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     //Parse page items into queue items
     let parsedQueueItems = []
 
-    // Block headers are returned once per number; items reference them by blockNumber.
-    let blocksByNumber = Utils.Map.make()
-    pageUnsafe.blocks->Array.forEach(block => {
-      blocksByNumber->Utils.Map.set(block.number, block)->ignore
-    })
-    let getBlock = blockNumber => blocksByNumber->Utils.Map.unsafeGet(blockNumber)
-
     pageUnsafe.items->Array.forEach(item => {
-      let onEventRegistration =
-        onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
+      let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
       parsedQueueItems
       ->Array.push(makeEventBatchQueueItem(item, ~onEventRegistration))
       ->ignore
     })
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
-
-    // Collect (blockNumber, blockHash) pairs we already have from the response —
-    // one per returned block plus, when present, the rollbackGuard's head block
-    // and the parent of the range's first block. Duplicates are allowed; reorg
-    // detection notices same-block-number-different-hash collisions itself.
-    let blockHashes = []
-    pageUnsafe.blocks->Array.forEach(block => {
-      blockHashes
-      ->Array.push({ReorgDetection.blockNumber: block.number, blockHash: block.hash})
-      ->ignore
-    })
-    switch pageUnsafe.rollbackGuard {
-    | None => ()
-    | Some({blockNumber, hash, firstBlockNumber, firstParentHash}) => {
-        blockHashes->Array.push({ReorgDetection.blockNumber, blockHash: hash})->ignore
-        blockHashes
-        ->Array.push({
-          ReorgDetection.blockNumber: firstBlockNumber - 1,
-          blockHash: firstParentHash,
-        })
-        ->ignore
-      }
-    }
-
-    // Best-effort timestamp for the queried-range head: prefer the rollbackGuard
-    // (set at the head for unconfirmed blocks), otherwise the last item if it
-    // happens to be in the range's last block. 0 is a tolerated placeholder
-    // when neither is available (FetchState already uses 0 in several spots).
-    let latestFetchedBlockTimestamp = switch pageUnsafe.rollbackGuard {
-    | Some({timestamp}) => timestamp
-    | None =>
-      switch pageUnsafe.items->Array.get(pageUnsafe.items->Array.length - 1) {
-      | Some(item) if item.blockNumber == heighestBlockQueried =>
-        getBlock(item.blockNumber).timestamp
-      | _ => 0
-      }
-    }
 
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
@@ -235,35 +181,25 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
 
     {
-      latestFetchedBlockTimestamp,
       parsedQueueItems,
       transactionStore: Some(pageUnsafe.transactionStore),
-      blockStore: Some(pageUnsafe.blockStore),
+      // The page store also carries the rollbackGuard's blocks (head block and
+      // parent of the range's first block), inserted on the Rust side.
+      blockStore: pageUnsafe.blockStore,
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
-      blockHashes,
       fromBlockQueried: fromBlock,
       requestStats,
     }
   }
 
-  let getBlockHashes = (~blockNumbers, ~logger) =>
-    HyperSync.queryBlockDataMulti(
-      ~client,
-      ~blockNumbers,
-      ~sourceName=name,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-      ~logger,
-    )->Promise.thenResolve(((queryRes, requestStats)) => {
-      Source.result: queryRes->HyperSync.mapExn,
-      requestStats,
-    })
+  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=client.getBlockHashes)
 
   {
     name,
     sourceFor: Sync,
-    chain,
+    chainId,
     pollingInterval: 100,
     poweredByHyperSync: true,
     getBlockHashes,
@@ -287,11 +223,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     },
     getItemsOrThrow,
     createHeightSubscription: (~onHeight) =>
-      HyperSyncHeightStream.subscribe(
-        ~hyperSyncUrl=endpointUrl,
-        ~apiToken,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~onHeight,
-      ),
+      HyperSyncHeightStream.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~chainId, ~onHeight),
   }
 }

@@ -54,7 +54,7 @@ module Make = () => {
   }
 
   type composedEventConstructor = (
-    ~chainId: int,
+    ~chainId: ChainId.t,
     ~blockTimestamp: int,
     ~blockNumber: int,
     ~transactionIndex: int,
@@ -177,7 +177,7 @@ module Make = () => {
       let log = Internal.Event({
         onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         payload: makeEvent(~blockHash),
-        chain: ChainMap.Chain.makeUnsafe(~chainId=self.chainConfig.id),
+        chainId: self.chainConfig.id,
         blockNumber,
         logIndex,
         transactionIndex,
@@ -255,20 +255,25 @@ module Make = () => {
     let heighstBlock = unfilteredBlocks->getLast->Option.getOrThrow
     let knownHeight = self->getHeight
 
-    let blockHashes = unfilteredBlocks->Array.map(b => {
-      ReorgDetection.blockNumber: b.blockNumber,
+    let observedBlocks = unfilteredBlocks->Array.map((b): BlockStore.inputBlock => {
+      blockNumber: b.blockNumber,
       blockHash: b.blockHash,
+      blockTimestamp: b.blockTimestamp,
     })
     switch self->getBlock(~blockNumber=fromBlock - 1) {
     | Some(b) =>
-      blockHashes
-      ->Array.unshift({ReorgDetection.blockNumber: b.blockNumber, blockHash: b.blockHash})
+      observedBlocks
+      ->Array.unshift({
+        BlockStore.blockNumber: b.blockNumber,
+        blockHash: b.blockHash,
+        blockTimestamp: b.blockTimestamp,
+      })
       ->ignore
     | None => ()
     }
 
     let addressesAndEventNames = self.chainConfig.contracts->Array.map(c => {
-      let addresses = query.addressesByContractName->Dict.get(c.name)->Option.getOr([])
+      let addresses = query.addresses->AddressSet.filterByContracts([c.name])->AddressSet.addresses
       {
         addresses,
         eventKeys: c.events->Array.map(eventConfig => {
@@ -282,15 +287,20 @@ module Make = () => {
 
     {
       knownHeight,
-      blockHashes,
       parsedQueueItems,
-      // Mock events carry their transaction and block inline on the payload, so
-      // there's no page store to merge.
+      // Mock events carry their transaction and block inline on the payload;
+      // the block page carries only the observed hashes for reorg detection.
       transactionStore: None,
-      blockStore: None,
+      blockStore: BlockStore.fromJs(
+        observedBlocks->Array.map((block): BlockStore.inputBlock => {
+          ...block,
+          blockHash: ?block.blockHash->Option.map(MockIndexer.evmBlockHash),
+        }),
+        ~ecosystem=Evm,
+        ~shouldChecksum=false,
+      ),
       fromBlockQueried: fromBlock,
       latestFetchedBlockNumber: heighstBlock.blockNumber,
-      latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
       stats: (
         {
           totalTimeElapsed: 0.,
@@ -308,7 +318,7 @@ module Make = () => {
         blockTimestamp,
         blockHash,
         blockNumber,
-      }): ReorgDetection.blockDataWithTimestamp => {
+      }): BlockStore.inputBlock => {
         blockTimestamp,
         blockHash,
         blockNumber,

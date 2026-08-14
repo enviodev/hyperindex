@@ -10,10 +10,8 @@ let keepLatestChangesLimit = Env.inMemoryObjectsTarget
 
 let getChangesCount = (state: IndexerState.t) => {
   let total = ref(0.)
-  state
-  ->IndexerState.allEntities
-  ->Array.forEach(entityConfig => {
-    total := total.contents +. (state->InMemoryStore.getInMemTable(~entityConfig)).changesCount
+  state->IndexerState.eachEntityTable((~entityConfig as _, ~scope as _, ~table) => {
+    total := total.contents +. table.changesCount
   })
   state
   ->IndexerState.effectState
@@ -113,14 +111,12 @@ let runOneWrite = async (state: IndexerState.t) => {
 
     let rollback = state->IndexerState.takeRollback
 
-    let updatedEntities = persistence.allEntities->Array.filterMap(entityConfig => {
-      let table = state->InMemoryStore.getInMemTable(~entityConfig)
+    let updatedEntities = []
+    state->IndexerState.eachEntityTable((~entityConfig, ~scope, ~table) => {
       let changes =
         table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId, ~upToCheckpointId)
-      if changes->Utils.Array.isEmpty {
-        None
-      } else {
-        Some(({entityConfig, changes}: Persistence.updatedEntity))
+      if changes->Utils.Array.notEmpty {
+        updatedEntities->Array.push(({entityConfig, scope, changes}: Persistence.updatedEntity))
       }
     })
     let updatedEffectsCache = snapshotEffects(state, ~cache)
@@ -221,12 +217,8 @@ let commitBatch = (state: IndexerState.t, ~batch: Batch.t) => {
 // keepLoadedFromDb, entries seeded from a db read are spared.
 let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
   let committedCheckpointId = state->IndexerState.committedCheckpointId
-  state
-  ->IndexerState.allEntities
-  ->Array.forEach(entityConfig =>
-    state
-    ->InMemoryStore.getInMemTable(~entityConfig)
-    ->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
+  state->IndexerState.eachEntityTable((~entityConfig as _, ~scope as _, ~table) =>
+    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
   )
   state
   ->IndexerState.effectState
@@ -237,7 +229,7 @@ let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
 
 // Blocks until the store holds fewer than keepLatestChangesLimit changes,
 // freeing committed changes first and awaiting commits as a last resort.
-let rec awaitCapacity = async (state: IndexerState.t) => {
+let rec awaitCapacityLoop = async (state: IndexerState.t) => {
   // After a failed write nothing will free capacity, so bail instead of waiting
   // on a commit that won't come (the error already went to onError).
   if !(state->IndexerState.hasFailedWrite) && state->getChangesCount >= keepLatestChangesLimit {
@@ -259,10 +251,20 @@ let rec awaitCapacity = async (state: IndexerState.t) => {
     ) {
       state->schedule
       await state->waitForCommit
-      await state->awaitCapacity
+      await state->awaitCapacityLoop
     }
   }
 }
+
+// Only the over-limit path is a real stall. Timing every call would charge each
+// batch the microtask hop of awaiting an already-resolved promise, which reads
+// as storage backpressure that isn't there.
+let awaitCapacity = async (state: IndexerState.t) =>
+  if state->getChangesCount >= keepLatestChangesLimit {
+    let timeRef = Performance.now()
+    await state->awaitCapacityLoop
+    state->IndexerState.recordStalledOnStorageWrite(~seconds=timeRef->Performance.secondsSince)
+  }
 
 // Awaits until everything processed is persisted. On a failed write we stop
 // draining (onError already surfaced it) rather than throw.

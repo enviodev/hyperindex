@@ -218,10 +218,6 @@ module Dict = {
 
   @set_index
   external setByInt: (dict<'a>, int, 'a) => unit = ""
-
-  let incrementByInt: (dict<int>, int) => unit = %raw(`(dict, key) => {
-    dict[key]++
-  }`)
 }
 
 module Math = {
@@ -579,6 +575,9 @@ module Set = {
 
   @send
   external intersection: (t<'value>, t<'value>) => t<'value> = "intersection"
+
+  @send
+  external union: (t<'value>, t<'value>) => t<'value> = "union"
 
   let immutableAdd: (t<'a>, 'a) => t<'a> = %raw(`(set, value) => {
     return new Set([...set, value])

@@ -12,7 +12,7 @@ type t = {
   ) => promise<unit>,
 }
 
-let makeClickHouse = (~host, ~database, ~username, ~password): t => {
+let makeClickHouse = (~host, ~database, ~username, ~password, ~chainIdMode: ChainId.mode=Int32): t => {
   let client = ClickHouse.createClient({
     url: host,
     username,
@@ -22,20 +22,20 @@ let makeClickHouse = (~host, ~database, ~username, ~password): t => {
   // Don't pass database to the client; it would fail if the database doesn't
   // exist yet. Each query qualifies the name explicitly or runs USE first.
 
-  let cache = Utils.WeakMap.make()
+  let cache = Dict.make()
 
   {
     name: "clickhouse",
     initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
-      ClickHouse.initialize(client, ~database, ~entities, ~enums)
+      ClickHouse.initialize(client, ~database, ~entities, ~enums, ~chainIdMode)
     },
     resume: (~checkpointId) => {
       ClickHouse.resume(client, ~database, ~checkpointId)
     },
     writeBatch: async (~batch, ~updatedEntities) => {
       await Promise.all(
-        updatedEntities->Array.map(({entityConfig, changes}) => {
-          ClickHouse.setUpdatesOrThrow(client, ~cache, ~changes, ~entityConfig, ~database)
+        updatedEntities->Array.map(({entityConfig, scope, changes}) => {
+          ClickHouse.setUpdatesOrThrow(client, ~cache, ~changes, ~entityConfig, ~scope, ~database)
         }),
       )->Utils.Promise.ignoreValue
       await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database)

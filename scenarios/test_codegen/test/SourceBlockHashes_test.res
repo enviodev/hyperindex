@@ -6,7 +6,7 @@ let testApiToken =
   )
 
 // Ethereum mainnet.
-let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
+let chainId = 1->ChainId.fromInt
 
 // Uniswap V2 Factory's PairCreated event (topic0 = keccak("PairCreated(address,address,address,uint256)"))
 // 2 indexed args (token0, token1) ⇒ topicCount = 3.
@@ -47,13 +47,13 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
   simulateParamsSchema: S.unknown
   ->S.shape(_ => ())
   ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),
-  selectedBlockFields: pairCreatedSelectedBlockFields,
-  selectedTransactionFields: Utils.Set.make(),
-  transactionFieldMask: 0.,
-  blockFieldMask: Evm.eventBlockFieldMask(
-    pairCreatedSelectedBlockFields->(
+  fieldSelection: Internal.makeFieldSelection(
+    ~blockFields=pairCreatedSelectedBlockFields->(
       Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
     ),
+    ~transactionFields=Utils.Set.make(),
+    ~blockMaskFn=Evm.eventBlockFieldMask,
+    ~transactionMaskFn=Evm.eventTransactionFieldMask,
   ),
   sighash: pairCreatedTopic0,
   topicCount: 3,
@@ -66,9 +66,11 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   isWildcard: false,
   filterByAddresses: false,
   dependsOnAddresses: true,
+  addressFilterParamGroups: [],
   startBlock: None,
   handler: None,
   contractRegister: None,
+  fieldSelection: pairCreatedEventConfig.fieldSelection,
   resolvedWhere: {
     topicSelections: [
       {
@@ -82,8 +84,16 @@ let pairCreatedRegistration: Internal.evmOnEventRegistration = {
   },
 }
 
-let makeAddressesByContractName = () =>
-  Dict.fromArray([("UniswapV2Factory", [uniswapV2FactoryAddress])])
+// The chain's address index, holding the one factory address these queries
+// fetch for.
+let addressStore = TestAddresses.makeStore(
+  ~onEventRegistrations=[(pairCreatedRegistration :> Internal.onEventRegistration)],
+  ~addresses=[
+    {address: uniswapV2FactoryAddress, contractName: "UniswapV2Factory", registrationBlock: -1},
+  ],
+  ~shouldChecksum=false,
+)
+let factorySet = addressStore->AddressStore.makeSet(~contractName="UniswapV2Factory")
 
 let makeSelection = (): FetchState.selection => {
   onEventRegistrations: [(pairCreatedRegistration :> Internal.onEventRegistration)],
@@ -92,7 +102,7 @@ let makeSelection = (): FetchState.selection => {
 
 let makeHyperSyncSource = () =>
   EvmHyperSyncSource.make({
-    chain,
+    chainId,
     endpointUrl: "https://eth.hypersync.xyz",
     onEventRegistrations: [pairCreatedRegistration],
     apiToken: Some(testApiToken),
@@ -101,28 +111,29 @@ let makeHyperSyncSource = () =>
     serializationFormat: Env.hypersyncClientSerializationFormat,
     enableQueryCaching: false,
     logLevel: Env.hypersyncLogLevel,
+    addressStore,
   })
 
 let makeRpcSource = () =>
   RpcSource.make({
     url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
-    chain,
+    chainId,
     onEventRegistrations: [pairCreatedRegistration],
     sourceFor: Sync,
     syncConfig: EvmChain.getSyncConfig({}),
     lowercaseAddresses: true,
+    addressStore,
   })
 
 let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
   try await source.getItemsOrThrow(
     ~fromBlock,
     ~toBlock=Some(toBlock),
-    ~addressesByContractName=makeAddressesByContractName(),
-    ~contractNameByAddress=FetchState.deriveContractNameByAddress(makeAddressesByContractName()),
+    ~addressSet=factorySet,
     ~knownHeight=toBlock + 1000,
     ~partitionId="0",
     ~selection=makeSelection(),
-    ~itemsTarget=5000,
+    ~itemsTarget=Some(5000),
     ~retry=0,
     ~logger=Logging.createChild(~params={"test": "SourceBlockHashes"}),
   ) catch {
@@ -141,13 +152,19 @@ let invoke = async (source: Source.t, ~fromBlock, ~toBlock) => {
 
 let assertContainsBlockHash = (
   ~t: Vitest.testContext,
-  ~blockHashes: array<ReorgDetection.blockData>,
+  ~blockStore: BlockStore.t,
   ~blockNumber,
   ~message,
 ) => {
-  let found = blockHashes->Array.some(b => b.blockNumber === blockNumber)
+  let found = switch blockStore->BlockStore.getHash(blockNumber) {
+  | Null.Value(_) => true
+  | Null.Null => false
+  }
   t.expect(found, ~message).toBe(true)
 }
+
+let storedBlockNumbers = (blockStore: BlockStore.t) =>
+  blockStore->BlockStore.getHashedBlockNumbers(~fromBlock=0, ~belowBlock=2147483647)
 
 describe("Source.blockHashes integration - empty range", () => {
   // Uniswap V2 Factory was deployed at block 10000835. Anything well below that
@@ -156,7 +173,7 @@ describe("Source.blockHashes integration - empty range", () => {
   let toBlock = 110
 
   Async.itWithOptions(
-    "HyperSync: empty parsedQueueItems and empty blockHashes for confirmed empty range",
+    "HyperSync: empty parsedQueueItems and empty block page for confirmed empty range",
     {retry: 3},
     async t => {
       let source = makeHyperSyncSource()
@@ -164,19 +181,19 @@ describe("Source.blockHashes integration - empty range", () => {
 
       t.expect({
         "parsedQueueItems": response.parsedQueueItems->Array.length,
-        "blockHashes": response.blockHashes,
+        "blockNumbers": response.blockStore->storedBlockNumbers,
         "fromBlockQueried": response.fromBlockQueried,
       }).toEqual({
         "parsedQueueItems": 0,
         // No items, no rollbackGuard at historical depth → nothing to harvest.
-        "blockHashes": [],
+        "blockNumbers": [],
         "fromBlockQueried": fromBlock,
       })
     },
   )
 
   Async.itWithOptions(
-    "RpcSource: empty parsedQueueItems but blockHashes still contains toBlock + parent",
+    "RpcSource: empty parsedQueueItems but the block page still contains toBlock + parent",
     {retry: 3},
     async t => {
       let source = makeRpcSource()
@@ -188,15 +205,15 @@ describe("Source.blockHashes integration - empty range", () => {
       // parent hash are free.
       assertContainsBlockHash(
         ~t,
-        ~blockHashes=response.blockHashes,
+        ~blockStore=response.blockStore,
         ~blockNumber=toBlock,
-        ~message="blockHashes must contain the latest fetched block (toBlock)",
+        ~message="the block page must contain the latest fetched block (toBlock)",
       )
       assertContainsBlockHash(
         ~t,
-        ~blockHashes=response.blockHashes,
+        ~blockStore=response.blockStore,
         ~blockNumber=toBlock - 1,
-        ~message="blockHashes must contain the parent of the latest fetched block",
+        ~message="the block page must contain the parent of the latest fetched block",
       )
     },
   )
@@ -213,7 +230,7 @@ describe("Source.blockHashes integration - single-log range", () => {
     "0x12a7ac0591fa50c8ee7e77cd38cac302286bdc57392a63ebb01b2859478f5752"
 
   Async.itWithOptions(
-    "HyperSync: returns exactly one parsed item and a blockHashes entry for the matching block",
+    "HyperSync: returns exactly one parsed item and a block-page entry for the matching block",
     {retry: 3},
     async t => {
       let source = makeHyperSyncSource()
@@ -221,25 +238,20 @@ describe("Source.blockHashes integration - single-log range", () => {
 
       t.expect({
         "parsedQueueItems": response.parsedQueueItems->Array.length,
-        "blockHashes": response.blockHashes,
+        "blockNumbers": response.blockStore->storedBlockNumbers,
+        "blockHash": response.blockStore->BlockStore.getHash(fromBlock),
         "latestFetchedBlockNumber": response.latestFetchedBlockNumber,
       }).toEqual({
         "parsedQueueItems": 1,
-        "blockHashes": [
-          (
-            {
-              ReorgDetection.blockNumber: fromBlock,
-              blockHash: expectedBlockHash,
-            }: ReorgDetection.blockData
-          ),
-        ],
+        "blockNumbers": [fromBlock],
+        "blockHash": Null.Value(expectedBlockHash),
         "latestFetchedBlockNumber": toBlock,
       })
     },
   )
 
   Async.itWithOptions(
-    "RpcSource: returns exactly one parsed item; blockHashes carries toBlock + parent + the log's block",
+    "RpcSource: returns exactly one parsed item; the block page carries toBlock + parent + the log's block",
     {retry: 3},
     async t => {
       let source = makeRpcSource()
@@ -249,17 +261,13 @@ describe("Source.blockHashes integration - single-log range", () => {
       t.expect(response.latestFetchedBlockNumber).toBe(toBlock)
 
       // toBlock entry comes from eth_getBlockByNumber; the log's block hash also
-      // ends up in the array (and equals toBlock here since the range is one block).
-      let toBlockEntry =
-        response.blockHashes->Array.find(b => b.blockNumber === toBlock)->Option.getOrThrow
-      let parentEntry =
-        response.blockHashes->Array.find(b => b.blockNumber === toBlock - 1)->Option.getOrThrow
+      // ends up in the page (and equals toBlock here since the range is one block).
       t.expect({
-        "toBlockHash": toBlockEntry.blockHash,
-        "parentHash": parentEntry.blockHash,
+        "toBlockHash": response.blockStore->BlockStore.getHash(toBlock),
+        "parentHash": response.blockStore->BlockStore.getHash(toBlock - 1),
       }).toEqual({
-        "toBlockHash": expectedBlockHash,
-        "parentHash": expectedParentHash,
+        "toBlockHash": Null.Value(expectedBlockHash),
+        "parentHash": Null.Value(expectedParentHash),
       })
     },
   )

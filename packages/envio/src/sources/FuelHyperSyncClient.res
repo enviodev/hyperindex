@@ -22,6 +22,8 @@ module Registration = {
     eventName: string,
     contractName: string,
     isWildcard: bool,
+    // Earliest block height this registration accepts; `None` is unrestricted.
+    startBlock: option<int>,
     kind: kind,
     // The LogData `rb` value as a decimal string; absent for other kinds.
     logId?: string,
@@ -45,6 +47,7 @@ module Registration = {
         eventName: eventConfig.name,
         contractName: eventConfig.contractName,
         isWildcard: reg.isWildcard,
+        startBlock: reg.startBlock,
         kind,
         ?logId,
       }
@@ -52,15 +55,18 @@ module Registration = {
 }
 
 module EventItems = {
-  // The whole per-query input: block range, the partition's registration
-  // selection (by index), and its current addresses. Receipt selections,
-  // field selection, and routing are derived on the Rust side.
+  // The whole per-query input beside the partition's address set: block range
+  // and the registration selection (by index). Receipt selections, field
+  // selection, and routing are derived on the Rust side.
   type query = {
     fromBlock: int,
     // Inclusive; None queries to the end of available data.
     toBlock: option<int>,
     registrationIndexes: array<int>,
-    addressesByContractName: dict<array<Address.t>>,
+    // Contract names to fetch address-free even though their registrations
+    // depend on addresses (client-side filtering). None/empty means every
+    // address-dependent contract is filtered server-side.
+    clientFilteredContracts: option<array<string>>,
   }
 
   // One routed receipt with its kind-specific columns flattened: LogData
@@ -81,17 +87,9 @@ module EventItems = {
     to?: string,
   }
 
-  type block = {
-    id: string,
-    height: int,
-    time: int,
-  }
-
   type response = {
     archiveHeight: option<int>,
     nextBlock: int,
-    // One block per height; items reference them by `blockHeight`.
-    blocks: array<block>,
     items: array<item>,
   }
 }
@@ -102,19 +100,27 @@ external classNew: (
   cfg,
   ~userAgent: string,
   array<Registration.input>,
+  AddressStore.t,
 ) => t = "new"
 
-let make = (cfg: cfg, ~eventRegistrations) => {
+let make = (cfg: cfg, ~eventRegistrations, ~addressStore) => {
   let envioVersion = Utils.EnvioPackage.value.version
   Core.getAddon().fuelHyperSyncClient->classNew(
     cfg,
     ~userAgent=`hyperindex/${envioVersion}`,
     eventRegistrations,
+    addressStore,
   )
 }
 
+// Returns the routed items/blocks plus the page's block store (Fuel blocks
+// keyed by height); the store's ids drive reorg detection on merge.
 @send
-external getEventItems: (t, EventItems.query) => promise<EventItems.response> = "getEventItems"
+external getEventItems: (
+  t,
+  EventItems.query,
+  AddressSet.t,
+) => promise<(EventItems.response, BlockStore.t)> = "getEventItems"
 
 @send
 external getHeight: t => promise<int> = "getHeight"

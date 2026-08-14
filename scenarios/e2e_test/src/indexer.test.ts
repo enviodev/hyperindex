@@ -8,6 +8,7 @@ import { createTestIndexer } from "envio";
 describe("Indexer smoke test", () => {
   it(
     "processes the first block with events on chain 1",
+    { retry: 3, timeout: 60_000 },
     async (t) => {
       const indexer = createTestIndexer();
 
@@ -17,6 +18,37 @@ describe("Indexer smoke test", () => {
         {
           "changes": [
             {
+              "ChainAccount": {
+                "sets": [
+                  {
+                    "id": "0x0000000000000000000000000000000000000000",
+                  },
+                ],
+              },
+              "ChainTransfer": {
+                "sets": [
+                  {
+                    "from": "0x0000000000000000000000000000000000000000",
+                    "id": "1-10861674-23",
+                    "value": 1000000000000000000000000000n,
+                  },
+                ],
+              },
+              "NumericArrays": {
+                "sets": [
+                  {
+                    "bigDecimals": [
+                      "3.3",
+                      "123456789012345678.123456789",
+                    ],
+                    "bigInts": [
+                      9007199254740993n,
+                      1000000000000000000000000000n,
+                    ],
+                    "id": "1",
+                  },
+                ],
+              },
               "Transfer": {
                 "sets": [
                   {
@@ -54,7 +86,6 @@ describe("Indexer smoke test", () => {
           ],
         }
       `);
-    },
-    60_000
+    }
   );
 });
