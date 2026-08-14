@@ -903,9 +903,9 @@ export type EvmOnEventOptions<
       readonly where?: EvmOnEventWhere<Params, Event["contractName"] & string>;
       /** Pass the selection's literal type as the `Fields` generic to get the
        * same narrowing `indexer.onEvent` infers from the call site. Defaults to
-       * no selection, mirroring the call-site default: `EvmFieldsSelection`
-       * names no fields in particular, so an options value declared with it
-       * would carry a selection `onEvent` can only reject. */
+       * no selection: `EvmFieldsSelection` names no fields in particular, so an
+       * options value declared without the generic would carry a selection
+       * `onEvent` can only reject. */
       readonly fields?: Fields & EvmFieldsLiteralCheck<Fields>;
     }
   : never;

@@ -141,6 +141,29 @@ export function checkSources(
   return diagnostics.map((d) => ts.formatDiagnostic(d, formatHost).trim());
 }
 
+const serviceHost: ts.LanguageServiceHost = {
+  getScriptFileNames: () => [typesPath, handlersPath],
+  // The content itself is the version, so the service re-reads exactly the
+  // fixture files that changed and keeps the rest of the graph parsed.
+  getScriptVersion: (fileName) => virtualFiles.get(fileName) ?? "",
+  getScriptSnapshot: (fileName) => {
+    const contents = host.readFile(fileName);
+    return contents === undefined ? undefined : ts.ScriptSnapshot.fromString(contents);
+  },
+  getCurrentDirectory: () => helpersDir,
+  getCompilationSettings: () => compilerOptions,
+  getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
+  fileExists: host.fileExists,
+  readFile: host.readFile,
+  readDirectory: ts.sys.readDirectory,
+  directoryExists: ts.sys.directoryExists,
+  getDirectories: ts.sys.getDirectories,
+};
+
+// Built once for the same reason `sourceFileCache` exists: a per-call service
+// (and registry) re-parses the whole lib/`envio` declaration graph every time.
+const service = ts.createLanguageService(serviceHost, ts.createDocumentRegistry());
+
 /**
  * The member names an editor offers at the `/*HERE*\/` marker in `handlers`,
  * sorted. Drives the language service rather than the checker, because a
@@ -157,25 +180,6 @@ export function completionsAt(typesDts: string, handlers: string): string[] {
     [handlersPath, text],
   ]);
 
-  const serviceHost: ts.LanguageServiceHost = {
-    getScriptFileNames: () => [typesPath, handlersPath],
-    // Keyed on content so the service re-reads whenever a fixture changes.
-    getScriptVersion: (fileName) => String(virtualFiles.get(fileName)?.length ?? 0),
-    getScriptSnapshot: (fileName) => {
-      const contents = virtualFiles.get(fileName) ?? baseReadFile(fileName);
-      return contents === undefined ? undefined : ts.ScriptSnapshot.fromString(contents);
-    },
-    getCurrentDirectory: () => helpersDir,
-    getCompilationSettings: () => compilerOptions,
-    getDefaultLibFileName: (options) => ts.getDefaultLibFilePath(options),
-    fileExists: host.fileExists,
-    readFile: host.readFile,
-    readDirectory: ts.sys.readDirectory,
-    directoryExists: ts.sys.directoryExists,
-    getDirectories: ts.sys.getDirectories,
-  };
-
-  const service = ts.createLanguageService(serviceHost, ts.createDocumentRegistry());
   const completions = service.getCompletionsAtPosition(handlersPath, position, {});
   return (completions?.entries ?? []).map((entry) => entry.name).sort();
 }

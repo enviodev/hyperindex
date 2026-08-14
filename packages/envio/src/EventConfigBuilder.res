@@ -283,8 +283,6 @@ let resolveFieldSelection = (
   | Some(fields) => Utils.Set.fromArray(fields)
   | None => globalTransactionFieldsSet
   }
-  // Stored as string sets — the typed field variants are strings at runtime,
-  // and sources recover the typed view where they need it.
   Internal.makeFieldSelection(
     ~blockFields=selectedBlockFields->(
       Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
@@ -402,12 +400,12 @@ let resolveInlineFieldSelection = (
   if enableRawEvents {
     blockFields->Utils.Set.addMany(rawEventBlockFields)
   }
-  {
-    blockFields,
-    transactionFields,
-    blockMask: Evm.eventBlockFieldMask(blockFields),
-    transactionMask: Evm.eventTransactionFieldMask(transactionFields),
-  }
+  Internal.makeFieldSelection(
+    ~blockFields,
+    ~transactionFields,
+    ~blockMaskFn=Evm.eventBlockFieldMask,
+    ~transactionMaskFn=Evm.eventTransactionFieldMask,
+  )
 }
 
 // ============== Build complete EVM event config ==============
@@ -524,8 +522,6 @@ let buildSvmInstructionEventConfig = (
     ->Utils.Schema.coerceToJsonPgType
     ->(Utils.magic: S.t<JSON.t> => S.t<Internal.eventParams>)
 
-  // The base eventConfig stores these as a string set (field names match the
-  // typed variants at runtime).
   let fieldSelection = Internal.makeFieldSelection(
     ~blockFields=Utils.Set.fromArray(Array.concat(alwaysIncludedSvmBlockFields, blockFields))->(
       Utils.magic: Utils.Set.t<Internal.svmBlockField> => Utils.Set.t<string>
@@ -632,9 +628,9 @@ let buildFuelEventConfig = (
     // always-queried trio.
     fieldSelection: Internal.makeFieldSelection(
       ~blockFields=Utils.Set.fromArray(Fuel.blockFields),
-      ~transactionFields=Utils.Set.make(),
+      ~transactionFields=Utils.Set.fromArray(Fuel.transactionFields),
       ~blockMaskFn=Fuel.eventBlockFieldMask,
-      ~transactionMaskFn=_ => 0.,
+      ~transactionMaskFn=Fuel.eventTransactionFieldMask,
     ),
     kind: fuelKind,
   }

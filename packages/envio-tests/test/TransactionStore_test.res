@@ -8,11 +8,9 @@ open Vitest
 describe("field-code mask ceiling", () => {
   it("no ecosystem exceeds the 32 field codes a mask can hold", t => {
     t.expect({
+      // Pinned because it sits exactly on the ceiling — the next EVM
+      // transaction field is the one that breaks `orMask`.
       "evmTransaction": Evm.transactionFields->Array.length,
-      "evmBlock": Evm.blockFields->Array.length,
-      "svmTransaction": Svm.transactionFields->Array.length,
-      "svmBlock": Svm.blockFields->Array.length,
-      "fuelBlock": Fuel.blockFields->Array.length,
       "overCeiling": [
         Evm.transactionFields,
         Evm.blockFields,
@@ -22,10 +20,6 @@ describe("field-code mask ceiling", () => {
       ]->Array.filter(fields => fields->Array.length > 32),
     }).toEqual({
       "evmTransaction": 32,
-      "evmBlock": 27,
-      "svmTransaction": 11,
-      "svmBlock": 6,
-      "fuelBlock": 3,
       // Widen `orMask` (BigInt, or a pair of floats) before adding the 33rd.
       "overCeiling": [],
     })

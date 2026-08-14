@@ -418,8 +418,10 @@ type indexingContract = {
 
 // What a single registration fetches and materialises. Field names are strings
 // so every ecosystem shares one type — the typed field variants are strings at
-// runtime. Each set carries its precompiled mask, and the two always describe
-// the same fields: build them together, never one without the other.
+// runtime. Always built through `makeFieldSelection`/`unionFieldSelection`
+// below, so a set and its mask are never derived from different inputs. Unlike
+// `eventConfig`, not `private` — that would block those two constructors too,
+// since a private record can only be coerced from a distinct record type.
 type fieldSelection = {
   blockFields: Utils.Set.t<string>,
   transactionFields: Utils.Set.t<string>,
@@ -428,10 +430,9 @@ type fieldSelection = {
   transactionMask: float,
 }
 
-// The only way to build a `fieldSelection`, so a set and its mask can never be
-// derived from different inputs. `~blockMaskFn`/`~transactionMaskFn` are the
-// ecosystem's `Evm`/`Svm`/`Fuel` mask functions, which the ecosystem modules
-// pass in (they depend on this module, so it can't reach them).
+// `~blockMaskFn`/`~transactionMaskFn` are the ecosystem's `Evm`/`Svm`/`Fuel`
+// mask functions, which the ecosystem modules pass in (they depend on this
+// module, so it can't reach them).
 let makeFieldSelection = (
   ~blockFields: Utils.Set.t<string>,
   ~transactionFields: Utils.Set.t<string>,
@@ -451,14 +452,13 @@ let makeFieldSelection = (
 // The overwhelmingly common case is two registrations that never named fields
 // inline and so share their event config's sets by reference — returning those
 // unchanged keeps the merge allocation-free.
+let unionFields = (a, b) => a === b ? a : a->Utils.Set.union(b)
+
 let unionFieldSelection = (a: fieldSelection, b: fieldSelection): fieldSelection => {
-  let unionFields = (a, b) => a === b ? a : a->Utils.Set.union(b)
-  {
-    blockFields: unionFields(a.blockFields, b.blockFields),
-    transactionFields: unionFields(a.transactionFields, b.transactionFields),
-    blockMask: FieldMask.orMask(a.blockMask, b.blockMask),
-    transactionMask: FieldMask.orMask(a.transactionMask, b.transactionMask),
-  }
+  blockFields: unionFields(a.blockFields, b.blockFields),
+  transactionFields: unionFields(a.transactionFields, b.transactionFields),
+  blockMask: FieldMask.orMask(a.blockMask, b.blockMask),
+  transactionMask: FieldMask.orMask(a.transactionMask, b.transactionMask),
 }
 
 // Definition of an event/instruction we know how to decode: identity + decode
