@@ -26,6 +26,32 @@ chains:
 
 let check = handlers => InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
 
+// `onInstruction` shares its registration path with EVM's `onEvent`, so the
+// EVM-only fields option reaches it whenever the project doesn't type-check.
+// SVM takes its selection from the config, so a dropped option would leave the
+// handler reading fields it never selected — it has to be rejected instead.
+InternalTestIndexer.fromUserApi(
+  ~schema=ApiTypesFixtures.schema,
+  ~configYaml,
+  ~test=`
+import { describe, it } from "vitest";
+import { indexer } from "envio";
+
+describe("the EVM-only fields option on an SVM instruction", () => {
+  it("is rejected at the registration call site", (t) => {
+    t.expect(() =>
+      indexer.onInstruction(
+        { program: "Swapper", instruction: "swap", fields: { block: ["slot"] } } as never,
+        async () => {},
+      ),
+    ).toThrowError(
+      \`The fields option of the "swap" event registration on contract "Swapper" is only supported on EVM. Select the fields in your config instead.\`,
+    );
+  });
+});
+`,
+)->ignore
+
 describe("SVM API types", () => {
   it("resolves config-bound SVM chain name and id unions", _ =>
     check(`
@@ -196,6 +222,11 @@ if (0) {
   indexer.onInstruction(
     // @ts-expect-error - "badInstr" is not an instruction of Swapper
     { program: "Swapper", instruction: "badInstr" },
+    async () => {},
+  );
+  indexer.onInstruction(
+    // @ts-expect-error - the inline fields selection is EVM-only
+    { program: "Swapper", instruction: "swap", fields: { block: ["slot"] } },
     async () => {},
   );
   indexer.onInstruction(

@@ -173,6 +173,33 @@ indexer.onEvent({ contract: "Gravatar", event: "CustomSelection" }, async ({ eve
   });
 });
 
+// The inline `fields` option replaces the config `field_selection` for the
+// registration. Type-only: `if (0)` keeps tsc checking the surface against the
+// generated types without registering a second handler.
+if (0) {
+  type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
+    ? true
+    : false;
+
+  indexer.onEvent(
+    {
+      contract: "Gravatar",
+      event: "CustomSelection",
+      fields: { block: ["parentHash"], transaction: ["to"] },
+    },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
+      expectType<TypeEqual<typeof event.block.number, number>>(true);
+      expectType<
+        TypeEqual<typeof event.transaction.to, `0x${string}` | undefined>
+      >(true);
+      // Selected by the event's config field_selection, but not listed here.
+      expectType<IsNotSelected<typeof event.transaction.hash>>(true);
+      expectType<IsNotSelected<typeof event.block.timestamp>>(true);
+    },
+  );
+}
+
 indexer.contractRegister({ contract: "NftFactory", event: "SimpleNftCreated" }, async ({ event, context }) => {
   context.chain.SimpleNft.add(event.params.contractAddress);
 });

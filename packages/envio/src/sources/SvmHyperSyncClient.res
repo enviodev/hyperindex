@@ -66,10 +66,8 @@ module Registration = {
             },
           )
         ),
-        transactionFields: eventConfig.selectedTransactionFields->Utils.Set.toArray,
-        blockFields: eventConfig.selectedBlockFields
-        ->(Utils.magic: Utils.Set.t<Internal.svmBlockField> => Utils.Set.t<string>)
-        ->Utils.Set.toArray,
+        transactionFields: reg.fieldSelection.transactionFields->Utils.Set.toArray,
+        blockFields: reg.fieldSelection.blockFields->Utils.Set.toArray,
         accounts: eventConfig.accounts,
         argsJson: ?switch eventConfig.args {
         | JSON.Null => None
