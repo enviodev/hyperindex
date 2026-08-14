@@ -43,8 +43,8 @@ optional `wildcard` / `where` / `fields` (see `indexer-wildcard`,
 `indexer-filters` and `indexer-transactions` skills). The second argument is the
 handler.
 
-`fields` names the block and transaction fields this handler reads, and is the
-recommended way to select them:
+`fields` lists the block and transaction fields this handler reads. Anything not
+listed is a type error — see the `indexer-transactions` skill.
 
 ```ts
 indexer.onEvent(

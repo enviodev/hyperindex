@@ -1,24 +1,19 @@
 ---
 name: indexer-transactions
 description: >-
-  Use when needing transaction- or block-level data in handlers. Select the
-  fields a handler reads with the `fields` option, and access via
-  event.transaction / event.block. No native transaction handler — access
-  through event handlers.
+  Use when a handler needs transaction or block data — event.transaction /
+  event.block, and the `fields` option that selects what they carry. There is no
+  onTransaction handler; transaction data arrives through event handlers.
 metadata:
   managed-by: envio
 ---
 
 # Transaction and Block Data
 
-There is no native transaction handler (`onTransaction`). Transaction and block
-data reach handlers through `event.transaction` / `event.block`, and both carry
-only the fields that handler selected.
+There is no `onTransaction` handler. Transaction and block data reach a handler
+through `event.transaction` and `event.block`.
 
-## Selecting Fields
-
-Name them in the handler's `fields` option — the recommended way, on
-`indexer.onEvent` and `indexer.contractRegister`:
+They carry only the fields the handler asks for. List them in `fields`:
 
 ```ts
 indexer.onEvent(
@@ -30,27 +25,30 @@ indexer.onEvent(
   async ({ event, context }) => {
     event.transaction.hash; // string
     event.block.timestamp; // number
-    event.transaction.gasUsed; // Type error: not selected
+    event.transaction.gasUsed; // Type error: not listed in fields
   },
 );
 ```
 
-Reading a field you didn't list is a compile error, so the selection and the
-handler can't drift. `block.number` is always readable; everything else has to
-be listed.
+Reading a field you didn't list is a type error. `event.block.number` is
+available without listing it.
 
-Two handlers on one event can select different sets. Read only what you listed —
-anything else is a type error, and its value is not guaranteed.
+Available on `indexer.onEvent` and `indexer.contractRegister`. Two handlers on
+the same event can list different fields.
 
-Write the selection inline, or in a variable declared `as const`. A variable
-typed `EvmFieldsSelection` is rejected, because it no longer says which fields
-this registration picked.
+Write the list inline, as above. To reuse one, declare it `as const`:
 
-## Selecting Fields in config.yaml
+```ts
+const txFields = { transaction: ["hash", "from"] } as const;
 
-`field_selection` selects fields for every handler of an event (or, at the root
-level, of every event). Prefer the `fields` option above: it keeps the selection
-next to the code that reads it, and lets two handlers on one event differ.
+indexer.onEvent({ contract: "MyContract", event: "Transfer", fields: txFields }, handler);
+```
+
+## Selecting in config.yaml instead
+
+`field_selection` applies to every handler of an event, or of every event when
+placed at the root level. Prefer `fields` in the handler — the list sits next to
+the code that reads it. A handler's `fields` overrides `field_selection`.
 
 ```yaml
 field_selection:
@@ -58,15 +56,17 @@ field_selection:
   block_fields: [timestamp]
 ```
 
-A handler's `fields` **replaces** `field_selection` for that registration —
-including fields config.yaml selected but the list omits.
-
 ## Available Transaction Fields
 
 `transactionIndex`, `hash`, `from`, `to`, `gas`, `gasPrice`, `maxPriorityFeePerGas`, `maxFeePerGas`, `cumulativeGasUsed`, `effectiveGasPrice`, `gasUsed`, `input`, `nonce`, `value`, `v`, `r`, `s`, `contractAddress`, `logsBloom`, `root`, `status`, `yParity`, `accessList`, `maxFeePerBlobGas`, `blobVersionedHashes`, `type`, `l1Fee`, `l1GasPrice`, `l1GasUsed`, `l1FeeScalar`, `gasUsedForL1`, `authorizationList`
 
+Some are chain-specific and read as `undefined` where they don't apply: the
+`l1*` fields need an L2, `root` only appears on pre-Byzantium transactions.
+
 ## Available Block Fields
 
-Always readable: `number`. Selectable: `timestamp`, `hash`, `parentHash`, `nonce`, `sha3Uncles`, `logsBloom`, `transactionsRoot`, `stateRoot`, `receiptsRoot`, `miner`, `difficulty`, `totalDifficulty`, `extraData`, `size`, `gasLimit`, `gasUsed`, `uncles`, `baseFeePerGas`, `blobGasUsed`, `excessBlobGas`, `parentBeaconBlockRoot`, `withdrawalsRoot`, `l1BlockNumber`, `sendCount`, `sendRoot`, `mixHash`
+`event.block.number` is always available. The rest must be listed:
+
+`timestamp`, `hash`, `parentHash`, `nonce`, `sha3Uncles`, `logsBloom`, `transactionsRoot`, `stateRoot`, `receiptsRoot`, `miner`, `difficulty`, `totalDifficulty`, `extraData`, `size`, `gasLimit`, `gasUsed`, `uncles`, `baseFeePerGas`, `blobGasUsed`, `excessBlobGas`, `parentBeaconBlockRoot`, `withdrawalsRoot`, `l1BlockNumber`, `sendCount`, `sendRoot`, `mixHash`
 
 > If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

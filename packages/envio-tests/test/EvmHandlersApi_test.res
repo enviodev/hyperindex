@@ -454,6 +454,16 @@ if (0) {
     },
   );
 
+  // A reused selection, as the skill shows it.
+  const txFields = { transaction: ["hash", "from"] } as const;
+  indexer.onEvent(
+    { contract: "Token", event: "Transfer", fields: txFields },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.transaction.hash, string>>(true);
+      expectType<TypeEqual<typeof event.transaction.from, \`0x\${string}\` | undefined>>(true);
+    },
+  );
+
   // The wildcard skill's example selects the field it reads.
   indexer.onEvent(
     {

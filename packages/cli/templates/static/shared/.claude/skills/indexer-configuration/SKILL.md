@@ -85,10 +85,9 @@ events:
 
 ## field_selection
 
-Prefer selecting transaction/block fields in the handler's `fields` option — it
-keeps the selection next to the code that reads it. `field_selection` is the
-config-wide alternative, at the root level (sibling to `contracts` and `chains`)
-or under an event entry:
+Selects transaction/block fields for every handler of an event — at the root
+level (sibling to `contracts` and `chains`), or under an event entry. Prefer the
+handler's `fields` option, which lists them next to the code that reads them:
 
 ```yaml
 field_selection:
@@ -96,7 +95,7 @@ field_selection:
   block_fields: [timestamp]
 ```
 
-See the `indexer-transactions` skill for the `fields` option and full field lists.
+See the `indexer-transactions` skill for `fields` and the full field lists.
 
 ## Environment Variables
 
