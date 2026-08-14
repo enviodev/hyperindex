@@ -58,6 +58,13 @@ external kindOfOrdinal: int => kind = "%identity"
 let kindOfClickHouseType = clickHouseType =>
   Core.getAddon().clickhouseColumnKind(clickHouseType)->kindOfOrdinal
 
+// A column of the target table, with its wire kind resolved. Resolving crosses
+// into Rust to parse the type text, so it belongs to the column set — which is
+// built once per entity and scope — rather than to each batch written through it.
+type column = {name: string, chType: string, kind: kind}
+
+let makeColumn = (~name, ~chType) => {name, chType, kind: chType->kindOfClickHouseType}
+
 %%private(let isString: unknown => bool = %raw(`(v) => typeof v === "string"`))
 external asString: unknown => string = "%identity"
 @val external toNumber: unknown => float = "Number"
@@ -94,9 +101,8 @@ type builder = {
 }
 
 // Only the storage the column's kind uses is allocated; the rest stay empty.
-let makeBuilder = (~name, ~chType, ~rows) => {
+let makeBuilder = ({name, chType, kind}: column, ~rows) => {
   let empty = 0
-  let kind = chType->kindOfClickHouseType
   {
     name,
     chType,
@@ -122,6 +128,52 @@ let markNull = (builder, ~row) => {
   nulls->TypedArray.set(row, 1)
 }
 
+%%private(let isHighSurrogate = unit => unit >= 0xD800 && unit <= 0xDBFF)
+%%private(let isLowSurrogate = unit => unit >= 0xDC00 && unit <= 0xDFFF)
+let replacementCharacter = "\u{FFFD}"
+
+// A lone surrogate is not a character, and napi already substitutes U+FFFD for
+// one on the way to UTF-8 — which costs the value nothing, since both are a
+// single UTF-16 unit. What no value survives on its own is the concatenation:
+// a value ending in a high surrogate followed by one starting with a low
+// surrogate spells a real pair across the seam, which napi then encodes as one
+// 4-byte character where the two lengths each claim a unit, and the span scan
+// rejects the whole column. Only a first or last unit can have its other half in
+// a neighbouring value, so substituting at the two ends is the whole fix.
+let withoutBoundarySurrogates = text => {
+  let last = text->String.length - 1
+  if last < 0 {
+    text
+  } else {
+    let leading = text->String.charCodeAtUnsafe(0)->isLowSurrogate
+    let trailing = text->String.charCodeAtUnsafe(last)->isHighSurrogate
+    switch (leading, trailing) {
+    | (false, false) => text
+    | _ if last === 0 => replacementCharacter
+    | _ =>
+      (leading ? replacementCharacter : text->String.charAt(0)) ++
+      text->String.slice(~start=1, ~end=last) ++ (
+        trailing ? replacementCharacter : text->String.charAt(last)
+      )
+    }
+  }
+}
+
+// RowBinary carries the raw integer, so a value the column cannot hold is not
+// rejected anywhere downstream — and a typed array reduces it modulo 2^64 on
+// the way in rather than refusing it, which would leave no trace at all.
+%%private(
+  let checkedBigInt = (value: unknown, ~builder, ~min, ~max) => {
+    let value = value->toBigInt
+    if value < min || value > max {
+      JsError.throwWithMessage(
+        `${value->BigInt.toString} is out of range for a ${builder.chType} column`,
+      )
+    }
+    value
+  }
+)
+
 // Writes one value into the column. `undefined`/`null` marks the row's null bit;
 // the slot keeps its zero value, which is what a column omitted from a
 // JSONEachRow row used to resolve to.
@@ -131,10 +183,18 @@ let writeValue = (builder, ~row, value: unknown) =>
   } else {
     switch builder.kind {
     | F64 => builder.floats->TypedArray.set(row, value->toNumber)
-    | U64 => builder.unsigned->TypedArray.set(row, value->toBigInt)
-    | I64 => builder.signed->TypedArray.set(row, value->toBigInt)
+    | U64 =>
+      builder.unsigned->TypedArray.set(
+        row,
+        value->checkedBigInt(~builder, ~min=0n, ~max=18446744073709551615n),
+      )
+    | I64 =>
+      builder.signed->TypedArray.set(
+        row,
+        value->checkedBigInt(~builder, ~min=-9223372036854775808n, ~max=9223372036854775807n),
+      )
     | Text =>
-      let text = value->toText
+      let text = value->toText->withoutBoundarySurrogates
       builder.texts->Array.setUnsafe(row, text)
       builder.lengths->TypedArray.set(row, text->String.length)
     }

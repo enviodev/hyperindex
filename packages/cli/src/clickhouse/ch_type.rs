@@ -1,34 +1,25 @@
 //! ClickHouse column types, parsed from the type text the caller declared the
 //! column with — the same string its `CREATE TABLE` used.
 //!
-//! Only what the encoder has to know to lay out bytes is modelled. An `Enum` is
-//! the clearest case: RowBinary carries the variant's number rather than its
-//! name, so the numbering has to be in the type text. Envio writes it there
-//! explicitly for exactly that reason, rather than leaving it to the numbering
-//! ClickHouse would apply to an unnumbered list.
+//! Only the types envio's DDL generates are modelled, so what the encoder has to
+//! keep correct is exactly what it can be handed. An `Enum` shows why the
+//! numbering has to be in the type text: RowBinary carries the variant's number
+//! rather than its name. Envio writes those numbers explicitly, and an unnumbered
+//! list is rejected here rather than auto-numbered — inferring them would put a
+//! second copy of ClickHouse's numbering rule on the encoding side, free to drift
+//! from the one the DDL wrote.
 
 use anyhow::{anyhow, bail, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChType {
-    Int8,
-    Int16,
     Int32,
     Int64,
-    Int128,
-    UInt8,
-    UInt16,
     UInt32,
     UInt64,
-    UInt128,
-    Float32,
     Float64,
     Bool,
     String,
-    FixedString(usize),
-    Date,
-    Date32,
-    DateTime,
     /// Ticks of 10^-precision seconds, stored as Int64.
     DateTime64 {
         precision: u32,
@@ -113,26 +104,27 @@ fn split_args(input: &str) -> Vec<&str> {
     parts
 }
 
-/// Number of bytes ClickHouse uses for a `Decimal` of the given precision.
+/// Number of bytes ClickHouse uses for a `Decimal` of the given precision. Envio
+/// falls back to `String` past 38 digits, so the 256-bit width never comes up and
+/// every Decimal that reaches the encoder fits the 128-bit value it carries.
 pub fn decimal_bytes(precision: u32) -> Result<usize> {
     match precision {
         1..=9 => Ok(4),
         10..=18 => Ok(8),
         19..=38 => Ok(16),
-        39..=76 => Ok(32),
         other => bail!("unsupported Decimal precision {other}"),
     }
 }
 
 fn parse_enum_variants(args: &str) -> Result<Vec<(String, i16)>> {
     let mut variants = Vec::new();
-    // ClickHouse always reports explicit values, but an unnumbered list is
-    // still valid input syntax and auto-numbers from 1.
-    let mut next_implicit = 1i16;
     for arg in split_args(args) {
         let (name_part, value_part) = match find_unquoted(arg, b'=') {
-            Some(i) => (arg[..i].trim(), Some(arg[i + 1..].trim())),
-            None => (arg, None),
+            Some(i) => (arg[..i].trim(), arg[i + 1..].trim()),
+            None => bail!(
+                "enum variant `{arg}` has no explicit value; RowBinary carries the \
+                 number, so the type text has to state it"
+            ),
         };
         let name = name_part
             .strip_prefix('\'')
@@ -140,12 +132,7 @@ fn parse_enum_variants(args: &str) -> Result<Vec<(String, i16)>> {
             .ok_or_else(|| anyhow!("malformed enum variant `{arg}`"))?
             .replace("\\'", "'")
             .replace("\\\\", "\\");
-        let value = match value_part {
-            Some(v) => v.parse::<i16>()?,
-            None => next_implicit,
-        };
-        next_implicit = value + 1;
-        variants.push((name, value));
+        variants.push((name, value_part.parse::<i16>()?));
     }
     if variants.is_empty() {
         bail!("enum with no variants");
@@ -157,12 +144,8 @@ pub fn parse(input: &str) -> Result<ChType> {
     let input = input.trim();
     if let Some((name, args)) = split_parameterized(input) {
         return match name {
-            // Only the inner type matters on the wire.
-            "LowCardinality" | "SimpleAggregateFunction" => parse(split_args(args).last().unwrap()),
             "Nullable" => Ok(ChType::Nullable(Box::new(parse(args)?))),
             "Array" => Ok(ChType::Array(Box::new(parse(args)?))),
-            "FixedString" => Ok(ChType::FixedString(args.trim().parse()?)),
-            "DateTime" => Ok(ChType::DateTime),
             "DateTime64" => {
                 let parts = split_args(args);
                 Ok(ChType::DateTime64 {
@@ -183,21 +166,7 @@ pub fn parse(input: &str) -> Result<ChType> {
                     scale: parts[1].parse()?,
                 })
             }
-            "Decimal32" | "Decimal64" | "Decimal128" | "Decimal256" => {
-                // The shorthand fixes the width, so it stands for the widest
-                // precision that width holds.
-                let precision = match name {
-                    "Decimal32" => 9,
-                    "Decimal64" => 18,
-                    "Decimal128" => 38,
-                    _ => 76,
-                };
-                Ok(ChType::Decimal {
-                    precision,
-                    scale: args.trim().parse()?,
-                })
-            }
-            "Enum" | "Enum8" => Ok(ChType::Enum {
+            "Enum8" => Ok(ChType::Enum {
                 bytes: 1,
                 variants: parse_enum_variants(args)?,
             }),
@@ -210,23 +179,13 @@ pub fn parse(input: &str) -> Result<ChType> {
     }
 
     match input {
-        "Int8" => Ok(ChType::Int8),
-        "Int16" => Ok(ChType::Int16),
         "Int32" => Ok(ChType::Int32),
         "Int64" => Ok(ChType::Int64),
-        "Int128" => Ok(ChType::Int128),
-        "UInt8" => Ok(ChType::UInt8),
-        "UInt16" => Ok(ChType::UInt16),
         "UInt32" => Ok(ChType::UInt32),
         "UInt64" => Ok(ChType::UInt64),
-        "UInt128" => Ok(ChType::UInt128),
-        "Float32" => Ok(ChType::Float32),
         "Float64" => Ok(ChType::Float64),
-        "Bool" | "Boolean" => Ok(ChType::Bool),
+        "Bool" => Ok(ChType::Bool),
         "String" => Ok(ChType::String),
-        "Date" => Ok(ChType::Date),
-        "Date32" => Ok(ChType::Date32),
-        "DateTime" => Ok(ChType::DateTime),
         other => bail!("unsupported ClickHouse type `{other}`"),
     }
 }
@@ -251,29 +210,17 @@ impl ChType {
     pub fn column_kind(&self) -> ColumnKind {
         match self {
             ChType::Nullable(inner) => inner.column_kind(),
-            ChType::Int8
-            | ChType::Int16
-            | ChType::Int32
-            | ChType::UInt8
-            | ChType::UInt16
+            ChType::Int32
             | ChType::UInt32
-            | ChType::Float32
             | ChType::Float64
             | ChType::Bool
-            | ChType::Date
-            | ChType::Date32
-            | ChType::DateTime
             | ChType::DateTime64 { .. } => ColumnKind::F64,
             ChType::UInt64 => ColumnKind::U64,
             ChType::Int64 => ColumnKind::I64,
-            ChType::String
-            | ChType::FixedString(_)
-            | ChType::Int128
-            | ChType::UInt128
-            | ChType::Decimal { .. }
-            | ChType::Enum { .. } => ColumnKind::Text,
             // An array arrives as the JSON of its elements.
-            ChType::Array(_) => ColumnKind::Text,
+            ChType::String | ChType::Decimal { .. } | ChType::Enum { .. } | ChType::Array(_) => {
+                ColumnKind::Text
+            }
         }
     }
 }
@@ -299,13 +246,8 @@ mod tests {
 
     #[test]
     fn parses_decimal_precision_and_scale() {
-        let parsed = [
-            "Decimal(9, 2)",
-            "Decimal(18, 0)",
-            "Decimal(50, 3)",
-            "Decimal64(4)",
-        ]
-        .map(|input| parse(input).unwrap());
+        let parsed = ["Decimal(9, 2)", "Decimal(18, 0)", "Decimal(38, 3)"]
+            .map(|input| parse(input).unwrap());
         assert_eq!(
             parsed,
             [
@@ -318,13 +260,8 @@ mod tests {
                     scale: 0
                 },
                 ChType::Decimal {
-                    precision: 50,
+                    precision: 38,
                     scale: 3
-                },
-                // The shorthand stands for the widest precision its width holds.
-                ChType::Decimal {
-                    precision: 18,
-                    scale: 4
                 },
             ]
         );
@@ -334,13 +271,22 @@ mod tests {
     /// it: a pair that disagreed would shift every following column on the wire.
     #[test]
     fn precision_fixes_the_backing_width() {
-        let widths =
-            [9u32, 10, 18, 19, 38, 39, 76].map(|precision| decimal_bytes(precision).unwrap());
-        assert_eq!(widths, [4, 8, 8, 16, 16, 32, 32]);
+        let widths = [9u32, 10, 18, 19, 38].map(|precision| decimal_bytes(precision).unwrap());
+        assert_eq!(widths, [4, 8, 8, 16, 16]);
+    }
+
+    /// Envio falls back to `String` past 38 digits, so a wider Decimal is a
+    /// declaration the encoder should refuse rather than silently truncate.
+    #[test]
+    fn rejects_a_decimal_wider_than_the_value_it_carries() {
+        assert_eq!(
+            parse("Decimal(50, 3)").unwrap_err().to_string(),
+            "unsupported Decimal precision 50"
+        );
     }
 
     #[test]
-    fn parses_enum_with_server_reported_values() {
+    fn parses_enum_with_explicit_values() {
         assert_eq!(
             parse("Enum8('SET' = 1, 'DELETE' = 2)").unwrap(),
             ChType::Enum {
@@ -350,13 +296,14 @@ mod tests {
         );
     }
 
+    /// Auto-numbering an unnumbered list would be a second copy of ClickHouse's
+    /// own rule, which is exactly what writing the numbers into the DDL avoids.
     #[test]
-    fn auto_numbers_an_unnumbered_enum_from_one() {
+    fn rejects_an_unnumbered_enum_rather_than_inferring_the_numbering() {
         assert_eq!(
-            parse("Enum8('SET', 'DELETE')")
-                .unwrap()
-                .enum_value("DELETE"),
-            Some(2)
+            parse("Enum8('SET', 'DELETE')").unwrap_err().to_string(),
+            "enum variant `'SET'` has no explicit value; RowBinary carries the number, \
+             so the type text has to state it"
         );
     }
 
@@ -367,11 +314,6 @@ mod tests {
             (parsed.enum_value("a,b"), parsed.enum_value("c(d)")),
             (Some(7), Some(9))
         );
-    }
-
-    #[test]
-    fn unwraps_low_cardinality() {
-        assert_eq!(parse("LowCardinality(String)").unwrap(), ChType::String);
     }
 
     #[test]
@@ -396,8 +338,36 @@ mod tests {
         );
     }
 
+    /// The DDL generator emits a closed set of types; anything outside it is a
+    /// column envio did not declare, and guessing at its layout would put bytes
+    /// on the wire that shift every column after it.
     #[test]
-    fn rejects_an_unknown_type() {
-        assert!(parse("Tuple(String, UInt8)").is_err());
+    fn rejects_types_the_ddl_never_emits() {
+        let errors = [
+            "Tuple(String, UInt8)",
+            "Int8",
+            "UInt128",
+            "Float32",
+            "FixedString(4)",
+            "Date",
+            "DateTime",
+            "Decimal64(4)",
+            "LowCardinality(String)",
+        ]
+        .map(|input| parse(input).unwrap_err().to_string());
+        assert_eq!(
+            errors,
+            [
+                "unsupported ClickHouse type `Tuple`",
+                "unsupported ClickHouse type `Int8`",
+                "unsupported ClickHouse type `UInt128`",
+                "unsupported ClickHouse type `Float32`",
+                "unsupported ClickHouse type `FixedString`",
+                "unsupported ClickHouse type `Date`",
+                "unsupported ClickHouse type `DateTime`",
+                "unsupported ClickHouse type `Decimal64`",
+                "unsupported ClickHouse type `LowCardinality`",
+            ]
+        );
     }
 }

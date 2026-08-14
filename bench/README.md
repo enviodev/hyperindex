@@ -12,8 +12,7 @@ shape identical on both backends.
 ## Setup
 
 ```sh
-ln -s ../../packages/envio node_modules/envio
-ln -s ../envio/bin.mjs node_modules/.bin/envio
+pnpm install           # from the repo root; bench is a workspace package
 cp .env.example .env   # then point it at your Postgres and ClickHouse
 export ENVIO_API_TOKEN=...
 ```

@@ -20,6 +20,8 @@ struct State {
     seen: usize,
     /// Total read queries seen.
     queries: usize,
+    /// Request line and headers of every request, in arrival order.
+    heads: Vec<String>,
 }
 
 pub struct MockClickHouse {
@@ -93,35 +95,33 @@ impl MockClickHouse {
         self.state.lock().unwrap().queries
     }
 
+    /// Request line and headers of every request the server handled.
+    pub fn heads(&self) -> Vec<String> {
+        self.state.lock().unwrap().heads.clone()
+    }
+
     /// Decodes every accepted body as rows of one `String` column, flattened in
-    /// arrival order — enough to tell which rows landed and how often.
+    /// arrival order — enough to tell which rows landed and how often. A body
+    /// that is not that shape is a bug in the encoder under test, so it fails
+    /// here rather than being reported as missing rows.
     pub fn accepted_strings(&self) -> Vec<String> {
         let mut out = Vec::new();
         for body in self.accepted() {
             let mut i = 0usize;
             while i < body.len() {
-                let (len, read) = read_varint(&body[i..]);
+                let (len, read) = super::row_binary::read_varint(&body[i..])
+                    .expect("accepted body is not a String column");
                 i += read;
-                out.push(String::from_utf8(body[i..i + len].to_vec()).unwrap());
-                i += len;
+                let end = i + len as usize;
+                let bytes = body
+                    .get(i..end)
+                    .expect("accepted body ends mid-string")
+                    .to_vec();
+                out.push(String::from_utf8(bytes).unwrap());
+                i = end;
             }
         }
         out
-    }
-}
-
-fn read_varint(bytes: &[u8]) -> (usize, usize) {
-    let mut value = 0usize;
-    let mut shift = 0u32;
-    let mut read = 0usize;
-    loop {
-        let byte = bytes[read];
-        value |= ((byte & 0x7F) as usize) << shift;
-        read += 1;
-        if byte & 0x80 == 0 {
-            return (value, read);
-        }
-        shift += 7;
     }
 }
 
@@ -143,25 +143,19 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
             })
             .unwrap_or(0);
 
-        let mut body = vec![0u8; content_length];
-        for (i, slot) in body.iter_mut().enumerate() {
-            *slot = match buffered.pop_front() {
-                Some(byte) => byte,
-                None => {
-                    let mut chunk = vec![0u8; content_length - i];
-                    stream.read_exact(&mut chunk).await?;
-                    let mut iter = chunk.into_iter();
-                    let first = iter.next().unwrap();
-                    buffered.extend(iter);
-                    first
-                }
-            };
-        }
+        // Whatever of the body already arrived with the headers, then the rest
+        // straight off the socket.
+        let buffered_bytes = buffered.len().min(content_length);
+        let mut body: Vec<u8> = buffered.drain(..buffered_bytes).collect();
+        body.resize(content_length, 0);
+        stream.read_exact(&mut body[buffered_bytes..]).await?;
+
+        state.lock().unwrap().heads.push(head.clone());
 
         // The request line carries the query for an insert; a read query arrives
         // in the body instead.
         let request_line = head.lines().next().unwrap_or_default().to_string();
-        let is_insert = request_line.contains("INSERT") || request_line.contains("INSERT+INTO");
+        let is_insert = request_line.contains("INSERT");
 
         let response = if is_insert {
             let reject = {

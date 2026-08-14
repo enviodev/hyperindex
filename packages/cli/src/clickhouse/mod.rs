@@ -52,49 +52,50 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Probes an idle pooled socket so a connection dropped by a NAT or proxy is
 /// discovered before a batch is handed to it.
 const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
-
-/// How hard to retry a failed insert. Only the tests vary it, to skip the waits.
-#[derive(Debug, Clone, Copy)]
-struct RetryPolicy {
-    attempts: u32,
-    wait: bool,
-}
-
-impl Default for RetryPolicy {
-    fn default() -> Self {
-        Self {
-            attempts: MAX_RETRIES,
-            wait: true,
-        }
-    }
-}
+/// How long a pooled socket may sit idle before the client drops it. Deliberately
+/// under ClickHouse's own `keep_alive_timeout` (3s on older servers, 10s by
+/// default), which is the deadline that matters: past it the server closes the
+/// socket, and a batch dispatched onto one already carrying a FIN fails with
+/// `connection closed before message completed`. `@clickhouse/client` set its
+/// `idle_socket_ttl` to 2.5s for the same reason.
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_millis(2_500);
+/// The longest a retry waits, which the delay ramps up to.
+const MAX_RETRY_DELAY: Duration = Duration::from_millis(1_000);
 
 /// Knobs the tests turn down so a run takes milliseconds: the retry waits and
 /// the request timeout a hanging server has to trip.
 #[derive(Debug, Clone, Copy)]
 struct Tuning {
-    retry: RetryPolicy,
+    attempts: u32,
+    /// Ceiling on the retry backoff. Tests pass `ZERO` to skip the waits, which
+    /// are the policy's concern rather than the encoder's.
+    max_retry_delay: Duration,
     request_timeout: Duration,
 }
 
 impl Default for Tuning {
     fn default() -> Self {
         Self {
-            retry: RetryPolicy::default(),
+            attempts: MAX_RETRIES,
+            max_retry_delay: MAX_RETRY_DELAY,
             request_timeout: REQUEST_TIMEOUT,
         }
     }
 }
 
-impl RetryPolicy {
-    /// Grows from 100ms to 1s as the remaining retries run down.
+impl Tuning {
+    /// Grows from a tenth of the ceiling up to it as the remaining retries run
+    /// down.
     fn delay(&self, retries_left: u32) -> Duration {
-        if !self.wait || self.attempts < 2 {
+        if self.attempts < 2 {
             return Duration::ZERO;
         }
+        let span = self.max_retry_delay.as_millis() as u64;
         Duration::from_millis(
-            (100 + 900 * u64::from(self.attempts - retries_left) / u64::from(self.attempts - 1))
-                .min(1000),
+            (span / 10
+                + (span - span / 10) * u64::from(self.attempts - retries_left)
+                    / u64::from(self.attempts - 1))
+            .min(span),
         )
     }
 }
@@ -110,15 +111,14 @@ pub struct ColumnInput {
     /// it back from `system.columns` would only add a round trip and a second
     /// place for the answer to come from.
     pub ch_type: String,
-    /// Int8/16/32, UInt8/16/32, Float32/64, Bool (0/1), Date, DateTime,
-    /// DateTime64 (ticks).
+    /// Int32, UInt32, Float64, Bool (0/1), DateTime64 (ticks).
     pub numbers: Option<Float64Array>,
     /// UInt64, which loses precision as an f64.
     pub unsigned64: Option<BigUint64Array>,
     /// Int64.
     pub signed64: Option<BigInt64Array>,
-    /// String, Decimal, Enum, Int128/UInt128 and JSON for Array columns: every
-    /// value concatenated, split by `lengths`.
+    /// String, Decimal, Enum, and the JSON of an Array column: every value
+    /// concatenated, split by `lengths`.
     pub text: Option<String>,
     /// UTF-16 code-unit length of each value in `text` — a JS string's own
     /// `.length`, so the caller never has to measure UTF-8.
@@ -142,18 +142,20 @@ impl StagedColumn {
     fn resolve(self) -> Result<Column> {
         let ch_type = ch_type::parse(&self.ch_type)
             .with_context(|| format!("Column `{}` has type `{}`", self.name, self.ch_type))?;
+        // Checked before resolving, so a column sent as the wrong kind is caught
+        // without first scanning its text for span boundaries.
+        let kind = ch_type.column_kind();
+        let staged_kind = self.values.kind();
+        if staged_kind != kind {
+            bail!(
+                "Column `{}` is {ch_type:?} and must be sent as {kind:?}, got {staged_kind:?}",
+                self.name,
+            );
+        }
         let values = self
             .values
             .resolve()
             .with_context(|| format!("Column `{}`", self.name))?;
-        let kind = ch_type.column_kind();
-        if values.kind() != kind {
-            bail!(
-                "Column `{}` is {ch_type:?} and must be sent as {kind:?}, got {:?}",
-                self.name,
-                values.kind()
-            );
-        }
         Ok(Column {
             name: self.name,
             ch_type,
@@ -232,7 +234,7 @@ impl ClickHouseSink {
         let client = reqwest::Client::builder()
             // The sink writes continuously; keeping sockets warm avoids a TLS
             // handshake per batch against a remote cluster.
-            .pool_idle_timeout(Duration::from_secs(90))
+            .pool_idle_timeout(POOL_IDLE_TIMEOUT)
             .pool_max_idle_per_host(8)
             .timeout(tuning.request_timeout)
             .connect_timeout(CONNECT_TIMEOUT)
@@ -286,7 +288,7 @@ impl ClickHouseSink {
                     })?;
                     StagedValues::Text {
                         data,
-                        bounds: lengths.to_vec(),
+                        utf16_lengths: lengths.to_vec(),
                     }
                 }
                 _ => {
@@ -360,7 +362,7 @@ impl ClickHouseSink {
         let mut attempted: Vec<String> = Vec::new();
         // Ranges still to send, most recent first; a failed range is replaced by
         // its two halves so the retry never re-sends rows that already landed.
-        let mut pending = vec![(0usize, encoded.rows(), self.tuning.retry.attempts)];
+        let mut pending = vec![(0usize, encoded.rows(), self.tuning.attempts)];
         while let Some((start, end, retries)) = pending.pop() {
             match self.post_rows(&query, encoded.slice(start, end)).await {
                 Ok(()) => continue,
@@ -381,7 +383,7 @@ impl ClickHouseSink {
                     );
                     (self.warn)(&warning);
                     attempted.push(warning);
-                    tokio::time::sleep(self.tuning.retry.delay(retries)).await;
+                    tokio::time::sleep(self.tuning.delay(retries)).await;
                     if rows > 1 {
                         let mid = start + rows / 2;
                         pending.push((mid, end, retries - 1));
@@ -399,10 +401,12 @@ impl ClickHouseSink {
         let response = self
             .client
             .post(&self.url)
-            .query(&[("query", query)])
-            .header("X-ClickHouse-User", &self.username)
-            .header("X-ClickHouse-Key", &self.password)
-            .header("X-ClickHouse-Database", &self.database)
+            .query(&[("query", query), ("database", &self.database)])
+            // Base64 of the credentials rather than the X-ClickHouse-User/Key
+            // headers: a header value may only carry visible ASCII, so a password
+            // with a non-ASCII character in it fails every request before it is
+            // sent. `@clickhouse/client` authenticated this way too.
+            .basic_auth(&self.username, Some(&self.password))
             .header("Content-Type", "application/octet-stream")
             .body(body)
             .send()
@@ -460,7 +464,7 @@ mod tests {
             ch_type: ty.to_string(),
             values: StagedValues::Text {
                 data: values.concat(),
-                bounds: values.iter().map(|v| v.len() as u32).collect(),
+                utf16_lengths: values.iter().map(|v| v.len() as u32).collect(),
             },
             nulls: Vec::new(),
         }
@@ -493,7 +497,7 @@ mod tests {
             ch_type: "Tuple(String, UInt8)".to_string(),
             values: StagedValues::Text {
                 data: String::new(),
-                bounds: vec![0],
+                utf16_lengths: vec![0],
             },
             nulls: Vec::new(),
         }
@@ -546,12 +550,10 @@ mod tests {
         sink_with(
             server,
             Tuning {
-                retry: RetryPolicy {
-                    attempts,
-                    // The waits are the policy's, not the encoder's; skipping
-                    // them keeps the test at milliseconds.
-                    wait: false,
-                },
+                attempts,
+                // The waits are the policy's, not the encoder's; skipping them
+                // keeps the test at milliseconds.
+                max_retry_delay: Duration::ZERO,
                 ..Tuning::default()
             },
         )
@@ -655,10 +657,8 @@ mod tests {
         let sink = sink_with(
             &server,
             Tuning {
-                retry: RetryPolicy {
-                    attempts: 1,
-                    wait: false,
-                },
+                attempts: 1,
+                max_retry_delay: Duration::ZERO,
                 request_timeout: Duration::from_millis(150),
             },
         );
@@ -715,6 +715,44 @@ mod tests {
             (true, 0),
             "expected the encoder's message, got: {}",
             err.reason
+        );
+    }
+
+    // A header value may only carry visible ASCII, so credentials sent as
+    // X-ClickHouse-User/Key fail to build the request at all for a password no
+    // stricter than a deployment is free to choose.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_non_ascii_password_still_authenticates() {
+        let server = mock_server::MockClickHouse::start(0).await;
+        let sink = ClickHouseSink::build(
+            ClickHouseSinkOptions {
+                url: server.url.clone(),
+                username: "défaut".to_string(),
+                password: "pässwörd".to_string(),
+                database: "mock".to_string(),
+            },
+            Tuning::default(),
+            Arc::new(|_: &str| ()),
+        )
+        .unwrap();
+        let handle = stage_ids(&sink, &["a"]);
+
+        sink.flush(handle).await.unwrap();
+
+        let head = server.heads().first().cloned().unwrap_or_default();
+        // base64("défaut:pässwörd"), which is what a Basic credential carries.
+        assert_eq!(
+            (
+                head.to_lowercase().contains(
+                    "authorization: basic ZMOpZmF1dDpww6Rzc3fDtnJk"
+                        .to_lowercase()
+                        .as_str()
+                ),
+                head.contains("database=mock"),
+                server.accepted_strings()
+            ),
+            (true, true, vec!["a".to_string()]),
+            "expected a Basic credential, got head: {head}"
         );
     }
 
