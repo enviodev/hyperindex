@@ -1,6 +1,11 @@
 // A parsed config for tests that need one but never index against it: chain
 // state, indexer state, storage wiring. Whatever such a test asserts on comes
-// from the test itself, so the fixture stays at one chain and one contract.
+// from the test itself, so the default fixture stays at one chain and one
+// contract.
+//
+// Parsed straight from the user API rather than through `Scenario`: these tests
+// pick their own storage, so the scenario backend must not reshape the config
+// under them.
 
 let defaultSchema = `
 type SimpleEntity {
@@ -9,11 +14,11 @@ type SimpleEntity {
 }
 `
 
-// Parsed straight from the user API rather than through `Scenario`: these tests
-// pick their own storage, so the scenario backend must not reshape the config
-// under them.
+let fromUserApi = (~schema=defaultSchema, configYaml) =>
+  Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow->Config.fromPublic
+
 let make = (~chainId=1, ~schema=defaultSchema) =>
-  Core.fromUserApi(
+  fromUserApi(
     ~schema,
     `
 name: test-config
@@ -29,8 +34,6 @@ chains:
         events:
           - event: "TestEvent()"
 `,
-  ).config
-  ->JSON.parseOrThrow
-  ->Config.fromPublic
+  )
 
 let default = make()

@@ -14,7 +14,7 @@ let defaultQuery: FetchState.query = {
 }
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
-  let config = Config.load()
+  let config = TestConfig.default
   let allEvents = []
   let numberOfMockEventsCreated = ref(0)
 
@@ -120,7 +120,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let chainConfig = config.defaultChain->Option.getUnsafe
     // For this test we don't need real sources - just testing event ordering
     // Create a mock source that satisfies SourceManager requirements (chain ID doesn't matter here)
-    let mockSource = MockIndexer.Source.make([], ~chainId=#1)
+    let mockSource = MockSource.make([], ~chainId=1)
     let mockChainState = ChainState.make(
       ~chainConfig,
       ~fetchState=fetchState.contents,
@@ -138,7 +138,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
   let state = IndexerState.make(
     ~config,
-    ~persistence=MockIndexer.defaultPersistence(),
+    ~persistence=TestIndexerState.defaultPersistence(),
     ~chainStates,
     ~isInReorgThreshold=false,
     ~isRealtime=false,
@@ -176,7 +176,7 @@ describe("IndexerState", () => {
         let (state, numberOfMockEventsCreated, _allEvents) = populateChainQueuesWithRandomEvents()
 
         let defaultFirstEvent = Internal.Event({
-          chainId: MockConfig.chain1,
+          chainId: 1->ChainId.fromInt,
           blockNumber: 0,
           logIndex: 0,
           transactionIndex: 0,
@@ -241,7 +241,7 @@ describe("IndexerState", () => {
     it(
       "applyBatchProgress keeps a fetchState that advanced during the batch",
       t => {
-        let config = Config.load()
+        let config = TestConfig.default
         let onEventRegistrations = [
           (EventRegistration.evmOnEventRegistration(
             ~id="0",
@@ -308,7 +308,7 @@ describe("IndexerState", () => {
           ->ChainMap.values
           ->Array.forEach(
             chainConfig => {
-              let mockSource = MockIndexer.Source.make([], ~chainId=#1)
+              let mockSource = MockSource.make([], ~chainId=1)
               let (fetchState, addressStore) = makeFetchState(~chainId=chainConfig.id, ~eventBlocks)
               let chainState = ChainState.make(
                 ~chainConfig,
@@ -325,7 +325,7 @@ describe("IndexerState", () => {
           )
           IndexerState.make(
             ~config,
-            ~persistence=MockIndexer.defaultPersistence(),
+            ~persistence=TestIndexerState.defaultPersistence(),
             ~chainStates,
             ~isInReorgThreshold=false,
             ~isRealtime=false,
