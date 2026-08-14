@@ -119,6 +119,13 @@ export const config = {
     return `http://localhost:${this.clickhousePort}`;
   },
 
+  /** Postgres settings, matching what docker_env provisions for tests */
+  pgHost: "localhost",
+  pgPort: 5433,
+  pgUser: "postgres",
+  pgPassword: "testing",
+  pgDatabase: "envio-dev",
+
   /** Timeouts (ms) */
   timeouts: {
     healthCheck: 5000,

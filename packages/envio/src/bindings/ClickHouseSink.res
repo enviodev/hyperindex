@@ -16,12 +16,17 @@ type options = {
   database: string,
 }
 
-@send external classNew: (Core.clickHouseSinkCtor, options) => t = "new"
+// The warning callback is how a degradation reaches the indexer's logger while
+// it is still happening: retries run inside a single `flush`, so anything handed
+// back at the end would only be read once the episode is over.
+@send external classNew: (Core.clickHouseSinkCtor, options, string => unit) => t = "new"
 
 // Column payload as the Rust `ColumnInput` object expects it: exactly one of the
 // value fields is set.
 type columnInput = {
   name: string,
+  @as("chType")
+  chType: string,
   numbers?: Float64Array.t,
   unsigned64?: BigUint64Array.t,
   signed64?: BigInt64Array.t,
@@ -32,48 +37,26 @@ type columnInput = {
 
 @send
 external stage: (t, ~table: string, ~rows: int, ~columns: array<columnInput>) => int = "stage"
-@send external flush: (t, int) => promise<array<string>> = "flush"
-@send external invalidateSchema: (t, string) => unit = "invalidateSchema"
+@send external flush: (t, int) => promise<unit> = "flush"
 
-let make = (~url, ~username, ~password, ~database) =>
-  Core.getAddon().clickHouseSink->classNew({url, username, password, database})
+let make = (~url, ~username, ~password, ~database, ~onWarning) =>
+  Core.getAddon().clickHouseSink->classNew({url, username, password, database}, onWarning)
 
-// How a column's values travel. Derived from the same `Table.fieldType` the DDL
-// is generated from, and pinned against the type ClickHouse reports for the
-// column by `ClickHouseColumnKind_test`.
+// How a column's values travel. Read back from the column's ClickHouse type
+// rather than mapped from `Table.fieldType` a second time: Rust already derives
+// the kind from that type to decide how to encode, so a JS copy of the mapping
+// could only ever be found wrong at runtime, as a rejected insert against a live
+// table.
 type kind =
   | @as(0) F64
   | @as(1) U64
   | @as(2) I64
   | @as(3) Text
 
-let kindOfField = (~fieldType: Table.fieldType, ~isArray, ~chainIdMode: ChainId.mode) =>
-  if isArray {
-    // An array is sent as the JSON of its elements.
-    Text
-  } else {
-    switch fieldType {
-    | Int32
-    | Uint32
-    | Serial
-    | Boolean
-    | Number
-    | Date => F64
-    | ChainId =>
-      switch chainIdMode {
-      | Int32 => F64
-      | Int64 => U64
-      }
-    | UInt52
-    | UInt64 => U64
-    | BigSerial => I64
-    | BigInt(_)
-    | BigDecimal(_)
-    | String
-    | Json
-    | Enum(_) => Text
-    }
-  }
+external kindOfOrdinal: int => kind = "%identity"
+
+let kindOfClickHouseType = clickHouseType =>
+  Core.getAddon().clickhouseColumnKind(clickHouseType)->kindOfOrdinal
 
 %%private(let isString: unknown => bool = %raw(`(v) => typeof v === "string"`))
 external asString: unknown => string = "%identity"
@@ -95,6 +78,10 @@ let toText = (value: unknown) =>
 // `stage` copies it into Rust memory, and nothing reads it afterwards.
 type builder = {
   name: string,
+  // The column's ClickHouse type, as the DDL declared it. Sent with the values
+  // so Rust encodes against the shape envio created rather than one it has to
+  // go and ask the server for.
+  chType: string,
   kind: kind,
   floats: Float64Array.t,
   unsigned: BigUint64Array.t,
@@ -107,10 +94,12 @@ type builder = {
 }
 
 // Only the storage the column's kind uses is allocated; the rest stay empty.
-let makeBuilder = (~name, ~kind, ~rows) => {
+let makeBuilder = (~name, ~chType, ~rows) => {
   let empty = 0
+  let kind = chType->kindOfClickHouseType
   {
     name,
+    chType,
     kind,
     floats: Float64Array.fromLength(kind === F64 ? rows : empty),
     unsigned: BigUint64Array.fromLength(kind === U64 ? rows : empty),
@@ -152,7 +141,7 @@ let writeValue = (builder, ~row, value: unknown) =>
   }
 
 let builderPayload = (builder): columnInput => {
-  let base = {name: builder.name, nulls: ?builder.nulls}
+  let base = {name: builder.name, chType: builder.chType, nulls: ?builder.nulls}
   switch builder.kind {
   | F64 => {...base, numbers: builder.floats}
   | U64 => {...base, unsigned64: builder.unsigned}

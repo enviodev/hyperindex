@@ -8,18 +8,21 @@
 
 import postgres from "postgres";
 
-const env = (name: string, fallback: string) => process.env[name] ?? fallback;
+import { config } from "../config.js";
+
+const env = (name: string, fallback: string | number) =>
+  process.env[name] ?? String(fallback);
 
 let sql: ReturnType<typeof postgres> | null = null;
 
 export function pg() {
   if (!sql) {
     sql = postgres({
-      host: env("ENVIO_PG_HOST", "localhost"),
-      port: Number(env("ENVIO_PG_PORT", "5433")),
-      username: env("ENVIO_PG_USER", "postgres"),
-      password: env("ENVIO_PG_PASSWORD", "testing"),
-      database: env("ENVIO_PG_DATABASE", "envio-dev"),
+      host: env("ENVIO_PG_HOST", config.pgHost),
+      port: Number(env("ENVIO_PG_PORT", config.pgPort)),
+      username: env("ENVIO_PG_USER", config.pgUser),
+      password: env("ENVIO_PG_PASSWORD", config.pgPassword),
+      database: env("ENVIO_PG_DATABASE", config.pgDatabase),
       // Values are compared against ClickHouse's text output, so keep whatever
       // the driver gives and stringify at the comparison site.
       max: 2,

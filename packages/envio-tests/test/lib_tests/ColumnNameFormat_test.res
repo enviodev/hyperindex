@@ -147,7 +147,7 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
   \`transactionIndex\` Int32,
   \`tokenOwner_id\` String,
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
 ORDER BY (id, envio_checkpoint_id)`)
@@ -195,7 +195,7 @@ ORDER BY (id, envio_checkpoint_id)`)
   \`id\` String,
   \`token_id\` Int32,
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
 ORDER BY (id, envio_checkpoint_id)`,

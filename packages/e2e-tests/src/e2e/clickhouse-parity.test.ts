@@ -17,7 +17,10 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import path from "path";
 import { config } from "../config.js";
 import { runCommand } from "../utils/process.js";
-import { queryClickHouse } from "../utils/clickhouse.js";
+import {
+  queryClickHouse,
+  isClickHouseReachable,
+} from "../utils/clickhouse.js";
 import { pgRows, closePg, isPgReachable } from "../utils/pg-direct.js";
 
 const PROJECT_DIR = path.join(config.scenariosDir, "e2e_test");
@@ -39,19 +42,7 @@ const indexerEnv = {
   E2E_EXPECTED_END_BLOCK: END_BLOCK,
 };
 
-const servicesReachable = async () => {
-  if (!(await isPgReachable())) return false;
-  try {
-    const res = await fetch(`${config.clickhouseUrl}/ping`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-};
-
-const reachable = await servicesReachable();
+const reachable = (await isPgReachable()) && (await isClickHouseReachable());
 
 // In CI both services are provisioned, so an unreachable one is a broken
 // pipeline rather than a machine without them.
@@ -110,8 +101,10 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
          FROM ${CH_DATABASE}.\`Transfer\` ORDER BY id`
       ),
     ]);
-    expect(pg.length).toBeGreaterThan(0);
-    expect(ch).toEqual(asText(pg));
+    expect({ hasRows: pg.length > 0, rows: ch }).toEqual({
+      hasRows: true,
+      rows: asText(pg),
+    });
   });
 
   // A per-chain entity carries the chain id in its primary key, spelled
@@ -127,8 +120,10 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
          FROM ${CH_DATABASE}.\`ChainTransfer\` ORDER BY chainId, id`
       ),
     ]);
-    expect(pg.length).toBeGreaterThan(0);
-    expect(ch).toEqual(asText(pg));
+    expect({ hasRows: pg.length > 0, rows: ch }).toEqual({
+      hasRows: true,
+      rows: asText(pg),
+    });
   });
 
   // The one entity written repeatedly under the same id, and deleted on some
@@ -146,8 +141,10 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
          FROM ${CH_DATABASE}.\`Holder\` ORDER BY id`
       ),
     ]);
-    expect(pg.length).toBeGreaterThan(0);
-    expect(ch).toEqual(asText(pg));
+    expect({ hasRows: pg.length > 0, rows: ch }).toEqual({
+      hasRows: true,
+      rows: asText(pg),
+    });
   });
 
   it("Holder deletes leave no row in either backend", async () => {

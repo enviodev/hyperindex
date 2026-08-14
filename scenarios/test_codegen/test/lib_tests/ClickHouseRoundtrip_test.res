@@ -63,7 +63,7 @@ describe("ClickHouse RowBinary roundtrip", () => {
         query: ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database),
       })
 
-      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database)
+      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~onWarning=ignore)
       await ClickHouse.setUpdatesOrThrow(
         sink,
         ~cache=Dict.make(),
@@ -92,10 +92,7 @@ describe("ClickHouse RowBinary roundtrip", () => {
         %raw(`[
           {
             id: "roundtrip-1",
-            // Not ASCII on purpose: the sink hands Rust one concatenated string per column
-  // plus each value's UTF-16 length, and Rust has to re-split it over UTF-8
-  // bytes. "é" is one UTF-16 unit over two bytes, "😀" is two units over four.
-  string: "héllo 😀",
+            string: "héllo 😀",
             optString: null,
             arrayOfStrings: ["a", "日本"],
             int_: -7,
@@ -173,7 +170,7 @@ describe("ClickHouse RowBinary roundtrip", () => {
         query: ClickHouse.makeCreateCheckpointsTableQuery(~database, ~chainIdMode=Int64),
       })
 
-      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database)
+      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~onWarning=ignore)
       await ClickHouse.setCheckpointsOrThrow(
         sink,
         ~batch={
@@ -231,7 +228,7 @@ describe("ClickHouse RowBinary roundtrip", () => {
       await client->ClickHouse.exec({
         query: ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database),
       })
-      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database)
+      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~onWarning=ignore)
 
       let attempt = async rogue => {
         switch await ClickHouse.setUpdatesOrThrow(
@@ -284,6 +281,64 @@ describe("ClickHouse RowBinary roundtrip", () => {
         `Failed to insert items into ClickHouse table "${tableName}"`,
         true,
       ))
+    },
+  )
+  // Naming every column in the INSERT is what lets a table carry columns envio
+  // does not write. The server fills them, so a DEFAULT expression is evaluated
+  // rather than replaced by the type's zero value, and a column whose type the
+  // encoder has never heard of is simply not its business.
+  Async.it_skipIf(chHost->Option.isNone)(
+    "Leaves columns it does not write to the server",
+    async t => {
+      let host = chHost->Option.getUnsafe
+      let database = "test_codegen_roundtrip_extra"
+      let entityConfig = MockIndexer.entityConfig("EntityWithAllTypes")
+      let tableName = EntityHistory.historyTableName(
+        ~entityName=entityConfig.name,
+        ~entityIndex=entityConfig.index,
+      )
+
+      let client = ClickHouse.createClient({url: host, username, password})
+      await client->ClickHouse.exec({query: `DROP DATABASE IF EXISTS ${database}`})
+      await client->ClickHouse.exec({query: `CREATE DATABASE ${database}`})
+      await client->ClickHouse.exec({
+        query: ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database),
+      })
+      // A column with a default expression, and one of a type the RowBinary
+      // encoder cannot represent at all.
+      await client->ClickHouse.exec({
+        query: `ALTER TABLE ${database}.\`${tableName}\` ADD COLUMN ingested_by String DEFAULT 'envio'`,
+      })
+      await client->ClickHouse.exec({
+        query: `ALTER TABLE ${database}.\`${tableName}\` ADD COLUMN trace UUID DEFAULT generateUUIDv4()`,
+      })
+
+      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~onWarning=ignore)
+      await ClickHouse.setUpdatesOrThrow(
+        sink,
+        ~cache=Dict.make(),
+        ~changes=[
+          Set({
+            entityId: entity.id->EntityId.unsafeOfString,
+            checkpointId: 1n,
+            entity: entity->(Utils.magic: Indexer.Entities.EntityWithAllTypes.t => Internal.entity),
+          }),
+        ],
+        ~entityConfig,
+        ~scope=CrossChain,
+        ~chainIdMode=Int32,
+      )
+
+      let result = await client->ClickHouse.query({
+        query: `SELECT id, ingested_by, trace != toUUID('00000000-0000-0000-0000-000000000000') AS has_trace FROM ${database}.\`${tableName}\``,
+      })
+      let rows = (await result->ClickHouse.json)["data"]
+      await client->ClickHouse.exec({query: `DROP DATABASE ${database}`})
+      await client->ClickHouse.close
+
+      t.expect(rows).toEqual(
+        %raw(`[{ id: "roundtrip-1", ingested_by: "envio", has_trace: 1 }]`),
+      )
     },
   )
 })
