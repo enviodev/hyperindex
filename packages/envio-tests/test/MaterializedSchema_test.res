@@ -284,7 +284,7 @@ tables:
     let contract = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     let selectionOf = name =>
       switch (contract.contracts->Array.getUnsafe(0)).events->Array.find(e => e.name === name) {
-      | Some(event) => event.selectedTransactionFields->Utils.Set.toArray
+      | Some(event) => event.fieldSelection.transactionFields->Utils.Set.toArray
       | None => ["the event is missing from the config"]
       }
     t.expect((selectionOf("Transfer"), selectionOf("Approval"))).toEqual((["hash"], []))

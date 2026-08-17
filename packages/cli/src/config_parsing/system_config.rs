@@ -17,7 +17,7 @@ use super::{
 };
 use crate::utils::dotenv::{self, EnvMap};
 use crate::{
-    config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
+    config_parsing::human_config::evm::RpcTransactionField,
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
     evm::abi::AbiOrNestedAbi,
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
@@ -1141,13 +1141,13 @@ impl SystemConfig {
                 // TODO: Add similar validation for Fuel
                 validation::validate_deserialized_config_yaml(evm_config)?;
 
-                let has_rpc_sync_src = evm_config.chains.iter().any(evm_chain_has_rpc_sync_src);
+                let has_rpc_src = evm_config.chains.iter().any(evm_chain_has_rpc_src);
 
                 //Add all global contracts
                 if let Some(global_contracts) = &evm_config.contracts {
                     for g_contract in global_contracts {
-                        let contract_has_rpc_sync_src = evm_config.chains.iter().any(|chain| {
-                            evm_chain_has_rpc_sync_src(chain)
+                        let contract_has_rpc_src = evm_config.chains.iter().any(|chain| {
+                            evm_chain_has_rpc_src(chain)
                                 && chain.contracts.as_ref().is_some_and(|contracts| {
                                     contracts
                                         .iter()
@@ -1158,7 +1158,7 @@ impl SystemConfig {
                             g_contract.config.events.clone(),
                             &g_contract.config.abi_file_path,
                             source,
-                            contract_has_rpc_sync_src,
+                            contract_has_rpc_src,
                         )
                         .context(format!(
                             "Failed parsing abi types for events in global contract {}",
@@ -1180,7 +1180,7 @@ impl SystemConfig {
                 }
 
                 for network in &evm_config.chains {
-                    let network_has_rpc_sync_src = evm_chain_has_rpc_sync_src(network);
+                    let network_has_rpc_src = evm_chain_has_rpc_src(network);
                     for contract in network.contracts.clone().unwrap_or_default() {
                         //Add values for local contract
                         match contract.config {
@@ -1189,7 +1189,7 @@ impl SystemConfig {
                                     l_contract.events,
                                     &l_contract.abi_file_path,
                                     source,
-                                    network_has_rpc_sync_src,
+                                    network_has_rpc_src,
                                 )
                                 .context(format!(
                                     "Failed parsing abi types for events in contract {} on \
@@ -1276,7 +1276,7 @@ impl SystemConfig {
                             block_fields: None,
                         },
                     ),
-                    has_rpc_sync_src,
+                    has_rpc_src,
                 )?;
 
                 let chain_id_mode = ChainIdMode::resolve(&chains)?;
@@ -1634,10 +1634,8 @@ impl SystemConfig {
             // Fetch demand lands on the events the tables actually read, so an
             // event no table touches keeps whatever selection it already had.
             let global_selection = config.field_selection.clone();
-            let has_rpc_sync_src = match &config.human_config {
-                HumanConfig::Evm(evm_config) => {
-                    evm_config.chains.iter().any(evm_chain_has_rpc_sync_src)
-                }
+            let has_rpc_src = match &config.human_config {
+                HumanConfig::Evm(evm_config) => evm_config.chains.iter().any(evm_chain_has_rpc_src),
                 _ => false,
             };
             for ((contract_name, event_name), demand) in compiled.field_demand.0 {
@@ -1660,7 +1658,7 @@ impl SystemConfig {
                     .unwrap_or(&global_selection)
                     .clone();
                 event.field_selection = Some(
-                    base.with_added(&demand.block, &demand.transaction, has_rpc_sync_src)
+                    base.with_added(&demand.block, &demand.transaction, has_rpc_src)
                         .with_context(|| {
                             format!("Failed selecting fields for `{contract_name}.{event_name}`")
                         })?,
@@ -1824,15 +1822,14 @@ fn default_rpc_for(chain: &EvmChain) -> For {
     }
 }
 
-fn evm_chain_has_rpc_sync_src(chain: &EvmChain) -> bool {
-    let default_for = default_rpc_for(chain);
-    let is_sync =
-        |source_for: &Option<For>| matches!(source_for.as_ref().unwrap_or(&default_for), For::Sync);
-
+/// Whether any of a chain's data reaches the indexer over RPC. Every RPC counts,
+/// whatever it's `for`: a fallback or realtime source parses events with the
+/// same field registry a sync one does, so a field RPC can't deliver would go
+/// missing for whichever blocks that source served.
+fn evm_chain_has_rpc_src(chain: &EvmChain) -> bool {
     match &chain.rpc {
-        Some(RpcSelection::Single(rpc)) => is_sync(&rpc.source_for),
-        Some(RpcSelection::List(rpcs)) => rpcs.iter().any(|rpc| is_sync(&rpc.source_for)),
-        Some(RpcSelection::Url(_)) => default_for == For::Sync,
+        Some(RpcSelection::Single(_)) | Some(RpcSelection::Url(_)) => true,
+        Some(RpcSelection::List(rpcs)) => !rpcs.is_empty(),
         None => false,
     }
 }
@@ -2661,7 +2658,7 @@ impl Event {
         events_config: Vec<EvmEventConfig>,
         abi_file_path: &Option<String>,
         source: &dyn ConfigSource,
-        has_rpc_sync_src: bool,
+        has_rpc_src: bool,
     ) -> Result<(Vec<Self>, EvmAbi)> {
         let abi_from_file = EvmAbi::from_source(abi_file_path, source)?;
 
@@ -2697,7 +2694,7 @@ impl Event {
                     Some(ref selection_config) => {
                         Some(FieldSelection::try_from_config_field_selection(
                             selection_config.clone(),
-                            has_rpc_sync_src,
+                            has_rpc_src,
                         )?)
                     }
                     None => None,
@@ -3002,7 +2999,7 @@ impl FieldSelection {
         &self,
         block_fields: &std::collections::BTreeSet<String>,
         transaction_fields: &std::collections::BTreeSet<String>,
-        has_rpc_sync_src: bool,
+        has_rpc_src: bool,
     ) -> Result<Self> {
         use human_config::evm::{BlockField, TransactionField};
         use strum::IntoEnumIterator;
@@ -3030,7 +3027,7 @@ impl FieldSelection {
                 block_fields: Some(block_fields),
                 transaction_fields: Some(transaction_fields),
             },
-            has_rpc_sync_src,
+            has_rpc_src,
         )?;
 
         let mut selection = self.clone();
@@ -3056,7 +3053,7 @@ impl FieldSelection {
     pub fn try_from_config_field_selection(
         field_selection_cfg: human_config::evm::FieldSelection,
         // For validating transaction field selection with rpc
-        has_rpc_sync_src: bool,
+        has_rpc_src: bool,
     ) -> Result<Self> {
         use human_config::evm::BlockField;
         use human_config::evm::TransactionField;
@@ -3083,7 +3080,15 @@ impl FieldSelection {
             ));
         }
 
-        if has_rpc_sync_src {
+        // Every block field is derivable from `eth_getBlockByNumber`, so only
+        // transactions have an RPC-unavailable set: the two whose complex array
+        // shape has no parser in `RpcSource`'s field registry.
+        //
+        // The runtime re-checks this over every registration in
+        // `HandlerRegister.validateRpcFieldSelection`, which is the only check
+        // an inline `fields` selection reaches. This one runs at codegen, so a
+        // `config.yaml` selection fails before a project is even built.
+        if has_rpc_src {
             let invalid_rpc_tx_fields: Vec<_> = transaction_fields
                 .iter()
                 .filter(|&field| RpcTransactionField::try_from(field.clone()).is_err())
@@ -3095,19 +3100,6 @@ impl FieldSelection {
                     "The following selected transaction_fields are unavailable for indexing via \
                      RPC: {}",
                     invalid_rpc_tx_fields.iter().join(", ")
-                ));
-            }
-
-            let invalid_rpc_block_fields: Vec<_> = block_fields
-                .iter()
-                .filter(|&field| RpcBlockField::try_from(field.clone()).is_err())
-                .cloned()
-                .collect();
-
-            if !invalid_rpc_block_fields.is_empty() {
-                return Err(anyhow!(
-                    "The following selected block_fields are unavailable for indexing via RPC: {}",
-                    invalid_rpc_block_fields.iter().join(", ")
                 ));
             }
         }
@@ -4048,7 +4040,7 @@ type Foo {
                         "UpdateMetadataAccountV2",
                         Some("0x0f"),
                         1,
-                        to_strings(&["signatures"]),
+                        to_strings(&["signature"]),
                         false,
                         1
                     ),

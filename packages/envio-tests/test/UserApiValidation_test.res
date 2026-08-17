@@ -728,7 +728,7 @@ chains:
       `
 name: unavailable-rpc-transaction-field
 field_selection:
-  transaction_fields: [gas]
+  transaction_fields: [accessList]
 chains:
   - id: 999999
     rpc:
@@ -736,22 +736,7 @@ chains:
       for: sync
     start_block: 0
 `,
-      "Config parse error: The following selected transaction_fields are unavailable for indexing via RPC: gas",
-    ),
-    (
-      "rejects block fields unavailable through RPC sync",
-      `
-name: unavailable-rpc-block-field
-field_selection:
-  block_fields: [sha3Uncles]
-chains:
-  - id: 999999
-    rpc:
-      url: https://rpc.example.test
-      for: sync
-    start_block: 0
-`,
-      "Config parse error: The following selected block_fields are unavailable for indexing via RPC: sha3Uncles",
+      "Config parse error: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
     ),
     (
       "rejects event fields unavailable on a local RPC contract",
@@ -768,9 +753,9 @@ chains:
         events:
           - event: Transfer()
             field_selection:
-              transaction_fields: [gas]
+              transaction_fields: [accessList]
 `,
-      "Config parse error: Failed parsing abi types for events in contract Token on network 999999: The following selected transaction_fields are unavailable for indexing via RPC: gas",
+      "Config parse error: Failed parsing abi types for events in contract Token on network 999999: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
     ),
     (
       "rejects event fields unavailable on a global contract used by RPC",
@@ -781,7 +766,7 @@ contracts:
     events:
       - event: Transfer()
         field_selection:
-          transaction_fields: [gas]
+          transaction_fields: [accessList]
 chains:
   - id: 999999
     rpc:
@@ -791,7 +776,7 @@ chains:
     contracts:
       - name: Token
 `,
-      "Config parse error: Failed parsing abi types for events in global contract Token: The following selected transaction_fields are unavailable for indexing via RPC: gas",
+      "Config parse error: Failed parsing abi types for events in global contract Token: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
     ),
     (
       "rejects duplicate contract names case-insensitively",
@@ -981,7 +966,7 @@ chains:
         events:
           - event: Transfer()
             field_selection:
-              transaction_fields: [gas]
+              transaction_fields: [accessList]
   - id: 999999
     rpc:
       url: https://rpc.example.test
@@ -1003,7 +988,7 @@ contracts:
     events:
       - event: Transfer()
         field_selection:
-          transaction_fields: [gas]
+          transaction_fields: [accessList]
 chains:
   - id: 1
     start_block: 0

@@ -91,7 +91,7 @@ describe("Resuming a backfill that never finalized", () => {
       // doesn't take the test worker down with it.
       ~onError=_ => (),
       async indexerMock => {
-        let pgSchema = indexerMock.pgSchema
+        let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         await Utils.delay(0)
 
         sourceMock.resolveGetHeightOrThrow(100)
@@ -157,7 +157,7 @@ describe("Resuming a backfill that never finalized", () => {
       ~mapStorage,
       ~onError=_ => (),
       async indexerMock => {
-        let pgSchema = indexerMock.pgSchema
+        let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         await Utils.delay(0)
 
         sourceMock.resolveGetHeightOrThrow(100)
@@ -207,7 +207,7 @@ describe("Resuming a backfill that never finalized", () => {
       // A finite chain exits the process on success; keep the test worker alive.
       ~onExit=() => (),
       async indexerMock => {
-        let pgSchema = indexerMock.pgSchema
+        let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         await Utils.delay(0)
 
         sourceMock.resolveGetHeightOrThrow(100)
@@ -268,7 +268,7 @@ describe("Resuming a backfill that never finalized", () => {
       ~mapStorage,
       ~onError=_ => (),
       async indexerMock => {
-        let pgSchema = indexerMock.pgSchema
+        let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         await Utils.delay(0)
 
         sourceMock1337.resolveGetHeightOrThrow(100)
@@ -350,7 +350,7 @@ describe("Resuming a backfill that never finalized", () => {
       ~mapStorage,
       ~onError=_ => (),
       async indexerMock => {
-        let pgSchema = indexerMock.pgSchema
+        let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         await Utils.delay(0)
 
         sourceMock.resolveGetHeightOrThrow(100)
@@ -399,7 +399,7 @@ describe("Resuming a backfill that never finalized", () => {
       ~mapStorage,
       ~onError=_ => (),
       async indexerMock => {
-        let pgSchema = indexerMock.pgSchema
+        let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         await Utils.delay(0)
 
         sourceMock.resolveGetHeightOrThrow(100)
@@ -458,7 +458,7 @@ describe("Resuming a backfill that never finalized", () => {
       ~mapStorage,
       ~onError=_ => (),
       async indexerMock => {
-        let pgSchema = indexerMock.pgSchema
+        let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         await Utils.delay(0)
 
         sourceMock.resolveGetHeightOrThrow(100)
@@ -539,7 +539,7 @@ describe("Resuming a backfill that never finalized", () => {
       ~mapStorage,
       ~onError=_ => (),
       async indexerMock => {
-        let pgSchema = indexerMock.pgSchema
+        let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         await Utils.delay(0)
 
         sourceMock.resolveGetHeightOrThrow(100)
@@ -613,7 +613,7 @@ describe("Resuming a backfill that never finalized", () => {
       ~mapStorage,
       ~onError=_ => (),
       async indexerMock => {
-        let pgSchema = indexerMock.pgSchema
+        let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         await Utils.delay(0)
 
         sourceMock1337.resolveGetHeightOrThrow(100)

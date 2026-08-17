@@ -81,6 +81,7 @@ let buildOnEventRegistrationWith = (
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
   ~where: option<JSON.t>,
+  ~fieldSelection: option<Internal.fieldSelection>,
   ~startBlock=?,
 ): Internal.onEventRegistration => {
   switch config.ecosystem.name {
@@ -111,6 +112,7 @@ let buildOnEventRegistrationWith = (
       ~where,
       ~chainId,
       ~onEventBlockFilterSchema=config.ecosystem.onEventBlockFilterSchema,
+      ~fieldSelection?,
       ~startBlock?,
     ) :> Internal.onEventRegistration)
   }
@@ -140,6 +142,19 @@ let sameEventAndFilter = (
   | Fuel | Svm => true
   }
 
+// The merged registration keeps `base`'s handler and slot, picks up the
+// contractRegister from `other`, and carries the union of what both callbacks
+// read. Relies on `onEventRegistration` having an optional field so the spread
+// stays a runtime spread and keeps `other`'s ecosystem-only fields.
+let mergeInto = (
+  base: Internal.onEventRegistration,
+  ~other: Internal.onEventRegistration,
+): Internal.onEventRegistration => {
+  ...base,
+  contractRegister: other.contractRegister,
+  fieldSelection: Internal.unionFieldSelection(base.fieldSelection, other.fieldSelection),
+}
+
 // Merge each contractRegister into a matching handler registration (either
 // registration order; the merged registration takes the handler's slot so
 // dispatch order follows handler registration order). Two handlers (or two
@@ -165,7 +180,7 @@ let mergeRegistrations = (resolved: array<Internal.onEventRegistration>, ~config
         merged :=
           merged.contents
           ->Array.filterWithIndex((_, j) => j !== i)
-          ->Array.concat([{...reg, contractRegister: target.contractRegister}])
+          ->Array.concat([reg->mergeInto(~other=target)])
       }
     } else {
       // A contractRegister merges into a matching handler registration,
@@ -179,7 +194,7 @@ let mergeRegistrations = (resolved: array<Internal.onEventRegistration>, ~config
       | i =>
         let target = merged.contents->Array.getUnsafe(i)
         let next = merged.contents->Array.copy
-        next->Array.setUnsafe(i, {...target, contractRegister: reg.contractRegister})
+        next->Array.setUnsafe(i, target->mergeInto(~other=reg))
         merged := next
       }
     }
@@ -226,6 +241,27 @@ let addOnEventRegistration = (
 ) => {
   let isWildcard = eventOptions->Option.flatMap(v => v.wildcard)->Option.getOr(false)
   let where = eventOptions->Option.flatMap(v => v.where)
+  // The inline selection doesn't vary by chain: resolve it once here and share
+  // the one value (and its sets) across every chain's registration.
+  let fieldSelection = switch eventOptions->Option.flatMap(v => v.fields) {
+  | None => None
+  | Some(fields) =>
+    // Only EVM resolves a registration selection of its own; Fuel and SVM take
+    // theirs from the event config, so an inline one would be silently dropped.
+    if registration.config.ecosystem.name !== Evm {
+      JsError.throwWithMessage(
+        `The fields option of the "${eventName}" event registration on contract "${contractName}" is only supported on EVM. Select the fields in your config instead.`,
+      )
+    }
+    Some(
+      EventConfigBuilder.resolveInlineFieldSelection(
+        fields,
+        ~contractName,
+        ~eventName,
+        ~enableRawEvents=registration.config.enableRawEvents,
+      ),
+    )
+  }
   let matched = ref(false)
   registration.config.chainMap
   ->ChainMap.values
@@ -245,6 +281,7 @@ let addOnEventRegistration = (
           ~handler,
           ~contractRegister,
           ~where,
+          ~fieldSelection,
           ~startBlock=?contract.startBlock,
         )
         (registration->getChainRegistrations(~chainId=chainConfig.id)).onEventRegistrations
@@ -279,6 +316,26 @@ let addOnEventRegistration = (
   }
 }
 
+// Materialized tables are written by handlers of their own, registered before
+// any user handler so their lower registration index puts their item first on a
+// log — a handler reading a materialized table then sees the current event's
+// contribution.
+let registerMaterializers = (r: activeRegistration) =>
+  Materialization.buildHandlers(r.config)->Array.forEach(({
+    contractName,
+    eventName,
+    wildcard,
+    handler,
+  }) =>
+    r->addOnEventRegistration(
+      ~contractName,
+      ~eventName,
+      ~handler=Some(handler),
+      ~contractRegister=None,
+      ~eventOptions=wildcard ? Some({wildcard: true}) : None,
+    )
+  )
+
 // Idempotent: handlers register once (import-cached), so the first call builds
 // the registration and every later call reuses it. `config` must be the full
 // chain set — registrations resolve for all its chains here, and
@@ -293,30 +350,47 @@ let startRegistration = (~config: Config.t) => {
       finished: false,
     }
     EnvioGlobal.value.activeRegistration = Some(r->(Utils.magic: activeRegistration => unknown))
-    // Materialized tables create their own fetch demand, so their handlers are
-    // registered before any user handler — including ones queued by modules
-    // imported pre-start — so a handler reading a materialized table always
-    // sees the current event's contribution.
-    Materialization.buildHandlers(config)->Array.forEach(({
-      contractName,
-      eventName,
-      wildcard,
-      handler,
-    }) =>
-      r->addOnEventRegistration(
-        ~contractName,
-        ~eventName,
-        ~handler=Some(handler),
-        ~contractRegister=None,
-        ~eventOptions=wildcard ? Some({wildcard: true}) : None,
-      )
-    )
+    r->registerMaterializers
     // Replay pre-registered callbacks in source (FIFO) order, then clear. For
     // multiple handlers on one event this replay order is the dispatch order, so
     // it must not reverse (which `Array.pop` would).
     let queued = preRegistered->Array.copy
     preRegistered->Array.splice(~start=0, ~remove=preRegistered->Array.length, ~insert=[])
     queued->Array.forEach(fn => fn(r))
+  }
+}
+
+// A registration a caller owns, rather than the single implicit one
+// `startRegistration` installs. Tests run several indexers in one process, each
+// with its own config, and handlers must register against the config they were
+// written for.
+type registration = activeRegistration
+
+let makeRegistration = (~config: Config.t): registration => {
+  let r = {
+    config,
+    registrationsByChainId: Dict.make(),
+    finished: false,
+  }
+  r->registerMaterializers
+  r
+}
+
+// Makes `registration` the target of `indexer.onEvent` & co. for the duration
+// of `fn`, restoring whatever was active before — so one caller's handlers
+// never land in another's registration. Concurrent scopes would still clobber
+// each other: the pointer they swap is process-global.
+let useRegistration = async (registration: registration, fn) => {
+  let previous = EnvioGlobal.value.activeRegistration
+  EnvioGlobal.value.activeRegistration = Some(registration->(Utils.magic: registration => unknown))
+  let restore = () => EnvioGlobal.value.activeRegistration = previous
+  switch await fn() {
+  | result =>
+    restore()
+    result
+  | exception exn =>
+    restore()
+    throw(exn)
   }
 }
 
@@ -415,8 +489,44 @@ let getSimulateOnEventRegistrations = (
         ~handler=None,
         ~contractRegister=None,
         ~where=None,
+        ~fieldSelection=None,
       ),
     ]
+  }
+}
+
+// An RPC source can only deliver the fields it knows how to parse; the rest are
+// silently skipped at materialisation. Every RPC on the chain counts, whatever
+// it's for — a fallback or realtime source runs the same parsers as a sync one,
+// so a field it can't deliver would go missing for whichever blocks it served.
+// The selection can come from either `config.yaml` or the inline `fields`
+// option, so the message names neither. Runs on the registrations a chain
+// actually keeps, so a handler whose `where` opts out of this chain isn't held
+// to its limits.
+//
+// The `config.yaml` half of this is also rejected at codegen, by the
+// `RpcTransactionField` subenum in `system_config.rs`. That one reports every
+// offending field at once and before the project builds; this one is the only
+// check an inline selection reaches. `RpcFieldSelection_test.res` pins the two
+// to the same field set.
+let validateRpcFieldSelection = (
+  chainConfig: Config.chain,
+  registrations: array<Internal.onEventRegistration>,
+) => {
+  let hasRpc = switch chainConfig.sourceConfig {
+  | EvmSourceConfig({rpcs}) => !(rpcs->Utils.Array.isEmpty)
+  | _ => false
+  }
+  if hasRpc {
+    registrations->Array.forEach(reg =>
+      reg.fieldSelection.transactionFields->Utils.Set.forEach(name =>
+        if !RpcSource.isRpcTransactionField(name) {
+          JsError.throwWithMessage(
+            `The "${name}" transaction field selected for the "${reg.eventConfig.name}" event on contract "${reg.eventConfig.contractName}" is unavailable for indexing via RPC. Remove it from the field selection, or remove chain ${chainConfig.id->ChainId.toString}'s RPC source — even an RPC the chain only falls back to has to deliver the selection.`,
+          )
+        }
+      )
+    )
   }
 }
 
@@ -470,6 +580,7 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
                       ~handler=None,
                       ~contractRegister=None,
                       ~where=None,
+                      ~fieldSelection=None,
                       ~startBlock=?contract.startBlock,
                     ),
                   )
@@ -504,6 +615,8 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
             ->ignore
           }
         })
+
+        validateRpcFieldSelection(chainConfig, onEventRegistrations)
 
         registrationsByChainId->Dict.set(
           key,

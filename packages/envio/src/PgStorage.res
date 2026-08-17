@@ -979,11 +979,8 @@ let rec writeBatch = async (
       let rows = batch.items->Array.filterMap(item =>
         switch item {
         | Internal.Event(_) =>
-          let coordinate = `${item
-            ->Internal.getItemChainId
-            ->ChainId.toString}-${item
-            ->Internal.getItemBlockNumber
-            ->Int.toString}-${item->Internal.getItemLogIndex->Int.toString}`
+          let eventItem = item->Internal.castUnsafeEventItem
+          let coordinate = `${eventItem.chainId->ChainId.toString}-${eventItem.blockNumber->Int.toString}-${eventItem.logIndex->Int.toString}`
           if seenLogCoordinates->Utils.Set.has(coordinate) {
             None
           } else {

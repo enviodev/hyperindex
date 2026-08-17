@@ -41,6 +41,20 @@ chains:
 
 let check = handlers => InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
 
+// For the cases that must NOT type-check: returns the type errors instead of
+// throwing them.
+let checkResult = handlers =>
+  try {
+    check(handlers)
+    "no type error"
+  } catch {
+  | JsExn(e) => e->JsExn.message->Option.getOr("no message")
+  }
+
+let aliasPreamble = `import { indexer, type EvmOnEventOptions } from "envio";
+type Transfer = { contractName: "Token"; eventName: "Transfer" };
+`
+
 describe("EVM API types", () => {
   it("resolves config-bound chain/contract name and id unions", _ =>
     check(`
@@ -139,6 +153,7 @@ import type {
   EvmOnEventHandler,
   EvmOnEventOptions,
   EvmOnEventWhere,
+  EvmFieldsSelection,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
@@ -152,6 +167,10 @@ expectType<
       readonly event: "Synced";
       readonly wildcard?: boolean;
       readonly where?: EvmOnEventWhere<{}, "Token">;
+      // The alias can't infer the selection the way a call site does, so it
+      // defaults to naming no fields rather than to the widened selection —
+      // which \`onEvent\` would only reject.
+      readonly fields?: undefined;
     }
   >
 >(true);
@@ -159,6 +178,16 @@ expectType<
 type PoolCreated = EvmEvent<"Factory", "PoolCreated">;
 expectType<
   TypeEqual<EvmContractRegisterOptions<PoolCreated>, EvmOnEventOptions<PoolCreated>>
+>(true);
+
+// Both aliases narrow \`fields\` the way the \`onEvent\`/\`contractRegister\`
+// signatures do, so a selection typed through them stays a literal.
+type PinnedFields = { readonly block: readonly ["parentHash"] };
+expectType<
+  TypeEqual<
+    EvmContractRegisterOptions<PoolCreated, {}, PinnedFields>["fields"],
+    PinnedFields | undefined
+  >
 >(true);
 
 expectType<
@@ -263,6 +292,211 @@ expectType<IsNotSelected<TransferEvent["transaction"]["from"]>>(true);
 expectType<IsNotSelected<TransferEvent["block"]["parentHash"]>>(true);
 `)
   )
+
+  it("narrows event block/transaction fields by the inline fields option", _ =>
+    check(`
+import { indexer } from "envio";
+import type {
+  EvmAllBlockFields,
+  EvmAllTransactionFields,
+  EvmFieldsSelection,
+  EvmTransactionFieldName,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
+  ? true
+  : false;
+
+expectType<TypeEqual<EvmAllBlockFields["parentHash"], string>>(true);
+expectType<TypeEqual<EvmAllBlockFields["nonce"], bigint | undefined>>(true);
+expectType<TypeEqual<EvmAllTransactionFields["hash"], string>>(true);
+expectType<TypeEqual<EvmAllTransactionFields["to"], \`0x\${string}\` | undefined>>(true);
+
+const _selection: EvmFieldsSelection = { block: ["parentHash"], transaction: ["to"] };
+// @ts-expect-error - "notAField" is not an EVM block field
+const _badSelection: EvmFieldsSelection = { block: ["notAField"] };
+
+if (0) {
+  // Inline fields replace the config selection for this handler: Transfer
+  // inherits the global transaction_fields [transactionIndex, hash], but they
+  // are not readable here because they aren't listed.
+  indexer.onEvent(
+    {
+      contract: "Token",
+      event: "Transfer",
+      fields: { block: ["parentHash"], transaction: ["to"] },
+    },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
+      expectType<TypeEqual<typeof event.transaction.to, \`0x\${string}\` | undefined>>(true);
+      // number is always included, without listing it.
+      expectType<TypeEqual<typeof event.block.number, number>>(true);
+      expectType<IsNotSelected<typeof event.block.timestamp>>(true);
+      expectType<IsNotSelected<typeof event.block.hash>>(true);
+      expectType<IsNotSelected<typeof event.block.nonce>>(true);
+      expectType<IsNotSelected<typeof event.transaction.hash>>(true);
+      expectType<IsNotSelected<typeof event.transaction.transactionIndex>>(true);
+      // Everything outside block/transaction is untouched.
+      expectType<TypeEqual<typeof event.params.value, bigint>>(true);
+      expectType<TypeEqual<typeof event.eventName, "Transfer">>(true);
+    },
+  );
+
+  // Listing an always-included field is allowed, not an error.
+  indexer.onEvent(
+    { contract: "Token", event: "Transfer", fields: { block: ["number", "timestamp"] } },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.block.number, number>>(true);
+      expectType<TypeEqual<typeof event.block.timestamp, number>>(true);
+    },
+  );
+
+  // An empty selection still carries number, and nothing else.
+  indexer.onEvent(
+    { contract: "Token", event: "Approval", fields: {} },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.block.number, number>>(true);
+      expectType<IsNotSelected<typeof event.block.parentHash>>(true);
+      expectType<IsNotSelected<typeof event.transaction.to>>(true);
+    },
+  );
+
+  // Without the option the config selection applies, unchanged.
+  indexer.onEvent({ contract: "Token", event: "Approval" }, async ({ event }) => {
+    expectType<TypeEqual<typeof event.block.timestamp, number>>(true);
+    expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
+    expectType<TypeEqual<typeof event.transaction.hash, string>>(true);
+  });
+
+  indexer.onEvent(
+    // @ts-expect-error - "notAField" is not an EVM block field
+    { contract: "Token", event: "Transfer", fields: { block: ["notAField"] } },
+    async () => {},
+  );
+
+  // A selection read from a variable typed as EvmFieldsSelection only carries
+  // the field-name union, so every field would type as selected while the
+  // runtime selects the listed subset. Rejected rather than silently widened.
+  const widened: EvmFieldsSelection = { block: ["parentHash"] };
+  indexer.onEvent(
+    // @ts-expect-error - fields.block must be a literal array
+    { contract: "Token", event: "Transfer", fields: widened },
+    async () => {},
+  );
+  const widenedTransaction: { transaction: EvmTransactionFieldName[] } = {
+    transaction: ["to"],
+  };
+  indexer.onEvent(
+    // @ts-expect-error - fields.transaction must be a literal array
+    { contract: "Token", event: "Transfer", fields: widenedTransaction },
+    async () => {},
+  );
+  // The same selection written inline is fine, no \`as const\` needed.
+  indexer.onEvent(
+    { contract: "Token", event: "Transfer", fields: { block: ["parentHash"] } },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
+    },
+  );
+  // As does an \`as const\` variable, which keeps the literal element types.
+  const pinned = { block: ["parentHash"] } as const;
+  indexer.onEvent(
+    { contract: "Token", event: "Transfer", fields: pinned },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
+      expectType<IsNotSelected<typeof event.block.nonce>>(true);
+    },
+  );
+
+  indexer.contractRegister(
+    {
+      contract: "Factory",
+      event: "PoolCreated",
+      fields: { transaction: ["from"] },
+    },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.transaction.from, \`0x\${string}\` | undefined>>(true);
+      expectType<IsNotSelected<typeof event.transaction.hash>>(true);
+      expectType<TypeEqual<typeof event.block.number, number>>(true);
+    },
+  );
+}
+`)
+  )
+
+  // A contextual type can type-check perfectly and still offer the editor
+  // nothing — an over-eager default on the `fields` type parameter did exactly
+  // that, leaving `fields: {}` with global-scope completions instead of the two
+  // knobs. No type assertion catches it, so the language service is asked
+  // directly.
+  // The example the `indexer-transactions` skill ships to user projects. Skills
+  // are prose, so nothing else compiles them; this keeps the recommended snippet
+  // honest as the option evolves.
+  it("compiles the fields example the transactions skill documents", _ =>
+    check(`
+import { indexer } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+if (0) {
+  indexer.onEvent(
+    {
+      contract: "Token",
+      event: "Transfer",
+      fields: { transaction: ["hash", "from"], block: ["timestamp"] },
+    },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.transaction.hash, string>>(true);
+      expectType<TypeEqual<typeof event.block.timestamp, number>>(true);
+      expectType<TypeEqual<typeof event.block.number, number>>(true);
+      // @ts-expect-error - gasUsed is not selected
+      event.transaction.gasUsed satisfies bigint;
+    },
+  );
+
+  // A reused selection, as the skill shows it.
+  const txFields = { transaction: ["hash", "from"] } as const;
+  indexer.onEvent(
+    { contract: "Token", event: "Transfer", fields: txFields },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.transaction.hash, string>>(true);
+      expectType<TypeEqual<typeof event.transaction.from, \`0x\${string}\` | undefined>>(true);
+    },
+  );
+
+  // The wildcard skill's example selects the field it reads.
+  indexer.onEvent(
+    {
+      contract: "Token",
+      event: "Transfer",
+      wildcard: true,
+      fields: { transaction: ["hash"] },
+    },
+    async ({ event }) => {
+      expectType<TypeEqual<typeof event.transaction.hash, string>>(true);
+    },
+  );
+}
+`)
+  )
+
+  it("offers the fields knobs and field names to an editor", t => {
+    let completions = handlers =>
+      InternalTestIndexer.completionsAt(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)
+    let at = source => completions(`
+import { indexer } from "envio";
+indexer.onEvent(${source}, async () => {});
+`)
+    t.expect((
+      at(`{ contract: "Token", event: "Transfer", fields: { /*HERE*/ } }`),
+      at(`{ contract: "Token", event: "Transfer", fields: { block: ["/*HERE*/"] } }`),
+      at(`{ contract: "Token", event: "Transfer", fields: { transaction: ["/*HERE*/"] } }`),
+    )).toEqual((
+      ["block", "transaction"],
+      Evm.blockFields->Array.toSorted(String.compare),
+      Evm.transactionFields->Array.toSorted(String.compare),
+    ))
+  })
 
   it("binds Entity / EntityName / Enum / EnumName to the schema", _ =>
     check(`
@@ -623,6 +857,82 @@ expectType<SingleOrMultiple<Address>>(_multi);
 expectType<
   TypeEqual<Logger["info"], (message: string, params?: Record<string, unknown> | Error) => void>
 >(true);
+`)
+  )
+
+  // An options value declared through the alias has to stay assignable to what
+  // `onEvent` accepts. The selection is the part the alias can't infer, so its
+  // default decides whether the other options survive the round trip.
+  it("accepts alias-declared options that name no selection", _ =>
+    check(
+      aliasPreamble ++ `
+const plain: EvmOnEventOptions<Transfer> = { contract: "Token", event: "Transfer" };
+indexer.onEvent(plain, async () => {});
+
+const filtered: EvmOnEventOptions<Transfer> = {
+  contract: "Token",
+  event: "Transfer",
+  where: ({ chain }) => chain.id === 1,
+};
+indexer.onEvent(filtered, async () => {});
+`,
+    )
+  )
+
+  it("accepts an alias-declared selection passed as the Fields generic", _ =>
+    check(
+      aliasPreamble ++ `
+const fields = { transaction: ["to"] } as const;
+const opts: EvmOnEventOptions<Transfer, {}, typeof fields> = {
+  contract: "Token",
+  event: "Transfer",
+  fields,
+};
+indexer.onEvent(opts, async () => {});
+`,
+    )
+  )
+
+  // Rejected at the declaration rather than at the `onEvent` call: the alias
+  // widens the selection to its element types, which no longer name the fields
+  // the registration listed.
+  it("rejects an alias-declared selection without the Fields generic", t =>
+    t.expect(
+      checkResult(
+        aliasPreamble ++ `
+const opts: EvmOnEventOptions<Transfer> = {
+  contract: "Token",
+  event: "Transfer",
+  fields: { transaction: ["to"] },
+};
+indexer.onEvent(opts, async () => {});
+`,
+      )->String.includes("is not assignable to type 'undefined'"),
+    ).toBe(true)
+  )
+
+  it("accepts alias-declared contractRegister options", _ =>
+    check(`
+import { indexer, type EvmContractRegisterOptions } from "envio";
+type Transfer = { contractName: "Token"; eventName: "Transfer" };
+const opts: EvmContractRegisterOptions<Transfer> = { contract: "Token", event: "Transfer" };
+indexer.contractRegister(opts, async () => {});
+`)
+  )
+
+  // `EvmFieldsSelection`'s own keys are optional, so a selection annotated with
+  // any type derived from it lists its fields under optional keys. Those name
+  // the same selection the runtime resolves, and have to type as selected.
+  it("narrows fields listed under optional keys", _ =>
+    check(`
+import { indexer } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+const pinned: { block?: readonly ["parentHash"] } = { block: ["parentHash"] };
+indexer.onEvent({ contract: "Token", event: "Transfer", fields: pinned }, async ({ event }) => {
+  expectType<TypeEqual<typeof event.block.parentHash, string>>(true);
+  expectType<TypeEqual<typeof event.block.number, number>>(true);
+});
 `)
   )
 })

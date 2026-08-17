@@ -125,7 +125,7 @@ describe("Materialized reducer rollback", () => {
         source.resolveGetItemsOrThrow(
           [makeTransferItem(~block=101, ~from=alice, ~to=bob, ~value=5n, ~handler)],
           ~latestFetchedBlockNumber=101,
-          ~latestFetchedBlockHash="0x101",
+          ~latestFetchedBlockHash="0x0101",
         )
         await indexerMock.getBatchWritePromise()
 
@@ -133,25 +133,30 @@ describe("Materialized reducer rollback", () => {
         source.resolveGetItemsOrThrow(
           [makeTransferItem(~block=102, ~from=alice, ~to=bob, ~value=2n, ~handler)],
           ~latestFetchedBlockNumber=102,
-          ~latestFetchedBlockHash="0x102",
+          ~latestFetchedBlockHash="0x0102",
         )
         await indexerMock.getBatchWritePromise()
 
         // Block 102 comes back with a different hash.
         source.resolveGetItemsOrThrow(
           [],
-          ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102-reorged"},
+          ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x0102aa"},
         )
         await Utils.delay(0)
         await Utils.delay(0)
-        source.resolveGetBlockHashes([{blockNumber: 101, blockHash: "0x101", blockTimestamp: 101}])
+        // Both blocks the depth search asks for come back unchanged, so the
+        // rollback target is 101 and only block 102's write is undone.
+        source.resolveGetBlockHashes([
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+        ])
         await indexerMock.getRollbackReadyPromise()
 
         // The rollback diff is written with the next batch, so drive one more.
         source.resolveGetItemsOrThrow(
           [],
           ~latestFetchedBlockNumber=102,
-          ~latestFetchedBlockHash="0x102",
+          ~latestFetchedBlockHash="0x0102",
         )
         await indexerMock.getBatchWritePromise()
         await indexerMock.waitUntilIdle()
@@ -194,23 +199,26 @@ describe("Materialized reducer rollback", () => {
         source.resolveGetItemsOrThrow(
           [makeTransferItem(~block=102, ~from=alice, ~to=carol, ~value=9n, ~handler)],
           ~latestFetchedBlockNumber=102,
-          ~latestFetchedBlockHash="0x102",
+          ~latestFetchedBlockHash="0x0102",
         )
         await indexerMock.getBatchWritePromise()
 
         source.resolveGetItemsOrThrow(
           [],
-          ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102-reorged"},
+          ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x0102aa"},
         )
         await Utils.delay(0)
         await Utils.delay(0)
-        source.resolveGetBlockHashes([{blockNumber: 101, blockHash: "0x101", blockTimestamp: 101}])
+        source.resolveGetBlockHashes([
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+        ])
         await indexerMock.getRollbackReadyPromise()
 
         source.resolveGetItemsOrThrow(
           [],
           ~latestFetchedBlockNumber=102,
-          ~latestFetchedBlockHash="0x102",
+          ~latestFetchedBlockHash="0x0102",
         )
         await indexerMock.getBatchWritePromise()
         await indexerMock.waitUntilIdle()

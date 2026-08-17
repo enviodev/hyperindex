@@ -127,7 +127,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
           t.expect(
             (
               missingHistoryRelationError->String.includes(
-                `relation "${indexerMock.pgSchema}.envio_history_${chOnlyEntityName}" does not exist`,
+                `relation "${(indexerMock->IndexerRunner.pgOrThrow).pgSchema}.envio_history_${chOnlyEntityName}" does not exist`,
               ),
               await (
                 indexerMock.query("SimpleEntity"): promise<array<Indexer.Entities.SimpleEntity.t>>
@@ -140,7 +140,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
           sourceMock.resolveGetItemsOrThrow(
             [],
             ~latestFetchedBlockNumber=103,
-            ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102-reorged"},
+            ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
           )
           await Utils.delay(0)
           await Utils.delay(0)
@@ -148,10 +148,12 @@ describe("Rollback with a ClickHouse-only entity", () => {
           t.expect(
             sourceMock.getBlockHashesCalls,
             ~message="Should have called getBlockHashes to find rollback depth",
-          ).toEqual([[100]])
+          ).toEqual([[100, 101]])
           sourceMock.resolveGetBlockHashes([
-            // The block 100 is untouched so we can rollback to it
-            {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},
+            // The block 100 is untouched so we can rollback to it; 101 came
+            // back on a different hash, so it is part of the reorg.
+            {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+            {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
           ])
 
           await indexerMock.getRollbackReadyPromise()->raiseOnIndexerError
@@ -161,7 +163,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
           sourceMock.resolveGetItemsOrThrow(
             [],
             ~latestFetchedBlockNumber=102,
-            ~latestFetchedBlockHash="0x102-reorged",
+            ~latestFetchedBlockHash="0x102a",
           )
           await indexerMock.getBatchWritePromise()->raiseOnIndexerError
 

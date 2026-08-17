@@ -160,13 +160,13 @@ describe("Chain-scoped rollback", () => {
         source137.resolveGetItemsOrThrow(
           [setEntities(~block=101, ~counter=137n)],
           ~latestFetchedBlockNumber=101,
-          ~latestFetchedBlockHash="0x101",
+          ~latestFetchedBlockHash="0x0101",
         )
         await indexerMock.getBatchWritePromise()
         source1.resolveGetItemsOrThrow(
           [setEntities(~block=101, ~counter=1n)],
           ~latestFetchedBlockNumber=101,
-          ~latestFetchedBlockHash="0x101",
+          ~latestFetchedBlockHash="0x0101",
         )
         await indexerMock.getBatchWritePromise()
 
@@ -175,19 +175,22 @@ describe("Chain-scoped rollback", () => {
         source1.resolveGetItemsOrThrow(
           [setEntities(~block=102, ~counter=2n)],
           ~latestFetchedBlockNumber=102,
-          ~latestFetchedBlockHash="0x102",
+          ~latestFetchedBlockHash="0x0102",
         )
         await indexerMock.getBatchWritePromise()
 
         // Block 102 comes back with a different hash.
         source1.resolveGetItemsOrThrow(
           [setEntities(~block=103, ~counter=99n)],
-          ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102-reorged"},
+          ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
         )
         await Utils.delay(0)
         await Utils.delay(0)
 
-        source1.resolveGetBlockHashes([{blockNumber: 101, blockHash: "0x101", blockTimestamp: 101}])
+        source1.resolveGetBlockHashes([
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+        ])
         await indexerMock.getRollbackReadyPromise()
 
         // The rollback diff is written with the next batch, so drive chain 1 once
@@ -195,7 +198,7 @@ describe("Chain-scoped rollback", () => {
         source1.resolveGetItemsOrThrow(
           [],
           ~latestFetchedBlockNumber=102,
-          ~latestFetchedBlockHash="0x102",
+          ~latestFetchedBlockHash="0x0102",
         )
         await indexerMock.getBatchWritePromise()
         await indexerMock.waitUntilIdle()
@@ -341,13 +344,13 @@ describe("Per-chain history and removal", () => {
         source137.resolveGetItemsOrThrow(
           [setEntities(~block=101, ~counter=137n, ~id="shared")],
           ~latestFetchedBlockNumber=101,
-          ~latestFetchedBlockHash="0x101",
+          ~latestFetchedBlockHash="0x0101",
         )
         await indexerMock.getBatchWritePromise()
         source1.resolveGetItemsOrThrow(
           [setEntities(~block=101, ~counter=1n, ~id="shared")],
           ~latestFetchedBlockNumber=101,
-          ~latestFetchedBlockHash="0x101",
+          ~latestFetchedBlockHash="0x0101",
         )
         await indexerMock.getBatchWritePromise()
 
@@ -367,7 +370,7 @@ describe("Per-chain history and removal", () => {
             },
           ],
           ~latestFetchedBlockNumber=102,
-          ~latestFetchedBlockHash="0x102",
+          ~latestFetchedBlockHash="0x0102",
         )
         await indexerMock.getBatchWritePromise()
 
@@ -378,16 +381,19 @@ describe("Per-chain history and removal", () => {
         // Chain 1 reorgs back to block 101, taking both the delete and the new id.
         source1.resolveGetItemsOrThrow(
           [setEntities(~block=103, ~counter=99n, ~id="ignored")],
-          ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102-reorged"},
+          ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
         )
         await Utils.delay(0)
         await Utils.delay(0)
-        source1.resolveGetBlockHashes([{blockNumber: 101, blockHash: "0x101", blockTimestamp: 101}])
+        source1.resolveGetBlockHashes([
+          {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+          {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+        ])
         await indexerMock.getRollbackReadyPromise()
         source1.resolveGetItemsOrThrow(
           [],
           ~latestFetchedBlockNumber=102,
-          ~latestFetchedBlockHash="0x102",
+          ~latestFetchedBlockHash="0x0102",
         )
         await indexerMock.getBatchWritePromise()
         await indexerMock.waitUntilIdle()
@@ -601,8 +607,7 @@ describe("Per-chain history prune", () => {
         await indexerMock.stop()
 
         let globalEntityConfig = config.userEntitiesByName->Dict.getUnsafe("GlobalCounter")
-        let sql = indexerMock.sql
-        let pgSchema = indexerMock.pgSchema
+        let {sql, pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         let historyTable = PgStorage.getEntityHistory(~entityConfig).table.tableName
         let globalHistoryTable = PgStorage.getEntityHistory(
           ~entityConfig=globalEntityConfig,

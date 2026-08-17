@@ -511,7 +511,7 @@
       "type": "string",
       "enum": [
         "transactionIndex",
-        "signatures",
+        "signature",
         "feePayer",
         "success",
         "err",
@@ -519,7 +519,8 @@
         "computeUnitsConsumed",
         "accountKeys",
         "recentBlockhash",
-        "version"
+        "version",
+        "allSignatures"
       ]
     },
     "SvmBlockField": {

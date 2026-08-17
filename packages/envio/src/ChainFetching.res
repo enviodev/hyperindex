@@ -11,17 +11,17 @@ type partitionQueryResponse = {
 let runContractRegistersOrThrow = async (
   ~itemsWithContractRegister: array<Internal.item>,
   ~config: Config.t,
+  ~chainState: ChainState.t,
   ~transactionStore: option<TransactionStore.t>,
-  ~blockStore: option<BlockStore.t>,
 ) => {
   // contractRegister handlers can read event.transaction and event.block, so
   // materialise the selected fields onto the payloads before running them. All
-  // items belong to the chain being fetched, hence its single page stores.
+  // items belong to the chain being fetched: transactions come from its
+  // response page, blocks from the chain store the page was merged into.
   await ChainState.materializePageItems(
     ~items=itemsWithContractRegister,
     ~transactionStore,
-    ~blockStore,
-    ~ecosystem=config.ecosystem.name,
+    ~blockStore=chainState->ChainState.blockStore,
   )
 
   let registrations: array<AddressStore.registration> = []
@@ -111,10 +111,8 @@ let rec onQueryResponse = async (
       transactionStore,
       blockStore,
       latestFetchedBlockNumber,
-      latestFetchedBlockTimestamp,
       stats,
       knownHeight,
-      blockHashes,
       fromBlockQueried,
     } = response
 
@@ -150,7 +148,7 @@ let rec onQueryResponse = async (
       })
     }
 
-    let reorgResult = chainState->ChainState.registerReorgGuard(~blockHashes, ~knownHeight)
+    let reorgResult = chainState->ChainState.registerReorgGuard(~blockStore, ~knownHeight)
 
     let rollbackWithReorgDetectedBlockNumber = switch reorgResult {
     | ReorgDetected(reorgDetected) => {
@@ -158,13 +156,17 @@ let rec onQueryResponse = async (
         ->ChainState.logger
         ->Logging.childInfo(
           reorgDetected->ReorgDetection.reorgDetectedToLogParams(
-            ~shouldRollbackOnReorg=(state->IndexerState.config).shouldRollbackOnReorg,
+            ~shouldRollbackOnReorg=chainState->ChainState.shouldRollbackOnReorg,
           ),
         )
         chainState->ChainState.recordReorgDetected(
           ~blockNumber=reorgDetected.scannedBlock.blockNumber,
         )
-        if (state->IndexerState.config).shouldRollbackOnReorg {
+
+        // Must agree with the `reportOnly` flag registerReorgGuard passed to
+        // the merge: a discarded page (rollback mode) needs the rollback to
+        // actually happen, or the stale stored hash re-reports forever.
+        if chainState->ChainState.shouldRollbackOnReorg {
           Some(reorgDetected.scannedBlock.blockNumber)
         } else {
           None
@@ -224,13 +226,9 @@ let rec onQueryResponse = async (
             ~newItems,
             ~newRegistrations,
             ~knownHeight,
-            ~latestFetchedBlock={
-              FetchState.blockNumber: latestFetchedBlockNumber,
-              blockTimestamp: latestFetchedBlockTimestamp,
-            },
+            ~latestFetchedBlock=latestFetchedBlockNumber,
             ~query,
             ~transactionStore,
-            ~blockStore,
           )
           ChainMetadata.stage(state)
           scheduleFetch()
@@ -243,8 +241,8 @@ let rec onQueryResponse = async (
         switch await runContractRegistersOrThrow(
           ~itemsWithContractRegister,
           ~config=state->IndexerState.config,
+          ~chainState,
           ~transactionStore,
-          ~blockStore,
         ) {
         | exception exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
         | newRegistrations => proceed(~newRegistrations)
@@ -262,7 +260,6 @@ and applyQueryResponse = (
   ~latestFetchedBlock,
   ~query,
   ~transactionStore,
-  ~blockStore,
 ) => {
   let chainState = state->IndexerState.getChainState(~chainId)
   let wasFetchingAtHead = chainState->ChainState.isFetchingAtHead
@@ -274,7 +271,6 @@ and applyQueryResponse = (
     ~newRegistrations,
     ~knownHeight,
     ~transactionStore,
-    ~blockStore,
   )
 
   // In auto-exit mode, set endBlock to the first event's block when events arrive.

@@ -515,6 +515,11 @@ pub mod evm {
         pub block_fields: Option<Vec<BlockField>>,
     }
 
+    // `RpcTransactionField` is the subset an RPC-synced chain can deliver:
+    // every field `eth_getTransactionByHash` or `eth_getTransactionReceipt`
+    // returns, which is all of them except the two array-shaped ones that have
+    // no parser in the runtime's field registry (`RpcSource.res`). Kept in step
+    // with that registry by `RpcFieldSelection_test.res`.
     #[subenum(RpcTransactionField)]
     #[derive(
         Debug,
@@ -539,6 +544,7 @@ pub mod evm {
         From,
         #[subenum(RpcTransactionField)]
         To,
+        #[subenum(RpcTransactionField)]
         Gas,
         #[subenum(RpcTransactionField)]
         GasPrice,
@@ -546,31 +552,50 @@ pub mod evm {
         MaxPriorityFeePerGas,
         #[subenum(RpcTransactionField)]
         MaxFeePerGas,
+        #[subenum(RpcTransactionField)]
         CumulativeGasUsed,
+        #[subenum(RpcTransactionField)]
         EffectiveGasPrice,
+        #[subenum(RpcTransactionField)]
         GasUsed,
         #[subenum(RpcTransactionField)]
         Input,
+        #[subenum(RpcTransactionField)]
         Nonce,
         #[subenum(RpcTransactionField)]
         Value,
+        #[subenum(RpcTransactionField)]
         V,
+        #[subenum(RpcTransactionField)]
         R,
+        #[subenum(RpcTransactionField)]
         S,
         #[subenum(RpcTransactionField)]
         ContractAddress,
+        #[subenum(RpcTransactionField)]
         LogsBloom,
+        #[subenum(RpcTransactionField)]
         Root,
+        #[subenum(RpcTransactionField)]
         Status,
+        #[subenum(RpcTransactionField)]
         YParity,
         AccessList,
+        #[subenum(RpcTransactionField)]
         MaxFeePerBlobGas,
+        #[subenum(RpcTransactionField)]
         BlobVersionedHashes,
+        #[subenum(RpcTransactionField)]
         Type,
+        #[subenum(RpcTransactionField)]
         L1Fee,
+        #[subenum(RpcTransactionField)]
         L1GasPrice,
+        #[subenum(RpcTransactionField)]
         L1GasUsed,
+        #[subenum(RpcTransactionField)]
         L1FeeScalar,
+        #[subenum(RpcTransactionField)]
         GasUsedForL1,
         AuthorizationList,
         // We want to encourage the use of context.chain.id instead
@@ -581,7 +606,6 @@ pub mod evm {
         // BlockNumber,
     }
 
-    #[subenum(RpcBlockField)]
     #[derive(
         Debug,
         Serialize,
@@ -597,30 +621,21 @@ pub mod evm {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     #[strum(serialize_all = "camelCase")]
     pub enum BlockField {
-        #[subenum(RpcBlockField)]
         ParentHash,
-        #[subenum(RpcBlockField)]
         Nonce,
         Sha3Uncles,
         LogsBloom,
         TransactionsRoot,
-        #[subenum(RpcBlockField)]
         StateRoot,
         ReceiptsRoot,
-        #[subenum(RpcBlockField)]
         Miner,
-        #[subenum(RpcBlockField)]
         Difficulty,
         TotalDifficulty,
-        #[subenum(RpcBlockField)]
         ExtraData,
         Size,
-        #[subenum(RpcBlockField)]
         GasLimit,
-        #[subenum(RpcBlockField)]
         GasUsed,
         Uncles,
-        #[subenum(RpcBlockField)]
         BaseFeePerGas,
         BlobGasUsed,
         ExcessBlobGas,
@@ -1277,7 +1292,7 @@ pub mod svm {
     #[strum(serialize_all = "camelCase")]
     pub enum SvmTransactionField {
         TransactionIndex,
-        Signatures,
+        Signature,
         FeePayer,
         Success,
         Err,
@@ -1286,6 +1301,7 @@ pub mod svm {
         AccountKeys,
         RecentBlockhash,
         Version,
+        AllSignatures,
     }
 
     /// Selectable block field names (camelCase), matching the public
@@ -1710,7 +1726,7 @@ chains:
                 - position: 0
                   values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
               field_selection:
-                transaction_fields: [signatures, feePayer]
+                transaction_fields: [signature, feePayer]
 "#;
 
         #[test]
@@ -1755,7 +1771,7 @@ chains:
                             }])),
                             field_selection: Some(SvmFieldSelection {
                                 transaction_fields: Some(vec![
-                                    SvmTransactionField::Signatures,
+                                    SvmTransactionField::Signature,
                                     SvmTransactionField::FeePayer,
                                 ]),
                                 block_fields: None,
