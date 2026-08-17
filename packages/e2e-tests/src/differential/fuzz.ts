@@ -13,13 +13,37 @@
  * Confirmed findings belong in the corpus (with a recorded snapshot), not
  * here: this finds bugs, the corpus pins them.
  *
- * Usage (needs Hasura 8080 + envio serve 8081, fixture applied):
+ * Two classes of difference are NOT bugs and are deliberately not generated,
+ * because both are decided by the iteration order of a Haskell HashMap that
+ * cannot be reproduced from outside Hasura:
+ *
+ * - Which key is blamed when ONE input object holds SEVERAL invalid values.
+ *   Hasura's choice is fixed per key set but follows neither document,
+ *   alphabetical, nor schema order. Generation therefore spends at most one
+ *   ill-typed value per query (`adversarialBudget`), so a reported finding is
+ *   always about the value, never about which sibling got blamed first.
+ * - Which column wins in a multi-key `order_by` OBJECT (`{a: asc, b: desc}`).
+ *   Hasura's precedence there is likewise hash order, and its own docs say to
+ *   pass an array of single-key objects for defined multi-column ordering.
+ *   Only the array form is generated; it is exact-parity in both engines.
+ *
+ * Usage (needs Hasura 8080 + envio serve 8081):
  *   pnpm fuzz:differential -- [--seeds 1..20] [--n 500] [--concurrency 8]
- *                             [--admin-ratio 0.3] [--verbose]
+ *                             [--phase default|limited] [--admin-ratio 0.3]
+ *                             [--verbose]
+ *
+ * The fixture and Hasura's metadata are (re)applied for the chosen phase
+ * before fuzzing, because the two engines must be configured identically for
+ * a difference to mean anything: a Hasura still tracked for another phase
+ * reports every row-limit and aggregate-visibility difference as a bug.
+ * `envio serve` must be started with that phase's environment
+ * (ENVIO_HASURA_RESPONSE_LIMIT / ENVIO_HASURA_PUBLIC_AGGREGATE) to match.
  */
 
 import { hasuraUrl, serveUrl, adminSecret } from "./env.js";
 import { arg, flag } from "./cliArgs.js";
+import { applyFixture, trackDatabase } from "./hasuraSetup.js";
+import { phaseConfigs, type Phase } from "./corpus.js";
 
 // ---------------------------------------------------------------------------
 // Deterministic RNG — every query is a pure function of its seed, so a
@@ -246,10 +270,12 @@ function inputLiteral(
     const fields = schema.inputFields(base.name);
     if (!fields.length) return "{}";
     const chosen = rng.sample(fields, 1, Math.min(2, fields.length));
+    // Only the first nested field inherits an ill-typed value: several bad
+    // values inside one object would just re-open the blame-order ambiguity.
     const body = chosen
       .map(
-        (f) =>
-          `${f.name}: ${inputLiteral(rng, schema, f.type, wellTyped, depth + 1)}`
+        (f, i) =>
+          `${f.name}: ${inputLiteral(rng, schema, f.type, wellTyped || i > 0, depth + 1)}`
       )
       .join(", ");
     const obj = `{${body}}`;
@@ -270,6 +296,20 @@ function inputLiteral(
 interface GenOptions {
   wellTypedRatio: number;
   maxDepth: number;
+  /** Ill-typed values left to spend in the current query. */
+  adversarialBudget: number;
+}
+
+/**
+ * Decides whether this value may be ill-typed, spending from the query's
+ * budget. Keeping the budget at one means a mismatch is never about which of
+ * several bad siblings Hasura happened to blame first.
+ */
+function allowAdversarial(rng: Rng, opts: GenOptions): boolean {
+  if (opts.adversarialBudget <= 0) return true;
+  if (rng.chance(opts.wellTypedRatio)) return true;
+  opts.adversarialBudget -= 1;
+  return false;
 }
 
 function genSelection(
@@ -314,7 +354,6 @@ function genArgs(
 ): [string, string][] {
   const args: [string, string][] = [];
   const byName = new Map(field.args.map((a) => [a.name, a]));
-  const wellTyped = () => rng.chance(opts.wellTypedRatio);
 
   if (byName.has("limit") && rng.chance(0.6))
     args.push(["limit", String(rng.int(0, 5))]);
@@ -323,11 +362,17 @@ function genArgs(
   if (byName.has("order_by") && rng.chance(0.5)) {
     const cols = schema.scalarFields(returnedType);
     if (cols.length) {
+      // One key per object: precedence between keys of the SAME object is
+      // hash order in Hasura and not reproducible, so only the array form
+      // (which is the documented way to order by several columns) is used.
       const picked = rng.sample(cols, 1, 2);
-      const body = picked
-        .map((c) => `${c.name}: ${rng.pick(ORDER_BY)}`)
-        .join(", ");
-      args.push(["order_by", rng.chance(0.3) ? `[{${body}}]` : `{${body}}`]);
+      const objects = picked.map((c) => `{${c.name}: ${rng.pick(ORDER_BY)}}`);
+      args.push([
+        "order_by",
+        objects.length === 1 && rng.chance(0.5)
+          ? objects[0]!
+          : `[${objects.join(", ")}]`,
+      ]);
     }
   }
   if (byName.has("distinct_on") && rng.chance(0.15)) {
@@ -343,7 +388,7 @@ function genArgs(
     if (a.type.kind !== "NON_NULL") continue;
     if (["limit", "offset", "order_by", "where", "distinct_on"].includes(a.name))
       continue;
-    args.push([a.name, inputLiteral(rng, schema, a.type, wellTyped())]);
+    args.push([a.name, inputLiteral(rng, schema, a.type, allowAdversarial(rng, opts))]);
   }
   return args;
 }
@@ -382,7 +427,7 @@ function genWhere(
     return null;
   }
   const op = rng.pick(ops);
-  const wellTyped = rng.chance(opts.wellTypedRatio);
+  const wellTyped = allowAdversarial(rng, opts);
   return `{${col.name}: {${op.name}: ${inputLiteral(rng, schema, op.type, wellTyped)}}}`;
 }
 
@@ -529,7 +574,8 @@ async function shrink(roots: Node[], admin: boolean): Promise<Node[]> {
     improved = false;
     for (const candidate of reductions(current)) {
       if (budget-- <= 0) break;
-      if (await differs(renderQuery(candidate), admin)) {
+      const d = await differs(renderQuery(candidate), admin);
+      if (d && !isBlameOrder(d.hasura, d.serve)) {
         current = candidate;
         improved = true;
         break;
@@ -541,6 +587,27 @@ async function shrink(roots: Node[], admin: boolean): Promise<Node[]> {
 
 // ---------------------------------------------------------------------------
 // Finding grouping — one bug should report once, not once per hit.
+
+/**
+ * A query can hold more than one invalid spot, and the engines then disagree
+ * only about which to blame — the unreproducible hash-order class described
+ * at the top of this file. Both erroring at DIFFERENT paths is exactly that
+ * shape; anything else (one side returning data, or both blaming the same
+ * path with a different message or code) is a real difference.
+ */
+function isBlameOrder(hasura: Response, serve: Response): boolean {
+  const errorPath = (r: Response): string | null => {
+    try {
+      const first = JSON.parse(r.body)?.errors?.[0];
+      return first ? String(first.extensions?.path ?? "") : null;
+    } catch {
+      return null;
+    }
+  };
+  const h = errorPath(hasura);
+  const s = errorPath(serve);
+  return h !== null && s !== null && h !== s;
+}
 
 function signature(hasura: Response, serve: Response): string {
   const shape = (r: Response) => {
@@ -559,6 +626,31 @@ function signature(hasura: Response, serve: Response): string {
     }
   };
   return `${shape(hasura)} -vs- ${shape(serve)}`;
+}
+
+/**
+ * A root-field set that differs between the engines means they are
+ * configured differently (or serve's schema build is wrong), and every
+ * subsequent finding would be noise. Fail loudly instead.
+ */
+async function assertSameSchemaShape(): Promise<void> {
+  const roots = async (url: string) => {
+    const res = await post(url, `{ __type(name: "query_root") { fields { name } } }`, false);
+    const parsed = JSON.parse(res.body);
+    return (parsed.data?.__type?.fields ?? []).map((f: { name: string }) => f.name).sort();
+  };
+  const [h, s] = await Promise.all([roots(hasuraUrl), roots(serveUrl)]);
+  const onlyHasura = h.filter((n: string) => !s.includes(n));
+  const onlyServe = s.filter((n: string) => !h.includes(n));
+  if (onlyHasura.length || onlyServe.length) {
+    console.error(
+      `query_root differs — the engines are not configured alike.\n` +
+        `  only in hasura: ${onlyHasura.join(", ") || "(none)"}\n` +
+        `  only in serve : ${onlyServe.join(", ") || "(none)"}\n` +
+        `Start serve with this phase's ENVIO_HASURA_* environment.`
+    );
+    process.exit(1);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -583,15 +675,22 @@ async function main() {
   const adminRatio = Number(arg("--admin-ratio") ?? 0.3);
   const verbose = flag("--verbose");
 
+  const phase = (arg("--phase") ?? "default") as Phase;
+  const fixtureDir = new URL("../../fixtures/differential/", import.meta.url);
+  await applyFixture(fixtureDir);
+  await trackDatabase(phaseConfigs[phase]);
+
   const schema = await Schema.load(serveUrl);
   console.log(
-    `fuzzing ${schema.roots.length} root fields, seeds ${seedLo}..${seedHi} x ${perSeed}`
+    `fuzzing ${schema.roots.length} root fields, phase ${phase}, seeds ${seedLo}..${seedHi} x ${perSeed}`
   );
+  await assertSameSchemaShape();
 
-  const opts: GenOptions = { wellTypedRatio, maxDepth: 2 };
+  const opts: GenOptions = { wellTypedRatio, maxDepth: 2, adversarialBudget: 1 };
   const bySignature = new Map<string, Finding>();
   let checked = 0;
   let hits = 0;
+  let ambiguous = 0;
 
   for (let seed = seedLo!; seed <= seedHi!; seed++) {
     const rng = new Rng(seed);
@@ -599,7 +698,7 @@ async function main() {
     // seed, never on how requests interleaved.
     const batch = Array.from({ length: perSeed }, (_, index) => ({
       index,
-      roots: generate(rng, schema, opts),
+      roots: generate(rng, schema, { ...opts, adversarialBudget: 1 }),
       admin: rng.chance(adminRatio),
     }));
 
@@ -618,6 +717,10 @@ async function main() {
           }
           checked++;
           if (!diff) continue;
+          if (isBlameOrder(diff.hasura, diff.serve)) {
+            ambiguous++;
+            continue;
+          }
           hits++;
           const sig = signature(diff.hasura, diff.serve);
           if (bySignature.has(sig)) continue;
@@ -650,7 +753,8 @@ async function main() {
 
   const findings = [...bySignature.values()];
   console.log(
-    `\nchecked ${checked}, mismatching responses ${hits}, distinct shapes ${findings.length}`
+    `\nchecked ${checked}, actionable mismatches ${hits} in ${findings.length} shapes` +
+      `, ${ambiguous} ambiguous (multiple invalid spots, blame order not reproducible)`
   );
   for (const f of findings) {
     console.log(

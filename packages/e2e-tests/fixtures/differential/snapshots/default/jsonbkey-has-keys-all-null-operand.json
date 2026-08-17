@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ raw_events(order_by: {serial: asc}, where: {block_fields: {_has_keys_all: null}}) { serial } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "expected a list, but found null",
+    "extensions": {
+     "path": "$.selectionSet.raw_events.args.where.block_fields._has_keys_all",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

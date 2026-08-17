@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ raw_events(order_by: {serial: asc}, where: {block_fields: {_has_keys_all: [{}]}}) { serial } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "parsing Text failed, expected String, but encountered Object",
+    "extensions": {
+     "path": "$.selectionSet.raw_events.args.where.block_fields._has_keys_all[0]",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}
