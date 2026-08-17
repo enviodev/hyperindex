@@ -155,12 +155,8 @@ describe("Test PgStorage SQL generation functions", () => {
         let entities = [
           entityConfig("A"),
           entityConfig("B"),
-          entityConfig(
-            "EntityWith63LenghtName______________________________________one",
-          ),
-          entityConfig(
-            "EntityWith63LenghtName______________________________________two",
-          ),
+          entityConfig("EntityWith63LenghtName______________________________________one"),
+          entityConfig("EntityWith63LenghtName______________________________________two"),
           entityConfig("EntityWithAllTypes"),
         ]
         let enums = config.allEnums
@@ -389,10 +385,7 @@ FROM "public"."envio_chains";`
   })
 
   describe("Deferred schema indexes", () => {
-    let entities = [
-      entityConfig("A"),
-      entityConfig("B"),
-    ]
+    let entities = [entityConfig("A"), entityConfig("B")]
 
     Async.it(
       "Creates no schema index during the initial DDL, but still the tables and views",
@@ -1069,12 +1062,24 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
   // throw. This test simulates that timing by writing the vars to process.env
   // right before calling makeStorageFromEnv.
   Async.it("Picks up ENVIO_CLICKHOUSE_* vars set after Env.res has been loaded", async t => {
+    let getEnvVar: string => option<string> = %raw(`(k) => process.env[k]`)
     let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
     let unsetEnvVar: string => unit = %raw(`(k) => { delete process.env[k]; }`)
-    setEnvVar("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123")
-    setEnvVar("ENVIO_CLICKHOUSE_USERNAME", "default")
-    setEnvVar("ENVIO_CLICKHOUSE_PASSWORD", "testing")
-    setEnvVar("ENVIO_CLICKHOUSE_DATABASE", "envio_indexer")
+    // The ClickHouse leg points the process at its own database through these
+    // same vars, so deleting them unconditionally would strip the run's wiring
+    // from every test after this one in the file.
+    let restored = [
+      ("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"),
+      ("ENVIO_CLICKHOUSE_USERNAME", "default"),
+      ("ENVIO_CLICKHOUSE_PASSWORD", "testing"),
+      ("ENVIO_CLICKHOUSE_DATABASE", "envio_indexer"),
+    ]->Array.map(
+      ((key, value)) => {
+        let before = getEnvVar(key)
+        setEnvVar(key, value)
+        (key, before)
+      },
+    )
     let config = {
       ...config,
       storage: (
@@ -1093,10 +1098,13 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
     | JsExn(e) => Error(e->JsExn.message->Option.getOr(""))
     | _ => Error("non-JsExn")
     }
-    unsetEnvVar("ENVIO_CLICKHOUSE_HOST")
-    unsetEnvVar("ENVIO_CLICKHOUSE_USERNAME")
-    unsetEnvVar("ENVIO_CLICKHOUSE_PASSWORD")
-    unsetEnvVar("ENVIO_CLICKHOUSE_DATABASE")
+    restored->Array.forEach(
+      ((key, before)) =>
+        switch before {
+        | Some(value) => setEnvVar(key, value)
+        | None => unsetEnvVar(key)
+        },
+    )
     t.expect(
       result,
       ~message="Should read ClickHouse env vars lazily so envio dev's late injection works",

@@ -1,6 +1,3 @@
-// An indexer state for tests that exercise state accounting without running the
-// loop: stall metrics, chain-metadata writes, backfill finalization.
-
 let config = TestConfig.default
 
 // The store requires a persistence even when the cycle never runs; reuse one.
