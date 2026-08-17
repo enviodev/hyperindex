@@ -495,9 +495,10 @@ async fn http_transport_surface_edge_cases() {
     let base = format!("http://127.0.0.1:{}", server.port);
     let client = reqwest::Client::new();
 
-    // GET /v1/graphql without WebSocket upgrade headers: axum's upgrade
-    // extractor rejects it (serve-defined behavior, pinned here — Hasura
-    // serves GraphiQL on plain GET instead).
+    // GET /v1/graphql without WebSocket upgrade headers answers exactly as
+    // Hasura does. The body itself is pinned against recorded Hasura
+    // responses by corpus/18-transport.ts; what this adds is that the route
+    // still answers it when nothing else in the process is running.
     let res = client
         .get(format!("{base}/v1/graphql"))
         .timeout(Duration::from_secs(5))
@@ -542,8 +543,9 @@ async fn http_transport_surface_edge_cases() {
             oversized_body
         ),
         (
-            400,
-            "Connection header did not include 'upgrade'".to_string(),
+            200,
+            "{\"errors\":[{\"message\":\"PersistedQueryNotSupported\",\"extensions\":{\"path\":\"$\",\"code\":\"not-supported\"}}]}"
+                .to_string(),
             404,
             413,
             "Failed to buffer the request body: length limit exceeded".to_string()
