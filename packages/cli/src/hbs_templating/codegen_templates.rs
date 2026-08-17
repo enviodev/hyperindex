@@ -337,13 +337,11 @@ impl EntityRecordTypeTemplate {
             .collect();
         let get_where_filter_code = format!("{{{}}}", get_where_filter_fields.join(", "));
 
-        let handler_name = config.entity_handler_name(&entity.name);
+        let access = config.entity_access(&entity.name);
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
-            code_name: handler_name
-                .clone()
-                .unwrap_or_else(|| entity.name.clone().capitalize()),
-            hidden_from_handlers: handler_name.is_none(),
+            hidden_from_handlers: access.is_hidden(),
+            code_name: access.code_name,
             postgres_fields,
             type_code,
             get_where_filter_code,
@@ -3611,26 +3609,29 @@ type GlobalCounter @crossChain {
         assert!(indexer_code.contains("Entities.name<'entity, 'id, 'getWhereFilter>) =>"));
     }
 
-    // The runtime keys contracts by the capitalized name and codegen emits
-    // modules from it, so an uncapitalized name would leave the two sides to
-    // agree by luck. Rejected at parse time, naming the rename.
+    // config.yaml may spell a contract's name however it likes; the runtime
+    // keys contracts by the capitalized name and codegen emits modules from it,
+    // so both sides of the config settle on that one spelling here — otherwise
+    // `name: contract1` compiled and then threw "not configured on any chain"
+    // at startup.
     #[test]
-    fn rejects_an_uncapitalized_contract_name() {
+    fn normalizes_an_uncapitalized_contract_name() {
         let project_root = get_test_path_string_helper();
         let project_paths =
             ParsedProjectPaths::new(&project_root, "configs/lowercase-contract-name.yaml")
                 .expect("Parsed paths");
+        let config = SystemConfig::parse_from_project_files(&project_paths)
+            .expect("a lowercase name parses");
         assert_eq!(
-            format!(
-                "{:#}",
-                SystemConfig::parse_from_project_files(&project_paths)
-                    .expect_err("an uncapitalized contract name must be rejected")
+            (
+                config.contracts.keys().cloned().collect::<Vec<_>>(),
+                config
+                    .get_chains()
+                    .iter()
+                    .flat_map(|chain| chain.contracts.iter().map(|c| c.name.clone()))
+                    .collect::<Vec<_>>()
             ),
-            concat!(
-                "The config has contract names that don't start with a capital letter: ",
-                "\"contract1\". You write these names in handlers and they name the generated ",
-                "types, so rename them to \"Contract1\"."
-            )
+            (vec!["Contract1".to_string()], vec!["Contract1".to_string()])
         );
     }
 

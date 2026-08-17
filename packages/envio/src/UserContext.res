@@ -113,12 +113,16 @@ let initEffect = (params: contextParams) => {
   makeCaller(~caller=None)
 }
 
+// Which accessor produced this entity context. The materializer's is the one
+// path allowed to write a table config.yaml maintains.
+type reachedBy =
+  | Handler
+  | Materializer
+
 type entityContextParams = {
   ...contextParams,
   entityConfig: Internal.entityConfig,
-  // Set only for the context `Materialization` writes through, which is the one
-  // path allowed to write a materialized table.
-  isMaterializer: bool,
+  reachedBy: reachedBy,
 }
 
 // The handler context is always chain-scoped, so a per-chain entity resolves to
@@ -199,12 +203,13 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
         }
 
     switch prop {
-    // The materializer reaches its entities through `Internal.materializerProp`,
-    // which builds the context with `isMaterializer` — so the guard closes the
-    // write operations of the ordinary `context.<Table>` accessor only.
+    // A table config.yaml maintains, reached the ordinary way: the one pairing
+    // that isn't allowed to write.
     | "set" | "getOrCreate" | "deleteUnsafe"
-      if params.config.materializedTables->Dict.has(params.entityConfig.name) &&
-      !params.isMaterializer =>
+      if switch (params.entityConfig.written, params.reachedBy) {
+      | (Materialized(_), Handler) => true
+      | (Materialized(_), Materializer) | (Handlers | Internal, _) => false
+      } =>
       (
         (_: unknown) => throwMaterializedReadOnly(params.entityConfig, prop)
       )->(Utils.magic: (unknown => unit) => unknown)
@@ -327,7 +332,7 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   },
 }
 
-let makeEntityContext = (params: contextParams, ~entityConfig, ~isMaterializer) =>
+let makeEntityContext = (params: contextParams, ~entityConfig, ~reachedBy) =>
   {
     item: params.item,
     isPreload: params.isPreload,
@@ -339,7 +344,7 @@ let makeEntityContext = (params: contextParams, ~entityConfig, ~isMaterializer) 
     isResolved: params.isResolved,
     config: params.config,
     entityConfig,
-    isMaterializer,
+    reachedBy,
   }
   ->Utils.Proxy.make(entityTraps)
   ->(Utils.magic: entityContextParams => unknown)
@@ -381,18 +386,21 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
         // `as_entity` is deliberately absent from that lookup.
         (table: string) =>
           switch params.config.entitiesByTableName->Utils.Dict.dangerouslyGetNonOption(table) {
-          | Some(entityConfig) => params->makeEntityContext(~entityConfig, ~isMaterializer=true)
+          | Some(entityConfig) => params->makeEntityContext(~entityConfig, ~reachedBy=Materializer)
           | None => JsError.throwWithMessage(`Table '${table}' is missing from the config.`)
           }
       )->(Utils.magic: (string => unknown) => unknown)
     | _ =>
       switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(prop) {
-      | Some(entityConfig) => params->makeEntityContext(~entityConfig, ~isMaterializer=false)
+      | Some(entityConfig) => params->makeEntityContext(~entityConfig, ~reachedBy=Handler)
       | None =>
         // A materialized table that didn't opt in is absent on purpose, so say
         // that rather than sending the user to regenerate code.
         switch params.config.userEntities->Array.find(entityConfig =>
-          entityConfig.hiddenFromHandlers && entityConfig.codeName === prop
+          switch entityConfig.written {
+          | Materialized({hidden: true}) => entityConfig.codeName === prop
+          | Handlers | Materialized({hidden: false}) | Internal => false
+          }
         ) {
         | Some(entityConfig) =>
           JsError.throwWithMessage(

@@ -259,6 +259,20 @@ describe("tables: select expressions", () => {
       "in `select.total`: `_negate` needs a number, but got String",
     ),
     (
+      "rejects a `_sum` of a value that can be missing",
+      `      id: params.to
+      total:
+        _sum: transaction.maxFeePerGas`,
+      "in `select.total`: `_sum` needs a number that is always set, but got BigInt or null. Adding up a value that can be missing isn't supported yet.",
+    ),
+    (
+      "rejects a `_negate` of a value that can be missing",
+      `      id: params.to
+      total:
+        _negate: transaction.maxFeePerGas`,
+      "in `select.total`: `_negate` needs a number that is always set, but got BigInt or null. Negating a value that can be missing isn't supported yet.",
+    ),
+    (
       "rejects an integer too big for an Int column",
       `      id: params.to
       total: 5000000000`,
@@ -294,6 +308,36 @@ ${select}`->table,
         ),
     )
   })
+
+  // A query column takes its type from every branch at once, so a single
+  // branch selecting something that can be missing is what makes it nullable.
+  it("rejects a `_sum` of a query column one branch leaves unset", t =>
+    expectError(
+      t,
+      `  totals:
+    with:
+      moves:
+        - from: evm.events
+          where:
+            eventName: Transfer
+          select:
+            account: params.to
+            delta: params.value
+        - from: evm.events
+          where:
+            eventName: Approval
+          select:
+            account: params.owner
+            delta: transaction.maxFeePerGas
+    from: moves
+    select:
+      id: account
+      total:
+        _sum: delta`->table,
+      prefix ++
+      "in `select.total`: `_sum` needs a number that is always set, but got BigInt or null. Adding up a value that can be missing isn't supported yet.",
+    )
+  )
 })
 
 describe("tables: _concat", () => {
@@ -474,6 +518,35 @@ describe("tables: where conditions", () => {
         _gt: Transfer`,
       "`eventName` only supports `_eq`/`_neq`/`_in`",
     ),
+    // `_eq: null` asks for the rows where a value isn't there, so a field that
+    // is always there makes it a condition nothing can satisfy.
+    (
+      "rejects a null comparison on a field that is never null",
+      `      eventName: Transfer
+      params:
+        from:
+          _eq: null`,
+      "in `where.params.from`: String is never null, so comparing it to null can never be true. Compare it to a value, or filter a field that can be missing.",
+    ),
+    (
+      "rejects a null among the values of an `_in` on a field that is never null",
+      `      eventName: Transfer
+      params:
+        from:
+          _in: [srcAddress, null]`,
+      "in `where.params.from`: String is never null, so comparing it to null can never be true. Compare it to a value, or filter a field that can be missing.",
+    ),
+    // An address literal is normalized to the casing the decoder writes, so
+    // one that isn't an address at all has no casing to be given.
+    (
+      "rejects a literal that isn't an address where an address is compared",
+      `      eventName: Transfer
+      params:
+        from:
+          _eq:
+            _literal: "0xnope"`,
+      "in `where.params.from`: `0xnope` is not an address, so it can never equal one. Check the spelling.",
+    ),
   ]->Array.forEach(((name, condition, message)) => {
     it(
       name,
@@ -496,23 +569,31 @@ describe("tables: names and storage", () => {
   [
     (
       "rejects a table name that isn't an identifier",
-      `  _totals:
+      `  totals-2:
     from: evm.events
     select:
       id: params.to`,
-      "Config parse error: Table name `_totals` is not a valid identifier. Use letters, digits and underscores, starting with a letter.",
+      "Config parse error: Table name `totals-2` is not a valid identifier. Use letters, digits and underscores, starting with a letter or an underscore.",
     ),
     (
-      "rejects two table names that differ only by case",
+      "rejects a table name that leaves nothing to call it",
+      `  _1:
+    from: evm.events
+    select:
+      id: params.to`,
+      "Config parse error: Table name `_1` leaves the generated code nothing to call it: handlers and tests reach a table by its name capitalized and stripped of leading underscores. Start it with a letter.",
+    ),
+    (
+      "rejects two table names the generated code can't tell apart",
       `  totals:
     from: evm.events
     select:
       id: params.to
-  Totals:
+  _Totals:
     from: evm.events
     select:
       id: params.to`,
-      "Config parse error: tables `totals` and `Totals` differ only by case, which the generated code can't tell apart. Rename one of them.",
+      "Config parse error: tables `totals` and `_Totals` are both `Totals` in the generated code, which can't tell them apart. Rename one of them.",
     ),
     (
       "rejects an `as_entity` name handlers can't use",
@@ -588,7 +669,7 @@ ${tableStorage}    from: evm.events
   let partialMessage = says =>
     "Config parse error: Schema validation failed:\n\nBoth storage backends are enabled and neither is `default: true`, so leaving one out of a table's storage would turn it off silently:\n  - `totals` says " ++
     says ++
-    "\n\nFixes:\n  - Name both, in schema.graphql: @storage(postgres: true, clickhouse: false)\n  - Or in a `tables` entry of config.yaml:\n      storage:\n        postgres: true\n        clickhouse: false\n  - Or set `default: true` on one backend under `storage:` in config.yaml, and leave the storage off the tables that should follow it."
+    "\n\nFixes:\n  - Name both, under the table's `storage:` in config.yaml:\n      storage:\n        postgres: true\n        clickhouse: false\n  - Or set `default: true` on one backend under `storage:` in config.yaml, and leave the storage off the tables that should follow it."
 
   it("rejects a table that asks for an index and says nothing about clickhouse", t =>
     expectError(
@@ -717,6 +798,121 @@ tables:
       id: params.to
 `,
       "Config parse error: `tables` needs `disable_default_cross_chain: true` at the top of config.yaml. Without it a table keeps one row per id shared by every chain, so the same id on two chains overwrites itself — for a token indexer that silently merges balances. Add:\n\n    disable_default_cross_chain: true\n\nand set `cross_chain: true` on any table that really is the same across chains.",
+    )
+  )
+})
+
+// Handlers, generated modules and the test indexer all address a table by one
+// code name, so two tables that land on the same one are indistinguishable
+// there however different their database tables are.
+describe("tables: code-name collisions", () => {
+  it("rejects a table whose name collides with a schema.graphql entity", t =>
+    expectError(
+      t,
+      ~schema="type Totals { id: ID! }",
+      `  totals:
+    from: evm.events
+    select:
+      id: params.to`->table,
+      "Config parse error: Failed compiling `tables`: `totals` and `Totals` in schema.graphql are both `Totals` in the generated code, which can't tell them apart. Rename one of them, or give one a different `as_entity`.",
+    )
+  )
+
+  it("rejects an `as_entity` that collides with a schema.graphql entity", t =>
+    expectError(
+      t,
+      ~schema="type Receipt { id: ID! }",
+      `  totals:
+    as_entity: Receipt
+    from: evm.events
+    select:
+      id: params.to`->table,
+      "Config parse error: Failed compiling `tables`: `tables.totals.as_entity` and `Receipt` in schema.graphql are both `Receipt` in the generated code, which can't tell them apart. Rename one of them, or give one a different `as_entity`.",
+    )
+  )
+
+  it("rejects two tables that pick the same `as_entity`", t =>
+    expectError(
+      t,
+      `  totals:
+    as_entity: Receipt
+    from: evm.events
+    select:
+      id: params.to
+  other_totals:
+    as_entity: Receipt
+    from: evm.events
+    select:
+      id: params.to`->table,
+      "Config parse error: Failed compiling `tables`: `tables.other_totals.as_entity` and `tables.totals.as_entity` are both `Receipt` in the generated code, which can't tell them apart. Rename one of them, or give one a different `as_entity`.",
+    )
+  )
+
+  // The whole point of `as_entity`: a table whose name would collide keeps its
+  // own database name and answers to a different one in code.
+  it("accepts a collision that `as_entity` resolves", t => {
+    let {config}: InternalTestIndexer.parsed = InternalTestIndexer.fromUserApi(
+      ~schema="type Totals { id: ID! }",
+      ~configYaml=`  totals:
+    as_entity: Receipt
+    from: evm.events
+    where:
+      eventName: Transfer
+    select:
+      id: params.to`->table,
+    )
+    t.expect(
+      config.userEntities->Array.map((e: Internal.entityConfig) => (e.name, e.codeName)),
+    ).toEqual([("Totals", "Totals"), ("totals", "Receipt")])
+  })
+})
+
+// A `_ref` writes the target's id into the referencing column, so it has to
+// hold the type that column will have — which is whatever the target's own
+// `select.id` settled on, not always a String.
+describe("tables: _ref id types", () => {
+  let refTo = (targetId, refId) =>
+    `  targets:
+    from: evm.events
+    where:
+      eventName: Transfer
+    select:
+      id: ${targetId}
+  holders:
+    from: evm.events
+    where:
+      eventName: Transfer
+    select:
+      id: params.to
+      target:
+        _ref:
+          table: targets
+          id: ${refId}`->table
+
+  it("rejects a reference whose id doesn't match the table it points at", t =>
+    expectError(
+      t,
+      refTo("logIndex", "params.to"),
+      "Config parse error: Failed compiling `tables`: in `tables.holders`: in `select.target._ref.id`: `targets` has Int for an id: expected Int but the expression is String: cannot unify String with Int",
+    )
+  )
+
+  [("logIndex", "Int"), ("params.value", "BigInt"), ("params.to", "String")]->Array.forEach(((
+    id,
+    described,
+  )) =>
+    it(
+      `Accepts a reference to ${described} ids`,
+      t => {
+        let {config}: InternalTestIndexer.parsed = InternalTestIndexer.fromUserApi(
+          ~configYaml=refTo(id, id),
+        )
+        t.expect(
+          config.userEntities
+          ->Array.filter((e: Internal.entityConfig) => e.name === "targets")
+          ->Array.map((e: Internal.entityConfig) => e.table.fields->Array.length),
+        ).toEqual([2])
+      },
     )
   )
 })

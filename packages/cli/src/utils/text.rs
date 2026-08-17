@@ -8,6 +8,19 @@ pub struct CapitalizedOptions {
     pub original: String,
 }
 
+/// The spelling generated code uses for a name config.yaml or schema.graphql
+/// writes however it likes. ReScript module names must start with a capital
+/// letter, so leading underscores go and the first letter is capitalized:
+/// `greeter` and `_greeter` both become `Greeter`.
+pub fn to_code_name(name: &str) -> String {
+    let trimmed = name.trim_start_matches('_');
+    let mut chars = trimmed.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
 pub trait Capitalize {
     fn capitalize(&self) -> String;
 

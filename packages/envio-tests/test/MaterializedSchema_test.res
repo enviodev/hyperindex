@@ -83,6 +83,50 @@ tables:
       ("tuple_list", "Json!"),
     ])
   })
+
+  // A list one branch leaves unset is a nullable list, not a list of nullable
+  // elements — the elements it does hold always have a value.
+  it("Types a list a branch selects null for as a nullable list", t => {
+    let config = parse(`
+name: nullable-list
+disable_default_cross_chain: true
+contracts:
+  - name: ERC20
+    events:
+      - event: "Batch(address[] recipients, uint256 value)"
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+tables:
+  rows:
+    with:
+      moves:
+        - from: evm.events
+          where:
+            eventName: Batch
+          select:
+            key: params.value
+            list: params.recipients
+        - from: evm.events
+          where:
+            eventName: Transfer
+          select:
+            key: params.value
+            list: null
+    from: moves
+    select:
+      id: key
+      recipients: list
+`)
+    t.expect(config->describeColumns("rows")).toEqual([
+      ("id", "BigInt!"),
+      ("recipients", "[String]"),
+    ])
+  })
 })
 
 // The ERC-20 template is the reference config: a `with` union feeding a `_sum`,

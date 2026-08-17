@@ -124,8 +124,6 @@ type t = {
   // Write plans compiled by the CLI from `tables`. `Materialization` turns
   // them into handlers.
   materializations: array<MaterializationPlan.t>,
-  // Tables the runtime maintains itself, so a handler can't also write them.
-  materializedTables: dict<bool>,
 }
 
 module EnvioAddresses = {
@@ -183,7 +181,7 @@ module EnvioAddresses = {
     // Internal table: never in the handler context, and its code name is only
     // used where a name is required.
     codeName: name,
-    hiddenFromHandlers: true,
+    written: Internal,
     index,
     schema,
     table,
@@ -386,8 +384,8 @@ let entityStorageSchema = S.schema(s =>
 let entityJsonSchema = S.schema(s =>
   {
     "name": s.matches(S.string),
-    "handlerName": s.matches(S.option(S.string)),
-    "hiddenFromHandlers": s.matches(S.option(S.bool)),
+    "codeName": s.matches(S.string),
+    "written": s.matches(S.option(S.string)),
     "crossChain": s.matches(S.option(S.bool)),
     "storage": s.matches(S.option(entityStorageSchema)),
     "properties": s.matches(S.array(propertySchema)),
@@ -588,8 +586,16 @@ let parseEntitiesFromJson = (
 
     {
       Internal.name: entityName,
-      codeName: entityJson["handlerName"]->Option.getOr(entityName->Utils.String.capitalize),
-      hiddenFromHandlers: entityJson["hiddenFromHandlers"]->Option.getOr(false),
+      codeName: entityJson["codeName"],
+      written: switch entityJson["written"] {
+      | None => Handlers
+      | Some("materialized") => Materialized({hidden: false})
+      | Some("materializedHidden") => Materialized({hidden: true})
+      | Some(other) =>
+        JsError.throwWithMessage(
+          `Invalid indexer config: entity \`${entityName}\` says it is written by \`${other}\`, which this envio version doesn't know. Run \`envio codegen\` again.`,
+        )
+      },
       index,
       schema: schema->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>),
       table,
@@ -1090,7 +1096,12 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   // materialized table without `as_entity` is absent: handlers can't reach it.
   let userEntitiesByName =
     userEntities
-    ->Array.filter(entityConfig => !entityConfig.hiddenFromHandlers)
+    ->Array.filter(entityConfig =>
+      switch entityConfig.written {
+      | Materialized({hidden: true}) | Internal => false
+      | Handlers | Materialized({hidden: false}) => true
+      }
+    )
     ->Array.map(entityConfig => (entityConfig.codeName, entityConfig))
     ->Dict.fromArray
 
@@ -1103,9 +1114,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   | Some(json) => json->MaterializationPlan.parseAllOrThrow
   | None => []
   }
-  let materializedTables = Dict.make()
-  materializations->Array.forEach(({table}) => materializedTables->Dict.set(table, true))
-
   // Extract contract handlers from the public config
   let contractHandlers = switch publicContractsConfig {
   | Some(contractsDict) =>
@@ -1146,7 +1154,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     allEntities,
     allEnums,
     materializations,
-    materializedTables,
   }
 }
 

@@ -24,7 +24,8 @@ use super::{
     entity_parsing::{GqlScalar, Schema, UserDefinedFieldType},
     system_config::{Contract, Event, EventKind, FieldSelection, SelectedField},
 };
-use crate::{type_schema::TypeIdent, utils::text::Capitalize};
+use crate::{type_schema::TypeIdent, utils::text};
+use alloy_dyn_abi::DynSolType;
 use anyhow::{anyhow, Context, Result};
 use indexmap::IndexMap;
 use schemars::{json_schema, JsonSchema, Schema as JsonSchemaSchema, SchemaGenerator};
@@ -128,9 +129,49 @@ impl JsonSchema for RawFilter {
 }
 
 /// `tables:`. Insertion-ordered, so generated columns follow the config.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct Tables(pub IndexMap<String, TableConfig>);
+
+impl<'de> Deserialize<'de> for Tables {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Tables;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an object keyed by table name")
+            }
+
+            // Streamed rather than buffered through a `Value`, so a mistake
+            // inside a table still reports the line it is on.
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                IndexMap::deserialize(serde::de::value::MapAccessDeserializer::new(map)).map(Tables)
+            }
+
+            // `tables: []` is how a config says it has no entities on purpose,
+            // which is what stops an absent schema.graphql being an error.
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                match seq.next_element::<serde::de::IgnoredAny>()? {
+                    None => Ok(Tables::default()),
+                    Some(_) => Err(serde::de::Error::custom(
+                        "`tables` is an object keyed by table name, so only an empty `tables: \
+                             []`                          can be written as a list",
+                    )),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
 
 impl JsonSchema for Tables {
     fn schema_name() -> Cow<'static, str> {
@@ -165,8 +206,8 @@ pub struct TableConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
         description = "Where this table is stored, overriding the top-level `storage`. `postgres` \
-                       and `clickhouse` each take true/false, or an object of settings (which also \
-                       turns the backend on)."
+                       and `clickhouse` each take true/false, or an object of settings (which \
+                       also turns the backend on)."
     )]
     pub storage: Option<TableStorage>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -508,6 +549,10 @@ pub struct Query {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Scalar {
     String,
+    /// An EVM address. A String everywhere downstream, but the decoder writes
+    /// it in the casing `address_format` picks, so a literal compared to one is
+    /// normalized to match.
+    Address,
     Boolean,
     Int,
     Float,
@@ -516,25 +561,35 @@ enum Scalar {
     Json,
     /// Reference to another table, by that table's name.
     Ref(String),
-    /// A YAML integer. Becomes whichever numeric type it is used alongside.
-    NumLit,
-    /// A YAML `null`, with nothing yet to take a type from.
-    Null,
+}
+
+/// How many values a type holds. A list of lists has no column shape, so
+/// nesting one inside another is unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Container {
+    Single,
+    /// A list, and whether one of its elements can be null. Independent of
+    /// whether the list itself can be: a list a branch leaves unset is a
+    /// nullable list of values that are always there.
+    List {
+        nullable_elements: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Ty {
     scalar: Scalar,
+    container: Container,
+    /// The value itself can be null — the column, or the whole list.
     nullable: bool,
-    array: bool,
 }
 
 impl Ty {
     fn new(scalar: Scalar) -> Self {
         Self {
             scalar,
+            container: Container::Single,
             nullable: false,
-            array: false,
         }
     }
 
@@ -543,14 +598,25 @@ impl Ty {
         self
     }
 
-    fn array(mut self) -> Self {
-        self.array = true;
-        self
+    /// A list of this type. Whatever nullability this type had describes the
+    /// elements from here on; the list itself starts out non-null.
+    fn list(self) -> Self {
+        Self {
+            scalar: self.scalar,
+            container: Container::List {
+                nullable_elements: self.nullable,
+            },
+            nullable: false,
+        }
+    }
+
+    fn is_list(&self) -> bool {
+        matches!(self.container, Container::List { .. })
     }
 
     fn describe(&self) -> String {
         let base = match &self.scalar {
-            Scalar::String => "String".to_string(),
+            Scalar::String | Scalar::Address => "String".to_string(),
             Scalar::Boolean => "Boolean".to_string(),
             Scalar::Int => "Int".to_string(),
             Scalar::Float => "Float".to_string(),
@@ -558,13 +624,13 @@ impl Ty {
             Scalar::BigDecimal => "BigDecimal".to_string(),
             Scalar::Json => "Json".to_string(),
             Scalar::Ref(target) => target.clone(),
-            Scalar::NumLit => "a number literal".to_string(),
-            Scalar::Null => "null".to_string(),
         };
-        let base = if self.array {
-            format!("a list of {base}")
-        } else {
-            base
+        let base = match self.container {
+            Container::Single => base,
+            Container::List { nullable_elements } => format!(
+                "a list of {base}{}",
+                if nullable_elements { " or null" } else { "" }
+            ),
         };
         if self.nullable {
             format!("{base} or null")
@@ -574,10 +640,10 @@ impl Ty {
     }
 
     /// GraphQL rendering. `id` positions render `String` as `ID`.
-    fn to_gql(&self, is_id: bool) -> Result<String> {
+    fn to_gql(&self, is_id: bool) -> String {
         let base = match &self.scalar {
-            Scalar::String if is_id => "ID".to_string(),
-            Scalar::String => "String".to_string(),
+            Scalar::String | Scalar::Address if is_id => "ID".to_string(),
+            Scalar::String | Scalar::Address => "String".to_string(),
             Scalar::Boolean => "Boolean".to_string(),
             Scalar::Int => "Int".to_string(),
             Scalar::Float => "Float".to_string(),
@@ -585,37 +651,29 @@ impl Ty {
             Scalar::BigDecimal => "BigDecimal".to_string(),
             Scalar::Json => "Json".to_string(),
             Scalar::Ref(target) => target.clone(),
-            // Nothing widened it, so it keeps the narrowest type that fits
-            // rather than silently becoming a BigInt column.
-            Scalar::NumLit => "Int".to_string(),
-            Scalar::Null => {
-                return Err(anyhow!(
-                    "this is always null, so its type is unknown. Select a value that has a type, \
-                     or drop the field."
-                ))
+        };
+        let base = match self.container {
+            Container::Single => base,
+            Container::List { nullable_elements } => {
+                format!("[{base}{}]", if nullable_elements { "" } else { "!" })
             }
         };
-        let base = if self.array {
-            format!("[{base}{}]", if self.nullable { "" } else { "!" })
-        } else {
-            base
-        };
-        Ok(if self.nullable {
+        if self.nullable {
             base
         } else {
             format!("{base}!")
-        })
+        }
     }
 
     /// The tag the runtime picks a zero and an addition by, for `_sum`/`_negate`.
     fn numeric_tag(&self) -> Option<&'static str> {
-        if self.array {
+        if self.is_list() {
             return None;
         }
         match self.scalar {
             // The type `to_gql` would give it, so a `_sum` over a literal that
             // never widened still agrees with its column.
-            Scalar::Int | Scalar::NumLit => Some("int"),
+            Scalar::Int => Some("int"),
             Scalar::Float => Some("float"),
             Scalar::BigInt => Some("bigint"),
             Scalar::BigDecimal => Some("bigdecimal"),
@@ -624,49 +682,147 @@ impl Ty {
     }
 }
 
-/// One type that holds both. A number takes the other side's numeric type;
-/// `null` makes the other side nullable.
-fn unify(a: &Ty, b: &Ty) -> Result<Ty> {
-    if a.scalar == Scalar::Null {
-        return Ok(b.clone().nullable());
-    }
-    if b.scalar == Scalar::Null {
-        return Ok(a.clone().nullable());
-    }
-    let nullable = a.nullable || b.nullable;
-    if a.array != b.array {
-        return Err(anyhow!(
-            "cannot unify {} with {}",
-            a.describe(),
-            b.describe()
-        ));
-    }
-    let scalar = match (&a.scalar, &b.scalar) {
-        (Scalar::NumLit, other) | (other, Scalar::NumLit) => match other {
-            Scalar::Int | Scalar::Float | Scalar::BigInt | Scalar::BigDecimal => other.clone(),
-            Scalar::NumLit => Scalar::NumLit,
-            _ => {
-                return Err(anyhow!(
-                    "cannot unify {} with {}",
-                    a.describe(),
-                    b.describe()
-                ))
-            }
-        },
-        (x, y) if x == y => x.clone(),
-        _ => {
+/// Arithmetic has no answer for a value that isn't there — the runtime would
+/// add or negate `undefined`. Rejected while there is no way to say what a
+/// missing value should count as.
+fn numeric_operand(typing: &Typing, operator: &str, verb: &str) -> Result<&'static str> {
+    let (tag, nullable) = match typing {
+        // The type `to_gql` would give it, so a `_sum` over a literal that
+        // never widened still agrees with its column.
+        Typing::Number { nullable } => ("int", *nullable),
+        Typing::Known(ty) => (
+            ty.numeric_tag().ok_or_else(|| {
+                anyhow!("`{operator}` needs a number, but got {}", typing.describe())
+            })?,
+            ty.nullable,
+        ),
+        Typing::Null => {
             return Err(anyhow!(
-                "cannot unify {} with {}",
-                a.describe(),
-                b.describe()
+                "`{operator}` needs a number, but got {}",
+                typing.describe()
             ))
         }
     };
-    Ok(Ty {
+    if nullable {
+        return Err(anyhow!(
+            "`{operator}` needs a number that is always set, but got {}. {verb} a value that can \
+             be missing isn't supported yet.",
+            typing.describe()
+        ));
+    }
+    Ok(tag)
+}
+
+/// What a compiled expression is, before it meets the column it lands in. A
+/// YAML number or `null` has no type of its own: it takes one from whatever it
+/// is used alongside, which is why neither is a `Scalar`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Typing {
+    Known(Ty),
+    /// A YAML integer, which becomes whichever numeric type it meets. Nullable
+    /// once a sibling branch selects null for the same column.
+    Number {
+        nullable: bool,
+    },
+    /// A YAML `null`, with nothing yet to take a type from.
+    Null,
+}
+
+impl Typing {
+    fn describe(&self) -> String {
+        match self {
+            Typing::Known(ty) => ty.describe(),
+            Typing::Number { .. } => "a number literal".to_string(),
+            Typing::Null => "null".to_string(),
+        }
+    }
+
+    /// The type a column of this shape settles on once every branch has been
+    /// seen.
+    fn resolve(&self) -> Result<Ty> {
+        match self {
+            Typing::Known(ty) => Ok(ty.clone()),
+            // Nothing widened it, so it keeps the narrowest type that fits
+            // rather than silently becoming a BigInt column.
+            Typing::Number { nullable } => Ok(Ty {
+                nullable: *nullable,
+                ..Ty::new(Scalar::Int)
+            }),
+            Typing::Null => Err(anyhow!(
+                "this is always null, so its type is unknown. Select a value that has a type, or \
+                 drop the field."
+            )),
+        }
+    }
+
+    fn or_null(self) -> Self {
+        match self {
+            Typing::Known(ty) => Typing::Known(ty.nullable()),
+            Typing::Number { .. } => Typing::Number { nullable: true },
+            Typing::Null => Typing::Null,
+        }
+    }
+}
+
+/// One typing that holds both. A number takes the other side's numeric type;
+/// `null` makes the other side nullable.
+fn unify(a: &Typing, b: &Typing) -> Result<Typing> {
+    let cannot = || anyhow!("cannot unify {} with {}", a.describe(), b.describe());
+    let (a, b) = match (a, b) {
+        (Typing::Null, Typing::Null) => return Ok(Typing::Null),
+        (Typing::Null, other) | (other, Typing::Null) => return Ok(other.clone().or_null()),
+        (Typing::Number { nullable: left }, Typing::Number { nullable: right }) => {
+            return Ok(Typing::Number {
+                nullable: *left || *right,
+            })
+        }
+        // A number literal beside a typed value takes that type, as long as it
+        // is a single number to take.
+        (Typing::Number { nullable }, Typing::Known(ty))
+        | (Typing::Known(ty), Typing::Number { nullable }) => {
+            return match ty.scalar {
+                Scalar::Int | Scalar::Float | Scalar::BigInt | Scalar::BigDecimal
+                    if !ty.is_list() =>
+                {
+                    Ok(Typing::Known(Ty {
+                        nullable: ty.nullable || *nullable,
+                        ..ty.clone()
+                    }))
+                }
+                _ => Err(cannot()),
+            }
+        }
+        (Typing::Known(a), Typing::Known(b)) => (a, b),
+    };
+    let nullable = a.nullable || b.nullable;
+    // A list unifies with a list, and its elements can be null if either side's
+    // can.
+    let container = match (a.container, b.container) {
+        (Container::Single, Container::Single) => Container::Single,
+        (
+            Container::List {
+                nullable_elements: left,
+            },
+            Container::List {
+                nullable_elements: right,
+            },
+        ) => Container::List {
+            nullable_elements: left || right,
+        },
+        _ => return Err(cannot()),
+    };
+    let scalar = match (&a.scalar, &b.scalar) {
+        (x, y) if x == y => x.clone(),
+        // A column holding both has no single casing to normalize a literal
+        // to, so it is plain text from here on.
+        (Scalar::Address, Scalar::String) | (Scalar::String, Scalar::Address) => Scalar::String,
+        _ => return Err(cannot()),
+    };
+    Ok(Typing::Known(Ty {
         scalar,
+        container,
         nullable,
-        array: a.array,
-    })
+    }))
 }
 
 //
@@ -682,9 +838,12 @@ enum CExpr {
     LitString { value: String },
     #[serde(rename = "bool")]
     LitBool { value: bool },
-    #[serde(rename = "int")]
+    // Both are JSON numbers and stay JS numbers, so they share a tag; the
+    // split is only so an integer literal can be negated and range-checked
+    // exactly on this side.
+    #[serde(rename = "number")]
     LitInt { value: i64 },
-    #[serde(rename = "float")]
+    #[serde(rename = "number")]
     LitFloat { value: f64 },
     /// Decimal text: JSON has no bigint, and the runtime needs an exact value.
     #[serde(rename = "bigint")]
@@ -710,59 +869,97 @@ enum CExpr {
 #[derive(Debug, Clone, PartialEq)]
 struct Typed {
     expr: CExpr,
-    ty: Ty,
+    typing: Typing,
+}
+
+/// The casing the decoder writes addresses in, from `address_format`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressCase {
+    Checksum,
+    Lowercase,
+}
+
+impl AddressCase {
+    fn normalize(&self, value: &str) -> Result<String> {
+        let address = crate::evm::address::Address::new(value).map_err(|_| {
+            anyhow!("`{value}` is not an address, so it can never equal one. Check the spelling.")
+        })?;
+        Ok(match self {
+            AddressCase::Checksum => address.to_checksum_hex_string(),
+            AddressCase::Lowercase => format!("{:#x}", address.as_alloy_address()),
+        })
+    }
 }
 
 impl Typed {
     /// Give a literal the column's type. Anything else must already match it.
-    fn coerce(self, target: &Ty) -> Result<CExpr> {
-        let Typed { expr, ty } = self;
-        if ty.scalar == Scalar::NumLit && !target.array {
-            let text = match &expr {
-                CExpr::LitInt { value } => value.to_string(),
-                other => {
-                    // NumLit is only ever produced by an integer literal.
-                    return Err(anyhow!("unexpected number literal expression {other:?}"));
-                }
-            };
-            return Ok(match target.scalar {
-                Scalar::BigInt => CExpr::LitBigInt { value: text },
-                Scalar::BigDecimal => CExpr::LitBigDecimal { value: text },
-                Scalar::Float => CExpr::LitFloat {
-                    value: text.parse().context("number literal out of float range")?,
-                },
-                // A literal that never met a wider sibling becomes an Int
-                // column, so it has to fit one.
-                Scalar::Int | Scalar::NumLit => {
-                    let value: i64 = text.parse().expect("came from an i64 literal");
-                    if i32::try_from(value).is_err() {
-                        return Err(anyhow!(
-                            "{value} is too big for an Int column. Select a BigInt value (a \
-                             uint256 param, say) into the same column so the column becomes \
-                             BigInt."
-                        ));
+    fn coerce(self, target: &Ty, addresses: AddressCase) -> Result<CExpr> {
+        let Typed { expr, typing } = self;
+        // Config.yaml is written by hand and explorers hand out both spellings,
+        // so an address literal that doesn't match the decoder's casing would
+        // compare unequal to every event and leave the table silently empty.
+        if target.scalar == Scalar::Address && !target.is_list() {
+            if let CExpr::LitString { value } = &expr {
+                return Ok(CExpr::LitString {
+                    value: addresses.normalize(value)?,
+                });
+            }
+        }
+        match typing {
+            // `unify` is the wrong judge here: merging types answers "what
+            // holds both", and null merged with anything widens it to nullable
+            // — right for settling a column's type across branches, wrong for
+            // asking whether a value fits a slot that already has a type.
+            Typing::Null if target.nullable => Ok(CExpr::LitNull),
+            Typing::Null => Err(anyhow!(
+                "{} is never null, so comparing it to null can never be true. Compare it to a \
+                 value, or filter a field that can be missing.",
+                target.describe()
+            )),
+            Typing::Number { .. } if !target.is_list() => {
+                let text = match &expr {
+                    CExpr::LitInt { value } => value.to_string(),
+                    // `Number` is only ever produced by an integer literal.
+                    other => return Err(anyhow!("unexpected number literal expression {other:?}")),
+                };
+                Ok(match target.scalar {
+                    Scalar::BigInt => CExpr::LitBigInt { value: text },
+                    Scalar::BigDecimal => CExpr::LitBigDecimal { value: text },
+                    Scalar::Float => CExpr::LitFloat {
+                        value: text.parse().context("number literal out of float range")?,
+                    },
+                    // A literal that never met a wider sibling becomes an Int
+                    // column, so it has to fit one.
+                    Scalar::Int => {
+                        let value: i64 = text.parse().expect("came from an i64 literal");
+                        if i32::try_from(value).is_err() {
+                            return Err(anyhow!(
+                                "{value} is too big for an Int column. Select a BigInt value (a \
+                                 uint256 param, say) into the same column so the column becomes \
+                                 BigInt."
+                            ));
+                        }
+                        expr
                     }
-                    expr
-                }
-                _ => {
-                    return Err(anyhow!(
-                        "a number can't be used where {} is expected",
-                        target.describe()
-                    ))
-                }
-            });
+                    _ => {
+                        return Err(anyhow!(
+                            "a number can't be used where {} is expected",
+                            target.describe()
+                        ))
+                    }
+                })
+            }
+            typing => {
+                unify(&typing, &Typing::Known(target.clone())).with_context(|| {
+                    format!(
+                        "expected {} but the expression is {}",
+                        target.describe(),
+                        typing.describe()
+                    )
+                })?;
+                Ok(expr)
+            }
         }
-        if ty.scalar == Scalar::Null {
-            return Ok(CExpr::LitNull);
-        }
-        unify(&ty, target).with_context(|| {
-            format!(
-                "expected {} but the expression is {}",
-                target.describe(),
-                ty.describe()
-            )
-        })?;
-        Ok(expr)
     }
 }
 
@@ -780,7 +977,7 @@ enum CFilter {
     #[serde(rename = "cmp")]
     Cmp {
         path: Vec<String>,
-        op: &'static str,
+        op: Comparison,
         value: CExpr,
     },
     #[serde(rename = "in")]
@@ -838,17 +1035,23 @@ fn residual_or(parts: Vec<Residual>) -> Residual {
 // ── Compiled output ────────────────────────────────────────────────────────
 //
 
+/// How one column of one row is written. The name is spelled as the entity API
+/// does (`owner_id` for a reference).
 #[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct FieldWrite {
-    /// Column name as the entity API spells it (`owner_id` for a reference).
-    name: String,
-    /// `set` overwrites; `sum` adds to what the row already holds.
-    op: &'static str,
-    /// How to add. Only emitted for `sum`.
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    numeric_type: Option<&'static str>,
-    expr: CExpr,
+#[serde(tag = "op")]
+enum FieldWrite {
+    /// Overwrites whatever the row holds.
+    #[serde(rename = "set")]
+    Set { name: String, expr: CExpr },
+    /// Adds to whatever the row holds, which is why only this one needs to know
+    /// the numeric type its zero comes from.
+    #[serde(rename = "sum")]
+    Sum {
+        name: String,
+        #[serde(rename = "type")]
+        numeric_type: &'static str,
+        expr: CExpr,
+    },
 }
 
 /// One write, bound to one event on one table.
@@ -856,8 +1059,8 @@ pub struct FieldWrite {
 #[serde(rename_all = "camelCase")]
 pub struct Materialization {
     pub table: String,
-    pub contract_name: String,
-    pub event_name: String,
+    #[serde(flatten)]
+    pub event: EventRef,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub wildcard: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -866,13 +1069,59 @@ pub struct Materialization {
     fields: Vec<FieldWrite>,
 }
 
+/// What code calls an entity, and who writes its rows. Both answers come from
+/// the same place, so a name can't disagree with the access it belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityAccess {
+    /// Keys `context.<X>`, `indexer.<X>` and the generated types, while the
+    /// entity's own name stays the database and GraphQL spelling.
+    pub code_name: String,
+    pub written: Written,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Written {
+    /// By handler code, through `context.<X>`.
+    Handlers,
+    /// By the runtime, from the table's `select`. Handlers can read it only
+    /// when the table opted in with `as_entity`, and can never write it.
+    Materialized { hidden: bool },
+}
+
+impl EntityAccess {
+    /// An entity from schema.graphql, which handlers own outright.
+    pub fn handlers(entity_name: &str) -> Self {
+        Self {
+            code_name: text::to_code_name(entity_name),
+            written: Written::Handlers,
+        }
+    }
+
+    fn materialized(table_name: &str, table: &TableConfig) -> Self {
+        Self {
+            // Hidden or not, the generated types and the test indexer still
+            // have to call the table something.
+            code_name: table
+                .as_entity
+                .clone()
+                .unwrap_or_else(|| text::to_code_name(table_name)),
+            written: Written::Materialized {
+                hidden: table.as_entity.is_none(),
+            },
+        }
+    }
+
+    pub fn is_hidden(&self) -> bool {
+        matches!(self.written, Written::Materialized { hidden: true })
+    }
+}
+
 pub struct Compiled {
     /// GraphQL SDL for every table declared in `tables`.
     pub sdl: String,
     pub materializations: Vec<Materialization>,
-    /// The name handlers reach each table by, or `None` when the table stays out
-    /// of the handler context. Keyed by table name.
-    pub handler_names: BTreeMap<String, Option<String>>,
+    /// How each declared table is written and named, keyed by table name.
+    pub entity_access: BTreeMap<String, EntityAccess>,
     /// Per-event block/transaction fields the materializations read, so each
     /// event fetches exactly what its tables select.
     pub field_demand: DemandByEvent,
@@ -903,7 +1152,7 @@ fn ty_from_type_ident(ident: &TypeIdent) -> Ty {
     // only ever nest option/array one level deep.
     match ident {
         TypeIdent::Option(inner) => ty_from_type_ident(inner).nullable(),
-        TypeIdent::Array(inner) => ty_from_type_ident(inner).array(),
+        TypeIdent::Array(inner) => ty_from_type_ident(inner).list(),
         TypeIdent::Int => Ty::new(Scalar::Int),
         TypeIdent::Float => Ty::new(Scalar::Float),
         TypeIdent::BigInt => Ty::new(Scalar::BigInt),
@@ -911,7 +1160,8 @@ fn ty_from_type_ident(ident: &TypeIdent) -> Ty {
         TypeIdent::Bool => Ty::new(Scalar::Boolean),
         TypeIdent::Json => Ty::new(Scalar::Json),
         TypeIdent::Timestamp => Ty::new(Scalar::Int),
-        // Address / String / ID and anything opaque are strings at runtime.
+        TypeIdent::Address => Ty::new(Scalar::Address),
+        // String / ID and anything opaque are strings at runtime.
         _ => Ty::new(Scalar::String),
     }
 }
@@ -923,7 +1173,7 @@ fn ty_from_abi(abi: &AbiType) -> Result<Ty> {
     fn from_gql(gql: &UserDefinedFieldType) -> Result<Ty> {
         Ok(match gql {
             UserDefinedFieldType::NonNullType(inner) => from_gql(inner)?,
-            UserDefinedFieldType::ListType(inner) => from_gql(inner)?.array(),
+            UserDefinedFieldType::ListType(inner) => from_gql(inner)?.list(),
             UserDefinedFieldType::Single(scalar) => Ty::new(match scalar {
                 GqlScalar::Boolean => Scalar::Boolean,
                 GqlScalar::BigInt(_) => Scalar::BigInt,
@@ -936,9 +1186,18 @@ fn ty_from_abi(abi: &AbiType) -> Result<Ty> {
             }),
         })
     }
-    from_gql(&UserDefinedFieldType::from_dyn_sol_type(
-        &abi.to_dyn_sol_type(),
-    )?)
+    // `address` is a String everywhere downstream, so the ABI type is the last
+    // place that still knows a param holds one.
+    let sol_type = abi.to_dyn_sol_type();
+    let ty = from_gql(&UserDefinedFieldType::from_dyn_sol_type(&sol_type)?)?;
+    Ok(if matches!(sol_type, DynSolType::Address) {
+        Ty {
+            scalar: Scalar::Address,
+            ..ty
+        }
+    } else {
+        ty
+    })
 }
 
 /// Walk into a tuple param by component name.
@@ -956,6 +1215,16 @@ fn descend_abi<'a>(abi: &'a AbiType, segment: &str) -> Option<&'a AbiType> {
 }
 
 /// What one event's resolved paths cost in fetched data.
+/// The event a branch reads, and the key everything about that event is
+/// gathered under.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct EventRef {
+    #[serde(rename = "contractName")]
+    pub contract: String,
+    #[serde(rename = "eventName")]
+    pub event: String,
+}
+
 #[derive(Default)]
 pub struct Demand {
     pub block: BTreeSet<String>,
@@ -965,17 +1234,14 @@ pub struct Demand {
 /// Keyed by event, so each `events:` entry fetches only what the tables
 /// reading it touch — rather than every event paying for the widest selection.
 #[derive(Default)]
-pub struct DemandByEvent(pub BTreeMap<(String, String), Demand>);
+pub struct DemandByEvent(pub BTreeMap<EventRef, Demand>);
 
 impl DemandByEvent {
-    fn merge(&mut self, contract_name: &str, event_name: &str, from: Demand) {
+    fn merge(&mut self, event: &EventRef, from: Demand) {
         if from.block.is_empty() && from.transaction.is_empty() {
             return;
         }
-        let into = self
-            .0
-            .entry((contract_name.to_string(), event_name.to_string()))
-            .or_default();
+        let into = self.0.entry(event.clone()).or_default();
         into.block.extend(from.block);
         into.transaction.extend(from.transaction);
     }
@@ -987,8 +1253,8 @@ impl Shape<'_> {
             Shape::Relation { name, columns } => {
                 if path.len() != 1 {
                     return Err(anyhow!(
-                        "`{}` comes from `with`, and its columns hold plain values — `{}` goes one \
-                         level too deep",
+                        "`{}` comes from `with`, and its columns hold plain values — `{}` goes \
+                         one level too deep",
                         name,
                         path.join(".")
                     ));
@@ -1011,9 +1277,8 @@ impl Shape<'_> {
                 let head = path[0].as_str();
                 let rest = &path[1..];
                 match head {
-                    "contractName" | "eventName" | "srcAddress" if rest.is_empty() => {
-                        Ok(Ty::new(Scalar::String))
-                    }
+                    "srcAddress" if rest.is_empty() => Ok(Ty::new(Scalar::Address)),
+                    "contractName" | "eventName" if rest.is_empty() => Ok(Ty::new(Scalar::String)),
                     "chainId" | "logIndex" if rest.is_empty() => Ok(Ty::new(Scalar::Int)),
                     "params" => {
                         let params = match &event.kind {
@@ -1108,8 +1373,7 @@ impl Shape<'_> {
 fn split_path(text: &str) -> Result<Vec<String>> {
     if text.is_empty() {
         return Err(anyhow!(
-            "an empty string is not a value. Use a field of the event, e.g. \
-                            `params.owner`."
+            "an empty string is not a value. Use a field of the event, e.g. `params.owner`."
         ));
     }
     let segments: Vec<String> = text.split('.').map(|s| s.to_string()).collect();
@@ -1225,12 +1489,7 @@ fn compile_selected(
         match operator.as_str() {
             "_sum" => {
                 let inner = compile_expr(inner, ctx, demand).context("in `_sum`")?;
-                if inner.ty.numeric_tag().is_none() {
-                    return Err(anyhow!(
-                        "`_sum` needs a number, but got {}",
-                        inner.ty.describe()
-                    ));
-                }
+                numeric_operand(&inner.typing, "_sum", "Adding up")?;
                 Selected::Sum(inner)
             }
             "_ref" => {
@@ -1253,8 +1512,7 @@ fn compile_selected(
                     let key = yaml_string(key, "a `_ref` key")?;
                     if key != "table" && key != "id" {
                         return Err(anyhow!(
-                            "`_ref` has no `{key}` option. It takes `table` and \
-                                            `id`."
+                            "`_ref` has no `{key}` option. It takes `table` and `id`."
                         ));
                     }
                 }
@@ -1313,30 +1571,30 @@ fn compile_expr(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<Type
                     let ty = ctx.shape.resolve(&path, demand)?;
                     return Ok(Typed {
                         expr: expr.clone(),
-                        ty,
+                        typing: Typing::Known(ty),
                     });
                 }
             }
             let ty = ctx.shape.resolve(&path, demand)?;
             Ok(Typed {
                 expr: CExpr::Path { path },
-                ty,
+                typing: Typing::Known(ty),
             })
         }
         Yaml::Bool(value) => Ok(Typed {
             expr: CExpr::LitBool { value: *value },
-            ty: Ty::new(Scalar::Boolean),
+            typing: Typing::Known(Ty::new(Scalar::Boolean)),
         }),
         Yaml::Number(number) => {
             if let Some(value) = number.as_i64() {
                 Ok(Typed {
                     expr: CExpr::LitInt { value },
-                    ty: Ty::new(Scalar::NumLit),
+                    typing: Typing::Number { nullable: false },
                 })
             } else if let Some(value) = number.as_f64() {
                 Ok(Typed {
                     expr: CExpr::LitFloat { value },
-                    ty: Ty::new(Scalar::Float),
+                    typing: Typing::Known(Ty::new(Scalar::Float)),
                 })
             } else {
                 Err(anyhow!("`{number:?}` is not a supported number"))
@@ -1344,7 +1602,7 @@ fn compile_expr(value: &Yaml, ctx: &ExprCtx, demand: &mut Demand) -> Result<Type
         }
         Yaml::Null => Ok(Typed {
             expr: CExpr::LitNull,
-            ty: Ty::new(Scalar::Null),
+            typing: Typing::Null,
         }),
         Yaml::Sequence(_) => Err(anyhow!(
             "a list is not a value. Use `_concat` to join several values into one."
@@ -1372,16 +1630,14 @@ fn compile_operator(
             )?;
             Ok(Typed {
                 expr: CExpr::LitString { value },
-                ty: Ty::new(Scalar::String),
+                typing: Typing::Known(Ty::new(Scalar::String)),
             })
         }
         // The identity, so a plain path can carry a `_description`.
         "_value" => compile_expr(inner, ctx, demand).context("in `_value`"),
         "_negate" => {
             let inner = compile_expr(inner, ctx, demand).context("in `_negate`")?;
-            let numeric_type = inner.ty.numeric_tag().ok_or_else(|| {
-                anyhow!("`_negate` needs a number, but got {}", inner.ty.describe())
-            })?;
+            let numeric_type = numeric_operand(&inner.typing, "_negate", "Negating")?;
             // Folded so a negated literal stays a literal and can still widen to
             // whatever numeric type its siblings settle on.
             let expr = match inner.expr {
@@ -1392,7 +1648,10 @@ fn compile_operator(
                     expr: Box::new(expr),
                 },
             };
-            Ok(Typed { ty: inner.ty, expr })
+            Ok(Typed {
+                typing: inner.typing,
+                expr,
+            })
         }
         "_concat" => {
             let (separator, values) = match inner {
@@ -1402,8 +1661,8 @@ fn compile_operator(
                         let key = yaml_string(key, "a `_concat` key")?;
                         if key != "separator" && key != "values" {
                             return Err(anyhow!(
-                                "`_concat` has no `{key}` option. It takes `values` \
-                                                and `separator`."
+                                "`_concat` has no `{key}` option. It takes `values` and \
+                                 `separator`."
                             ));
                         }
                     }
@@ -1430,27 +1689,35 @@ fn compile_operator(
             for (index, value) in values.iter().enumerate() {
                 let part = compile_expr(value, ctx, demand)
                     .with_context(|| format!("in `_concat.values[{index}]`"))?;
-                match part.ty.scalar {
-                    Scalar::Json | Scalar::Null | Scalar::Ref(_) => {
-                        return Err(anyhow!(
-                            "`_concat.values[{index}]` is {}, which can't be turned into text",
-                            part.ty.describe()
-                        ))
-                    }
-                    _ if part.ty.array => {
+                let text_like = match &part.typing {
+                    Typing::Number { nullable } => Ok(*nullable),
+                    Typing::Null => Err(false),
+                    Typing::Known(ty) => match ty.scalar {
+                        Scalar::Json | Scalar::Ref(_) => Err(false),
+                        _ if ty.is_list() => Err(true),
+                        _ => Ok(ty.nullable),
+                    },
+                };
+                match text_like {
+                    Err(is_list) if is_list => {
                         return Err(anyhow!(
                             "`_concat.values[{index}]` is a list, which can't be turned into text"
                         ))
                     }
-                    _ if part.ty.nullable => {
+                    Err(_) => {
                         return Err(anyhow!(
-                            "`_concat.values[{index}]` is {}, and a null would make two \
-                             different rows join to the same text. Select a value that is always \
-                             set.",
-                            part.ty.describe()
+                            "`_concat.values[{index}]` is {}, which can't be turned into text",
+                            part.typing.describe()
                         ))
                     }
-                    _ => (),
+                    Ok(true) => {
+                        return Err(anyhow!(
+                            "`_concat.values[{index}]` is {}, and a null would make two different \
+                             rows join to the same text. Select a value that is always set.",
+                            part.typing.describe()
+                        ))
+                    }
+                    Ok(false) => (),
                 }
                 compiled.push(part.expr);
             }
@@ -1459,7 +1726,7 @@ fn compile_operator(
                     separator,
                     values: compiled,
                 },
-                ty: Ty::new(Scalar::String),
+                typing: Typing::Known(Ty::new(Scalar::String)),
             })
         }
         "_sum" => Err(anyhow!(
@@ -1472,8 +1739,8 @@ fn compile_operator(
             "`_derived_from` can only be used directly on a `select` field"
         )),
         other => Err(anyhow!(
-            "`{other}` is not one of `_value`, `_literal`, `_negate`, `_sum`, \
-                              `_concat`, `_ref`, `_derived_from`"
+            "`{other}` is not one of `_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, \
+             `_derived_from`"
         )),
     }
 }
@@ -1482,14 +1749,49 @@ fn compile_operator(
 // ── Filter parsing ─────────────────────────────────────────────────────────
 //
 
-const COMPARISON_OPS: &[(&str, &str)] = &[
-    ("_eq", "eq"),
-    ("_neq", "ne"),
-    ("_gt", "gt"),
-    ("_gte", "gte"),
-    ("_lt", "lt"),
-    ("_lte", "lte"),
-];
+/// A comparison, in the spelling config.yaml uses and the one the plan JSON
+/// does — rather than a `&str` that could hold neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+enum Comparison {
+    #[serde(rename = "eq")]
+    Eq,
+    #[serde(rename = "ne")]
+    Ne,
+    #[serde(rename = "gt")]
+    Gt,
+    #[serde(rename = "gte")]
+    Gte,
+    #[serde(rename = "lt")]
+    Lt,
+    #[serde(rename = "lte")]
+    Lte,
+}
+
+impl Comparison {
+    const ALL: [(&'static str, Comparison); 6] = [
+        ("_eq", Comparison::Eq),
+        ("_neq", Comparison::Ne),
+        ("_gt", Comparison::Gt),
+        ("_gte", Comparison::Gte),
+        ("_lt", Comparison::Lt),
+        ("_lte", Comparison::Lte),
+    ];
+
+    fn from_key(key: &str) -> Option<Comparison> {
+        Self::ALL
+            .iter()
+            .find(|(name, _)| *name == key)
+            .map(|(_, op)| *op)
+    }
+
+    fn keys() -> String {
+        Self::ALL
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
 
 /// A single condition, before it is evaluated against a candidate event.
 enum Condition {
@@ -1497,7 +1799,7 @@ enum Condition {
     Or(Vec<Condition>),
     Cmp {
         path: Vec<String>,
-        op: &'static str,
+        op: Comparison,
         value: Yaml,
     },
     In {
@@ -1555,7 +1857,7 @@ fn parse_field_filter(path: &[String], value: &Yaml) -> Result<Condition> {
         scalar => {
             return Ok(Condition::Cmp {
                 path: path.to_vec(),
-                op: "eq",
+                op: Comparison::Eq,
                 value: scalar.clone(),
             })
         }
@@ -1563,7 +1865,7 @@ fn parse_field_filter(path: &[String], value: &Yaml) -> Result<Condition> {
     let mut parts = Vec::with_capacity(map.len());
     for (key, item) in map {
         let key = yaml_string(key, "a `where` key")?;
-        if let Some((_, op)) = COMPARISON_OPS.iter().find(|(name, _)| *name == key) {
+        if let Some(op) = Comparison::from_key(&key) {
             parts.push(Condition::Cmp {
                 path: path.to_vec(),
                 op,
@@ -1581,11 +1883,7 @@ fn parse_field_filter(path: &[String], value: &Yaml) -> Result<Condition> {
         } else if key.starts_with('_') {
             return Err(anyhow!(
                 "`{key}` is not a known filter operator. Available: {}, _in, _nin",
-                COMPARISON_OPS
-                    .iter()
-                    .map(|(name, _)| *name)
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                Comparison::keys()
             ));
         } else {
             let mut nested = path.to_vec();
@@ -1602,6 +1900,17 @@ fn parse_field_filter(path: &[String], value: &Yaml) -> Result<Condition> {
     Ok(Condition::And(parts))
 }
 
+/// A `contractName`/`eventName` literal in the spelling the compiled config
+/// uses. config.yaml may write a contract's name however it likes, and
+/// `Contract::new` normalizes it, so the filter has to be normalized alongside.
+fn discriminator_value(field: &str, text: &str) -> String {
+    if field == "contractName" {
+        text::to_code_name(text)
+    } else {
+        text.to_string()
+    }
+}
+
 /// The `contractName`/`eventName` a filter can match, so a table only gets
 /// plans for events it could actually be written by.
 fn discriminators(condition: &Condition, out: &mut (BTreeSet<String>, BTreeSet<String>)) {
@@ -1611,10 +1920,10 @@ fn discriminators(condition: &Condition, out: &mut (BTreeSet<String>, BTreeSet<S
                 discriminators(part, out);
             }
         }
-        Condition::Cmp { path, op, value } if *op == "eq" && path.len() == 1 => {
+        Condition::Cmp { path, op, value } if *op == Comparison::Eq && path.len() == 1 => {
             if let Some(text) = value.as_str() {
                 if path[0] == "contractName" {
-                    out.0.insert(text.to_string());
+                    out.0.insert(discriminator_value(&path[0], text));
                 } else if path[0] == "eventName" {
                     out.1.insert(text.to_string());
                 }
@@ -1628,7 +1937,7 @@ fn discriminators(condition: &Condition, out: &mut (BTreeSet<String>, BTreeSet<S
             for value in values {
                 if let Some(text) = value.as_str() {
                     if path[0] == "contractName" {
-                        out.0.insert(text.to_string());
+                        out.0.insert(discriminator_value(&path[0], text));
                     } else if path[0] == "eventName" {
                         out.1.insert(text.to_string());
                     }
@@ -1648,6 +1957,7 @@ fn evaluate(
     shape: &Shape,
     demand: &mut Demand,
     table_names: &[String],
+    addresses: AddressCase,
 ) -> Result<Residual> {
     match condition {
         // A sibling discriminator narrows what the other conjuncts are typed
@@ -1658,7 +1968,15 @@ fn evaluate(
             let mut resolved = Vec::with_capacity(parts.len());
             let mut first_error = None;
             for part in parts {
-                match evaluate(part, contract_name, event_name, shape, demand, table_names) {
+                match evaluate(
+                    part,
+                    contract_name,
+                    event_name,
+                    shape,
+                    demand,
+                    table_names,
+                    addresses,
+                ) {
                     Ok(Residual::False) => return Ok(Residual::False),
                     Ok(part) => resolved.push(part),
                     Err(error) => first_error = first_error.or(Some(error)),
@@ -1675,7 +1993,15 @@ fn evaluate(
             let mut resolved = Vec::with_capacity(parts.len());
             let mut first_error = None;
             for part in parts {
-                match evaluate(part, contract_name, event_name, shape, demand, table_names) {
+                match evaluate(
+                    part,
+                    contract_name,
+                    event_name,
+                    shape,
+                    demand,
+                    table_names,
+                    addresses,
+                ) {
                     Ok(Residual::True) => return Ok(Residual::True),
                     Ok(part) => resolved.push(part),
                     Err(error) => first_error = first_error.or(Some(error)),
@@ -1689,10 +2015,10 @@ fn evaluate(
         Condition::Cmp { path, op, value } => {
             if let Some(known) = known_discriminator(path, contract_name, event_name) {
                 if let Some(text) = value.as_str() {
-                    let matches = known == text;
+                    let matches = known == discriminator_value(&path[0], text);
                     return Ok(match (*op, matches) {
-                        ("eq", true) | ("ne", false) => Residual::True,
-                        ("eq", false) | ("ne", true) => Residual::False,
+                        (Comparison::Eq, true) | (Comparison::Ne, false) => Residual::True,
+                        (Comparison::Eq, false) | (Comparison::Ne, true) => Residual::False,
                         _ => {
                             return Err(anyhow!(
                                 "`{}` only supports `_eq`/`_neq`/`_in`",
@@ -1714,11 +2040,11 @@ fn evaluate(
             let compiled = compile_expr(value, &ctx, demand)
                 .with_context(|| format!("in `where.{}`", path.join(".")))?;
             let value = compiled
-                .coerce(&target)
+                .coerce(&target, addresses)
                 .with_context(|| format!("in `where.{}`", path.join(".")))?;
             Ok(Residual::Unknown(CFilter::Cmp {
                 path: path.clone(),
-                op,
+                op: *op,
                 value,
             }))
         }
@@ -1733,7 +2059,7 @@ fn evaluate(
                     let text = value.as_str().ok_or_else(|| {
                         anyhow!("`{}` must be compared to strings", path.join("."))
                     })?;
-                    matches = matches || text == known;
+                    matches = matches || discriminator_value(&path[0], text) == known;
                 }
                 return Ok(if matches != *negated {
                     Residual::True
@@ -1752,7 +2078,8 @@ fn evaluate(
             let compiled = values
                 .iter()
                 .map(|value| {
-                    compile_expr(value, &ctx, demand).and_then(|compiled| compiled.coerce(&target))
+                    compile_expr(value, &ctx, demand)
+                        .and_then(|compiled| compiled.coerce(&target, addresses))
                 })
                 .collect::<Result<Vec<_>>>()
                 .with_context(|| format!("in `where.{}`", path.join(".")))?;
@@ -1900,10 +2227,20 @@ impl TableSchema {
     }
 }
 
-/// A `select` field's resolved shape, merged across every matching event.
-struct FieldShape {
+/// A `select` field once every branch has agreed on its type.
+struct Column {
     name: String,
     ty: Ty,
+    /// The target field on the other table, for `_derived_from`.
+    derived_from: Option<String>,
+    is_ref: bool,
+    description: Option<String>,
+}
+
+/// A `select` field as it is being merged across the matching events.
+struct FieldShape {
+    name: String,
+    typing: Typing,
     description: Option<String>,
     /// For `_derived_from`, the field on the other table. Such a field is in
     /// the schema but never written.
@@ -1911,19 +2248,75 @@ struct FieldShape {
     is_ref: bool,
 }
 
+/// What every table compiles against: the other tables it may reference, the
+/// configured contracts, and the types of the block and transaction fields.
+struct TableCtx<'a> {
+    table_names: &'a [String],
+    contracts: &'a BTreeMap<String, &'a Contract>,
+    block_field_types: &'a BTreeMap<String, Ty>,
+    transaction_field_types: &'a BTreeMap<String, Ty>,
+    pass: Pass<'a>,
+    addresses: AddressCase,
+}
+
+/// A table's `select` is compiled twice: once to learn every table's id type,
+/// and once more to write the plans now that a `_ref.id` can be checked against
+/// the table it points at.
+#[derive(Clone, Copy)]
+enum Pass<'a> {
+    CollectIds,
+    WritePlans(&'a BTreeMap<String, Ty>),
+}
+
 /// One table's writes for one event.
 struct Branch {
-    contract_name: String,
-    event_name: String,
+    event: EventRef,
     filter: Option<CFilter>,
-    /// Column expressions, when the table reads a `with` query.
+}
+
+/// A branch of a `with` query, with the column expressions a table's `select`
+/// substitutes when it reads them.
+struct QueryBranch {
+    branch: Branch,
     columns: IndexMap<String, CExpr>,
+}
+
+/// Where a table's rows come from. A query's columns and its per-branch
+/// expressions only exist in the one case that has them.
+enum Source {
+    Events(Vec<Branch>),
+    Query {
+        name: String,
+        columns: IndexMap<String, Ty>,
+        branches: Vec<QueryBranch>,
+    },
+}
+
+impl Source {
+    fn is_empty(&self) -> bool {
+        match self {
+            Source::Events(branches) => branches.is_empty(),
+            Source::Query { branches, .. } => branches.is_empty(),
+        }
+    }
+
+    /// Each branch, with the columns a `select` reading it can substitute.
+    fn branches(&self) -> Vec<(&Branch, Option<&IndexMap<String, CExpr>>)> {
+        match self {
+            Source::Events(branches) => branches.iter().map(|branch| (branch, None)).collect(),
+            Source::Query { branches, .. } => branches
+                .iter()
+                .map(|QueryBranch { branch, columns }| (branch, Some(columns)))
+                .collect(),
+        }
+    }
 }
 
 pub fn compile(
     tables: &Tables,
     contracts: &BTreeMap<String, &Contract>,
     schema: &Schema,
+    addresses: AddressCase,
 ) -> Result<Compiled> {
     let table_names: Vec<String> = tables.0.keys().cloned().collect();
     for name in &table_names {
@@ -1934,32 +2327,76 @@ pub fn compile(
         }
     }
 
+    // Handlers, generated modules and the test indexer address a table by its
+    // code name, so two tables that share one are indistinguishable there even
+    // though their database tables differ. Entities from schema.graphql are in
+    // the same namespace, and `as_entity` picks the name outright.
+    let mut by_code_name: BTreeMap<String, String> = schema
+        .entities
+        .keys()
+        .map(|name| {
+            (
+                text::to_code_name(name),
+                format!("`{name}` in schema.graphql"),
+            )
+        })
+        .collect();
+    for (table_name, table) in &tables.0 {
+        let (code_name, source) = match &table.as_entity {
+            Some(as_entity) => {
+                validate_handler_name(as_entity, table_name)?;
+                (
+                    as_entity.clone(),
+                    format!("`tables.{table_name}.as_entity`"),
+                )
+            }
+            None => (text::to_code_name(table_name), format!("`{table_name}`")),
+        };
+        if let Some(existing) = by_code_name.insert(code_name.clone(), source.clone()) {
+            return Err(anyhow!(
+                "{source} and {existing} are both `{code_name}` in the generated code, which \
+                 can't tell them apart. Rename one of them, or give one a different `as_entity`."
+            ));
+        }
+    }
+
     let all_evm = FieldSelection::all_evm();
     let block_field_types = field_type_table(&all_evm.block_fields, true);
     let transaction_field_types = field_type_table(&all_evm.transaction_fields, false);
 
+    let mut ctx = TableCtx {
+        table_names: &table_names,
+        contracts,
+        block_field_types: &block_field_types,
+        transaction_field_types: &transaction_field_types,
+        pass: Pass::CollectIds,
+        addresses,
+    };
+
+    // A table's id comes from its own `select.id`, which can't itself be a
+    // `_ref` — so one pass settles every id type, and the pass that writes the
+    // plans can type-check each `_ref.id` against the table it points at.
+    let mut id_types: BTreeMap<String, Ty> = BTreeMap::new();
+    for (table_name, table) in &tables.0 {
+        let compiled = compile_table(table_name, table, &ctx, &mut DemandByEvent::default())
+            .with_context(|| format!("in `tables.{table_name}`"))?;
+        id_types.insert(table_name.clone(), compiled.2);
+    }
+    ctx.pass = Pass::WritePlans(&id_types);
+
     let mut schemas = Vec::new();
     let mut materializations = Vec::new();
     let mut demand = DemandByEvent::default();
-    let mut handler_names = BTreeMap::new();
+    let mut entity_access = BTreeMap::new();
 
     for (table_name, table) in &tables.0 {
-        let handler_name = table.as_entity.clone();
-        if let Some(name) = &handler_name {
-            validate_handler_name(name, table_name)?;
-        }
-        handler_names.insert(table_name.clone(), handler_name);
+        entity_access.insert(
+            table_name.clone(),
+            EntityAccess::materialized(table_name, table),
+        );
 
-        let compiled = compile_table(
-            table_name,
-            table,
-            &table_names,
-            contracts,
-            &block_field_types,
-            &transaction_field_types,
-            &mut demand,
-        )
-        .with_context(|| format!("in `tables.{table_name}`"))?;
+        let compiled = compile_table(table_name, table, &ctx, &mut demand)
+            .with_context(|| format!("in `tables.{table_name}`"))?;
         schemas.push(compiled.0);
         materializations.extend(compiled.1);
     }
@@ -1973,7 +2410,7 @@ pub fn compile(
     Ok(Compiled {
         sdl,
         materializations,
-        handler_names,
+        entity_access,
         field_demand: demand,
     })
 }
@@ -1995,12 +2432,17 @@ fn field_type_table(fields: &[SelectedField], is_block: bool) -> BTreeMap<String
 fn compile_table(
     table_name: &str,
     table: &TableConfig,
-    table_names: &[String],
-    contracts: &BTreeMap<String, &Contract>,
-    block_field_types: &BTreeMap<String, Ty>,
-    transaction_field_types: &BTreeMap<String, Ty>,
+    table_ctx: &TableCtx,
     demand: &mut DemandByEvent,
-) -> Result<(TableSchema, Vec<Materialization>)> {
+) -> Result<(TableSchema, Vec<Materialization>, Ty)> {
+    let &TableCtx {
+        table_names,
+        contracts,
+        block_field_types,
+        transaction_field_types,
+        pass,
+        addresses,
+    } = table_ctx;
     let select = &table.select;
     let from = table.from.as_str();
     if !select.contains_key("id") {
@@ -2010,7 +2452,7 @@ fn compile_table(
     // Reading a `with` query gives one branch per query in it; reading
     // `evm.events` gives one branch per matching event, with no columns to
     // substitute.
-    let (branches, relation_columns) = match table.with.as_ref().and_then(|with| with.get(from)) {
+    let source = match table.with.as_ref().and_then(|with| with.get(from)) {
         Some(queries) => {
             // No defined meaning yet, and ignoring it would write rows the
             // user asked to exclude.
@@ -2020,15 +2462,7 @@ fn compile_table(
                      conditions into the `with` queries."
                 ));
             }
-            compile_relation(
-                from,
-                queries,
-                table_names,
-                contracts,
-                block_field_types,
-                transaction_field_types,
-                demand,
-            )?
+            compile_relation(from, queries, table_ctx, demand)?
         }
         None => {
             // A `with` query is only reachable through `from`, so declaring
@@ -2044,8 +2478,8 @@ fn compile_table(
             }
             if from != EVM_EVENTS_SOURCE {
                 return Err(anyhow!(
-                    "`from: {from}` is not a source. Use `{EVM_EVENTS_SOURCE}`, or the name of one \
-                     of this table's `with` queries."
+                    "`from: {from}` is not a source. Use `{EVM_EVENTS_SOURCE}`, or the name of \
+                     one of this table's `with` queries."
                 ));
             }
             let condition = table
@@ -2054,28 +2488,17 @@ fn compile_table(
                 .map(|filter| parse_filter(&filter.0))
                 .transpose()
                 .context("in `where`")?;
-            let branches = resolve_event_branches(
-                condition.as_ref(),
-                contracts,
-                block_field_types,
-                transaction_field_types,
-                demand,
-                table_names,
+            Source::Events(
+                resolve_event_branches(condition.as_ref(), table_ctx, demand)
+                    .context("in `where`")?
+                    .into_iter()
+                    .map(|(event, filter)| Branch { event, filter })
+                    .collect(),
             )
-            .context("in `where`")?
-            .into_iter()
-            .map(|(contract_name, event_name, filter)| Branch {
-                contract_name,
-                event_name,
-                filter,
-                columns: IndexMap::new(),
-            })
-            .collect();
-            (branches, None)
         }
     };
 
-    if branches.is_empty() {
+    if source.is_empty() {
         return Err(anyhow!(
             "`where` matches none of the configured events, so this table would never get any rows"
         ));
@@ -2086,30 +2509,34 @@ fn compile_table(
     let mut declared: Option<Vec<FieldShape>> = None;
     let mut plans = Vec::new();
 
-    for branch in &branches {
-        let contract = contracts
-            .get(&branch.contract_name)
-            .ok_or_else(|| anyhow!("contract `{}` is not configured", branch.contract_name))?;
-        let event = contract
-            .events
-            .iter()
-            .find(|event| event.name == branch.event_name)
-            .ok_or_else(|| {
-                anyhow!(
-                    "event `{}` is not configured on contract `{}`",
-                    branch.event_name,
-                    branch.contract_name
-                )
-            })?;
-        let event_shape = Shape::Event {
-            contract_name: &branch.contract_name,
-            event,
-            block_fields: block_field_types,
-            transaction_fields: transaction_field_types,
-        };
-        let (shape, substitutions) = match &relation_columns {
-            Some((name, columns)) => (Shape::Relation { name, columns }, Some(&branch.columns)),
-            None => (event_shape, None),
+    for (branch, substitutions) in source.branches() {
+        let shape = match &source {
+            Source::Query { name, columns, .. } => Shape::Relation {
+                name: name.as_str(),
+                columns,
+            },
+            Source::Events(_) => {
+                let contract = contracts.get(&branch.event.contract).ok_or_else(|| {
+                    anyhow!("contract `{}` is not configured", branch.event.contract)
+                })?;
+                let event = contract
+                    .events
+                    .iter()
+                    .find(|event| event.name == branch.event.event)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "event `{}` is not configured on contract `{}`",
+                            branch.event.event,
+                            branch.event.contract
+                        )
+                    })?;
+                Shape::Event {
+                    contract_name: &branch.event.contract,
+                    event,
+                    block_fields: block_field_types,
+                    transaction_fields: transaction_field_types,
+                }
+            }
         };
         let ctx = ExprCtx {
             shape: &shape,
@@ -2124,7 +2551,7 @@ fn compile_table(
                 .with_context(|| format!("in `select.{field_name}`"))?;
             resolved.push((field_name.clone(), selected));
         }
-        demand.merge(&branch.contract_name, &branch.event_name, branch_demand);
+        demand.merge(&branch.event, branch_demand);
 
         let shapes: Vec<FieldShape> = resolved
             .iter()
@@ -2134,25 +2561,26 @@ fn compile_table(
                 match selected {
                     Selected::Value(typed) | Selected::Sum(typed) => FieldShape {
                         name,
-                        ty: typed.ty.clone(),
+                        typing: typed.typing.clone(),
                         derived_from: None,
                         is_ref: false,
                         description,
                     },
                     Selected::Ref { table, id } => FieldShape {
                         name,
-                        ty: Ty {
+                        typing: Typing::Known(Ty {
                             scalar: Scalar::Ref(table.clone()),
-                            nullable: id.ty.nullable,
-                            array: false,
-                        },
+                            container: Container::Single,
+                            nullable: matches!(id.typing, Typing::Null)
+                                || matches!(&id.typing, Typing::Known(ty) if ty.nullable),
+                        }),
                         derived_from: None,
                         is_ref: true,
                         description,
                     },
                     Selected::DerivedFrom { table, field } => FieldShape {
                         name,
-                        ty: Ty::new(Scalar::Ref(table.clone())).array(),
+                        typing: Typing::Known(Ty::new(Scalar::Ref(table.clone())).list()),
                         derived_from: Some(field.clone()),
                         is_ref: false,
                         description,
@@ -2163,40 +2591,18 @@ fn compile_table(
 
         match &mut declared {
             None => declared = Some(shapes),
+            // Every branch compiles the same `select` map, so the columns and
+            // their descriptions already agree; only the types can differ,
+            // because each branch resolves the paths against its own event.
             Some(declared) => {
-                if declared.len() != shapes.len() {
-                    return Err(anyhow!(
-                        "`{table_name}` selects a different number of columns for different events"
-                    ));
-                }
                 for (existing, incoming) in declared.iter_mut().zip(shapes) {
-                    if existing.name != incoming.name {
-                        return Err(anyhow!(
-                            "`{table_name}` selects different columns for different events: `{}` \
-                             for one, `{}` for another",
-                            existing.name,
-                            incoming.name
-                        ));
-                    }
-                    existing.ty = unify(&existing.ty, &incoming.ty).with_context(|| {
-                        format!(
-                            "`{}` has a different type for different events",
-                            existing.name
-                        )
-                    })?;
-                    existing.description = match (existing.description.take(), incoming.description)
-                    {
-                        (Some(existing_text), Some(incoming_text))
-                            if existing_text != incoming_text =>
-                        {
-                            return Err(anyhow!(
-                                "`{}` has a different `_description` for different events",
+                    existing.typing =
+                        unify(&existing.typing, &incoming.typing).with_context(|| {
+                            format!(
+                                "`{}` has a different type for different events",
                                 existing.name
-                            ))
-                        }
-                        (Some(text), _) | (None, Some(text)) => Some(text),
-                        (None, None) => None,
-                    };
+                            )
+                        })?;
                 }
             }
         }
@@ -2204,74 +2610,102 @@ fn compile_table(
         plans.push((branch, resolved));
     }
 
-    let declared = declared.expect("branches is non-empty");
+    // Column types are final only once every branch has been seen, so this is
+    // where a literal that never widened settles on one — and where a column
+    // that is only ever null has to admit it has no type.
+    let declared = declared
+        .expect("branches is non-empty")
+        .into_iter()
+        .map(|shape| {
+            let ty = shape
+                .typing
+                .resolve()
+                .with_context(|| format!("in `select.{}`", shape.name))?;
+            Ok(Column {
+                name: shape.name,
+                ty,
+                derived_from: shape.derived_from,
+                is_ref: shape.is_ref,
+                description: shape.description,
+            })
+        })
+        .collect::<Result<Vec<Column>>>()?;
 
-    // Column types are final only once every branch has been seen, so the plans
-    // are written here — a literal serializes as the type it widened to.
+    // The plans are written against those final types — a literal serializes as
+    // the type it widened to.
     let mut materializations = Vec::with_capacity(plans.len());
     for (branch, resolved) in plans {
         let mut id = None;
         let mut fields = Vec::new();
         for ((field_name, (selected, _)), shape) in resolved.into_iter().zip(&declared) {
             let ty = &shape.ty;
-            // A `_sum` adds in the column's type, not this branch's own: a `0`
-            // in one branch and a BigInt in another must agree on the zero.
-            let (op, numeric_type, expr) = match selected {
-                Selected::Value(typed) => (
-                    "set",
-                    None,
-                    typed
-                        .coerce(ty)
+            // A reference is written to the `_id` column, as the entity API
+            // spells it.
+            let name = if shape.is_ref {
+                format!("{field_name}_id")
+            } else {
+                field_name.clone()
+            };
+            let write = match selected {
+                Selected::Value(typed) => FieldWrite::Set {
+                    name,
+                    expr: typed
+                        .coerce(ty, addresses)
                         .with_context(|| format!("in `select.{field_name}`"))?,
-                ),
-                Selected::Sum(typed) => (
-                    "sum",
-                    ty.numeric_tag(),
-                    typed
-                        .coerce(ty)
+                },
+                // A `_sum` adds in the column's type, not this branch's own: a
+                // `0` in one branch and a BigInt in another must agree on the
+                // zero.
+                Selected::Sum(typed) => FieldWrite::Sum {
+                    name,
+                    numeric_type: ty
+                        .numeric_tag()
+                        .expect("a `_sum` column is numeric, checked when it was selected"),
+                    expr: typed
+                        .coerce(ty, addresses)
                         .with_context(|| format!("in `select.{field_name}`"))?,
-                ),
-                Selected::Ref { id, .. } => {
-                    let target = Ty {
-                        scalar: Scalar::String,
-                        nullable: ty.nullable,
-                        array: false,
+                },
+                Selected::Ref { table, id } => {
+                    let expr = match pass {
+                        // Still collecting the id types this would be checked
+                        // against, so it is left as written for now.
+                        Pass::CollectIds => id.expr,
+                        Pass::WritePlans(id_types) => {
+                            let target = id_types
+                                .get(&table)
+                                .expect("every table's id type was collected on the first pass");
+                            let target = Ty {
+                                nullable: ty.nullable,
+                                ..target.clone()
+                            };
+                            id.coerce(&target, addresses).with_context(|| {
+                                format!(
+                                    "in `select.{field_name}._ref.id`: `{table}` has {} for an id",
+                                    target.describe()
+                                )
+                            })?
+                        }
                     };
-                    (
-                        "set",
-                        None,
-                        id.coerce(&target)
-                            .with_context(|| format!("in `select.{field_name}._ref.id`"))?,
-                    )
+                    FieldWrite::Set { name, expr }
                 }
                 Selected::DerivedFrom { .. } => continue,
             };
             if field_name == "id" {
-                if op == "sum" {
-                    return Err(anyhow!(
-                        "`select.id` can't be a `_sum`: the id names the row, it isn't added up"
-                    ));
-                }
-                id = Some(expr);
+                id = Some(match write {
+                    FieldWrite::Set { expr, .. } => expr,
+                    FieldWrite::Sum { .. } => {
+                        return Err(anyhow!(
+                            "`select.id` can't be a `_sum`: the id names the row, it isn't added up"
+                        ))
+                    }
+                });
                 continue;
             }
-            fields.push(FieldWrite {
-                // A reference is written to the `_id` column, as the entity API
-                // spells it.
-                name: if shape.is_ref {
-                    format!("{field_name}_id")
-                } else {
-                    field_name.clone()
-                },
-                op,
-                numeric_type,
-                expr,
-            });
+            fields.push(write);
         }
         materializations.push(Materialization {
             table: table_name.to_string(),
-            contract_name: branch.contract_name.clone(),
-            event_name: branch.event_name.clone(),
+            event: branch.event.clone(),
             wildcard: table.wildcard.unwrap_or(false),
             filter: branch.filter.clone(),
             id: id.ok_or_else(|| anyhow!("every table must select an `id`"))?,
@@ -2286,7 +2720,7 @@ fn compile_table(
         .find(|shape| shape.name == "id")
         .expect("id is required above")
         .ty;
-    if id_ty.nullable || id_ty.array {
+    if id_ty.nullable || id_ty.is_list() {
         return Err(anyhow!(
             "`select.id` must always be set and hold a single value, but it is {}",
             id_ty.describe()
@@ -2294,7 +2728,7 @@ fn compile_table(
     }
     if !matches!(
         id_ty.scalar,
-        Scalar::String | Scalar::Int | Scalar::BigInt | Scalar::NumLit
+        Scalar::String | Scalar::Address | Scalar::Int | Scalar::BigInt
     ) {
         return Err(anyhow!(
             "`select.id` is {}, which can't be an id. Use String, Int or BigInt.",
@@ -2327,19 +2761,13 @@ fn compile_table(
 
     let fields = declared
         .iter()
-        .map(|shape| {
-            let gql_type = shape
-                .ty
-                .to_gql(shape.name == "id")
-                .with_context(|| format!("in `select.{}`", shape.name))?;
-            Ok(SchemaField {
-                name: shape.name.clone(),
-                gql_type,
-                derived_from: shape.derived_from.clone(),
-                description: shape.description.clone(),
-            })
+        .map(|shape| SchemaField {
+            name: shape.name.clone(),
+            gql_type: shape.ty.to_gql(shape.name == "id"),
+            derived_from: shape.derived_from.clone(),
+            description: shape.description.clone(),
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect();
 
     Ok((
         TableSchema {
@@ -2349,34 +2777,39 @@ fn compile_table(
             fields,
         },
         materializations,
+        id_ty.clone(),
     ))
 }
 
 /// Compile the queries of one `with` and merge their column types.
-#[allow(clippy::type_complexity)]
 fn compile_relation(
     relation_name: &str,
     queries: &Queries,
-    table_names: &[String],
-    contracts: &BTreeMap<String, &Contract>,
-    block_field_types: &BTreeMap<String, Ty>,
-    transaction_field_types: &BTreeMap<String, Ty>,
+    table_ctx: &TableCtx,
     demand: &mut DemandByEvent,
-) -> Result<(Vec<Branch>, Option<(String, IndexMap<String, Ty>)>)> {
+) -> Result<Source> {
+    let &TableCtx {
+        table_names,
+        contracts,
+        block_field_types,
+        transaction_field_types,
+        addresses,
+        ..
+    } = table_ctx;
     if queries.0.is_empty() {
         return Err(anyhow!("`with.{relation_name}` needs at least one query"));
     }
 
-    let mut branches: Vec<Branch> = Vec::new();
+    let mut branches: Vec<QueryBranch> = Vec::new();
     // Merged once every query has been compiled.
-    let mut column_types: Option<IndexMap<String, Ty>> = None;
+    let mut column_types: Option<IndexMap<String, Typing>> = None;
     let mut pending: Vec<(usize, IndexMap<String, Typed>)> = Vec::new();
 
     for (query_index, query) in queries.0.iter().enumerate() {
         if query.from != EVM_EVENTS_SOURCE {
             return Err(anyhow!(
-                "`with.{relation_name}[{query_index}].from` must be `{EVM_EVENTS_SOURCE}`, but got \
-                 `{}`",
+                "`with.{relation_name}[{query_index}].from` must be `{EVM_EVENTS_SOURCE}`, but \
+                 got `{}`",
                 query.from
             ));
         }
@@ -2386,34 +2819,31 @@ fn compile_relation(
             .map(|filter| parse_filter(&filter.0))
             .transpose()
             .with_context(|| format!("in `with.{relation_name}[{query_index}].where`"))?;
-        let events = resolve_event_branches(
-            condition.as_ref(),
-            contracts,
-            block_field_types,
-            transaction_field_types,
-            demand,
-            table_names,
-        )
-        .with_context(|| format!("in `with.{relation_name}[{query_index}]`"))?;
+        let events = resolve_event_branches(condition.as_ref(), table_ctx, demand)
+            .with_context(|| format!("in `with.{relation_name}[{query_index}]`"))?;
         if events.is_empty() {
             return Err(anyhow!(
                 "`with.{relation_name}[{query_index}].where` matches none of the configured events"
             ));
         }
 
-        for (contract_name, event_name, filter) in events {
+        for (event_ref, filter) in events {
             let contract = contracts
-                .get(&contract_name)
-                .ok_or_else(|| anyhow!("contract `{contract_name}` is not configured"))?;
+                .get(&event_ref.contract)
+                .ok_or_else(|| anyhow!("contract `{}` is not configured", event_ref.contract))?;
             let event = contract
                 .events
                 .iter()
-                .find(|event| event.name == event_name)
+                .find(|event| event.name == event_ref.event)
                 .ok_or_else(|| {
-                    anyhow!("event `{event_name}` is not configured on `{contract_name}`")
+                    anyhow!(
+                        "event `{}` is not configured on `{}`",
+                        event_ref.event,
+                        event_ref.contract
+                    )
                 })?;
             let shape = Shape::Event {
-                contract_name: &contract_name,
+                contract_name: &event_ref.contract,
                 event,
                 block_fields: block_field_types,
                 transaction_fields: transaction_field_types,
@@ -2432,14 +2862,14 @@ fn compile_relation(
                     })?;
                 columns.insert(column_name.clone(), typed);
             }
-            demand.merge(&contract_name, &event_name, branch_demand);
+            demand.merge(&event_ref, branch_demand);
 
             match &mut column_types {
                 None => {
                     column_types = Some(
                         columns
                             .iter()
-                            .map(|(name, typed)| (name.clone(), typed.ty.clone()))
+                            .map(|(name, typed)| (name.clone(), typed.typing.clone()))
                             .collect(),
                     );
                 }
@@ -2452,9 +2882,9 @@ fn compile_relation(
                             columns.keys().cloned().collect::<Vec<_>>().join(", ")
                         ));
                     }
-                    for (name, ty) in existing.iter_mut() {
-                        let incoming = &columns.get(name).expect("keys were compared above").ty;
-                        *ty = unify(ty, incoming).with_context(|| {
+                    for (name, typing) in existing.iter_mut() {
+                        let incoming = &columns.get(name).expect("keys were compared above").typing;
+                        *typing = unify(typing, incoming).with_context(|| {
                             format!(
                                 "the branches of `with.{relation_name}` disagree on the type of \
                                  `{name}`"
@@ -2464,17 +2894,29 @@ fn compile_relation(
                 }
             }
 
-            branches.push(Branch {
-                contract_name,
-                event_name,
-                filter,
+            branches.push(QueryBranch {
+                branch: Branch {
+                    event: event_ref,
+                    filter,
+                },
                 columns: IndexMap::new(),
             });
             pending.push((branches.len() - 1, columns));
         }
     }
 
-    let column_types = column_types.expect("queries is non-empty");
+    // A table reading this query sees columns with real types, so a literal
+    // that never widened settles here rather than inside the table's `select`.
+    let column_types = column_types
+        .expect("queries is non-empty")
+        .into_iter()
+        .map(|(name, typing)| {
+            let ty = typing
+                .resolve()
+                .with_context(|| format!("in `with.{relation_name}` column `{name}`"))?;
+            Ok((name, ty))
+        })
+        .collect::<Result<IndexMap<String, Ty>>>()?;
     for (branch_index, columns) in pending {
         let branch = &mut branches[branch_index];
         for (name, typed) in columns {
@@ -2482,26 +2924,33 @@ fn compile_relation(
                 .get(&name)
                 .expect("every branch selects the same columns");
             let expr = typed
-                .coerce(target)
+                .coerce(target, addresses)
                 .with_context(|| format!("in `with.{relation_name}` column `{name}`"))?;
             branch.columns.insert(name, expr);
         }
     }
 
-    Ok((branches, Some((relation_name.to_string(), column_types))))
+    Ok(Source::Query {
+        name: relation_name.to_string(),
+        columns: column_types,
+        branches,
+    })
 }
 
-/// Every configured (contract, event) a filter could match, each with whatever
-/// of the filter the runtime still has to check.
-#[allow(clippy::type_complexity)]
+/// Every configured event a filter could match, each with whatever of the
+/// filter the runtime still has to check.
 fn resolve_event_branches(
     condition: Option<&Condition>,
-    contracts: &BTreeMap<String, &Contract>,
-    block_field_types: &BTreeMap<String, Ty>,
-    transaction_field_types: &BTreeMap<String, Ty>,
+    table_ctx: &TableCtx,
     demand: &mut DemandByEvent,
-    table_names: &[String],
-) -> Result<Vec<(String, String, Option<CFilter>)>> {
+) -> Result<Vec<(EventRef, Option<CFilter>)>> {
+    let &TableCtx {
+        table_names,
+        contracts,
+        block_field_types,
+        transaction_field_types,
+        ..
+    } = table_ctx;
     let mut named = (BTreeSet::new(), BTreeSet::new());
     if let Some(condition) = condition {
         discriminators(condition, &mut named);
@@ -2533,6 +2982,10 @@ fn resolve_event_branches(
     let mut branches = Vec::new();
     for (contract_name, contract) in contracts {
         for event in &contract.events {
+            let event_ref = EventRef {
+                contract: contract_name.clone(),
+                event: event.name.clone(),
+            };
             let filter = match condition {
                 None => None,
                 Some(condition) => {
@@ -2552,21 +3005,22 @@ fn resolve_event_branches(
                         &shape,
                         &mut branch_demand,
                         table_names,
+                        table_ctx.addresses,
                     )?;
                     match residual {
                         Residual::False => continue,
                         Residual::True => {
-                            demand.merge(contract_name, &event.name, branch_demand);
+                            demand.merge(&event_ref, branch_demand);
                             None
                         }
                         Residual::Unknown(filter) => {
-                            demand.merge(contract_name, &event.name, branch_demand);
+                            demand.merge(&event_ref, branch_demand);
                             Some(filter)
                         }
                     }
                 }
             };
-            branches.push((contract_name.clone(), event.name.clone(), filter));
+            branches.push((event_ref, filter));
         }
     }
     Ok(branches)
@@ -2590,23 +3044,31 @@ fn validate_handler_name(name: &str, table_name: &str) -> Result<()> {
 /// `_ref` and `_derived_from` name tables, and the generated SDL uses those
 /// names verbatim — so a table name has to be a usable GraphQL type name.
 pub fn validate_table_names(tables: &Tables) -> Result<()> {
+    let mut by_code_name: BTreeMap<String, &String> = BTreeMap::new();
     for name in tables.0.keys() {
-        // No leading underscore: capitalizing leaves `_` alone, so it would
-        // reach codegen as an invalid ReScript module name.
         let mut chars = name.chars();
-        let valid = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic())
+        let valid = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
             && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
         if !valid {
             return Err(anyhow!(
                 "Table name `{name}` is not a valid identifier. Use letters, digits and \
-                 underscores, starting with a letter."
+                 underscores, starting with a letter or an underscore."
             ));
         }
-        if name.capitalize() != *name && tables.0.contains_key(&name.capitalize()) {
+        // Generated code capitalizes the name and drops leading underscores, so
+        // a name that is only underscores and digits leaves nothing to call it.
+        let code_name = text::to_code_name(name);
+        if !code_name.starts_with(|c: char| c.is_ascii_alphabetic()) {
             return Err(anyhow!(
-                "tables `{name}` and `{}` differ only by case, which the generated code can't tell \
-                 apart. Rename one of them.",
-                name.capitalize()
+                "Table name `{name}` leaves the generated code nothing to call it: handlers and \
+                 tests reach a table by its name capitalized and stripped of leading underscores. \
+                 Start it with a letter."
+            ));
+        }
+        if let Some(existing) = by_code_name.insert(code_name.clone(), name) {
+            return Err(anyhow!(
+                "tables `{existing}` and `{name}` are both `{code_name}` in the generated code, \
+                 which can't tell them apart. Rename one of them."
             ));
         }
     }

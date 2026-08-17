@@ -297,6 +297,7 @@ expression: json
   "entities": [
     {
       "name": "EmptyEntity",
+      "codeName": "EmptyEntity",
       "properties": [
         {
           "name": "id",

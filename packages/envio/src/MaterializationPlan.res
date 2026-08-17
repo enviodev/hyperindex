@@ -14,7 +14,6 @@ type rec expr =
   | Path(array<string>)
   | LitString(string)
   | LitBool(bool)
-  // `int` and `float` both arrive as JSON numbers and stay JS numbers.
   | LitNumber(float)
   // Decimal text: JSON has no bigint, and the value has to stay exact.
   | LitBigInt(string)
@@ -38,11 +37,7 @@ let exprSchema = S.recursive(self =>
       LitBool(s.field("value", S.bool))
     }),
     S.object(s => {
-      s.tag("kind", "int")
-      LitNumber(s.field("value", S.float))
-    }),
-    S.object(s => {
-      s.tag("kind", "float")
+      s.tag("kind", "number")
       LitNumber(s.field("value", S.float))
     }),
     S.object(s => {
