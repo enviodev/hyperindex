@@ -1,8 +1,7 @@
 use alloy_json_abi::JsonAbi;
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
-use serde_json::{Map, Value};
-use std::collections::HashSet;
+use serde_json::Value;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -12,85 +11,63 @@ pub enum AbiOrNestedAbi {
     NestedAbi { abi: JsonAbi },
 }
 
-/// What an ABI entry may carry. The parser rejects anything else, and older
-/// toolchains wrote more: truffle stamped every entry with its `signature`, and
-/// files that have been in a repo since 2020 still carry it.
-const ITEM_KEYS: &[&str] = &[
-    "type",
-    "name",
-    "inputs",
-    "outputs",
-    "stateMutability",
-    "anonymous",
-    "constant",
-    "payable",
-];
-const PARAM_KEYS: &[&str] = &["name", "type", "components", "internalType", "indexed"];
-
-fn keep(object: &mut Map<String, Value>, allowed: &[&str]) {
-    object.retain(|key, _| allowed.contains(&key.as_str()));
-}
-
-fn strip_params(value: &mut Value) {
-    let Some(params) = value.as_array_mut() else {
-        return;
-    };
-    for param in params {
-        let Some(object) = param.as_object_mut() else {
-            continue;
-        };
-        keep(object, PARAM_KEYS);
-        if let Some(components) = object.get_mut("components") {
-            strip_params(components);
-        }
+fn items_mut(abi: &mut Value) -> Option<&mut Vec<Value>> {
+    match abi {
+        Value::Array(items) => Some(items),
+        Value::Object(object) => object.get_mut("abi")?.as_array_mut(),
+        _ => None,
     }
 }
 
-/// Drops the entries' unrecognised keys, leaving the ABI itself untouched.
-fn strip_unknown_keys(text: &str) -> Option<String> {
+/// A contract has one constructor, one fallback and one receive. An ABI
+/// concatenated from a proxy and its implementation lists them twice, and the
+/// parser has nowhere to put the second.
+fn drop_repeated_singletons(text: &str) -> Option<String> {
     let mut parsed: Value = serde_json::from_str(text).ok()?;
-    let items = match &mut parsed {
-        Value::Array(items) => items,
-        Value::Object(object) => object.get_mut("abi")?.as_array_mut()?,
-        _ => return None,
-    };
-    // A contract has one constructor, one fallback and one receive; an ABI
-    // concatenated from a proxy and its implementation lists them twice, and the
-    // parser has nowhere to put the second.
-    let mut seen = HashSet::new();
-    let mut kept = Vec::with_capacity(items.len());
-    for mut item in std::mem::take(items) {
-        let object = item.as_object_mut()?;
-        keep(object, ITEM_KEYS);
-        for key in ["inputs", "outputs"] {
-            if let Some(params) = object.get_mut(key) {
-                strip_params(params);
-            }
-        }
-        let kind = object.get("type").and_then(Value::as_str).unwrap_or("");
-        if matches!(kind, "constructor" | "fallback" | "receive") && !seen.insert(kind.to_string())
-        {
-            continue;
-        }
-        kept.push(item);
-    }
-    *items = kept;
+    let mut seen = [false; 3];
+    items_mut(&mut parsed)?.retain(|item| {
+        let singleton = match item.get("type").and_then(Value::as_str) {
+            Some("constructor") => 0,
+            Some("fallback") => 1,
+            Some("receive") => 2,
+            _ => return true,
+        };
+        !std::mem::replace(&mut seen[singleton], true)
+    });
     serde_json::to_string(&parsed).ok()
 }
 
-/// Reads an ABI file, tolerating the extra keys old toolchains wrote.
+/// `AbiOrNestedAbi` is untagged, so serde only reports that the file matched no
+/// variant. Reading it again as the shape it actually is recovers the real
+/// complaint: the unknown entry type, the malformed parameter.
+fn diagnose(text: &str) -> Option<serde_json::Error> {
+    let mut parsed: Value = serde_json::from_str(text).ok()?;
+    let items = std::mem::take(items_mut(&mut parsed)?);
+    serde_json::from_value::<JsonAbi>(Value::Array(items)).err()
+}
+
+/// Reads an ABI file, repairing what old toolchains wrote.
 pub fn parse(text: &str) -> Result<AbiOrNestedAbi> {
-    match serde_json::from_str::<AbiOrNestedAbi>(text) {
-        Ok(abi) => Ok(abi),
-        Err(err) => strip_unknown_keys(text)
-            .and_then(|text| serde_json::from_str::<AbiOrNestedAbi>(&text).ok())
-            .ok_or_else(|| anyhow!("{err}")),
+    let err = match serde_json::from_str::<AbiOrNestedAbi>(text) {
+        Ok(abi) => return Ok(abi),
+        Err(err) => err,
+    };
+    let repaired = drop_repeated_singletons(text)
+        .and_then(|text| serde_json::from_str::<AbiOrNestedAbi>(&text).ok());
+    match repaired {
+        Some(abi) => Ok(abi),
+        None => Err(anyhow!("{}", diagnose(text).unwrap_or(err))),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn events(abi: AbiOrNestedAbi) -> Vec<String> {
+        let (AbiOrNestedAbi::Abi(abi) | AbiOrNestedAbi::NestedAbi { abi }) = abi;
+        abi.events().map(|event| event.name.clone()).collect()
+    }
 
     #[test]
     fn reads_an_abi_a_truffle_era_toolchain_wrote() {
@@ -117,46 +94,37 @@ mod tests {
         )
         .unwrap();
 
-        let AbiOrNestedAbi::Abi(abi) = abi else {
-            panic!("expected a flat ABI");
-        };
-        assert_eq!(
-            (
-                abi.functions().map(|f| f.name.as_str()).collect::<Vec<_>>(),
-                abi.events().map(|e| e.name.as_str()).collect::<Vec<_>>(),
-            ),
-            (vec!["admin"], vec!["Failure"])
-        );
+        assert_eq!(events(abi), vec!["Failure"]);
     }
 
     // Compound V2's ABIs, generated when the proxy and the implementation were
     // concatenated, list the constructor twice.
     #[test]
-    fn reads_an_abi_that_names_its_constructor_twice() {
+    fn reads_an_abi_that_repeats_its_constructor_fallback_and_receive() {
         let abi = parse(
             r#"[
-              {"inputs": [], "payable": false, "stateMutability": "nonpayable", "type": "constructor", "signature": "constructor"},
-              {"inputs": [], "payable": false, "stateMutability": "nonpayable", "type": "constructor", "signature": "constructor"},
+              {"inputs": [], "payable": false, "stateMutability": "nonpayable", "type": "constructor"},
+              {"payable": true, "stateMutability": "payable", "type": "fallback"},
+              {"stateMutability": "payable", "type": "receive"},
+              {"inputs": [], "payable": false, "stateMutability": "nonpayable", "type": "constructor"},
+              {"payable": true, "stateMutability": "payable", "type": "fallback"},
+              {"stateMutability": "payable", "type": "receive"},
               {"anonymous": false, "inputs": [], "name": "Failure", "type": "event"}
             ]"#,
         )
         .unwrap();
 
-        let AbiOrNestedAbi::Abi(abi) = abi else {
-            panic!("expected a flat ABI");
-        };
-        assert_eq!(
-            abi.events().map(|e| e.name.as_str()).collect::<Vec<_>>(),
-            vec!["Failure"]
-        );
+        assert_eq!(events(abi), vec!["Failure"]);
     }
 
     #[test]
-    fn reads_a_nested_abi_with_extra_keys() {
+    fn reads_a_nested_abi_that_repeats_its_constructor() {
         let abi = parse(
             r#"{
               "contractName": "Comptroller",
               "abi": [
+                {"inputs": [], "stateMutability": "nonpayable", "type": "constructor"},
+                {"inputs": [], "stateMutability": "nonpayable", "type": "constructor"},
                 {"anonymous": false, "inputs": [], "name": "Failure", "type": "event", "signature": "0x45b96fe4"}
               ],
               "bytecode": "0x60806040"
@@ -164,23 +132,42 @@ mod tests {
         )
         .unwrap();
 
-        let AbiOrNestedAbi::NestedAbi { abi } = abi else {
-            panic!("expected a nested ABI");
+        assert_eq!(events(abi), vec!["Failure"]);
+    }
+
+    #[test]
+    fn reports_what_an_unreadable_abi_got_wrong() {
+        let Err(err) = parse(r#"[{"type": "wormhole"}]"#) else {
+            panic!("expected an unreadable ABI to fail");
         };
+
         assert_eq!(
-            abi.events().map(|e| e.name.as_str()).collect::<Vec<_>>(),
-            vec!["Failure"]
+            err.to_string(),
+            "unknown variant `wormhole`, expected one of `constructor`, `fallback`, `receive`, \
+             `function`, `event`, `error`"
         );
     }
 
     #[test]
-    fn reports_the_original_error_when_stripping_does_not_help() {
-        let Err(err) = parse(r#"[{"type": "wormhole"}]"#) else {
+    fn reports_what_a_malformed_parameter_got_wrong() {
+        let Err(err) = parse(
+            r#"[{"anonymous": false, "name": "E", "type": "event", "inputs": [{"name": "a", "type": "uint256[", "indexed": false}]}]"#,
+        ) else {
             panic!("expected an unreadable ABI to fail");
         };
-        assert!(
-            !err.to_string().is_empty(),
-            "expected the parser's own error"
+
+        assert_eq!(
+            err.to_string(),
+            "invalid value: string \"uint256[\", expected a valid Solidity type specifier"
         );
+    }
+
+    #[test]
+    fn reports_that_a_file_which_is_not_json_is_not_json() {
+        let Err(err) = parse("not json") else {
+            panic!("expected an unreadable ABI to fail");
+        };
+
+        assert_eq!(err.to_string(), "expected ident at line 1 column 2");
     }
 }
