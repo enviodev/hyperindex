@@ -10,17 +10,6 @@ type options = {
   addressStore: AddressStore.t,
 }
 
-// Synthesize a stable logIndex for an SVM instruction so the FetchState
-// ordering machinery (which compares by `(blockNumber, logIndex)`) sorts
-// instructions deterministically within a slot. The bit packing fits inside
-// JS's 53-bit safe-integer range: transactionIndex ≤ ~10k per slot,
-// instruction position ≤ 1000 per tx, depth ≤ ~10. Outer-only instructions
-// land at `tx * 65536`; inner ones append depth-weighted offsets.
-let synthLogIndex = (~transactionIndex, ~instructionAddress) => {
-  let addrSum = instructionAddress->Array.reduce(0, (acc, n) => acc * 1024 + n + 1)
-  transactionIndex * 65536 + addrSum
-}
-
 // Parse the Rust-decoded instruction (args/accounts arrive as JSON strings to
 // side-step napi-rs's lack of native JSON passthrough) into the public shape.
 let parseDecoded = (
@@ -160,10 +149,13 @@ let make = (
         onEventRegistration,
         chainId,
         blockNumber: item.slot,
-        logIndex: synthLogIndex(
-          ~transactionIndex=item.transactionIndex,
-          ~instructionAddress=item.instructionAddress,
-        ),
+        // A slot orders by `(transactionIndex, instructionAddress)` — the
+        // transaction, then the instruction's position in its CPI tree. Both
+        // ride the item so the buffer comparator can order on the pair
+        // directly; no single integer can hold it (Solana allows a CPI depth
+        // of 5, which needs more bits than a JS integer is exact to).
+        logIndex: item.transactionIndex,
+        orderPath: item.instructionAddress,
         // The parent transaction is materialised from the store at batch prep.
         transactionIndex: item.transactionIndex,
         payload: payload->(Utils.magic: Envio.svmInstruction => Internal.eventPayload),

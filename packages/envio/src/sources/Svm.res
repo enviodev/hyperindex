@@ -1,9 +1,3 @@
-let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
-    delete fields.hash
-    delete fields.height
-    delete fields.time
-  }`)
-
 // Ordered transaction field names, the field codes shared with the Rust store
 // (`SvmTxField`). Derived from the typed field list so the two can't drift;
 // `Internal.allSvmTransactionFields` is pinned to the Rust ordinal order by a test.
@@ -32,7 +26,6 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "hash",
-  cleanUpRawEventFieldsInPlace,
   onBlockMethodName: "onSlot",
   // SVM filter shape: `{slot: {_gte?, _lte?, _every?}}`.
   // Inner range chunk parsed by `blockRangeSchema` in `Main.res`.

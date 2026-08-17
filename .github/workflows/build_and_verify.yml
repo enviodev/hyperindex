@@ -181,7 +181,8 @@ jobs:
         run: pnpm test:templates
 
   # Scenario integration tests
-  # Requires postgres only — GraphQL/Hasura coverage lives in the e2e-test job
+  # envio-tests runs once per storage backend; GraphQL/Hasura coverage lives in
+  # the e2e-test job
   scenarios-test:
     runs-on: ubuntu-latest
     needs: build-envio-package
@@ -189,9 +190,9 @@ jobs:
     env:
       ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
-    # postgres/hasura anchors defined here (first job needing them, in file
-    # order) and reused via aliases below to avoid repeating the identical
-    # `services:` blocks in every job that needs the same containers.
+    # The postgres anchor is defined here (first job needing it) and reused
+    # by alias in later jobs; the hasura anchor is defined the same way in
+    # differential-test-live.
     services:
       postgres: &postgres-service
         image: postgres:16
@@ -207,19 +208,17 @@ jobs:
         ports:
           - 5433:5432
 
-      hasura: &hasura-service
-        image: hasura/graphql-engine:v2.43.0
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.2.15.4
         env:
-          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
-          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
-          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
-          HASURA_GRAPHQL_NO_OF_RETRIES: 10
-          HASURA_GRAPHQL_ADMIN_SECRET: testing
-          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
-          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
-          PORT: 8080
+          CLICKHOUSE_PASSWORD: testing
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
         ports:
-          - 8080:8080
+          - 8123:8123
 
     steps:
       - uses: actions/checkout@v6
@@ -227,9 +226,25 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
-      - name: envio-tests
+      # The scenario suite is backend-agnostic, so it runs three times. A
+      # scenario that can't run on a backend skips itself with a reason.
+      - name: envio-tests (memory)
         working-directory: packages/envio-tests
         run: pnpm test
+        env:
+          ENVIO_TEST_STORAGE: memory
+
+      - name: envio-tests (postgres)
+        working-directory: packages/envio-tests
+        run: pnpm test
+        env:
+          ENVIO_TEST_STORAGE: postgres
+
+      - name: envio-tests (clickhouse)
+        working-directory: packages/envio-tests
+        run: pnpm test
+        env:
+          ENVIO_TEST_STORAGE: clickhouse
 
       - name: test_codegen
         working-directory: scenarios/test_codegen
@@ -330,7 +345,19 @@ jobs:
 
     services:
       postgres: *postgres-service
-      hasura: *hasura-service
+      hasura: &hasura-service
+        image: hasura/graphql-engine:v2.43.0
+        env:
+          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
+          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
+          HASURA_GRAPHQL_NO_OF_RETRIES: 10
+          HASURA_GRAPHQL_ADMIN_SECRET: testing
+          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
+          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
+          PORT: 8080
+        ports:
+          - 8080:8080
 
     steps:
       - uses: actions/checkout@v6
