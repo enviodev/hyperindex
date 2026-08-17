@@ -124,6 +124,35 @@ export default defineCases([
     query: `{ User(order_by: {id: asc}, limit: 1) { id @include(if: true) address @skip(if: false) } }`,
   },
 
+  // --- the same degeneration nested under a table root -------------------
+  // A nested aggregate whose selection is emptied does not fail an
+  // assertion: it returns one row per related row, so the PARENT rows are
+  // duplicated. coll-1 has 4 tokens and appears 4 times, turning 3
+  // collections into 10 rows. serve returns the 3 rows GraphQL asks for.
+  {
+    name: "degagg-nested-aggregate-nodes-excluded",
+    query: `{ NftCollection(order_by: {id: asc}) { id tokens_aggregate { nodes @include(if: false) { __typename } } } }`,
+    role: "admin",
+    knownGap: DEGENERATE,
+  },
+  {
+    name: "degagg-nested-aggregate-typename-only",
+    query: `{ NftCollection(order_by: {id: asc}) { id tokens_aggregate { aggregate { __typename } } } }`,
+    role: "admin",
+    knownGap: DEGENERATE,
+  },
+  // A real aggregate function nested the same way is well-formed on both.
+  {
+    name: "degagg-nested-aggregate-count",
+    query: `{ NftCollection(order_by: {id: asc}) { id tokens_aggregate { aggregate { count } } } }`,
+    role: "admin",
+  },
+  {
+    name: "degagg-nested-aggregate-count-plus-skipped-nodes",
+    query: `{ NftCollection(order_by: {id: asc}) { id tokens_aggregate { aggregate { count } nodes @skip(if: true) { id } } } }`,
+    role: "admin",
+  },
+
   // --- admin-only internal error detail ----------------------------------
   // Hasura returns the failing statement, its parameters and the raw
   // Postgres error under extensions.internal for the admin role. serve never

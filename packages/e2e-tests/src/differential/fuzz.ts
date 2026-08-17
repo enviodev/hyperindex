@@ -385,7 +385,10 @@ function genSelection(
   }
   if (rng.chance(0.12))
     out.push({ field: "__typename", args: [], children: [] });
-  if (rng.chance(0.12) && out.length) {
+  // Only when something else survives: a directive that empties an aggregate
+  // selection makes Hasura emit a degenerate statement, which is a divergence
+  // the corpus already pins (corpus/21-degenerate-aggregates.ts).
+  if (rng.chance(0.12) && out.length > 1) {
     const which = rng.int(0, out.length - 1);
     out[which] = {
       ...out[which]!,
@@ -670,6 +673,13 @@ const KNOWN_DIVERGENCES: { reason: string; matches: (h: string, s: string) => bo
     matches: (h, s) =>
       h.includes("invalid input syntax for type json") &&
       !s.includes("invalid input syntax for type json"),
+  },
+  {
+    reason:
+      "aggregate selection with no aggregate function: Hasura's statement returns one " +
+      "row per matching row and fails its exactly-one-row assertion",
+    matches: (h, s) =>
+      h.includes("database query error") && !s.includes("database query error"),
   },
 ];
 

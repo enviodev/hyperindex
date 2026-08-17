@@ -1,0 +1,89 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ NftCollection(order_by: {id: asc}) { id tokens_aggregate { aggregate { __typename } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "NftCollection": [
+    {
+     "id": "coll-1",
+     "tokens_aggregate": {
+      "aggregate": {
+       "__typename": "Token_aggregate_fields"
+      }
+     }
+    },
+    {
+     "id": "coll-1",
+     "tokens_aggregate": {
+      "aggregate": {
+       "__typename": "Token_aggregate_fields"
+      }
+     }
+    },
+    {
+     "id": "coll-1",
+     "tokens_aggregate": {
+      "aggregate": {
+       "__typename": "Token_aggregate_fields"
+      }
+     }
+    },
+    {
+     "id": "coll-1",
+     "tokens_aggregate": {
+      "aggregate": {
+       "__typename": "Token_aggregate_fields"
+      }
+     }
+    },
+    {
+     "id": "coll-2",
+     "tokens_aggregate": {
+      "aggregate": {
+       "__typename": "Token_aggregate_fields"
+      }
+     }
+    },
+    {
+     "id": "coll-2",
+     "tokens_aggregate": {
+      "aggregate": {
+       "__typename": "Token_aggregate_fields"
+      }
+     }
+    },
+    {
+     "id": "coll-2",
+     "tokens_aggregate": {
+      "aggregate": {
+       "__typename": "Token_aggregate_fields"
+      }
+     }
+    },
+    {
+     "id": "coll-2",
+     "tokens_aggregate": {
+      "aggregate": {
+       "__typename": "Token_aggregate_fields"
+      }
+     }
+    },
+    {
+     "id": "coll-2",
+     "tokens_aggregate": {
+      "aggregate": {
+       "__typename": "Token_aggregate_fields"
+      }
+     }
+    },
+    {
+     "id": "coll-3",
+     "tokens_aggregate": null
+    }
+   ]
+  }
+ }
+}
