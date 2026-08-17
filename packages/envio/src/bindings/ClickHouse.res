@@ -169,24 +169,119 @@ let changeClickHouseType = getClickHouseFieldType(
   ~isArray=false,
 )
 
-// The checkpoints table as ClickHouse holds it, in column order: the DDL and the
-// insert both read it, so neither can describe a column the other doesn't.
+// The checkpoints table as ClickHouse holds it, in column order. The DDL, the
+// insert's column list and the values it sends all come from this one list, so a
+// column cannot be declared in one and forgotten in another — nor, worse, end up
+// paired with a different column's values, which nothing downstream could catch:
+// every array reaches the builders as `unknown`.
 // `events_processed` is widened here rather than taken from
 // `InternalTable.Checkpoints.table`, whose Int32 is what Postgres stores.
-let checkpointColumns: array<(string, Table.fieldType, bool)> = [
-  ((#id: InternalTable.Checkpoints.field :> string), UInt64, false),
-  ((#chain_id: InternalTable.Checkpoints.field :> string), ChainId, false),
-  ((#block_number: InternalTable.Checkpoints.field :> string), Int32, false),
-  ((#block_hash: InternalTable.Checkpoints.field :> string), String, true),
-  ((#events_processed: InternalTable.Checkpoints.field :> string), UInt64, false),
+type checkpointColumn = {
+  name: string,
+  fieldType: Table.fieldType,
+  isNullable: bool,
+  valuesOf: Batch.t => array<unknown>,
+}
+
+let checkpointColumns: array<checkpointColumn> = [
+  {
+    name: (#id: InternalTable.Checkpoints.field :> string),
+    fieldType: UInt64,
+    isNullable: false,
+    valuesOf: batch => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
+  },
+  {
+    name: (#chain_id: InternalTable.Checkpoints.field :> string),
+    fieldType: ChainId,
+    isNullable: false,
+    valuesOf: batch => batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
+  },
+  {
+    name: (#block_number: InternalTable.Checkpoints.field :> string),
+    fieldType: Int32,
+    isNullable: false,
+    valuesOf: batch => batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
+  },
+  {
+    name: (#block_hash: InternalTable.Checkpoints.field :> string),
+    fieldType: String,
+    isNullable: true,
+    valuesOf: batch =>
+      batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
+  },
+  {
+    name: (#events_processed: InternalTable.Checkpoints.field :> string),
+    fieldType: UInt64,
+    isNullable: false,
+    valuesOf: batch => batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
+  },
 ]
+
+// Resolved per chain-id mode, which is the only thing the column types vary
+// with. Resolving a wire kind crosses into Rust, so it does not belong on the
+// path a batch takes.
+let checkpointSinkColumns = {
+  let cache = Dict.make()
+  (~chainIdMode: ChainId.mode) => {
+    let key = switch chainIdMode {
+    | Int32 => "Int32"
+    | Int64 => "Int64"
+    }
+    switch cache->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some(columns) => columns
+    | None =>
+      let columns =
+        checkpointColumns->Array.map(({name, fieldType, isNullable}) =>
+          ClickHouseSink.makeColumn(
+            ~name,
+            ~chType=getClickHouseFieldType(~fieldType, ~isNullable, ~isArray=false, ~chainIdMode),
+          )
+        )
+      cache->Dict.set(key, columns)
+      columns
+    }
+  }
+}
+
+// Every column envio declares on an entity's history table, in DDL order. The
+// CREATE TABLE, the insert and the startup type check all read this, so a column
+// is encoded against the type it was created with.
+let entityColumnTypes = (~entityConfig: Internal.entityConfig, ~chainIdMode: ChainId.mode): array<(
+  string,
+  string,
+)> => {
+  let columns = entityConfig.table.fields->Array.filterMap(field =>
+    switch field {
+    | Table.Field(f) =>
+      Some((
+        f->Table.getClickHouseDbFieldName,
+        getClickHouseFieldType(
+          ~fieldType=f.fieldType,
+          ~isNullable=f.isNullable,
+          ~isArray=f.isArray,
+          ~chainIdMode,
+        ),
+      ))
+    | DerivedFrom(_) => None
+    }
+  )
+  columns->Array.push((EntityHistory.checkpointIdFieldName, checkpointIdClickHouseType))
+  columns->Array.push((EntityHistory.changeFieldName, changeClickHouseType))
+  columns
+}
+
+let checkpointColumnTypes = (~chainIdMode: ChainId.mode): array<(string, string)> =>
+  checkpointColumns->Array.map(({name, fieldType, isNullable}) => (
+    name,
+    getClickHouseFieldType(~fieldType, ~isNullable, ~isArray=false, ~chainIdMode),
+  ))
 
 // Column set of an entity history table, resolved once per entity and scope.
 // Only the column list and the compiled serializers are cached; each write
 // allocates its own builders, so two writes can never share storage.
 type entityColumns = {
   tableName: string,
-  columns: array<(string, string)>,
+  columns: array<ClickHouseSink.column>,
   convertSetOrThrow: Change.t<Internal.entity> => dict<unknown>,
   convertDeleteOrThrow: Change.t<Internal.entity> => dict<unknown>,
 }
@@ -205,23 +300,10 @@ let makeEntityColumns = (
   let scopeChainId = scope->Internal.chainScopeChainId
   let idSchema = entityConfig.table->Table.getIdSchema
 
-  let columns = entityConfig.table.fields->Array.filterMap(field =>
-    switch field {
-    | Table.Field(f) =>
-      Some((
-        f->Table.getClickHouseDbFieldName,
-        getClickHouseFieldType(
-          ~fieldType=f.fieldType,
-          ~isNullable=f.isNullable,
-          ~isArray=f.isArray,
-          ~chainIdMode,
-        ),
-      ))
-    | DerivedFrom(_) => None
-    }
-  )
-  columns->Array.push((EntityHistory.checkpointIdFieldName, checkpointIdClickHouseType))
-  columns->Array.push((EntityHistory.changeFieldName, changeClickHouseType))
+  let columns =
+    entityColumnTypes(~entityConfig, ~chainIdMode)->Array.map(((name, chType)) =>
+      ClickHouseSink.makeColumn(~name, ~chType)
+    )
 
   {
     tableName: EntityHistory.historyTableName(
@@ -263,9 +345,6 @@ let stageBuilders = (sink, ~tableName, ~builders: array<ClickHouseSink.builder>,
     ~columns=builders->Array.map(ClickHouseSink.builderPayload),
   )
 
-let insertBuilders = async (sink, ~tableName, ~builders, ~rows) =>
-  await sink->ClickHouseSink.flush(sink->stageBuilders(~tableName, ~builders, ~rows))
-
 let setCheckpointsOrThrow = async (sink, ~batch: Batch.t, ~chainIdMode: ChainId.mode) => {
   let rows = batch.checkpointIds->Array.length
   if rows === 0 {
@@ -273,34 +352,25 @@ let setCheckpointsOrThrow = async (sink, ~batch: Batch.t, ~chainIdMode: ChainId.
   } else {
     let tableName = InternalTable.Checkpoints.table.tableName
     // Same column list the DDL is built from, so a column added there arrives
-    // here with a builder rather than silently taking the type's default.
+    // here with a builder rather than silently taking the type's default, and
+    // with the values that belong to it rather than a neighbour's.
     let builders =
-      checkpointColumns->Array.map(((name, fieldType, isNullable)) =>
-        ClickHouseSink.makeBuilder(
-          ~name,
-          ~chType=getClickHouseFieldType(~fieldType, ~isNullable, ~isArray=false, ~chainIdMode),
-          ~rows,
-        )
-      )
-    let values: array<array<unknown>> = [
-      batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
-      batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
-      batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
-      batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
-      batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
-    ]
-
-    for row in 0 to rows - 1 {
-      builders->Array.forEachWithIndex((builder, column) =>
-        builder->ClickHouseSink.writeValue(
-          ~row,
-          values->Array.getUnsafe(column)->Array.getUnsafe(row),
-        )
-      )
-    }
+      checkpointSinkColumns(~chainIdMode)->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
+    let values = checkpointColumns->Array.map(({valuesOf}) => valuesOf(batch))
 
     try {
-      await sink->insertBuilders(~tableName, ~builders, ~rows)
+      // Inside the wrapper because writing a value can fail: a checkpoint id
+      // past what UInt64 holds is refused here rather than being reduced to a
+      // different id by the typed array it would land in.
+      for row in 0 to rows - 1 {
+        builders->Array.forEachWithIndex((builder, column) =>
+          builder->ClickHouseSink.writeValue(
+            ~row,
+            values->Array.getUnsafe(column)->Array.getUnsafe(row),
+          )
+        )
+      }
+      await sink->ClickHouseSink.flush(sink->stageBuilders(~tableName, ~builders, ~rows))
     } catch {
     | exn =>
       throw(
@@ -348,8 +418,7 @@ let setUpdatesOrThrow = async (
     }
 
     let handle = try {
-      let builders =
-        columns->Array.map(((name, chType)) => ClickHouseSink.makeBuilder(~name, ~chType, ~rows))
+      let builders = columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
       for row in 0 to rows - 1 {
         let change = changes->Array.getUnsafe(row)
         // The entity history table is the source of truth for ClickHouse, so
@@ -427,22 +496,10 @@ let makeCreateHistoryTableQuery = (
   ~chainIdMode: ChainId.mode=Int32,
 ) => {
   let tableEngine = replicated ? "ReplicatedMergeTree" : "MergeTree()"
-  let fieldDefinitions = entityConfig.table.fields->Array.filterMap(field => {
-    switch field {
-    | Field(field) =>
-      Some({
-        let fieldName = field->Table.getClickHouseDbFieldName
-        let clickHouseType = getClickHouseFieldType(
-          ~fieldType=field.fieldType,
-          ~isNullable=field.isNullable,
-          ~isArray=field.isArray,
-          ~chainIdMode,
-        )
-        `\`${fieldName}\` ${clickHouseType}`
-      })
-    | DerivedFrom(_) => None
-    }
-  })
+  let fieldDefinitions =
+    entityColumnTypes(~entityConfig, ~chainIdMode)->Array.map(((name, chType)) =>
+      `\`${name}\` ${chType}`
+    )
 
   let (partitionBy, orderBy, ttl) = switch entityConfig.storage.clickhouseOptions {
   | Some(options) => (options.partitionBy, options.orderBy, options.ttl)
@@ -514,9 +571,7 @@ let makeCreateHistoryTableQuery = (
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
     )}\`${onClusterClause(~onCluster)} (
-  ${fieldDefinitions->Array.joinUnsafe(",\n  ")},
-  \`${EntityHistory.checkpointIdFieldName}\` ${checkpointIdClickHouseType},
-  \`${EntityHistory.changeFieldName}\` ${changeClickHouseType}
+  ${fieldDefinitions->Array.joinUnsafe(",\n  ")}
 )
 ENGINE = ${tableEngine}${partitionByClause}
 ORDER BY (${orderByColumns})${ttlClause}`
@@ -533,7 +588,7 @@ let makeCreateCheckpointsTableQuery = (
   let idField = (#id: InternalTable.Checkpoints.field :> string)
   let columns =
     checkpointColumns
-    ->Array.map(((name, fieldType, isNullable)) =>
+    ->Array.map(({name, fieldType, isNullable}) =>
       `  \`${name}\` ${getClickHouseFieldType(
           ~fieldType,
           ~isNullable,

@@ -90,11 +90,17 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
   // Postgres renames columns to snake_case for this project while ClickHouse
   // keeps the schema's spelling, so each side is listed explicitly: the
   // assertion covers the naming as well as the values.
+  //
+  // Both sides order by id under `COLLATE "C"`, which is byte order — what
+  // ClickHouse sorts a String by. Postgres would otherwise use the database's
+  // own collation, where en_US largely ignores `-` at the primary level and ids
+  // like `1-…` and `137-…` interleave differently than ClickHouse puts them,
+  // failing the row-for-row comparison on data that actually matches.
   it("Transfer matches column for column", async () => {
     const [pg, ch] = await Promise.all([
       pgRows(
         `SELECT "id", "from", "to", "value", "block_number", "transaction_hash"
-         FROM "${PG_SCHEMA}"."Transfer" ORDER BY "id"`
+         FROM "${PG_SCHEMA}"."Transfer" ORDER BY "id" COLLATE "C"`
       ),
       chRows(
         `SELECT id, \`from\`, \`to\`, value, blockNumber, transactionHash
@@ -113,7 +119,7 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
     const [pg, ch] = await Promise.all([
       pgRows(
         `SELECT "id", "from", "value", "chain_id"
-         FROM "${PG_SCHEMA}"."ChainTransfer" ORDER BY "chain_id", "id"`
+         FROM "${PG_SCHEMA}"."ChainTransfer" ORDER BY "chain_id", "id" COLLATE "C"`
       ),
       chRows(
         `SELECT id, \`from\`, value, chainId
@@ -134,7 +140,7 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
     const [pg, ch] = await Promise.all([
       pgRows(
         `SELECT "id", "last_block", "last_value"
-         FROM "${PG_SCHEMA}"."Holder" ORDER BY "id"`
+         FROM "${PG_SCHEMA}"."Holder" ORDER BY "id" COLLATE "C"`
       ),
       chRows(
         `SELECT id, lastBlock, lastValue

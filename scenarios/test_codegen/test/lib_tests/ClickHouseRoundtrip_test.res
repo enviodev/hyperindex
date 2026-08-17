@@ -15,6 +15,11 @@ let database = "test_codegen_roundtrip"
 
 let timestamp = Date.fromTime(1234567890123.0)
 
+// Half of a surrogate pair each. ReScript rejects a lone surrogate as a string
+// literal escape, so they are built from their code units.
+let highSurrogate = String.fromCharCode(0xD800)
+let lowSurrogate = String.fromCharCode(0xDC00)
+
 let entity: Indexer.Entities.EntityWithAllTypes.t = {
   id: "roundtrip-1",
   // Not ASCII on purpose: the sink hands Rust one concatenated string per column
@@ -283,6 +288,181 @@ describe("ClickHouse RowBinary roundtrip", () => {
       ))
     },
   )
+  // Values reach Rust as one concatenated string per column plus each value's
+  // UTF-16 length. A lone surrogate is not a character and napi substitutes
+  // U+FFFD for one, which costs a value nothing on its own — but a value ending
+  // in a high surrogate next to one starting with a low surrogate spells a real
+  // pair across the seam, which encodes as a single character where the lengths
+  // claim two. The whole column then fails to split, and no retry can help
+  // because the batch is unchanged.
+  Async.it_skipIf(chHost->Option.isNone)(
+    "Stores values whose lone surrogates would pair across the concatenation",
+    async t => {
+      let host = chHost->Option.getUnsafe
+      let database = "test_codegen_roundtrip_surrogate"
+      let entityConfig = MockIndexer.entityConfig("EntityWithAllTypes")
+      let tableName = EntityHistory.historyTableName(
+        ~entityName=entityConfig.name,
+        ~entityIndex=entityConfig.index,
+      )
+
+      let client = ClickHouse.createClient({url: host, username, password})
+      await client->ClickHouse.exec({query: `DROP DATABASE IF EXISTS ${database}`})
+      await client->ClickHouse.exec({query: `CREATE DATABASE ${database}`})
+      await client->ClickHouse.exec({
+        query: ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database),
+      })
+
+      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~onWarning=ignore)
+      await ClickHouse.setUpdatesOrThrow(
+        sink,
+        ~cache=Dict.make(),
+        ~changes=[
+          Set({
+            entityId: "surrogate-1"->EntityId.unsafeOfString,
+            checkpointId: 1n,
+            entity: {...entity, id: "surrogate-1", string: "ends" ++ highSurrogate}->(
+              Utils.magic: Indexer.Entities.EntityWithAllTypes.t => Internal.entity
+            ),
+          }),
+          Set({
+            entityId: "surrogate-2"->EntityId.unsafeOfString,
+            checkpointId: 2n,
+            entity: {...entity, id: "surrogate-2", string: lowSurrogate ++ "starts"}->(
+              Utils.magic: Indexer.Entities.EntityWithAllTypes.t => Internal.entity
+            ),
+          }),
+        ],
+        ~entityConfig,
+        ~scope=CrossChain,
+        ~chainIdMode=Int32,
+      )
+
+      let result = await client->ClickHouse.query({
+        query: `SELECT id, string FROM ${database}.\`${tableName}\` ORDER BY envio_checkpoint_id`,
+      })
+      let rows = (await result->ClickHouse.json)["data"]
+      await client->ClickHouse.exec({query: `DROP DATABASE ${database}`})
+      await client->ClickHouse.close
+
+      // Each lone surrogate becomes U+FFFD, which is what napi would have stored
+      // for either value on its own.
+      t.expect(rows).toEqual(
+        %raw(`[
+          { id: "surrogate-1", string: "ends�" },
+          { id: "surrogate-2", string: "�starts" }
+        ]`),
+      )
+    },
+  )
+
+  // An array's elements travel as JSON rather than in a typed array, so they
+  // reach the encoder by a different route than a scalar of the same type — and
+  // used to be coerced where a scalar would have been rejected.
+  Async.it_skipIf(chHost->Option.isNone)(
+    "Rejects array elements a scalar of the same type would be rejected for",
+    async t => {
+      let host = chHost->Option.getUnsafe
+      let database = "test_codegen_roundtrip_elements"
+      let entityConfig = MockIndexer.entityConfig("EntityWithAllTypes")
+
+      let client = ClickHouse.createClient({url: host, username, password})
+      await client->ClickHouse.exec({query: `DROP DATABASE IF EXISTS ${database}`})
+      await client->ClickHouse.exec({query: `CREATE DATABASE ${database}`})
+      await client->ClickHouse.exec({
+        query: ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database),
+      })
+      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~onWarning=ignore)
+
+      let attempt = async rogue =>
+        switch await ClickHouse.setUpdatesOrThrow(
+          sink,
+          ~cache=Dict.make(),
+          ~changes=[
+            Set({
+              entityId: entity.id->EntityId.unsafeOfString,
+              checkpointId: 1n,
+              entity: rogue->(Utils.magic: Indexer.Entities.EntityWithAllTypes.t => Internal.entity),
+            }),
+          ],
+          ~entityConfig,
+          ~scope=CrossChain,
+          ~chainIdMode=Int32,
+        ) {
+        | () => "stored without complaint"
+        | exception Persistence.StorageError({reason}) =>
+          reason->(Utils.magic: exn => {"message": string})->(r => r["message"])
+        | exception _ => "not a StorageError"
+        }
+
+      // Truncated to 1 before; the scalar `int_` path has always refused this.
+      let fractional = await attempt({
+        ...entity,
+        arrayOfInts: [1.5]->(Utils.magic: array<float> => array<int>),
+      })
+      // Stored as the four-character string "null" before.
+      let nullElement = await attempt({
+        ...entity,
+        arrayOfStrings: [Null.null]->(Utils.magic: array<Null.t<string>> => array<string>),
+      })
+
+      await client->ClickHouse.exec({query: `DROP DATABASE ${database}`})
+      await client->ClickHouse.close
+
+      t.expect((
+        fractional->String.includes("is not an integer"),
+        nullElement->String.includes("null is not a value"),
+      )).toEqual((true, true))
+    },
+  )
+
+  // A UInt64 column's values reach Rust in a BigUint64Array, which reduces an
+  // out-of-range bigint modulo 2^64 on the way in rather than refusing it —
+  // the one wire kind whose values Rust never gets the chance to bounds-check.
+  Async.it_skipIf(chHost->Option.isNone)(
+    "Rejects a checkpoint id the UInt64 column cannot hold",
+    async t => {
+      let host = chHost->Option.getUnsafe
+      let database = "test_codegen_roundtrip_uint64"
+
+      let client = ClickHouse.createClient({url: host, username, password})
+      await client->ClickHouse.exec({query: `DROP DATABASE IF EXISTS ${database}`})
+      await client->ClickHouse.exec({query: `CREATE DATABASE ${database}`})
+      await client->ClickHouse.exec({
+        query: ClickHouse.makeCreateCheckpointsTableQuery(~database),
+      })
+      let sink = ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~onWarning=ignore)
+
+      let message = switch await ClickHouse.setCheckpointsOrThrow(
+        sink,
+        ~batch={
+          totalBatchSize: 1,
+          items: [],
+          progressedChainsById: Dict.make(),
+          isInReorgThreshold: false,
+          // Wrapped to 18446744073709551615 before, landing a checkpoint far
+          // past the head that the current-state view would then read up to.
+          checkpointIds: [-1n],
+          checkpointChainIds: [1->ChainId.fromInt],
+          checkpointBlockNumbers: [1],
+          checkpointBlockHashes: [Null.null],
+          checkpointEventsProcessed: [1],
+        },
+        ~chainIdMode=Int32,
+      ) {
+      | () => "stored without complaint"
+      | exception Persistence.StorageError({reason}) =>
+        reason->(Utils.magic: exn => {"message": string})->(r => r["message"])
+      | exception _ => "not a StorageError"
+      }
+
+      await client->ClickHouse.exec({query: `DROP DATABASE ${database}`})
+      await client->ClickHouse.close
+
+      t.expect(message->String.includes("out of range for a UInt64 column")).toEqual(true)
+    },
+  )
+
   // Naming every column in the INSERT is what lets a table carry columns envio
   // does not write. The server fills them, so a DEFAULT expression is evaluated
   // rather than replaced by the type's zero value, and a column whose type the

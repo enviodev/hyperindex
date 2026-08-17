@@ -14,9 +14,15 @@ OUT_DIR="$BENCH_DIR/results"
 mkdir -p "$OUT_DIR"
 
 CONFIG="config.$VARIANT.generated.yaml"
-sed -e "s/^    start_block: .*/    start_block: $START/" \
-    -e "s/^    end_block: .*/    end_block: $END/" \
+# Indentation is captured rather than matched, and the result is checked: a
+# rewrite that quietly matched nothing would benchmark the committed block range
+# under the requested label, so pg and ch could be compared over different data.
+sed -e "s/^\( *\)start_block:.*/\1start_block: $START/" \
+    -e "s/^\( *\)end_block:.*/\1end_block: $END/" \
     "config.$VARIANT.yaml" > "$CONFIG"
+for field in "start_block: $START" "end_block: $END"; do
+  grep -q "$field" "$CONFIG" || { echo "run.sh: failed to set '$field' in $CONFIG" >&2; exit 1; }
+done
 
 export ENVIO_CONFIG="$CONFIG"
 export ENVIO_PG_SCHEMA="bench_$VARIANT"
@@ -75,7 +81,11 @@ def labelled(name, key):
         if lm:
             out[lm.group(1)] = float(m.group(2))
     return out
-events = sum(labelled("envio_progress_events", "chainId").values()) or None
+# A run that processed nothing is a result, not a missing scrape: `or None`
+# would report both as null and hide a stalled run from anyone comparing the
+# pg and ch outputs.
+progress = labelled("envio_progress_events", "chainId")
+events = sum(progress.values()) if progress else None
 writes = labelled("envio_storage_write_total", "storage")
 secs = labelled("envio_storage_write_seconds", "storage")
 res = {
@@ -83,7 +93,7 @@ res = {
     "wall_seconds": wall,
     "exit_code": exit_code,
     "events_processed": events,
-    "events_per_second": round(events / wall, 1) if events else None,
+    "events_per_second": round(events / wall, 1) if events is not None and wall > 0 else None,
     "progress_block": labelled("envio_progress_block", "chainId"),
     "write_seconds": secs,
     "write_total": writes,

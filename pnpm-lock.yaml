@@ -13,6 +13,12 @@ importers:
 
   .: {}
 
+  bench:
+    dependencies:
+      envio:
+        specifier: file:../packages/envio
+        version: link:../packages/envio
+
   packages/build-envio:
     devDependencies:
       '@types/node':
