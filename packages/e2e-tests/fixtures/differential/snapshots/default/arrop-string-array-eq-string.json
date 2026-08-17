@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {arrayOfStrings: {_eq: \"a\"}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "malformed array literal: \"a\"",
+    "extensions": {
+     "path": "$",
+     "code": "data-exception"
+    }
+   }
+  ]
+ }
+}

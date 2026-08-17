@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {arrayOfBigInts: {_neq: [null, true]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "parsing Text failed, expected String, but encountered Boolean",
+    "extensions": {
+     "path": "$.selectionSet.EntityWithAllTypes.args.where.arrayOfBigInts._neq",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

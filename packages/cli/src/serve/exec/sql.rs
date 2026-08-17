@@ -256,8 +256,14 @@ fn pg_error(e: tokio_postgres::Error, sql: &str) -> GraphQLError {
     // Hasura maps SQLSTATE classes: data exceptions and constraint
     // violations surface the Postgres message, everything else is the
     // opaque "unexpected" internal error.
-    let class = &db.code().code()[..2.min(db.code().code().len())];
+    let sqlstate = db.code().code();
+    let class = &sqlstate[..2.min(sqlstate.len())];
     let (code, message) = match class {
+        // Hasura singles out one data exception: an invalid escape sequence
+        // (a LIKE pattern ending in the escape character) is a bad request
+        // rather than a data exception, since the pattern came from the
+        // client. Every other 22xxx keeps the class default.
+        "22" if sqlstate == "22025" => ("bad-request", db.message().to_string()),
         "22" => ("data-exception", db.message().to_string()),
         "23" => ("constraint-violation", db.message().to_string()),
         _ => {

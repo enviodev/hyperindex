@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {arrayOfInts: {_eq: null}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "unexpected null value for type 'Int'",
+    "extensions": {
+     "path": "$.selectionSet.EntityWithAllTypes.args.where.arrayOfInts._eq",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

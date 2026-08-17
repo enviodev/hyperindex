@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {arrayOfFloats: {_gt: -1}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "parsing [] failed, expected Array, but encountered Number",
+    "extensions": {
+     "path": "$.selectionSet.EntityWithAllTypes.args.where.arrayOfFloats._gt",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}
