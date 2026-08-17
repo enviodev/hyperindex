@@ -39,7 +39,6 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "id",
-  cleanUpRawEventFieldsInPlace,
   onBlockMethodName: "onBlock",
   // Fuel filter shape: `{block: {height: {_gte?, _lte?, _every?}}}`.
   // Inner range chunk parsed by `blockRangeSchema` in `Main.res`.

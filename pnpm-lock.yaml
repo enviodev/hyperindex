@@ -262,9 +262,6 @@ importers:
       envio:
         specifier: file:../../packages/envio
         version: link:../../packages/envio
-      rescript:
-        specifier: 12.2.0
-        version: 12.2.0
     devDependencies:
       '@types/node':
         specifier: 24.12.2

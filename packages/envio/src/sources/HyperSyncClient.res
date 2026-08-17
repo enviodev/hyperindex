@@ -15,7 +15,6 @@ type cfg = {
   /** Milliseconds to wait for a response before timing out. Default: 30000. */
   httpReqTimeoutMillis?: int,
   /** Number of retries to attempt before returning error. Default: 12. */
-  maxNumRetries?: int,
   /** Milliseconds that would be used for retry backoff increasing. Default: 500. */
   retryBackoffMs?: int,
   /** Initial wait time for request backoff. Default: 200. */
@@ -347,8 +346,6 @@ let make = (
       enableChecksumAddresses,
       apiToken,
       httpReqTimeoutMillis,
-      // Retries are handled internally by the indexer, not the binary client
-      maxNumRetries: 0,
       ?serializationFormat,
       ?enableQueryCaching,
       ?retryBaseMs,
