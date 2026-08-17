@@ -41,12 +41,13 @@ plain GET, and `x-request-id`.
 
 Two annotations control how a case is judged:
 
-- **`knownGap: "..."`** — serve is known not to match here yet. The case is
-  still recorded from Hasura (the snapshot *is* the spec for the eventual
-  implementation), a mismatch is reported as a known gap rather than a
-  failure, and a case that starts *matching* fails loudly so the annotation
-  gets removed with the fix. This is how a gap stays visible and tracked
-  without a permanently red required CI job.
+- **`knownGap: "..."`** — this case does not match today. The case is still
+  recorded from Hasura (the snapshot *is* the spec), a mismatch is reported
+  as a known gap rather than a failure, and a case that starts *matching*
+  fails loudly so the annotation gets removed with the fix. That is how a gap
+  stays visible without a permanently red required CI job — and it caught
+  three annotations that were wrong the moment the behaviour changed under
+  them.
 - **`recordOnly: true`** — record Hasura's answer, assert nothing about
   serve. For endpoints where matching Hasura is not the goal (serve should
   expose Prometheus metrics whether or not the Hasura edition under test
@@ -54,6 +55,12 @@ Two annotations control how a case is judged:
 
 Closing a gap is therefore: implement it, drop the `knownGap` line, and both
 `diffServe.ts` and the live suite flip from "known gap" to a hard assertion.
+
+Every gap that was a gap is now closed. The annotations that remain are
+differences serve does not intend to close, each carrying its reason:
+Hasura's binary-encoded jsonb `_in` operands, its degenerate aggregate
+statements, `extensions.internal` on admin errors, and the Postgres planner
+artifact where a failing predicate is skipped around inlined constants.
 
 ## Fuzzing
 
@@ -130,6 +137,13 @@ not intuition — are the spec:
   by the route's `allMod200`. The query string is never read, so every GET
   answers identically. The parity target is that fixed error body, not a GET
   execution path.
+- **A batch has no size limit.** Hasura's OSS `checkGQLBatchedReqs` is
+  `pure ()`, so the only bound on how many operations one request carries is
+  the 2 MB body limit. serve matches that; if a deployment wants a cap, it is
+  a deliberate divergence to add, not a parity fix.
+- **A JSON syntax error is phrased by aeson.** What it reports as
+  "unexpected" is the rest of the input from the offending token, one byte
+  before the column serde_json reports.
 - **A malformed batch element is reported positionally.** A batch that fails
   to parse answers with a single error object (not an array) whose path is
   indexed to the offending element — `$[0]`, where serve reports `$`.
