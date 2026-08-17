@@ -636,7 +636,7 @@
           "additionalProperties": false
         },
         {
-          "description": "Reference to a nominal type defined in the program-level\n`defined_types` registry (populated from an Anchor IDL `types:`\nblock or the bundled-Metaplex registry).",
+          "description": "Reference to a nominal type defined in the program-level\n`defined_types` registry (populated from a parsed IDL).",
           "type": "object",
           "properties": {
             "defined": {

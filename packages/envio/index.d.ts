@@ -1161,7 +1161,7 @@ export type SvmOnSlotOptions<Config extends IndexerConfigTypes = GlobalConfig> =
 // ============== SVM onInstruction types ==============
 
 /** Borsh-decoded params view of an instruction. Present whenever a
- * `ProgramSchema` was attached to the program (bundled, Anchor IDL, or
+ * `ProgramSchema` was attached to the program (a parsed IDL, or
  * hand-written `accounts`/`args` in YAML). Absent when no schema applies or
  * the discriminator didn't match any registered instruction. */
 export type SvmInstructionParams = {
@@ -1532,7 +1532,7 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                  * `(programId, discriminator)` from the YAML config.
                  * `instruction.params.args` and
                  * `instruction.params.accounts` are typed from the
-                 * program's Borsh schema (Anchor IDL, bundled, or
+                 * program's Borsh schema (a parsed IDL, or
                  * hand-written `accounts`/`args` in YAML). `params` stays
                  * optional at runtime because schema-matching can fail on
                  * IDL drift or unknown discriminators.

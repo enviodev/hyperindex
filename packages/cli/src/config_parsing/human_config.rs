@@ -1201,8 +1201,7 @@ pub mod svm {
         #[serde(rename = "array")]
         Array(Box<ArgType>, usize),
         /// Reference to a nominal type defined in the program-level
-        /// `defined_types` registry (populated from an Anchor IDL `types:`
-        /// block or the bundled-Metaplex registry).
+        /// `defined_types` registry (populated from a parsed IDL).
         #[serde(rename = "defined")]
         Defined(String),
         /// Inline-or-registry struct. Used as a nominal type definition in

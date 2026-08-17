@@ -11,7 +11,7 @@ use super::{
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
         HumanConfig,
     },
-    hypersync_endpoints,
+    hypersync_endpoints, svm_idl,
     validation::{self, validate_names_valid_rescript},
 };
 use crate::utils::dotenv::{self, EnvMap};
@@ -37,9 +37,9 @@ use std::{
 };
 
 use hypersync_client_solana::decode::{
-    metaplex_token_metadata, schema_from_anchor_idl_json, EnumVariant as SvmEnumVariant,
-    FieldType as SvmFieldType, InstructionSchema as SvmInstructionSchema,
-    NamedField as SvmNamedField, ProgramSchema as SvmProgramSchema,
+    EnumVariant as SvmEnumVariant, FieldType as SvmFieldType,
+    InstructionSchema as SvmInstructionSchema, NamedAccount as SvmNamedAccount,
+    NamedField as SvmNamedField,
 };
 
 type ContractNameKey = String;
@@ -1889,29 +1889,44 @@ impl EvmAbi {
     }
 }
 
-/// Base58 program id for the bundled Metaplex Token Metadata schema. Kept
-/// here (rather than imported from the upstream crate) so a future bundled
-/// schema can be added by appending a row to the `bundled_program_schemas`
-/// table without leaking strings across the module boundary.
-const METAPLEX_TOKEN_METADATA_PROGRAM_ID: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
-
-/// One row in the bundled-programs table: `(program_id, source_name,
-/// accessor returning the upstream `ProgramSchema`)`.
-type BundledProgramRow = (
-    &'static str,
-    &'static str,
-    fn() -> &'static SvmProgramSchema,
-);
-
-/// Table of bundled programs. Lookup by base58 `program_id`. To add a
-/// program: ship a `ProgramSchema` constant in `hypersync_client_solana`,
-/// expose a public accessor, then add a row here.
-fn bundled_program_schemas() -> Vec<BundledProgramRow> {
-    vec![(
-        METAPLEX_TOKEN_METADATA_PROGRAM_ID,
-        "metaplex_token_metadata",
-        metaplex_token_metadata,
-    )]
+/// Re-key the IDL's instructions the way routing dispatches on them: by the
+/// discriminator bytes matched against the head of `instruction.data`. Two
+/// instructions sharing a prefix are undispatchable, so that's an error rather
+/// than a silently dropped instruction.
+fn index_by_discriminator(
+    instructions: BTreeMap<String, svm_idl::IxIdl>,
+) -> Result<BTreeMap<Vec<u8>, SvmInstructionSchema>> {
+    let mut out: BTreeMap<Vec<u8>, SvmInstructionSchema> = BTreeMap::new();
+    for (name, ix) in instructions {
+        let schema = SvmInstructionSchema {
+            name,
+            discriminator: ix.discriminator.clone(),
+            accounts: ix
+                .accounts
+                .into_iter()
+                .map(|a| SvmNamedAccount {
+                    name: a.name,
+                    writable: a.writable,
+                    signer: a.signer,
+                    optional: a.optional,
+                })
+                .collect(),
+            args: ix.args,
+        };
+        if let Some(existing) = out.get(&ix.discriminator) {
+            return Err(anyhow!(
+                "Instructions '{}' and '{}' share discriminator 0x{}",
+                existing.name,
+                schema.name,
+                ix.discriminator
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+            ));
+        }
+        out.insert(ix.discriminator, schema);
+    }
+    Ok(out)
 }
 
 fn resolve_program_schema(
@@ -1934,31 +1949,15 @@ fn resolve_program_schema(
         let resolved = source
             .read_project_relative_file(idl_path)
             .with_context(|| format!("reading IDL at '{idl_path}'"))?;
-        let schema = schema_from_anchor_idl_json(&resolved.raw)
-            .with_context(|| format!("parsing IDL at '{}'", resolved.path.display()))?;
+        let idl = svm_idl::parse_idl(&resolved.raw, &program.name)?;
         return Ok(SvmAbi {
             program_id: program.program_id.clone(),
-            instructions: schema.instructions,
-            defined_types: schema.defined_types,
+            instructions: index_by_discriminator(idl.instructions)?,
+            defined_types: idl.defined_types,
             source: SvmSchemaSource::AnchorIdl {
                 path: idl_path.to_string(),
             },
         });
-    }
-
-    if !any_instruction_carries_schema {
-        if let Some((_, name, getter)) = bundled_program_schemas()
-            .into_iter()
-            .find(|(pid, _, _)| *pid == program.program_id.as_str())
-        {
-            let schema = getter();
-            return Ok(SvmAbi {
-                program_id: program.program_id.clone(),
-                instructions: schema.instructions.clone(),
-                defined_types: schema.defined_types.clone(),
-                source: SvmSchemaSource::Bundled { name },
-            });
-        }
     }
 
     Ok(SvmAbi {
@@ -1971,8 +1970,8 @@ fn resolve_program_schema(
 
 /// Resolve per-instruction `(accounts, args)` from one of:
 /// 1. YAML per-instruction `accounts`/`args` overrides (highest priority).
-/// 2. The matching `InstructionSchema` on the program's resolved schema
-///    (bundled OR Anchor IDL), keyed by the YAML `discriminator` bytes.
+/// 2. The matching `InstructionSchema` from the program's parsed IDL, keyed
+///    by the YAML `discriminator` bytes.
 /// 3. An empty pair (`accounts: []`, `args: []`) so existing untyped
 ///    handlers keep working.
 fn resolve_instruction_layout(
@@ -1989,7 +1988,7 @@ fn resolve_instruction_layout(
     if instr.accounts.is_some() != instr.args.is_some() {
         return Err(anyhow!(
             "Instruction '{}': `accounts` and `args` must be provided together (or both omitted \
-             to fall back to a bundled/IDL schema).",
+             to fall back to the program's IDL).",
             instr.name
         ));
     }
@@ -2161,12 +2160,11 @@ pub struct SvmAbi {
     /// Base58 program id this schema describes.
     pub program_id: String,
     /// Per-instruction Borsh layout (accounts + args), keyed by full
-    /// discriminator bytes. Populated from an Anchor IDL's `instructions` or the
-    /// bundled-schema registry; empty for inline (per-instruction YAML) schemas.
+    /// discriminator bytes. Populated from a parsed IDL; empty for inline
+    /// (per-instruction YAML) schemas.
     pub instructions: BTreeMap<Vec<u8>, SvmInstructionSchema>,
     /// Nominal-type registry referenced by `SvmFieldType::Defined`. Populated
-    /// from an Anchor IDL's `types:` block, the bundled-schema registry, or
-    /// empty for hand-written ad-hoc schemas.
+    /// from a parsed IDL, or empty for hand-written ad-hoc schemas.
     pub defined_types: BTreeMap<String, SvmFieldType>,
     pub source: SvmSchemaSource,
 }
@@ -2175,8 +2173,6 @@ pub struct SvmAbi {
 pub enum SvmSchemaSource {
     /// User-supplied `idl: <path>` parsed at codegen time.
     AnchorIdl { path: String },
-    /// `program_id` matched a bundled `ProgramSchema` (e.g. Metaplex).
-    Bundled { name: &'static str },
     /// Hand-written per-instruction `accounts`/`args` in YAML.
     Inline,
 }
@@ -2378,7 +2374,7 @@ pub struct SvmEventKind {
     /// `None` matches both outer and inner (CPI-invoked) instructions.
     pub is_inner: Option<bool>,
     /// Positional account names. Empty when the user supplied no schema and
-    /// no bundled/IDL schema applies; in that case `decoded.accounts` is `{}`.
+    /// no IDL applies; in that case `decoded.accounts` is `{}`.
     pub accounts: Vec<String>,
     /// Borsh argument layout in declared order. Empty for unknown
     /// instructions; the raw `instruction.data` is still available.

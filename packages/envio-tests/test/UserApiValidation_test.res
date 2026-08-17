@@ -1932,7 +1932,7 @@ chains:
             - name: Transfer
               accounts: []
 `,
-      "Config parse error: Layout for instruction 'Transfer': Instruction 'Transfer': \`accounts\` and \`args\` must be provided together (or both omitted to fall back to a bundled/IDL schema).",
+      "Config parse error: Layout for instruction 'Transfer': Instruction 'Transfer': \`accounts\` and \`args\` must be provided together (or both omitted to fall back to the program's IDL).",
     )
   })
 })

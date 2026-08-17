@@ -27,22 +27,21 @@ async function bumpStats(
 indexer.onInstruction(
   { program: "TokenMetadata", instruction: "CreateMetadataAccountV3" },
   async ({ instruction, context }) => {
-    const params = instruction.params;
-    if (!params) {
-      // Bundled Metaplex schema should always match disc 0x21 — surface
-      // mismatches loudly so the upstream decoder regression is obvious.
-      console.warn("CreateMetadataAccountV3: no decoded payload");
-      return;
-    }
-    const { args, accounts } = params;
-    const metadataPda = accounts.metadata;
+    const { accounts } = instruction;
+    // Token Metadata's CreateMetadataAccountV3 account layout (Metaplex):
+    //   0 = metadata account (PDA)
+    //   1 = mint
+    //   2 = mint authority
+    //   3 = payer
+    //   4 = update authority
+    const metadataPda = accounts[0];
     if (metadataPda === undefined) return;
-    const mint = accounts.mint ?? "";
-    const updateAuthority = accounts.update_authority;
+    const mint = accounts[1] ?? "";
+    const updateAuthority = accounts[4];
     const txSig = instruction.transaction.signature;
 
     console.log(
-      `[Create] slot=${instruction.block.slot} name='${args.data.name}' symbol='${args.data.symbol}' mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
+      `[Create] slot=${instruction.block.slot} mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
     );
 
     context.TokenMetadataAccount.set({
@@ -62,15 +61,10 @@ indexer.onInstruction(
 indexer.onInstruction(
   { program: "TokenMetadata", instruction: "UpdateMetadataAccountV2" },
   async ({ instruction, context }) => {
-    const params = instruction.params;
-    if (!params) {
-      console.warn("UpdateMetadataAccountV2: no decoded payload");
-      return;
-    }
-    const { args, accounts } = params;
-    const metadataPda = accounts.metadata;
+    const { accounts } = instruction;
+    const metadataPda = accounts[0];
     if (metadataPda === undefined) return;
-    const updateAuthority = args.update_authority ?? accounts.update_authority;
+    const updateAuthority = accounts[1];
     const txSig = instruction.transaction.signature;
 
     console.log(

@@ -21,7 +21,7 @@ type svmOnSlotArgs<'context> = {
 }
 
 /** Borsh-decoded instruction view. Present whenever a `ProgramSchema` was
- attached to the program (bundled schema, Anchor IDL, or hand-written YAML
+ attached to the program (a parsed IDL, or hand-written YAML
  `accounts`/`args`). Absent (`None`) when no schema applied or the
  discriminator didn't match any registered instruction. */
 type svmInstructionParams = {
