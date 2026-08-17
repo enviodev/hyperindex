@@ -269,14 +269,13 @@ function inputLiteral(
   if (base.kind === "INPUT_OBJECT" && depth < 2) {
     const fields = schema.inputFields(base.name);
     if (!fields.length) return "{}";
-    const chosen = rng.sample(fields, 1, Math.min(2, fields.length));
-    // Only the first nested field inherits an ill-typed value: several bad
-    // values inside one object would just re-open the blame-order ambiguity.
+    // One field per input object. Two operators in one comparison object
+    // (`{_like: ..., _in: ...}`) reopen the blame-order ambiguity, and do so
+    // even when both are well-typed, because Postgres then evaluates two
+    // predicates whose runtime errors surface in engine-specific order.
+    const chosen = rng.sample(fields, 1, 1);
     const body = chosen
-      .map(
-        (f, i) =>
-          `${f.name}: ${inputLiteral(rng, schema, f.type, wellTyped || i > 0, depth + 1)}`
-      )
+      .map((f) => `${f.name}: ${inputLiteral(rng, schema, f.type, wellTyped, depth + 1)}`)
       .join(", ");
     const obj = `{${body}}`;
     return list && rng.chance(0.7) ? `[${obj}]` : obj;
@@ -475,10 +474,24 @@ async function post(url: string, query: string, admin: boolean): Promise<Respons
 
 function canonical(body: string): string {
   try {
-    return JSON.stringify(sortDeep(JSON.parse(body)));
+    return JSON.stringify(sortDeep(stripInternal(JSON.parse(body))));
   } catch {
     return body;
   }
+}
+
+/**
+ * `extensions.internal` carries the failing SQL, its parameters and the raw
+ * Postgres error. Hasura includes it for the admin role; serve never does,
+ * deliberately, so that a compromised admin secret cannot be used to read the
+ * generated SQL back out of the API. It is dropped before comparing rather
+ * than reported on every admin-role internal error.
+ */
+function stripInternal(body: unknown): unknown {
+  const errors = (body as { errors?: { extensions?: Record<string, unknown> }[] })?.errors;
+  if (Array.isArray(errors))
+    for (const e of errors) if (e?.extensions) delete e.extensions.internal;
+  return body;
 }
 
 /**
@@ -575,7 +588,9 @@ async function shrink(roots: Node[], admin: boolean): Promise<Node[]> {
     for (const candidate of reductions(current)) {
       if (budget-- <= 0) break;
       const d = await differs(renderQuery(candidate), admin);
-      if (d && !isBlameOrder(d.hasura, d.serve)) {
+      const known =
+        d && KNOWN_DIVERGENCES.some((k) => k.matches(d.hasura.body, d.serve.body));
+      if (d && !known && !isBlameOrder(d.hasura, d.serve)) {
         current = candidate;
         improved = true;
         break;
@@ -587,6 +602,22 @@ async function shrink(roots: Node[], admin: boolean): Promise<Node[]> {
 
 // ---------------------------------------------------------------------------
 // Finding grouping — one bug should report once, not once per hit.
+
+/**
+ * Differences that are Hasura bugs serve deliberately does not reproduce.
+ * Each is pinned by a corpus case carrying the same explanation, so this list
+ * only keeps them out of the fuzzer's actionable output.
+ */
+const KNOWN_DIVERGENCES: { reason: string; matches: (h: string, s: string) => boolean }[] = [
+  {
+    reason:
+      "jsonb _in/_nin: Hasura binary-encodes non-string elements (buildArrayLiteral " +
+      "via PE.jsonb_ast) and Postgres rejects the array literal",
+    matches: (h, s) =>
+      h.includes("invalid input syntax for type json") &&
+      !s.includes("invalid input syntax for type json"),
+  },
+];
 
 /**
  * A query can hold more than one invalid spot, and the engines then disagree
@@ -691,6 +722,7 @@ async function main() {
   let checked = 0;
   let hits = 0;
   let ambiguous = 0;
+  const divergences = new Map<string, number>();
 
   for (let seed = seedLo!; seed <= seedHi!; seed++) {
     const rng = new Rng(seed);
@@ -719,6 +751,13 @@ async function main() {
           if (!diff) continue;
           if (isBlameOrder(diff.hasura, diff.serve)) {
             ambiguous++;
+            continue;
+          }
+          const divergence = KNOWN_DIVERGENCES.find((d) =>
+            d.matches(diff!.hasura.body, diff!.serve.body)
+          );
+          if (divergence) {
+            divergences.set(divergence.reason, (divergences.get(divergence.reason) ?? 0) + 1);
             continue;
           }
           hits++;
@@ -756,6 +795,8 @@ async function main() {
     `\nchecked ${checked}, actionable mismatches ${hits} in ${findings.length} shapes` +
       `, ${ambiguous} ambiguous (multiple invalid spots, blame order not reproducible)`
   );
+  for (const [reason, count] of divergences)
+    console.log(`  known divergence x${count}: ${reason}`);
   for (const f of findings) {
     console.log(
       `\n--- seed ${f.seed} #${f.index}${f.admin ? " (admin)" : ""}\n${f.query}`

@@ -1,6 +1,7 @@
 /**
- * Operands of the jsonb key operators (`_has_key`, `_has_keys_all`,
- * `_has_keys_any`). Found by `fuzz.ts`.
+ * Operands of the jsonb operators. Found by `fuzz.ts`.
+ *
+ * The key operators (`_has_key`, `_has_keys_all`, `_has_keys_any`):
  *
  * These take Text rather than the column's own type, and Hasura parses them
  * with aeson like any other operand — so a non-string is a `parse-failed`
@@ -9,6 +10,18 @@
  * The null cases differ by position: a null operand is passed through to SQL
  * (matching no rows), while a null *element* of the keys list is rejected,
  * because the list's element type is non-null.
+ *
+ * `_in`/`_nin` on a jsonb column are a different story: they are broken in
+ * Hasura v2.43 and serve deliberately does not reproduce the breakage. Hasura
+ * builds the `= ANY(...)` array literal with `buildArrayLiteral`, which
+ * encodes a non-string jsonb element through `PE.jsonb_ast` — the BINARY
+ * encoder. Every such element therefore carries jsonb's 0x01 version byte
+ * into a text array literal and Postgres rejects the lot with "invalid input
+ * syntax for type json". The only operand that survives is a JSON string
+ * whose contents do not themselves parse as JSON, which takes a different
+ * branch. serve implements the operator as intended, so these cases are
+ * marked as gaps we do not plan to close: if a Hasura upgrade fixes the
+ * encoder, re-recording makes them match and the harness will say so.
  */
 
 import { defineCases } from "../corpus.js";
@@ -104,5 +117,61 @@ export default defineCases([
     name: "jsonbkey-has-keys-all-variable-null-element",
     query: `query ($k: [String!]) { ${ROOT.replace(")", `, where: {block_fields: {_has_keys_all: $k}})`)} { serial } }`,
     rawVariables: `{"k": [null]}`,
+  },
+
+  // --- _in / _nin on a jsonb column: Hasura's binary-encoder bug ---------
+  // Works on both: a string that is not itself valid JSON.
+  {
+    name: "jsonbin-in-string-not-json",
+    query: `{ ${ROOT.replace(")", `, where: {params: {_in: ["str"]}})`)} { serial } }`,
+  },
+  {
+    name: "jsonbin-in-empty-list",
+    query: `{ ${ROOT.replace(")", `, where: {params: {_in: []}})`)} { serial } }`,
+  },
+  // _eq takes a different translation path and is correct on both engines.
+  {
+    name: "jsonbin-eq-number",
+    query: `{ ${ROOT.replace(")", `, where: {params: {_eq: 1}})`)} { serial } }`,
+  },
+  {
+    name: "jsonbin-eq-object",
+    query: `{ ${ROOT.replace(")", `, where: {params: {_eq: {}}})`)} { serial } }`,
+  },
+  {
+    name: "jsonbin-in-number",
+    query: `{ ${ROOT.replace(")", `, where: {params: {_in: [1]}})`)} { serial } }`,
+    knownGap: "Hasura binary-encodes non-string jsonb _in elements and errors; serve executes the operator correctly",
+  },
+  {
+    name: "jsonbin-in-boolean",
+    query: `{ ${ROOT.replace(")", `, where: {params: {_in: [true]}})`)} { serial } }`,
+    knownGap: "Hasura binary-encodes non-string jsonb _in elements and errors; serve executes the operator correctly",
+  },
+  {
+    name: "jsonbin-in-object",
+    query: `{ ${ROOT.replace(")", `, where: {params: {_in: [{}]}})`)} { serial } }`,
+    knownGap: "Hasura binary-encodes non-string jsonb _in elements and errors; serve executes the operator correctly",
+  },
+  {
+    name: "jsonbin-in-nested-list",
+    query: `{ ${ROOT.replace(")", `, where: {params: {_in: [[1]]}})`)} { serial } }`,
+    knownGap: "Hasura binary-encodes non-string jsonb _in elements and errors; serve executes the operator correctly",
+  },
+  // A string that DOES parse as JSON takes the same buggy branch.
+  {
+    name: "jsonbin-in-string-that-is-json",
+    query: `{ ${ROOT.replace(")", `, where: {params: {_in: ["1"]}})`)} { serial } }`,
+    knownGap: "Hasura binary-encodes non-string jsonb _in elements and errors; serve executes the operator correctly",
+  },
+  {
+    name: "jsonbin-nin-number",
+    query: `{ ${ROOT.replace(")", `, where: {params: {_nin: [1]}})`)} { serial } }`,
+    knownGap: "Hasura binary-encodes non-string jsonb _in elements and errors; serve executes the operator correctly",
+  },
+  {
+    name: "jsonbin-in-number-bare",
+    query: `{ ${ROOT.replace(")", `, where: {params: {_in: 1}})`)} { serial } }`,
+    knownGap: "Hasura binary-encodes non-string jsonb _in elements and errors; serve executes the operator correctly",
   },
 ]);

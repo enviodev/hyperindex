@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ raw_events(order_by: {serial: asc}, where: {params: {_in: [[1]]}}) { serial } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "invalid input syntax for type json",
+    "extensions": {
+     "path": "$",
+     "code": "data-exception"
+    }
+   }
+  ]
+ }
+}
