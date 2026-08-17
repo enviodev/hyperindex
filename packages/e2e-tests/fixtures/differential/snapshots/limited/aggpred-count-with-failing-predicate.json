@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ SimpleEntity_aggregate(where: {value: {_nilike: \"\\\\\"}}) { aggregate { count } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "LIKE pattern must not end with escape character",
+    "extensions": {
+     "path": "$",
+     "code": "bad-request"
+    }
+   }
+  ]
+ }
+}

@@ -21,6 +21,7 @@ import jsonbKeyOperands from "./20-jsonb-key-operands.js";
 import degenerateAggregates from "./21-degenerate-aggregates.js";
 import runtimeErrorVisibility from "./22-runtime-error-visibility.js";
 import requestBody from "./23-request-body.js";
+import aggregatePredicates from "./24-aggregate-predicates.js";
 import type { CorpusCase } from "../corpus.js";
 
 export const allCases: CorpusCase[] = [
@@ -47,4 +48,5 @@ export const allCases: CorpusCase[] = [
   ...degenerateAggregates,
   ...runtimeErrorVisibility,
   ...requestBody,
+  ...aggregatePredicates,
 ];

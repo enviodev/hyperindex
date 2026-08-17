@@ -1,0 +1,14 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ SimpleEntity_aggregate(where: {value: {_eq: \"nope\"}}) { __typename } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimpleEntity_aggregate": {
+    "__typename": "SimpleEntity_aggregate"
+   }
+  }
+ }
+}

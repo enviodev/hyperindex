@@ -598,6 +598,36 @@ function genWhere(
   return `{${col.name}: {${op.name}: ${maybeVariable(rng, opts, op.type, literal)}}}`;
 }
 
+/**
+ * An introspection root beside a data root: the two are resolved by
+ * completely separate code in serve (introspection.rs against the registry,
+ * sql.rs against Postgres) and only a mixed query proves they compose.
+ */
+function introspectionRoot(rng: Rng, schema: Schema): Node {
+  const typeNames = [...schema.types.keys()].filter((n) => !n.startsWith("__"));
+  const name = typeNames.length ? rng.pick(typeNames) : "query_root";
+  return rng.chance(0.5)
+    ? {
+        field: "__type",
+        args: [["name", JSON.stringify(name)]],
+        children: [
+          { field: "name", args: [], children: [] },
+          { field: "kind", args: [], children: [] },
+        ],
+      }
+    : {
+        field: "__schema",
+        args: [],
+        children: [
+          {
+            field: "queryType",
+            args: [],
+            children: [{ field: "name", args: [], children: [] }],
+          },
+        ],
+      };
+}
+
 function generate(rng: Rng, schema: Schema, opts: GenOptions): Node[] {
   const count = rng.chance(0.15) ? 2 : 1;
   const roots: Node[] = [];
@@ -619,6 +649,7 @@ function generate(rng: Rng, schema: Schema, opts: GenOptions): Node[] {
       })
     );
   }
+  if (rng.chance(0.08)) roots.push(introspectionRoot(rng, schema));
   return roots;
 }
 
@@ -759,7 +790,12 @@ function reductions(roots: Node[]): Node[][] {
   return out;
 }
 
-async function shrink(roots: Node[], admin: boolean, opts: GenOptions): Promise<Node[]> {
+async function shrink(
+  roots: Node[],
+  admin: boolean,
+  opts: GenOptions,
+  limit: number | undefined
+): Promise<Node[]> {
   let current = roots;
   let improved = true;
   let budget = 300;
@@ -769,7 +805,10 @@ async function shrink(roots: Node[], admin: boolean, opts: GenOptions): Promise<
       if (budget-- <= 0) break;
       const d = await differs(renderQuery(candidate, opts), admin);
       const known =
-        d && KNOWN_DIVERGENCES.some((k) => k.matches(d.hasura.body, d.serve.body));
+        d &&
+        (KNOWN_DIVERGENCES.some((k) => k.matches(d.hasura.body, d.serve.body)) ||
+          truncatedByRowLimit(d.hasura.body, limit) ||
+          truncatedByRowLimit(d.serve.body, limit));
       if (d && !known && !isBlameOrder(d.hasura, d.serve)) {
         current = candidate;
         improved = true;
@@ -782,6 +821,37 @@ async function shrink(roots: Node[], admin: boolean, opts: GenOptions): Promise<
 
 // ---------------------------------------------------------------------------
 // Finding grouping — one bug should report once, not once per hit.
+
+/**
+ * With a row limit in force and no `order_by`, WHICH rows come back is
+ * unspecified — the aggregate `nodes` field takes no arguments at all, so a
+ * generated query cannot even ask for an order. Two engines truncating two
+ * different scans is not a difference in behaviour, so a data-only mismatch
+ * where something was truncated to exactly the limit is not reported. The
+ * default phase has no limit, so the same shapes are still fully compared
+ * there and a real ordering bug still surfaces.
+ */
+function truncatedByRowLimit(body: string, limit: number | undefined): boolean {
+  if (limit === undefined) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return false;
+  }
+  let found = false;
+  const walk = (v: unknown) => {
+    if (found) return;
+    if (Array.isArray(v)) {
+      if (v.length === limit) found = true;
+      v.forEach(walk);
+    } else if (v && typeof v === "object") {
+      Object.values(v as Record<string, unknown>).forEach(walk);
+    }
+  };
+  walk(parsed);
+  return found;
+}
 
 /**
  * Differences that are Hasura bugs serve deliberately does not reproduce.
@@ -806,12 +876,13 @@ const KNOWN_DIVERGENCES: { reason: string; matches: (h: string, s: string) => bo
   },
   {
     reason:
-      "runtime error visibility: Postgres reorders AND clauses by cost, and Hasura's " +
-      "inlined constants let it skip a failing predicate that serve's bound parameters " +
-      "leave in place",
+      "runtime error visibility: whether a failing predicate raises depends on whether " +
+      "the engine evaluates it — Postgres reorders AND clauses by cost around Hasura's " +
+      "inlined constants, and serve skips the statement entirely for a selection that " +
+      "needs no data",
     matches: (h, s) =>
-      h.includes('"data"') &&
-      /"code":"(data-exception|bad-request)"/.test(s),
+      (h.includes('"data"') && /"code":"(data-exception|bad-request)"/.test(s)) ||
+      (s.includes('"data"') && /"code":"(data-exception|bad-request)"/.test(h)),
   },
 ];
 
@@ -914,11 +985,17 @@ async function main() {
   );
   await assertSameSchemaShape();
 
-  const opts: GenOptions = { wellTypedRatio, maxDepth: 2, adversarialBudget: 1 };
+  const opts: GenOptions = {
+    wellTypedRatio,
+    maxDepth: Number(arg("--max-depth") ?? 3),
+    adversarialBudget: 1,
+  };
   const bySignature = new Map<string, Finding>();
   let checked = 0;
   let hits = 0;
   let ambiguous = 0;
+  let unordered = 0;
+  const responseLimit = phaseConfigs[phase].responseLimit;
   const divergences = new Map<string, number>();
   // A generator feature that silently stops firing would turn into a quiet
   // loss of coverage, so every run reports what it actually produced.
@@ -967,6 +1044,13 @@ async function main() {
             ambiguous++;
             continue;
           }
+          if (
+            truncatedByRowLimit(diff.hasura.body, responseLimit) ||
+            truncatedByRowLimit(diff.serve.body, responseLimit)
+          ) {
+            unordered++;
+            continue;
+          }
           const divergence = KNOWN_DIVERGENCES.find((d) =>
             d.matches(diff!.hasura.body, diff!.serve.body)
           );
@@ -987,7 +1071,7 @@ async function main() {
             hasura: diff.hasura.body,
             serve: diff.serve.body,
           });
-          const small = await shrink(item.roots, item.admin, item.perQuery);
+          const small = await shrink(item.roots, item.admin, item.perQuery, responseLimit);
           const smallDoc = renderQuery(small, item.perQuery);
           const reDiff = await differs(smallDoc, item.admin);
           if (reDiff)
@@ -1009,7 +1093,10 @@ async function main() {
   const findings = [...bySignature.values()];
   console.log(
     `\nchecked ${checked}, actionable mismatches ${hits} in ${findings.length} shapes` +
-      `, ${ambiguous} ambiguous (multiple invalid spots, blame order not reproducible)`
+      `, ${ambiguous} ambiguous (multiple invalid spots, blame order not reproducible)` +
+      (unordered
+        ? `, ${unordered} unordered (row limit truncated an unordered result)`
+        : "")
   );
   console.log(
     `  generated: ${produced.variables} with variables, ${produced.fragments} with named ` +

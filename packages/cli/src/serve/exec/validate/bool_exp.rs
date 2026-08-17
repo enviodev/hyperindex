@@ -303,8 +303,15 @@ fn coerce_aggregate_bool_exp<'a>(
     let type_def = ctx.registry.get(&type_name);
     let remote = model_table(ctx, rt);
 
+    let entries = expect_object(v, &type_name, path)?;
+    // Hasura's aggregate predicate holds exactly one entry; an empty object
+    // is rejected rather than treated as no predicate at all.
+    if entries.len() != 1 {
+        return Err(verr(path, "exactly one predicate should be specified"));
+    }
+
     let mut out: Vec<ir::BoolExp> = Vec::new();
-    for (op, value) in expect_object(v, &type_name, path)? {
+    for (op, value) in entries {
         let opath = format!("{path}.{op}");
         let Some(fd) = type_def.and_then(|d| d.input_field(op)) else {
             return Err(verr(
