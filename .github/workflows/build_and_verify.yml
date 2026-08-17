@@ -193,7 +193,7 @@ jobs:
 
     # The postgres anchor is defined here (first job needing it) and reused
     # by alias in later jobs; the hasura anchor is defined the same way in
-    # differential-test-live.
+    # serve-differential-test-live.
     services:
       postgres: &postgres-service
         image: postgres:16
@@ -293,8 +293,8 @@ jobs:
   # so it needs Postgres only. Hasura is used just to *populate* those
   # snapshots (`pnpm record:differential`, run locally/manually whenever
   # the corpus changes, not on every CI run) - see
-  # differential-test-live below for the live-Hasura confidence check.
-  differential-test:
+  # serve-differential-test-live below for the live-Hasura confidence check.
+  serve-differential-test:
     runs-on: ubuntu-latest
     needs: build-envio-package
     timeout-minutes: 9
@@ -339,7 +339,7 @@ jobs:
   # verify the committed snapshots, run the full HTTP + WebSocket suite,
   # and exercise envio serve under a short bounded load. Snapshot drift is
   # required; the slower live-parity and soak checks remain informational.
-  differential-test-live:
+  serve-differential-test-live:
     runs-on: ubuntu-latest
     needs: build-envio-package
     timeout-minutes: 20
@@ -430,7 +430,7 @@ jobs:
   # same-machine comparison here). Informational only - never blocks a
   # merge on a regression, since CI runners have enough performance
   # variance on their own that a hard threshold would be flaky.
-  differential-benchmark:
+  serve-differential-benchmark:
     runs-on: ubuntu-latest
     needs: build-envio-package
     timeout-minutes: 15
