@@ -41,6 +41,7 @@ let pairCreatedEventConfig: Internal.evmEventConfig = {
   id: pairCreatedEventId,
   contractName: "UniswapV2Factory",
   name: "PairCreated",
+  identity: Named({contractName: "UniswapV2Factory", eventName: "PairCreated"}),
   paramsRawEventSchema: S.literal(%raw(`null`))
   ->S.shape(_ => ())
   ->(Utils.magic: S.t<unit> => S.t<Internal.eventParams>),

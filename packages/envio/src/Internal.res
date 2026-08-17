@@ -463,6 +463,35 @@ let unionFieldSelection = (a: fieldSelection, b: fieldSelection): fieldSelection
   transactionMask: FieldMask.orMask(a.transactionMask, b.transactionMask),
 }
 
+// What a registration names. `Named` is a config-declared (contract, event)
+// pair — every registration made through `onEvent`/`onInstruction`. `Raw` is
+// program-less: the user described the rows inline with a `where` selector and
+// no config entry backs it, so it's identified by an ordinal allocated when the
+// registration is made. Two raw registrations never share an ordinal, which is
+// what keeps them separate even when their selectors are identical.
+type registrationIdentity =
+  | Named({contractName: string, eventName: string})
+  // `kind` is the ecosystem the selector was written for ("svm", "evm"), so
+  // keys stay unambiguous once more than one ecosystem registers raw.
+  | Raw({kind: string, ordinal: int, selector: string})
+
+// The registration store's key. A `Raw` key can never collide with a `Named`
+// one, so a raw registration never marks a configured event as handled.
+let identityKey = identity =>
+  switch identity {
+  | Named({contractName, eventName}) => contractName ++ "." ++ eventName
+  | Raw({kind, ordinal}) => `raw:${kind}:${ordinal->Int.toString}`
+  }
+
+// How a registration is named back to the user. A raw one has no contract or
+// event name to quote, so it's named by the selector the user wrote.
+let identityLabel = identity =>
+  switch identity {
+  | Named({contractName, eventName}) =>
+    `the "${eventName}" event registration on contract "${contractName}"`
+  | Raw({selector}) => `the raw registration for ${selector}`
+  }
+
 // Definition of an event/instruction we know how to decode: identity + decode
 // schemas + chain-independent field selection. A pure function of the ABI +
 // config, shared across chains. `private` so it can only be coerced from an
@@ -470,8 +499,13 @@ let unionFieldSelection = (a: fieldSelection, b: fieldSelection): fieldSelection
 // base back down to evm/fuel/svm safely.
 type eventConfig = private {
   id: string,
+  // Display/data names: what the payload, the logger, `raw_events` and the
+  // address store call this event. Routing and store keying go through
+  // `identity` instead — for a raw registration these two are synthesized from
+  // the selector and are not unique.
   name: string,
   contractName: string,
+  identity: registrationIdentity,
   paramsRawEventSchema: S.schema<eventParams>,
   simulateParamsSchema: S.schema<eventParams>,
   // The `config.yaml` selection, which every registration of this event
@@ -747,10 +781,10 @@ let getItemChainId = item =>
   | Block({onBlockRegistration: {chainId}}) => chainId
   }
 
-// The `fields` option of an EVM `onEvent`/`contractRegister` registration:
-// the block and transaction fields the handler reads. Replaces the config
-// `field_selection` for this registration.
-type evmFieldsSelection = {
+// The `fields` option of a registration: the block and transaction fields the
+// handler reads, replacing the config `field_selection` for this registration.
+// Field names are validated per ecosystem, so the shape is shared.
+type fieldsSelection = {
   block?: array<string>,
   transaction?: array<string>,
 }
@@ -758,7 +792,7 @@ type evmFieldsSelection = {
 type eventOptions<'where> = {
   wildcard?: bool,
   where?: 'where,
-  fields?: evmFieldsSelection,
+  fields?: fieldsSelection,
 }
 
 type fuelSupplyParams = {

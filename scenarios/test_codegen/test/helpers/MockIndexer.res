@@ -337,6 +337,7 @@ let evmOnEventRegistration = (
     id,
     contractName,
     name: "EventWithoutFields",
+    identity: Named({contractName, eventName: "EventWithoutFields"}),
     paramsRawEventSchema: EventConfigBuilder.buildParamsSchema(paramsMetadata),
     simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema(paramsMetadata),
     fieldSelection: Internal.makeFieldSelection(

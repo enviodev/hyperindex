@@ -20,6 +20,12 @@ let setHandler: (
   Internal.genericHandler<Internal.genericHandlerArgs<'event, Internal.handlerContext>>,
   ~eventOptions: option<Internal.eventOptions<'where>>,
 ) => unit
+let setRawHandler: (
+  ~where: JSON.t,
+  ~fields: option<Internal.fieldsSelection>,
+  ~includeLogs: bool,
+  Internal.genericHandler<Internal.genericHandlerArgs<'event, Internal.handlerContext>>,
+) => unit
 let setContractRegister: (
   ~contractName: string,
   ~eventName: string,

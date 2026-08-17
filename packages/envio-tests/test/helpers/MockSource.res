@@ -77,6 +77,7 @@ let makeMockSourceRegistration = (~index, ~contractName): Internal.onEventRegist
       // query selection, while ChainState still owns and resolves this slot.
       contractName,
       name: "MockEvent",
+      identity: Named({contractName, eventName: "MockEvent"}),
       paramsRawEventSchema: EventConfigBuilder.buildParamsSchema([]),
       simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema([]),
       fieldSelection: Internal.makeFieldSelection(

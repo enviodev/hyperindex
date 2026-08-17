@@ -20,9 +20,11 @@ type activeRegistration = {
   config: Config.t,
   registrationsByChainId: dict<chainRegistrations>,
   mutable finished: bool,
+  // Next ordinal handed to a raw registration. One per `onRawInstruction` call
+  // (not per chain), so a raw registration keeps one identity across the chain
+  // set the call resolves for.
+  mutable nextRawOrdinal: int,
 }
-
-let getKey = (~contractName, ~eventName) => contractName ++ "." ++ eventName
 
 // Test-only: reset to fresh-import state so a new registration cycle starts
 // empty (production starts each isolate empty and registers once).
@@ -71,6 +73,7 @@ let startRegistration = (~config: Config.t) => {
       config,
       registrationsByChainId: Dict.make(),
       finished: false,
+      nextRawOrdinal: 0,
     }
     EnvioGlobal.value.activeRegistration = Some(r->(Utils.magic: activeRegistration => unknown))
     // Replay pre-registered callbacks in source (FIFO) order, then clear. For
@@ -92,6 +95,7 @@ let makeRegistration = (~config: Config.t): registration => {
   config,
   registrationsByChainId: Dict.make(),
   finished: false,
+  nextRawOrdinal: 0,
 }
 
 // Makes `registration` the target of `indexer.onEvent` & co. for the duration
@@ -176,19 +180,23 @@ let getResolvedWhere = (reg: Internal.onEventRegistration) =>
     reg->(Utils.magic: Internal.onEventRegistration => Internal.evmOnEventRegistration)
   ).resolvedWhere
 
+let identityKey = (reg: Internal.onEventRegistration) =>
+  Internal.identityKey(reg.eventConfig.identity)
+
 // Two chain registrations target the same fetched log when they share the
-// event, the wildcard flag, and (on EVM) the resolved `where` — a handler and
+// identity, the wildcard flag, and (on EVM) the resolved `where` — a handler and
 // a contractRegister that agree on all three can be merged into one
 // registration (so one item per log runs both). `where` is compared on the
 // resolved structure (`Values` by hex arrays, `ContractAddresses` by contract
-// name, plus `startBlock`); differing filters stay separate registrations.
+// name, plus `startBlock`); differing filters stay separate registrations. Two
+// raw registrations never share an identity, so they never merge — each one
+// carries its own selector and dispatches on its own.
 let sameEventAndFilter = (
   a: Internal.onEventRegistration,
   b: Internal.onEventRegistration,
   ~config: Config.t,
 ) =>
-  a.eventConfig.contractName === b.eventConfig.contractName &&
-  a.eventConfig.name === b.eventConfig.name &&
+  a->identityKey === b->identityKey &&
   a.isWildcard === b.isWildcard &&
   switch config.ecosystem.name {
   | Evm => getResolvedWhere(a) == getResolvedWhere(b)
@@ -303,7 +311,9 @@ let addOnEventRegistration = (
     // theirs from the event config, so an inline one would be silently dropped.
     if registration.config.ecosystem.name !== Evm {
       JsError.throwWithMessage(
-        `The fields option of the "${eventName}" event registration on contract "${contractName}" is only supported on EVM. Select the fields in your config instead.`,
+        `The fields option of ${Internal.identityLabel(
+            Named({contractName, eventName}),
+          )} is only supported on EVM. Select the fields in your config instead.`,
       )
     }
     Some(
@@ -369,6 +379,60 @@ let addOnEventRegistration = (
   }
 }
 
+// Resolve one program-less `onRawInstruction` call into a registration for
+// every chain in the config. Unlike a named registration there is nothing to
+// look up: the selector the user wrote is the whole definition, so it matches
+// every chain and can never fail to resolve. The synthesized event config is
+// built once and shared — it doesn't vary by chain.
+let addRawOnEventRegistration = (
+  registration: activeRegistration,
+  ~where: JSON.t,
+  ~fields: option<Internal.fieldsSelection>,
+  ~includeLogs: bool,
+  ~handler: option<Internal.handler>,
+) => {
+  let ordinal = registration.nextRawOrdinal
+  registration.nextRawOrdinal = ordinal + 1
+  let eventConfig = EventConfigBuilder.buildRawEventConfig(
+    ~ecosystemName=registration.config.ecosystem.name,
+    ~ordinal,
+    ~where,
+    ~fields,
+    ~includeLogs,
+  )
+  registration.config.chainMap
+  ->ChainMap.values
+  ->Array.forEach(chainConfig =>
+    (registration->getChainRegistrations(~chainId=chainConfig.id)).onEventRegistrations
+    ->Array.push(
+      buildOnEventRegistrationWith(
+        ~config=registration.config,
+        ~chainId=chainConfig.id,
+        ~eventConfig,
+        // No config-declared contract backs a raw registration, so there are no
+        // addresses to gate it on — the selector pins the rows itself.
+        ~isWildcard=true,
+        ~handler,
+        ~contractRegister=None,
+        ~where=None,
+        ~fieldSelection=None,
+      ),
+    )
+    ->ignore
+  )
+}
+
+let setRawHandler = (~where, ~fields, ~includeLogs, handler) => {
+  withRegistration(registration => {
+    registration->addRawOnEventRegistration(
+      ~where,
+      ~fields,
+      ~includeLogs,
+      ~handler=Some(handler->(Utils.magic: Internal.genericHandler<'args> => Internal.handler)),
+    )
+  })
+}
+
 let setHandler = (~contractName, ~eventName, handler, ~eventOptions) => {
   withRegistration(registration => {
     let newHandler = handler->(Utils.magic: Internal.genericHandler<'args> => Internal.handler)
@@ -419,20 +483,18 @@ let storedOnEventRegistrations = (r: activeRegistration, ~chainId: ChainId.t): a
 
 // True when any registration for the event is a wildcard. Used by simulate to
 // decide whether a src address needs deriving.
-let isWildcard = (~contractName, ~eventName) =>
+let isWildcard = (~contractName, ~eventName) => {
+  let key = Internal.identityKey(Named({contractName, eventName}))
   switch getActiveRegistration() {
   | Some(r) =>
     r.registrationsByChainId
     ->Dict.valuesToArray
     ->Array.some(chainRegs =>
-      chainRegs.onEventRegistrations->Array.some(reg =>
-        reg.eventConfig.contractName === contractName &&
-        reg.eventConfig.name === eventName &&
-        reg.isWildcard
-      )
+      chainRegs.onEventRegistrations->Array.some(reg => reg->identityKey === key && reg.isWildcard)
     )
   | None => false
   }
+}
 
 // Every registration for one event on a chain, so simulate fans a simulated
 // event out to each the way real routing does. Falls back to a bare
@@ -447,11 +509,8 @@ let getSimulateOnEventRegistrations = (
   | Some(r) => r->storedOnEventRegistrations(~chainId)
   | None => []
   }
-  let matching =
-    mergeRegistrations(stored, ~config)->Array.filter(reg =>
-      reg.eventConfig.contractName === eventConfig.contractName &&
-        reg.eventConfig.name === eventConfig.name
-    )
+  let key = Internal.identityKey(eventConfig.identity)
+  let matching = mergeRegistrations(stored, ~config)->Array.filter(reg => reg->identityKey === key)
   if matching->Utils.Array.notEmpty {
     matching
   } else {
@@ -519,20 +578,16 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
 
         let builtRegs = mergeRegistrations(r->storedOnEventRegistrations(~chainId), ~config)
         let registeredKeys = Utils.Set.make()
-        builtRegs->Array.forEach(reg =>
-          registeredKeys
-          ->Utils.Set.add(
-            getKey(~contractName=reg.eventConfig.contractName, ~eventName=reg.eventConfig.name),
-          )
-          ->ignore
-        )
+        builtRegs->Array.forEach(reg => registeredKeys->Utils.Set.add(reg->identityKey)->ignore)
 
         // Events with no handler/contractRegister aren't fetched or dispatched
         // unless raw events are enabled, in which case a bare registration is
         // added to fetch them. Otherwise they're reported once below. Keyed on
         // the resolved registrations (before the where-empty drop) so a
         // `where: false` event still counts as registered — its handler opted
-        // out of this chain, so it gets no raw-event registration either.
+        // out of this chain, so it gets no raw-event registration either. A raw
+        // registration keys on its own ordinal, so it never counts as a handler
+        // for a configured event it happens to select.
         let rawEventRegs = []
         chainConfig.contracts->Array.forEach(contract => {
           contract.events->Array.forEach(
@@ -540,7 +595,9 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
               if (
                 !(
                   registeredKeys->Utils.Set.has(
-                    getKey(~contractName=contract.name, ~eventName=eventConfig.name),
+                    Internal.identityKey(
+                      Named({contractName: contract.name, eventName: eventConfig.name}),
+                    ),
                   )
                 )
               ) {

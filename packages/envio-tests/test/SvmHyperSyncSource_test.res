@@ -25,6 +25,7 @@ let makeEventConfig = (
     id: "0x21",
     name: "CreateMetadataAccountV3",
     contractName: "TokenMetadata",
+    identity: Named({contractName: "TokenMetadata", eventName: "CreateMetadataAccountV3"}),
     paramsRawEventSchema: %raw(`null`),
     simulateParamsSchema: %raw(`null`),
     programId: metaplexProgramId->SvmTypes.Pubkey.fromStringUnsafe,

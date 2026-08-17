@@ -1307,6 +1307,52 @@ export type SvmOnInstructionHandler<
   Config extends IndexerConfigTypes = GlobalConfig,
 > = (args: SvmOnInstructionHandlerArgs<Config>) => Promise<void>;
 
+// ============== SVM onRawInstruction types ==============
+
+/** One positional account constraint: the account at `position` must be one of
+ * `values`. Mirrors `account_filters` in `config.yaml`. */
+export type SvmAccountFilter = {
+  /** Account position within the instruction (0..=9). */
+  readonly position: number;
+  /** Allowed base58 pubkeys for this position. */
+  readonly values: readonly string[];
+};
+
+/** Account constraints of a raw selector: a flat list (AND across positions),
+ * or `{ anyOf }`, a list of AND-groups that are OR-ed together. */
+export type SvmAccountFilters =
+  | readonly SvmAccountFilter[]
+  | { readonly anyOf: readonly (readonly SvmAccountFilter[])[] };
+
+/** Which instructions an `indexer.onRawInstruction` registration wants. This is
+ * the whole definition — no program has to be declared in `config.yaml`. */
+export type SvmRawInstructionWhere = {
+  /** Base58 program id whose instructions to match. */
+  readonly programId: string;
+  /** Hex-encoded instruction-data prefix ("0x" optional), 1, 2, 4 or 8 bytes.
+   * Omit to match every instruction of the program. */
+  readonly discriminator?: string;
+  /** Filter on inner-vs-outer instructions. Omit to match both. */
+  readonly isInner?: boolean;
+  readonly accountFilters?: SvmAccountFilters;
+};
+
+export type SvmBlockFieldName = keyof SvmInstructionBlock & string;
+export type SvmTransactionFieldName = keyof SvmTransaction & string;
+
+/** Options for an SVM `indexer.onRawInstruction` registration. A named
+ * registration takes its field selection from `config.yaml`; a raw one has no
+ * config entry, so it names the fields it reads here. */
+export type SvmOnRawInstructionOptions = {
+  readonly where: SvmRawInstructionWhere;
+  readonly fields?: {
+    readonly block?: readonly SvmBlockFieldName[];
+    readonly transaction?: readonly SvmTransactionFieldName[];
+  };
+  /** Deliver the logs scoped to each matched instruction. */
+  readonly includeLogs?: boolean;
+};
+
 // ============== Indexer Types ==============
 
 // Helper: Check if an ecosystem is configured. Single-ecosystem indexers only
@@ -1523,6 +1569,18 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
               options: SvmOnSlotOptions<Config>,
               handler: SvmOnSlotHandler<Config>,
             ) => void;
+            /**
+             * Register a handler for instructions selected by `where` alone —
+             * the program does not have to be declared in `config.yaml`.
+             * Nothing decodes them, so `instruction.params` is absent and the
+             * handler reads `data` and `accounts` itself.
+             */
+            readonly onRawInstruction: (
+              options: SvmOnRawInstructionOptions,
+              handler: (
+                args: SvmOnInstructionHandlerArgs<Config>,
+              ) => Promise<void>,
+            ) => void;
           } & (Config["svm"] extends {
             programs: infer Programs extends Record<string, Record<string, any>>;
           }
@@ -1579,6 +1637,7 @@ type CodegenRequiredHint =
 type CodegenRequiredFallback = {
   readonly onEvent: (...hint: CodegenRequiredHint[]) => void;
   readonly onInstruction: (...hint: CodegenRequiredHint[]) => void;
+  readonly onRawInstruction: (...hint: CodegenRequiredHint[]) => void;
   readonly onBlock: (...hint: CodegenRequiredHint[]) => void;
   readonly onSlot: (...hint: CodegenRequiredHint[]) => void;
   readonly contractRegister: (...hint: CodegenRequiredHint[]) => void;

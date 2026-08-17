@@ -239,7 +239,7 @@ let getGlobalIndexer = (): 'indexer => {
           "event": unknown,
           "wildcard": option<bool>,
           "where": option<JSON.t>,
-          "fields": option<Internal.evmFieldsSelection>,
+          "fields": option<Internal.fieldsSelection>,
         }
       )
     // Detect format: if "contract" is a string, it's the TS format
@@ -295,7 +295,7 @@ let getGlobalIndexer = (): 'indexer => {
           "program": unknown,
           "instruction": unknown,
           "where": option<JSON.t>,
-          "fields": option<Internal.evmFieldsSelection>,
+          "fields": option<Internal.fieldsSelection>,
         }
       )
     let (programName, instructionName) = if typeof(raw["program"]) === #string {
@@ -345,6 +345,43 @@ let getGlobalIndexer = (): 'indexer => {
           context: args.context,
         }),
       ~eventOptions,
+    )
+  }
+
+  // onRawInstruction: the program-less counterpart of onInstruction. The
+  // selector comes from `where` instead of a config-declared program, so
+  // nothing here resolves a name — the options go straight to the registration,
+  // which synthesizes the event config from them.
+  let onRawInstructionFn = (rawOptions: 'a, handler: 'b) => {
+    HandlerRegister.throwIfFinishedRegistration(~methodName="onRawInstruction")
+    let raw =
+      rawOptions->(
+        Utils.magic: 'a => {
+          "where": option<JSON.t>,
+          "fields": option<Internal.fieldsSelection>,
+          "includeLogs": option<bool>,
+        }
+      )
+    let where = switch raw["where"] {
+    | Some(where) => where
+    | None =>
+      JsError.throwWithMessage(
+        "`indexer.onRawInstruction` requires a `where` selector describing the instructions to index.",
+      )
+    }
+    let userHandler =
+      handler->(
+        Utils.magic: 'b => Envio.svmOnInstructionArgs<Internal.handlerContext> => promise<unit>
+      )
+    HandlerRegister.setRawHandler(
+      ~where,
+      ~fields=raw["fields"],
+      ~includeLogs=raw["includeLogs"]->Option.getOr(false),
+      (args: Internal.genericHandlerArgs<Internal.event, Internal.handlerContext>) =>
+        userHandler({
+          instruction: args.event->(Utils.magic: Internal.event => Envio.svmInstruction),
+          context: args.context,
+        }),
     )
   }
 
@@ -417,6 +454,7 @@ let getGlobalIndexer = (): 'indexer => {
             "chainIds",
             "chains",
             "onInstruction",
+            "onRawInstruction",
             "onSlot",
             "~internalAndWillBeRemovedSoon_onRollbackCommit",
           ]
@@ -440,6 +478,7 @@ let getGlobalIndexer = (): 'indexer => {
       }
     | "onEvent" => onEventFn->Utils.magic
     | "onInstruction" => onInstructionFn->Utils.magic
+    | "onRawInstruction" => onRawInstructionFn->Utils.magic
     | "contractRegister" => contractRegisterFn->Utils.magic
     | "onBlock" | "onSlot" => onBlockFn->Utils.magic
     | "~internalAndWillBeRemovedSoon_onRollbackCommit" => onRollbackCommitFn->Utils.magic

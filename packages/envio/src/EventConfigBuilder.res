@@ -316,8 +316,8 @@ let selectionKinds = ["block", "transaction"]
 // typo, and an unrecognised key would read as an empty selection — silently
 // dropping every field `config.yaml` selected. Rejected here so the option is
 // held to the same shape whether or not the project type-checks it.
-let validateFieldsShapeOrThrow = (fields: Internal.evmFieldsSelection, ~registration: string) => {
-  let raw = fields->(Utils.magic: Internal.evmFieldsSelection => unknown)
+let validateFieldsShapeOrThrow = (fields: Internal.fieldsSelection, ~registration: string) => {
+  let raw = fields->(Utils.magic: Internal.fieldsSelection => unknown)
   if typeof(raw) !== #object || raw === %raw(`null`) || Array.isArray(raw) {
     JsError.throwWithMessage(
       `The fields option of ${registration} must be an object of block and transaction field names.`,
@@ -377,12 +377,12 @@ let parseFieldsOrThrow = (
 // option itself (the names are for error messages), never on the chain, so one
 // `onEvent` call resolves once and shares the result across every chain.
 let resolveInlineFieldSelection = (
-  fields: Internal.evmFieldsSelection,
+  fields: Internal.fieldsSelection,
   ~contractName: string,
   ~eventName: string,
   ~enableRawEvents: bool,
 ): Internal.fieldSelection => {
-  let registration = `the "${eventName}" event registration on contract "${contractName}"`
+  let registration = Internal.identityLabel(Named({contractName, eventName}))
   validateFieldsShapeOrThrow(fields, ~registration)
   let blockFields = parseFieldsOrThrow(
     fields.block,
@@ -426,6 +426,7 @@ let buildEvmEventConfig = (
     id: sighash ++ "_" ++ topicCount->Int.toString,
     name: eventName,
     contractName,
+    identity: Named({contractName, eventName}),
     paramsRawEventSchema: buildParamsSchema(params),
     simulateParamsSchema: buildSimulateParamsSchema(params),
     fieldSelection: resolveFieldSelection(
@@ -505,6 +506,9 @@ let alwaysIncludedSvmBlockFields: array<Internal.svmBlockField> = [Slot, Time, H
 let buildSvmInstructionEventConfig = (
   ~contractName: string,
   ~instructionName: string,
+  // Defaults to the config-declared (program, instruction) pair; a raw
+  // registration passes its own.
+  ~identity: option<Internal.registrationIdentity>=?,
   ~programId: SvmTypes.Pubkey.t,
   ~discriminator: option<string>,
   ~discriminatorByteLen: int,
@@ -539,6 +543,10 @@ let buildSvmInstructionEventConfig = (
     },
     name: instructionName,
     contractName,
+    identity: switch identity {
+    | Some(identity) => identity
+    | None => Named({contractName, eventName: instructionName})
+    },
     paramsRawEventSchema: paramsSchema,
     simulateParamsSchema: paramsSchema,
     programId,
@@ -573,6 +581,157 @@ let buildSvmOnEventRegistration = (
   startBlock,
   fieldSelection: eventConfig.fieldSelection,
 }
+
+// ============== Build raw (program-less) event configs ==============
+
+// One positional account constraint of a raw `where`, before the pubkeys are
+// parsed. Mirrors the `account_filters` entry of `config.yaml`.
+type rawAccountFilter = {position: int, values: array<string>}
+
+let rawAccountFilterSchema = S.object(s => {
+  position: s.field("position", S.int->S.intMin(0)->S.intMax(9)),
+  values: s.field("values", S.array(S.string)),
+})->S.strict
+
+// Both config shapes: a flat list of constraints (AND across positions), or
+// `{anyOf: [...]}`, a list of AND-groups OR-ed together. Normalized to the
+// disjunctive normal form the event config carries.
+let rawAccountFiltersSchema: S.t<array<array<rawAccountFilter>>> = S.union([
+  S.array(rawAccountFilterSchema)->S.shape(group => [group]),
+  S.object(s => s.field("anyOf", S.array(S.array(rawAccountFilterSchema))))->S.strict,
+])
+
+// The `where` of an `indexer.onRawInstruction` registration: which instructions
+// the handler wants, and nothing about how they decode. Strict, so a typo
+// surfaces at the registration call site instead of silently widening the
+// selector.
+type svmRawWhere = {
+  programId: string,
+  discriminator: option<string>,
+  isInner: option<bool>,
+  accountFilters: option<array<array<rawAccountFilter>>>,
+}
+
+let svmRawWhereSchema = S.object(s => {
+  programId: s.field("programId", S.string),
+  discriminator: s.field("discriminator", S.option(S.string)),
+  isInner: s.field("isInner", S.option(S.bool)),
+  accountFilters: s.field("accountFilters", S.option(rawAccountFiltersSchema)),
+})->S.strict
+
+// Byte length drives the `dN` selector the source queries with, so it's derived
+// from the value rather than taken on trust.
+let rawDiscriminatorByteLen = (discriminator: string) => {
+  let hex =
+    discriminator->String.startsWith("0x") ? discriminator->String.slice(~start=2) : discriminator
+  let byteLen = hex->String.length / 2
+  if (
+    hex->String.length->mod(2) !== 0 ||
+    !(hex->String.match(/^[0-9a-fA-F]*$/)->Option.isSome) ||
+    !([1, 2, 4, 8]->Array.includes(byteLen))
+  ) {
+    JsError.throwWithMessage(
+      `\`indexer.onRawInstruction\` \`where.discriminator\` must be a hex value of 1, 2, 4 or 8 bytes ("0x" optional), but got "${discriminator}".`,
+    )
+  }
+  byteLen
+}
+
+// What error messages call this registration. A raw registration has no name a
+// user would recognise, so it's named by the selector they wrote.
+let svmRawSelector = (where: svmRawWhere) => {
+  let parts = [`programId: "${where.programId}"`]
+  switch where.discriminator {
+  | Some(d) => parts->Array.push(`discriminator: "${d}"`)->ignore
+  | None => ()
+  }
+  switch where.isInner {
+  | Some(isInner) => parts->Array.push(`isInner: ${isInner ? "true" : "false"}`)->ignore
+  | None => ()
+  }
+  `where { ${parts->Array.joinUnsafe(", ")} }`
+}
+
+let validSvmBlockFields = Utils.Set.fromArray(Svm.blockFields)
+let validSvmTransactionFields = Utils.Set.fromArray(Svm.transactionFields)
+
+// A named SVM registration inherits its selection from `config.yaml`; a raw one
+// has no config entry to inherit from, so it names its fields inline. Returns
+// the two field lists the event config builder resolves into a selection.
+let parseSvmInlineFields = (fields: option<Internal.fieldsSelection>, ~registration: string) =>
+  switch fields {
+  | None => ([], [])
+  | Some(fields) =>
+    validateFieldsShapeOrThrow(fields, ~registration)
+    (
+      parseFieldsOrThrow(fields.block, ~valid=validSvmBlockFields, ~kind="block", ~registration)
+      ->Utils.Set.toArray
+      ->(Utils.magic: array<string> => array<Internal.svmBlockField>),
+      parseFieldsOrThrow(
+        fields.transaction,
+        ~valid=validSvmTransactionFields,
+        ~kind="transaction",
+        ~registration,
+      )
+      ->Utils.Set.toArray
+      ->(Utils.magic: array<string> => array<Internal.svmTransactionField>),
+    )
+  }
+
+// Synthesize the event config of a program-less registration from the selector
+// the user wrote. No config-declared contract is consulted: the identity's
+// ordinal is the only thing that makes it distinct, and the display names come
+// from the selector. Dispatches on the ecosystem so a second raw entry point
+// (EVM `onRawEvent`) is a branch here rather than a mechanism of its own.
+let buildRawEventConfig = (
+  ~ecosystemName: Ecosystem.name,
+  ~ordinal: int,
+  ~where: JSON.t,
+  ~fields: option<Internal.fieldsSelection>,
+  ~includeLogs: bool,
+): Internal.eventConfig =>
+  switch ecosystemName {
+  | Svm =>
+    let where = try where->S.parseOrThrow(svmRawWhereSchema) catch {
+    | S.Raised(exn) =>
+      JsError.throwWithMessage(
+        `\`indexer.onRawInstruction\` \`where\` is invalid: ${exn
+          ->Utils.prettifyExn
+          ->(Utils.magic: exn => string)}`,
+      )
+    }
+    let identity = Internal.Raw({kind: "svm", ordinal, selector: svmRawSelector(where)})
+    let (blockFields, transactionFields) = parseSvmInlineFields(
+      fields,
+      ~registration=Internal.identityLabel(identity),
+    )
+    (buildSvmInstructionEventConfig(
+      // Program-less: the program id stands in for the name the config would
+      // have given, and every raw registration on it is "raw" — the identity,
+      // not these, is what keeps them apart.
+      ~contractName=where.programId,
+      ~instructionName="raw",
+      ~identity,
+      ~programId=where.programId->SvmTypes.Pubkey.fromStringUnsafe,
+      ~discriminator=where.discriminator,
+      ~discriminatorByteLen=where.discriminator->Option.mapOr(0, rawDiscriminatorByteLen),
+      ~includeLogs,
+      ~accountFilters=where.accountFilters
+      ->Option.getOr([])
+      ->Array.map(group =>
+        group->Array.map((filter): Internal.svmAccountFilter => {
+          position: filter.position,
+          values: filter.values->SvmTypes.Pubkey.fromStringsUnsafe,
+        })
+      ),
+      ~isInner=where.isInner,
+      ~transactionFields,
+      ~blockFields,
+    ) :> Internal.eventConfig)
+  | Evm =>
+    JsError.throwWithMessage("Raw registrations are not supported for the EVM ecosystem yet.")
+  | Fuel => JsError.throwWithMessage("Raw registrations are not supported for the Fuel ecosystem.")
+  }
 
 // ============== Build Fuel event config ==============
 
@@ -621,6 +780,7 @@ let buildFuelEventConfig = (
     },
     name: eventName,
     contractName,
+    identity: Named({contractName, eventName}),
     paramsRawEventSchema: paramsSchema,
     simulateParamsSchema: paramsSchema,
     // Fuel keeps the transaction inline on the payload, so nothing is selected
