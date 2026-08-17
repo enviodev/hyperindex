@@ -43,29 +43,43 @@ struct Accepted {
 /// `getAcceptedEncodings`. Quality values are ignored except where they
 /// *reject* an encoding, which is the only place they change the outcome.
 fn accepted_encodings(headers: &HeaderMap) -> Accepted {
-    let mut values: Vec<&str> = Vec::new();
+    // The q-value checks are exact string matches rather than a parse,
+    // because Hasura's are: it compares against the literal "identity;q=0"
+    // and "gzip;q=0" after splitting on commas. Accepting `q=0.0` here would
+    // be more correct and less compatible.
+    let mut count = 0usize;
+    let mut only_star = true;
+    let mut gzip_listed = false;
+    let mut gzip_refused = false;
+    let mut identity_listed = false;
+    let mut identity_refused = false;
+    let mut star_refused = false;
+
     for header in headers.get_all(axum::http::header::ACCEPT_ENCODING) {
         let Ok(text) = header.to_str() else { continue };
-        values.extend(text.split(',').map(str::trim));
+        for value in text.split(',').map(str::trim) {
+            count += 1;
+            only_star &= value == "*";
+            gzip_listed |= value.starts_with("gzip");
+            gzip_refused |= value == "gzip;q=0";
+            identity_listed |= value.starts_with("identity");
+            identity_refused |= value == "identity;q=0";
+            star_refused |= value == "*;q=0";
+        }
     }
 
     // No header at all, or exactly `*`: technically "send what you like", but
     // Hasura reads it as identity-only and so must we.
-    if values.is_empty() || values == ["*"] {
+    if count == 0 || only_star {
         return Accepted {
             gzip: false,
             identity: true,
         };
     }
 
-    let identity_rejected = values.contains(&"identity;q=0")
-        || (values.contains(&"*;q=0") && !values.iter().any(|v| v.starts_with("identity")));
-    let gzip_accepted =
-        values.iter().any(|v| v.starts_with("gzip")) && !values.contains(&"gzip;q=0");
-
     Accepted {
-        gzip: gzip_accepted,
-        identity: !identity_rejected,
+        gzip: gzip_listed && !gzip_refused,
+        identity: !(identity_refused || (star_refused && !identity_listed)),
     }
 }
 
@@ -114,7 +128,7 @@ fn gzip(body: &[u8]) -> Vec<u8> {
             None => slot.insert(Compress::new(LEVEL, false)),
         };
 
-        let mut out = Vec::with_capacity(body.len() / 2 + GZIP_HEADER.len() + 8);
+        let mut out = Vec::with_capacity(body.len() / 8 + 64);
         out.extend_from_slice(&GZIP_HEADER);
 
         let mut consumed = 0usize;
@@ -128,7 +142,7 @@ fn gzip(body: &[u8]) -> Vec<u8> {
                 Ok(Status::Ok) | Ok(Status::BufError) => {
                     // No progress means the output buffer is full.
                     if compress.total_out() == before_out {
-                        out.reserve(body.len() / 2 + 64);
+                        out.reserve(body.len() / 4 + 64);
                     }
                 }
                 Err(_) => return body.to_vec(),
@@ -146,7 +160,7 @@ fn gzip(body: &[u8]) -> Vec<u8> {
 /// The body to send, and the `Content-Encoding` to send it under.
 pub(super) struct Encoded {
     pub body: Vec<u8>,
-    pub content_encoding: Option<&'static str>,
+    pub content_encoding: Option<axum::http::HeaderValue>,
 }
 
 /// Compresses `body` if this client's `Accept-Encoding` calls for it. Large
@@ -160,16 +174,28 @@ pub(super) async fn encode(headers: &HeaderMap, body: String) -> Encoded {
             content_encoding: None,
         };
     }
-    let compressed = if body.len() >= OFFLOAD_BYTES {
-        tokio::task::spawn_blocking(move || gzip(body.as_bytes()))
-            .await
-            .unwrap_or_else(|_| Vec::new())
+    let gzipped = if body.len() >= OFFLOAD_BYTES {
+        // Shared rather than moved so the body survives a compressor that
+        // panics: an empty payload labelled gzip is a decode error at the
+        // client, where the uncompressed body is merely larger.
+        let body = std::sync::Arc::new(body);
+        let offloaded = std::sync::Arc::clone(&body);
+        match tokio::task::spawn_blocking(move || gzip(offloaded.as_bytes())).await {
+            Ok(gzipped) => gzipped,
+            Err(error) => {
+                tracing::error!(%error, "envio serve: response compression failed");
+                return Encoded {
+                    body: std::sync::Arc::unwrap_or_clone(body).into_bytes(),
+                    content_encoding: None,
+                };
+            }
+        }
     } else {
         gzip(body.as_bytes())
     };
     Encoded {
-        body: compressed,
-        content_encoding: Some("gzip"),
+        body: gzipped,
+        content_encoding: Some(axum::http::HeaderValue::from_static("gzip")),
     }
 }
 

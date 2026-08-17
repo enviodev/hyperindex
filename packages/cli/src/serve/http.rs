@@ -326,63 +326,64 @@ pub fn resolve_role(
     )
 }
 
+/// A finished GraphQL response: the body, or the error that replaces it.
+///
 /// Hasura splits its response path in two, and the split is observable:
 /// `logSuccessAndResp` sets `x-request-id` and negotiates compression, while
 /// `logErrorAndResp` sets only the content type and length. An error response
 /// therefore carries no request id — not even one the client supplied — and
 /// is never compressed.
-enum Answer {
-    Success(String),
-    Error(exec::error::GraphQLError),
-}
+type Answer = Result<String, exec::error::GraphQLError>;
 
-impl Answer {
-    fn status(&self) -> StatusCode {
-        match self {
-            Answer::Success(_) => StatusCode::OK,
-            Answer::Error(e) => StatusCode::from_u16(e.status).unwrap_or(StatusCode::OK),
+/// Every response carries this, so it is built once rather than revalidated
+/// per request.
+const JSON_CONTENT_TYPE: HeaderValue = HeaderValue::from_static("application/json; charset=utf-8");
+
+/// Echoes the client's request id verbatim, or mints one. Hasura generates a
+/// v4 UUID (`Server/Types.hs getRequestId`).
+fn put_request_id(response: &mut HeaderMap, request_headers: &HeaderMap) {
+    let name = HeaderName::from_static("x-request-id");
+    match request_headers.get(&name) {
+        Some(supplied) => {
+            response.insert(name, supplied.clone());
+        }
+        None => {
+            let mut buffer = uuid::Uuid::encode_buffer();
+            let id = uuid::Uuid::new_v4().hyphenated().encode_lower(&mut buffer);
+            if let Ok(value) = HeaderValue::from_str(id) {
+                response.insert(name, value);
+            }
         }
     }
 }
 
-/// Echoes the client's request id, or mints one. Hasura generates a v4 UUID
-/// (`Server/Types.hs getRequestId`).
-fn request_id(headers: &HeaderMap) -> String {
-    headers
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned)
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
-}
-
 async fn respond(request_headers: &HeaderMap, answer: Answer) -> axum::response::Response {
-    let status = answer.status();
+    let status = match &answer {
+        Ok(_) => StatusCode::OK,
+        Err(e) => StatusCode::from_u16(e.status).unwrap_or(StatusCode::OK),
+    };
     let mut response = match answer {
-        Answer::Error(e) => {
+        Err(e) => {
             let body = e.response_body().to_string();
             axum::response::Response::new(axum::body::Body::from(body))
         }
-        Answer::Success(body) => {
+        Ok(body) => {
             let encoded = super::compression::encode(request_headers, body).await;
             let mut response =
                 axum::response::Response::new(axum::body::Body::from(encoded.body));
             if let Some(encoding) = encoded.content_encoding {
-                put_header(response.headers_mut(), "content-encoding", encoding);
+                response
+                    .headers_mut()
+                    .insert(header::CONTENT_ENCODING, encoding);
             }
-            put_header(
-                response.headers_mut(),
-                "x-request-id",
-                &request_id(request_headers),
-            );
+            put_request_id(response.headers_mut(), request_headers);
             response
         }
     };
     *response.status_mut() = status;
-    put_header(
-        response.headers_mut(),
-        "content-type",
-        "application/json; charset=utf-8",
-    );
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, JSON_CONTENT_TYPE);
     response
 }
 
@@ -396,22 +397,11 @@ async fn graphql_handler(
 }
 
 async fn graphql_answer(state: &AppState, headers: &HeaderMap, body: &[u8]) -> Answer {
-    let role = match resolve_role(headers, &state.serve.admin_secret) {
-        Ok(role) => role,
-        Err(e) => return Answer::Error(e),
-    };
+    let role = resolve_role(headers, &state.serve.admin_secret)?;
 
-    let request = match decode_request_body(body) {
-        Ok(r) => r,
-        Err(e) => return Answer::Error(e),
-    };
-
-    match request {
+    match decode_request_body(body)? {
         DecodedBody::Single(request) => {
-            match exec::execute_query_request(&state.serve, &state.schemas, role, &request).await {
-                Ok(body) => Answer::Success(body),
-                Err(e) => Answer::Error(e),
-            }
+            exec::execute(&state.serve, &state.schemas, role, &request).await
         }
         // A batch answers with an array of results, positionally. Each
         // operation is executed in turn, as Hasura's `runGQBatched` does
@@ -421,51 +411,28 @@ async fn graphql_answer(state: &AppState, headers: &HeaderMap, body: &[u8]) -> A
         // pool. An operation that fails contributes its own errors object
         // rather than failing the batch.
         DecodedBody::Batch(requests) => {
+            use std::fmt::Write as _;
+
             let mut out = String::from("[");
             for (i, request) in requests.iter().enumerate() {
                 if i > 0 {
                     out.push(',');
                 }
-                match exec::execute_query_request(&state.serve, &state.schemas, role, request).await
-                {
-                    Ok(body) => out.push_str(&body),
-                    Err(e) => out.push_str(&e.response_body().to_string()),
+                match exec::execute(&state.serve, &state.schemas, role, request).await {
+                    Ok(body) => {
+                        out.reserve(body.len() + 1);
+                        out.push_str(&body);
+                    }
+                    // Writing the error's JSON straight into the buffer avoids
+                    // materialising it as its own String first.
+                    Err(e) => {
+                        let _ = write!(out, "{}", e.response_body());
+                    }
                 }
             }
             out.push(']');
-            Answer::Success(out)
+            Ok(out)
         }
-    }
-}
-
-/// Restates a serde_json syntax error the way aeson does, since the message
-/// is part of the response body.
-///
-/// aeson names what it found and what it wanted: `Unexpected end-of-input,
-/// expecting JSON value`, `Unexpected ",}", expecting key literal`. What it
-/// "found" is the rest of the input from the offending token, which sits one
-/// byte before the column serde reports. Shapes without a recorded oracle
-/// keep serde's own wording rather than a guessed translation.
-fn aeson_syntax_message(text: &str, error: &serde_json::Error) -> String {
-    let rendered = error.to_string();
-    let unexpected = || {
-        // serde's column is 1-based and points just past the offending byte.
-        let start = error.column().saturating_sub(2);
-        text.char_indices()
-            .nth(start)
-            .map(|(i, _)| &text[i..])
-            .unwrap_or("")
-    };
-    if rendered.starts_with("EOF while parsing a value") {
-        "Unexpected end-of-input, expecting JSON value".to_string()
-    } else if rendered.starts_with("EOF while parsing an object") {
-        "Unexpected end-of-input, expecting , or }".to_string()
-    } else if rendered.starts_with("key must be a string") {
-        format!("Unexpected \"{}\", expecting key literal", unexpected())
-    } else if rendered.starts_with("expected ident") || rendered.starts_with("expected value") {
-        format!("Unexpected \"{}\", expecting JSON value", unexpected())
-    } else {
-        rendered
     }
 }
 
@@ -527,7 +494,12 @@ fn decode_request_body(body: &[u8]) -> Result<DecodedBody, exec::error::GraphQLE
                     .to_string(),
             ))
         }
-        Err(e) => return Err(invalid_json(aeson_syntax_message(text, &e))),
+        // The message is serde_json's own. Hasura reports aeson's phrasing,
+        // which names the input from where ITS parser gave up — before a
+        // separator it had not consumed, with escapes applied — a position
+        // serde's line and column cannot reconstruct. The code, path and
+        // status match; only this text differs. See corpus/23-request-body.
+        Err(e) => return Err(invalid_json(e.to_string())),
     };
 
     // An array body is a batch; every element is decoded with its own index
@@ -663,13 +635,12 @@ async fn ws_or_get_handler(
     use axum::extract::FromRequestParts;
 
     let (mut parts, _body) = request.into_parts();
-    let headers = parts.headers.clone();
     match axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
-        Ok(ws) => super::ws::handle_upgrade(state, headers, ws),
+        Ok(ws) => super::ws::handle_upgrade(state, parts.headers, ws),
         Err(_) => {
             respond(
-                &headers,
-                Answer::Error(exec::error::GraphQLError {
+                &parts.headers,
+                Err(exec::error::GraphQLError {
                     message: "PersistedQueryNotSupported".to_string(),
                     path: "$".to_string(),
                     code: "not-supported",
@@ -685,7 +656,6 @@ async fn ws_or_get_handler(
 mod tests {
     use super::*;
 
-    /// Decodes a single-operation body, which is all these cases send.
     fn decode_single(body: &[u8]) -> Result<GraphQLRequest, exec::error::GraphQLError> {
         match decode_request_body(body)? {
             DecodedBody::Single(request) => Ok(request),

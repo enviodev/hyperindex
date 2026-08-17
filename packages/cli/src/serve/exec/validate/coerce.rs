@@ -371,7 +371,9 @@ pub(super) fn coerce_column_value<'a>(
                         item,
                         path,
                     )?;
-                    elems.push(Some(elem.text.unwrap_or_default()));
+                    // Every non-null element coerces to a `Some`; the null
+                    // case took the branch above.
+                    elems.push(elem.text);
                 }
                 Ok(ir::SqlValue::new(pg_array_literal(&elems), cast))
             }

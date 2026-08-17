@@ -183,8 +183,6 @@ impl<'de> serde::Deserialize<'de> for FirstWins {
                 Ok(FirstWins(Json::Array(out)))
             }
 
-            // Every scalar defers to serde_json's own Value deserializer, so
-            // number handling stays exactly as it was.
             fn visit_unit<E>(self) -> Result<Self::Value, E> {
                 Ok(FirstWins(Json::Null))
             }
@@ -200,6 +198,8 @@ impl<'de> serde::Deserialize<'de> for FirstWins {
             fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
                 Ok(FirstWins(Json::Number(v.into())))
             }
+            // A non-finite float has no JSON spelling, and becomes null here
+            // exactly as serde_json's own visitor makes it.
             fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
                 Ok(FirstWins(
                     serde_json::Number::from_f64(v).map_or(Json::Null, Json::Number),

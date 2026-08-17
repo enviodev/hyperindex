@@ -304,8 +304,8 @@ fn coerce_aggregate_bool_exp<'a>(
     let remote = model_table(ctx, rt);
 
     let entries = expect_object(v, &type_name, path)?;
-    // Hasura's aggregate predicate holds exactly one entry; an empty object
-    // is rejected rather than treated as no predicate at all.
+    // Hasura's aggregate predicate holds exactly one entry: an empty object
+    // is not "no predicate", and two are not a conjunction.
     if entries.len() != 1 {
         return Err(verr(path, "exactly one predicate should be specified"));
     }
