@@ -138,6 +138,10 @@ let fromUserApi = (
       )
     }
 
+  if registerHandlers && handlers->Option.isNone {
+    JsError.throwWithMessage("fromUserApi was called with ~registerHandlers but no ~handlers source.")
+  }
+
   switch (test, registerHandlers ? handlers : None) {
   // Parse-only: type errors are thrown at the call site, as callers assert.
   | (None, None) =>
