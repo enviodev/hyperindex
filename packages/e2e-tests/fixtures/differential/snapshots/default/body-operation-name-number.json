@@ -1,0 +1,23 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "rawBody": "{\"query\": \"{ __typename }\", \"operationName\": 5}"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "parsing Name failed, expected String, but encountered Number",
+    "extensions": {
+     "path": "$.operationName",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

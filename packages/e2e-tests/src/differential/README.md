@@ -25,6 +25,9 @@ identical JSON responses — data, errors, and serialization alike.
 - `rawRequest.ts` — `node:http` client used by transport probes, where
   `fetch` cannot be used because it negotiates and decodes `content-encoding`
   behind the caller's back.
+- `fuzz.ts` — schema-driven differential fuzzer (see below).
+- `performance.test.ts` — measures both engines live and fails if serve
+  regresses past a ratio of Hasura.
 
 ## Transport probes and known gaps
 
@@ -51,6 +54,59 @@ Two annotations control how a case is judged:
 
 Closing a gap is therefore: implement it, drop the `knownGap` line, and both
 `diffServe.ts` and the live suite flip from "known gap" to a hard assertion.
+
+## Fuzzing
+
+The corpus covers what someone thought to enumerate. Parity bugs live in the
+combinations nobody enumerates — a column type crossed with an operator
+crossed with a malformed operand — so `fuzz.ts` generates queries from the
+live introspected schema, runs them against both engines and shrinks any
+mismatch to a minimal query before reporting it.
+
+```sh
+pnpm fuzz:differential -- --seeds 1..20 --n 400 [--phase default|limited]
+```
+
+It applies the fixture and Hasura's metadata for the phase first, and refuses
+to run if the two engines' `query_root` field sets still differ — a serve
+started for a different phase would otherwise report every aggregate-
+visibility difference as a bug. Every run prints what it generated
+(variables, named and inline fragments, directives, aggregates) so a
+generator feature that silently stops firing shows up as lost coverage rather
+than a quiet all-clear.
+
+A finding is a *lead*, not a test. Confirm it, then add a corpus case with a
+recorded snapshot — the corpus is what gates a merge; the fuzzer is what
+finds what the corpus is missing. Everything under `corpus/19` to `corpus/23`
+arrived this way.
+
+Three classes of difference are deliberately not reported, each because it is
+decided by something outside serve's control:
+
+- **Blame order.** When one query holds several invalid values, which one
+  Hasura blames is its aeson HashMap's iteration order — fixed per key set,
+  but following neither document, alphabetical, nor schema order. Generation
+  spends at most one ill-typed value per query, and a mismatch where both
+  engines error at *different paths* is reported as ambiguous.
+- **Multi-key `order_by` objects.** Precedence between keys of one object is
+  the same hash order; Hasura's own docs say to pass an array of single-key
+  objects, which is exact-parity in both directions and is all the fuzzer
+  generates.
+- **Known divergences.** Hasura bugs serve does not reproduce, listed in
+  `KNOWN_DIVERGENCES` and pinned by corpus cases carrying the same
+  explanation.
+
+## Performance
+
+`performance.test.ts` runs a representative slice of the corpus against both
+engines in the same run, interleaving iterations so drift lands on both sides
+equally, and fails if serve's median exceeds `ENVIO_PERF_MAX_RATIO` (default
+1.5) times Hasura's on any case. Measuring both engines together is what
+makes it safe to gate on: a slow runner slows both, so the ratio holds even
+when the absolute numbers do not. It writes `perf-report.md`.
+
+`bench.ts` remains the detailed instrument — per-case timing and resource use
+against a stored baseline, on the larger bench dataset.
 
 ### What the recorded transport oracle says
 

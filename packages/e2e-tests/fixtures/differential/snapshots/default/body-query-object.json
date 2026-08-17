@@ -1,0 +1,23 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "rawBody": "{\"query\": {}}"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "parsing Text failed, expected String, but encountered Object",
+    "extensions": {
+     "path": "$.query",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

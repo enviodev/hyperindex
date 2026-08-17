@@ -462,7 +462,8 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
             return Err(parse_failed(
                 "$.operationName",
                 format!(
-                    "parsing Text failed, expected String, but encountered {}",
+                    // An operation name parses as GraphQL's Name, not as Text.
+                    "parsing Name failed, expected String, but encountered {}",
                     aeson_kind(other)
                 ),
             ))
@@ -535,8 +536,6 @@ mod tests {
         assert!(error.contains("0.0.0.0"));
     }
 
-    // Error shapes mirror Hasura's, matching the em-* error-matrix corpus
-    // (e.g. em-body-lone-surrogate-in-query pins the invalid-json path).
     #[test]
     fn request_body_decoding_errors() {
         let decode = |body: &str| {

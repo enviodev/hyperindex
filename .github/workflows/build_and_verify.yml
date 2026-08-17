@@ -354,14 +354,33 @@ jobs:
           git add -N packages/e2e-tests/fixtures/differential/snapshots
           git diff --exit-code -- packages/e2e-tests/fixtures/differential/snapshots
 
-      - name: Run live differential suite (HTTP + WebSocket)
+      - name: Run live differential suite (HTTP + WebSocket + performance)
         continue-on-error: true
         working-directory: packages/e2e-tests
         run: pnpm test:differential
 
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-report
+          path: packages/e2e-tests/perf-report.md
+          retention-days: 30
+          if-no-files-found: ignore
+
       - name: Start envio serve
         continue-on-error: true
         uses: ./.github/actions/start-envio-serve
+
+      # Schema-driven differential fuzzing: generates queries from the live
+      # introspected schema and diffs both engines. Bounded seeds keep the
+      # runtime predictable; the seeds are fixed, so a failure here replays
+      # exactly with the seed it prints. Informational like the rest of this
+      # job - a confirmed finding becomes a corpus case, and the corpus is
+      # what gates a merge.
+      - name: Differential fuzz
+        continue-on-error: true
+        working-directory: packages/e2e-tests
+        run: pnpm fuzz:differential -- --seeds 1..12 --n 250 --concurrency 8
 
       # 60s bounded soak smoke: server stays up, no 5xx, no fd/RSS blowup.
       # p99-drift comparison is meaningless over windows this short on
