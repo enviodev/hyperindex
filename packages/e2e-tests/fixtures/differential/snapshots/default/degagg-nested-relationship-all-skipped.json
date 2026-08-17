@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User(order_by: {id: asc}, limit: 1) { id tokens(order_by: {id: asc}) { id @skip(if: true) } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User": [
+    {
+     "id": "user \"quoted\" 🚀",
+     "tokens": [
+      {}
+     ]
+    }
+   ]
+  }
+ }
+}

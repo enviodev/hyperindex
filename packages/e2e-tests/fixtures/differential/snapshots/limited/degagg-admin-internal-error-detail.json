@@ -1,0 +1,27 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ User_aggregate(where: {id: {_eq: \"nope\"}}) { aggregate { __typename } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "database query error",
+    "extensions": {
+     "path": "$",
+     "code": "unexpected",
+     "internal": {
+      "arguments": [
+       "(Oid 114,Just (\"{\\\"x-hasura-role\\\":\\\"admin\\\"}\",Binary))",
+       "(Oid 25,Just (\"nope\",Binary))"
+      ],
+      "error": "Rows returned != 1",
+      "prepared": true,
+      "statement": "SELECT  json_build_object('aggregate', json_build_object('__typename', 'User_aggregate_fields' ) ) AS \"root\" FROM  (SELECT  1  FROM  (SELECT  *  FROM \"public\".\"User\"  WHERE ((\"public\".\"User\".\"id\") = (($2)::text))     ) AS \"_root.base\"      ) AS \"_root\"      "
+     }
+    }
+   }
+  ]
+ }
+}

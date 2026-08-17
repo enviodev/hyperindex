@@ -176,6 +176,8 @@ interface Node {
   alias?: string;
   args: [string, string][];
   children: Node[];
+  /** e.g. `@include(if: true)` — rendered verbatim after the arguments. */
+  directive?: string;
 }
 
 function render(node: Node, indent = ""): string {
@@ -183,9 +185,10 @@ function render(node: Node, indent = ""): string {
     ? `(${node.args.map(([k, v]) => `${k}: ${v}`).join(", ")})`
     : "";
   const name = node.alias ? `${node.alias}: ${node.field}` : node.field;
-  if (!node.children.length) return `${indent}${name}${args}`;
+  const dir = node.directive ? ` ${node.directive}` : "";
+  if (!node.children.length) return `${indent}${name}${args}${dir}`;
   const inner = node.children.map((c) => render(c, indent + "  ")).join("\n");
-  return `${indent}${name}${args} {\n${inner}\n${indent}}`;
+  return `${indent}${name}${args}${dir} {\n${inner}\n${indent}}`;
 }
 
 function renderQuery(roots: Node[]): string {
@@ -311,6 +314,45 @@ function allowAdversarial(rng: Rng, opts: GenOptions): boolean {
   return false;
 }
 
+/**
+ * `<table>_aggregate_fields` holds count plus the typed aggregate groups
+ * (sum/avg/max/min/stddev/variance), each over the columns its type allows.
+ * These are a serialization surface of their own — a sum over bigint is
+ * stringified, a stddev over int is a float — and nothing else in the
+ * generator reaches them.
+ */
+function genAggregateSelection(
+  rng: Rng,
+  schema: Schema,
+  typeName: string,
+  opts: GenOptions
+): Node[] {
+  const out: Node[] = [];
+  const fields = schema.types.get(typeName)?.fields ?? [];
+  const count = fields.find((f) => f.name === "count");
+  if (count && rng.chance(0.6)) {
+    const args: [string, string][] = [];
+    if (rng.chance(0.3)) args.push(["distinct", rng.pick(["true", "false"])]);
+    out.push({ field: "count", args, children: [] });
+  }
+  const groups = fields.filter((f) => baseType(f.type).kind === "OBJECT");
+  for (const group of rng.sample(groups, 1, 2)) {
+    const inner = baseType(group.type).name;
+    const cols = schema.scalarFields(inner);
+    if (!cols.length) continue;
+    out.push({
+      field: group.name,
+      args: [],
+      children: rng
+        .sample(cols, 1, Math.min(3, cols.length))
+        .map((c) => ({ field: c.name, args: [], children: [] })),
+    });
+  }
+  if (!out.length || rng.chance(0.1))
+    out.push({ field: "__typename", args: [], children: [] });
+  return out;
+}
+
 function genSelection(
   rng: Rng,
   schema: Schema,
@@ -318,6 +360,10 @@ function genSelection(
   depth: number,
   opts: GenOptions
 ): Node[] {
+  // An aggregate result object: `aggregate { ... }` and `nodes { ... }`.
+  if (typeName.endsWith("_aggregate_fields"))
+    return genAggregateSelection(rng, schema, typeName, opts);
+
   const scalars = schema.scalarFields(typeName);
   const out: Node[] = rng
     .sample(scalars, 1, Math.min(4, scalars.length))
@@ -339,6 +385,13 @@ function genSelection(
   }
   if (rng.chance(0.12))
     out.push({ field: "__typename", args: [], children: [] });
+  if (rng.chance(0.12) && out.length) {
+    const which = rng.int(0, out.length - 1);
+    out[which] = {
+      ...out[which]!,
+      directive: `@${rng.pick(["include", "skip"])}(if: ${rng.pick(["true", "false"])})`,
+    };
+  }
   if (rng.chance(0.1) && out.length)
     out[0] = { ...out[0]!, alias: `a${rng.int(0, 99)}` };
   return out;
@@ -561,8 +614,9 @@ function reductions(roots: Node[]): Node[][] {
           children: [{ field: "__typename", args: [], children: [] }],
         })
       );
-    // Drop an alias.
+    // Drop an alias or a directive.
     if (node.alias) out.push(rebuild({ ...node, alias: undefined }));
+    if (node.directive) out.push(rebuild({ ...node, directive: undefined }));
     // Recurse.
     node.children.forEach((child, i) =>
       walk(child, (n) =>

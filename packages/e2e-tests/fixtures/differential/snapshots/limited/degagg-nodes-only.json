@@ -1,0 +1,30 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_aggregate { nodes { id } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_aggregate": {
+    "nodes": [
+     {
+      "id": "user-1"
+     },
+     {
+      "id": "user-2"
+     },
+     {
+      "id": "user-3"
+     },
+     {
+      "id": "user-4"
+     },
+     {
+      "id": "user \"quoted\" 🚀"
+     }
+    ]
+   }
+  }
+ }
+}
