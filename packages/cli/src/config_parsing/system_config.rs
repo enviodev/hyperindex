@@ -120,6 +120,10 @@ trait ConfigSource {
     fn load_schema(&self, configured_path: &Option<String>) -> Result<Schema>;
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
     fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
+    /// File names (not paths) directly inside `dir`, sorted. Missing directory
+    /// is an empty listing, not an error.
+    #[allow(dead_code)]
+    fn list_project_relative_dir(&self, dir: &str) -> Result<Vec<String>>;
 }
 
 struct FilesystemConfigSource<'a> {
@@ -177,6 +181,10 @@ impl ConfigSource for FilesystemConfigSource<'_> {
             path: resolved_path,
             raw,
         })
+    }
+
+    fn list_project_relative_dir(&self, _dir: &str) -> Result<Vec<String>> {
+        todo!()
     }
 }
 
@@ -250,6 +258,10 @@ impl ConfigSource for MemoryConfigSource<'_> {
 
     fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
         self.read_virtual_file(path)
+    }
+
+    fn list_project_relative_dir(&self, _dir: &str) -> Result<Vec<String>> {
+        todo!()
     }
 }
 
