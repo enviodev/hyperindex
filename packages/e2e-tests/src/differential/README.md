@@ -18,6 +18,10 @@ identical JSON responses — data, errors, and serialization alike.
   relationships), parameterized by phase.
 - `../../fixtures/differential/schema.sql` — DDL dump of the schema
   `envio local db-migrate setup` creates for scenarios/test_codegen.
+- `../../fixtures/differential/collation.sql` — pins every text column to
+  `COLLATE "C"`, applied between the two. Row order is Postgres's decision,
+  not the engine's, so without this the oracle only reproduces on a cluster
+  initdb'd with the same locale as the one that recorded it.
 - `../../fixtures/differential/seed.sql` — deterministic rows exercising
   serialization edge cases.
 - `../../fixtures/differential/snapshots/` — recorded Hasura responses; the

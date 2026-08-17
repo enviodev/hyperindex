@@ -315,6 +315,7 @@ jobs:
         run: |
           PGPASSWORD=testing psql -h localhost -p 5433 -U postgres -d envio-dev -v ON_ERROR_STOP=1 \
             -f packages/e2e-tests/fixtures/differential/schema.sql \
+            -f packages/e2e-tests/fixtures/differential/collation.sql \
             -f packages/e2e-tests/fixtures/differential/seed.sql
 
       - name: Start envio serve (default phase)
