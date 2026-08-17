@@ -354,8 +354,12 @@ jobs:
           git add -N packages/e2e-tests/fixtures/differential/snapshots
           git diff --exit-code -- packages/e2e-tests/fixtures/differential/snapshots
 
+      # The correctness check for envio serve against a live Hasura: every
+      # corpus case over both phases, the WebSocket subscription scenarios,
+      # CORS, lifecycle, and the performance budget. It gates - a difference
+      # here is either a serve bug or a corpus case that needs updating, and
+      # both need a person.
       - name: Run live differential suite (HTTP + WebSocket + performance)
-        continue-on-error: true
         working-directory: packages/e2e-tests
         run: pnpm test:differential
 
@@ -367,16 +371,16 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
+      # Not continue-on-error: the steps below are meaningless against a
+      # server that never came up, and would report success by default.
       - name: Start envio serve
-        continue-on-error: true
         uses: ./.github/actions/start-envio-serve
 
       # Schema-driven differential fuzzing: generates queries from the live
-      # introspected schema and diffs both engines. Bounded seeds keep the
-      # runtime predictable; the seeds are fixed, so a failure here replays
-      # exactly with the seed it prints. Informational like the rest of this
-      # job - a confirmed finding becomes a corpus case, and the corpus is
-      # what gates a merge.
+      # introspected schema and diffs both engines. Informational, because a
+      # finding is a lead rather than a verdict - it becomes a corpus case
+      # once confirmed, and the corpus is what gates. Seeds are fixed, so a
+      # finding replays exactly with the seed it prints.
       - name: Differential fuzz
         continue-on-error: true
         working-directory: packages/e2e-tests

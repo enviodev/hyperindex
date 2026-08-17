@@ -36,10 +36,15 @@ import { startServe, stopServe, type ServeProcess } from "./serveProcess.js";
 const fixtureDir = new URL("../../fixtures/differential/", import.meta.url);
 
 /**
- * How much slower than Hasura serve may be before the build fails. serve is
- * normally faster; this is loose enough to survive a noisy shared runner and
- * still catch a real regression (an accidental N+1, a lost prepared
- * statement cache, a per-request schema rebuild).
+ * How much slower than Hasura serve may be, over the corpus as a whole,
+ * before the build fails. serve is normally well under 1x; this is loose
+ * enough to survive a noisy shared runner and still catch a real regression
+ * (an accidental N+1, a lost prepared statement cache, a per-request schema
+ * rebuild).
+ *
+ * The budget is spent on the total rather than per case deliberately: an
+ * individual 2 ms query is mostly round trip, so per-case ratios swing on a
+ * shared runner and would turn one gate into fourteen chances to flake.
  */
 const MAX_RATIO = Number(process.env.ENVIO_PERF_MAX_RATIO ?? 1.5);
 const ITERATIONS = Number(process.env.ENVIO_PERF_ITERATIONS ?? 25);
@@ -145,23 +150,21 @@ describe.sequential("performance vs hasura", () => {
     await stopServe(serve);
   });
 
-  it("has bench cases to measure", () => {
-    expect(benchCases.length).toBeGreaterThan(0);
-  });
-
-  for (const corpusCase of benchCases) {
-    it(`${corpusCase.name} is not slower than Hasura`, async () => {
-      const timing = await measure(corpusCase);
-      timings.push(timing);
-      expect({
-        name: timing.name,
-        withinBudget: timing.ratio <= MAX_RATIO,
-        ratio: Number(timing.ratio.toFixed(2)),
-      }).toEqual({
-        name: timing.name,
+  it(
+    "is not slower than Hasura over the corpus",
+    async () => {
+      expect(benchCases.length).toBeGreaterThan(0);
+      for (const corpusCase of benchCases) {
+        timings.push(await measure(corpusCase));
+      }
+      const hasura = timings.reduce((a, t) => a + t.hasuraMs, 0);
+      const serve = timings.reduce((a, t) => a + t.serveMs, 0);
+      const ratio = Number((serve / hasura).toFixed(2));
+      expect({ withinBudget: ratio <= MAX_RATIO, ratio }).toEqual({
         withinBudget: true,
-        ratio: Number(timing.ratio.toFixed(2)),
+        ratio,
       });
-    }, 120_000);
-  }
+    },
+    benchCases.length * 120_000
+  );
 });

@@ -89,11 +89,12 @@ export interface CorpusCase {
   bench?: boolean;
   transport?: TransportProbe;
   /**
-   * A gap `envio serve` is known not to close yet, described in one line.
-   * The case is still recorded from Hasura — the snapshot is the spec for
-   * the eventual implementation — but a mismatch against serve is reported
-   * as a known gap instead of failing the run. A known-gap case that starts
-   * matching DOES fail, so the annotation cannot outlive the gap.
+   * A difference from Hasura that this case does not currently match,
+   * described in one line: either a gap still to close, or one serve does
+   * not intend to close (a Hasura bug, a Postgres planner artifact). The
+   * case is still recorded from Hasura — the snapshot is the spec — but a
+   * mismatch is reported instead of failing the run. A case that starts
+   * matching DOES fail, so the annotation cannot outlive the difference.
    */
   knownGap?: string;
   /**

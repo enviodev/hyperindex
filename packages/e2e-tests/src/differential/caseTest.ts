@@ -1,8 +1,6 @@
 /**
- * How a corpus case becomes a vitest test, shared by every suite that runs
- * the corpus. Keeping the annotation handling in one place is deliberate: the
- * first time it was duplicated, one suite kept asserting cases the other had
- * already classified as known gaps.
+ * How a corpus case becomes a vitest test. Every suite that runs the corpus
+ * shares this, so a case is judged the same way wherever it runs.
  */
 
 import type { CorpusCase } from "./corpus.js";
@@ -16,7 +14,7 @@ type ItFn = {
 /**
  * `recordOnly` cases exist to capture Hasura's answer, not to hold serve to
  * it. `knownGap` cases run as expected failures, so vitest fails them if they
- * start passing and the annotation cannot outlive the gap.
+ * start passing and the annotation cannot outlive the difference.
  */
 export function itForCase(it: ItFn, corpusCase: CorpusCase) {
   if (corpusCase.recordOnly) return it.skip;

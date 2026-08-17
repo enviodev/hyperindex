@@ -397,12 +397,7 @@ function allowAdversarial(rng: Rng, opts: GenOptions): boolean {
  * stringified, a stddev over int is a float — and nothing else in the
  * generator reaches them.
  */
-function genAggregateSelection(
-  rng: Rng,
-  schema: Schema,
-  typeName: string,
-  opts: GenOptions
-): Node[] {
+function genAggregateSelection(rng: Rng, schema: Schema, typeName: string): Node[] {
   const out: Node[] = [];
   const fields = schema.types.get(typeName)?.fields ?? [];
   const count = fields.find((f) => f.name === "count");
@@ -438,7 +433,7 @@ function genSelection(
 ): Node[] {
   // An aggregate result object: `aggregate { ... }` and `nodes { ... }`.
   if (typeName.endsWith("_aggregate_fields"))
-    return genAggregateSelection(rng, schema, typeName, opts);
+    return genAggregateSelection(rng, schema, typeName);
 
   const scalars = schema.scalarFields(typeName);
   const out: Node[] = rng
