@@ -56,6 +56,33 @@ type svmTokenBalance = {
   postAmount?: bigint,
 }
 
+/** The token side of an account of a transaction. `null` on an account that
+ holds no SPL token balance; the amounts carry the other two states — `null`
+ before means the token account was opened during the transaction, `null` after
+ means it was closed. */
+type svmAccountToken = {
+  mint: SvmTypes.Pubkey.t,
+  /** Owner at the end of the transaction, falling back to the owner on entry
+   when the account was closed during it. */
+  owner: Null.t<SvmTypes.Pubkey.t>,
+  /** Mint decimals, for scaling the raw amounts below. */
+  decimals: Null.t<int>,
+  /** Raw amount in base units before the transaction. */
+  preAmount: Null.t<bigint>,
+  /** Raw amount in base units after the transaction. */
+  postAmount: Null.t<bigint>,
+}
+
+/** One account the transaction touched: its native lamport change and, when it
+ is a token account, its token balance. Every entry comes from the transaction's
+ own account keys, so an account with no recorded activity is still listed. */
+type svmAccount = {
+  address: SvmTypes.Pubkey.t,
+  preLamports: Null.t<bigint>,
+  postLamports: Null.t<bigint>,
+  token: Null.t<svmAccountToken>,
+}
+
 type svmTransaction = {
   transactionIndex?: int,
   /** The transaction's identifying signature (`allSignatures[0]`). */
@@ -71,6 +98,7 @@ type svmTransaction = {
   /** Every signature on the transaction, in message order; the first is
    `signature`. Longer than one element only for a multi-signer transaction. */
   allSignatures: array<string>,
+  accounts?: array<svmAccount>,
   tokenBalances?: array<svmTokenBalance>,
 }
 

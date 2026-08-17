@@ -1215,6 +1215,34 @@ export type SvmTokenBalance = {
   readonly postAmount?: bigint;
 };
 
+/** The token side of an account of a transaction. `null` on an account that
+ * holds no SPL token balance; the amounts carry the other two states — `null`
+ * before means the token account was opened during the transaction, `null`
+ * after means it was closed. */
+export type SvmAccountToken = {
+  readonly mint: string;
+  /** Owner at the end of the transaction, falling back to the owner on entry
+   * when the account was closed during it. */
+  readonly owner: string | null;
+  /** Mint decimals, for scaling the raw amounts below. */
+  readonly decimals: number | null;
+  /** Raw amount in base units before the transaction. */
+  readonly preAmount: bigint | null;
+  /** Raw amount in base units after the transaction. */
+  readonly postAmount: bigint | null;
+};
+
+/** One account the transaction touched: its native lamport change and, when it
+ * is a token account, its token balance. Every entry comes from the
+ * transaction's own account keys, so an account with no recorded activity is
+ * still listed. Select via `field_selection.transaction_fields`. */
+export type SvmAccount = {
+  readonly address: string;
+  readonly preLamports: bigint | null;
+  readonly postLamports: bigint | null;
+  readonly token: SvmAccountToken | null;
+};
+
 export type SvmLog = {
   readonly kind: string;
   readonly message: string;

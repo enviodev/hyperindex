@@ -38,17 +38,21 @@ use types::{opt_hex, to_hex, QueryResponse};
 /// Move the response's transactions and account activity into a
 /// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept in Rust so
 /// only the config-selected fields are materialised at batch prep; many
-/// instructions in one transaction collapse to a single stored row, and token
-/// balances land in the store's companion table joined back by key at
+/// instructions in one transaction collapse to a single stored row, and account
+/// activity lands in the store's companion table joined back by key at
 /// materialisation.
 ///
 /// `keys` restricts what is stored to the transactions routed items reference;
 /// `None` stores the whole response (the raw `get` query, which builds no
-/// items).
+/// items). `keep_native_only_rows` retains the activity rows of accounts holding
+/// no token balance; only `transaction.accounts` reads them, so a selection that
+/// asks for token balances alone drops them rather than carrying an entry per
+/// account of every matched transaction.
 fn build_svm_store(
     mut transactions: Vec<simple::Transaction>,
     mut account_activity: Vec<simple::AccountActivity>,
     keys: Option<&HashSet<(u64, u32)>>,
+    keep_native_only_rows: bool,
 ) -> TransactionStore {
     if let Some(keys) = keys {
         let referenced = |slot: Option<u64>, index: Option<u32>| {
@@ -56,6 +60,9 @@ fn build_svm_store(
         };
         transactions.retain(|tx| referenced(tx.slot, tx.transaction_index));
         account_activity.retain(|row| referenced(row.slot, row.transaction_index));
+    }
+    if !keep_native_only_rows {
+        account_activity.retain(|row| row.mint.is_some());
     }
     let store = TransactionStore::new_svm();
     store.insert_svm_txs(transactions);
@@ -258,13 +265,15 @@ impl SvmHyperSyncClient {
     ) -> napi::Result<(QueryResponse, TransactionStore, BlockStore)> {
         let mut resp = self.get_raw(query).await?;
 
-        // Retain raw transactions + token balances in Rust; the store
+        // Retain raw transactions + account activity in Rust; the store
         // materialises the parent transaction (selected fields only) at batch
-        // prep.
+        // prep. A raw query's rows are the caller's own selection, so all of
+        // them are kept.
         let store = build_svm_store(
             std::mem::take(&mut resp.transactions),
             std::mem::take(&mut resp.account_activity),
             None,
+            true,
         );
 
         let (block_headers, block_store) = take_blocks(&mut resp, None).map_err(map_err)?;
@@ -364,12 +373,17 @@ impl SvmHyperSyncClient {
             .map_err(map_err)?;
         }
         if built.needs_account_activity {
-            // The store keys balance rows by account regardless of what the
-            // consumer selected, so `account` always rides along.
+            // The store keys activity rows by account regardless of what the
+            // consumer selected, so `account` always rides along. The table also
+            // carries the message-header flags (`is_signer`, `is_writable`) and
+            // a derived `token_state`; none are exposed yet, so none are
+            // fetched.
             field_selection.account_activity = parse_columns(&[
                 "slot",
                 "transaction_index",
                 "account",
+                "pre_balance",
+                "post_balance",
                 "mint",
                 "pre_owner",
                 "post_owner",
@@ -453,6 +467,7 @@ impl SvmHyperSyncClient {
             std::mem::take(&mut resp.transactions),
             std::mem::take(&mut resp.account_activity),
             Some(&referenced_transactions),
+            built.needs_accounts,
         );
         let (block_headers, block_store) =
             take_blocks(&mut resp, Some(&referenced_slots)).map_err(map_err)?;
@@ -1048,6 +1063,7 @@ mod tests {
             vec![tx(42, 7), tx(43, 7)],
             vec![balance(42, 7), balance(43, 7)],
             Some(&referenced),
+            false,
         );
 
         let mask = ((1u64 << (crate::transaction_store::SvmTxField::FeePayer as u32))
@@ -1080,6 +1096,63 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn native_only_activity_rows_are_stored_only_for_a_selection_reading_accounts() {
+        // A token-balances-only selection would carry an activity row per
+        // account of every matched transaction for nothing, so those rows are
+        // dropped as the page is built; `transaction.accounts` is what needs
+        // them.
+        let activity = |account: u8, mint: Option<simple::Address>| simple::AccountActivity {
+            slot: Some(43),
+            transaction_index: Some(7),
+            account: Some(simple::Address([account; 32])),
+            pre_balance: Some(100),
+            mint,
+            ..Default::default()
+        };
+        let rows = || vec![activity(1, None), activity(2, Some(mint(43)))];
+        let tx = || {
+            vec![simple::Transaction {
+                slot: Some(43),
+                transaction_index: Some(7),
+                account_keys: Some(vec![simple::Address([1; 32]), simple::Address([2; 32])]),
+                ..Default::default()
+            }]
+        };
+
+        let mask = (1u64 << (crate::transaction_store::SvmTxField::Accounts as u32)) as f64;
+        let stored = |keep_native_only_rows| async move {
+            let cols = build_svm_store(tx(), rows(), None, keep_native_only_rows)
+                .materialize(vec![43], vec![7], vec![mask])
+                .await
+                .expect("materialize");
+            match column(&cols, "accounts") {
+                Some(crate::field_columns::Column::Accounts(accounts)) => accounts[0]
+                    .as_ref()
+                    .expect("selected row")
+                    .iter()
+                    .map(|a| (a.address.clone(), a.pre_lamports.is_some()))
+                    .collect::<Vec<_>>(),
+                _ => panic!("expected an accounts column"),
+            }
+        };
+
+        assert_eq!(
+            (stored(false).await, stored(true).await),
+            (
+                // The dropped row leaves its account listed but with no balances.
+                vec![
+                    (simple::Address([1; 32]).to_string(), false),
+                    (simple::Address([2; 32]).to_string(), true),
+                ],
+                vec![
+                    (simple::Address([1; 32]).to_string(), true),
+                    (simple::Address([2; 32]).to_string(), true),
+                ],
+            )
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn no_key_set_stores_the_whole_response() {
         // The raw `get` query builds no items, so it has no reference set to
         // filter by and must keep everything.
@@ -1100,6 +1173,7 @@ mod tests {
             }],
             vec![],
             None,
+            true,
         );
         let (_, block_store) = take_blocks(&mut resp, None).expect("take blocks");
 

@@ -520,7 +520,8 @@
         "accountKeys",
         "recentBlockhash",
         "version",
-        "allSignatures"
+        "allSignatures",
+        "accounts"
       ]
     },
     "SvmBlockField": {

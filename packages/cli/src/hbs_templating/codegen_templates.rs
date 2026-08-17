@@ -2671,6 +2671,16 @@ fn field_type_to_ts_type(
     }
 }
 
+/// Nullable rather than optional: the account-activity join sets every property
+/// (napi renders a missing value as `null`), so a handler narrows the three
+/// token states — not a token account, opened, closed — by testing for `null`.
+const SVM_ACCOUNTS_TS: &str =
+    "readonly { readonly address: string; readonly preLamports: bigint | \
+                               null; readonly postLamports: bigint | null; readonly token: { \
+                               readonly mint: string; readonly owner: string | null; readonly \
+                               decimals: number | null; readonly preAmount: bigint | null; \
+                               readonly postAmount: bigint | null } | null }[]";
+
 const SVM_TOKEN_BALANCES_TS: &str = "readonly { readonly account?: string; readonly mint?: \
                                      string; readonly owner?: string; readonly decimals?: \
                                      number; readonly preAmount?: bigint; readonly postAmount?: \
@@ -2755,6 +2765,7 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
                 SvmTransactionField::RecentBlockhash => ("string", false),
                 SvmTransactionField::Version => ("string", true),
                 SvmTransactionField::AllSignatures => ("readonly string[]", false),
+                SvmTransactionField::Accounts => (SVM_ACCOUNTS_TS, false),
             };
             SvmTransactionFieldSpec {
                 name: field.to_string(),
@@ -3711,10 +3722,11 @@ type GlobalCounter @crossChain {
     #[test]
     fn svm_transaction_ts_type_renders_optionality_and_unselected() {
         // Selected required fields (`signature`, `feePayer`) and always-present
-        // `tokenBalances` have no `| undefined`; nullable selected field (`err`,
-        // null on a successful tx) is `string | undefined`; unselected fields
-        // get the `@deprecated` hint + `FieldNotSelected`, matching the EVM
-        // rendering.
+        // `tokenBalances`/`accounts` have no `| undefined`; nullable selected
+        // field (`err`, null on a successful tx) is `string | undefined`;
+        // unselected fields get the `@deprecated` hint + `FieldNotSelected`,
+        // matching the EVM rendering. `accounts` carries its nullability inside
+        // the record instead — every property is set, `null` where absent.
         let generated = svm_transaction_ts_type(
             &svm_transaction_field_specs(),
             &[
@@ -3722,6 +3734,7 @@ type GlobalCounter @crossChain {
                 "feePayer".to_string(),
                 "err".to_string(),
                 "tokenBalances".to_string(),
+                "accounts".to_string(),
             ],
             "Swap",
             "  ",

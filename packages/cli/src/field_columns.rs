@@ -60,6 +60,36 @@ pub struct SvmTokenBalanceOut {
     pub post_amount: Option<BigInt>,
 }
 
+/// The token side of a materialised SVM account, absent on an account that
+/// holds no SPL token balance. `preAmount`/`postAmount` carry the other two
+/// states: absent before means the token account was opened during the
+/// transaction, absent after means it was closed.
+#[napi(object)]
+#[derive(Clone)]
+pub struct SvmAccountTokenOut {
+    pub mint: String,
+    /// Owner at the end of the transaction, falling back to the owner it had on
+    /// entry when the account was closed during it — see `SvmTokenBalanceOut`.
+    pub owner: Option<String>,
+    pub decimals: Option<u8>,
+    /// Raw amount in base units — `amount` is SPL's word for the integer, and
+    /// keeps token units distinct from lamports.
+    pub pre_amount: Option<BigInt>,
+    pub post_amount: Option<BigInt>,
+}
+
+/// One account of a transaction: its native lamport change and, when it is a
+/// token account, its token balance. Materialised by joining the account
+/// activity rows to the transaction's account keys.
+#[napi(object)]
+#[derive(Clone)]
+pub struct SvmAccountOut {
+    pub address: String,
+    pub pre_lamports: Option<BigInt>,
+    pub post_lamports: Option<BigInt>,
+    pub token: Option<SvmAccountTokenOut>,
+}
+
 /// One materialised field across all rows: struct-of-arrays, one entry per row,
 /// `None` where the row is missing or the value is absent. Every variant's
 /// element type is `Send` and `ToNapiValue`. New ecosystems/field kinds extend
@@ -74,6 +104,7 @@ pub enum Column {
     AccessList(Vec<Option<Vec<AccessListItem>>>),
     AuthList(Vec<Option<Vec<AuthorizationItem>>>),
     TokenBalances(Vec<Option<Vec<SvmTokenBalanceOut>>>),
+    Accounts(Vec<Option<Vec<SvmAccountOut>>>),
 }
 
 impl Column {
@@ -95,6 +126,7 @@ impl Column {
             Column::AccessList(v) => set_col(env, objs, key, v),
             Column::AuthList(v) => set_col(env, objs, key, v),
             Column::TokenBalances(v) => set_col(env, objs, key, v),
+            Column::Accounts(v) => set_col(env, objs, key, v),
         }
     }
 }

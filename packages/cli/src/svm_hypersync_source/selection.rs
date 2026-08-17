@@ -118,9 +118,12 @@ pub struct SvmOnEventRegistrationInput {
 /// Maps a selected transaction field to the extra query column it needs.
 /// `transactionIndex` is always fetched as the store key, and `tokenBalances`
 /// lives in the account_activity table, so neither adds a transaction column.
+/// `accounts` joins that table to the transaction's own key list, so it needs
+/// `account_keys` as well as the activity rows.
 fn transaction_field_column(field: &str) -> Result<Option<&'static str>> {
     Ok(match field {
         "transactionIndex" | "tokenBalances" => None,
+        "accounts" => Some("account_keys"),
         "signature" => Some("transaction_id"),
         "allSignatures" => Some("signatures"),
         "feePayer" => Some("fee_payer"),
@@ -167,6 +170,10 @@ pub(crate) struct Registration {
     pub account_filters: Vec<Vec<(usize, Vec<String>)>>,
     pub transaction_columns: Vec<&'static str>,
     pub needs_account_activity: bool,
+    /// Whether the registration reads the whole per-account view rather than
+    /// only the token balances; the store keeps the native-only activity rows
+    /// just for it.
+    pub needs_accounts: bool,
     pub block_columns: Vec<&'static str>,
 }
 
@@ -209,9 +216,13 @@ impl Registration {
             .collect::<Result<Vec<_>>>()?;
         let mut transaction_columns = Vec::new();
         let mut needs_account_activity = false;
+        let mut needs_accounts = false;
         for field in &input.transaction_fields {
-            if field == "tokenBalances" {
+            if matches!(field.as_str(), "tokenBalances" | "accounts") {
                 needs_account_activity = true;
+            }
+            if field == "accounts" {
+                needs_accounts = true;
             }
             if let Some(column) = transaction_field_column(field)? {
                 if !transaction_columns.contains(&column) {
@@ -248,6 +259,7 @@ impl Registration {
             account_filters,
             transaction_columns,
             needs_account_activity,
+            needs_accounts,
             block_columns,
         })
     }
@@ -366,6 +378,8 @@ pub(crate) struct BuiltSelection {
     /// slot/transaction_index store key too).
     pub transaction_columns: Vec<&'static str>,
     pub needs_account_activity: bool,
+    /// Union over the selection's registrations; see `Registration`.
+    pub needs_accounts: bool,
     pub needs_logs: bool,
     /// The selection's registrations sorted by index, for routing.
     pub registrations: Vec<Arc<Registration>>,
@@ -405,6 +419,7 @@ impl SelectionBuilder {
         let mut block_columns = vec!["slot", "blockhash", "block_time"];
         let mut transaction_columns: Vec<&'static str> = Vec::new();
         let mut needs_account_activity = false;
+        let mut needs_accounts = false;
         let mut needs_logs = false;
         let mut registrations = Vec::with_capacity(registration_indexes.len());
 
@@ -426,6 +441,7 @@ impl SelectionBuilder {
                 }
             }
             needs_account_activity = needs_account_activity || reg.needs_account_activity;
+            needs_accounts = needs_accounts || reg.needs_accounts;
             needs_logs = needs_logs || reg.include_logs;
 
             // Placeholder configs carry no real program — skip rather than
@@ -474,6 +490,7 @@ impl SelectionBuilder {
             block_columns,
             transaction_columns,
             needs_account_activity,
+            needs_accounts,
             needs_logs,
             registrations,
         })
@@ -764,9 +781,31 @@ mod tests {
         assert_eq!(
             (
                 built.transaction_columns.clone(),
-                built.needs_account_activity
+                built.needs_account_activity,
+                built.needs_accounts,
             ),
-            (vec![], true)
+            (vec![], true, false)
+        );
+    }
+
+    #[test]
+    fn accounts_fetches_the_key_list_alongside_the_activity_rows() {
+        // `accounts` joins the account_activity table to the transaction's own
+        // key list, so it opts into both.
+        let mut input = reg(0, PROG_A, Some("0x21"), 1, false);
+        input.transaction_fields = vec!["accounts".to_string()];
+        let (_store, _set, built) = build(&[input], &[0], &[]);
+        assert_eq!(
+            (
+                built.transaction_columns.clone(),
+                built.needs_account_activity,
+                built.needs_accounts,
+            ),
+            (
+                vec!["slot", "transaction_index", "account_keys"],
+                true,
+                true
+            )
         );
     }
 

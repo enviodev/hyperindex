@@ -81,6 +81,8 @@ expression: generated
    * ```
    */
   readonly allSignatures: FieldNotSelected<"Field 'allSignatures' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  /** The accounts field. */
+  readonly accounts: readonly { readonly address: string; readonly preLamports: bigint | null; readonly postLamports: bigint | null; readonly token: { readonly mint: string; readonly owner: string | null; readonly decimals: number | null; readonly preAmount: bigint | null; readonly postAmount: bigint | null } | null }[];
   /** The tokenBalances field. */
   readonly tokenBalances: readonly { readonly account?: string; readonly mint?: string; readonly owner?: string; readonly decimals?: number; readonly preAmount?: bigint; readonly postAmount?: bigint }[];
 }

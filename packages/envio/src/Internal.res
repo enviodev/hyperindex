@@ -151,6 +151,7 @@ type svmTransactionField =
   | @as("version") Version
   | @as("tokenBalances") TokenBalances
   | @as("allSignatures") AllSignatures
+  | @as("accounts") Accounts
 
 let allSvmTransactionFields: array<svmTransactionField> = [
   TransactionIndex,
@@ -165,6 +166,7 @@ let allSvmTransactionFields: array<svmTransactionField> = [
   Version,
   TokenBalances,
   AllSignatures,
+  Accounts,
 ]
 let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
 

@@ -24,7 +24,8 @@ chains:
                 transaction_fields: [signature]
 `
 
-let check = handlers => InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
+let check = handlers =>
+  InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
 
 // `onInstruction` shares its registration path with EVM's `onEvent`, so the
 // EVM-only fields option reaches it whenever the project doesn't type-check.
@@ -115,6 +116,8 @@ expectType<SvmOnSlotFilter>(_empty);
   it("shapes the config-independent instruction named types", _ =>
     check(`
 import type {
+  SvmAccount,
+  SvmAccountToken,
   SvmInstruction,
   SvmInstructionBlock,
   SvmInstructionParams,
@@ -149,6 +152,29 @@ expectType<TypeEqual<SvmInstructionBlock["hash"], string>>(true);
 expectType<TypeEqual<SvmInstructionBlock["time"], number | undefined>>(true);
 
 expectType<TypeEqual<SvmLog, { readonly kind: string; readonly message: string }>>(true);
+expectType<
+  TypeEqual<
+    SvmAccount,
+    {
+      readonly address: string;
+      readonly preLamports: bigint | null;
+      readonly postLamports: bigint | null;
+      readonly token: SvmAccountToken | null;
+    }
+  >
+>(true);
+expectType<
+  TypeEqual<
+    SvmAccountToken,
+    {
+      readonly mint: string;
+      readonly owner: string | null;
+      readonly decimals: number | null;
+      readonly preAmount: bigint | null;
+      readonly postAmount: bigint | null;
+    }
+  >
+>(true);
 expectType<
   TypeEqual<
     SvmTokenBalance,
@@ -241,6 +267,52 @@ if (0) {
   );
 }
 `)
+  )
+
+  it("narrows transaction.accounts from the config selection", _ =>
+    InternalTestIndexer.fromUserApi(
+      ~schema=ApiTypesFixtures.schema,
+      ~configYaml=`
+name: svm-accounts
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: Swapper
+          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+          instructions:
+            - name: swap
+              discriminator: "0x09"
+              field_selection:
+                transaction_fields: [accounts]
+`,
+      ~handlers=`
+import { indexer } from "envio";
+import type { SvmAccount } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+indexer.onInstruction(
+  { program: "Swapper", instruction: "swap" },
+  async ({ instruction: { transaction } }) => {
+    expectType<TypeEqual<typeof transaction.accounts, readonly SvmAccount[]>>(true);
+    for (const account of transaction.accounts) {
+      expectType<TypeEqual<typeof account.address, string>>(true);
+      // Every property is set, so the three token states are all null checks:
+      // no token side, opened during the transaction, closed during it.
+      if (account.token === null) continue;
+      if (account.token.preAmount === null) continue;
+      if (account.token.postAmount === null) continue;
+      expectType<TypeEqual<typeof account.token.postAmount, bigint>>(true);
+    }
+    // @ts-expect-error - tokenBalances is not selected for this instruction
+    transaction.tokenBalances.length;
+  },
+);
+`,
+    )->ignore
   )
 
   it("binds schema entities and enums under an SVM config", _ =>

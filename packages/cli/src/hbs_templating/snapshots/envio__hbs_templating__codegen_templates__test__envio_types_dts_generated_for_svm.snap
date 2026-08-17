@@ -136,6 +136,15 @@ declare module "envio" {
              * @deprecated Not selected for this instruction. To enable, add to config.yaml:
              * ```yaml
              * field_selection:
+             *   transaction_fields:
+             *     - accounts
+             * ```
+             */
+            readonly accounts: FieldNotSelected<"Field 'accounts' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
              *   token_balance_fields: true
              * ```
              */
@@ -268,6 +277,15 @@ declare module "envio" {
              * ```
              */
             readonly allSignatures: FieldNotSelected<"Field 'allSignatures' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+            /**
+             * @deprecated Not selected for this instruction. To enable, add to config.yaml:
+             * ```yaml
+             * field_selection:
+             *   transaction_fields:
+             *     - accounts
+             * ```
+             */
+            readonly accounts: FieldNotSelected<"Field 'accounts' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
             /**
              * @deprecated Not selected for this instruction. To enable, add to config.yaml:
              * ```yaml
