@@ -29,7 +29,8 @@
  *
  * Usage (needs Hasura 8080 + envio serve 8081):
  *   pnpm fuzz:differential -- [--seeds 1..20] [--n 500] [--concurrency 8]
- *                             [--phase default|limited] [--admin-ratio 0.3]
+ *                             [--phase default|limited] [--max-depth 3]
+ *                             [--well-typed-ratio 0.75] [--admin-ratio 0.3]
  *                             [--verbose]
  *
  * The fixture and Hasura's metadata are (re)applied for the chosen phase
