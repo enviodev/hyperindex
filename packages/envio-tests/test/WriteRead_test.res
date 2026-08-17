@@ -116,16 +116,6 @@ type EntityWithAllNonArrayTypes {
   optTimestamp: Timestamp
 }
 `,
-  ~unsupported=[
-    // Not a capability gap: with the sink on, a schema of four or more entities
-    // stalls the first write for exactly 30s, where three finish in ~250ms.
-    // Every scenario written before this one had three or fewer, so nothing had
-    // reached it. Drop this skip once that is fixed.
-    {
-      backend: #clickhouse,
-      reason: "4+ entity tables stall the ClickHouse sink for 30s",
-    },
-  ],
 )
 
 // The entity records the schema above generates for a user, restated here: a
