@@ -1,0 +1,12 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ SimulateTestEvent(where: {_and: [{timestamp: {_in: -1}}, {id: {_nilike: \"\\\\\"}}]}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "SimulateTestEvent": []
+  }
+ }
+}

@@ -114,6 +114,13 @@ function baseType(t: TypeRef): { name: string; kind: string } {
   return { name: cur.name ?? "", kind: cur.kind };
 }
 
+/** Renders a type reference back to GraphQL syntax, e.g. `[Int!]!`. */
+function renderType(t: TypeRef): string {
+  if (t.kind === "NON_NULL") return `${renderType(t.ofType!)}!`;
+  if (t.kind === "LIST") return `[${renderType(t.ofType!)}]`;
+  return t.name ?? "String";
+}
+
 /** Whether a type is a list at any wrapping level. */
 function isListType(t: TypeRef): boolean {
   let cur: TypeRef | null = t;
@@ -178,6 +185,10 @@ interface Node {
   children: Node[];
   /** e.g. `@include(if: true)` — rendered verbatim after the arguments. */
   directive?: string;
+  /** Wraps the children in `... on <type> { }`. */
+  inlineFragmentOn?: string;
+  /** Replaces the children with a spread of these named fragments. */
+  fragmentSpreads?: string[];
 }
 
 function render(node: Node, indent = ""): string {
@@ -186,13 +197,51 @@ function render(node: Node, indent = ""): string {
     : "";
   const name = node.alias ? `${node.alias}: ${node.field}` : node.field;
   const dir = node.directive ? ` ${node.directive}` : "";
-  if (!node.children.length) return `${indent}${name}${args}${dir}`;
-  const inner = node.children.map((c) => render(c, indent + "  ")).join("\n");
+  if (!node.children.length && !node.fragmentSpreads?.length)
+    return `${indent}${name}${args}${dir}`;
+  const spreads = (node.fragmentSpreads ?? []).map((f) => `${indent}  ...${f}`);
+  const rendered = node.children.map((c) => render(c, indent + "  "));
+  const body = [...rendered, ...spreads].join("\n");
+  const inner = node.inlineFragmentOn
+    ? `${indent}  ... on ${node.inlineFragmentOn} {\n${body
+        .split("\n")
+        .map((l) => `  ${l}`)
+        .join("\n")}\n${indent}  }`
+    : body;
   return `${indent}${name}${args}${dir} {\n${inner}\n${indent}}`;
 }
 
-function renderQuery(roots: Node[]): string {
-  return `{\n${roots.map((r) => render(r, "  ")).join("\n")}\n}`;
+interface Document {
+  query: string;
+  variables?: string;
+}
+
+/**
+ * Assembles the document. Shrinking removes the arguments and selections that
+ * referenced a variable or spread a fragment, and GraphQL rejects a document
+ * that declares either without using it — so both sets are filtered down to
+ * what the rendered body still mentions.
+ */
+function renderQuery(roots: Node[], opts?: GenOptions): Document {
+  const body = `{\n${roots.map((r) => render(r, "  ")).join("\n")}\n}`;
+  const used = (name: string, prefix: string) =>
+    new RegExp(`\\${prefix}${name}\\b`).test(body);
+  const frags = (opts?.fragments ?? []).filter((f) => used(f.name, "."));
+  const withFragments = body + frags.map((f) => `\n\nfragment ${f.name} on ${f.onType} {\n${f.body}\n}`).join("");
+  const vars = (opts?.variables ?? []).filter((v) =>
+    new RegExp(`\\$${v.name}\\b`).test(withFragments)
+  );
+  const header = vars.length
+    ? `query Q(${vars.map((v) => `$${v.name}: ${v.type}`).join(", ")}) `
+    : frags.length
+      ? "query Q "
+      : "";
+  return {
+    query: `${header}${withFragments}`,
+    variables: vars.length
+      ? `{${vars.map((v) => `${JSON.stringify(v.name)}:${v.json}`).join(",")}}`
+      : undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +349,33 @@ interface GenOptions {
   maxDepth: number;
   /** Ill-typed values left to spend in the current query. */
   adversarialBudget: number;
+  /** Collected while generating one query; empty for a plain literal query. */
+  variables?: { name: string; type: string; json: string }[];
+  fragments?: { name: string; onType: string; body: string }[];
+}
+
+/**
+ * Lifts an argument value out into a query variable, which reaches serve as
+ * JSON through an entirely different path than an inline literal (variable
+ * coercion, number-precision preservation, null handling). Only literals that
+ * are already valid JSON are lifted: GraphQL enum literals and input-object
+ * keys are unquoted, so they have no direct JSON spelling.
+ */
+function maybeVariable(
+  rng: Rng,
+  opts: GenOptions,
+  type: TypeRef,
+  literal: string
+): string {
+  if (!opts.variables || !rng.chance(0.25)) return literal;
+  try {
+    JSON.parse(literal);
+  } catch {
+    return literal;
+  }
+  const name = `v${opts.variables.length}`;
+  opts.variables.push({ name, type: renderType(type), json: literal });
+  return `$${name}`;
 }
 
 /**
@@ -376,11 +452,13 @@ function genSelection(
       const inner = baseType(f.type).name;
       const children = genSelection(rng, schema, inner, depth + 1, opts);
       if (children.length)
-        out.push({
-          field: f.name,
-          args: genArgs(rng, schema, f, inner, opts),
-          children,
-        });
+        out.push(
+          wrapInFragment(rng, opts, inner, {
+            field: f.name,
+            args: genArgs(rng, schema, f, inner, opts),
+            children,
+          })
+        );
     }
   }
   if (rng.chance(0.12))
@@ -400,6 +478,33 @@ function genSelection(
   return out;
 }
 
+/**
+ * Sometimes moves a node's selection into a named fragment, or wraps it in an
+ * inline fragment on its own type. Both are pure restructurings — the
+ * response must not change — which is exactly what makes them worth
+ * generating: they exercise a whole resolution path (fragments.rs) that
+ * literal selections never reach.
+ */
+function wrapInFragment(
+  rng: Rng,
+  opts: GenOptions,
+  onType: string,
+  node: Node
+): Node {
+  if (!node.children.length) return node;
+  if (opts.fragments && rng.chance(0.15)) {
+    const name = `F${opts.fragments.length}`;
+    opts.fragments.push({
+      name,
+      onType,
+      body: node.children.map((c) => render(c, "  ")).join("\n"),
+    });
+    return { ...node, children: [], fragmentSpreads: [name] };
+  }
+  if (rng.chance(0.12)) return { ...node, inlineFragmentOn: onType };
+  return node;
+}
+
 function genArgs(
   rng: Rng,
   schema: Schema,
@@ -410,8 +515,13 @@ function genArgs(
   const args: [string, string][] = [];
   const byName = new Map(field.args.map((a) => [a.name, a]));
 
-  if (byName.has("limit") && rng.chance(0.6))
-    args.push(["limit", String(rng.int(0, 5))]);
+  if (byName.has("limit") && rng.chance(0.6)) {
+    const limit = String(rng.int(0, 5));
+    args.push([
+      "limit",
+      maybeVariable(rng, opts, byName.get("limit")!.type, limit),
+    ]);
+  }
   if (byName.has("offset") && rng.chance(0.25))
     args.push(["offset", String(rng.int(0, 3))]);
   if (byName.has("order_by") && rng.chance(0.5)) {
@@ -443,7 +553,8 @@ function genArgs(
     if (a.type.kind !== "NON_NULL") continue;
     if (["limit", "offset", "order_by", "where", "distinct_on"].includes(a.name))
       continue;
-    args.push([a.name, inputLiteral(rng, schema, a.type, allowAdversarial(rng, opts))]);
+    const literal = inputLiteral(rng, schema, a.type, allowAdversarial(rng, opts));
+    args.push([a.name, maybeVariable(rng, opts, a.type, literal)]);
   }
   return args;
 }
@@ -483,7 +594,8 @@ function genWhere(
   }
   const op = rng.pick(ops);
   const wellTyped = allowAdversarial(rng, opts);
-  return `{${col.name}: {${op.name}: ${inputLiteral(rng, schema, op.type, wellTyped)}}}`;
+  const literal = inputLiteral(rng, schema, op.type, wellTyped);
+  return `{${col.name}: {${op.name}: ${maybeVariable(rng, opts, op.type, literal)}}}`;
 }
 
 function generate(rng: Rng, schema: Schema, opts: GenOptions): Node[] {
@@ -496,14 +608,16 @@ function generate(rng: Rng, schema: Schema, opts: GenOptions): Node[] {
       returned.kind === "OBJECT"
         ? genSelection(rng, schema, returned.name, 0, opts)
         : [];
-    roots.push({
-      field: root.name,
-      alias: count > 1 ? `r${i}` : undefined,
-      args: genArgs(rng, schema, root, returned.name, opts),
-      children: children.length
-        ? children
-        : [{ field: "__typename", args: [], children: [] }],
-    });
+    roots.push(
+      wrapInFragment(rng, opts, returned.name, {
+        field: root.name,
+        alias: count > 1 ? `r${i}` : undefined,
+        args: genArgs(rng, schema, root, returned.name, opts),
+        children: children.length
+          ? children
+          : [{ field: "__typename", args: [], children: [] }],
+      })
+    );
   }
   return roots;
 }
@@ -516,14 +630,21 @@ interface Response {
   body: string;
 }
 
-async function post(url: string, query: string, admin: boolean): Promise<Response> {
+async function post(
+  url: string,
+  query: string,
+  admin: boolean,
+  variables?: string
+): Promise<Response> {
   const res = await fetch(`${url}${url.endsWith("/v1/graphql") ? "" : "/v1/graphql"}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       ...(admin ? { "x-hasura-admin-secret": adminSecret } : {}),
     },
-    body: JSON.stringify({ query }),
+    // Assembled by hand so a generated variables payload keeps its exact
+    // JSON text, numeric precision included.
+    body: `{"query":${JSON.stringify(query)}${variables ? `,"variables":${variables}` : ""}}`,
   });
   return { status: res.status, body: await res.text() };
 }
@@ -573,12 +694,12 @@ function sortDeep(value: unknown): unknown {
 }
 
 async function differs(
-  query: string,
+  doc: Document,
   admin: boolean
 ): Promise<{ hasura: Response; serve: Response } | null> {
   const [hasura, serve] = await Promise.all([
-    post(hasuraUrl, query, admin),
-    post(serveUrl, query, admin),
+    post(hasuraUrl, doc.query, admin, doc.variables),
+    post(serveUrl, doc.query, admin, doc.variables),
   ]);
   if (hasura.status === serve.status && canonical(hasura.body) === canonical(serve.body))
     return null;
@@ -617,9 +738,11 @@ function reductions(roots: Node[]): Node[][] {
           children: [{ field: "__typename", args: [], children: [] }],
         })
       );
-    // Drop an alias or a directive.
+    // Drop an alias, a directive, or an inline-fragment wrapper.
     if (node.alias) out.push(rebuild({ ...node, alias: undefined }));
     if (node.directive) out.push(rebuild({ ...node, directive: undefined }));
+    if (node.inlineFragmentOn)
+      out.push(rebuild({ ...node, inlineFragmentOn: undefined }));
     // Recurse.
     node.children.forEach((child, i) =>
       walk(child, (n) =>
@@ -636,7 +759,7 @@ function reductions(roots: Node[]): Node[][] {
   return out;
 }
 
-async function shrink(roots: Node[], admin: boolean): Promise<Node[]> {
+async function shrink(roots: Node[], admin: boolean, opts: GenOptions): Promise<Node[]> {
   let current = roots;
   let improved = true;
   let budget = 300;
@@ -644,7 +767,7 @@ async function shrink(roots: Node[], admin: boolean): Promise<Node[]> {
     improved = false;
     for (const candidate of reductions(current)) {
       if (budget-- <= 0) break;
-      const d = await differs(renderQuery(candidate), admin);
+      const d = await differs(renderQuery(candidate, opts), admin);
       const known =
         d && KNOWN_DIVERGENCES.some((k) => k.matches(d.hasura.body, d.serve.body));
       if (d && !known && !isBlameOrder(d.hasura, d.serve)) {
@@ -680,6 +803,15 @@ const KNOWN_DIVERGENCES: { reason: string; matches: (h: string, s: string) => bo
       "row per matching row and fails its exactly-one-row assertion",
     matches: (h, s) =>
       h.includes("database query error") && !s.includes("database query error"),
+  },
+  {
+    reason:
+      "runtime error visibility: Postgres reorders AND clauses by cost, and Hasura's " +
+      "inlined constants let it skip a failing predicate that serve's bound parameters " +
+      "leave in place",
+    matches: (h, s) =>
+      h.includes('"data"') &&
+      /"code":"(data-exception|bad-request)"/.test(s),
   },
 ];
 
@@ -754,6 +886,7 @@ interface Finding {
   seed: number;
   index: number;
   query: string;
+  variables?: string;
   admin: boolean;
   hasura: string;
   serve: string;
@@ -787,26 +920,43 @@ async function main() {
   let hits = 0;
   let ambiguous = 0;
   const divergences = new Map<string, number>();
+  // A generator feature that silently stops firing would turn into a quiet
+  // loss of coverage, so every run reports what it actually produced.
+  const produced = { variables: 0, fragments: 0, inlineFragments: 0, directives: 0, aggregates: 0 };
 
   for (let seed = seedLo!; seed <= seedHi!; seed++) {
     const rng = new Rng(seed);
     // Generate the whole seed's batch up front so query N depends only on the
     // seed, never on how requests interleaved.
-    const batch = Array.from({ length: perSeed }, (_, index) => ({
-      index,
-      roots: generate(rng, schema, { ...opts, adversarialBudget: 1 }),
-      admin: rng.chance(adminRatio),
-    }));
+    const batch = Array.from({ length: perSeed }, (_, index) => {
+      const perQuery: GenOptions = {
+        ...opts,
+        adversarialBudget: 1,
+        variables: [],
+        fragments: [],
+      };
+      return {
+        index,
+        roots: generate(rng, schema, perQuery),
+        perQuery,
+        admin: rng.chance(adminRatio),
+      };
+    });
 
     let cursor = 0;
     await Promise.all(
       Array.from({ length: concurrency }, async () => {
         while (cursor < batch.length) {
           const item = batch[cursor++]!;
-          const query = renderQuery(item.roots);
+          const doc = renderQuery(item.roots, item.perQuery);
+          if (doc.variables) produced.variables++;
+          if (/\bfragment \w+ on /.test(doc.query)) produced.fragments++;
+          if (/\.\.\. on /.test(doc.query)) produced.inlineFragments++;
+          if (/@(include|skip)\(/.test(doc.query)) produced.directives++;
+          if (/_aggregate\b/.test(doc.query)) produced.aggregates++;
           let diff;
           try {
-            diff = await differs(query, item.admin);
+            diff = await differs(doc, item.admin);
           } catch (err) {
             console.error(`request failed: ${err}`);
             continue;
@@ -831,19 +981,21 @@ async function main() {
           bySignature.set(sig, {
             seed,
             index: item.index,
-            query,
+            query: doc.query,
+            variables: doc.variables,
             admin: item.admin,
             hasura: diff.hasura.body,
             serve: diff.serve.body,
           });
-          const small = await shrink(item.roots, item.admin);
-          const smallQuery = renderQuery(small);
-          const reDiff = await differs(smallQuery, item.admin);
+          const small = await shrink(item.roots, item.admin, item.perQuery);
+          const smallDoc = renderQuery(small, item.perQuery);
+          const reDiff = await differs(smallDoc, item.admin);
           if (reDiff)
             bySignature.set(sig, {
               seed,
               index: item.index,
-              query: smallQuery,
+              query: smallDoc.query,
+              variables: smallDoc.variables,
               admin: item.admin,
               hasura: reDiff.hasura.body,
               serve: reDiff.serve.body,
@@ -859,11 +1011,17 @@ async function main() {
     `\nchecked ${checked}, actionable mismatches ${hits} in ${findings.length} shapes` +
       `, ${ambiguous} ambiguous (multiple invalid spots, blame order not reproducible)`
   );
+  console.log(
+    `  generated: ${produced.variables} with variables, ${produced.fragments} with named ` +
+      `fragments, ${produced.inlineFragments} inline, ${produced.directives} with directives, ` +
+      `${produced.aggregates} aggregate`
+  );
   for (const [reason, count] of divergences)
     console.log(`  known divergence x${count}: ${reason}`);
   for (const f of findings) {
     console.log(
-      `\n--- seed ${f.seed} #${f.index}${f.admin ? " (admin)" : ""}\n${f.query}`
+      `\n--- seed ${f.seed} #${f.index}${f.admin ? " (admin)" : ""}\n${f.query}` +
+        (f.variables ? `\nvariables: ${f.variables}` : "")
     );
     console.log(`  hasura: ${f.hasura.slice(0, 300)}`);
     console.log(`  serve : ${f.serve.slice(0, 300)}`);

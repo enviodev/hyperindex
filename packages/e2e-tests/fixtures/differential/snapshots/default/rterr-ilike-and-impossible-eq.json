@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ SimulateTestEvent(where: {_and: [{id: {_nilike: \"\\\\\"}}, {timestamp: {_eq: -1}}]}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "LIKE pattern must not end with escape character",
+    "extensions": {
+     "path": "$",
+     "code": "bad-request"
+    }
+   }
+  ]
+ }
+}

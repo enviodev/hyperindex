@@ -19,6 +19,7 @@ import transport from "./18-transport.js";
 import arrayOperands from "./19-array-operands.js";
 import jsonbKeyOperands from "./20-jsonb-key-operands.js";
 import degenerateAggregates from "./21-degenerate-aggregates.js";
+import runtimeErrorVisibility from "./22-runtime-error-visibility.js";
 import type { CorpusCase } from "../corpus.js";
 
 export const allCases: CorpusCase[] = [
@@ -43,4 +44,5 @@ export const allCases: CorpusCase[] = [
   ...arrayOperands,
   ...jsonbKeyOperands,
   ...degenerateAggregates,
+  ...runtimeErrorVisibility,
 ];
