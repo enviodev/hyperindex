@@ -27,21 +27,22 @@ async function bumpStats(
 indexer.onInstruction(
   { program: "TokenMetadata", instruction: "CreateMetadataAccountV3" },
   async ({ instruction, context }) => {
-    const { accounts } = instruction;
-    // Token Metadata's CreateMetadataAccountV3 account layout (Metaplex):
-    //   0 = metadata account (PDA)
-    //   1 = mint
-    //   2 = mint authority
-    //   3 = payer
-    //   4 = update authority
-    const metadataPda = accounts[0];
-    if (metadataPda === undefined) return;
-    const mint = accounts[1] ?? "";
-    const updateAuthority = accounts[4];
+    const params = instruction.params;
+    if (!params) {
+      // The IDL covers discriminator 0x21, so a miss means the on-chain layout
+      // drifted from the checked-in IDL. Surface it rather than write a
+      // half-decoded row.
+      context.log.warn("CreateMetadataAccountV3: instruction did not match the IDL");
+      return;
+    }
+    const { args, accounts } = params;
+    const metadataPda = accounts.metadata;
+    const mint = accounts.mint;
+    const updateAuthority = accounts.updateAuthority;
     const txSig = instruction.transaction.signature;
 
-    console.log(
-      `[Create] slot=${instruction.block.slot} mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
+    context.log.info(
+      `Create: slot=${instruction.block.slot} name='${args.data.name}' symbol='${args.data.symbol}' mint=${mint.slice(0, 8)}..`,
     );
 
     context.TokenMetadataAccount.set({
@@ -61,14 +62,20 @@ indexer.onInstruction(
 indexer.onInstruction(
   { program: "TokenMetadata", instruction: "UpdateMetadataAccountV2" },
   async ({ instruction, context }) => {
-    const { accounts } = instruction;
-    const metadataPda = accounts[0];
-    if (metadataPda === undefined) return;
-    const updateAuthority = accounts[1];
+    const params = instruction.params;
+    if (!params) {
+      context.log.warn("UpdateMetadataAccountV2: instruction did not match the IDL");
+      return;
+    }
+    const { args, accounts } = params;
+    const metadataPda = accounts.metadata;
+    // The instruction can reassign the update authority; when it doesn't, the
+    // signing authority is still the current one.
+    const updateAuthority = args.newUpdateAuthority ?? accounts.updateAuthority;
     const txSig = instruction.transaction.signature;
 
-    console.log(
-      `[Update] slot=${instruction.block.slot} metadata=${metadataPda.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
+    context.log.info(
+      `Update: slot=${instruction.block.slot} metadata=${metadataPda.slice(0, 8)}..`,
     );
 
     const existing = await context.TokenMetadataAccount.get(metadataPda);

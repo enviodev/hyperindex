@@ -108,7 +108,6 @@ chains:
           idl: idls/swapper.json
           instructions:
             - name: swap
-              discriminator: "0x0102030405060708"
 `
 
 let codamaConfigYaml = `
@@ -125,8 +124,16 @@ chains:
           idl: idls/spl-token.codama.json
           instructions:
             - name: transfer
-              discriminator: "0x03"
 `
+
+
+let parseError = (~files, ~configYaml) =>
+  try {
+    InternalTestIndexer.fromUserApi(~files, ~configYaml)->ignore
+    "the parse to fail, but it succeeded"
+  } catch {
+  | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
+  }
 
 let checkAnchor = handlers =>
   InternalTestIndexer.fromUserApi(
@@ -186,23 +193,79 @@ indexer.onInstruction(
 `)
   )
 
+  // The whole point of keying the IDL by name: the config names an
+  // instruction and the discriminator comes from the IDL, not from a hand-
+  // transcribed hex string.
+  it("derives the discriminator from the IDL", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files=Dict.fromArray([("idls/swapper.json", anchorIdl)]),
+      ~configYaml=anchorConfigYaml,
+    )
+    let ids =
+      config.chainMap
+      ->ChainMap.values
+      ->Array.flatMap(chain =>
+        chain.contracts->Array.flatMap(contract =>
+          contract.events->Array.map(event => (contract.name, event.name, event.id))
+        )
+      )
+    t.expect(ids).toEqual([("Swapper", "swap", "0x0102030405060708")])
+  })
+
+  // A name the IDL doesn't have used to fall through to an untyped
+  // instruction; nothing told the user their handler would never see args.
+  it("rejects an instruction name the IDL does not declare", t =>
+    t.expect(
+      parseError(
+        ~files=Dict.fromArray([("idls/swapper.json", anchorIdl)]),
+        ~configYaml=anchorConfigYaml->String.replace("- name: swap", "- name: swapExactOut"),
+      ),
+    ).toBe(
+      "Config parse error: Layout for instruction 'swapExactOut': Instruction 'swapExactOut' is not in the program's IDL. Available instructions: swap.",
+    )
+  )
+
+  it("rejects a configured discriminator that contradicts the IDL", t =>
+    t.expect(
+      parseError(
+        ~files=Dict.fromArray([("idls/swapper.json", anchorIdl)]),
+        ~configYaml=anchorConfigYaml->String.replace(
+          "- name: swap",
+          `- name: swap\n              discriminator: "0xdeadbeefdeadbeef"`,
+        ),
+      ),
+    ).toBe(
+      "Config parse error: Layout for instruction 'swap': Instruction 'swap': the config sets `discriminator: 0xdeadbeefdeadbeef` but the IDL derives 0x0102030405060708. Drop the `discriminator` line and let the IDL supply it.",
+    )
+  )
+
+  it("rejects an IDL whose address is not the configured program", t =>
+    t.expect(
+      parseError(
+        ~files=Dict.fromArray([("idls/swapper.json", anchorIdl)]),
+        ~configYaml=anchorConfigYaml->String.replace(
+          "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8\n          idl",
+          "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n          idl",
+        ),
+      ),
+    ).toBe(
+      "Config parse error: Resolving Borsh schema for TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA: Program 'Swapper': the IDL declares address '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8' but the config sets `program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`.",
+    )
+  )
+
   // Routing dispatches on the discriminator, so two instructions sharing one
   // are undispatchable — a name-keyed IDL can express that, and it has to be
   // rejected rather than silently collapsed to whichever landed last.
-  it("rejects two instructions sharing a discriminator", t => {
-    let actual = try {
-      InternalTestIndexer.fromUserApi(
+  it("rejects two instructions sharing a discriminator", t =>
+    t.expect(
+      parseError(
         ~files=Dict.fromArray([("idls/spl-token.codama.json", clashingCodamaIdl)]),
         ~configYaml=codamaConfigYaml,
-      )->ignore
-      "the parse to fail, but it succeeded"
-    } catch {
-    | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
-    }
-    t.expect(actual).toBe(
-      "Config parse error: Resolving Borsh schema for program 'SplToken' (TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA): Instructions 'transfer' and 'transferAgain' share discriminator 0x03",
+      ),
+    ).toBe(
+      "Config parse error: Resolving Borsh schema for TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA: parsing IDL for program 'SplToken': instructions 'transfer' and 'transferAgain' share discriminator 0x03",
     )
-  })
+  )
 
   // The discriminator field is consumed as the instruction's prefix, so it is
   // not an argument the Borsh runtime decodes.

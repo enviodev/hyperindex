@@ -14,11 +14,12 @@
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, bail, Context, Result};
+use heck::ToSnakeCase;
 use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
-use super::{EventIdl, IdlAccount, IxIdl, ProgramIdl};
+use super::{required_str, EventIdl, IdlAccount, IxIdl, ProgramIdl};
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
     let address = root
@@ -72,7 +73,7 @@ fn parse_instructions(root: &Map<String, Value>) -> Result<BTreeMap<String, IxId
         let discriminator = match ix.get("discriminator") {
             Some(node) => parse_byte_array(node)
                 .with_context(|| format!("instruction '{name}' discriminator"))?,
-            None => hashed_discriminator("global:", &to_snake_case(&name)),
+            None => hashed_discriminator("global:", &name.to_snake_case()),
         };
         let ix_idl = IxIdl {
             discriminator,
@@ -107,11 +108,15 @@ fn parse_events(
             }
             None => hashed_discriminator("event:", &name),
         };
+        // 0.30+ leaves only the discriminator here and puts the payload in
+        // `types` under the event's own name. A missing payload would decode
+        // as a field-less event rather than fail, so it's an error.
         let fields = match ev.get("fields") {
             Some(node) => parse_named_fields(Some(node), &format!("event '{name}' fields"))?,
             None => match defined_types.get(&name) {
                 Some(FieldType::Struct(fields)) => fields.clone(),
-                _ => Vec::new(),
+                Some(other) => bail!("event '{name}' payload type is {other:?}, expected a struct"),
+                None => bail!("event '{name}' declares no fields and no type named '{name}'"),
             },
         };
         if out
@@ -138,24 +143,6 @@ fn hashed_discriminator(prefix: &str, name: &str) -> Vec<u8> {
     hasher.update(prefix.as_bytes());
     hasher.update(name.as_bytes());
     hasher.finalize()[..8].to_vec()
-}
-
-fn to_snake_case(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 4);
-    let mut prev_lower = false;
-    for c in s.chars() {
-        if c.is_ascii_uppercase() {
-            if prev_lower {
-                out.push('_');
-            }
-            out.extend(c.to_lowercase());
-            prev_lower = false;
-        } else {
-            out.push(c);
-            prev_lower = c.is_ascii_lowercase() || c.is_ascii_digit();
-        }
-    }
-    out
 }
 
 fn parse_byte_array(node: &Value) -> Result<Vec<u8>> {
@@ -227,11 +214,17 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
         .as_object()
         .ok_or_else(|| anyhow!("{path}: unsupported type {node}"))?;
 
-    if let Some(inner) = obj.get("option").or_else(|| obj.get("coption")) {
+    if let Some(inner) = obj.get("option") {
         return Ok(FieldType::Option(Box::new(parse_type(
             inner,
             &format!("{path}.option"),
         )?)));
+    }
+    // An SPL `COption` tags presence with four bytes where Borsh uses one, and
+    // the runtime has no four-byte option to decode it with. Reading it as a
+    // Borsh option would misalign this field and every field after it.
+    if obj.contains_key("coption") {
+        bail!("{path}: `coption` is not Borsh-compatible and cannot be decoded");
     }
     if let Some(inner) = obj.get("vec") {
         return Ok(FieldType::Vec(Box::new(parse_type(
@@ -355,10 +348,4 @@ fn parse_enum_variant(v: &Value, enum_name: &str) -> Result<EnumVariant> {
         Some(other) => bail!("{path}.fields: expected an array, got {other}"),
     };
     Ok(EnumVariant { name, fields })
-}
-
-fn required_str<'a>(node: &'a Value, key: &str) -> Result<&'a str> {
-    node.get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("missing '{key}' in {node}"))
 }

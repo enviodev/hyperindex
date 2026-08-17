@@ -11,7 +11,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 
-use super::{IdlAccount, IxIdl, ProgramIdl};
+use super::{required_str, IdlAccount, IxIdl, ProgramIdl};
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
     // A `.codama` file wraps the root node; a serialized `RootNode` is the
@@ -126,9 +126,24 @@ fn parse_discriminators(ix: &Value) -> Result<(Vec<u8>, Vec<String>)> {
             other => bail!("unsupported discriminator kind '{other}'"),
         }
     }
+    // Dispatch matches one contiguous prefix off the head of the data, so the
+    // parts have to tile from offset 0 with no gap and no overlap. Anything
+    // else would concatenate into a prefix that is not what the program
+    // actually encodes.
     parts.sort_by_key(|(offset, _, _)| *offset);
-    let bytes = parts.iter().flat_map(|(_, b, _)| b.clone()).collect();
-    let field_names = parts.into_iter().filter_map(|(_, _, name)| name).collect();
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut field_names = Vec::new();
+    for (offset, part, field) in parts {
+        if offset != bytes.len() as u64 {
+            bail!(
+                "discriminator part at offset {offset} does not follow the previous part, which \
+                 ends at {}; dispatch needs one contiguous prefix from offset 0",
+                bytes.len()
+            );
+        }
+        bytes.extend(part);
+        field_names.extend(field);
+    }
     Ok((bytes, field_names))
 }
 
@@ -165,19 +180,28 @@ fn constant_bytes(constant: &Value) -> Result<Vec<u8>> {
 fn number_bytes(value: &Value, ty: &Value) -> Result<Vec<u8>> {
     let number = value
         .get("number")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| anyhow!("expected a 'number', got {value}"))?;
+        .and_then(Value::as_i64)
+        .ok_or_else(|| anyhow!("expected an integer 'number', got {value}"))?;
     let format = ty
         .get("format")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("expected a number type, got {ty}"))?;
-    let width = match format {
-        "u8" | "i8" => 1,
-        "u16" | "i16" => 2,
-        "u32" | "i32" => 4,
-        "u64" | "i64" => 8,
+    // Signed formats are encoded two's-complement at their own width, so the
+    // range check has to be per-format rather than "does it fit in u64".
+    let (width, min, max) = match format {
+        "u8" => (1, 0, u8::MAX as i64),
+        "u16" => (2, 0, u16::MAX as i64),
+        "u32" => (4, 0, u32::MAX as i64),
+        "u64" => (8, 0, i64::MAX),
+        "i8" => (1, i8::MIN as i64, i8::MAX as i64),
+        "i16" => (2, i16::MIN as i64, i16::MAX as i64),
+        "i32" => (4, i32::MIN as i64, i32::MAX as i64),
+        "i64" => (8, i64::MIN, i64::MAX),
         other => bail!("unsupported discriminator number format '{other}'"),
     };
+    if number < min || number > max {
+        bail!("discriminator value {number} does not fit in {format}");
+    }
     Ok(number.to_le_bytes()[..width].to_vec())
 }
 
@@ -267,12 +291,21 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
                 .with_context(|| path.to_string())?
                 .to_string(),
         )),
-        // `zeroableOptionTypeNode` differs only in how `None` is encoded, and
-        // the Borsh runtime has no zeroable form to decode it with.
-        "optionTypeNode" | "zeroableOptionTypeNode" => Ok(FieldType::Option(Box::new(parse_type(
-            item(node, path)?,
-            &format!("{path}.item"),
-        )?))),
+        // Borsh tags an option with one byte, which is Codama's default
+        // prefix. A wider prefix decodes at the wrong offset.
+        "optionTypeNode" => {
+            require_prefix(node, "u8", path)?;
+            Ok(FieldType::Option(Box::new(parse_type(
+                item(node, path)?,
+                &format!("{path}.item"),
+            )?)))
+        }
+        // A zeroable option carries no tag at all — presence is encoded by the
+        // value being non-zero. There is no Borsh shape for that, and reading
+        // it as a tagged option would consume a byte that isn't there.
+        "zeroableOptionTypeNode" => {
+            bail!("{path}: zeroable options are not Borsh-compatible and cannot be decoded")
+        }
         "arrayTypeNode" => {
             let item = parse_type(item(node, path)?, &format!("{path}.item"))?;
             let count = node
@@ -289,7 +322,11 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
                         len: len as usize,
                     })
                 }
-                "prefixedCountNode" => Ok(FieldType::Vec(Box::new(item))),
+                // Borsh frames a vector with a u32 length prefix.
+                "prefixedCountNode" => {
+                    require_prefix(count, "u32", path)?;
+                    Ok(FieldType::Vec(Box::new(item)))
+                }
                 other => bail!("{path}: unsupported array count kind '{other}'"),
             }
         }
@@ -334,13 +371,7 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
         // byte layout in a way the runtime cannot express, and unwrapping one
         // regardless would misalign every field decoded after it.
         "sizePrefixTypeNode" => {
-            let prefix = node
-                .get("prefix")
-                .and_then(|p| p.get("format"))
-                .and_then(Value::as_str);
-            if prefix != Some("u32") {
-                bail!("{path}: size prefix must be u32, got {prefix:?}");
-            }
+            require_prefix(node, "u32", path)?;
             parse_type(
                 node.get("type")
                     .ok_or_else(|| anyhow!("{path}: {kind} has no 'type'"))?,
@@ -379,6 +410,26 @@ fn parse_enum_variant(v: &Value, enum_path: &str) -> Result<EnumVariant> {
     })
 }
 
+/// Codama lets a node choose the integer width framing it; the Borsh runtime
+/// has exactly one width per shape. An absent prefix means Codama's default,
+/// which is what these shapes are checked against.
+fn require_prefix(node: &Value, expected: &str, path: &str) -> Result<()> {
+    let actual = node
+        .get("prefix")
+        .map(|p| required_str(p, "format").with_context(|| path.to_string()))
+        .transpose()?;
+    match actual {
+        None => Ok(()),
+        Some(format) if format == expected => Ok(()),
+        Some(format) => bail!("{path}: prefix must be {expected}, got {format}"),
+    }
+}
+
+fn item<'a>(node: &'a Value, path: &str) -> Result<&'a Value> {
+    node.get("item")
+        .ok_or_else(|| anyhow!("{path}: node has no 'item'"))
+}
+
 /// Tuple items become `_0`, `_1`, … so every decoded body is keyed by name.
 fn positional_fields(node: &Value, path: &str) -> Result<Vec<NamedField>> {
     let items = node
@@ -395,15 +446,4 @@ fn positional_fields(node: &Value, path: &str) -> Result<Vec<NamedField>> {
             })
         })
         .collect()
-}
-
-fn item<'a>(node: &'a Value, path: &str) -> Result<&'a Value> {
-    node.get("item")
-        .ok_or_else(|| anyhow!("{path}: node has no 'item'"))
-}
-
-fn required_str<'a>(node: &'a Value, key: &str) -> Result<&'a str> {
-    node.get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("missing '{key}' in {node}"))
 }

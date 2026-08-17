@@ -1404,28 +1404,20 @@ impl SystemConfig {
                     for program in programs {
                         let svm_abi =
                             resolve_program_schema(program, source).with_context(|| {
-                                format!(
-                                    "Resolving Borsh schema for program '{}' ({})",
-                                    program.name, program.program_id
-                                )
+                                format!("Resolving Borsh schema for {}", program.program_id)
                             })?;
                         let events = program
                             .instructions
                             .iter()
                             .map(|instr| -> Result<Event> {
-                                let (normalized_discriminator, byte_len) =
-                                    match &instr.discriminator {
-                                        Some(d) => {
-                                            let hex = d.strip_prefix("0x").unwrap_or(d);
-                                            let byte_len = (hex.len() / 2) as u8;
-                                            (Some(format!("0x{hex}")), byte_len)
-                                        }
-                                        None => (None, 0u8),
-                                    };
-                                let (accounts, args) = resolve_instruction_layout(instr, &svm_abi)
-                                    .with_context(|| {
-                                        format!("Layout for instruction '{}'", instr.name)
-                                    })?;
+                                let ResolvedInstruction {
+                                    discriminator: normalized_discriminator,
+                                    discriminator_byte_len: byte_len,
+                                    accounts,
+                                    args,
+                                } = resolve_instruction(instr, &svm_abi).with_context(|| {
+                                    format!("Layout for instruction '{}'", instr.name)
+                                })?;
                                 let fs = instr.field_selection.as_ref();
                                 let selected_transaction_fields =
                                     resolve_svm_transaction_fields(fs);
@@ -1889,44 +1881,22 @@ impl EvmAbi {
     }
 }
 
-/// Re-key the IDL's instructions the way routing dispatches on them: by the
-/// discriminator bytes matched against the head of `instruction.data`. Two
-/// instructions sharing a prefix are undispatchable, so that's an error rather
-/// than a silently dropped instruction.
-fn index_by_discriminator(
-    instructions: BTreeMap<String, svm_idl::IxIdl>,
-) -> Result<BTreeMap<Vec<u8>, SvmInstructionSchema>> {
-    let mut out: BTreeMap<Vec<u8>, SvmInstructionSchema> = BTreeMap::new();
-    for (name, ix) in instructions {
-        let schema = SvmInstructionSchema {
-            name,
-            discriminator: ix.discriminator.clone(),
-            accounts: ix
-                .accounts
-                .into_iter()
-                .map(|a| SvmNamedAccount {
-                    name: a.name,
-                    writable: a.writable,
-                    signer: a.signer,
-                    optional: a.optional,
-                })
-                .collect(),
-            args: ix.args,
-        };
-        if let Some(existing) = out.get(&ix.discriminator) {
-            return Err(anyhow!(
-                "Instructions '{}' and '{}' share discriminator 0x{}",
-                existing.name,
-                schema.name,
-                ix.discriminator
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>(),
-            ));
-        }
-        out.insert(ix.discriminator, schema);
+fn to_instruction_schema(name: String, ix: svm_idl::IxIdl) -> SvmInstructionSchema {
+    SvmInstructionSchema {
+        name,
+        discriminator: ix.discriminator,
+        accounts: ix
+            .accounts
+            .into_iter()
+            .map(|a| SvmNamedAccount {
+                name: a.name,
+                writable: a.writable,
+                signer: a.signer,
+                optional: a.optional,
+            })
+            .collect(),
+        args: ix.args,
     }
-    Ok(out)
 }
 
 fn resolve_program_schema(
@@ -1950,9 +1920,25 @@ fn resolve_program_schema(
             .read_project_relative_file(idl_path)
             .with_context(|| format!("reading IDL at '{idl_path}'"))?;
         let idl = svm_idl::parse_idl(&resolved.raw, &program.name)?;
+        // A mismatch here means the IDL and the configured program id describe
+        // different programs, and every derived layout would be wrong.
+        if let Some(address) = &idl.address {
+            if address != &program.program_id {
+                return Err(anyhow!(
+                    "Program '{}': the IDL declares address '{address}' but the config sets \
+                     `program_id: {}`.",
+                    program.name,
+                    program.program_id
+                ));
+            }
+        }
         return Ok(SvmAbi {
             program_id: program.program_id.clone(),
-            instructions: index_by_discriminator(idl.instructions)?,
+            instructions: idl
+                .instructions
+                .into_iter()
+                .map(|(name, ix)| (name.clone(), to_instruction_schema(name, ix)))
+                .collect(),
             defined_types: idl.defined_types,
             source: SvmSchemaSource::AnchorIdl {
                 path: idl_path.to_string(),
@@ -1968,23 +1954,36 @@ fn resolve_program_schema(
     })
 }
 
-/// Resolve per-instruction `(accounts, args)` from one of:
-/// 1. YAML per-instruction `accounts`/`args` overrides (highest priority).
-/// 2. The matching `InstructionSchema` from the program's parsed IDL, keyed
-///    by the YAML `discriminator` bytes.
-/// 3. An empty pair (`accounts: []`, `args: []`) so existing untyped
-///    handlers keep working.
-fn resolve_instruction_layout(
+/// One configured instruction's discriminator and Borsh layout.
+struct ResolvedInstruction {
+    /// Normalized `0x`-prefixed hex. `None` matches every instruction in the
+    /// program, which is the lowest routing priority.
+    discriminator: Option<String>,
+    discriminator_byte_len: u8,
+    accounts: Vec<String>,
+    args: Vec<SvmNamedField>,
+}
+
+/// Resolve one configured instruction against the program's schema, from one of:
+/// 1. YAML per-instruction `accounts`/`args` overrides, with the YAML
+///    discriminator.
+/// 2. The program's IDL, matched on the instruction *name* — so the
+///    discriminator is derived rather than transcribed by hand.
+/// 3. Neither, leaving an untyped instruction matched only by its YAML
+///    discriminator.
+fn resolve_instruction(
     instr: &human_config::svm::Instruction,
     abi: &SvmAbi,
-) -> Result<(Vec<String>, Vec<SvmNamedField>)> {
-    if let (Some(accounts_yaml), Some(args_yaml)) = (&instr.accounts, &instr.args) {
-        let args = args_yaml
-            .iter()
-            .map(yaml_arg_to_named_field)
-            .collect::<Result<Vec<_>>>()?;
-        return Ok((accounts_yaml.clone(), args));
-    }
+) -> Result<ResolvedInstruction> {
+    let yaml_discriminator = instr
+        .discriminator
+        .as_deref()
+        .map(|d| {
+            crate::hex::decode_optionally_prefixed(d, "discriminator")
+                .map(|bytes| (format!("0x{}", hex_lower(&bytes)), bytes.len() as u8))
+        })
+        .transpose()?;
+
     if instr.accounts.is_some() != instr.args.is_some() {
         return Err(anyhow!(
             "Instruction '{}': `accounts` and `args` must be provided together (or both omitted \
@@ -1992,29 +1991,65 @@ fn resolve_instruction_layout(
             instr.name
         ));
     }
-
-    if let Some(disc_bytes) = disc_to_bytes(instr.discriminator.as_deref())? {
-        if let Some(ix_schema) = abi.instructions.get(&disc_bytes) {
-            let accounts = ix_schema.accounts.iter().map(|a| a.name.clone()).collect();
-            let args = ix_schema.args.clone();
-            return Ok((accounts, args));
-        }
+    if let (Some(accounts), Some(args)) = (&instr.accounts, &instr.args) {
+        let (discriminator, discriminator_byte_len) = split_discriminator(yaml_discriminator);
+        return Ok(ResolvedInstruction {
+            discriminator,
+            discriminator_byte_len,
+            accounts: accounts.clone(),
+            args: args
+                .iter()
+                .map(yaml_arg_to_named_field)
+                .collect::<Result<Vec<_>>>()?,
+        });
     }
 
-    Ok((Vec::new(), Vec::new()))
+    if matches!(abi.source, SvmSchemaSource::AnchorIdl { .. }) {
+        let schema = abi.instructions.get(&instr.name).ok_or_else(|| {
+            anyhow!(
+                "Instruction '{}' is not in the program's IDL. Available instructions: {}.",
+                instr.name,
+                abi.instructions.keys().join(", ")
+            )
+        })?;
+        let derived = format!("0x{}", hex_lower(&schema.discriminator));
+        // The IDL is the authority; a hand-written discriminator that
+        // disagrees with it would route to a layout the program never encodes.
+        if let Some((configured, _)) = &yaml_discriminator {
+            if configured != &derived {
+                return Err(anyhow!(
+                    "Instruction '{}': the config sets `discriminator: {configured}` but the IDL \
+                     derives {derived}. Drop the `discriminator` line and let the IDL supply it.",
+                    instr.name
+                ));
+            }
+        }
+        return Ok(ResolvedInstruction {
+            discriminator: Some(derived),
+            discriminator_byte_len: schema.discriminator.len() as u8,
+            accounts: schema.accounts.iter().map(|a| a.name.clone()).collect(),
+            args: schema.args.clone(),
+        });
+    }
+
+    let (discriminator, discriminator_byte_len) = split_discriminator(yaml_discriminator);
+    Ok(ResolvedInstruction {
+        discriminator,
+        discriminator_byte_len,
+        accounts: Vec::new(),
+        args: Vec::new(),
+    })
 }
 
-fn disc_to_bytes(disc: Option<&str>) -> Result<Option<Vec<u8>>> {
-    let Some(s) = disc else { return Ok(None) };
-    let hex = s.strip_prefix("0x").unwrap_or(s);
-    let bytes = (0..hex.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&hex[i..i + 2], 16)
-                .with_context(|| format!("invalid hex byte at offset {i} in discriminator '{s}'"))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok(Some(bytes))
+fn split_discriminator(parsed: Option<(String, u8)>) -> (Option<String>, u8) {
+    match parsed {
+        Some((hex, len)) => (Some(hex), len),
+        None => (None, 0),
+    }
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn yaml_arg_to_named_field(arg: &human_config::svm::ArgDef) -> Result<SvmNamedField> {
@@ -2159,10 +2194,10 @@ pub enum Abi {
 pub struct SvmAbi {
     /// Base58 program id this schema describes.
     pub program_id: String,
-    /// Per-instruction Borsh layout (accounts + args), keyed by full
-    /// discriminator bytes. Populated from a parsed IDL; empty for inline
+    /// Per-instruction Borsh layout (accounts + args), keyed by the IDL's
+    /// instruction name — which is what `config.yaml` names. Empty for inline
     /// (per-instruction YAML) schemas.
-    pub instructions: BTreeMap<Vec<u8>, SvmInstructionSchema>,
+    pub instructions: BTreeMap<String, SvmInstructionSchema>,
     /// Nominal-type registry referenced by `SvmFieldType::Defined`. Populated
     /// from a parsed IDL, or empty for hand-written ad-hoc schemas.
     pub defined_types: BTreeMap<String, SvmFieldType>,

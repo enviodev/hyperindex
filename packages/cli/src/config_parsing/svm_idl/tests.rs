@@ -88,13 +88,20 @@ fn render_type(ty: &FieldType) -> String {
     }
 }
 
-fn parse_fixture(file_stem: &str) -> ProgramIdl {
+fn read_fixture(file_stem: &str) -> String {
     let path = format!(
         "{}/../../scenarios/svm_flow_xray/idls/{file_stem}.json",
         env!("CARGO_MANIFEST_DIR")
     );
-    let json = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
-    parse_idl(&json, &program_name_from_filename(file_stem)).expect("parse")
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
+}
+
+fn parse_fixture(file_stem: &str) -> ProgramIdl {
+    parse_idl(
+        &read_fixture(file_stem),
+        &program_name_from_filename(file_stem),
+    )
+    .expect("parse")
 }
 
 #[test]
@@ -176,6 +183,23 @@ fn derives_discriminators_for_legacy_anchor_idl() {
     );
 }
 
+/// Anchor derives the pre-0.30 discriminator from `heck`'s snake_case, which
+/// splits an acronym run. A hand-rolled converter that only breaks on
+/// lower→upper collapses `CLMM` into one word and derives the wrong bytes for
+/// every such instruction — silently, since the IDL still parses.
+#[test]
+fn splits_acronym_runs_like_anchor_does() {
+    let idl = parse_idl(
+        r#"{ "instructions": [{ "name": "raydiumCLMMSwap", "accounts": [], "args": [] }] }"#,
+        "Router",
+    )
+    .expect("parse");
+    assert_eq!(
+        render(&idl),
+        "address: -\ninstruction raydiumCLMMSwap 0x2fb8d5c123d25704 () ()\n"
+    );
+}
+
 /// Anchor 0.30+ ships inline discriminators, `metadata.address`, the
 /// `{"defined": {"name": T}}` type ref and the `writable`/`signer` flags; an
 /// event's payload lives in `types` under the event's own name.
@@ -236,9 +260,9 @@ fn parses_anchor_030_idl() {
     );
 }
 
-/// SPL Token is the case Anchor cannot express and the reason Codama is in
-/// the spec: a 1-byte discriminator carried by a regular argument, a packed
-/// two-field discriminator, and a COption account slot.
+/// SPL Token is the case Anchor cannot express and the reason Codama is in the
+/// spec: a 1-byte discriminator carried by a regular argument, a two-byte one
+/// packed from two such arguments, and a literal byte constant.
 #[test]
 fn parses_codama_spl_token_idl() {
     let idl = parse_idl(
@@ -298,7 +322,7 @@ fn parses_codama_spl_token_idl() {
                   {
                     "kind": "instructionArgumentNode",
                     "name": "freezeAuthority",
-                    "type": { "kind": "zeroableOptionTypeNode", "item": { "kind": "publicKeyTypeNode" } }
+                    "type": { "kind": "optionTypeNode", "item": { "kind": "publicKeyTypeNode" } }
                   }
                 ],
                 "discriminators": [
@@ -322,8 +346,8 @@ fn parses_codama_spl_token_idl() {
                   {
                     "kind": "instructionArgumentNode",
                     "name": "subDiscriminator",
-                    "type": { "kind": "numberTypeNode", "format": "u16", "endian": "le" },
-                    "defaultValue": { "kind": "numberValueNode", "number": 258 },
+                    "type": { "kind": "numberTypeNode", "format": "u8", "endian": "le" },
+                    "defaultValue": { "kind": "numberValueNode", "number": 1 },
                     "defaultValueStrategy": "omitted"
                   },
                   { "kind": "instructionArgumentNode", "name": "amount", "type": { "kind": "numberTypeNode", "format": "u64" } }
@@ -408,61 +432,152 @@ fn parses_codama_spl_token_idl() {
          instruction initializeMint 0x00 (mint:w, rent:?) (decimals: u8, mintAuthority: pubkey, freezeAuthority: Option<pubkey>)\n\
          instruction syncNative 0x11 () ()\n\
          instruction transfer 0x03 (source:w, destination:w, authority:s) (amount: u64)\n\
-         instruction transferChecked 0x0c0201 (source:w) (amount: u64)\n\
+         instruction transferChecked 0x0c01 (source:w) (amount: u64)\n\
          type accountState = enum {uninitialized, frozen(since: u64), initialized(_0: bool, _1: pubkey)}\n\
          type multisig = {m: u8, signers: [pubkey; 11], memo: string, history: Vec<@accountState>}\n"
     );
 }
 
+/// Shapes that parse as JSON but cannot be decoded, or cannot be dispatched.
+/// Each one would otherwise reach codegen and fail at indexer start, or worse,
+/// decode at the wrong offset and produce plausible garbage.
 #[test]
-fn rejects_an_idl_of_neither_dialect() {
-    let error = parse_idl(r#"{ "name": "mystery" }"#, "Mystery").unwrap_err();
-    assert_eq!(
-        format!("{error:#}"),
-        "parsing IDL for program 'Mystery': unrecognized IDL: expected an Anchor IDL (top-level \
-         'instructions') or a Codama IDL (a 'rootNode')"
-    );
-}
+fn rejects_undecodable_and_undispatchable_idls() {
+    let cases: Vec<(&str, &str)> = vec![
+        ("neither dialect", r#"{ "name": "mystery" }"#),
+        (
+            "duplicate instruction name",
+            r#"{ "instructions": [{ "name": "swap" }, { "name": "swap" }] }"#,
+        ),
+        (
+            // The one-byte tag Borsh uses; SPL's COption uses four.
+            "anchor coption",
+            r#"{ "instructions": [{
+                 "name": "initializeMint",
+                 "discriminator": [0],
+                 "args": [{ "name": "freezeAuthority", "type": { "coption": "pubkey" } }]
+               }] }"#,
+        ),
+        (
+            "undefined type reference",
+            r#"{ "instructions": [{
+                 "name": "swap",
+                 "discriminator": [1],
+                 "args": [{ "name": "amount", "type": "u46" }]
+               }] }"#,
+        ),
+        (
+            "event with no payload type",
+            r#"{ "instructions": [], "events": [{ "name": "Swapped", "discriminator": [1] }] }"#,
+        ),
+        (
+            "discriminator wider than dispatch probes",
+            r#"{ "instructions": [{ "name": "swap", "discriminator": [1, 2, 3] }] }"#,
+        ),
+        (
+            "instruction with no discriminator at all",
+            r#"{ "kind": "rootNode", "program": { "instructions": [{ "name": "swap" }] } }"#,
+        ),
+        (
+            "one discriminator a prefix of another",
+            r#"{ "kind": "rootNode", "program": { "instructions": [
+                 { "name": "transfer", "discriminators": [{
+                     "kind": "constantDiscriminatorNode", "offset": 0,
+                     "constant": { "value": { "kind": "bytesValueNode", "data": "0c" } } }] },
+                 { "name": "transferChecked", "discriminators": [{
+                     "kind": "constantDiscriminatorNode", "offset": 0,
+                     "constant": { "value": { "kind": "bytesValueNode", "data": "0c02" } } }] }
+               ] } }"#,
+        ),
+        (
+            // Behind another argument, so the bytes before it are the program's
+            // data, not part of the prefix.
+            "discriminator field not at offset 0",
+            r#"{ "kind": "rootNode", "program": { "instructions": [{
+                 "name": "swap",
+                 "arguments": [
+                   { "name": "amount", "type": { "kind": "numberTypeNode", "format": "u64" } },
+                   { "name": "tag", "type": { "kind": "numberTypeNode", "format": "u8" },
+                     "defaultValue": { "kind": "numberValueNode", "number": 3 } }
+                 ],
+                 "discriminators": [{ "kind": "fieldDiscriminatorNode", "name": "tag", "offset": 8 }]
+               }] } }"#,
+        ),
+        (
+            "discriminator value too wide for its format",
+            r#"{ "kind": "rootNode", "program": { "instructions": [{
+                 "name": "swap",
+                 "arguments": [{ "name": "tag",
+                   "type": { "kind": "numberTypeNode", "format": "u8" },
+                   "defaultValue": { "kind": "numberValueNode", "number": 300 } }],
+                 "discriminators": [{ "kind": "fieldDiscriminatorNode", "name": "tag", "offset": 0 }]
+               }] } }"#,
+        ),
+        (
+            // SPL Token's real `freezeAuthority`: presence is a zero check, not
+            // a tag byte, so there is no byte for the runtime to consume.
+            "codama zeroable option",
+            r#"{ "kind": "rootNode", "program": { "instructions": [],
+                 "definedTypes": [{ "name": "mint", "type": {
+                   "kind": "zeroableOptionTypeNode", "item": { "kind": "publicKeyTypeNode" } } }] } }"#,
+        ),
+        (
+            "codama option with a wide tag",
+            r#"{ "kind": "rootNode", "program": { "instructions": [],
+                 "definedTypes": [{ "name": "maybeFee", "type": {
+                   "kind": "optionTypeNode",
+                   "item": { "kind": "numberTypeNode", "format": "u64" },
+                   "prefix": { "kind": "numberTypeNode", "format": "u32" } } }] } }"#,
+        ),
+        (
+            "codama vector with a narrow length prefix",
+            r#"{ "kind": "rootNode", "program": { "instructions": [],
+                 "definedTypes": [{ "name": "signers", "type": {
+                   "kind": "arrayTypeNode",
+                   "item": { "kind": "publicKeyTypeNode" },
+                   "count": { "kind": "prefixedCountNode",
+                              "prefix": { "kind": "numberTypeNode", "format": "u8" } } } }] } }"#,
+        ),
+        (
+            "codama string with a narrow size prefix",
+            r#"{ "kind": "rootNode", "program": { "instructions": [],
+                 "definedTypes": [{ "name": "label", "type": {
+                   "kind": "sizePrefixTypeNode",
+                   "type": { "kind": "stringTypeNode", "encoding": "utf8" },
+                   "prefix": { "kind": "numberTypeNode", "format": "u8" } } }] } }"#,
+        ),
+    ];
 
-#[test]
-fn rejects_duplicate_instruction_names() {
-    let error = parse_idl(
-        r#"{ "instructions": [{ "name": "swap", "args": [] }, { "name": "swap", "args": [] }] }"#,
-        "Dup",
-    )
-    .unwrap_err();
-    assert_eq!(
-        format!("{error:#}"),
-        "parsing IDL for program 'Dup': IDL declares instruction 'swap' more than once"
-    );
-}
+    let reported: Vec<String> = cases
+        .iter()
+        .map(|(label, json)| {
+            let error = parse_idl(json, "Program").expect_err(label);
+            let message = format!("{error:#}")
+                .strip_prefix("parsing IDL for program 'Program': ")
+                .expect("every message is scoped to the program")
+                .to_string();
+            format!("{label}: {message}")
+        })
+        .collect();
 
-/// Only a u32 size prefix matches how the Borsh runtime frames a string, so a
-/// narrower one is rejected rather than decoded at the wrong offset.
-#[test]
-fn rejects_a_codama_size_prefix_the_runtime_cannot_decode() {
-    let error = parse_idl(
-        r#"{
-          "kind": "rootNode",
-          "program": {
-            "instructions": [],
-            "definedTypes": [{
-              "name": "label",
-              "type": {
-                "kind": "sizePrefixTypeNode",
-                "type": { "kind": "stringTypeNode", "encoding": "utf8" },
-                "prefix": { "kind": "numberTypeNode", "format": "u8" }
-              }
-            }]
-          }
-        }"#,
-        "Labelled",
-    )
-    .unwrap_err();
     assert_eq!(
-        format!("{error:#}"),
-        "parsing IDL for program 'Labelled': definedTypes.label: size prefix must be u32, got \
-         Some(\"u8\")"
+        reported,
+        vec![
+            "neither dialect: unrecognized IDL: expected an Anchor IDL (top-level 'instructions') or a Codama IDL (a 'rootNode')",
+            "duplicate instruction name: IDL declares instruction 'swap' more than once",
+            "anchor coption: instruction 'initializeMint' args.freezeAuthority: `coption` is not Borsh-compatible and cannot be decoded",
+            "undefined type reference: instruction 'swap' references undefined type 'u46'",
+            "event with no payload type: event 'Swapped' declares no fields and no type named 'Swapped'",
+            "discriminator wider than dispatch probes: instruction 'swap' has a 3-byte discriminator; dispatch only probes widths [1, 2, 4, 8]",
+            "instruction with no discriminator at all: instruction 'swap' has a 0-byte discriminator; dispatch only probes widths [1, 2, 4, 8]",
+            "one discriminator a prefix of another: instruction 'transfer' has discriminator 0x0c, a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' would shadow it",
+            "discriminator field not at offset 0: instruction 'swap' discriminators: discriminator part at offset 8 does not follow the previous part, which ends at 0; dispatch needs one contiguous prefix from offset 0",
+            "discriminator value too wide for its format: instruction 'swap' discriminators: discriminator value 300 does not fit in u8",
+            "codama zeroable option: definedTypes.mint: zeroable options are not Borsh-compatible and cannot be decoded",
+            "codama option with a wide tag: definedTypes.maybeFee: prefix must be u8, got u32",
+            "codama vector with a narrow length prefix: definedTypes.signers: prefix must be u32, got u8",
+            "codama string with a narrow size prefix: definedTypes.label: prefix must be u32, got u8",
+        ]
     );
 }
 
@@ -476,4 +591,76 @@ fn derives_program_names_from_filenames() {
         derived,
         vec!["PumpFun", "Pumpfun", "JupiterV6", "SplToken", "Drift"]
     );
+}
+
+/// Deterministic mutation fuzzing over the real fixtures. `parse_idl` takes
+/// untrusted JSON, so no input may panic — every rejection has to arrive as an
+/// `Err`. A seeded walk keeps a failure reproducible from the printed seed.
+///
+/// This covers panics, not semantics. For semantics the gap that remains is a
+/// Borsh round trip: encode a value against a parsed layout, decode it back,
+/// and assert equality. That would have caught the option-tag and size-prefix
+/// bugs by construction rather than by review, and it wants an encoder the
+/// runtime does not currently expose — worth adding when one exists. A
+/// `cargo-fuzz` target over `parse_idl` is the other natural extension, for
+/// continuous coverage rather than a fixed seed per run.
+#[test]
+fn mutated_fixtures_never_panic() {
+    // xorshift64*, so the sequence is fixed across platforms and runs.
+    fn next(state: &mut u64) -> u64 {
+        *state ^= *state >> 12;
+        *state ^= *state << 25;
+        *state ^= *state >> 27;
+        state.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    /// Replace the `target`-th node of `value` in traversal order with
+    /// something of a different shape.
+    fn mutate(value: &mut Value, target: &mut i64, replacement: u64) {
+        if *target < 0 {
+            return;
+        }
+        if *target == 0 {
+            *value = match replacement % 6 {
+                0 => Value::Null,
+                1 => Value::Bool(true),
+                2 => Value::from(replacement),
+                3 => Value::from(-1i64),
+                4 => Value::String("\u{1F600}".into()),
+                _ => Value::Array(vec![]),
+            };
+            *target = -1;
+            return;
+        }
+        *target -= 1;
+        match value {
+            Value::Object(map) => map
+                .values_mut()
+                .for_each(|child| mutate(child, target, replacement)),
+            Value::Array(items) => items
+                .iter_mut()
+                .for_each(|child| mutate(child, target, replacement)),
+            _ => {}
+        }
+    }
+
+    let mut state = 0x005E_ED1D_u64;
+    for stem in ["jupiter", "kamino"] {
+        let original: Value = serde_json::from_str(&read_fixture(stem)).expect("fixture is JSON");
+        for _ in 0..150 {
+            let seed = state;
+            let replacement = next(&mut state);
+            let mut mutated = original.clone();
+            let mut target = (next(&mut state) % 4000) as i64;
+            mutate(&mut mutated, &mut target, replacement);
+            let json = mutated.to_string();
+            // `parse_idl` must decide, not panic. A panic here fails the test
+            // with the seed in the message so it can be replayed.
+            let outcome = std::panic::catch_unwind(|| parse_idl(&json, "Fuzzed").is_ok());
+            assert!(
+                outcome.is_ok(),
+                "parse_idl panicked on a mutation of {stem}.json (seed 0x{seed:x})"
+            );
+        }
+    }
 }

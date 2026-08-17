@@ -1885,7 +1885,7 @@ chains:
           idl: idls/program.json
           instructions: []
 `,
-      "Config parse error: Resolving Borsh schema for program 'Program' (metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s): reading IDL at 'idls/program.json': Virtual config file \"idls/program.json\" was not provided",
+      "Config parse error: Resolving Borsh schema for metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s: reading IDL at 'idls/program.json': Virtual config file \"idls/program.json\" was not provided",
     )
   })
 
@@ -1910,7 +1910,7 @@ chains:
               accounts: []
               args: []
 `,
-      "Config parse error: Resolving Borsh schema for program 'Program' (metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s): Program 'Program': \`idl\` is mutually exclusive with per-instruction \`accounts\`/\`args\` overrides. Use one or the other.",
+      "Config parse error: Resolving Borsh schema for metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s: Program 'Program': \`idl\` is mutually exclusive with per-instruction \`accounts\`/\`args\` overrides. Use one or the other.",
     )
   })
 

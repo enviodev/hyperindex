@@ -1789,6 +1789,7 @@ dependencies = [
  "fuel-abi-types",
  "futures-util",
  "graphql-parser",
+ "heck",
  "hyperfuel-client",
  "hypersync-client",
  "hypersync-client-solana",
