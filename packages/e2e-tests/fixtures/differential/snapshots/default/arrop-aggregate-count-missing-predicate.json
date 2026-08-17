@@ -1,0 +1,18 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ B_aggregate(where: {a_aggregate: {count: {filter: {optionalStringToTestLinkedEntities: {_eq: \"x\"}}}}}) { aggregate { count } } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "missing required field 'predicate'",
+    "extensions": {
+     "path": "$.selectionSet.B_aggregate.args.where.a_aggregate.count.predicate",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

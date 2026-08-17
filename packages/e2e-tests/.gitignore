@@ -3,3 +3,4 @@
 bench-report.md
 soak-report.md
 fixtures/differential/hasura-baseline.json
+perf-report.md

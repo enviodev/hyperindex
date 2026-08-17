@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ PostgresNumericPrecisionEntityTester(where: {exampleBigIntArrayRequired: {_nin: [1e3]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "parsing [] failed, expected Array, but encountered Number",
+    "extensions": {
+     "path": "$.selectionSet.PostgresNumericPrecisionEntityTester.args.where.exampleBigIntArrayRequired._nin[0]",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

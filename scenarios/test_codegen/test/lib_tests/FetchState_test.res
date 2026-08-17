@@ -82,6 +82,7 @@ let mockEvent = (
   ~logIndex=0,
   ~chainId=1->ChainId.fromInt,
   ~registrationIndex=0,
+  ~orderPath=?,
 ): Internal.item =>
   Internal.Event({
     chainId: chainId,
@@ -90,8 +91,15 @@ let mockEvent = (
     // resolves; the rest of the registration is unused by these tests.
     onEventRegistration: Utils.magic({"index": registrationIndex}),
     logIndex,
+    ?orderPath,
     transactionIndex: 0,
     payload: "Mock event in fetchstate test"->(Utils.magic: string => Internal.eventPayload),
+  })
+
+let mockBlockItem = (~blockNumber, ~registrationIndex=0): Internal.item =>
+  Internal.Block({
+    blockNumber,
+    onBlockRegistration: Utils.magic({"index": registrationIndex}),
   })
 
 let dcToRegistration = (dc: Internal.indexingAddress): AddressStore.registration => {
@@ -4772,6 +4780,36 @@ describe("mergeIntoBuffer", () => {
       mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=0),
       mockEvent(~blockNumber=7, ~logIndex=2, ~registrationIndex=1),
     ]))
+  })
+
+  it("runs a block item after every event of its block, whatever the log index", t => {
+    // The item kind separates the two runs, so no log index can leapfrog the
+    // block handler. SVM keys instructions by transaction index, which climbs
+    // far past anything an EVM log index reaches.
+    let event = mockEvent(~blockNumber=7, ~logIndex=1_500)
+    let blockItem = mockBlockItem(~blockNumber=7)
+    t.expect(([]->FetchState.mergeIntoBuffer([blockItem, event]))).toEqual(([event, blockItem]))
+  })
+
+  it("keeps a deep call and a later transaction's call distinct", t => {
+    // Guards the pair that the superseded packed key conflated: it folded the
+    // path into the transaction's stride, so `tx 0, path [0,0,0]` and
+    // `tx 16, path [0,0]` produced one key and the merge dropped one of them.
+    let deepInFirstTx = mockEvent(~blockNumber=7, ~logIndex=0, ~orderPath=[0, 0, 0])
+    let innerInLaterTx = mockEvent(~blockNumber=7, ~logIndex=16, ~orderPath=[0, 0])
+    t.expect(([]->FetchState.mergeIntoBuffer([innerInLaterTx, deepInFirstTx]))).toEqual(([
+      deepInFirstTx,
+      innerInLaterTx,
+    ]))
+  })
+
+  it("orders sibling calls of one transaction by path, and dedupes an exact repeat", t => {
+    let outer = mockEvent(~blockNumber=7, ~logIndex=3, ~orderPath=[1])
+    let inner = mockEvent(~blockNumber=7, ~logIndex=3, ~orderPath=[1, 0])
+    let nextOuter = mockEvent(~blockNumber=7, ~logIndex=3, ~orderPath=[2])
+    t.expect(
+      ([]->FetchState.mergeIntoBuffer([nextOuter, inner, outer, inner])),
+    ).toEqual(([outer, inner, nextOuter]))
   })
 })
 

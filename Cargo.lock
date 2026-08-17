@@ -1968,6 +1968,7 @@ dependencies = [
  "deadpool-postgres",
  "env_logger",
  "faster-hex",
+ "flate2",
  "fuel-abi-types",
  "futures-util",
  "graphql-parser",
@@ -2014,6 +2015,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

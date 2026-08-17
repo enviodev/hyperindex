@@ -1,0 +1,26 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User { nonexistentField } }",
+  "transport": {
+   "requestHeaders": {
+    "Accept-Encoding": "gzip"
+   }
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "field 'nonexistentField' not found in type: 'User'",
+    "extensions": {
+     "path": "$.selectionSet.User.selectionSet.nonexistentField",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

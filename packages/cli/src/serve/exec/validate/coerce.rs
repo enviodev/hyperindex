@@ -335,29 +335,60 @@ pub(super) fn coerce_column_value<'a>(
     path: &str,
 ) -> GResult<ir::SqlValue> {
     if v.is_null() {
-        let base = scalar.gql_name(pg_type);
-        let display = if is_array { format!("[{base}!]") } else { base };
+        // Hasura names the element type even for an array column: its parser
+        // reports the scalar it was trying to read, not the list around it.
         return Err(verr(
             path,
-            format!("unexpected null value for type '{display}'"),
+            format!(
+                "unexpected null value for type '{}'",
+                scalar.gql_name(pg_type)
+            ),
         ));
     }
     if is_array {
         let cast = column_pg_cast(scalar, pg_type, pg_type_schema, true);
-        let mut elems: Vec<String> = Vec::new();
-        for (i, item) in list_items(v).into_iter().enumerate() {
-            let elem = coerce_column_value(
-                ctx,
-                scalar,
-                pg_type,
-                pg_type_schema,
-                false,
-                item,
-                &format!("{path}[{i}]"),
-            )?;
-            elems.push(elem.text.unwrap_or_default());
-        }
-        return Ok(ir::SqlValue::new(pg_array_literal(&elems), cast));
+        // An array operand is parsed by aeson, which demands a real array —
+        // GraphQL's single-value-to-list coercion does not apply, so a bare
+        // scalar is a parse failure rather than a one-element list. Strings
+        // and enum literals are the exception: they pass through opaquely as
+        // the array literal and fail (if malformed) in Postgres instead.
+        return match v {
+            V::L(q::Value::List(_)) | V::J(Json::Array(_)) => {
+                let mut elems: Vec<Option<String>> = Vec::new();
+                for item in list_items(v) {
+                    if item.is_null() {
+                        elems.push(None);
+                        continue;
+                    }
+                    // Element failures report at the operand's own path: aeson
+                    // fails the array parse, and never names an element index.
+                    let elem = coerce_column_value(
+                        ctx,
+                        scalar,
+                        pg_type,
+                        pg_type_schema,
+                        false,
+                        item,
+                        path,
+                    )?;
+                    // Every non-null element coerces to a `Some`; the null
+                    // case took the branch above.
+                    elems.push(elem.text);
+                }
+                Ok(ir::SqlValue::new(pg_array_literal(&elems), cast))
+            }
+            V::L(q::Value::String(s)) | V::J(Json::String(s)) => {
+                Ok(ir::SqlValue::new(s.clone(), cast))
+            }
+            V::L(q::Value::Enum(e)) => Ok(ir::SqlValue::new(e.clone(), cast)),
+            other => Err(perr(
+                path,
+                format!(
+                    "parsing [] failed, expected Array, but encountered {}",
+                    aeson_kind(other)
+                ),
+            )),
+        };
     }
 
     let cast = column_pg_cast(scalar, pg_type, pg_type_schema, false);
@@ -623,12 +654,18 @@ fn write_json_literal<'a>(ctx: &Ctx<'a>, value: &'a AValue, out: &mut String) ->
 }
 
 /// Postgres array literal text form, e.g. `{a,"b c"}`.
-fn pg_array_literal(elems: &[String]) -> String {
+/// `None` is a genuine SQL NULL element, which must stay unquoted — a
+/// quoted `"NULL"` is the four-character string instead.
+fn pg_array_literal(elems: &[Option<String>]) -> String {
     let mut out = String::from("{");
-    for (i, e) in elems.iter().enumerate() {
+    for (i, elem) in elems.iter().enumerate() {
         if i > 0 {
             out.push(',');
         }
+        let Some(e) = elem else {
+            out.push_str("NULL");
+            continue;
+        };
         let needs_quoting = e.is_empty()
             || e.eq_ignore_ascii_case("null")
             || e.chars()
@@ -889,13 +926,14 @@ mod tests {
     fn pg_array_literal_quoting() {
         assert_eq!(
             pg_array_literal(&[
-                "one".to_string(),
-                "two words".to_string(),
-                "a\"b\\c".to_string(),
-                "".to_string(),
-                "NULL".to_string(),
+                Some("one".to_string()),
+                Some("two words".to_string()),
+                Some("a\"b\\c".to_string()),
+                Some("".to_string()),
+                Some("NULL".to_string()),
+                None,
             ]),
-            r#"{one,"two words","a\"b\\c","","NULL"}"#
+            r#"{one,"two words","a\"b\\c","","NULL",NULL}"#
         );
     }
 

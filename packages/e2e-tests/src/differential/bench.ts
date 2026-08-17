@@ -293,6 +293,8 @@ function selectCases(): CorpusCase[] {
   return allCases.filter(
     (c) =>
       (c.phases ?? ["default"]).includes("default") &&
+      // Transport probes vary the HTTP envelope, not the query load.
+      c.transport === undefined &&
       (flag("--all") ? c.compare !== "rootSet" : c.bench === true) &&
       (!filter || c.name.includes(filter))
   );

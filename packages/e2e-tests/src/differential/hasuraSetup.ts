@@ -48,8 +48,13 @@ export async function runSql(sql: string): Promise<string[][]> {
 
 export async function applyFixture(fixtureDir: URL): Promise<void> {
   const schemaSql = await readFile(new URL("schema.sql", fixtureDir), "utf8");
+  const collationSql = await readFile(
+    new URL("collation.sql", fixtureDir),
+    "utf8"
+  );
   const seedSql = await readFile(new URL("seed.sql", fixtureDir), "utf8");
   await runSql(schemaSql);
+  await runSql(collationSql);
   await runSql(seedSql);
 }
 

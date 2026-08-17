@@ -79,7 +79,7 @@ describe("Deferred schema indexes", () => {
         ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
         ~shouldRollbackOnReorg=false,
         async indexerMock => {
-          let pgSchema = indexerMock.pgSchema
+          let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
           await Utils.delay(0)
 
           t.expect(
@@ -141,7 +141,7 @@ describe("Deferred schema indexes", () => {
           gate.wait()->Promise.then(() => storage.finalizeBackfill(~entities, ~chainIds, ~readyAt)),
       },
       async indexerMock => {
-        let pgSchema = indexerMock.pgSchema
+        let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         await Utils.delay(0)
 
         sourceMock.resolveGetHeightOrThrow(100)
@@ -258,7 +258,7 @@ describe("Deferred schema indexes", () => {
         },
       },
       async indexerMock => {
-        let pgSchema = indexerMock.pgSchema
+        let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         await Utils.delay(0)
 
         chainA.resolveGetHeightOrThrow(100)
@@ -314,7 +314,7 @@ describe("Deferred schema indexes", () => {
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       ~shouldRollbackOnReorg=false,
       async indexerMock => {
-        let pgSchema = indexerMock.pgSchema
+        let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         // The height is unresolved, so the tables exist but the backfill is stalled
         // and no schema index has been created yet.
         await Utils.delay(0)
@@ -365,7 +365,7 @@ describe("Automatic getWhere indexes", () => {
       ~chains=[{chain: #1337, sourceConfig: Config.CustomSources([sourceMock.source])}],
       ~shouldRollbackOnReorg=false,
       async indexerMock => {
-        let pgSchema = indexerMock.pgSchema
+        let {pgSchema} = indexerMock->IndexerRunner.pgOrThrow
         await Utils.delay(0)
         sourceMock.resolveGetHeightOrThrow(1000)
         await Utils.delay(0)

@@ -1,0 +1,23 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "rawBody": "1.5"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered Number",
+    "extensions": {
+     "path": "$",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

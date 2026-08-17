@@ -1,0 +1,32 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "rawBody": "[{\"query\":\"{ User(order_by: {id: asc}, limit: 1) { id } }\"},{\"query\":\"{ Token(order_by: {id: asc}, limit: 1) { id } }\"}]"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": [
+  {
+   "data": {
+    "User": [
+     {
+      "id": "user \"quoted\" 🚀"
+     }
+    ]
+   }
+  },
+  {
+   "data": {
+    "Token": [
+     {
+      "id": "tok-1"
+     }
+    ]
+   }
+  }
+ ]
+}

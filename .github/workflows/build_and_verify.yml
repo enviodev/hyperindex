@@ -181,7 +181,8 @@ jobs:
         run: pnpm test:templates
 
   # Scenario integration tests
-  # Requires postgres only — GraphQL/Hasura coverage lives in the e2e-test job
+  # envio-tests runs once per storage backend; GraphQL/Hasura coverage lives in
+  # the e2e-test job
   scenarios-test:
     runs-on: ubuntu-latest
     needs: build-envio-package
@@ -189,9 +190,9 @@ jobs:
     env:
       ENVIO_API_TOKEN: ${{ secrets.ENVIO_API_TOKEN }}
 
-    # postgres/hasura anchors defined here (first job needing them, in file
-    # order) and reused via aliases below to avoid repeating the identical
-    # `services:` blocks in every job that needs the same containers.
+    # The postgres anchor is defined here (first job needing it) and reused
+    # by alias in later jobs; the hasura anchor is defined the same way in
+    # serve-differential-test-live.
     services:
       postgres: &postgres-service
         image: postgres:16
@@ -207,19 +208,17 @@ jobs:
         ports:
           - 5433:5432
 
-      hasura: &hasura-service
-        image: hasura/graphql-engine:v2.43.0
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.2.15.4
         env:
-          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
-          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
-          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
-          HASURA_GRAPHQL_NO_OF_RETRIES: 10
-          HASURA_GRAPHQL_ADMIN_SECRET: testing
-          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
-          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
-          PORT: 8080
+          CLICKHOUSE_PASSWORD: testing
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
         ports:
-          - 8080:8080
+          - 8123:8123
 
     steps:
       - uses: actions/checkout@v6
@@ -227,9 +226,25 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
-      - name: envio-tests
+      # The scenario suite is backend-agnostic, so it runs three times. A
+      # scenario that can't run on a backend skips itself with a reason.
+      - name: envio-tests (memory)
         working-directory: packages/envio-tests
         run: pnpm test
+        env:
+          ENVIO_TEST_STORAGE: memory
+
+      - name: envio-tests (postgres)
+        working-directory: packages/envio-tests
+        run: pnpm test
+        env:
+          ENVIO_TEST_STORAGE: postgres
+
+      - name: envio-tests (clickhouse)
+        working-directory: packages/envio-tests
+        run: pnpm test
+        env:
+          ENVIO_TEST_STORAGE: clickhouse
 
       - name: test_codegen
         working-directory: scenarios/test_codegen
@@ -277,8 +292,8 @@ jobs:
   # so it needs Postgres only. Hasura is used just to *populate* those
   # snapshots (`pnpm record:differential`, run locally/manually whenever
   # the corpus changes, not on every CI run) - see
-  # differential-test-live below for the live-Hasura confidence check.
-  differential-test:
+  # serve-differential-test-live below for the live-Hasura confidence check.
+  serve-differential-test:
     runs-on: ubuntu-latest
     needs: build-envio-package
     timeout-minutes: 9
@@ -299,6 +314,7 @@ jobs:
         run: |
           PGPASSWORD=testing psql -h localhost -p 5433 -U postgres -d envio-dev -v ON_ERROR_STOP=1 \
             -f packages/e2e-tests/fixtures/differential/schema.sql \
+            -f packages/e2e-tests/fixtures/differential/collation.sql \
             -f packages/e2e-tests/fixtures/differential/seed.sql
 
       - name: Start envio serve (default phase)
@@ -323,14 +339,26 @@ jobs:
   # verify the committed snapshots, run the full HTTP + WebSocket suite,
   # and exercise envio serve under a short bounded load. Snapshot drift is
   # required; the slower live-parity and soak checks remain informational.
-  differential-test-live:
+  serve-differential-test-live:
     runs-on: ubuntu-latest
     needs: build-envio-package
     timeout-minutes: 20
 
     services:
       postgres: *postgres-service
-      hasura: *hasura-service
+      hasura: &hasura-service
+        image: hasura/graphql-engine:v2.43.0
+        env:
+          HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:testing@postgres:5432/envio-dev
+          HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+          HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log, query-log
+          HASURA_GRAPHQL_NO_OF_RETRIES: 10
+          HASURA_GRAPHQL_ADMIN_SECRET: testing
+          HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
+          HASURA_GRAPHQL_UNAUTHORIZED_ROLE: public
+          PORT: 8080
+        ports:
+          - 8080:8080
 
     steps:
       - uses: actions/checkout@v6
@@ -354,14 +382,37 @@ jobs:
           git add -N packages/e2e-tests/fixtures/differential/snapshots
           git diff --exit-code -- packages/e2e-tests/fixtures/differential/snapshots
 
-      - name: Run live differential suite (HTTP + WebSocket)
-        continue-on-error: true
+      # The correctness check for envio serve against a live Hasura: every
+      # corpus case over both phases, the WebSocket subscription scenarios,
+      # CORS, lifecycle, and the performance budget. It gates - a difference
+      # here is either a serve bug or a corpus case that needs updating, and
+      # both need a person.
+      - name: Run live differential suite (HTTP + WebSocket + performance)
         working-directory: packages/e2e-tests
         run: pnpm test:differential
 
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-report
+          path: packages/e2e-tests/perf-report.md
+          retention-days: 30
+          if-no-files-found: ignore
+
+      # Not continue-on-error: the steps below are meaningless against a
+      # server that never came up, and would report success by default.
       - name: Start envio serve
-        continue-on-error: true
         uses: ./.github/actions/start-envio-serve
+
+      # Schema-driven differential fuzzing: generates queries from the live
+      # introspected schema and diffs both engines. Informational, because a
+      # finding is a lead rather than a verdict - it becomes a corpus case
+      # once confirmed, and the corpus is what gates. Seeds are fixed, so a
+      # finding replays exactly with the seed it prints.
+      - name: Differential fuzz
+        continue-on-error: true
+        working-directory: packages/e2e-tests
+        run: pnpm fuzz:differential -- --seeds 1..12 --n 250 --concurrency 8
 
       # 60s bounded soak smoke: server stays up, no 5xx, no fd/RSS blowup.
       # p99-drift comparison is meaningless over windows this short on
@@ -379,7 +430,7 @@ jobs:
   # same-machine comparison here). Informational only - never blocks a
   # merge on a regression, since CI runners have enough performance
   # variance on their own that a hard threshold would be flaky.
-  differential-benchmark:
+  serve-differential-benchmark:
     runs-on: ubuntu-latest
     needs: build-envio-package
     timeout-minutes: 15

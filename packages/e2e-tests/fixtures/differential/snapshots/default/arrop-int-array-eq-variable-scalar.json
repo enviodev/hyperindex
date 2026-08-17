@@ -1,0 +1,19 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($v: [Int!]) { EntityWithAllTypes(where: {arrayOfInts: {_eq: $v}}, order_by: {id: asc}) { id } }",
+  "rawVariables": "{\"v\": 1}"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "parsing [] failed, expected Array, but encountered Number",
+    "extensions": {
+     "path": "$.selectionSet.EntityWithAllTypes.args.where.arrayOfInts._eq",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

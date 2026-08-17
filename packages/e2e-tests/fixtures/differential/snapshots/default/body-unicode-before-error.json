@@ -1,0 +1,23 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "rawBody": "{\"q🚀\": \"x\", \"query\": }"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "Unexpected \"}\", expecting JSON value",
+    "extensions": {
+     "path": "$",
+     "code": "invalid-json"
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,14 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_aggregate { __typename } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_aggregate": {
+    "__typename": "User_aggregate"
+   }
+  }
+ }
+}

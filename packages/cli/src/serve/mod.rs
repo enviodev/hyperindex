@@ -14,6 +14,7 @@
 //! `schema.graphql`, resolved through a deliberately minimal `config.yaml`
 //! reader that tolerates configs from any envio version >= 2.21.5.
 
+mod compression;
 mod env_config;
 mod exec;
 mod gql;

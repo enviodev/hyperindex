@@ -63,22 +63,10 @@ impl Schemas {
     }
 }
 
-/// Executes one GraphQL request over HTTP semantics. Returns (status,
-/// response JSON as a string). The response is assembled by string
-/// splicing so values produced by Postgres keep their exact serialization.
-pub async fn execute_query_request(
-    state: &Arc<ServeState>,
-    schemas: &Schemas,
-    role: Role,
-    request: &GraphQLRequest,
-) -> (u16, String) {
-    match execute_inner(state, schemas, role, request).await {
-        Ok(body) => (200, body),
-        Err(e) => (e.status, e.response_body().to_string()),
-    }
-}
-
-async fn execute_inner(
+/// Executes one GraphQL request over HTTP semantics. The response is
+/// assembled by string splicing so values produced by Postgres keep their
+/// exact serialization.
+pub async fn execute(
     state: &Arc<ServeState>,
     schemas: &Schemas,
     role: Role,

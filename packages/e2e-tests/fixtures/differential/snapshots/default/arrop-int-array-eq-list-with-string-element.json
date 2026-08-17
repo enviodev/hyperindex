@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {arrayOfInts: {_eq: [1, \"x\"]}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "invalid input syntax for type integer: \"x\"",
+    "extensions": {
+     "path": "$",
+     "code": "data-exception"
+    }
+   }
+  ]
+ }
+}

@@ -1,0 +1,23 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "rawBody": "{\"query\": \"{ __typename }\", \"variables\": [1]}"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "parsing HashMap failed, expected Object, but encountered Array",
+    "extensions": {
+     "path": "$.variables",
+     "code": "parse-failed"
+    }
+   }
+  ]
+ }
+}

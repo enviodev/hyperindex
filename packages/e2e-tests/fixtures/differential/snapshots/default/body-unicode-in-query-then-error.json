@@ -1,0 +1,23 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "rawBody": "{\"query\": \"{ User(where: {id: {_eq: \"🚀\"}}) { id } }\", }"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "Unexpected \"\\240\\159\\154\\128\\\"}}) { id } }\\\", }\", expecting , or }",
+    "extensions": {
+     "path": "$",
+     "code": "invalid-json"
+    }
+   }
+  ]
+ }
+}

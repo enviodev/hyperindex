@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "rawBody": "{\"query\": \"{ __typename }\", \"query\": \"{ User { id } }\"}"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": {
+  "data": {
+   "__typename": "query_root"
+  }
+ }
+}

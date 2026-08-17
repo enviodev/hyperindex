@@ -1,5 +1,5 @@
 use super::args::{api_to_db_column, expect_list, expect_object, resolve_item, resolve_nested};
-use super::coerce::{coerce_bool_strict, coerce_column_value, coerce_enum, coerce_string_strict};
+use super::coerce::{coerce_bool_strict, coerce_column_value, coerce_enum};
 use super::{ir, model_table, verr, Column, Ctx, GResult, Scalar, TypeRef, V};
 
 // ---------------------------------------------------------------------------
@@ -110,6 +110,12 @@ pub(super) fn coerce_bool_exp<'a>(
 // Comparison expressions
 // ---------------------------------------------------------------------------
 
+/// A jsonb key operand, coerced exactly as Hasura coerces a `text` column
+/// value: strings pass through, everything else is an aeson parse failure.
+fn jsonb_key_text<'a>(ctx: &'a Ctx<'a>, v: V<'a>, path: &str) -> GResult<ir::SqlValue> {
+    coerce_column_value(ctx, Scalar::String, "text", "pg_catalog", false, v, path)
+}
+
 fn comparison_type_name(scalar: Scalar, pg_type: &str, is_array: bool) -> String {
     let s = scalar.gql_name(pg_type);
     if is_array {
@@ -218,16 +224,24 @@ fn coerce_comparison_ops<'a>(
             "_niregex" => ir::CompareOp::Niregex(scalar_value(value, &opath)?),
             "_contains" => ir::CompareOp::Contains(scalar_value(value, &opath)?),
             "_contained_in" => ir::CompareOp::ContainedIn(scalar_value(value, &opath)?),
+            // The jsonb key operators take Text, which Hasura parses with
+            // aeson like any other operand -- so a non-string is a parse
+            // failure, not the GraphQL-native "expected a string" error. A
+            // null operand reaches SQL (and matches nothing); a null element
+            // is rejected, the keys list being a list of non-null Text.
             "_has_key" => {
-                let s = coerce_string_strict(value, &opath)?;
-                ir::CompareOp::HasKey(ir::SqlValue::new(s, "text"))
+                let key = if value.is_null() {
+                    ir::SqlValue::null("text".to_string())
+                } else {
+                    jsonb_key_text(ctx, value, &opath)?
+                };
+                ir::CompareOp::HasKey(key)
             }
             "_has_keys_all" | "_has_keys_any" => {
                 let items = expect_list(value, &opath)?;
                 let mut out = Vec::new();
                 for (i, item) in items.into_iter().enumerate() {
-                    let s = coerce_string_strict(item, &format!("{opath}[{i}]"))?;
-                    out.push(ir::SqlValue::new(s, "text"));
+                    out.push(jsonb_key_text(ctx, item, &format!("{opath}[{i}]"))?);
                 }
                 if op == "_has_keys_all" {
                     ir::CompareOp::HasKeysAll(out)
@@ -289,8 +303,15 @@ fn coerce_aggregate_bool_exp<'a>(
     let type_def = ctx.registry.get(&type_name);
     let remote = model_table(ctx, rt);
 
+    let entries = expect_object(v, &type_name, path)?;
+    // Hasura's aggregate predicate holds exactly one entry: an empty object
+    // is not "no predicate", and two are not a conjunction.
+    if entries.len() != 1 {
+        return Err(verr(path, "exactly one predicate should be specified"));
+    }
+
     let mut out: Vec<ir::BoolExp> = Vec::new();
-    for (op, value) in expect_object(v, &type_name, path)? {
+    for (op, value) in entries {
         let opath = format!("{path}.{op}");
         let Some(fd) = type_def.and_then(|d| d.input_field(op)) else {
             return Err(verr(

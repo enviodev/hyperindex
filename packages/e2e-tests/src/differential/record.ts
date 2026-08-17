@@ -42,7 +42,7 @@ async function main() {
       const snapshot = {
         role: corpusCase.role ?? "public",
         request: {
-          query: corpusCase.query,
+          ...(corpusCase.query !== undefined && { query: corpusCase.query }),
           ...(corpusCase.variables !== undefined && {
             variables: corpusCase.variables,
           }),
@@ -52,8 +52,12 @@ async function main() {
           ...(corpusCase.operationName !== undefined && {
             operationName: corpusCase.operationName,
           }),
+          ...(corpusCase.transport !== undefined && {
+            transport: corpusCase.transport,
+          }),
         },
         status: response.status,
+        ...(response.headers !== undefined && { headers: response.headers }),
         body: response.body,
       };
       await writeFile(

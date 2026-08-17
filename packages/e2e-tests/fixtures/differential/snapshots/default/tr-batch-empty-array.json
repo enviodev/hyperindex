@@ -1,0 +1,13 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "rawBody": "[]"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": []
+}

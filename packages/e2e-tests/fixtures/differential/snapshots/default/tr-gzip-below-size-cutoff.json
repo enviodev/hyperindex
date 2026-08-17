@@ -1,0 +1,27 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_by_pk(id: \"user-1\") { id address } }",
+  "transport": {
+   "requestHeaders": {
+    "Accept-Encoding": "gzip"
+   },
+   "compareHeaders": [
+    "vary"
+   ]
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null,
+  "vary": null
+ },
+ "body": {
+  "data": {
+   "User_by_pk": {
+    "id": "user-1",
+    "address": "0xaaaa000000000000000000000000000000000001"
+   }
+  }
+ }
+}

@@ -1,0 +1,18 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ NftCollection(where: {tokens_aggregate: null}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "errors": [
+   {
+    "message": "field 'tokens_aggregate' not found in type: 'NftCollection_bool_exp'",
+    "extensions": {
+     "path": "$.selectionSet.NftCollection.args.where.tokens_aggregate",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}

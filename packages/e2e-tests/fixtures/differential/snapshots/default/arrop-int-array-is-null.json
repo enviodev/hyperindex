@@ -1,0 +1,12 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ EntityWithAllTypes(where: {arrayOfInts: {_is_null: true}}, order_by: {id: asc}) { id } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": []
+  }
+ }
+}

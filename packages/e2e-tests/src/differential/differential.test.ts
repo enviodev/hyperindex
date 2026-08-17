@@ -13,6 +13,7 @@ import { applyFixture, trackDatabase } from "./hasuraSetup.js";
 import { hasuraUrl, serveUrl } from "./env.js";
 import { runCase, normalize } from "./runner.js";
 import { startServe, stopServe, type ServeProcess } from "./serveProcess.js";
+import { itForCase, caseTitle } from "./caseTest.js";
 
 const fixtureDir = new URL("../../fixtures/differential/", import.meta.url);
 
@@ -41,7 +42,7 @@ describe.sequential("differential", () => {
       });
 
       for (const corpusCase of phaseCases) {
-        it(corpusCase.name, async () => {
+        itForCase(it, corpusCase)(caseTitle(corpusCase), async () => {
           const [hasura, envio] = await Promise.all([
             runCase(hasuraUrl, corpusCase),
             runCase(serveUrl, corpusCase),

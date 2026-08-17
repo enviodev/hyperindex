@@ -1,0 +1,23 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "rawBody": "{\n  \"query\": nope\n}"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "Unexpected \"nope\\n}\", expecting JSON value",
+    "extensions": {
+     "path": "$",
+     "code": "invalid-json"
+    }
+   }
+  ]
+ }
+}

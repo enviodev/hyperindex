@@ -18,10 +18,143 @@ identical JSON responses — data, errors, and serialization alike.
   relationships), parameterized by phase.
 - `../../fixtures/differential/schema.sql` — DDL dump of the schema
   `envio local db-migrate setup` creates for scenarios/test_codegen.
+- `../../fixtures/differential/collation.sql` — pins every text column to
+  `COLLATE "C"`, applied between the two. Row order is Postgres's decision,
+  not the engine's, so without this the oracle only reproduces on a cluster
+  initdb'd with the same locale as the one that recorded it.
 - `../../fixtures/differential/seed.sql` — deterministic rows exercising
   serialization edge cases.
 - `../../fixtures/differential/snapshots/` — recorded Hasura responses; the
   ground-truth oracle, regenerated with `pnpm record:differential`.
+- `rawRequest.ts` — `node:http` client used by transport probes, where
+  `fetch` cannot be used because it negotiates and decodes `content-encoding`
+  behind the caller's back.
+- `fuzz.ts` — schema-driven differential fuzzer (see below).
+- `performance.test.ts` — measures both engines live and fails if serve
+  regresses past a ratio of Hasura.
+
+## Transport probes and known gaps
+
+Most cases are a POST of `{query, variables}` compared on the response body
+alone. A case with a `transport` block instead controls the HTTP envelope —
+method, path, request headers, raw body — and its snapshot additionally
+records the response's `contentEncoding` and whichever response headers the
+case lists in `compareHeaders`. `corpus/18-transport.ts` uses this to cover
+the layer the body corpus is blind to: gzip, batched (JSON array) requests,
+plain GET, and `x-request-id`.
+
+Two annotations control how a case is judged:
+
+- **`knownGap: "..."`** — this case does not match today. The case is still
+  recorded from Hasura (the snapshot *is* the spec), a mismatch is reported
+  as a known gap rather than a failure, and a case that starts *matching*
+  fails loudly so the annotation gets removed with the fix. That is how a gap
+  stays visible without a permanently red required CI job — and it caught
+  three annotations that were wrong the moment the behaviour changed under
+  them.
+- **`recordOnly: true`** — record Hasura's answer, assert nothing about
+  serve. For endpoints where matching Hasura is not the goal (serve should
+  expose Prometheus metrics whether or not the Hasura edition under test
+  does) but where the recorded answer still settles what Hasura actually did.
+
+Closing a gap is therefore: implement it, drop the `knownGap` line, and both
+`diffServe.ts` and the live suite flip from "known gap" to a hard assertion.
+
+Every gap that was a gap is now closed. The annotations that remain are
+differences serve does not intend to close, each carrying its reason:
+Hasura's binary-encoded jsonb `_in` operands, its degenerate aggregate
+statements, `extensions.internal` on admin errors, and the Postgres planner
+artifact where a failing predicate is skipped around inlined constants.
+
+## Fuzzing
+
+The corpus covers what someone thought to enumerate. Parity bugs live in the
+combinations nobody enumerates — a column type crossed with an operator
+crossed with a malformed operand — so `fuzz.ts` generates queries from the
+live introspected schema, runs them against both engines and shrinks any
+mismatch to a minimal query before reporting it.
+
+```sh
+pnpm fuzz:differential -- --seeds 1..20 --n 400 [--phase default|limited]
+```
+
+It applies the fixture and Hasura's metadata for the phase first, and refuses
+to run if the two engines' `query_root` field sets still differ — a serve
+started for a different phase would otherwise report every aggregate-
+visibility difference as a bug. Every run prints what it generated
+(variables, named and inline fragments, directives, aggregates) so a
+generator feature that silently stops firing shows up as lost coverage rather
+than a quiet all-clear.
+
+A finding is a *lead*, not a test. Confirm it, then add a corpus case with a
+recorded snapshot — the corpus is what gates a merge; the fuzzer is what
+finds what the corpus is missing. Everything under `corpus/19` to `corpus/23`
+arrived this way.
+
+Three classes of difference are deliberately not reported, each because it is
+decided by something outside serve's control:
+
+- **Blame order.** When one query holds several invalid values, which one
+  Hasura blames is its aeson HashMap's iteration order — fixed per key set,
+  but following neither document, alphabetical, nor schema order. Generation
+  spends at most one ill-typed value per query, and a mismatch where both
+  engines error at *different paths* is reported as ambiguous.
+- **Multi-key `order_by` objects.** Precedence between keys of one object is
+  the same hash order; Hasura's own docs say to pass an array of single-key
+  objects, which is exact-parity in both directions and is all the fuzzer
+  generates.
+- **Known divergences.** Hasura bugs serve does not reproduce, listed in
+  `KNOWN_DIVERGENCES` and pinned by corpus cases carrying the same
+  explanation.
+
+## Performance
+
+`performance.test.ts` runs a representative slice of the corpus against both
+engines in the same run, interleaving iterations so drift lands on both sides
+equally, and fails if serve's median exceeds `ENVIO_PERF_MAX_RATIO` (default
+1.5) times Hasura's on any case. Measuring both engines together is what
+makes it safe to gate on: a slow runner slows both, so the ratio holds even
+when the absolute numbers do not. It writes `perf-report.md`.
+
+`bench.ts` remains the detailed instrument — per-case timing and resource use
+against a stored baseline, on the larger bench dataset.
+
+### What the recorded transport oracle says
+
+Several of these behaviors are not what you would guess, and the snapshots —
+not intuition — are the spec:
+
+- **gzip is narrower than a stock compression middleware.** gzip is the only
+  encoding Hasura implements; a missing `Accept-Encoding` *or* a bare `*` is
+  treated as identity-only rather than permission to compress; and when both
+  identity and gzip are acceptable, bodies under 700 bytes are left
+  uncompressed. Only an explicit `identity;q=0` forces gzip regardless of
+  size. No `Vary` header is sent at all.
+- **Error responses get neither compression nor `x-request-id`.** Both are set
+  in `logSuccessAndResp`; the error path (`logErrorAndResp`) sets only
+  content-length and the JSON content type. So an error carries no request id
+  even when the client supplied one — serve has to reproduce that asymmetry,
+  not just start emitting the header everywhere.
+- **Hasura does not execute query-over-GET.** `GET /v1/graphql` is wired to
+  the Automatic Persisted Queries handler, which in the OSS build is
+  `throw400 NotSupported "PersistedQueryNotSupported"`, turned into HTTP 200
+  by the route's `allMod200`. The query string is never read, so every GET
+  answers identically. The parity target is that fixed error body, not a GET
+  execution path.
+- **A batch has no size limit.** Hasura's OSS `checkGQLBatchedReqs` is
+  `pure ()`, so the only bound on how many operations one request carries is
+  the 2 MB body limit. serve matches that; if a deployment wants a cap, it is
+  a deliberate divergence to add, not a parity fix.
+- **A JSON syntax error is phrased by aeson.** What it reports as
+  "unexpected" is the rest of the input from the offending token, one byte
+  before the column serde_json reports.
+- **A malformed batch element is reported positionally.** A batch that fails
+  to parse answers with a single error object (not an array) whose path is
+  indexed to the offending element — `$[0]`, where serve reports `$`.
+- **Prometheus metrics are not in CE.** `/v1/metrics` 404s on
+  `hasura/graphql-engine:v2.43.0` (`server_type: "ce"`); it is an EE feature.
+  Serve's metrics endpoint is therefore a requirement in its own right, with
+  no CE oracle to match — hence `recordOnly` on that probe.
 
 ## Running
 
@@ -43,6 +176,18 @@ for the limited-phase cases, and `--filter <substr>` / `--verbose N` to
 narrow down a failure.
 
 **Full suite (needs Postgres 5433 + Hasura 8080 live — CI runs this):**
+
+Bring up the same Hasura CI runs against, pointed at the local Postgres
+(host networking, so `localhost:5433` resolves from inside the container):
+
+```sh
+docker run -d --name hasura-diff --network host \
+  -e HASURA_GRAPHQL_DATABASE_URL='postgres://postgres:testing@localhost:5433/envio-dev' \
+  -e HASURA_GRAPHQL_ADMIN_SECRET=testing \
+  -e HASURA_GRAPHQL_UNAUTHORIZED_ROLE=public \
+  -e HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true \
+  -e PORT=8080 hasura/graphql-engine:v2.43.0
+```
 
 ```sh
 pnpm --filter e2e-tests record:differential   # refresh Hasura oracle snapshots
@@ -107,9 +252,6 @@ live Hasura v2.43 (`pnpm record:differential` after the fixture edits):
   stored as re-serialized parsed JSON, which hides float-formatting
   differences (e.g. `1.0` vs `1`); record raw response bytes alongside so
   float-formatting parity is verifiable.
-- **GET /v1/graphql corpus cases** — Hasura answers plain GET (GraphiQL /
-  query-over-GET) while serve currently 400s without upgrade headers; record
-  Hasura's GET behavior so the intended parity target is pinned.
 - **Auth-matrix corpus cases** — only public/admin/admin-wrong are covered;
   record combinations of `X-Hasura-Role` with and without a valid admin
   secret (and unknown roles) to pin the full role-resolution matrix.

@@ -12,7 +12,8 @@
     "record:differential": "tsx src/differential/record.ts",
     "bench:differential": "tsx src/differential/bench.ts",
     "soak:differential": "tsx src/differential/soakLoad.ts",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "fuzz:differential": "tsx src/differential/fuzz.ts"
   },
   "devDependencies": {
     "@types/node": "24.12.2",

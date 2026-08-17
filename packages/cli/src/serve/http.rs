@@ -326,40 +326,114 @@ pub fn resolve_role(
     )
 }
 
+/// A finished GraphQL response: the body, or the error that replaces it.
+///
+/// Hasura splits its response path in two, and the split is observable:
+/// `logSuccessAndResp` sets `x-request-id` and negotiates compression, while
+/// `logErrorAndResp` sets only the content type and length. An error response
+/// therefore carries no request id — not even one the client supplied — and
+/// is never compressed.
+type Answer = Result<String, exec::error::GraphQLError>;
+
+/// Every response carries this, so it is built once rather than revalidated
+/// per request.
+const JSON_CONTENT_TYPE: HeaderValue = HeaderValue::from_static("application/json; charset=utf-8");
+
+/// Echoes the client's request id verbatim, or mints one. Hasura generates a
+/// v4 UUID (`Server/Types.hs getRequestId`).
+fn put_request_id(response: &mut HeaderMap, request_headers: &HeaderMap) {
+    let name = HeaderName::from_static("x-request-id");
+    match request_headers.get(&name) {
+        Some(supplied) => {
+            response.insert(name, supplied.clone());
+        }
+        None => {
+            let mut buffer = uuid::Uuid::encode_buffer();
+            let id = uuid::Uuid::new_v4().hyphenated().encode_lower(&mut buffer);
+            if let Ok(value) = HeaderValue::from_str(id) {
+                response.insert(name, value);
+            }
+        }
+    }
+}
+
+async fn respond(request_headers: &HeaderMap, answer: Answer) -> axum::response::Response {
+    let status = match &answer {
+        Ok(_) => StatusCode::OK,
+        Err(e) => StatusCode::from_u16(e.status).unwrap_or(StatusCode::OK),
+    };
+    let mut response = match answer {
+        Err(e) => {
+            let body = e.response_body().to_string();
+            axum::response::Response::new(axum::body::Body::from(body))
+        }
+        Ok(body) => {
+            let encoded = super::compression::encode(request_headers, body).await;
+            let mut response =
+                axum::response::Response::new(axum::body::Body::from(encoded.body));
+            if let Some(encoding) = encoded.content_encoding {
+                response
+                    .headers_mut()
+                    .insert(header::CONTENT_ENCODING, encoding);
+            }
+            put_request_id(response.headers_mut(), request_headers);
+            response
+        }
+    };
+    *response.status_mut() = status;
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, JSON_CONTENT_TYPE);
+    response
+}
+
 async fn graphql_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Bytes,
-) -> impl IntoResponse {
-    let role = match resolve_role(&headers, &state.serve.admin_secret) {
-        Ok(role) => role,
-        Err(e) => {
-            return (
-                StatusCode::from_u16(e.status).unwrap_or(StatusCode::UNAUTHORIZED),
-                [("content-type", "application/json; charset=utf-8")],
-                e.response_body().to_string(),
-            );
-        }
-    };
+) -> axum::response::Response {
+    let answer = graphql_answer(&state, &headers, &body).await;
+    respond(&headers, answer).await
+}
 
-    let request = match decode_request_body(&body) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::from_u16(e.status).unwrap_or(StatusCode::OK),
-                [("content-type", "application/json; charset=utf-8")],
-                e.response_body().to_string(),
-            );
-        }
-    };
+async fn graphql_answer(state: &AppState, headers: &HeaderMap, body: &[u8]) -> Answer {
+    let role = resolve_role(headers, &state.serve.admin_secret)?;
 
-    let (status, body) =
-        exec::execute_query_request(&state.serve, &state.schemas, role, &request).await;
-    (
-        StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
-        [("content-type", "application/json; charset=utf-8")],
-        body,
-    )
+    match decode_request_body(body)? {
+        DecodedBody::Single(request) => {
+            exec::execute(&state.serve, &state.schemas, role, &request).await
+        }
+        // A batch answers with an array of results, positionally. Each
+        // operation is executed in turn, as Hasura's `runGQBatched` does
+        // (`for reqs` is sequential): the batch's win is amortising the round
+        // trip and the auth check, not running the operations at once, and
+        // one connection per batch keeps a large batch from monopolising the
+        // pool. An operation that fails contributes its own errors object
+        // rather than failing the batch.
+        DecodedBody::Batch(requests) => {
+            use std::fmt::Write as _;
+
+            let mut out = String::from("[");
+            for (i, request) in requests.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                match exec::execute(&state.serve, &state.schemas, role, request).await {
+                    Ok(body) => {
+                        out.reserve(body.len() + 1);
+                        out.push_str(&body);
+                    }
+                    // Writing the error's JSON straight into the buffer avoids
+                    // materialising it as its own String first.
+                    Err(e) => {
+                        let _ = write!(out, "{}", e.response_body());
+                    }
+                }
+            }
+            out.push(']');
+            Ok(out)
+        }
+    }
 }
 
 /// aeson's name for a JSON value's kind, as it appears in Hasura's
@@ -375,10 +449,18 @@ fn aeson_kind(v: &serde_json::Value) -> &'static str {
     }
 }
 
+/// A request body is either one operation or a batch of them.
+enum DecodedBody {
+    Single(GraphQLRequest),
+    Batch(Vec<GraphQLRequest>),
+}
+
 /// Decodes the POST body with Hasura's exact error shapes: invalid UTF-8
 /// and malformed JSON are `invalid-json`; structurally wrong GQLReq
-/// payloads are `parse-failed` with aeson-style messages.
-fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::GraphQLError> {
+/// payloads are `parse-failed` with aeson-style messages. A JSON array is a
+/// batch, and a batch that fails to parse answers with a single error object
+/// whose path names the offending element (`$[0]`), not an array of errors.
+fn decode_request_body(body: &[u8]) -> Result<DecodedBody, exec::error::GraphQLError> {
     use exec::error::GraphQLError;
 
     let invalid_json = |message: String| GraphQLError {
@@ -387,13 +469,6 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
         code: "invalid-json",
         status: 200,
     };
-    let parse_failed = |path: &str, message: String| GraphQLError {
-        message,
-        path: path.to_string(),
-        code: exec::error::CODE_PARSE_FAILED,
-        status: 200,
-    };
-
     let text =
         match std::str::from_utf8(body) {
             Ok(t) => t,
@@ -419,14 +494,56 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
                     .to_string(),
             ))
         }
+        // The message is serde_json's own. Hasura reports aeson's phrasing,
+        // which names the input from where ITS parser gave up — before a
+        // separator it had not consumed, with escapes applied — a position
+        // serde's line and column cannot reconstruct. The code, path and
+        // status match; only this text differs. See corpus/23-request-body.
         Err(e) => return Err(invalid_json(e.to_string())),
     };
 
-    let obj = match &value {
+    // An array body is a batch; every element is decoded with its own index
+    // in the path, and the first failure aborts the whole request.
+    if let serde_json::Value::Array(items) = &value {
+        let mut requests = Vec::with_capacity(items.len());
+        for (i, item) in items.iter().enumerate() {
+            requests.push(decode_request_object(
+                item,
+                &format!("$[{i}]"),
+                &number_originals,
+            )?);
+        }
+        return Ok(DecodedBody::Batch(requests));
+    }
+
+    Ok(DecodedBody::Single(decode_request_object(
+        &value,
+        "$",
+        &number_originals,
+    )?))
+}
+
+/// One `{query, variables, operationName}` object. `path` is where this
+/// object sits in the body: `$` for a single request, `$[i]` in a batch.
+fn decode_request_object(
+    value: &serde_json::Value,
+    path: &str,
+    number_originals: &std::collections::HashMap<u64, String>,
+) -> Result<GraphQLRequest, exec::error::GraphQLError> {
+    use exec::error::GraphQLError;
+
+    let parse_failed = |path: &str, message: String| GraphQLError {
+        message,
+        path: path.to_string(),
+        code: exec::error::CODE_PARSE_FAILED,
+        status: 200,
+    };
+
+    let obj = match value {
         serde_json::Value::Object(o) => o,
         other => {
             return Err(parse_failed(
-                "$",
+                path,
                 format!(
                     "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered {}",
                     aeson_kind(other)
@@ -438,7 +555,7 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
     let query = match obj.get("query") {
         None => {
             return Err(parse_failed(
-                "$",
+                path,
                 "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, key \"query\" not found"
                     .to_string(),
             ))
@@ -446,7 +563,7 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
         Some(serde_json::Value::String(s)) => s.clone(),
         Some(other) => {
             return Err(parse_failed(
-                "$.query",
+                &format!("{path}.query"),
                 format!(
                     "parsing Text failed, expected String, but encountered {}",
                     aeson_kind(other)
@@ -460,12 +577,13 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
         Some(serde_json::Value::String(s)) => Some(s.clone()),
         Some(other) => {
             return Err(parse_failed(
-                "$.operationName",
+                &format!("{path}.operationName"),
                 format!(
-                    "parsing Text failed, expected String, but encountered {}",
+                    // An operation name parses as GraphQL's Name, not as Text.
+                    "parsing Name failed, expected String, but encountered {}",
                     aeson_kind(other)
                 ),
-            ))
+            ));
         }
     };
 
@@ -474,7 +592,7 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
         Some(v @ (serde_json::Value::Object(_) | serde_json::Value::Null)) => Some(v.clone()),
         Some(other) => {
             return Err(parse_failed(
-                "$.variables",
+                &format!("{path}.variables"),
                 format!(
                     "parsing HashMap failed, expected Object, but encountered {}",
                     aeson_kind(other)
@@ -488,7 +606,7 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
     // sentinel substitution so their exact text reaches SQL parameters,
     // as Hasura's arbitrary-precision Scientific does.
     let variable_number_originals = if matches!(variables, Some(serde_json::Value::Object(_))) {
-        number_originals
+        number_originals.clone()
     } else {
         Default::default()
     };
@@ -501,18 +619,49 @@ fn decode_request_body(body: &[u8]) -> Result<GraphQLRequest, exec::error::Graph
     })
 }
 
-/// GET /v1/graphql serves the WebSocket upgrade (subscriptions).
+/// GET /v1/graphql serves the WebSocket upgrade (subscriptions), and answers
+/// anything else the way Hasura does.
+///
+/// Hasura does not implement query-over-GET: the route is wired to the
+/// Automatic Persisted Queries handler, which the OSS build defines as
+/// `throw400 NotSupported "PersistedQueryNotSupported"`, and the route's
+/// `allMod200` turns that into HTTP 200. The query string is never read, so
+/// every non-upgrade GET — with a query, without one, with an admin secret,
+/// asking for a subscription — gets the same answer.
 async fn ws_or_get_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    ws: axum::extract::ws::WebSocketUpgrade,
+    request: Request,
 ) -> axum::response::Response {
-    super::ws::handle_upgrade(state, headers, ws)
+    use axum::extract::FromRequestParts;
+
+    let (mut parts, _body) = request.into_parts();
+    match axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
+        Ok(ws) => super::ws::handle_upgrade(state, parts.headers, ws),
+        Err(_) => {
+            respond(
+                &parts.headers,
+                Err(exec::error::GraphQLError {
+                    message: "PersistedQueryNotSupported".to_string(),
+                    path: "$".to_string(),
+                    code: "not-supported",
+                    status: 200,
+                }),
+            )
+            .await
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn decode_single(body: &[u8]) -> Result<GraphQLRequest, exec::error::GraphQLError> {
+        match decode_request_body(body)? {
+            DecodedBody::Single(request) => Ok(request),
+            DecodedBody::Batch(_) => unreachable!("not a batch body"),
+        }
+    }
 
     #[tokio::test]
     async fn occupied_port_error_has_recovery_commands() {
@@ -535,86 +684,10 @@ mod tests {
         assert!(error.contains("0.0.0.0"));
     }
 
-    // Error shapes mirror Hasura's, matching the em-* error-matrix corpus
-    // (e.g. em-body-lone-surrogate-in-query pins the invalid-json path).
-    #[test]
-    fn request_body_decoding_errors() {
-        let decode = |body: &str| {
-            decode_request_body(body.as_bytes())
-                .map(|_| unreachable!("expected a decode error for {body:?}"))
-                .unwrap_err()
-        };
-        let shape = |e: exec::error::GraphQLError| (e.message, e.path, e.code, e.status);
-        assert_eq!(
-            [
-                decode("not json"),
-                decode("[1,2]"),
-                decode("\"query\""),
-                decode("42"),
-                decode("{}"),
-                decode("{\"query\": 5}"),
-                decode("{\"query\": \"{ x }\", \"variables\": \"v\"}"),
-                decode("{\"query\": \"{ x }\", \"variables\": [1]}"),
-            ]
-            .map(shape),
-            [
-                (
-                    "expected ident at line 1 column 2".to_string(),
-                    "$".to_string(),
-                    "invalid-json",
-                    200
-                ),
-                (
-                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered Array".to_string(),
-                    "$".to_string(),
-                    "parse-failed",
-                    200
-                ),
-                (
-                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered String".to_string(),
-                    "$".to_string(),
-                    "parse-failed",
-                    200
-                ),
-                (
-                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered Number".to_string(),
-                    "$".to_string(),
-                    "parse-failed",
-                    200
-                ),
-                (
-                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, key \"query\" not found".to_string(),
-                    "$".to_string(),
-                    "parse-failed",
-                    200
-                ),
-                (
-                    "parsing Text failed, expected String, but encountered Number".to_string(),
-                    "$.query".to_string(),
-                    "parse-failed",
-                    200
-                ),
-                (
-                    "parsing HashMap failed, expected Object, but encountered String".to_string(),
-                    "$.variables".to_string(),
-                    "parse-failed",
-                    200
-                ),
-                (
-                    "parsing HashMap failed, expected Object, but encountered Array".to_string(),
-                    "$.variables".to_string(),
-                    "parse-failed",
-                    200
-                ),
-            ]
-        );
-    }
-
     #[test]
     fn variable_number_metadata_is_decoder_owned() {
         let request =
-            decode_request_body(br#"{"query":"q","variables":{"big":99999999999999999999999}}"#)
-                .unwrap();
+            decode_single(br#"{"query":"q","variables":{"big":99999999999999999999999}}"#).unwrap();
         let variables = request.variables.as_ref().unwrap();
         let bits = variables["big"].as_f64().unwrap().to_bits();
         assert_eq!(
@@ -625,7 +698,7 @@ mod tests {
             Some("99999999999999999999999")
         );
 
-        let spoofed = decode_request_body(
+        let spoofed = decode_single(
             br#"{"query":"q","variables":{"v":1.5,"\u0001variable number originals":{"4609434218613702656":"999999999999999999"}}}"#,
         )
         .unwrap();
@@ -639,7 +712,7 @@ mod tests {
 
     #[test]
     fn out_of_f64_range_variable_numbers_are_preserved() {
-        let request = decode_request_body(
+        let request = decode_single(
             br#"{"query":"query($n: numeric!, $j: jsonb!) { x }","variables":{"n":1e400,"j":{"nested":-9e999}}}"#,
         )
         .expect("arbitrary-precision JSON numbers are valid Hasura inputs");
@@ -661,7 +734,7 @@ mod tests {
         );
 
         let malformed =
-            decode_request_body(br#"{"query":"query($n: numeric!) { x }","variables":{"n":1e}}"#)
+            decode_single(br#"{"query":"query($n: numeric!) { x }","variables":{"n":1e}}"#)
                 .err()
                 .expect("malformed JSON must still be rejected");
         assert_eq!(malformed.code, "invalid-json");

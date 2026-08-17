@@ -1,0 +1,24 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "method": "GET",
+   "path": "/v1/graphql"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "PersistedQueryNotSupported",
+    "extensions": {
+     "path": "$",
+     "code": "not-supported"
+    }
+   }
+  ]
+ }
+}

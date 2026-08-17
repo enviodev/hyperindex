@@ -1,0 +1,17 @@
+{
+ "role": "public",
+ "request": {
+  "query": "query ($v: [Int!]) { EntityWithAllTypes(where: {arrayOfInts: {_eq: $v}}, order_by: {id: asc}) { id } }",
+  "variables": {
+   "v": [
+    1
+   ]
+  }
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "EntityWithAllTypes": []
+  }
+ }
+}

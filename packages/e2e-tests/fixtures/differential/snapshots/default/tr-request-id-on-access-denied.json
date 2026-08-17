@@ -1,0 +1,27 @@
+{
+ "role": "admin-wrong",
+ "request": {
+  "query": "{ __typename }",
+  "transport": {
+   "compareHeaders": [
+    "x-request-id"
+   ]
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null,
+  "x-request-id": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "invalid \"x-hasura-admin-secret\"/\"x-hasura-access-key\"",
+    "extensions": {
+     "path": "$",
+     "code": "access-denied"
+    }
+   }
+  ]
+ }
+}

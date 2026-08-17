@@ -1,0 +1,16 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User_aggregate(where: {id: {_eq: \"user-1\"}}) { aggregate { __typename } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "User_aggregate": {
+    "aggregate": {
+     "__typename": "User_aggregate_fields"
+    }
+   }
+  }
+ }
+}

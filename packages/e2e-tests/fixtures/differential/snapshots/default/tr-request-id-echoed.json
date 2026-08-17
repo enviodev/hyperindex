@@ -1,0 +1,24 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ __typename }",
+  "transport": {
+   "requestHeaders": {
+    "X-Request-Id": "differential-fixed-request-id"
+   },
+   "compareHeaders": [
+    "x-request-id"
+   ]
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null,
+  "x-request-id": "differential-fixed-request-id"
+ },
+ "body": {
+  "data": {
+   "__typename": "query_root"
+  }
+ }
+}

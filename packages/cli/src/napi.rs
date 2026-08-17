@@ -26,7 +26,8 @@ pub struct FromUserApiResult {
     /// `with_indexer_types` was requested.
     pub indexer_types: Option<String>,
     /// The generated `Indexer.res`, present only when `with_indexer_types` was
-    /// requested. Same production codegen output, from the same parse.
+    /// requested and the config isn't SVM (which has no ReScript surface).
+    /// Same production codegen output, from the same parse.
     pub indexer_code: Option<String>,
 }
 
@@ -80,7 +81,7 @@ pub fn from_user_api(
         })?;
         (
             Some(template.indexer_types_dts().to_string()),
-            Some(template.indexer_code().to_string()),
+            template.indexer_code().map(str::to_string),
         )
     } else {
         (None, None)

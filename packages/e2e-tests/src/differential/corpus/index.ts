@@ -15,6 +15,13 @@ import variablesAndRequest from "./14-variables-and-request.js";
 import scalarSerialization from "./15-scalar-serialization.js";
 import relationshipMatrix from "./16-relationship-matrix.js";
 import errorMatrix from "./17-error-matrix.js";
+import transport from "./18-transport.js";
+import arrayOperands from "./19-array-operands.js";
+import jsonbKeyOperands from "./20-jsonb-key-operands.js";
+import degenerateAggregates from "./21-degenerate-aggregates.js";
+import runtimeErrorVisibility from "./22-runtime-error-visibility.js";
+import requestBody from "./23-request-body.js";
+import aggregatePredicates from "./24-aggregate-predicates.js";
 import type { CorpusCase } from "../corpus.js";
 
 export const allCases: CorpusCase[] = [
@@ -35,4 +42,11 @@ export const allCases: CorpusCase[] = [
   ...scalarSerialization,
   ...relationshipMatrix,
   ...errorMatrix,
+  ...transport,
+  ...arrayOperands,
+  ...jsonbKeyOperands,
+  ...degenerateAggregates,
+  ...runtimeErrorVisibility,
+  ...requestBody,
+  ...aggregatePredicates,
 ];

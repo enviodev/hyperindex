@@ -1,0 +1,53 @@
+{
+ "role": "admin",
+ "request": {
+  "query": "{ NftCollection(order_by: {id: asc}) { id tokens_aggregate { nodes @include(if: false) { __typename } } } }"
+ },
+ "status": 200,
+ "body": {
+  "data": {
+   "NftCollection": [
+    {
+     "id": "coll-1",
+     "tokens_aggregate": {}
+    },
+    {
+     "id": "coll-1",
+     "tokens_aggregate": {}
+    },
+    {
+     "id": "coll-1",
+     "tokens_aggregate": {}
+    },
+    {
+     "id": "coll-1",
+     "tokens_aggregate": {}
+    },
+    {
+     "id": "coll-2",
+     "tokens_aggregate": {}
+    },
+    {
+     "id": "coll-2",
+     "tokens_aggregate": {}
+    },
+    {
+     "id": "coll-2",
+     "tokens_aggregate": {}
+    },
+    {
+     "id": "coll-2",
+     "tokens_aggregate": {}
+    },
+    {
+     "id": "coll-2",
+     "tokens_aggregate": {}
+    },
+    {
+     "id": "coll-3",
+     "tokens_aggregate": null
+    }
+   ]
+  }
+ }
+}

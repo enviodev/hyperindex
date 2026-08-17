@@ -1,0 +1,43 @@
+{
+ "role": "public",
+ "request": {
+  "transport": {
+   "rawBody": "[{\"query\":\"{ User(order_by: {id: asc}, limit: 1) { id } }\"},{\"query\":\"{ User { nonexistentField } }\"},{\"query\":\"{ Token(order_by: {id: asc}, limit: 1) { id } }\"}]"
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null
+ },
+ "body": [
+  {
+   "data": {
+    "User": [
+     {
+      "id": "user \"quoted\" 🚀"
+     }
+    ]
+   }
+  },
+  {
+   "errors": [
+    {
+     "message": "field 'nonexistentField' not found in type: 'User'",
+     "extensions": {
+      "path": "$.selectionSet.User.selectionSet.nonexistentField",
+      "code": "validation-failed"
+     }
+    }
+   ]
+  },
+  {
+   "data": {
+    "Token": [
+     {
+      "id": "tok-1"
+     }
+    ]
+   }
+  }
+ ]
+}

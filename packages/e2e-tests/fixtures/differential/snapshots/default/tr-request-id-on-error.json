@@ -1,0 +1,30 @@
+{
+ "role": "public",
+ "request": {
+  "query": "{ User { nonexistentField } }",
+  "transport": {
+   "requestHeaders": {
+    "X-Request-Id": "differential-fixed-request-id"
+   },
+   "compareHeaders": [
+    "x-request-id"
+   ]
+  }
+ },
+ "status": 200,
+ "headers": {
+  "contentEncoding": null,
+  "x-request-id": null
+ },
+ "body": {
+  "errors": [
+   {
+    "message": "field 'nonexistentField' not found in type: 'User'",
+    "extensions": {
+     "path": "$.selectionSet.User.selectionSet.nonexistentField",
+     "code": "validation-failed"
+    }
+   }
+  ]
+ }
+}
