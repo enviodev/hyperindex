@@ -1,0 +1,190 @@
+//! Response compression, negotiated exactly as Hasura negotiates it.
+//!
+//! The rules are narrower than a stock compression middleware's, and each one
+//! is pinned by a recorded case in `corpus/18-transport.ts`:
+//!
+//! - gzip is the only encoding; `br` and `deflate` are never answered with.
+//! - A missing `Accept-Encoding`, or a bare `*`, means identity only. That is
+//!   conservative (RFC 7231 allows anything there), and deliberate on
+//!   Hasura's side.
+//! - When identity and gzip are both acceptable, a body under 700 bytes is
+//!   left alone: below that, compression costs more than it saves.
+//! - Only an explicit `identity;q=0` makes gzip mandatory regardless of size.
+//!
+//! No `Vary` header is emitted, also matching Hasura.
+
+use axum::http::HeaderMap;
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use std::io::Write;
+
+/// Hasura's cutoff: under this many bytes, compression is skipped whenever
+/// identity is also acceptable.
+const MIN_COMPRESS_BYTES: usize = 700;
+
+/// Bodies at or above this size are compressed on a blocking thread instead
+/// of the async executor. At ~1 GB/s (zlib-rs, level 1) this bounds the time
+/// a request spends holding a runtime worker to about a millisecond; serve
+/// answers list queries tens of megabytes long, where compressing inline
+/// would stall every other task on that worker for tens of milliseconds.
+const OFFLOAD_BYTES: usize = 1024 * 1024;
+
+/// Level 1. Response bytes are not part of the parity contract — only whether
+/// the response was compressed at all — so the level is free, and level 1
+/// captures ~96% of level 6's saving on a large response for ~20% of the CPU.
+const LEVEL: Compression = Compression::new(1);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Accepted {
+    gzip: bool,
+    identity: bool,
+}
+
+/// Which encodings the client will take, following Hasura's
+/// `getAcceptedEncodings`. Quality values are ignored except where they
+/// *reject* an encoding, which is the only place they change the outcome.
+fn accepted_encodings(headers: &HeaderMap) -> Accepted {
+    let mut values: Vec<&str> = Vec::new();
+    for header in headers.get_all(axum::http::header::ACCEPT_ENCODING) {
+        let Ok(text) = header.to_str() else { continue };
+        values.extend(text.split(',').map(str::trim));
+    }
+
+    // No header at all, or exactly `*`: technically "send what you like", but
+    // Hasura reads it as identity-only and so must we.
+    if values.is_empty() || values == ["*"] {
+        return Accepted {
+            gzip: false,
+            identity: true,
+        };
+    }
+
+    let identity_rejected = values.contains(&"identity;q=0")
+        || (values.contains(&"*;q=0") && !values.iter().any(|v| v.starts_with("identity")));
+    let gzip_accepted =
+        values.iter().any(|v| v.starts_with("gzip")) && !values.contains(&"gzip;q=0");
+
+    Accepted {
+        gzip: gzip_accepted,
+        identity: !identity_rejected,
+    }
+}
+
+/// Whether a body of this size should be gzipped for this client.
+fn should_compress(headers: &HeaderMap, len: usize) -> bool {
+    match accepted_encodings(headers) {
+        // Both are fine, so compress only when it pays for itself.
+        Accepted {
+            gzip: true,
+            identity: true,
+        } => len >= MIN_COMPRESS_BYTES,
+        // Identity was explicitly rejected: gzip regardless of size.
+        Accepted {
+            gzip: true,
+            identity: false,
+        } => true,
+        _ => false,
+    }
+}
+
+fn gzip(body: &[u8]) -> Vec<u8> {
+    // Compressed output is smaller than the input for everything past the
+    // cutoff, so half the input length is a sound starting capacity.
+    let mut encoder = GzEncoder::new(Vec::with_capacity(body.len() / 2), LEVEL);
+    encoder
+        .write_all(body)
+        .and_then(|()| encoder.finish())
+        .unwrap_or_else(|_| body.to_vec())
+}
+
+/// The body to send, and the `Content-Encoding` to send it under.
+pub(super) struct Encoded {
+    pub body: Vec<u8>,
+    pub content_encoding: Option<&'static str>,
+}
+
+/// Compresses `body` if this client's `Accept-Encoding` calls for it. Large
+/// bodies are compressed on a blocking thread; small ones inline, where the
+/// work is measured in microseconds and the hand-off would cost more than the
+/// compression.
+pub(super) async fn encode(headers: &HeaderMap, body: String) -> Encoded {
+    if !should_compress(headers, body.len()) {
+        return Encoded {
+            body: body.into_bytes(),
+            content_encoding: None,
+        };
+    }
+    let compressed = if body.len() >= OFFLOAD_BYTES {
+        tokio::task::spawn_blocking(move || gzip(body.as_bytes()))
+            .await
+            .unwrap_or_else(|_| Vec::new())
+    } else {
+        gzip(body.as_bytes())
+    };
+    Encoded {
+        body: compressed,
+        content_encoding: Some("gzip"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers(accept_encoding: Option<&str>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        if let Some(value) = accept_encoding {
+            headers.insert(
+                axum::http::header::ACCEPT_ENCODING,
+                value.parse().expect("valid header"),
+            );
+        }
+        headers
+    }
+
+    // The negotiation table is pinned end-to-end by corpus/18-transport.ts
+    // against live Hasura; this covers the same rules at the unit a
+    // recorded case cannot reach, namely the size cutoff boundary.
+    #[test]
+    fn size_cutoff_applies_only_when_identity_is_also_acceptable() {
+        let gzip_only = headers(Some("gzip, identity;q=0"));
+        let both = headers(Some("gzip"));
+        assert_eq!(
+            [
+                should_compress(&both, MIN_COMPRESS_BYTES - 1),
+                should_compress(&both, MIN_COMPRESS_BYTES),
+                should_compress(&gzip_only, 1),
+                should_compress(&gzip_only, MIN_COMPRESS_BYTES),
+            ],
+            [false, true, true, true]
+        );
+    }
+
+    #[test]
+    fn only_gzip_is_ever_offered() {
+        let big = MIN_COMPRESS_BYTES;
+        assert_eq!(
+            [
+                should_compress(&headers(None), big),
+                should_compress(&headers(Some("*")), big),
+                should_compress(&headers(Some("br")), big),
+                should_compress(&headers(Some("deflate")), big),
+                should_compress(&headers(Some("gzip;q=0")), big),
+                should_compress(&headers(Some("identity")), big),
+                should_compress(&headers(Some("gzip, deflate, br")), big),
+            ],
+            [false, false, false, false, false, false, true]
+        );
+    }
+
+    #[test]
+    fn compressed_output_round_trips() {
+        let body = "x".repeat(4096);
+        let encoded = gzip(body.as_bytes());
+        assert!(encoded.len() < body.len());
+        let mut decoder = flate2::read::GzDecoder::new(&encoded[..]);
+        let mut round_tripped = String::new();
+        std::io::Read::read_to_string(&mut decoder, &mut round_tripped).unwrap();
+        assert_eq!(round_tripped, body);
+    }
+}

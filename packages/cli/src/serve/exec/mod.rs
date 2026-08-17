@@ -63,19 +63,18 @@ impl Schemas {
     }
 }
 
-/// Executes one GraphQL request over HTTP semantics. Returns (status,
-/// response JSON as a string). The response is assembled by string
-/// splicing so values produced by Postgres keep their exact serialization.
+/// Executes one GraphQL request over HTTP semantics. The response is
+/// assembled by string splicing so values produced by Postgres keep their
+/// exact serialization. Success and failure stay distinct because the HTTP
+/// layer treats them differently: only a successful response carries
+/// `x-request-id` and is eligible for compression, as in Hasura.
 pub async fn execute_query_request(
     state: &Arc<ServeState>,
     schemas: &Schemas,
     role: Role,
     request: &GraphQLRequest,
-) -> (u16, String) {
-    match execute_inner(state, schemas, role, request).await {
-        Ok(body) => (200, body),
-        Err(e) => (e.status, e.response_body().to_string()),
-    }
+) -> Result<String, GraphQLError> {
+    execute_inner(state, schemas, role, request).await
 }
 
 async fn execute_inner(

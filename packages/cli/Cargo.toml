@@ -64,6 +64,11 @@ napi = { version = "=3.8.5", features = ["napi10", "async", "serde-json"] }
 napi-derive = "=3.5.4"
 axum = { version = "0.8", features = ["ws"] }
 socket2 = "0.5"
+# The zlib-rs backend is 2-7x faster than the default miniz_oxide at every
+# response size; named explicitly so the choice cannot be lost if the crate
+# that currently pulls it in goes away.
+flate2 = { version = "1.1", features = ["zlib-rs"] }
+uuid = { version = "1", features = ["v4"] }
 tokio-postgres = "0.7"
 deadpool-postgres = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }

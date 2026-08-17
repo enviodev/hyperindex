@@ -6,10 +6,8 @@
  * Every other corpus file compares response bodies over one fixed request
  * shape (POST, JSON object, no interesting headers). These cases vary the
  * shape itself, so they are the only ones that can see the gaps between
- * `envio serve` and Hasura at this layer. Cases carrying `knownGap` are
- * failing reproductions: recorded from Hasura as the spec, reported as
- * known gaps against serve until the gap closes, and hard failures the
- * moment serve starts matching (so the annotation gets removed).
+ * `envio serve` and Hasura at this layer. All four gaps they were written to
+ * pin are now closed, and these cases are what keeps them closed.
  */
 
 import { defineCases } from "../corpus.js";
@@ -24,9 +22,8 @@ export default defineCases([
   // -------------------------------------------------------------------------
   // gzip response compression.
   //
-  // serve has no compression layer at all, so the same response costs ~2.4x
-  // the egress. `contentEncoding` in the snapshot is what pins this — bodies
-  // match either way, since the probe decompresses before comparing.
+  // `contentEncoding` in the snapshot is what pins this — bodies match either
+  // way, since the probe decompresses before comparing.
   //
   // Hasura's negotiation is narrower than a stock compression middleware's
   // (Hasura/Server/Compression.hs, recorded behavior in the cases below):
@@ -40,7 +37,6 @@ export default defineCases([
   {
     name: "tr-gzip-accept-gzip",
     query: LIST_QUERY,
-    knownGap: "serve sends no content-encoding: no compression layer",
     transport: {
       requestHeaders: { "Accept-Encoding": "gzip" },
       compareHeaders: ["vary"],
@@ -49,7 +45,6 @@ export default defineCases([
   {
     name: "tr-gzip-accept-gzip-deflate-br",
     query: LIST_QUERY,
-    knownGap: "serve sends no content-encoding: no compression layer",
     transport: {
       requestHeaders: { "Accept-Encoding": "gzip, deflate, br" },
       compareHeaders: ["vary"],
@@ -60,14 +55,12 @@ export default defineCases([
   {
     name: "tr-gzip-identity-rejected-small-body",
     query: SMALL_QUERY,
-    knownGap: "serve sends no content-encoding: no compression layer",
     transport: {
       requestHeaders: { "Accept-Encoding": "gzip, identity;q=0" },
       compareHeaders: ["vary"],
     },
   },
-  // The cases below already match, and must keep matching after a
-  // compression layer lands — they are what a stock middleware gets wrong.
+  // The cases below are what a stock middleware gets wrong.
   {
     name: "tr-gzip-accept-identity",
     query: LIST_QUERY,
@@ -130,12 +123,12 @@ export default defineCases([
   // -------------------------------------------------------------------------
   // Batched (JSON array) requests.
   //
-  // Hasura executes a JSON array of operations and answers with an array of
-  // results; serve's body decoder only accepts an object, so it answers with
-  // a parse-failed error and every client on a batching HTTP link breaks.
+  // A JSON array of operations is executed and answered with an array of
+  // results, positionally. Both engines execute the elements in turn rather
+  // than at once, so the batch's win is amortising the round trip and the
+  // auth check.
   {
     name: "tr-batch-two-queries",
-    knownGap: "serve rejects an array body as parse-failed instead of executing it",
     transport: {
       rawBody: JSON.stringify([
         { query: `{ User(order_by: {id: asc}, limit: 1) { id } }` },
@@ -145,7 +138,6 @@ export default defineCases([
   },
   {
     name: "tr-batch-single-element",
-    knownGap: "serve rejects an array body as parse-failed instead of executing it",
     transport: {
       rawBody: JSON.stringify([
         { query: `{ User(order_by: {id: asc}, limit: 1) { id } }` },
@@ -154,14 +146,12 @@ export default defineCases([
   },
   {
     name: "tr-batch-empty-array",
-    knownGap: "serve rejects an array body as parse-failed instead of executing it",
     transport: { rawBody: `[]` },
   },
   // Per-element isolation: one failing operation must not take down the
   // whole batch, and the results must stay positional.
   {
     name: "tr-batch-mixed-valid-and-invalid",
-    knownGap: "serve rejects an array body as parse-failed instead of executing it",
     transport: {
       rawBody: JSON.stringify([
         { query: `{ User(order_by: {id: asc}, limit: 1) { id } }` },
@@ -172,7 +162,6 @@ export default defineCases([
   },
   {
     name: "tr-batch-with-variables",
-    knownGap: "serve rejects an array body as parse-failed instead of executing it",
     transport: {
       rawBody: JSON.stringify([
         {
@@ -187,7 +176,7 @@ export default defineCases([
     },
   },
   // Auth is resolved before the body is parsed, so a bad secret answers the
-  // same whatever the body's shape — this already matches.
+  // same whatever the body's shape.
   {
     name: "tr-batch-admin-secret-wrong",
     role: "admin-wrong",
@@ -202,7 +191,6 @@ export default defineCases([
   {
     name: "tr-batch-respects-response-limit",
     phases: ["limited"],
-    knownGap: "serve rejects an array body as parse-failed instead of executing it",
     transport: {
       rawBody: JSON.stringify([
         { query: `{ User(order_by: {id: asc}) { id } }` },
@@ -215,26 +203,19 @@ export default defineCases([
   // `$[0]`, not the `$` serve reports for the whole body.
   {
     name: "tr-batch-element-not-an-object",
-    knownGap: "serve rejects an array body as parse-failed instead of executing it",
     transport: { rawBody: `[42]` },
   },
   {
     name: "tr-batch-element-missing-query",
-    knownGap: "serve rejects an array body as parse-failed instead of executing it",
     transport: { rawBody: `[{"variables":{}}]` },
   },
   {
     name: "tr-batch-nested-array",
-    knownGap: "serve reports the parse error at path $ instead of $[0]",
     transport: { rawBody: `[[{"query":"{ __typename }"}]]` },
   },
 
   // -------------------------------------------------------------------------
   // Plain GET.
-  //
-  // serve routes every GET on /v1/graphql into the WebSocket upgrade
-  // extractor, so a health check or a curl gets HTTP 400 "Connection header
-  // did not include 'upgrade'" instead of anything GraphQL-shaped.
   //
   // Hasura does NOT execute query-over-GET: the OSS build wires GET
   // /v1/graphql to the Automatic Persisted Queries handler, which is
@@ -246,47 +227,35 @@ export default defineCases([
   {
     name: "tr-get-query",
     query: `{ User(order_by: {id: asc}, limit: 2) { id } }`,
-    knownGap:
-      "serve 400s every GET with a non-JSON body; Hasura answers 200 PersistedQueryNotSupported",
     transport: { method: "GET" },
   },
   {
     name: "tr-get-query-with-variables",
     query: `query ($limit: Int!) { User(order_by: {id: asc}, limit: $limit) { id } }`,
     variables: { limit: 1 },
-    knownGap:
-      "serve 400s every GET with a non-JSON body; Hasura answers 200 PersistedQueryNotSupported",
     transport: { method: "GET" },
   },
   {
     name: "tr-get-operation-name",
     query: `query A { User(order_by: {id: asc}, limit: 1) { id } }\nquery B { Token(order_by: {id: asc}, limit: 1) { id } }`,
     operationName: "B",
-    knownGap:
-      "serve 400s every GET with a non-JSON body; Hasura answers 200 PersistedQueryNotSupported",
     transport: { method: "GET" },
   },
   // The bare-GET case from the gap report: a health check or a browser
   // hitting the endpoint by hand.
   {
     name: "tr-get-no-query",
-    knownGap:
-      "serve 400s every GET with a non-JSON body; Hasura answers 200 PersistedQueryNotSupported",
     transport: { method: "GET", path: "/v1/graphql" },
   },
   {
     name: "tr-get-admin-secret",
     query: `{ User(order_by: {id: asc}, limit: 1) { id } }`,
     role: "admin",
-    knownGap:
-      "serve 400s every GET with a non-JSON body; Hasura answers 200 PersistedQueryNotSupported",
     transport: { method: "GET" },
   },
   {
     name: "tr-get-subscription-rejected",
     query: `subscription { User(order_by: {id: asc}, limit: 1) { id } }`,
-    knownGap:
-      "serve 400s every GET with a non-JSON body; Hasura answers 200 PersistedQueryNotSupported",
     transport: { method: "GET" },
   },
   // A real WebSocket upgrade on the same route must keep working — the GET
@@ -311,8 +280,7 @@ export default defineCases([
   // -------------------------------------------------------------------------
   // x-request-id.
   //
-  // Hasura emits one per response and echoes a client-supplied value; serve
-  // emits none, so a support ticket cannot be joined to a log line.
+  // One per response, echoing a client-supplied value when there is one.
   //
   // It is set in logSuccessAndResp only (Hasura/Server/App.hs), so error
   // responses carry NO x-request-id — not even one the client supplied. serve
@@ -321,20 +289,17 @@ export default defineCases([
   {
     name: "tr-request-id-generated",
     query: `{ __typename }`,
-    knownGap: "serve emits no x-request-id",
     transport: { compareHeaders: ["x-request-id"] },
   },
   {
     name: "tr-request-id-echoed",
     query: `{ __typename }`,
-    knownGap: "serve emits no x-request-id",
     transport: {
       requestHeaders: { "X-Request-Id": "differential-fixed-request-id" },
       compareHeaders: ["x-request-id"],
     },
   },
-  // Already matching, and must keep matching: an error response carries no
-  // request id even though the client sent one.
+  // An error response carries no request id even though the client sent one.
   {
     name: "tr-request-id-on-error",
     query: `{ User { nonexistentField } }`,
