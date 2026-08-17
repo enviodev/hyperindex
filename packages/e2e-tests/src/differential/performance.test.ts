@@ -11,6 +11,18 @@
  * the ratio holds even when the absolute numbers do not.
  *
  * Requires Postgres (5433) and Hasura (8080); serve is spawned by the suite.
+ *
+ * One caveat when running this locally: the dev harness builds and loads the
+ * DEBUG addon, which is roughly 2.4x slower than the release build CI runs
+ * against, and slow enough to swamp what is being measured — compression of a
+ * 2 KB response costs ~7 us in release and ~350 us in debug. To measure what
+ * ships, build the release library and pin it before starting:
+ *
+ *   cargo build --release -p envio --lib && cargo build -p envio --lib \
+ *     && cp target/release/libenvio.so target/debug/envio.node
+ *
+ * (the debug build first, so its timestamp stays older than the pinned file
+ * and the loader does not overwrite it).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";

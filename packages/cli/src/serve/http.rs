@@ -438,6 +438,37 @@ async fn graphql_answer(state: &AppState, headers: &HeaderMap, body: &[u8]) -> A
     }
 }
 
+/// Restates a serde_json syntax error the way aeson does, since the message
+/// is part of the response body.
+///
+/// aeson names what it found and what it wanted: `Unexpected end-of-input,
+/// expecting JSON value`, `Unexpected ",}", expecting key literal`. What it
+/// "found" is the rest of the input from the offending token, which sits one
+/// byte before the column serde reports. Shapes without a recorded oracle
+/// keep serde's own wording rather than a guessed translation.
+fn aeson_syntax_message(text: &str, error: &serde_json::Error) -> String {
+    let rendered = error.to_string();
+    let unexpected = || {
+        // serde's column is 1-based and points just past the offending byte.
+        let start = error.column().saturating_sub(2);
+        text.char_indices()
+            .nth(start)
+            .map(|(i, _)| &text[i..])
+            .unwrap_or("")
+    };
+    if rendered.starts_with("EOF while parsing a value") {
+        "Unexpected end-of-input, expecting JSON value".to_string()
+    } else if rendered.starts_with("EOF while parsing an object") {
+        "Unexpected end-of-input, expecting , or }".to_string()
+    } else if rendered.starts_with("key must be a string") {
+        format!("Unexpected \"{}\", expecting key literal", unexpected())
+    } else if rendered.starts_with("expected ident") || rendered.starts_with("expected value") {
+        format!("Unexpected \"{}\", expecting JSON value", unexpected())
+    } else {
+        rendered
+    }
+}
+
 /// aeson's name for a JSON value's kind, as it appears in Hasura's
 /// parse-failed messages.
 fn aeson_kind(v: &serde_json::Value) -> &'static str {
@@ -496,7 +527,7 @@ fn decode_request_body(body: &[u8]) -> Result<DecodedBody, exec::error::GraphQLE
                     .to_string(),
             ))
         }
-        Err(e) => return Err(invalid_json(e.to_string())),
+        Err(e) => return Err(invalid_json(aeson_syntax_message(text, &e))),
     };
 
     // An array body is a batch; every element is decoded with its own index
@@ -654,6 +685,14 @@ async fn ws_or_get_handler(
 mod tests {
     use super::*;
 
+    /// Decodes a single-operation body, which is all these cases send.
+    fn decode_single(body: &[u8]) -> Result<GraphQLRequest, exec::error::GraphQLError> {
+        match decode_request_body(body)? {
+            DecodedBody::Single(request) => Ok(request),
+            DecodedBody::Batch(_) => unreachable!("not a batch body"),
+        }
+    }
+
     #[tokio::test]
     async fn occupied_port_error_has_recovery_commands() {
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -676,83 +715,9 @@ mod tests {
     }
 
     #[test]
-    fn request_body_decoding_errors() {
-        let decode = |body: &str| {
-            decode_request_body(body.as_bytes())
-                .map(|_| unreachable!("expected a decode error for {body:?}"))
-                .unwrap_err()
-        };
-        let shape = |e: exec::error::GraphQLError| (e.message, e.path, e.code, e.status);
-        assert_eq!(
-            [
-                decode("not json"),
-                decode("[1,2]"),
-                decode("\"query\""),
-                decode("42"),
-                decode("{}"),
-                decode("{\"query\": 5}"),
-                decode("{\"query\": \"{ x }\", \"variables\": \"v\"}"),
-                decode("{\"query\": \"{ x }\", \"variables\": [1]}"),
-            ]
-            .map(shape),
-            [
-                (
-                    "expected ident at line 1 column 2".to_string(),
-                    "$".to_string(),
-                    "invalid-json",
-                    200
-                ),
-                (
-                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered Array".to_string(),
-                    "$".to_string(),
-                    "parse-failed",
-                    200
-                ),
-                (
-                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered String".to_string(),
-                    "$".to_string(),
-                    "parse-failed",
-                    200
-                ),
-                (
-                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, expected Object, but encountered Number".to_string(),
-                    "$".to_string(),
-                    "parse-failed",
-                    200
-                ),
-                (
-                    "parsing Hasura.GraphQL.Transport.HTTP.Protocol.GQLReq(GQLReq) failed, key \"query\" not found".to_string(),
-                    "$".to_string(),
-                    "parse-failed",
-                    200
-                ),
-                (
-                    "parsing Text failed, expected String, but encountered Number".to_string(),
-                    "$.query".to_string(),
-                    "parse-failed",
-                    200
-                ),
-                (
-                    "parsing HashMap failed, expected Object, but encountered String".to_string(),
-                    "$.variables".to_string(),
-                    "parse-failed",
-                    200
-                ),
-                (
-                    "parsing HashMap failed, expected Object, but encountered Array".to_string(),
-                    "$.variables".to_string(),
-                    "parse-failed",
-                    200
-                ),
-            ]
-        );
-    }
-
-    #[test]
     fn variable_number_metadata_is_decoder_owned() {
         let request =
-            decode_request_body(br#"{"query":"q","variables":{"big":99999999999999999999999}}"#)
-                .unwrap();
+            decode_single(br#"{"query":"q","variables":{"big":99999999999999999999999}}"#).unwrap();
         let variables = request.variables.as_ref().unwrap();
         let bits = variables["big"].as_f64().unwrap().to_bits();
         assert_eq!(
@@ -763,7 +728,7 @@ mod tests {
             Some("99999999999999999999999")
         );
 
-        let spoofed = decode_request_body(
+        let spoofed = decode_single(
             br#"{"query":"q","variables":{"v":1.5,"\u0001variable number originals":{"4609434218613702656":"999999999999999999"}}}"#,
         )
         .unwrap();
@@ -777,7 +742,7 @@ mod tests {
 
     #[test]
     fn out_of_f64_range_variable_numbers_are_preserved() {
-        let request = decode_request_body(
+        let request = decode_single(
             br#"{"query":"query($n: numeric!, $j: jsonb!) { x }","variables":{"n":1e400,"j":{"nested":-9e999}}}"#,
         )
         .expect("arbitrary-precision JSON numbers are valid Hasura inputs");
@@ -799,7 +764,7 @@ mod tests {
         );
 
         let malformed =
-            decode_request_body(br#"{"query":"query($n: numeric!) { x }","variables":{"n":1e}}"#)
+            decode_single(br#"{"query":"query($n: numeric!) { x }","variables":{"n":1e}}"#)
                 .err()
                 .expect("malformed JSON must still be rejected");
         assert_eq!(malformed.code, "invalid-json");

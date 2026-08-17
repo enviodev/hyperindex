@@ -135,9 +135,85 @@ pub fn parse_value_preserving_numbers(
     src: &str,
 ) -> Result<(Json, HashMap<u64, String>), serde_json::Error> {
     let _: &RawValue = serde_json::from_str(src)?;
+    let parse = |text: &str| {
+        serde_json::from_str::<FirstWins>(text).map(|FirstWins(value)| value)
+    };
     match rewrite_lossy_numbers(src) {
-        Some((rewritten, originals)) => Ok((serde_json::from_str::<Json>(&rewritten)?, originals)),
-        None => Ok((serde_json::from_str::<Json>(src)?, HashMap::new())),
+        Some((rewritten, originals)) => Ok((parse(&rewritten)?, originals)),
+        None => Ok((parse(src)?, HashMap::new())),
+    }
+}
+
+/// A `Value` whose objects keep the FIRST of any repeated key, which is what
+/// Hasura answers: a body carrying `query` twice runs the first one.
+/// serde_json's own map keeps the last. Folding it during the single parse
+/// costs an `entry` lookup per key and no extra pass.
+struct FirstWins(Json);
+
+impl<'de> serde::Deserialize<'de> for FirstWins {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = FirstWins;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("any JSON value")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut out = serde_json::Map::new();
+                while let Some((key, FirstWins(value))) = map.next_entry::<String, FirstWins>()? {
+                    out.entry(key).or_insert(value);
+                }
+                Ok(FirstWins(Json::Object(out)))
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut out = Vec::new();
+                while let Some(FirstWins(value)) = seq.next_element::<FirstWins>()? {
+                    out.push(value);
+                }
+                Ok(FirstWins(Json::Array(out)))
+            }
+
+            // Every scalar defers to serde_json's own Value deserializer, so
+            // number handling stays exactly as it was.
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(FirstWins(Json::Null))
+            }
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(FirstWins(Json::Null))
+            }
+            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
+                Ok(FirstWins(Json::Bool(v)))
+            }
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
+                Ok(FirstWins(Json::Number(v.into())))
+            }
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
+                Ok(FirstWins(Json::Number(v.into())))
+            }
+            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
+                Ok(FirstWins(
+                    serde_json::Number::from_f64(v).map_or(Json::Null, Json::Number),
+                ))
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(FirstWins(Json::String(v.to_owned())))
+            }
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E> {
+                Ok(FirstWins(Json::String(v)))
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
     }
 }
 
