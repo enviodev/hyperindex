@@ -17,7 +17,7 @@ let minerAddress = "0x000000000000000000000000000000000000beef"
 let stateRoot = "0x00000000000000000000000000000000000000000000000000000000000000dd"
 let transactionHash = "0x00000000000000000000000000000000000000000000000000000000000000ff"
 
-let {config}: InternalTestIndexer.parsed = InternalTestIndexer.fromUserApi(
+let parsed: InternalTestIndexer.parsed = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: hypersync-source-contract
 contracts:
@@ -37,36 +37,45 @@ type Account {
   id: ID!
 }
 `,
+  // Three registrations, each with its own inline selection: two siblings on
+  // Transfer, one on Approval. One query carries the union of all three.
+  ~handlers=`
+import { indexer } from "envio";
+
+indexer.onEvent(
+  { contract: "Token", event: "Transfer", fields: { block: ["parentHash"], transaction: ["to"] } },
+  async ({ event }) => {
+    event.block.parentHash;
+    event.transaction.to;
+  },
+);
+
+indexer.onEvent(
+  {
+    contract: "Token",
+    event: "Transfer",
+    fields: { block: ["miner"], transaction: ["hash", "gasUsed"] },
+  },
+  async ({ event }) => {
+    event.block.miner;
+    event.transaction.hash;
+    event.transaction.gasUsed;
+  },
+);
+
+indexer.onEvent(
+  { contract: "Token", event: "Approval", fields: { block: ["stateRoot"] } },
+  async ({ event }) => {
+    event.block.stateRoot;
+  },
+);
+`,
+  ~registerHandlers=true,
 )
 
-// Three registrations, each with its own inline selection: two siblings on
-// Transfer, one on Approval. One query carries the union of all three.
-let onEventRegistrations = {
-  HandlerRegister.resetOnEventRegistrations()
-  HandlerRegister.startRegistration(~config)
-  let handler = %raw(`() => Promise.resolve()`)
-  HandlerRegister.setHandler(
-    ~contractName="Token",
-    ~eventName="Transfer",
-    handler,
-    ~eventOptions=Some({fields: {block: ["parentHash"], transaction: ["to"]}}),
-  )
-  HandlerRegister.setHandler(
-    ~contractName="Token",
-    ~eventName="Transfer",
-    handler,
-    ~eventOptions=Some({fields: {block: ["miner"], transaction: ["hash", "gasUsed"]}}),
-  )
-  HandlerRegister.setHandler(
-    ~contractName="Token",
-    ~eventName="Approval",
-    handler,
-    ~eventOptions=Some({fields: {block: ["stateRoot"]}}),
-  )
+let onEventRegistrations = () => {
   let chainRegistrations: HandlerRegister.chainRegistrations =
-    HandlerRegister.finishRegistration(~config)
-    ->Utils.Dict.dangerouslyGetNonOption("1")
-    ->Option.getOrThrow
+    parsed.registrations()->Utils.Dict.dangerouslyGetNonOption("1")->Option.getOrThrow
   chainRegistrations.onEventRegistrations->(
     Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
   )
@@ -88,7 +97,7 @@ let makeSource = (~url, ~lowercaseAddresses=true) => {
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,
     endpointUrl: url,
-    onEventRegistrations,
+    onEventRegistrations: onEventRegistrations(),
     apiToken: Some(MockHyperSyncServer.apiToken),
     clientTimeoutMillis: 10_000,
     lowercaseAddresses,
@@ -109,7 +118,7 @@ let fetch = (source: Source.t, ~addressSet, ~fromBlock=10, ~toBlock=Some(11)) =>
     ~partitionId="mock-partition",
     ~selection={
       dependsOnAddresses: true,
-      onEventRegistrations: onEventRegistrations->(
+      onEventRegistrations: onEventRegistrations()->(
         Utils.magic: array<Internal.evmOnEventRegistration> => array<Internal.onEventRegistration>
       ),
     },
