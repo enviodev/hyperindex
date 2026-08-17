@@ -77,6 +77,20 @@ let mockEvent = (~blockNumber, ~logIndex=0): Internal.item => Internal.Event({
   payload: "Mock event in fetchstate test"->(Utils.magic: string => Internal.eventPayload),
 })
 
+// An item's position within its block: an event by log index, a block handler
+// by registration, after every event of that block. Block items carry no log
+// index — the item kind is what orders them.
+let event = logIndex => `event:${logIndex->Int.toString}`
+let blockHandler = index => `blockHandler:${index->Int.toString}`
+let itemCoordinate = (item: Internal.item) =>
+  switch item {
+  | Internal.Event({blockNumber, logIndex}) => (blockNumber, event(logIndex))
+  | Internal.Block({blockNumber, onBlockRegistration}) => (
+      blockNumber,
+      blockHandler(onBlockRegistration.index),
+    )
+  }
+
 describe("FetchState onBlock functionality", () => {
   it("should add block items to queue when processing first batch with onBlock config", t => {
     // Create a fetch state with onBlock config
@@ -108,25 +122,24 @@ describe("FetchState onBlock functionality", () => {
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
     let queue = updatedFetchState.buffer
-    let blockNumberLogIndexTuples =
-      queue->Array.map(item => (item->Internal.getItemBlockNumber, item->Internal.getItemLogIndex))
+    let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have block items for blocks 0, 2, 4, 6, 8, 10 (interval=2, startBlock=0) plus event at block 5
-    // Expected in reverse order (latest to earliest): block items have logIndex=16777216, event has logIndex=0
+    // A block's events come first, then its block handlers.
     let expectedTuples = [
-      (0, 16777216),
-      (2, 16777216),
-      (4, 16777216),
-      (5, 0),
-      (6, 16777216),
-      (8, 16777216),
-      (10, 16777216),
+      (0, blockHandler(0)),
+      (2, blockHandler(0)),
+      (4, blockHandler(0)),
+      (5, event(0)),
+      (6, blockHandler(0)),
+      (8, blockHandler(0)),
+      (10, blockHandler(0)),
     ]
 
     // Check that we have the exact expected tuples
     t.expect(
       blockNumberLogIndexTuples,
-      ~message="Should have correct block number and log index tuples",
+      ~message="Should have correct block number and item coordinates",
     ).toEqual(expectedTuples)
   })
 
@@ -156,26 +169,25 @@ describe("FetchState onBlock functionality", () => {
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
     let queue = updatedFetchState.buffer
-    let blockNumberLogIndexTuples =
-      queue->Array.map(item => (item->Internal.getItemBlockNumber, item->Internal.getItemLogIndex))
+    let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have block items starting from block 5 (startBlock=5, interval=1) plus event at block 5
     // The event at block 5 is NOT deduplicated with the block item at block 5
     // Expected in reverse order (latest to earliest): block items have higher priority than events at same block
     let expectedTuples = [
-      (5, 0),
-      (5, 16777216),
-      (6, 16777216),
-      (7, 16777216),
-      (8, 16777216),
-      (9, 16777216),
-      (10, 16777216),
+      (5, event(0)),
+      (5, blockHandler(0)),
+      (6, blockHandler(0)),
+      (7, blockHandler(0)),
+      (8, blockHandler(0)),
+      (9, blockHandler(0)),
+      (10, blockHandler(0)),
     ]
 
     // Check that we have the exact expected tuples
     t.expect(
       blockNumberLogIndexTuples,
-      ~message="Should have correct block number and log index tuples",
+      ~message="Should have correct block number and item coordinates",
     ).toEqual(expectedTuples)
   })
 
@@ -205,29 +217,28 @@ describe("FetchState onBlock functionality", () => {
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
     let queue = updatedFetchState.buffer
-    let blockNumberLogIndexTuples =
-      queue->Array.map(item => (item->Internal.getItemBlockNumber, item->Internal.getItemLogIndex))
+    let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have block items that don't exceed endBlock=8 plus event at block 5
     // The event at block 5 is NOT deduplicated with the block item at block 5
     // Expected in reverse order (latest to earliest): block items have higher priority than events at same block
     let expectedTuples = [
-      (0, 16777216),
-      (1, 16777216),
-      (2, 16777216),
-      (3, 16777216),
-      (4, 16777216),
-      (5, 0),
-      (5, 16777216),
-      (6, 16777216),
-      (7, 16777216),
-      (8, 16777216),
+      (0, blockHandler(0)),
+      (1, blockHandler(0)),
+      (2, blockHandler(0)),
+      (3, blockHandler(0)),
+      (4, blockHandler(0)),
+      (5, event(0)),
+      (5, blockHandler(0)),
+      (6, blockHandler(0)),
+      (7, blockHandler(0)),
+      (8, blockHandler(0)),
     ]
 
     // Check that we have the exact expected tuples
     t.expect(
       blockNumberLogIndexTuples,
-      ~message="Should have correct block number and log index tuples",
+      ~message="Should have correct block number and item coordinates",
     ).toEqual(expectedTuples)
   })
 
@@ -258,34 +269,33 @@ describe("FetchState onBlock functionality", () => {
 
     // Get all (blockNumber, logIndex) tuples from the queue (including event items)
     let queue = updatedFetchState.buffer
-    let blockNumberLogIndexTuples =
-      queue->Array.map(item => (item->Internal.getItemBlockNumber, item->Internal.getItemLogIndex))
+    let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
     // Should have block items for both configs plus event at block 5
-    // Config1 (interval=2, index=0): blocks 0,2,4,6,8,10,12 with logIndex=16777216+0=16777216
-    // Config2 (interval=3, index=1): blocks 0,3,6,9,12 with logIndex=16777216+1=16777217
+    // Config1 (interval=2, index=0): blocks 0,2,4,6,8,10,12
+    // Config2 (interval=3, index=1): blocks 0,3,6,9,12
     // Combined: 0(c1),0(c2),2(c1),3(c2),4(c1),5(event),6(c1),6(c2),8(c1),9(c2),10(c1),12(c1),12(c2)
     // Expected in reverse order (latest to earliest): [12(c2),12(c1),10(c1),9(c2),8(c1),6(c2),6(c1),5(event),4(c1),3(c2),2(c1),0(c2),0(c1)]
     let expectedTuples = [
-      (0, 16777216),
-      (0, 16777217),
-      (2, 16777216),
-      (3, 16777217),
-      (4, 16777216),
-      (5, 0),
-      (6, 16777216),
-      (6, 16777217),
-      (8, 16777216),
-      (9, 16777217),
-      (10, 16777216),
-      (12, 16777216),
-      (12, 16777217),
+      (0, blockHandler(0)),
+      (0, blockHandler(1)),
+      (2, blockHandler(0)),
+      (3, blockHandler(1)),
+      (4, blockHandler(0)),
+      (5, event(0)),
+      (6, blockHandler(0)),
+      (6, blockHandler(1)),
+      (8, blockHandler(0)),
+      (9, blockHandler(1)),
+      (10, blockHandler(0)),
+      (12, blockHandler(0)),
+      (12, blockHandler(1)),
     ]
 
     // Check that we have the exact expected tuples
     t.expect(
       blockNumberLogIndexTuples,
-      ~message="Should have correct block number and log index tuples",
+      ~message="Should have correct block number and item coordinates",
     ).toEqual(expectedTuples)
   })
 
@@ -314,17 +324,15 @@ describe("FetchState onBlock functionality", () => {
 
     // Verify that no block items were added when onBlock configs are not provided
     let queue = updatedFetchState.buffer
-    let blockNumberLogIndexTuples =
-      queue->Array.map(item => (item->Internal.getItemBlockNumber, item->Internal.getItemLogIndex))
+    let blockNumberLogIndexTuples = queue->Array.map(itemCoordinate)
 
-    // Should have only the event item (block 5, logIndex 0)
-    // Expected in reverse order (latest to earliest): [5]
-    let expectedTuples = [(5, 0)]
+    // Should have only the event item
+    let expectedTuples = [(5, event(0))]
 
     // Check that we have the exact expected tuples
     t.expect(
       blockNumberLogIndexTuples,
-      ~message="Should have correct block number and log index tuples",
+      ~message="Should have correct block number and item coordinates",
     ).toEqual(expectedTuples)
   })
 })
