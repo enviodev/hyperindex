@@ -66,7 +66,7 @@ describe("HeightStream reconnect driver", () => {
     )
   })
 
-  Async.it("Resets the backoff once a connection carries traffic", async t => {
+  Async.it("Resets the backoff once a connection has lasted", async t => {
     let harness = makeHarness()
     // Exactly the retry delay each time, so no connection lives long enough to
     // also go stale.
@@ -76,7 +76,11 @@ describe("HeightStream reconnect driver", () => {
     }
     let reconnected = harness->driverAt(3)
     reconnected.onConnected()
+    // Kept alive across more than a staleness window, so the connection counts
+    // as having worked.
+    await Vi.advanceTimersByTimeAsync(14_000)
     reconnected.onKeepAlive()
+    await Vi.advanceTimersByTimeAsync(14_000)
     reconnected.onFailure(~reason="closed")
 
     await Vi.advanceTimersByTimeAsync(249)
@@ -91,17 +95,18 @@ describe("HeightStream reconnect driver", () => {
     ))
   })
 
-  Async.it("Keeps backing off when a connection opens and drops without traffic", async t => {
+  Async.it("Keeps backing off when short connections deliver a height each time", async t => {
     let harness = makeHarness()
-    // An endpoint that accepts the connection and drops it straight away would
-    // otherwise reconnect at the base delay forever, and every reconnect costs
-    // its consumer a catch-up request.
+    // HyperSync sends the head as soon as it connects, so an endpoint that
+    // accepts a connection and drops it straight away still looks like it
+    // carried traffic. Only its lifetime says otherwise.
     let schedule = [250, 500, 1_000, 2_000]
 
     let connectsAroundRetry = []
     for attempt in 0 to schedule->Array.length - 1 {
       let driver = harness->driverAt(attempt)
       driver.onConnected()
+      driver.onHeight(100 + attempt)
       driver.onFailure(~reason="closed")
       await Vi.advanceTimersByTimeAsync(schedule->Array.getUnsafe(attempt) - 1)
       let beforeDue = harness.drivers->Array.length

@@ -42,8 +42,7 @@ let subscribe = (
   // A connection is either waiting for traffic or waiting to be retried, never
   // both, so a single slot holds whichever timer is pending.
   let timeoutId = ref(None)
-  // Whether the connection currently being retried had reached Live.
-  let wasLive = ref(false)
+  let connectionStartedAt = ref(Performance.now())
 
   let clearPendingTimeout = () => {
     switch timeoutId.contents {
@@ -65,19 +64,21 @@ let subscribe = (
     clearPendingTimeout()
     timeoutId := Some(setTimeout(() => {
           timeoutId := None
-          fail(~reason="stale", ~fromStaleTimeout=true)
+          fail(~reason="stale")
         }, staleTimeout))
   }
-  and fail = (~reason, ~fromStaleTimeout=false) => {
+  and fail = (~reason) => {
     generation := generation.contents + 1
     clearPendingTimeout()
     closeConnection()
 
-    // An established connection going quiet says the endpoint works but has
-    // nothing to send, which is normal on a chain whose block time exceeds the
-    // timeout. Retrying promptly is safe because staleTimeout already spaces
-    // these out; only failures that can repeat immediately need to escalate.
-    if fromStaleTimeout && wasLive.contents {
+    // A connection that lasted a full staleness window did its job, however it
+    // ended, and deserves a prompt retry. Judging it by duration rather than by
+    // whether it connected or carried traffic is what makes this work for both
+    // transports: HyperSync sends a height the moment it connects, so an
+    // endpoint accepting and dropping connections would otherwise look healthy
+    // every time and never back off.
+    if Performance.now() -. connectionStartedAt.contents >= staleTimeout->Int.toFloat {
       failureCount := 0
     }
     failureCount := failureCount.contents + 1
@@ -98,7 +99,7 @@ let subscribe = (
   }
   and start = () => {
     generation := generation.contents + 1
-    wasLive := false
+    connectionStartedAt := Performance.now()
     let connectionGeneration = generation.contents
     let isCurrent = () => !unsubscribed.contents && generation.contents === connectionGeneration
 
@@ -107,39 +108,30 @@ let subscribe = (
     // the retry timeout rather than the other way around.
     armStaleTimeout()
 
-    // Traffic, not the connect itself, is what proves an endpoint is worth
-    // retrying quickly. Resetting on connect would let one that accepts a
-    // connection and drops it immediately reconnect at the base delay forever.
-    let onTraffic = () => {
-      failureCount := 0
-      armStaleTimeout()
-    }
-
-    // A transport constructor can throw on a malformed url. Left to escape it
-    // would reach a timer callback on the next retry and take the process down.
-    let closeCurrentConnection = try Some(
-      connect({
+    let driver = {
       onConnected: () =>
         if isCurrent() {
-          wasLive := true
           armStaleTimeout()
           onStatus(Live)
         },
       onKeepAlive: () =>
         if isCurrent() {
-          onTraffic()
+          armStaleTimeout()
         },
       onHeight: height =>
         if isCurrent() {
-          onTraffic()
+          armStaleTimeout()
           onHeight(height)
         },
       onFailure: (~reason) =>
         if isCurrent() {
           fail(~reason)
         },
-      }),
-    ) catch {
+    }
+
+    // A transport constructor can throw on a malformed url. Left to escape it
+    // would reach a timer callback on the next retry and take the process down.
+    let closeCurrentConnection = try Some(connect(driver)) catch {
     | _ => None
     }
 
