@@ -121,12 +121,12 @@ fn validate(idl: &mut ProgramIdl) {
         }
     }
 
-    // An instruction that declares no discriminator has no leading prefix at
-    // all: its data opens with argument values. Those bytes can equal any
-    // discriminator the program declares, so its calls can land on any
-    // registration here — which makes it every other instruction's problem
-    // rather than only its own. Nothing in the file says which calls, so the
-    // whole program goes.
+    // An instruction whose leading prefix is unknown — declared absent, or
+    // declared in a way this parser cannot read — puts every other
+    // instruction at risk. Its data opens with bytes nothing here predicts,
+    // and those bytes can equal any discriminator the program declares, so
+    // its calls can land on any registration. Nothing in the file says which,
+    // so the whole program goes.
     let undiscriminated: Option<String> = idl
         .instructions
         .iter()
@@ -146,8 +146,8 @@ fn validate(idl: &mut ProgramIdl) {
             }
             demoted.entry(name.clone()).or_insert_with(|| {
                 format!(
-                    "'{culprit}' declares no discriminator, so its calls carry argument bytes \
-                     where a discriminator would be and can match any this program declares"
+                    "no discriminator could be read for '{culprit}', so its calls carry bytes \
+                     that can match any discriminator this program declares"
                 )
             });
         }
@@ -250,28 +250,32 @@ fn prefix_collisions(mut by_bytes: Vec<(&[u8], &str)>) -> Unusable {
             if !longer.starts_with(shorter) {
                 break;
             }
-            let (short_hex, long_hex) = (crate::hex::encode(shorter), crate::hex::encode(longer));
             if shorter == longer {
+                let hex = crate::hex::encode(shorter);
                 out.insert(
                     first.to_string(),
-                    format!("it shares discriminator 0x{short_hex} with '{second}'"),
+                    format!("it shares discriminator 0x{hex} with '{second}'"),
                 );
                 out.insert(
                     second.to_string(),
-                    format!("it shares discriminator 0x{short_hex} with '{first}'"),
+                    format!("it shares discriminator 0x{hex} with '{first}'"),
                 );
                 continue;
             }
             out.entry(first.to_string()).or_insert_with(|| {
                 format!(
-                    "its discriminator 0x{short_hex} is a prefix of '{second}'\'s 0x{long_hex}, so \
-                     '{second}' takes every call that would have matched it"
+                    "its discriminator 0x{} is a prefix of '{second}'\'s 0x{}, so '{second}' \
+                     takes every call that would have matched it",
+                    crate::hex::encode(shorter),
+                    crate::hex::encode(longer),
                 )
             });
             out.entry(second.to_string()).or_insert_with(|| {
                 format!(
-                    "its discriminator 0x{long_hex} extends '{first}'\'s 0x{short_hex}, so a \
-                     '{first}' call whose data continues those bytes arrives here instead"
+                    "its discriminator 0x{} extends '{first}'\'s 0x{}, so a '{first}' call whose \
+                     data continues those bytes arrives here instead",
+                    crate::hex::encode(longer),
+                    crate::hex::encode(shorter),
                 )
             });
         }
@@ -377,7 +381,11 @@ fn collect_instructions<T>(
         let (discriminator, carried) = match discriminator_of(&name, entry) {
             Ok(parsed) => parsed,
             Err(e) => {
-                unusable.insert(name, format!("{e:#}"));
+                // On chain this instruction still carries some prefix; the
+                // file just does not say which. Recorded empty, which is how
+                // `validate` spells "could be anything".
+                unusable.insert(name.clone(), format!("{e:#}"));
+                discriminators.insert(name, Vec::new());
                 continue;
             }
         };
