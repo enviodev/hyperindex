@@ -21,7 +21,7 @@ let getTimestamp = (~blockNumber) => blockNumber * 15
 
 let getBlockData = (~blockNumber): int => blockNumber
 
-let baseEventConfig = (MockIndexer.evmOnEventRegistration(
+let baseEventConfig = (EventRegistration.evmOnEventRegistration(
   ~id="0",
   ~contractName="Gravatar",
 ) :> Internal.onEventRegistration)

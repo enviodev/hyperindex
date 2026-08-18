@@ -28,7 +28,7 @@ let emptyBatch = (~checkpointId): Batch.t => {
 let makeStore = () => {
   let setChainMetaCalls = []
   let writeBatchChainMetaCalls = []
-  let base = MockIndexer.Storage.make([])
+  let base = MockStorage.make([])
   let storage = {
     ...base.storage,
     setChainMeta: chainsData => {
@@ -50,25 +50,7 @@ let makeStore = () => {
       Promise.resolve()
     },
   }
-  let persistence = {
-    ...PgStorage.makePersistenceFromConfig(~config=MockIndexer.config, ~storage),
-    storageStatus: Persistence.Ready({
-      cleanRun: false,
-      cache: Dict.make(),
-      chains: [],
-      reorgCheckpoints: [],
-      checkpointId: 0n,
-      envioInfo: None,
-    }),
-  }
-  let store = IndexerState.make(
-    ~config=MockIndexer.config,
-    ~persistence,
-    ~chainStates=Dict.make(),
-    ~isInReorgThreshold=false,
-    ~isRealtime=false,
-    ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
-  )
+  let store = TestIndexerState.make(~persistence=TestIndexerState.readyPersistence(~storage))
   (store, setChainMetaCalls, writeBatchChainMetaCalls)
 }
 
@@ -122,9 +104,7 @@ describe("InMemoryStore chain metadata", () => {
     await store->Writing.flush
     // Only chain 2 advances, but the write carries the whole snapshot (one upsert).
     let chain2Next = metaFields(~buffer=25)
-    store->Writing.setChainMeta(
-      Dict.fromArray([("1", metaFields(~buffer=10)), ("2", chain2Next)]),
-    )
+    store->Writing.setChainMeta(Dict.fromArray([("1", metaFields(~buffer=10)), ("2", chain2Next)]))
     await store->Writing.flush
 
     t.expect(setChainMetaCalls).toEqual([

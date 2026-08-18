@@ -14,72 +14,14 @@ let entityConfig = (name: string): Internal.entityConfig => config->entityConfig
 
 let evmBlockHash = MockSource.evmBlockHash
 
-// The store requires a persistence/config even when the cycle never runs; reuse one.
-// Lazy so importing the helper doesn't open a pg client for tests that never use it.
-// Its schema is never created — a query through this persistence means a test is
-// wired wrong, and pointing it at a real schema would hide that.
-let defaultPersistenceRef = ref(None)
-let defaultPersistence = () =>
-  switch defaultPersistenceRef.contents {
-  | Some(persistence) => persistence
-  | None =>
-    let config = Config.load()
-    let persistence = PgStorage.makePersistenceFromConfig(
-      ~config,
-      ~storage=PgStorage.makeStorageFromEnv(
-        ~config,
-        ~sql=PgStorage.makeClient(),
-        ~pgSchema=TestPgSchema.make(),
-        ~isHasuraEnabled=false,
-      ),
-    )
-    defaultPersistenceRef := Some(persistence)
-    persistence
-  }
+let defaultPersistence = () => TestIndexerState.defaultPersistence(~config)
 
 module Gate = MockSource.Gate
 
 module InMemoryStore = {
-  let setEntity = (
-    indexerState,
-    ~entityConfig: Internal.entityConfig,
-    ~scope=Internal.CrossChain,
-    entity,
-  ) => {
-    let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
-    let entity = entity->(Utils.magic: 'a => Internal.entity)
-    inMemTable->InMemoryTable.Entity.set(
-      ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
-      Set({
-        entityId: (entity: Internal.entity).id->EntityId.unsafeOfString,
-        checkpointId: 0n,
-        entity,
-      }),
-    )
-  }
+  let setEntity = TestIndexerState.setEntity
 
-  let make = (~config=?, ~entities=[]) => {
-    let config = switch config {
-    | Some(config) => config
-    | None => Config.load()
-    }
-    let indexerState = IndexerState.make(
-      ~config,
-      ~persistence=defaultPersistence(),
-      // A trivial chain state map for store-only tests that never run the loop.
-      ~chainStates=Dict.make(),
-      ~isInReorgThreshold=false,
-      ~isRealtime=false,
-      // The cycle never runs here, so a write only means a test is wired wrong.
-      ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
-    )
-    entities->Array.forEach(((entityConfig, items)) => {
-      items->Array.forEach(entity => {
-        indexerState->setEntity(~entityConfig, entity)
-      })
-    })
-    indexerState
-  }
+  let make = (~config=config, ~entities=[]) => TestIndexerState.make(~config, ~entities)
 }
 
 module Storage = {
@@ -292,97 +234,5 @@ module Helper = {
     [{"fromBlock": 1, "toBlock": Some(100), "retry": 0, "p": "0"}])
     sourceMock.resolveGetItemsOrThrow([])
     await indexerMock.getBatchWritePromise()
-  }
-}
-
-let mockRawEventRow: InternalTable.RawEvents.t = {
-  chain_id: 1->ChainId.fromInt,
-  event_id: 1234567890n,
-  contract_name: "NftFactory",
-  event_name: "SimpleNftCreated",
-  block_number: 1000,
-  log_index: 10,
-  transaction_fields: %raw(`{"transactionIndex": 20, "hash": "0x1234567890abcdef"}`),
-  src_address: "0x0123456789abcdef0123456789abcdef0123456"->Utils.magic,
-  block_hash: "0x9876543210fedcba9876543210fedcba987654321",
-  block_timestamp: 1620720000,
-  block_fields: %raw(`{}`),
-  params: {
-    "foo": "bar",
-    "baz": 42,
-  }->Utils.magic,
-}
-
-let eventId = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f_1"
-
-let evmOnEventRegistration = (
-  ~id=eventId,
-  ~contractName="ERC20",
-  ~blockFieldNames: array<Internal.evmBlockField>=[],
-  ~transactionFieldNames: array<Internal.evmTransactionField>=[],
-  ~isWildcard=false,
-  ~dependsOnAddresses=?,
-  ~filterByAddresses=false,
-  ~startBlock: option<int>=?,
-  ~eventFilters: option<array<Internal.resolvedTopicSelection>>=?,
-  // Override the event's ABI when a test needs indexed params (so its logs
-  // carry the topics its `where` filters on). Defaults to a no-param,
-  // single-topic event. `topicCount` is derived from the indexed params the
-  // same way production's `EventConfigBuilder.buildEvmEventConfig` does, so the
-  // two can't drift.
-  ~paramsMetadata: array<Internal.paramMeta>=[],
-  ~topicCount=paramsMetadata->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc),
-): Internal.evmOnEventRegistration => {
-  let eventConfig: Internal.evmEventConfig = {
-    id,
-    contractName,
-    name: "EventWithoutFields",
-    paramsRawEventSchema: EventConfigBuilder.buildParamsSchema(paramsMetadata),
-    simulateParamsSchema: EventConfigBuilder.buildSimulateParamsSchema(paramsMetadata),
-    fieldSelection: Internal.makeFieldSelection(
-      ~blockFields=Utils.Set.fromArray(blockFieldNames)->(
-        Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
-      ),
-      ~transactionFields=Utils.Set.fromArray(transactionFieldNames)->(
-        Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
-      ),
-      ~blockMaskFn=Evm.eventBlockFieldMask,
-      ~transactionMaskFn=Evm.eventTransactionFieldMask,
-    ),
-    sighash: id,
-    topicCount,
-    paramsMetadata,
-  }
-  {
-    index: -1,
-    eventConfig: (eventConfig :> Internal.eventConfig),
-    isWildcard,
-    filterByAddresses,
-    dependsOnAddresses: filterByAddresses || dependsOnAddresses->Option.getOr(!isWildcard),
-    addressFilterParamGroups: [],
-    startBlock,
-    handler: None,
-    contractRegister: None,
-    fieldSelection: eventConfig.fieldSelection,
-    resolvedWhere: {
-      topicSelections: switch eventFilters {
-      | Some(topicSelections) => topicSelections
-      | None => [
-          {
-            topic0: [
-              // This is a sighash in the original code
-              id->EvmTypes.Hex.fromStringUnsafe,
-            ],
-            topic1: switch dependsOnAddresses {
-            | Some(true) => ContractAddresses({contractName: contractName})
-            | _ => Values([])
-            },
-            topic2: Values([]),
-            topic3: Values([]),
-          },
-        ]
-      },
-      startBlock: None,
-    },
   }
 }

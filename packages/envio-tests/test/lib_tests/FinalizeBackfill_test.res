@@ -6,9 +6,9 @@ open Vitest
 // still changing.
 describe("Finalizing the backfill", () => {
   Async.it("Runs once when two paths reach the phase together", async t => {
-    let gate = MockIndexer.Gate.make()
+    let gate = MockSource.Gate.make()
     let calls = ref(0)
-    let base = MockIndexer.Storage.make([])
+    let base = MockStorage.make([])
     let storage = {
       ...base.storage,
       finalizeBackfill: (~entities as _, ~chainIds as _, ~readyAt as _) => {
@@ -16,25 +16,7 @@ describe("Finalizing the backfill", () => {
         gate.wait()
       },
     }
-    let persistence = {
-      ...PgStorage.makePersistenceFromConfig(~config=MockIndexer.config, ~storage),
-      storageStatus: Persistence.Ready({
-        cleanRun: false,
-        cache: Dict.make(),
-        chains: [],
-        reorgCheckpoints: [],
-        checkpointId: 0n,
-        envioInfo: None,
-      }),
-    }
-    let state = IndexerState.make(
-      ~config=MockIndexer.config,
-      ~persistence,
-      ~chainStates=Dict.make(),
-      ~isInReorgThreshold=false,
-      ~isRealtime=false,
-      ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
-    )
+    let state = TestIndexerState.make(~persistence=TestIndexerState.readyPersistence(~storage))
 
     let first = FinalizeBackfill.run(state)
     let second = FinalizeBackfill.run(state)

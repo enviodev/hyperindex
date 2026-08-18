@@ -108,12 +108,12 @@ let dcToRegistration = (dc: Internal.indexingAddress): AddressStore.registration
   registrationBlock: dc.registrationBlock,
 }
 
-let baseEventConfig = (MockIndexer.evmOnEventRegistration(
+let baseEventConfig = (EventRegistration.evmOnEventRegistration(
   ~id="0",
   ~contractName="Gravatar",
 ) :> Internal.onEventRegistration)
 
-let baseEventConfig2 = (MockIndexer.evmOnEventRegistration(
+let baseEventConfig2 = (EventRegistration.evmOnEventRegistration(
   ~id="0",
   ~contractName="NftFactory",
 ) :> Internal.onEventRegistration)
@@ -400,7 +400,7 @@ describe("FetchState.make", () => {
       let dc = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress2)
       let (fetchState, _addressStore) = makeFs(
         ~onEventRegistrations=[
-          (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
+          (EventRegistration.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
           baseEventConfig,
         ],
         ~addresses=[makeConfigContract("ContractA", mockAddress1), dc],
@@ -476,7 +476,7 @@ describe("FetchState.make", () => {
       let dc2 = makeDynContractRegistration(~blockNumber=0, ~contractAddress=mockAddress4)
       let (fetchState, _addressStore) = makeFs(
         ~onEventRegistrations=[
-          (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
+          (EventRegistration.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
           baseEventConfig,
         ],
         ~addresses=[
@@ -571,11 +571,11 @@ describe("FetchState.make", () => {
   )
 
   it("Two static contracts with different names merge based on block distance", t => {
-    let contractAEventConfig = (MockIndexer.evmOnEventRegistration(
+    let contractAEventConfig = (EventRegistration.evmOnEventRegistration(
       ~id="0",
       ~contractName="ContractA",
     ) :> Internal.onEventRegistration)
-    let closeContractBEventConfig = (MockIndexer.evmOnEventRegistration(
+    let closeContractBEventConfig = (EventRegistration.evmOnEventRegistration(
       ~id="0",
       ~contractName="ContractB",
       ~startBlock=19_999,
@@ -621,7 +621,7 @@ describe("FetchState.make", () => {
     ).toEqual(None)
 
     // --- Far startBlocks: mergeBlock on current, merge addresses into next ---
-    let farContractBEventConfig = (MockIndexer.evmOnEventRegistration(
+    let farContractBEventConfig = (EventRegistration.evmOnEventRegistration(
       ~id="0",
       ~contractName="ContractB",
       ~startBlock=20_002,
@@ -668,11 +668,11 @@ describe("FetchState.make", () => {
   it(
     "Same contract with close configured startBlocks creates one partition, far startBlocks creates two with mergeBlock",
     t => {
-      let contractAEventConfig = (MockIndexer.evmOnEventRegistration(
+      let contractAEventConfig = (EventRegistration.evmOnEventRegistration(
         ~id="0",
         ~contractName="ContractA",
       ) :> Internal.onEventRegistration)
-      let closeContractBEventConfig = (MockIndexer.evmOnEventRegistration(
+      let closeContractBEventConfig = (EventRegistration.evmOnEventRegistration(
         ~id="0",
         ~contractName="ContractB",
         ~startBlock=19_999,
@@ -716,7 +716,7 @@ describe("FetchState.make", () => {
       ).toEqual(None)
 
       // --- Far startBlocks: mergeBlock on current, merge addresses into next ---
-      let farContractBEventConfig = (MockIndexer.evmOnEventRegistration(
+      let farContractBEventConfig = (EventRegistration.evmOnEventRegistration(
         ~id="0",
         ~contractName="ContractB",
         ~startBlock=20_002,
@@ -770,12 +770,12 @@ describe("FetchState.make", () => {
   )
 
   it("Different contracts with filterByAddresses merge into a single partition", t => {
-    let contractAEventConfig = (MockIndexer.evmOnEventRegistration(
+    let contractAEventConfig = (EventRegistration.evmOnEventRegistration(
       ~id="0",
       ~contractName="ContractA",
       ~filterByAddresses=true,
     ) :> Internal.onEventRegistration)
-    let contractBEventConfig = (MockIndexer.evmOnEventRegistration(
+    let contractBEventConfig = (EventRegistration.evmOnEventRegistration(
       ~id="0",
       ~contractName="ContractB",
       ~filterByAddresses=true,
@@ -1354,10 +1354,10 @@ describe("FetchState.registerDynamicContracts", () => {
       let (fetchState, addressStore) = makeFs(
         ~onEventRegistrations=[
           baseEventConfig,
-          (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="NftFactory") :> Internal.onEventRegistration),
+          (EventRegistration.evmOnEventRegistration(~id="0", ~contractName="NftFactory") :> Internal.onEventRegistration),
           // An event from another contract
           // which has an event filter by addresses
-          (MockIndexer.evmOnEventRegistration(
+          (EventRegistration.evmOnEventRegistration(
             ~id="0",
             ~contractName="SimpleNft",
             ~isWildcard=false,
@@ -1563,21 +1563,21 @@ describe("FetchState.registerDynamicContracts", () => {
   it(
     "Creates FetchState with wildcard and normal events. Addresses not belonging to event configs should be skipped (pre-registration case)",
     t => {
-      let wildcard1 = (MockIndexer.evmOnEventRegistration(
+      let wildcard1 = (EventRegistration.evmOnEventRegistration(
         ~id="wildcard1",
         ~contractName="Gravatar",
         ~isWildcard=true,
       ) :> Internal.onEventRegistration)
-      let wildcard2 = (MockIndexer.evmOnEventRegistration(
+      let wildcard2 = (EventRegistration.evmOnEventRegistration(
         ~id="wildcard2",
         ~contractName="Gravatar",
         ~isWildcard=true,
       ) :> Internal.onEventRegistration)
-      let normal1 = (MockIndexer.evmOnEventRegistration(
+      let normal1 = (EventRegistration.evmOnEventRegistration(
         ~id="normal1",
         ~contractName="NftFactory",
       ) :> Internal.onEventRegistration)
-      let normal2 = (MockIndexer.evmOnEventRegistration(
+      let normal2 = (EventRegistration.evmOnEventRegistration(
         ~id="normal2",
         ~contractName="NftFactory",
         ~isWildcard=true,
@@ -2287,7 +2287,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
   it("Skips the blocks below a partition's earliest registration start block", t => {
     let makeWildcard = (~id, ~startBlock=?) =>
-      (MockIndexer.evmOnEventRegistration(
+      (EventRegistration.evmOnEventRegistration(
         ~id,
         ~contractName="Gravatar",
         ~isWildcard=true,
@@ -2352,7 +2352,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
   it("Narrows a query's selection to the registrations its range can match", t => {
     let makeReg = (~id, ~startBlock=?) =>
-      (MockIndexer.evmOnEventRegistration(
+      (EventRegistration.evmOnEventRegistration(
         ~id,
         ~contractName="Gravatar",
         ~isWildcard=true,
@@ -2389,15 +2389,15 @@ describe("FetchState.getNextQuery & integration", () => {
   })
 
   it("Wildcard partition never merges to another one", t => {
-    let wildcard = (MockIndexer.evmOnEventRegistration(
+    let wildcard = (EventRegistration.evmOnEventRegistration(
       ~id="wildcard",
       ~contractName="ContractA",
       ~isWildcard=true,
     ) :> Internal.onEventRegistration)
     let (fetchState, addressStore) = makeFs(
       ~onEventRegistrations=[
-        (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="Gravatar") :> Internal.onEventRegistration),
-        (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
+        (EventRegistration.evmOnEventRegistration(~id="0", ~contractName="Gravatar") :> Internal.onEventRegistration),
+        (EventRegistration.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
         wildcard,
       ],
       ~addresses=[makeConfigContract("ContractA", mockAddress1)],
@@ -2580,7 +2580,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
   it("Keeps wildcard partition on rollback", t => {
     let wildcardEventConfigs = [
-      (MockIndexer.evmOnEventRegistration(
+      (EventRegistration.evmOnEventRegistration(
         ~id="wildcard",
         ~contractName="ContractA",
         ~isWildcard=true,
@@ -2588,7 +2588,7 @@ describe("FetchState.getNextQuery & integration", () => {
     ]
     let onEventRegistrations = [
       ...wildcardEventConfigs,
-      (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="Gravatar") :> Internal.onEventRegistration),
+      (EventRegistration.evmOnEventRegistration(~id="0", ~contractName="Gravatar") :> Internal.onEventRegistration),
     ]
     let (fetchState, addressStore) = makeFs(
       ~onEventRegistrations,
@@ -2788,7 +2788,7 @@ describe("FetchState unit tests for specific cases", () => {
   })
 
   it("Shouldn't wait for new block until all partitions reached the head", t => {
-    let wildcard = (MockIndexer.evmOnEventRegistration(
+    let wildcard = (EventRegistration.evmOnEventRegistration(
       ~id="wildcard",
       ~contractName="ContractA",
       ~isWildcard=true,
@@ -2798,7 +2798,7 @@ describe("FetchState unit tests for specific cases", () => {
     // another reached max queue size
     let (fetchState, _) = makeFs(
       ~onEventRegistrations=[
-        (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
+        (EventRegistration.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
         wildcard,
       ],
       ~addresses=[makeConfigContract("ContractA", mockAddress0)],
@@ -2926,7 +2926,7 @@ describe("FetchState unit tests for specific cases", () => {
   it("Returns NoItem when there is an empty partition at block 0", t => {
     let (fetchState, _) = makeFs(
       ~onEventRegistrations=[
-        (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
+        (EventRegistration.evmOnEventRegistration(~id="0", ~contractName="ContractA") :> Internal.onEventRegistration),
       ],
       ~addresses=[
         makeConfigContract("ContractA", mockAddress1),
@@ -5282,7 +5282,7 @@ describe("FetchState client-side address filtering", () => {
       ~onEventRegistrations=[
         baseEventConfig,
         baseEventConfig2,
-        (MockIndexer.evmOnEventRegistration(
+        (EventRegistration.evmOnEventRegistration(
           ~id="0",
           ~contractName="SimpleNft",
         ) :> Internal.onEventRegistration),

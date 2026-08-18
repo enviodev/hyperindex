@@ -2,7 +2,7 @@ open Vitest
 
 let chainId = 1->ChainId.fromInt
 let baseChainConfig = {
-  ...Config.load().chainMap->ChainMap.values->Utils.Array.firstUnsafe,
+  ...TestConfig.default.chainMap->ChainMap.values->Utils.Array.firstUnsafe,
   id: chainId,
 }
 
@@ -58,7 +58,7 @@ let makeChainState = (resumedChainState, ~reorgCheckpoints=[]) =>
     ~reorgCheckpoints,
     ~isInReorgThreshold=false,
     ~isRealtime=false,
-    ~config=Config.load(),
+    ~config=TestConfig.default,
     ~registrationsByChainId,
   )
 

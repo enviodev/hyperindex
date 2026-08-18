@@ -32,7 +32,7 @@ let withPinIdentity = (registration: Internal.evmOnEventRegistration, ~index) =>
 }
 
 let makeRegistration = (~index=0, ~receiptOnly=false) => {
-  MockIndexer.evmOnEventRegistration(
+  EventRegistration.evmOnEventRegistration(
     ~id=sighash,
     ~blockFieldNames=[Number, Timestamp, Hash, ParentHash, GasUsed, Miner],
     ~transactionFieldNames=receiptOnly
@@ -50,7 +50,7 @@ let makeRoutingRegistration = (
   // topicCount is derived from paramsMetadata inside evmOnEventRegistration.
   ~paramsMetadata: array<Internal.paramMeta>=[],
 ) => {
-  MockIndexer.evmOnEventRegistration(
+  EventRegistration.evmOnEventRegistration(
     ~id=sighash,
     ~contractName,
     ~blockFieldNames=[Number],
@@ -303,8 +303,8 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         // Block 99 comes from block 100's parentHash, which is what reorg
         // detection compares the seam against.
         "blockHashes": [
-          {ReorgDetection.blockNumber: 99, blockHash: MockIndexer.evmBlockHash("0x0000000000000000000000000000000000000000000000000000000000000b63")},
-          {ReorgDetection.blockNumber: 100, blockHash: MockIndexer.evmBlockHash("0x0000000000000000000000000000000000000000000000000000000000000b64")},
+          {ReorgDetection.blockNumber: 99, blockHash: MockSource.evmBlockHash("0x0000000000000000000000000000000000000000000000000000000000000b63")},
+          {ReorgDetection.blockNumber: 100, blockHash: MockSource.evmBlockHash("0x0000000000000000000000000000000000000000000000000000000000000b64")},
         ],
         "requestCounts": Dict.fromArray([
           ("eth_getLogs", 1),

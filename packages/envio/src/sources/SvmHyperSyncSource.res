@@ -182,7 +182,11 @@ let make = (
     }
   }
 
-  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=client.getBlockHashes)
+  // Called through the client rather than passed as a value: the client is a
+  // napi class, so a detached method reference loses the instance it belongs to.
+  let getBlockHashes = HyperSync.makeGetBlockHashes(
+    ~query=(~blockNumbers) => client.getBlockHashes(~blockNumbers),
+  )
 
   {
     name,
