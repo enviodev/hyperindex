@@ -134,12 +134,7 @@ ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
     )
     ->Utils.Promise.ignoreValue
 
-  type rawRow = {
-    chainId: ChainId.t,
-    address: NodeJs.Buffer.t,
-    contractId: int,
-    registrationBlock: int,
-  }
+  type rawRow = AddressRows.storedRow
 
   let makeGetRowsQuery = (~pgSchema) =>
     `SELECT "chain_id" as "chainId",
@@ -147,56 +142,6 @@ ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
 "contract_id" as "contractId",
 "registration_block" as "registrationBlock"
 FROM "${pgSchema}"."${table.tableName}";`
-
-  type mutableGroup = {
-    chunks: array<NodeJs.Buffer.t>,
-    lengths: Null.t<array<int>>,
-    contractIds: array<int>,
-    registrationBlocks: array<int>,
-  }
-
-  // Groups the flat rows into the per-chain columnar form the address store
-  // seeds from. Keyed by the normalized chain id string, matching how the
-  // chains rows are keyed. `isFixedWidth` is false only for SVM, whose base58
-  // keys vary in width and so need their lengths carried alongside.
-  let groupRows = (rows: array<rawRow>, ~isFixedWidth: bool): dict<seedRows> => {
-    let groups: dict<mutableGroup> = Dict.make()
-    rows->Array.forEach(row => {
-      let key = row.chainId->ChainId.normalizeOrThrow->ChainId.toString
-      let group = switch groups->Utils.Dict.dangerouslyGetNonOption(key) {
-      | Some(group) => group
-      | None =>
-        let group = {
-          chunks: [],
-          lengths: isFixedWidth ? Null.null : Null.make([]),
-          contractIds: [],
-          registrationBlocks: [],
-        }
-        groups->Dict.set(key, group)
-        group
-      }
-      group.chunks->Array.push(row.address)->ignore
-      switch group.lengths->Null.toOption {
-      | Some(lengths) => lengths->Array.push(row.address->NodeJs.Buffer.length)->ignore
-      | None => ()
-      }
-      group.contractIds->Array.push(row.contractId)->ignore
-      group.registrationBlocks->Array.push(row.registrationBlock)->ignore
-    })
-    let seedRowsByChain = Dict.make()
-    groups->Utils.Dict.forEachWithKey((group, key) => {
-      seedRowsByChain->Dict.set(
-        key,
-        {
-          AddressRows.addresses: NodeJs.Buffer.concat(group.chunks),
-          lengths: group.lengths,
-          contractIds: group.contractIds,
-          registrationBlocks: group.registrationBlocks,
-        },
-      )
-    })
-    seedRowsByChain
-  }
 }
 
 module Chains = {
@@ -413,7 +358,7 @@ FROM "${pgSchema}"."${table.tableName}";`
     ))
 
     let addressRowsByChainId =
-      rawAddressRows->EnvioAddresses.groupRows(~isFixedWidth=isFixedWidthAddresses)
+      rawAddressRows->AddressRows.group(~isFixedWidth=isFixedWidthAddresses)
 
     rawInitialStates->Array.map(rawInitialState => {
       let id = rawInitialState.id->ChainId.normalizeOrThrow

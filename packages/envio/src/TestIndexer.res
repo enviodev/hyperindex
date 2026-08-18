@@ -38,41 +38,17 @@ type testIndexerState = {
   mutable processChanges: array<unknown>,
 }
 
-// The stored rows in the columnar form the address store seeds from, grouped
-// by chain id string. The lengths are always carried, so this side never has to
-// know how wide a key is.
-let addressRowsByChain = (state: testIndexerState): dict<AddressRows.seedRows> => {
-  let chunks: dict<array<NodeJs.Buffer.t>> = Dict.make()
-  let seedRowsByChain = Dict.make()
-  state.addresses->Array.forEach(row => {
-    let key = row.chainId->ChainId.toString
-    let (rowChunks, seedRows) = switch seedRowsByChain->Utils.Dict.dangerouslyGetNonOption(key) {
-    | Some(seedRows) => (chunks->Dict.getUnsafe(key), seedRows)
-    | None =>
-      let seedRows: AddressRows.seedRows = {
-        addresses: NodeJs.Buffer.empty,
-        lengths: Null.make([]),
-        contractIds: [],
-        registrationBlocks: [],
-      }
-      let rowChunks = []
-      seedRowsByChain->Dict.set(key, seedRows)
-      chunks->Dict.set(key, rowChunks)
-      (rowChunks, seedRows)
-    }
-    rowChunks->Array.push(row.address)->ignore
-    seedRows.lengths->Null.getUnsafe->Array.push(row.address->NodeJs.Buffer.length)->ignore
-    seedRows.contractIds->Array.push(row.contractId)->ignore
-    seedRows.registrationBlocks->Array.push(row.registrationBlock)->ignore
+// Rows are always grouped with their lengths carried, so this side never needs
+// to know how wide an ecosystem's key is.
+let addressRowsByChain = (state: testIndexerState) =>
+  state.addresses
+  ->Array.map((row): AddressRows.storedRow => {
+    chainId: row.chainId,
+    address: row.address,
+    contractId: row.contractId,
+    registrationBlock: row.registrationBlock,
   })
-  seedRowsByChain
-  ->Dict.toArray
-  ->Array.map(((key, seedRows)) => (
-    key,
-    {...seedRows, AddressRows.addresses: NodeJs.Buffer.concat(chunks->Dict.getUnsafe(key))},
-  ))
-  ->Dict.fromArray
-}
+  ->AddressRows.group(~isFixedWidth=false)
 
 // Rows of a per-chain entity are keyed per (chain, id): the same id exists
 // independently on every chain.

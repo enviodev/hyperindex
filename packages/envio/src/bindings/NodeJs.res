@@ -73,6 +73,7 @@ module Buffer = {
   @val @scope("Buffer") external concat: array<t> => t = "concat"
   @val @scope("Buffer") external alloc: int => t = "alloc"
   @get external length: t => int = "length"
+  @send external toBase64: (t, @as("base64") _) => string = "toString"
   let empty = alloc(0)
 }
 

@@ -49,8 +49,10 @@ type t = {
   cache: dict<Persistence.effectCacheRecord>,
   effectCache: dict<dict<Internal.effectCacheItem>>,
   mutable envioInfo: option<JSON.t>,
-  // Every indexed address, insert-only — the in-memory twin of envio_addresses.
+  // Every indexed address, insert-only — the in-memory twin of envio_addresses,
+  // with the keys that stand in for its primary key.
   mutable addresses: array<AddressRows.row>,
+  addressKeys: Utils.Set.t<string>,
   // The canonical contract mapping, assigned at initialize and read back on a
   // resume just as the stored one is.
   mutable contractNames: array<string>,
@@ -67,6 +69,7 @@ let make = (): t => {
   effectCache: Dict.make(),
   envioInfo: None,
   addresses: [],
+  addressKeys: Utils.Set.make(),
   contractNames: [],
   isInitialized: false,
 }
@@ -134,54 +137,30 @@ let seedConfigAddresses = (state: t, ~chainConfigs: array<Config.chain>, ~ecosys
     Core.getAddon()
     .splitAddresses(~ecosystem=(ecosystem :> string), ~bytes=rows.addresses, ~lengths=rows.lengths)
     ->Array.forEachWithIndex((address, idx) => {
-      state.addresses
-      ->Array.push({
+      let row = {
         AddressRows.chainId: chainConfig.id,
         address,
         contractId: rows.contractIds->Array.getUnsafe(idx),
         registrationBlock: AddressRows.configRegistrationBlock,
         checkpointId: AddressRows.configCheckpointId,
-      })
-      ->ignore
+      }
+      state.addressKeys->Utils.Set.add(AddressRows.storageKey(~chainId=row.chainId, ~contractId=row.contractId, ~address=row.address))->ignore
+      state.addresses->Array.push(row)->ignore
     })
   })
 }
 
-// The stored rows in the columnar form the address store seeds from, grouped by
-// chain id string. The lengths are always carried, so this side never has to
-// know how wide a key is.
-let addressRowsByChain = (state: t): dict<AddressRows.seedRows> => {
-  let chunks: dict<array<NodeJs.Buffer.t>> = Dict.make()
-  let seedRowsByChain = Dict.make()
-  state.addresses->Array.forEach(row => {
-    let key = row.chainId->ChainId.toString
-    let (rowChunks, seedRows) = switch seedRowsByChain->Utils.Dict.dangerouslyGetNonOption(key) {
-    | Some(seedRows) => (chunks->Dict.getUnsafe(key), seedRows)
-    | None =>
-      let seedRows: AddressRows.seedRows = {
-        addresses: NodeJs.Buffer.empty,
-        lengths: Null.make([]),
-        contractIds: [],
-        registrationBlocks: [],
-      }
-      let rowChunks = []
-      seedRowsByChain->Dict.set(key, seedRows)
-      chunks->Dict.set(key, rowChunks)
-      (rowChunks, seedRows)
-    }
-    rowChunks->Array.push(row.address)->ignore
-    seedRows.lengths->Null.getUnsafe->Array.push(row.address->NodeJs.Buffer.length)->ignore
-    seedRows.contractIds->Array.push(row.contractId)->ignore
-    seedRows.registrationBlocks->Array.push(row.registrationBlock)->ignore
+// Rows are always grouped with their lengths carried, so the in-memory
+// storages never need to know how wide an ecosystem's key is.
+let addressRowsByChain = (state: t) =>
+  state.addresses
+  ->Array.map((row): AddressRows.storedRow => {
+    chainId: row.chainId,
+    address: row.address,
+    contractId: row.contractId,
+    registrationBlock: row.registrationBlock,
   })
-  seedRowsByChain
-  ->Dict.toArray
-  ->Array.map(((key, seedRows)) => (
-    key,
-    {...seedRows, AddressRows.addresses: NodeJs.Buffer.concat(chunks->Dict.getUnsafe(key))},
-  ))
-  ->Dict.fromArray
-}
+  ->AddressRows.group(~isFixedWidth=false)
 
 let toInitialChainStates = (state: t): array<Persistence.initialChainState> => {
   let addressesByChain = state->addressRowsByChain
@@ -320,6 +299,11 @@ let backfillHistory = (
 
 let applyRollback = (state: t, ~targetCheckpointId) => {
   state.checkpoints = state.checkpoints->Array.filter(cp => cp.id <= targetCheckpointId)
+  state.addresses->Array.forEach(row =>
+    if row.checkpointId > targetCheckpointId {
+      state.addressKeys->Utils.Set.delete(AddressRows.storageKey(~chainId=row.chainId, ~contractId=row.contractId, ~address=row.address))->ignore
+    }
+  )
   state.addresses = state.addresses->Array.filter(row => row.checkpointId <= targetCheckpointId)
   state.history
   ->Dict.toArray
@@ -353,12 +337,8 @@ let writeBatch = (
   registeredAddresses
   ->AddressRows.finalizeCheckpoint(~shouldSaveHistory)
   ->Array.forEach(row => {
-    let isStored = state.addresses->Array.some(stored =>
-      stored.chainId == row.chainId &&
-        stored.contractId === row.contractId &&
-        stored.address == row.address
-    )
-    if !isStored {
+    if !(state.addressKeys->Utils.Set.has(AddressRows.storageKey(~chainId=row.chainId, ~contractId=row.contractId, ~address=row.address))) {
+      state.addressKeys->Utils.Set.add(AddressRows.storageKey(~chainId=row.chainId, ~contractId=row.contractId, ~address=row.address))->ignore
       state.addresses->Array.push(row)->ignore
     }
   })
