@@ -11,8 +11,8 @@ let contract = (~address, ~contractName, ~registrationBlock): Internal.indexingA
 // One event per contract so the store knows both contract names; an address
 // registered for anything else is tracked but never fetched.
 let onEventRegistrations = [
-  (MockIndexer.evmOnEventRegistration(~id="0", ~contractName="A") :> Internal.onEventRegistration),
-  (MockIndexer.evmOnEventRegistration(~id="1", ~contractName="B") :> Internal.onEventRegistration),
+  (EventRegistration.evmOnEventRegistration(~id="0", ~contractName="A") :> Internal.onEventRegistration),
+  (EventRegistration.evmOnEventRegistration(~id="1", ~contractName="B") :> Internal.onEventRegistration),
 ]
 
 describe("AddressStore", () => {
@@ -106,7 +106,7 @@ describe("AddressStore", () => {
 
   it("keeps a contract unrestricted when any registration has no start block", t => {
     let reg = (~contractName, ~startBlock=?, ~isWildcard=false) =>
-      (MockIndexer.evmOnEventRegistration(
+      (EventRegistration.evmOnEventRegistration(
         ~id=contractName,
         ~contractName,
         ~startBlock?,

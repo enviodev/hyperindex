@@ -4,7 +4,7 @@ open Vitest
 // boundaries from (knownHeight, maxReorgDepth), where maxReorgDepth is the
 // resumed-from-DB value and may differ from the config after a restart.
 describe("ChainState reorg threshold", () => {
-  let baseChainConfig = Config.load().chainMap->ChainMap.values->Utils.Array.firstUnsafe
+  let baseChainConfig = TestConfig.default.chainMap->ChainMap.values->Utils.Array.firstUnsafe
 
   let makeChainState = (~knownHeight, ~maxReorgDepth, ~scannedHashes) => {
     let addressStore = AddressStore.make(~ecosystem=Evm, ~shouldChecksum=false, ~contracts=[])
@@ -46,7 +46,7 @@ describe("ChainState reorg threshold", () => {
     | Null.Null => ()
     }
     let fetchState = {...base, FetchState.knownHeight}
-    let mockSource = MockIndexer.Source.make([], ~chainId=#1)
+    let mockSource = MockSource.make([], ~chainId=1)
     let cs = ChainState.make(
       ~chainConfig=baseChainConfig,
       ~fetchState,
