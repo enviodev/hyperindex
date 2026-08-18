@@ -333,6 +333,17 @@ let writeBatch = (
   | None => ()
   }
 
+  // The rollback diff restates what the reverted state already is, so it is not
+  // a change history should record — and an id it touches needs no backfill
+  // either, because the diff already carries its reverted value. Postgres draws
+  // the same line, keyed on the diff's checkpoint id.
+  let diffCheckpointId = rollback->Option.map(({diffCheckpointId}) => diffCheckpointId)
+  let isDiff = (change: Change.t<Internal.entity>) =>
+    switch diffCheckpointId {
+    | Some(diffCheckpointId) => change->Change.getCheckpointId === diffCheckpointId
+    | None => false
+    }
+
   updatedEntities->Array.forEach(({entityConfig, scope, changes}: Persistence.updatedEntity) => {
     let entityDict = state->getEntityDict(~name=entityConfig.name)
     let historyRows = state->getHistory(~name=entityConfig.name)
@@ -340,9 +351,17 @@ let writeBatch = (
     // onto the stored entity the same way the Postgres write path does.
     let chainIdField = entityConfig.table->Table.getChainIdField
 
+    let idsWithDiff = Utils.Set.make()
+    changes->Array.forEach(change =>
+      if isDiff(change) {
+        idsWithDiff->Utils.Set.add(change->Change.getEntityId->EntityId.toKey)->ignore
+      }
+    )
+
     changes->Array.forEach(change => {
       let entityId = change->Change.getEntityId
-      if shouldSaveHistory {
+      let shouldSaveChangeHistory = shouldSaveHistory && !isDiff(change)
+      if shouldSaveHistory && !(idsWithDiff->Utils.Set.has(entityId->EntityId.toKey)) {
         state->backfillHistory(~entityConfig, ~scope, ~entityId, ~rows=historyRows)
       }
       switch change {
@@ -353,7 +372,7 @@ let writeBatch = (
         | _ => entity
         }
         entityDict->Dict.set(rowKey(~scope, ~entityId), storedEntity)
-        if shouldSaveHistory {
+        if shouldSaveChangeHistory {
           historyRows
           ->Array.push({
             entityId,
@@ -366,7 +385,7 @@ let writeBatch = (
         }
       | Delete({checkpointId}) =>
         entityDict->Utils.Dict.deleteInPlace(rowKey(~scope, ~entityId))
-        if shouldSaveHistory {
+        if shouldSaveChangeHistory {
           historyRows
           ->Array.push({
             entityId,
