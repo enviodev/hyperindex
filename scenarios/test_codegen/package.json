@@ -6,7 +6,6 @@
     "build": "rescript",
     "watch": "rescript watch",
     "test": "rescript && tsc --noEmit && vitest run",
-    "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs",
     "codegen": "envio codegen",
     "docker-up": "envio local docker up",
     "docker-down": "envio local docker down",

@@ -7,12 +7,6 @@ export default defineConfig({
       "test/**/*_test.res.mjs",
       "test/**/*.test.ts",
     ],
-    exclude: [
-      "test/fixtures/**",
-      // Entirely commented-out test files
-      "test/integration-raw-events.test.ts",
-      "test/topic-hashing.test.ts",
-    ],
     // Tests within a file stay sequential — they share the process-global
     // config and handler registry.
     sequence: {
