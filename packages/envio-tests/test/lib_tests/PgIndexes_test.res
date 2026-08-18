@@ -67,6 +67,7 @@ let makeStorage = (~sql=sql, pgSchema) =>
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
     ~isHasuraEnabled=false,
+    ~ecosystem=Evm,
   )
 
 // A schema of its own per test, so the fixtures below can leave whatever

@@ -50,6 +50,7 @@ let setup = async () => {
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
     ~isHasuraEnabled=false,
+    ~ecosystem=Evm,
   )
   let _ = await storage.initialize(
     ~chainConfigs=config.chainMap->ChainMap.values,

@@ -695,23 +695,12 @@ let createTestIndexer = (): t<'processConfig> => {
   let chainConfigs = config.chainMap->ChainMap.values
   let contractNames = Config.canonicalContractNames(~chainConfigs)
   let ecosystem = config.ecosystem.name
-  let addresses = []
-  chainConfigs->Array.forEach(chainConfig => {
-    let rows = chainConfig->ChainState.configAddressRows(~ecosystem, ~contractNames)
-    Core.getAddon()
-    .splitAddresses(~ecosystem=(ecosystem :> string), ~bytes=rows.addresses, ~lengths=rows.lengths)
-    ->Array.forEachWithIndex((address, idx) => {
-      addresses
-      ->Array.push({
-        AddressRows.chainId: chainConfig.id,
-        address,
-        contractId: rows.contractIds->Array.getUnsafe(idx),
-        registrationBlock: AddressRows.configRegistrationBlock,
-        checkpointId: AddressRows.configCheckpointId,
-      })
-      ->ignore
-    })
-  })
+  let addresses =
+    chainConfigs
+    ->Array.map(chainConfig =>
+      chainConfig->ChainState.configStorageRows(~ecosystem, ~contractNames)
+    )
+    ->Array.flat
 
   let state = {
     processInProgress: false,

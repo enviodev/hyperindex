@@ -9,6 +9,12 @@ let configAddressRows: (
   ~contractNames: array<string>,
 ) => AddressRows.seedRows
 
+let configStorageRows: (
+  Config.chain,
+  ~ecosystem: Ecosystem.name,
+  ~contractNames: array<string>,
+) => array<AddressRows.row>
+
 let make: (
   ~chainConfig: Config.chain,
   ~fetchState: FetchState.t,

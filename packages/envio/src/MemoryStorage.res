@@ -129,25 +129,22 @@ let registerEntities = (state: t, ~entities: array<Internal.entityConfig>) =>
 // writes into `envio_addresses`.
 let seedConfigAddresses = (state: t, ~chainConfigs: array<Config.chain>, ~ecosystem) => {
   state.contractNames = Config.canonicalContractNames(~chainConfigs)
-  chainConfigs->Array.forEach(chainConfig => {
-    let rows = chainConfig->ChainState.configAddressRows(
-      ~ecosystem,
-      ~contractNames=state.contractNames,
-    )
-    Core.getAddon()
-    .splitAddresses(~ecosystem=(ecosystem :> string), ~bytes=rows.addresses, ~lengths=rows.lengths)
-    ->Array.forEachWithIndex((address, idx) => {
-      let row = {
-        AddressRows.chainId: chainConfig.id,
-        address,
-        contractId: rows.contractIds->Array.getUnsafe(idx),
-        registrationBlock: AddressRows.configRegistrationBlock,
-        checkpointId: AddressRows.configCheckpointId,
-      }
-      state.addressKeys->Utils.Set.add(AddressRows.storageKey(~chainId=row.chainId, ~contractId=row.contractId, ~address=row.address))->ignore
+  chainConfigs->Array.forEach(chainConfig =>
+    chainConfig
+    ->ChainState.configStorageRows(~ecosystem, ~contractNames=state.contractNames)
+    ->Array.forEach(row => {
+      state.addressKeys
+      ->Utils.Set.add(
+        AddressRows.storageKey(
+          ~chainId=row.chainId,
+          ~contractId=row.contractId,
+          ~address=row.address,
+        ),
+      )
+      ->ignore
       state.addresses->Array.push(row)->ignore
     })
-  })
+  )
 }
 
 // Rows are always grouped with their lengths carried, so the in-memory

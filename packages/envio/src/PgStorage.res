@@ -1494,7 +1494,7 @@ let make = (
   ~chainIdMode: ChainId.mode=Int32,
   // Decides how wide an address key is, both when the config's addresses are
   // encoded at initialize and when stored rows are grouped on resume.
-  ~ecosystem: Ecosystem.name=Evm,
+  ~ecosystem: Ecosystem.name,
   ~sink: option<Sink.t>=?,
   ~onInitialize=?,
   ~onNewTables=?,
@@ -1753,26 +1753,12 @@ let make = (
       chainConfigs->Array.map(chainConfig =>
         chainConfig->ChainState.configAddressRows(~ecosystem, ~contractNames)
       )
-    let configAddressRows = []
-    chainConfigs->Array.forEachWithIndex((chainConfig, idx) => {
-      let rows = addressRowsByChain->Array.getUnsafe(idx)
-      let addresses = Core.getAddon().splitAddresses(
-        ~ecosystem=(ecosystem :> string),
-        ~bytes=rows.addresses,
-        ~lengths=rows.lengths,
+    let configAddressRows =
+      chainConfigs
+      ->Array.map(chainConfig =>
+        chainConfig->ChainState.configStorageRows(~ecosystem, ~contractNames)
       )
-      addresses->Array.forEachWithIndex((address, rowIdx) => {
-        configAddressRows
-        ->Array.push({
-          AddressRows.chainId: chainConfig.id,
-          address,
-          contractId: rows.contractIds->Array.getUnsafe(rowIdx),
-          registrationBlock: AddressRows.configRegistrationBlock,
-          checkpointId: AddressRows.configCheckpointId,
-        })
-        ->ignore
-      })
-    })
+      ->Array.flat
 
     // The contract mapping and the config's addresses join the schema in the
     // same transaction as envio_info: a schema that comes up without them would
@@ -1807,8 +1793,6 @@ let make = (
       cleanRun: true,
       cache,
       reorgCheckpoints: [],
-      // Just-written row; resume's compat check would no-op on a clean run,
-      // but keep the field consistent with the resume path's shape.
       contractNames,
       chains: chainConfigs->Array.mapWithIndex((chainConfig, idx): Persistence.initialChainState => {
         id: chainConfig.id,

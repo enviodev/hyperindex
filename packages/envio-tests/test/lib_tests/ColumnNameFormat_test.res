@@ -252,6 +252,7 @@ ORDER BY (id, envio_checkpoint_id)`,
       ~pgDatabase=Env.Db.database,
       ~pgPassword=Env.Db.password,
       ~isHasuraEnabled=false,
+    ~ecosystem=Evm,
     )
     let _ = await storage.initialize(
       ~entities=config.userEntities,

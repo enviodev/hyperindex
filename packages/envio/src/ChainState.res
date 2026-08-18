@@ -101,6 +101,25 @@ let configAddressRows = (
   }
 }
 
+// The same addresses as storage rows: what a clean run writes into
+// `envio_addresses`, keyed exactly as the store keys them.
+let configStorageRows = (
+  chainConfig: Config.chain,
+  ~ecosystem: Ecosystem.name,
+  ~contractNames: array<string>,
+): array<AddressRows.row> => {
+  let rows = chainConfig->configAddressRows(~ecosystem, ~contractNames)
+  Core.getAddon()
+  .splitAddresses(~ecosystem=(ecosystem :> string), ~bytes=rows.addresses, ~lengths=rows.lengths)
+  ->Array.mapWithIndex((address, idx) => {
+    AddressRows.chainId: chainConfig.id,
+    address,
+    contractId: rows.contractIds->Array.getUnsafe(idx),
+    registrationBlock: AddressRows.configRegistrationBlock,
+    checkpointId: AddressRows.configCheckpointId,
+  })
+}
+
 let validateOnEventRegistrations = (
   ~chainId: ChainId.t,
   registrations: array<Internal.onEventRegistration>,

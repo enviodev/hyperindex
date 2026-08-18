@@ -1718,6 +1718,43 @@ mod tests {
     }
 
     #[test]
+    fn rolling_back_an_owner_in_the_middle_of_a_key_leaves_the_rest() {
+        // Three contracts holding one address. Registrations are linked
+        // newest-first, so registering D second but at the highest block puts
+        // the one the rollback kills in the middle of that chain.
+        let store =
+            AddressStore::new_evm(false, contracts(&[("C", None), ("D", None), ("E", None)]));
+        store
+            .register_batch(vec![reg(A, "C", 100), reg(A, "D", 700), reg(A, "E", 200)])
+            .unwrap();
+        store.rollback(600);
+
+        assert_eq!(
+            (
+                store.is_indexed_at(A.to_string(), "C".to_string(), 800),
+                store.is_indexed_at(A.to_string(), "D".to_string(), 800),
+                store.is_indexed_at(A.to_string(), "E".to_string(), 800),
+                store
+                    .get_all(A.to_string())
+                    .into_iter()
+                    .map(|e| e.contract_name)
+                    .collect::<Vec<_>>(),
+                store.size(),
+                // The killed registration can be made afresh.
+                kinds(&store.register_seed(vec![reg(A, "D", 800)])),
+            ),
+            (
+                true,
+                false,
+                true,
+                vec!["C".to_string(), "E".to_string()],
+                2,
+                vec!["added"],
+            )
+        );
+    }
+
+    #[test]
     fn a_shared_address_sorts_by_contract_within_its_start_block() {
         // The sort key must stay total over live entries: two registrations of
         // one address at one start block differ only by contract.
