@@ -491,7 +491,9 @@ let disableSource = (sourceManager: t, sourceState: sourceState) => {
     | Some(unsubscribe) =>
       unsubscribe()
       // The subscription is gone, so the source must not keep looking live to a
-      // wait that is still in flight for it.
+      // wait still in flight for it. That wait polls the benched source until
+      // another one answers, at the same interval the no-subscription path
+      // would use — disabling is a capability verdict, not an outage.
       sourceState->markSubscriptionDown
     | None => ()
     }

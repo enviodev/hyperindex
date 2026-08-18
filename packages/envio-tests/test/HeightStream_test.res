@@ -153,6 +153,31 @@ describe("HeightStream reconnect driver", () => {
     ))
   })
 
+  Async.it("Names a stale failure after a message it could not read", async t => {
+    let harness = makeHarness()
+    let driver = harness->driverAt(0)
+    driver.onConnected()
+    driver.onUnreadable()
+
+    // An unreadable message is not traffic, so the connection still goes quiet;
+    // the point is that the failure says why rather than looking like a chain
+    // with nothing to report.
+    await Vi.advanceTimersByTimeAsync(15_000)
+    let afterFirst = harness.statuses->Array.copy
+
+    // The retry starts clean, so one stray message doesn't label every later
+    // failure.
+    await Vi.advanceTimersByTimeAsync(250)
+    (harness->driverAt(1)).onConnected()
+    await Vi.advanceTimersByTimeAsync(15_000)
+    harness.unsubscribe()
+
+    t.expect((afterFirst, harness.statuses)).toStrictEqual((
+      ["live", "down:unreadable"],
+      ["live", "down:unreadable", "live", "down:stale"],
+    ))
+  })
+
   Async.it("Keeps a connection alive on keep-alive traffic and on heights", async t => {
     let harness = makeHarness()
     let driver = harness->driverAt(0)
@@ -388,7 +413,11 @@ describe("RpcWebSocketHeightStream", () => {
   })
 
   Async.it("Stays down while the socket opens but never confirms the subscription", async t => {
-    let (server, url) = await listenWs(_socket => ())
+    // Answering with something the stream can't read must not count as
+    // confirmation, nor bring the connection down on its own.
+    let (server, url) = await listenWs(socket =>
+      socket->WsServer.onMessage(_data => socket->WsServer.send("not json at all"))
+    )
     let statuses = []
     let unsubscribe = RpcWebSocketHeightStream.subscribe(
       ~wsUrl=url,

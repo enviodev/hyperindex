@@ -2,6 +2,10 @@
 // connection as dead.
 let staleTimeout = 15_000
 
+// Stream health reaches operators through envio_source_height_stream_failures_total
+// rather than the log, so every reason has to stand on its own as a label. A
+// rejected token still gets an actionable log line, from the query path in
+// EvmHyperSyncSource that hits the same 401.
 let failureReason = (error: EventSource.errorEvent) =>
   switch (error.code, error.message) {
   | (Some(code), _) => code->Int.toString
@@ -38,9 +42,7 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>
     es->EventSource.addEventListener("height", event =>
       switch event.data->Int.fromString {
       | Some(height) => driver.onHeight(height)
-      // Not counted as traffic, so a stream that only ever sends garbage goes
-      // stale and reconnects instead of looking healthy forever.
-      | None => ()
+      | None => driver.onUnreadable()
       }
     )
 

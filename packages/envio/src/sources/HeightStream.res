@@ -12,6 +12,10 @@ type driver = {
   // Traffic that proves the connection is alive without carrying a height.
   onKeepAlive: unit => unit,
   onHeight: int => unit,
+  // A message the transport couldn't read. Not a failure by itself, and
+  // deliberately not counted as traffic, but it is why the connection that
+  // follows goes quiet, so it names that failure.
+  onUnreadable: unit => unit,
   onFailure: (~reason: string) => unit,
 }
 
@@ -43,6 +47,7 @@ let subscribe = (
   // both, so a single slot holds whichever timer is pending.
   let timeoutId = ref(None)
   let connectionStartedAt = ref(Performance.now())
+  let sawUnreadable = ref(false)
 
   let clearPendingTimeout = () => {
     switch timeoutId.contents {
@@ -64,7 +69,9 @@ let subscribe = (
     clearPendingTimeout()
     timeoutId := Some(setTimeout(() => {
           timeoutId := None
-          fail(~reason="stale")
+          // Distinguishes a provider whose message shape we don't understand
+          // from a chain that simply has nothing to report.
+          fail(~reason=sawUnreadable.contents ? "unreadable" : "stale")
         }, staleTimeout))
   }
   and fail = (~reason) => {
@@ -100,6 +107,7 @@ let subscribe = (
   and start = () => {
     generation := generation.contents + 1
     connectionStartedAt := Performance.now()
+    sawUnreadable := false
     let connectionGeneration = generation.contents
     let isCurrent = () => !unsubscribed.contents && generation.contents === connectionGeneration
 
@@ -122,6 +130,10 @@ let subscribe = (
         if isCurrent() {
           armStaleTimeout()
           onHeight(height)
+        },
+      onUnreadable: () =>
+        if isCurrent() {
+          sawUnreadable := true
         },
       onFailure: (~reason) =>
         if isCurrent() {

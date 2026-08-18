@@ -67,9 +67,7 @@ let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
       // An open socket isn't usable until the node accepts the subscription.
       | Some(SubscriptionConfirmed(_)) => driver.onConnected()
       | Some(ErrorResponse) => driver.onFailure(~reason="subscribe-rejected")
-      // Not counted as traffic, so a stream of messages we can't read goes
-      // stale and reconnects instead of looking healthy forever.
-      | None => ()
+      | None => driver.onUnreadable()
       }
     })
 
