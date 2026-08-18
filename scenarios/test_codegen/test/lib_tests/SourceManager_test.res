@@ -3403,6 +3403,57 @@ describe("SourceManager height subscription", () => {
     t.expect(await waiting).toEqual(102)
   })
 
+  Async.it("Runs one poll loop when a push settles a wait without advancing it", async t => {
+    let pollingInterval = 20
+    let mock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval,
+    )
+    let sourceManager = SourceManager.make(
+      ~isRealtime=true,
+      ~sources=[mock.source],
+      ~newBlockStallTimeoutRealtime=5_000,
+    )
+    await subscribeAndGoLive(mock, sourceManager, ~knownHeight=100)
+
+    // Waiting for a height well above the head, so a poll that finds a higher
+    // one keeps the wait going instead of ending it.
+    let waiting =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=true,
+        ~knownHeight=110,
+        ~reducedPolling=false,
+      )
+    await Utils.delay(0)
+
+    // A reconnect ends the fallback loop, so the wait takes the polled 105 even
+    // though the stream itself is still only caught up to 101.
+    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    await Utils.delay(0)
+    mock.resolveGetHeightOrThrow(105)
+    await Utils.delay(0)
+    mock.setHeightSubscriptionStatus(Live)
+    // Long enough for the retired poll loop to wake and hand back the 105 it
+    // reached, which the wait takes even though the stream is still at 101.
+    await Utils.delay(pollingInterval * 2)
+
+    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    await Utils.delay(0)
+    // A load-balanced backend can report a head behind the one a poll saw. It
+    // settles this wait without moving it forward, which must still retire the
+    // poll loop the wait started.
+    mock.triggerHeightSubscription(103)
+    await Utils.delay(0)
+
+    let pollsBefore = mock.getHeightOrThrowCalls->Array.length
+    mock.resolveGetHeightOrThrow(104)
+    await Utils.delay(pollingInterval * 2)
+    let pollsAdded = mock.getHeightOrThrowCalls->Array.length - pollsBefore
+    mock.triggerHeightSubscription(111)
+
+    t.expect((pollsAdded, await waiting)).toStrictEqual((1, 111))
+  })
+
   Async.it("Reports height stream failures and reconnects as metrics", async t => {
     let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(

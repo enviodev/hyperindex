@@ -585,12 +585,10 @@ let getSourceNewHeight = async (
   while newHeight.contents <= knownHeight && status.contents !== Done {
     switch sourceState.unsubscribe {
     | Some(_) =>
-      // The height this iteration has to beat. Not initialHeight: the
-      // subscription may have already pushed a height that advanced newHeight
-      // without reaching knownHeight, and a poll loop that measured itself
-      // against initialHeight would then return without polling, spinning this
-      // loop on resolved promises.
+      // The height this iteration has to beat, which is not initialHeight once
+      // the subscription has pushed one that didn't reach knownHeight.
       let iterationHeight = newHeight.contents
+      let settled = ref(false)
       // Both resolvers are dropped once the race settles, so a healthy stream
       // doesn't accumulate one closure per block in the pending arrays.
       let heightResolver = ref(None)
@@ -626,13 +624,12 @@ let getSourceNewHeight = async (
         // subscriptionLive keeps the backstop working: that one polls a stream
         // which claims to be live but has gone quiet.
         let connectsWhenTriggered = sourceState.heightStreamConnects
-        // newHeight only moves when an iteration settles, so it still being
-        // iterationHeight means this race is the one in flight. Stopping once
-        // it is over matters: otherwise a source that never returns a new
-        // height leaves a poller running for the rest of the process.
+        // Stopping once this iteration's race is over matters: otherwise a
+        // source that never returns a new height leaves a poller running for
+        // the rest of the process, and every later iteration adds another.
         let shouldPoll = () =>
           h.contents <= knownHeight &&
-          newHeight.contents === iterationHeight &&
+          !settled.contents &&
           status.contents !== Done &&
           sourceState.heightStreamConnects === connectsWhenTriggered
         while shouldPoll() {
@@ -650,6 +647,7 @@ let getSourceNewHeight = async (
         h.contents
       })
       let height = await Promise.race([subscriptionPromise, pollingFallback])
+      settled := true
 
       switch heightResolver.contents {
       | Some(resolve) =>
