@@ -805,7 +805,8 @@ let takeRollback = (state: t): option<Persistence.rollback> => {
 // Advance the committed (durably persisted) frontier after a successful write.
 // Written rows leave the buffer only once the transaction that holds them has
 // committed. A failed write keeps them, and re-inserting a row the database
-// already has is a no-op.
+// already has is a no-op. Rows staged while the write was in flight belong to
+// later checkpoints — ids only ever grow — so this can't drop one unwritten.
 let markCommitted = (state: t, ~upToCheckpointId) => {
   state.committedCheckpointId = upToCheckpointId
   state.registeredAddresses =

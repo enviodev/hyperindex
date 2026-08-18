@@ -45,13 +45,13 @@ type rawVerdict = {
 
 // A seeded row the store refused, already rendered for the warning. Only the
 // rejections come back: a resume seeds millions of rows and needs a verdict for
-// none of them.
+// none of them. The only rejection a stored row can get is a repeat of a
+// registration the store already holds.
 type rejectedRow = {
   address: Address.t,
   contractName: string,
-  kind: string,
   effectiveStartBlock: int,
-  existingEffectiveStartBlock: Null.t<int>,
+  existingEffectiveStartBlock: int,
 }
 
 // A registration the store handed over for persistence, paired with the

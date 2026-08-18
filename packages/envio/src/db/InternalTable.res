@@ -74,13 +74,12 @@ SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(T
 module EnvioAddresses = {
   let name = "envio_addresses"
 
-  type row = AddressRows.row
-  type seedRows = AddressRows.seedRows
-
   let table = mkTable(
     name,
     ~fields=[
       mkField("chain_id", ChainId, ~fieldSchema=ChainId.schema, ~isPrimaryKey),
+      // The field schemas are unused: this table is read and written by the
+      // hand-written queries below, never through the generic row encoding.
       mkField("address", Bytea, ~fieldSchema=S.string, ~isPrimaryKey),
       mkField("contract_id", SmallInt, ~fieldSchema=S.int, ~isPrimaryKey),
       mkField("registration_block", Int32, ~fieldSchema=S.int),
@@ -326,7 +325,7 @@ WHERE "${(#id: field :> string)}" = $2
     timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
     numEventsProcessed: float,
     progressBlockNumber: int,
-    addressRows: EnvioAddresses.seedRows,
+    addressRows: AddressRows.seedRows,
     sourceBlockNumber: int,
   }
 

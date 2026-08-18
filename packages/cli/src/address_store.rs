@@ -494,14 +494,16 @@ pub struct DrainedAddress {
 /// A seeded row the store refused, rendered for the caller's warning. Only the
 /// rejections cross the boundary: a resume seeds millions of rows and gets back
 /// a per-row verdict for none of them.
+///
+/// The only rejection a seeded row can get is a repeat of a registration the
+/// store already holds — its key is already the store's own encoding, so it
+/// can't be malformed.
 #[napi(object)]
 pub struct RejectedRow {
     pub address: String,
     pub contract_name: String,
-    /// `duplicate` | `invalid`
-    pub kind: String,
     pub effective_start_block: i64,
-    pub existing_effective_start_block: Option<i64>,
+    pub existing_effective_start_block: i64,
 }
 
 /// One contract's live registration count, for the per-contract gauge.
@@ -1074,9 +1076,8 @@ impl StoreInner {
             return Some(RejectedRow {
                 address: address_string(self.ecosystem, &key),
                 contract_name: self.contract_name(contract_idx).to_string(),
-                kind: VERDICT_DUPLICATE.to_string(),
                 effective_start_block,
-                existing_effective_start_block: Some(self.entry(id).effective_start_block),
+                existing_effective_start_block: self.entry(id).effective_start_block,
             });
         }
         self.insert(key, contract_idx, registration_block, effective_start_block);
@@ -2158,11 +2159,18 @@ mod tests {
             (
                 rejected
                     .iter()
-                    .map(|r| (r.address.as_str(), r.contract_name.as_str(), r.kind.as_str()))
+                    .map(|r| {
+                        (
+                            r.address.as_str(),
+                            r.contract_name.as_str(),
+                            r.existing_effective_start_block,
+                        )
+                    })
                     .collect::<Vec<_>>(),
                 store.size(),
             ),
-            (vec![(A, "C", "duplicate")], 1)
+            // The registration already held starts at the contract's start block.
+            (vec![(A, "C", 100)], 1)
         );
     }
 

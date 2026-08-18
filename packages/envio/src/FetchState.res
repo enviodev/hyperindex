@@ -2685,9 +2685,10 @@ let make = (
       ~contractAddress=rejected.address,
       ~params={
         "contractName": rejected.contractName,
-        "kind": rejected.kind,
+        "existingBlockNumber": rejected.existingEffectiveStartBlock,
+        "newBlockNumber": rejected.effectiveStartBlock,
       },
-      `Skipping stored address: it is already registered for this contract.`,
+      `Skipping a stored address: it is already registered for this contract.`,
     )
   })
 
