@@ -115,10 +115,15 @@ let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) =
     )
   }
 
+  // A chain may be given several mocks — a Sync and a Realtime one, say — and
+  // they reach its source config in the order `~sources` listed them.
   let chainMap = config.chainMap->ChainMap.mapWithKey((chainId, chainConfig) =>
-    switch sources->Array.find(((mockedChain, _)) => mockedChain->ChainId.fromInt == chainId) {
-    | Some((_, mock)) => {...chainConfig, sourceConfig: Config.CustomSources([mock.source])}
-    | None => chainConfig
+    switch sources->Array.filter(((mockedChain, _)) => mockedChain->ChainId.fromInt == chainId) {
+    | [] => chainConfig
+    | mocks => {
+        ...chainConfig,
+        sourceConfig: Config.CustomSources(mocks->Array.map(((_, mock)) => mock.source)),
+      }
     }
   )
   {...config, chainMap}
@@ -154,7 +159,7 @@ let run = async (
   ~onError=?,
   ~onExit=?,
   ~mapStorage=?,
-  body: (~indexer: IndexerRunner.t, ~source: int => MockSource.t) => promise<unit>,
+  body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let mocks =
     sources->Array.map(({chain, ?methods, ?sourceFor, ?pollingInterval}) => (
@@ -176,12 +181,16 @@ let run = async (
       ~reorgThresholdReadyTolerance,
     )
 
-  let source = chain =>
-    switch mocks->Array.find(((mockedChain, _)) => mockedChain === chain) {
+  // `~index` picks between several mocks given for one chain, in the order
+  // `~sources` listed them.
+  let source = (chain, ~index=0) =>
+    switch mocks
+    ->Array.filter(((mockedChain, _)) => mockedChain === chain)
+    ->Array.get(index) {
     | Some((_, mock)) => mock
     | None =>
       JsError.throwWithMessage(
-        `No mock source for chain ${chain->Int.toString}. Add it to \`~sources\` in Scenario.run.`,
+        `No mock source at index ${index->Int.toString} for chain ${chain->Int.toString}. Add it to \`~sources\` in Scenario.run.`,
       )
     }
 
@@ -235,10 +244,11 @@ let it = (
   ~onExit=?,
   ~mapStorage=?,
   ~timeout=?,
+  ~retry=?,
   body: (
     ~t: Vitest.testContext,
     ~indexer: IndexerRunner.t,
-    ~source: int => MockSource.t,
+    ~source: (int, ~index: int=?) => MockSource.t,
   ) => promise<unit>,
 ) => {
   switch scenario->skipReason {
@@ -248,9 +258,7 @@ let it = (
       async _ => (),
     )
   | None =>
-    Vitest.Async.it(
-      name,
-      async t =>
+    let runBody = async (t: Vitest.testContext) =>
       await scenario->run(
         ~sources,
         ~reducedPollingInterval?,
@@ -262,9 +270,11 @@ let it = (
         ~onExit?,
         ~mapStorage?,
         (~indexer, ~source) => body(~t, ~indexer, ~source),
-      ),
-      ~timeout?,
-    )
+      )
+    switch retry {
+    | Some(retry) => Vitest.Async.itWithOptions(name, {retry, timeout: ?timeout}, runBody)
+    | None => Vitest.Async.it(name, runBody, ~timeout?)
+    }
   }
 }
 
