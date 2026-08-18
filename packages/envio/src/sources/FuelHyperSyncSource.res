@@ -25,7 +25,9 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
   let client = switch FuelHyperSyncClient.make(
     {url: endpointUrl, apiToken},
-    ~eventRegistrations=FuelHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
+    ~eventRegistrations=FuelHyperSyncClient.Registration.fromOnEventRegistrations(
+      onEventRegistrations,
+    ),
     ~addressStore,
   ) {
   | client => client
@@ -57,29 +59,19 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~addressSet,
       ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
-    | FuelHyperSync.GetLogs.Error(error) =>
+    | FuelHyperSync.GetLogs.Error(WrongInstance) =>
+      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: []}))
+    | FuelHyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
             exn: %raw(`null`),
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
-            retry: switch error {
-            | WrongInstance =>
-              let backoffMillis = switch retry {
-              | 0 => 100
-              | _ => 500 * retry
-              }
-              WithBackoff({
-                message: `Block #${fromBlock->Int.toString} not found in FuelHyperSync. HyperFuel has multiple instances and it's possible that they drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
-                backoffMillis,
-              })
-            | UnexpectedMissingParams({missingParams}) =>
-              ImpossibleForTheQuery({
-                message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
-                    ", ",
-                  )}`,
-              })
-            },
+            retry: ImpossibleForTheQuery({
+              message: `Source returned invalid data with missing required fields: ${missingParams->Array.joinUnsafe(
+                  ", ",
+                )}`,
+            }),
           }),
         ),
       )
@@ -114,12 +106,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     let parsingTimeRef = Performance.now()
 
-    // Blocks are returned once per height; items reference them by blockHeight.
-    let blocksByHeight = Utils.Map.make()
-    pageUnsafe.blocks->Array.forEach(block => {
-      blocksByHeight->Utils.Map.set(block.height, block)->ignore
-    })
-
     let parsedQueueItems = pageUnsafe.items->Array.map(item => {
       // Routing happened in Rust; the item references its registration by
       // chain-scoped index.
@@ -128,8 +114,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         onEventRegistration.eventConfig->(
           Utils.magic: Internal.eventConfig => Internal.fuelEventConfig
         )
-      // Presence of every routed item's block is validated in Rust.
-      let block = blocksByHeight->Utils.Map.unsafeGet(item.blockHeight)
 
       let params = switch eventConfig.kind {
       | LogData({decode}) =>
@@ -178,12 +162,13 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         payload: {
           contractName: eventConfig.contractName,
           eventName: eventConfig.name,
-          chainId: chainId,
+          chainId,
           params,
           transaction: {
             "id": item.txId,
           }->Obj.magic, // TODO: Obj.magic needed until the field selection types are not configurable for Fuel and Evm separately
-          block: block->Obj.magic,
+          // `block` is omitted; it's materialised from the block store onto the
+          // payload at batch prep (like EVM/SVM).
           srcAddress: item.srcAddress,
           logIndex: item.receiptIndex,
         }->Fuel.fromPayload,
@@ -191,18 +176,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     })
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
-
-    // Fuel never rolls back on reorg, so block hashes here are purely informational
-    // for detect-only logging via ReorgDetection.
-    let blockHashes = pageUnsafe.blocks->Array.map(block => {
-      ReorgDetection.blockNumber: block.height,
-      blockHash: block.id,
-    })
-
-    let latestFetchedBlockTimestamp = switch blocksByHeight->Utils.Map.get(heighestBlockQueried) {
-    | Some(block) => block.time
-    | None => 0
-    }
 
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
@@ -213,15 +186,15 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
 
     {
-      latestFetchedBlockTimestamp,
       parsedQueueItems,
-      // Fuel keeps transaction and block on the payload; no store pages.
+      // Fuel keeps transaction and block inline on the payload; the block store
+      // carries only the (height, id) rows that drive reorg detection (Fuel
+      // never rolls back, so it's detect-only logging).
       transactionStore: None,
-      blockStore: None,
+      blockStore: pageUnsafe.blockStore,
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
-      blockHashes,
       fromBlockQueried: fromBlock,
       requestStats,
     }

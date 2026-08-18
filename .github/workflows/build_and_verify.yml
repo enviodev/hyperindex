@@ -175,8 +175,9 @@ jobs:
         run: pnpm test:templates
 
   # Scenario integration tests
-  # Requires postgres and clickhouse — the ClickHouse sink's RowBinary encoder is
-  # only verifiable against a real server. GraphQL/Hasura coverage lives in the
+  # envio-tests runs once per storage backend; the ClickHouse leg needs a real
+  # server because the RowBinary encoder decides byte layout per column type, so
+  # nothing short of one confirms it. GraphQL/Hasura coverage lives in the
   # e2e-test job.
   scenarios-test:
     runs-on: ubuntu-latest
@@ -216,9 +217,25 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
-      - name: envio-tests
+      # The scenario suite is backend-agnostic, so it runs three times. A
+      # scenario that can't run on a backend skips itself with a reason.
+      - name: envio-tests (memory)
         working-directory: packages/envio-tests
         run: pnpm test
+        env:
+          ENVIO_TEST_STORAGE: memory
+
+      - name: envio-tests (postgres)
+        working-directory: packages/envio-tests
+        run: pnpm test
+        env:
+          ENVIO_TEST_STORAGE: postgres
+
+      - name: envio-tests (clickhouse)
+        working-directory: packages/envio-tests
+        run: pnpm test
+        env:
+          ENVIO_TEST_STORAGE: clickhouse
 
       - name: test_codegen
         working-directory: scenarios/test_codegen

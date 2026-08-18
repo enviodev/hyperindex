@@ -1,12 +1,5 @@
 type indexingAddress = Internal.indexingContract
 
-type blockNumberAndTimestamp = {
-  blockNumber: int,
-  blockTimestamp: int,
-}
-
-type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
-
 type selection = {
   onEventRegistrations: array<Internal.onEventRegistration>,
   // Whether the partition's queries are built from its own address list
@@ -70,7 +63,7 @@ type pendingQuery = {
   // Stores latestFetchedBlock when query completes. Only needed to persist
   // timestamp while earlier queries are still pending before updating
   // the partition's latestFetchedBlock.
-  mutable fetchedBlock: option<blockNumberAndTimestamp>,
+  mutable fetchedBlock: option<int>,
 }
 
 /**
@@ -83,7 +76,7 @@ type partition = {
   id: string,
   // The block number of the latest fetched query
   // which added all its events to the queue
-  latestFetchedBlock: blockNumberAndTimestamp,
+  latestFetchedBlock: int,
   selection: selection,
   // The partition's slice of the chain's address index. Ordered by
   // (effectiveStartBlock, address) inside Rust, so a partition layout is a pure
@@ -109,7 +102,7 @@ type partition = {
   // cap is useful density evidence while saying nothing about source capacity.
   // None distinguishes a new partition from a real zero-density observation.
   eventDensity: option<float>,
-  // Tracks the latestFetchedBlock.blockNumber of the most recent response
+  // Tracks the latestFetchedBlock of the most recent response
   // that updated sourceRangeCapacity. Prevents degradation of the chunking
   // heuristic when parallel query responses arrive out of order.
   latestSourceRangeCapacityUpdateBlock: int,
@@ -270,8 +263,8 @@ module OptimizedPartitions = {
   ) => {
     let combinedAddresses = p1.addresses->AddressSet.merge(p2.addresses)
 
-    let p1Below = p1.latestFetchedBlock.blockNumber < potentialMergeBlock
-    let p2Below = p2.latestFetchedBlock.blockNumber < potentialMergeBlock
+    let p1Below = p1.latestFetchedBlock < potentialMergeBlock
+    let p2Below = p2.latestFetchedBlock < potentialMergeBlock
 
     // Build the continuing partition (at potentialMergeBlock with combined addresses),
     // collecting completed partitions (with mergeBlock) along the way
@@ -303,7 +296,7 @@ module OptimizedPartitions = {
         id: newId,
         dynamicContract: Some(contractName),
         selection: p1.selection,
-        latestFetchedBlock: {blockNumber: potentialMergeBlock, blockTimestamp: 0},
+        latestFetchedBlock: potentialMergeBlock,
         mergeBlock: None,
         addresses: p1.addresses, // replaced below
         mutPendingQueries: [],
@@ -348,8 +341,7 @@ module OptimizedPartitions = {
   // quering the same block range multiple times
   let tooFarBlockRange = 20_000
 
-  let ascSortFn = (a, b) =>
-    Int.compare(a.latestFetchedBlock.blockNumber, b.latestFetchedBlock.blockNumber)
+  let ascSortFn = (a, b) => Int.compare(a.latestFetchedBlock, b.latestFetchedBlock)
 
   // Contracts a standing address-free partition already fetches client-side.
   // Addresses registered for them after that partition passed get a normal
@@ -374,11 +366,11 @@ module OptimizedPartitions = {
   // bounded query claims its whole toBlock. An in-flight unbounded query has no
   // ceiling at all, so nothing is safe to stop a catch-up partition at yet.
   let getAnchorSafeBlock = (p: partition) => {
-    let safeRef = ref(Some(p.latestFetchedBlock.blockNumber))
+    let safeRef = ref(Some(p.latestFetchedBlock))
     p.mutPendingQueries->Array.forEach(pq =>
       switch (safeRef.contents, pq) {
       | (None, _) => ()
-      | (Some(safe), {fetchedBlock: Some({blockNumber})}) =>
+      | (Some(safe), {fetchedBlock: Some(blockNumber)}) =>
         if blockNumber > safe {
           safeRef := Some(blockNumber)
         }
@@ -446,7 +438,7 @@ module OptimizedPartitions = {
       // response to ever remove it on. A retired partition still awaiting a
       // response stays until it lands.
       | {mergeBlock: Some(mergeBlock)} =>
-        if p.latestFetchedBlock.blockNumber < mergeBlock || p->isFetching {
+        if p.latestFetchedBlock < mergeBlock || p->isFetching {
           newPartitions->Array.push(p)->ignore
         }
       // Since it's not a dynamic contract partition,
@@ -461,7 +453,7 @@ module OptimizedPartitions = {
         let potentialMergeBlock = switch p.mutPendingQueries->Utils.Array.last {
         | Some({isChunk: true, toBlock: Some(toBlock)}) => Some(toBlock)
         | Some(_) => None // unbounded query -- can't merge
-        | None => Some(p.latestFetchedBlock.blockNumber)
+        | None => Some(p.latestFetchedBlock)
         }
         switch potentialMergeBlock {
         | None => newPartitions->Array.push(p)->ignore
@@ -567,13 +559,13 @@ module OptimizedPartitions = {
           switch anchorSafeBlocks->Utils.Dict.dangerouslyGetNonOption(contractName) {
           | None => anchored->Array.push(p)->ignore
           | Some(anchorSafeBlock) =>
-            if p.latestFetchedBlock.blockNumber < anchorSafeBlock {
+            if p.latestFetchedBlock < anchorSafeBlock {
               anchored->Array.push({...p, mergeBlock: Some(anchorSafeBlock)})->ignore
             } else if p->isFetching {
               // Caught up, but a response is still owed: keep it until that
               // lands rather than dropping the range it owns.
               anchored
-              ->Array.push({...p, mergeBlock: Some(p.latestFetchedBlock.blockNumber)})
+              ->Array.push({...p, mergeBlock: Some(p.latestFetchedBlock)})
               ->ignore
             }
           }
@@ -612,7 +604,7 @@ module OptimizedPartitions = {
   @inline
   let consumeFetchedQueries = (
     mutPendingQueries: array<pendingQuery>,
-    ~initialLatestFetchedBlock: blockNumberAndTimestamp,
+    ~initialLatestFetchedBlock: int,
   ) => {
     let latestFetchedBlock = ref(initialLatestFetchedBlock)
 
@@ -621,7 +613,7 @@ module OptimizedPartitions = {
     while canContinue.contents {
       switch mutPendingQueries->Array.get(consumedCount.contents) {
       | Some({fetchedBlock: Some(fetchedBlock), fromBlock})
-        if fromBlock <= latestFetchedBlock.contents.blockNumber + 1 =>
+        if fromBlock <= latestFetchedBlock.contents + 1 =>
         latestFetchedBlock := fetchedBlock
         consumedCount := consumedCount.contents + 1
       | _ => canContinue := false
@@ -662,7 +654,7 @@ module OptimizedPartitions = {
     ~query,
     ~knownHeight,
     ~itemsCount,
-    ~latestFetchedBlock: blockNumberAndTimestamp,
+    ~latestFetchedBlock: int,
   ) =>
     optimizedPartitions->handleQueryResponseForPartition(
       ~p=optimizedPartitions->getOrThrow(~partitionId=query.partitionId),
@@ -678,7 +670,7 @@ module OptimizedPartitions = {
     ~query,
     ~knownHeight,
     ~itemsCount,
-    ~latestFetchedBlock: blockNumberAndTimestamp,
+    ~latestFetchedBlock: int,
   ) => {
     let mutEntities = optimizedPartitions.entities->Utils.Dict.shallowCopy
 
@@ -686,7 +678,7 @@ module OptimizedPartitions = {
     let pendingQuery = getPendingQueryOrThrow(p, ~fromBlock=query.fromBlock)
     pendingQuery.fetchedBlock = Some(latestFetchedBlock)
 
-    let blockRange = latestFetchedBlock.blockNumber - query.fromBlock + 1
+    let blockRange = latestFetchedBlock - query.fromBlock + 1
     // Update density for every response, independently from whether this range
     // is valid evidence of source capacity. A cap hit is still useful density
     // evidence because it reports items returned across the scanned range.
@@ -704,13 +696,13 @@ module OptimizedPartitions = {
     // responses arrive out of order (e.g. earlier query with smaller range
     // arriving after a later query with bigger range).
     let shouldUpdateSourceRangeCapacity =
-      latestFetchedBlock.blockNumber > p.latestSourceRangeCapacityUpdateBlock &&
+      latestFetchedBlock > p.latestSourceRangeCapacityUpdateBlock &&
         switch query.toBlock {
         | None =>
           // Don't update source capacity when very close to the head.
-          latestFetchedBlock.blockNumber < knownHeight - 10
+          latestFetchedBlock < knownHeight - 10
         | Some(queryToBlock) =>
-          if latestFetchedBlock.blockNumber < queryToBlock {
+          if latestFetchedBlock < queryToBlock {
             // Partial response is direct capacity evidence — unless it was
             // truncated by our own itemsTarget cap: that reflects the
             // reservation we asked for, not what the server could return. A
@@ -748,7 +740,7 @@ module OptimizedPartitions = {
     // the last of them has landed.
     let partitionReachedMergeBlock =
       switch p.mergeBlock {
-      | Some(mergeBlock) => updatedLatestFetchedBlock.blockNumber >= mergeBlock
+      | Some(mergeBlock) => updatedLatestFetchedBlock >= mergeBlock
       | None => false
       } &&
       !(p->isFetching)
@@ -772,7 +764,7 @@ module OptimizedPartitions = {
         prevSourceRangeCapacity: updatedPrevSourceRangeCapacity,
         eventDensity: updatedEventDensity,
         latestSourceRangeCapacityUpdateBlock: shouldUpdateSourceRangeCapacity
-          ? latestFetchedBlock.blockNumber
+          ? latestFetchedBlock
           : p.latestSourceRangeCapacityUpdateBlock,
       }
 
@@ -789,10 +781,8 @@ module OptimizedPartitions = {
         let idx = ids->Array.indexOf(p.id)
         let isAfter = jdx =>
           jdx < count &&
-            (
-              mutEntities->Dict.getUnsafe(ids->Array.getUnsafe(jdx))
-            ).latestFetchedBlock.blockNumber <
-            updatedMainPartition.latestFetchedBlock.blockNumber
+            (mutEntities->Dict.getUnsafe(ids->Array.getUnsafe(jdx))).latestFetchedBlock <
+            updatedMainPartition.latestFetchedBlock
         if isAfter(idx + 1) {
           let reordered = ids->Array.copy
           let jdx = ref(idx)
@@ -862,9 +852,9 @@ let bufferBlockNumber = ({latestOnBlockBlockNumber, optimizedPartitions}: t) => 
   switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
   | None => latestOnBlockBlockNumber
   | Some(latestFullyFetchedBlock) =>
-    latestOnBlockBlockNumber < latestFullyFetchedBlock.blockNumber
+    latestOnBlockBlockNumber < latestFullyFetchedBlock
       ? latestOnBlockBlockNumber
-      : latestFullyFetchedBlock.blockNumber
+      : latestFullyFetchedBlock
   }
 }
 
@@ -874,16 +864,10 @@ let bufferBlockNumber = ({latestOnBlockBlockNumber, optimizedPartitions}: t) => 
 @inline
 let bufferBlock = ({optimizedPartitions, latestOnBlockBlockNumber}: t) => {
   switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
-  | None => {
-      blockNumber: latestOnBlockBlockNumber,
-      blockTimestamp: 0,
-    }
+  | None => latestOnBlockBlockNumber
   | Some(latestFullyFetchedBlock) =>
-    latestOnBlockBlockNumber < latestFullyFetchedBlock.blockNumber
-      ? {
-          blockNumber: latestOnBlockBlockNumber,
-          blockTimestamp: 0,
-        }
+    latestOnBlockBlockNumber < latestFullyFetchedBlock
+      ? latestOnBlockBlockNumber
       : latestFullyFetchedBlock
   }
 }
@@ -916,31 +900,87 @@ let getRegistrationIndex = (item: Internal.item): int =>
   | Block({onBlockRegistration}) => onBlockRegistration.index
   }
 
-// Total order on buffer items: block, then logIndex, then registration index.
-// Returns a plain int (-1/0/1) with explicit field comparisons so it can be
-// called directly from the merge/insertion loops below — no Array.sort callback,
-// no allocated key. `0` means a true duplicate: same log routed to the same
-// registration (two registrations for one log differ by index and are kept).
+// Lexicographic order on two call paths, parent before child: `[1]` precedes
+// `[1, 0]`, which is the order the runtime executed them in.
+let comparePath = (a: array<int>, b: array<int>): int => {
+  let la = a->Array.length
+  let lb = b->Array.length
+  let shared = la < lb ? la : lb
+  let i = ref(0)
+  let result = ref(0)
+  while result.contents === 0 && i.contents < shared {
+    let x = a->Array.getUnsafe(i.contents)
+    let y = b->Array.getUnsafe(i.contents)
+    if x !== y {
+      result := (x < y ? -1 : 1)
+    }
+    i := i.contents + 1
+  }
+  if result.contents !== 0 {
+    result.contents
+  } else if la === lb {
+    0
+  } else if la < lb {
+    -1
+  } else {
+    1
+  }
+}
+
+// Cold tail of `compareBufferItem`, out of line so the block/kind/log-index
+// comparison that every merge step runs stays small enough for V8 to inline.
+let compareTiebreak = (a: Internal.item, b: Internal.item): int => {
+  // Two items an ecosystem's scalar key can't separate: instructions of one
+  // Solana transaction, ordered by their position in its CPI tree.
+  let byPath = switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
+  | (Value(pa), Value(pb)) => comparePath(pa, pb)
+  | _ => 0
+  }
+  if byPath !== 0 {
+    byPath
+  } else {
+    let ia = a->getRegistrationIndex
+    let ib = b->getRegistrationIndex
+    ia < ib ? -1 : ia > ib ? 1 : 0
+  }
+}
+
+// Total order on buffer items: block, then item kind, then the ecosystem's
+// within-block order, then registration index. Returns a plain int (-1/0/1)
+// with explicit field comparisons so it can be called directly from the
+// merge/insertion loops below — no Array.sort callback, no allocated key. `0`
+// means a true duplicate: the same log routed to the same registration (two
+// registrations for one log differ by index and are kept).
+//
+// Kind outranks the log index so that every event of a block precedes that
+// block's handlers by construction. A sentinel log index for block items
+// would put the same guarantee at the mercy of how large an ecosystem's key
+// grows — which is how SVM, keyed by transaction index, came to run slot
+// handlers ahead of most of a slot's instructions.
 let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
   let ba = a->Internal.getItemBlockNumber
   let bb = b->Internal.getItemBlockNumber
   if ba != bb {
     ba < bb ? -1 : 1
   } else {
-    let la = a->Internal.getItemLogIndex
-    let lb = b->Internal.getItemLogIndex
-    if la != lb {
-      la < lb ? -1 : 1
+    let ka = a->Internal.getItemKind
+    let kb = b->Internal.getItemKind
+    if ka !== kb {
+      ka < kb ? -1 : 1
     } else {
-      let ia = a->getRegistrationIndex
-      let ib = b->getRegistrationIndex
-      ia < ib ? -1 : ia > ib ? 1 : 0
+      let la = a->Internal.getItemLogIndex
+      let lb = b->Internal.getItemLogIndex
+      if la != lb {
+        la < lb ? -1 : 1
+      } else {
+        compareTiebreak(a, b)
+      }
     }
   }
 }
 
 // Merge a maybe-unsorted `newItems` run into the already-sorted, already-deduped
-// `buffer`, dropping items equal on (blockNumber, logIndex, registration index).
+// `buffer`, dropping items equal on every component of `compareBufferItem`.
 // Single linear pass over both runs after ordering `newItems` in place; every
 // comparison is a direct `compareBufferItem` call (V8 inlines it) rather than a
 // callback through `Array.sort`.
@@ -996,9 +1036,6 @@ let mergeIntoBuffer = (buffer: array<Internal.item>, newItems: array<Internal.it
   merged
 }
 
-// Some big number which should be bigger than any log index
-let blockItemLogIndex = 16777216
-
 // Appends Block items produced by the onBlock handlers for every block in
 // (fromBlock, maxBlockNumber] into mutItems and returns the new
 // latestOnBlockBlockNumber pointer. maxOnBlockBufferSize bounds how many items
@@ -1045,7 +1082,6 @@ let appendOnBlockItems = (
           Block({
             onBlockRegistration,
             blockNumber,
-            logIndex: blockItemLogIndex + onBlockRegistration.index,
           }),
         )
         newItemsCounter := newItemsCounter.contents + 1
@@ -1078,7 +1114,7 @@ let updateInternal = (
   | None => fetchState.buffer
   }
 
-  // onBlock items are generated as their own ascending (block, logIndex) run and
+  // onBlock items are generated as their own ascending run and
   // folded into `base` by the single merge below.
   let blockItems = []
   let latestOnBlockBlockNumber = switch fetchState.onBlockRegistrations {
@@ -1093,7 +1129,7 @@ let updateInternal = (
     | None =>
       switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
       | None => knownHeight
-      | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock.blockNumber
+      | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock
       }
     }
     appendOnBlockItems(
@@ -1164,11 +1200,11 @@ let addClientFilteredContract = (
 // refetch it. An in-flight open-ended query has no toBlock of its own; it can't
 // return past the chain's known height, so that bounds it.
 let claimedFetchedBlock = (p: partition, ~knownHeight) =>
-  p.mutPendingQueries->Array.reduce(p.latestFetchedBlock.blockNumber, (max, q) =>
+  p.mutPendingQueries->Array.reduce(p.latestFetchedBlock, (max, q) =>
     Pervasives.max(
       max,
       switch q.fetchedBlock {
-      | Some({blockNumber}) => blockNumber
+      | Some(blockNumber) => blockNumber
       | None => q.toBlock->Option.getOr(knownHeight)
       },
     )
@@ -1213,7 +1249,7 @@ let collapseClientFilteredContracts = (
   // Frontiers of the addresses that were never given a server-side partition
   // because their contract is already client-filtered. They stand in for the
   // partitions that would otherwise have been created only to be absorbed here.
-  ~clientFilteredFrontiers: array<blockNumberAndTimestamp>=[],
+  ~clientFilteredFrontiers: array<int>=[],
   ~knownHeight: int,
 ) => {
   if clientFilteredContracts->Utils.Set.size === 0 {
@@ -1232,7 +1268,7 @@ let collapseClientFilteredContracts = (
     // then handleQueryResponse drops it.
     let retire = (p: partition) => {
       ...p,
-      mergeBlock: Some(p.latestFetchedBlock.blockNumber),
+      mergeBlock: Some(p.latestFetchedBlock),
     }
     let absorb = p => {
       absorbedPartitions->Array.push(p)->ignore
@@ -1301,10 +1337,10 @@ let collapseClientFilteredContracts = (
       // partition (and any in-progress backfill) untouched.
       partitions
     } else {
-      let minFrontierRef: ref<option<blockNumberAndTimestamp>> = ref(None)
-      let considerFrontier = (b: blockNumberAndTimestamp) =>
+      let minFrontierRef: ref<option<int>> = ref(None)
+      let considerFrontier = (b: int) =>
         switch minFrontierRef.contents {
-        | Some(m) if m.blockNumber <= b.blockNumber => ()
+        | Some(m) if m <= b => ()
         | _ => minFrontierRef := Some(b)
         }
       absorbedPartitions->Array.forEach(p => considerFrontier(p.latestFetchedBlock))
@@ -1386,7 +1422,7 @@ let collapseClientFilteredContracts = (
         // all the partition will ever claim.
         let catchUpToBlock = standingOut->claimedFetchedBlock(~knownHeight)
         switch minFrontierRef.contents {
-        | Some(minFrontier) if minFrontier.blockNumber < catchUpToBlock =>
+        | Some(minFrontier) if minFrontier < catchUpToBlock =>
           let id = nextPartitionIndexRef.contents->Int.toString
           nextPartitionIndexRef := nextPartitionIndexRef.contents + 1
           kept
@@ -1535,10 +1571,7 @@ OptimizedPartitions.t => {
       // the first group's since groups are ascending.
       switch groups->Array.get(0) {
       | Some({startBlock}) =>
-        clientFilteredFrontiers->Array.push({
-          blockNumber: Pervasives.max(startBlock - 1, progressBlockNumber),
-          blockTimestamp: 0,
-        })
+        clientFilteredFrontiers->Array.push(Pervasives.max(startBlock - 1, progressBlockNumber))
       | None => ()
       }
     } else {
@@ -1562,10 +1595,7 @@ OptimizedPartitions.t => {
           }
         }
 
-        let latestFetchedBlock = {
-          blockNumber: Pervasives.max(startBlock - 1, progressBlockNumber),
-          blockTimestamp: 0,
-        }
+        let latestFetchedBlock = Pervasives.max(startBlock - 1, progressBlockNumber)
         let remainingRef = ref(countRef.contents)
         let chunkOffsetRef = ref(offsetRef.contents)
         while remainingRef.contents > 0 {
@@ -1609,8 +1639,8 @@ OptimizedPartitions.t => {
     while nextIdx.contents < nonDynamicPartitions->Array.length {
       let nextP = nonDynamicPartitions->Array.getUnsafe(nextIdx.contents)
       let currentP = currentPRef.contents
-      let currentPBlock = currentP.latestFetchedBlock.blockNumber
-      let nextPBlock = nextP.latestFetchedBlock.blockNumber
+      let currentPBlock = currentP.latestFetchedBlock
+      let nextPBlock = nextP.latestFetchedBlock
 
       let totalCount = currentP.addresses->AddressSet.size + nextP.addresses->AddressSet.size
 
@@ -1869,12 +1899,7 @@ Throws if the partition with given query cannot be found (unexpected)
 
 newItems are ordered earliest to latest (as they are returned from the worker)
 */
-let handleQueryResult = (
-  fetchState: t,
-  ~query: query,
-  ~latestFetchedBlock: blockNumberAndTimestamp,
-  ~newItems,
-): t => {
+let handleQueryResult = (fetchState: t, ~query: query, ~latestFetchedBlock: int, ~newItems): t => {
   fetchState->updateInternal(
     ~optimizedPartitions=fetchState.optimizedPartitions->OptimizedPartitions.handleQueryResponse(
       ~query,
@@ -2104,7 +2129,7 @@ let walkPartitionPending = (
   let maybeChunkRange = getMinHistoryRange(p)
   let pendingCount = p.mutPendingQueries->Array.length
 
-  let cursor = ref(p.latestFetchedBlock.blockNumber + 1)
+  let cursor = ref(p.latestFetchedBlock + 1)
   let canContinue = ref(true)
   let chunksUsedThisCall = ref(0)
   let pqIdx = ref(0)
@@ -2130,7 +2155,7 @@ let walkPartitionPending = (
       chunksUsedThisCall := chunksUsedThisCall.contents + (candidates->Array.length - beforeLen)
     }
     switch pq {
-    | {isChunk: true, toBlock: Some(toBlock), fetchedBlock: Some({blockNumber})}
+    | {isChunk: true, toBlock: Some(toBlock), fetchedBlock: Some(blockNumber)}
       if blockNumber < toBlock =>
       cursor := blockNumber + 1
     | {isChunk: true, toBlock: Some(toBlock)} => cursor := toBlock + 1
@@ -2432,9 +2457,7 @@ let getNextQuery = (
         }
       }
       inFlightCounts->Array.setUnsafe(idx, inFlightCount.contents)
-      if (
-        p.mutPendingQueries->Array.length > 0 || p.latestFetchedBlock.blockNumber < headBlockNumber
-      ) {
+      if p.mutPendingQueries->Array.length > 0 || p.latestFetchedBlock < headBlockNumber {
         // Even if there are some partitions waiting for the new block
         // We still want to wait for all partitions reaching the head
         // because they might update knownHeight in their response
@@ -2616,10 +2639,7 @@ let make = (
   ~clientFilterAddressThreshold=None,
   ~isResumed=false,
 ): t => {
-  let latestFetchedBlock = {
-    blockTimestamp: 0,
-    blockNumber: progressBlockNumber,
-  }
+  let latestFetchedBlock = progressBlockNumber
 
   let notDependingOnAddresses = []
   let normalRegistrations = []
@@ -2764,7 +2784,7 @@ let make = (
   let latestOnBlockBlockNumber = if knownHeight > 0 && onBlockRegistrations->Utils.Array.notEmpty {
     let maxBlockNumber = switch optimizedPartitions->OptimizedPartitions.getLatestFullyFetchedBlock {
     | None => knownHeight
-    | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock.blockNumber
+    | Some(latestFullyFetchedBlock) => latestFullyFetchedBlock
     }
     appendOnBlockItems(
       ~mutItems=buffer,
@@ -2809,11 +2829,11 @@ let rollbackPendingQueries = (mutPendingQueries: array<pendingQuery>, ~targetBlo
     let pq = mutPendingQueries->Array.getUnsafe(qIdx)
     if pq.fromBlock <= targetBlockNumber {
       switch pq.fetchedBlock {
-      | Some({blockNumber}) if blockNumber > targetBlockNumber =>
+      | Some(blockNumber) if blockNumber > targetBlockNumber =>
         adjusted
         ->Array.push({
           ...pq,
-          fetchedBlock: Some({blockNumber: targetBlockNumber, blockTimestamp: 0}),
+          fetchedBlock: Some(targetBlockNumber),
         })
         ->ignore
       | Some(_) => adjusted->Array.push(pq)->ignore
@@ -2868,8 +2888,8 @@ let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber
       ->Array.push({
         ...p,
         id,
-        latestFetchedBlock: p.latestFetchedBlock.blockNumber > targetBlockNumber
-          ? {blockNumber: targetBlockNumber, blockTimestamp: 0}
+        latestFetchedBlock: p.latestFetchedBlock > targetBlockNumber
+          ? targetBlockNumber
           : p.latestFetchedBlock,
         // Everything above the target is refetched by whichever partition this
         // one was catching up to, so there is nothing left to catch up on past
@@ -2884,7 +2904,7 @@ let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber
       ->ignore
 
     // Non-wildcard with lfb > target: delete, collect addresses for recreation
-    | _ if p.latestFetchedBlock.blockNumber > targetBlockNumber =>
+    | _ if p.latestFetchedBlock > targetBlockNumber =>
       collectForRecreation(p.addresses->AddressSet.filterByRegistrationBlock(targetBlockNumber))
 
     // Non-wildcard with lfb <= target: keep, adjust pending queries and mergeBlock

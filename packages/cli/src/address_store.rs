@@ -30,13 +30,7 @@ use crate::field_columns::Ecosystem;
 type Key = Box<[u8]>;
 
 fn decode_hex_address(s: &str, len: usize) -> Option<Key> {
-    let hex = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X"))?;
-    if hex.len() != len * 2 {
-        return None;
-    }
-    let mut out = vec![0u8; len];
-    faster_hex::hex_decode(hex.as_bytes(), &mut out).ok()?;
-    Some(out.into_boxed_slice())
+    crate::hex::decode_fixed(s, len).map(|bytes| bytes.into_boxed_slice())
 }
 
 /// The binary key for an address string, or `None` when it isn't a well-formed

@@ -42,14 +42,24 @@ type svmInstructionParams = {
 type svmTokenBalance = {
   account?: SvmTypes.Pubkey.t,
   mint?: SvmTypes.Pubkey.t,
+  /** Owner at the end of the transaction, falling back to the owner on entry
+   when the account was closed during it. Pre and post owners differ only when
+   a `SetAuthority(AccountOwner)` runs mid-transaction. */
   owner?: SvmTypes.Pubkey.t,
-  preAmount?: string,
-  postAmount?: string,
+  /** Mint decimals, for scaling the raw amounts below. */
+  decimals?: int,
+  /** Raw amount in base units before the transaction. Absent when the token
+   account was created during it. */
+  preAmount?: bigint,
+  /** Raw amount in base units after the transaction. Absent when the token
+   account was closed during it. */
+  postAmount?: bigint,
 }
 
 type svmTransaction = {
   transactionIndex?: int,
-  signatures: array<string>,
+  /** The transaction's identifying signature (`allSignatures[0]`). */
+  signature: string,
   feePayer?: SvmTypes.Pubkey.t,
   success?: bool,
   err?: string,
@@ -58,6 +68,9 @@ type svmTransaction = {
   accountKeys: array<SvmTypes.Pubkey.t>,
   recentBlockhash?: string,
   version?: string,
+  /** Every signature on the transaction, in message order; the first is
+   `signature`. Longer than one element only for a multi-signer transaction. */
+  allSignatures: array<string>,
   tokenBalances?: array<svmTokenBalance>,
 }
 

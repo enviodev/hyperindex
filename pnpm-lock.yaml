@@ -271,9 +271,6 @@ importers:
       envio:
         specifier: file:../../packages/envio
         version: link:../../packages/envio
-      rescript:
-        specifier: 12.2.0
-        version: 12.2.0
     devDependencies:
       '@types/node':
         specifier: 24.12.2
@@ -293,9 +290,6 @@ importers:
       envio:
         specifier: file:../../packages/envio
         version: link:../../packages/envio
-      envio-tests:
-        specifier: file:../../packages/envio-tests
-        version: link:../../packages/envio-tests
       ts-expect:
         specifier: 1.3.0
         version: 1.3.0

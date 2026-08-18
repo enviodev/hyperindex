@@ -979,11 +979,8 @@ let rec writeBatch = async (
       let rows = batch.items->Array.filterMap(item =>
         switch item {
         | Internal.Event(_) =>
-          let coordinate = `${item
-            ->Internal.getItemChainId
-            ->ChainId.toString}-${item
-            ->Internal.getItemBlockNumber
-            ->Int.toString}-${item->Internal.getItemLogIndex->Int.toString}`
+          let eventItem = item->Internal.castUnsafeEventItem
+          let coordinate = `${eventItem.chainId->ChainId.toString}-${eventItem.blockNumber->Int.toString}-${eventItem.logIndex->Int.toString}`
           if seenLogCoordinates->Utils.Set.has(coordinate) {
             None
           } else {
@@ -2311,7 +2308,12 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       }
     })
 
-    (removals, restoredEntitiesResult)
+    (
+      removals,
+      restoredEntitiesResult
+      ->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
+      ->(Utils.magic: array<unknown> => array<Internal.entity>),
+    )
   }
 
   let writeBatchMethod = async (

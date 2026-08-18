@@ -4,7 +4,6 @@ type cfg = {
   /** Optional bearer token for the HyperSync server. */
   apiToken?: string,
   httpReqTimeoutMillis?: int,
-  maxNumRetries?: int,
   retryBaseMs?: int,
   retryCeilingMs?: int,
 }
@@ -67,10 +66,8 @@ module Registration = {
             },
           )
         ),
-        transactionFields: eventConfig.selectedTransactionFields->Utils.Set.toArray,
-        blockFields: eventConfig.selectedBlockFields
-        ->(Utils.magic: Utils.Set.t<Internal.svmBlockField> => Utils.Set.t<string>)
-        ->Utils.Set.toArray,
+        transactionFields: reg.fieldSelection.transactionFields->Utils.Set.toArray,
+        blockFields: reg.fieldSelection.blockFields->Utils.Set.toArray,
         accounts: eventConfig.accounts,
         argsJson: ?switch eventConfig.args {
         | JSON.Null => None
@@ -110,18 +107,20 @@ module QueryTypes = {
 
   type fieldSelection = {block?: array<blockField>, transaction?: array<transactionField>}
 
-  /** Filter for selecting instructions. All non-empty fields are AND-ed: an
-   instruction must match at least one value in every non-empty field.
+  /** Filter for selecting instruction calls. All non-empty fields are AND-ed:
+   an instruction must match at least one value in every non-empty field.
 
    Discriminator filters (d1..d8) take hex-encoded byte prefixes ("0x" optional).
    Account filters (a0..a9) take base58 pubkey strings. */
   type instructionSelection = {
-    programId?: array<string>,
+    executingAccount?: array<string>,
     d1?: array<string>,
     d2?: array<string>,
     d4?: array<string>,
     d8?: array<string>,
     isInner?: bool,
+    /** Success of the parent transaction; absent matches both. */
+    txSuccess?: bool,
   }
 
   // The `get` query surface, used only for block-data range queries; event
@@ -129,7 +128,7 @@ module QueryTypes = {
   type query = {
     fromSlot: int,
     toSlot?: int,
-    instructions?: array<instructionSelection>,
+    instructionCalls?: array<instructionSelection>,
     includeAllBlocks?: bool,
     fields?: fieldSelection,
     maxNumBlocks?: int,
@@ -155,24 +154,29 @@ module ResponseTypes = {
     extraAccounts: array<string>,
   }
 
-  type instruction = {
+  type instructionCall = {
     slot: int,
     transactionIndex: int,
     instructionAddress: array<int>,
-    programId: string,
-    accounts: array<string>,
+    /** The invoked program's account. */
+    executingAccount: string,
+    accountArguments: array<string>,
     data: string,
     d1?: string,
     d2?: string,
     d4?: string,
     d8?: string,
     isInner: bool,
-    isCommitted: bool,
+    /** Success of the parent transaction, not of this invocation. */
+    txSuccess: bool,
+    /** Per-invocation failure reason (e.g. "custom program error: 0x1"). */
+    error?: string,
+    computeUnitsConsumed?: bigint,
   }
 
   type queryResponseData = {
     blocks: array<block>,
-    instructions: array<instruction>,
+    instructionCalls: array<instructionCall>,
   }
 
   type queryResponse = {
@@ -241,6 +245,9 @@ type queryResponse = ResponseTypes.queryResponse
 
 type t = {
   getHeight: unit => promise<int>,
+  // Block-hash query construction, pagination, and cursor-backed skipped-slot
+  // coverage live in Rust.
+  getBlockHashes: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<RequestStat.t>)>,
   // Block-data range queries only; the store pages it returns are empty.
   get: (~query: query) => promise<(queryResponse, TransactionStore.t, BlockStore.t)>,
   // Returns the routed items plus pages of raw transactions and blocks (kept
@@ -265,7 +272,6 @@ let make = (
   ~url,
   ~apiToken=?,
   ~httpReqTimeoutMillis=?,
-  ~maxNumRetries=?,
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
   ~eventRegistrations=[],
@@ -277,7 +283,6 @@ let make = (
       url,
       ?apiToken,
       ?httpReqTimeoutMillis,
-      ?maxNumRetries,
       ?retryBaseMs,
       ?retryCeilingMs,
     },

@@ -21,7 +21,7 @@ use crate::{
     type_schema::{RecordField, TypeExpr, TypeIdent},
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use convert_case::{Case, Casing};
 
 use crate::config_parsing::abi_compat::EventParam;
@@ -658,34 +658,7 @@ impl EventTemplate {
                     }
                 }
             }
-            EventKind::Svm(_) => Ok(Self::from_svm_instruction_event(
-                config_event,
-                contract_name,
-            )),
-        }
-    }
-
-    /// Per-instruction ReScript module for SVM. Minimal surface for C1: enough
-    /// shape so the GADT `eventIdentity<event, paramsConstructor, onEventWhere>`
-    /// machinery still type-checks. Concrete `indexer.onInstruction(...)`
-    /// registration arrives in C2 alongside dispatch.
-    fn from_svm_instruction_event(
-        config_event: &system_config::Event,
-        _contract_name: &CapitalizedOptions,
-    ) -> Self {
-        let event_name = config_event.name.capitalize();
-        let module_code = format!(
-            r#"
-let name = "{event_name}"
-let contractName = contractName
-type params = Envio.svmInstructionParams
-type paramsConstructor = unit
-type event = Envio.svmInstruction
-type onEventWhere = Internal.noOnEventWhere"#
-        );
-        EventTemplate {
-            name: event_name,
-            module_code,
+            EventKind::Svm(_) => Err(anyhow!("ReScript is not supported for SVM indexers")),
         }
     }
 }
@@ -979,7 +952,7 @@ pub struct ProjectTemplate {
     #[allow(dead_code)]
     chain_configs: Vec<NetworkConfigTemplate>,
     is_rescript: bool,
-    indexer_code: String,
+    indexer_code: Option<String>,
     envio_types_dts: String,
 }
 
@@ -1004,8 +977,9 @@ impl ProjectTemplate {
     }
 
     /// The generated `Indexer.res` contents (the project's ReScript surface).
-    pub fn indexer_code(&self) -> &str {
-        &self.indexer_code
+    /// `None` for SVM, which has no ReScript surface.
+    pub fn indexer_code(&self) -> Option<&str> {
+        self.indexer_code.as_deref()
     }
 
     pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
@@ -1045,14 +1019,11 @@ impl ProjectTemplate {
             .with_context(|| format!("Failed writing {ENVIO_ENV_DTS_FILE} to project root"))?;
 
         // 4. `src/Indexer.res` — bridges ReScript handlers to the runtime.
-        if self.is_rescript {
+        if let (true, Some(indexer_code)) = (self.is_rescript, &self.indexer_code) {
             let src_dir = project_paths.project_root.join("src");
             std::fs::create_dir_all(&src_dir).context("Failed to create user src directory")?;
-            write_if_changed(
-                &src_dir.join("Indexer.res"),
-                &format!("{}\n", self.indexer_code),
-            )
-            .context("Failed writing Indexer.res to user src directory")?;
+            write_if_changed(&src_dir.join("Indexer.res"), &format!("{}\n", indexer_code))
+                .context("Failed writing Indexer.res to user src directory")?;
         }
 
         Ok(())
@@ -1278,96 +1249,46 @@ impl ProjectTemplate {
         format!("{{ readonly params: {} }}", params_ts)
     }
 
-    pub fn from_config(cfg: &SystemConfig) -> Result<Self> {
-        // Compute all available fields for the ecosystem (EVM has all block/tx fields,
-        // Fuel has fixed fields). Used for generating deprecated S.never markers.
-        let all_ecosystem_fields = match cfg.get_ecosystem() {
-            Ecosystem::Evm => {
-                let all_evm = system_config::FieldSelection::all_evm();
-                Some(FieldSelection::new(FieldSelectionOptions {
-                    block_fields: all_evm.block_fields,
-                    transaction_fields: all_evm.transaction_fields,
-                }))
-            }
-            Ecosystem::Fuel => {
-                let fuel_fs = system_config::FieldSelection::fuel();
-                Some(FieldSelection::new_without_defaults(
-                    FieldSelectionOptions {
-                        block_fields: fuel_fs.block_fields,
-                        transaction_fields: fuel_fs.transaction_fields,
-                    },
-                ))
-            }
-            Ecosystem::Svm => None,
-        };
-
+    /// Build `src/Indexer.res` — the ReScript surface for the project's
+    /// config and schema. EVM and Fuel only; SVM projects are TypeScript.
+    fn generate_indexer_code(
+        cfg: &SystemConfig,
+        chain_configs: &[NetworkConfigTemplate],
+        entities: &[EntityRecordTypeTemplate],
+        gql_enums: &[GraphQlEnumTypeTemplate],
+        global_field_selection: &FieldSelection,
+        all_ecosystem_fields: Option<&FieldSelection>,
+    ) -> Result<String> {
         let codegen_contracts: Vec<ContractTemplate> = cfg
             .get_contracts()
             .iter()
             .map(|cfg_contract| {
-                ContractTemplate::from_config_contract(cfg_contract, all_ecosystem_fields.as_ref())
+                ContractTemplate::from_config_contract(cfg_contract, all_ecosystem_fields)
             })
             .collect::<Result<_>>()
             .context("Failed generating contract template types")?;
 
-        let entities: Vec<EntityRecordTypeTemplate> = cfg
-            .get_entities()
-            .iter()
-            .map(|entity| EntityRecordTypeTemplate::from_config_entity(entity, cfg))
-            .collect::<Result<_>>()
-            .context("Failed generating entity template types")?;
-
-        let gql_enums: Vec<GraphQlEnumTypeTemplate> = cfg
-            .get_gql_enums()
-            .iter()
-            .map(|gql_enum| GraphQlEnumTypeTemplate::from_config_gql_enum(gql_enum))
-            .collect::<Result<_>>()
-            .context("Failed generating enum template types")?;
-
-        let chain_configs: Vec<NetworkConfigTemplate> = cfg
-            .get_chains()
-            .iter()
-            .map(|network| NetworkConfigTemplate::from_config_network(network, cfg))
-            .collect::<Result<_>>()
-            .context("Failed generating chain configs template")?;
-
-        let global_field_selection = match cfg.get_ecosystem() {
-            // SVM blocks expose only {slot, hash, time}; skip the EVM default
-            // block fields the global selection would otherwise prepend.
-            Ecosystem::Svm => FieldSelection::new_without_defaults(FieldSelectionOptions {
-                transaction_fields: cfg.field_selection.transaction_fields.clone(),
-                block_fields: cfg.field_selection.block_fields.clone(),
-            }),
-            _ => FieldSelection::global_selection(&cfg.field_selection),
-        };
-
-        let chain_id_cases = match &cfg.human_config {
-            HumanConfig::Svm(hcfg) => hcfg
-                .chains
-                .iter()
-                .enumerate()
-                .map(|(idx, _chain)| idx.to_string())
-                .collect::<Vec<_>>(),
-            HumanConfig::Fuel(hcfg) => hcfg
-                .chains
-                .iter()
-                .map(|chain| chain.id.to_string())
-                .collect::<Vec<_>>(),
-            HumanConfig::Evm(hcfg) => hcfg
-                .chains
-                .iter()
-                .map(|chain| chain.id.to_string())
-                .collect::<Vec<_>>(),
-        };
-
-        // Generate onBlock handler signature with ecosystem-specific types.
-        // Mirror the TypeScript surface in `packages/envio/index.d.ts`
-        // (`EvmOnBlockHandlerArgs`, `FuelOnBlockHandlerArgs`,
-        // `SvmOnSlotHandlerArgs`).
-        let on_block_handler_type = match cfg.get_ecosystem() {
-            Ecosystem::Evm => "Envio.evmOnBlockArgs<handlerContext> => promise<unit>",
-            Ecosystem::Fuel => "Envio.fuelOnBlockArgs<handlerContext> => promise<unit>",
-            Ecosystem::Svm => "Envio.svmOnSlotArgs<handlerContext> => promise<unit>",
+        // The onBlock handler signature mirrors the TypeScript surface in
+        // `packages/envio/index.d.ts` (`EvmOnBlockHandlerArgs`,
+        // `FuelOnBlockHandlerArgs`).
+        let (on_block_handler_type, chain_id_cases) = match &cfg.human_config {
+            HumanConfig::Evm(hcfg) => (
+                "Envio.evmOnBlockArgs<handlerContext> => promise<unit>",
+                hcfg.chains
+                    .iter()
+                    .map(|chain| chain.id.to_string())
+                    .collect::<Vec<_>>(),
+            ),
+            HumanConfig::Fuel(hcfg) => (
+                "Envio.fuelOnBlockArgs<handlerContext> => promise<unit>",
+                hcfg.chains
+                    .iter()
+                    .map(|chain| chain.id.to_string())
+                    .collect::<Vec<_>>(),
+            ),
+            HumanConfig::Svm(_) => {
+                return Err(anyhow!("ReScript is not supported for SVM indexers"))
+            }
         };
 
         // ReScript integer polyvariants (`#137`) are int32-bound, so a config
@@ -1398,7 +1319,7 @@ type indexerContract = {
 
         // Collect all unique contract names across chains
         let mut all_contract_names = BTreeSet::new();
-        for chain_config in &chain_configs {
+        for chain_config in chain_configs {
             for contract in &chain_config.codegen_contracts {
                 all_contract_names.insert(contract.name.original.clone());
             }
@@ -1457,13 +1378,10 @@ type indexerChains = {{
             indexer_chains_fields
         );
 
-        // Ecosystem-specific indexer surface. EVM/Fuel expose event + block
-        // handlers; SVM has no event handlers and uses `onSlot` instead of
-        // `onBlock`. Mirrors the TS typings in `packages/envio/index.d.ts`
-        // and the ecosystem-specific key set in `Main.getGlobalIndexer`.
-        let indexer_type = match cfg.get_ecosystem() {
-            Ecosystem::Evm | Ecosystem::Fuel => format!(
-                r#"/** Metadata and configuration for the indexer. */
+        // Mirrors the TS typings in `packages/envio/index.d.ts` and the
+        // ecosystem-specific key set in `Main.getGlobalIndexer`.
+        let indexer_type = format!(
+            r#"/** Metadata and configuration for the indexer. */
 type indexer = {{
   /** The name of the indexer from config.yaml. */
   name: string,
@@ -1489,31 +1407,7 @@ type indexer = {{
     {on_block_handler_type},
   ) => unit,
 }}"#
-            ),
-            Ecosystem::Svm => format!(
-                r#"/** Metadata and configuration for the indexer. */
-type indexer = {{
-  /** The name of the indexer from config.yaml. */
-  name: string,
-  /** The description of the indexer from config.yaml. */
-  description: option<string>,
-  /** Array of all chain IDs this indexer operates on. */
-  chainIds: array<chainId>,
-  /** Per-chain configuration keyed by chain ID. */
-  chains: indexerChains,
-  /** Register an instruction handler. */
-  onInstruction: 'event 'paramsConstructor 'where. (
-    onInstructionOptions<eventIdentity<'event, 'paramsConstructor, 'where>, 'where>,
-    Internal.genericHandler<Internal.genericHandlerArgs<'event, handlerContext>>,
-  ) => unit,
-  /** Register a Slot Handler. Evaluates `where` once per configured chain at registration time. */
-  onSlot: (
-    Envio.onBlockOptions<indexerChain>,
-    {on_block_handler_type},
-  ) => unit,
-}}"#
-            ),
-        };
+        );
 
         // Generate getChainById function. `chainId` is only a polyvariant in
         // Int32 mode, so the Int64 form looks the key up on the chains record
@@ -1554,8 +1448,8 @@ switch chainId {{
         };
 
         // Generate Enums and Entities modules
-        let enums_module_code = indent(&generate_enums_code(&gql_enums));
-        let entities_module_code = indent(&generate_entities_code(&entities));
+        let enums_module_code = indent(&generate_enums_code(gql_enums));
+        let entities_module_code = indent(&generate_entities_code(entities));
 
         // Generate handlerContext types. String ids use the plain
         // `handlerEntityOperations`; numeric ids use the custom-id variant.
@@ -1754,7 +1648,7 @@ type handlerContext = {{
             .join("\n");
 
         // Block and Transaction module types with deprecated fields for unselected
-        let block_module_type = if let Some(ref all_fs) = all_ecosystem_fields {
+        let block_module_type = if let Some(all_fs) = all_ecosystem_fields {
             Self::generate_rescript_all_fields_record(
                 &global_field_selection.block_fields,
                 &all_fs.block_fields,
@@ -1766,7 +1660,7 @@ type handlerContext = {{
             global_field_selection.block_type.clone()
         };
 
-        let transaction_module_type = if let Some(ref all_fs) = all_ecosystem_fields {
+        let transaction_module_type = if let Some(all_fs) = all_ecosystem_fields {
             Self::generate_rescript_all_fields_record(
                 &global_field_selection.transaction_fields,
                 &all_fs.transaction_fields,
@@ -1840,12 +1734,6 @@ module SingleOrMultiple: {{
 type onEventOptions<'eventIdentity, 'where> = {{
   event: 'eventIdentity,
   wildcard?: bool,
-  where?: 'where,
-}}
-
-/** Options for `indexer.onInstruction` (SVM). */
-type onInstructionOptions<'eventIdentity, 'where> = {{
-  instruction: 'eventIdentity,
   where?: 'where,
 }}
 
@@ -1999,6 +1887,76 @@ type testIndexer = {{
                 .to_string();
 
         indexer_code = format!("{}\n\n{}", indexer_code, generated_top_level_bindings);
+
+        Ok(indexer_code)
+    }
+
+    pub fn from_config(cfg: &SystemConfig) -> Result<Self> {
+        // Compute all available fields for the ecosystem (EVM has all block/tx fields,
+        // Fuel has fixed fields). Used for generating deprecated S.never markers.
+        let all_ecosystem_fields = match cfg.get_ecosystem() {
+            Ecosystem::Evm => {
+                let all_evm = system_config::FieldSelection::all_evm();
+                Some(FieldSelection::new(FieldSelectionOptions {
+                    block_fields: all_evm.block_fields,
+                    transaction_fields: all_evm.transaction_fields,
+                }))
+            }
+            Ecosystem::Fuel => {
+                let fuel_fs = system_config::FieldSelection::fuel();
+                Some(FieldSelection::new_without_defaults(
+                    FieldSelectionOptions {
+                        block_fields: fuel_fs.block_fields,
+                        transaction_fields: fuel_fs.transaction_fields,
+                    },
+                ))
+            }
+            Ecosystem::Svm => None,
+        };
+
+        let entities: Vec<EntityRecordTypeTemplate> = cfg
+            .get_entities()
+            .iter()
+            .map(|entity| EntityRecordTypeTemplate::from_config_entity(entity, cfg))
+            .collect::<Result<_>>()
+            .context("Failed generating entity template types")?;
+
+        let gql_enums: Vec<GraphQlEnumTypeTemplate> = cfg
+            .get_gql_enums()
+            .iter()
+            .map(|gql_enum| GraphQlEnumTypeTemplate::from_config_gql_enum(gql_enum))
+            .collect::<Result<_>>()
+            .context("Failed generating enum template types")?;
+
+        let chain_configs: Vec<NetworkConfigTemplate> = cfg
+            .get_chains()
+            .iter()
+            .map(|network| NetworkConfigTemplate::from_config_network(network, cfg))
+            .collect::<Result<_>>()
+            .context("Failed generating chain configs template")?;
+
+        let global_field_selection = match cfg.get_ecosystem() {
+            // SVM blocks expose only {slot, hash, time}; skip the EVM default
+            // block fields the global selection would otherwise prepend.
+            Ecosystem::Svm => FieldSelection::new_without_defaults(FieldSelectionOptions {
+                transaction_fields: cfg.field_selection.transaction_fields.clone(),
+                block_fields: cfg.field_selection.block_fields.clone(),
+            }),
+            _ => FieldSelection::global_selection(&cfg.field_selection),
+        };
+
+        // ReScript output is EVM/Fuel only; SVM projects are TypeScript.
+        let indexer_code = match cfg.get_ecosystem() {
+            Ecosystem::Svm => None,
+            Ecosystem::Evm | Ecosystem::Fuel => Some(Self::generate_indexer_code(
+                cfg,
+                &chain_configs,
+                &entities,
+                &gql_enums,
+                &global_field_selection,
+                all_ecosystem_fields.as_ref(),
+            )?),
+        };
 
         // Helper function to convert kebab-case to camelCase
         let kebab_to_camel = |s: &str| -> String { s.to_case(Case::Camel) };
@@ -2714,8 +2672,9 @@ fn field_type_to_ts_type(
 }
 
 const SVM_TOKEN_BALANCES_TS: &str = "readonly { readonly account?: string; readonly mint?: \
-                                     string; readonly owner?: string; readonly preAmount?: \
-                                     string; readonly postAmount?: string }[]";
+                                     string; readonly owner?: string; readonly decimals?: \
+                                     number; readonly preAmount?: bigint; readonly postAmount?: \
+                                     bigint }[]";
 
 /// One selected field line of a generated `.d.ts` record: a doc comment plus the
 /// `readonly` property with its real type.
@@ -2783,7 +2742,7 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
         .map(|field| {
             let (ts_type, optional) = match field {
                 SvmTransactionField::TransactionIndex => ("number", false),
-                SvmTransactionField::Signatures => ("readonly string[]", false),
+                SvmTransactionField::Signature => ("string", false),
                 SvmTransactionField::FeePayer => ("string", false),
                 SvmTransactionField::Success => ("boolean", false),
                 SvmTransactionField::Err => ("string", true),
@@ -2795,6 +2754,7 @@ fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
                 SvmTransactionField::AccountKeys => ("readonly string[]", false),
                 SvmTransactionField::RecentBlockhash => ("string", false),
                 SvmTransactionField::Version => ("string", true),
+                SvmTransactionField::AllSignatures => ("readonly string[]", false),
             };
             SvmTransactionFieldSpec {
                 name: field.to_string(),
@@ -3497,14 +3457,18 @@ mod test {
     #[test]
     fn indexer_code_generates_correct_types_and_values() {
         let project_template = get_project_template_helper("config1.yaml");
-        insta::assert_snapshot!(project_template.indexer_code);
+        insta::assert_snapshot!(project_template
+            .indexer_code()
+            .expect("rescript indexer code"));
     }
 
     #[test]
     fn indexer_code_multiple_chains() {
         // config2.yaml has chain IDs 1 (known: ethereum-mainnet) and 2 (unknown)
         let project_template = get_project_template_helper("config2.yaml");
-        insta::assert_snapshot!(project_template.indexer_code);
+        insta::assert_snapshot!(project_template
+            .indexer_code()
+            .expect("rescript indexer code"));
     }
 
     #[test]
@@ -3544,7 +3508,8 @@ type Vault {
                 .expect("numeric-id config should parse");
         let indexer_code = super::ProjectTemplate::from_config(&config)
             .expect("project template")
-            .indexer_code;
+            .indexer_code
+            .expect("rescript indexer code");
 
         let expectations = [
             // `type id` is emitted before `type t`.
@@ -3606,7 +3571,8 @@ type GlobalCounter @crossChain {
                 .expect("per-chain config should parse");
         let indexer_code = super::ProjectTemplate::from_config(&config)
             .expect("project template")
-            .indexer_code;
+            .indexer_code
+            .expect("rescript indexer code");
 
         let expectations = [
             // The per-chain entity's row and filter carry the chain id...
@@ -3744,7 +3710,7 @@ type GlobalCounter @crossChain {
 
     #[test]
     fn svm_transaction_ts_type_renders_optionality_and_unselected() {
-        // Selected required fields (`signatures`, `feePayer`) and always-present
+        // Selected required fields (`signature`, `feePayer`) and always-present
         // `tokenBalances` have no `| undefined`; nullable selected field (`err`,
         // null on a successful tx) is `string | undefined`; unselected fields
         // get the `@deprecated` hint + `FieldNotSelected`, matching the EVM
@@ -3752,7 +3718,7 @@ type GlobalCounter @crossChain {
         let generated = svm_transaction_ts_type(
             &svm_transaction_field_specs(),
             &[
-                "signatures".to_string(),
+                "signature".to_string(),
                 "feePayer".to_string(),
                 "err".to_string(),
                 "tokenBalances".to_string(),
@@ -3761,37 +3727,6 @@ type GlobalCounter @crossChain {
             "  ",
         );
         insta::assert_snapshot!(generated);
-    }
-
-    #[test]
-    fn event_template_svm_instruction_rescript_snapshot() {
-        // The SVM per-instruction module is keyed only off the instruction
-        // name; pin the ReScript shape emitted by `from_svm_instruction_event`.
-        let event = system_config::Event {
-            name: "CreateMetadataAccountV3".to_string(),
-            kind: system_config::EventKind::Svm(system_config::SvmEventKind {
-                discriminator: Some("0x21".to_string()),
-                discriminator_byte_len: 1,
-                selected_transaction_fields: vec![],
-                selected_block_fields: vec![],
-                include_logs: false,
-                account_filters: vec![],
-                is_inner: None,
-                accounts: vec![],
-                args: vec![],
-            }),
-            sighash: "0x21".to_string(),
-            event_signature: String::new(),
-            field_selection: None,
-        };
-        let template = EventTemplate::from_config_event(
-            &event,
-            None,
-            &"TokenMetadata".to_string().to_capitalized_options(),
-        )
-        .unwrap();
-        assert_eq!(template.name, "CreateMetadataAccountV3");
-        insta::assert_snapshot!(template.module_code);
     }
 
     #[test]
@@ -3807,9 +3742,51 @@ type GlobalCounter @crossChain {
     }
 
     #[test]
-    fn indexer_code_generated_for_svm() {
-        let project_template = get_project_template_helper("svm-metaplex-config.yaml");
-        insta::assert_snapshot!(project_template.indexer_code);
+    fn svm_projects_get_no_rescript_indexer() {
+        use tempdir::TempDir;
+
+        let yaml = r#"
+name: svm-no-rescript
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: Swapper
+          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+          instructions:
+            - name: swap
+              discriminator: "0x09"
+"#;
+        let schema = r#"
+type Swap {
+  id: ID!
+}
+"#;
+        // `true` puts the project in the shape that would otherwise get an
+        // `Indexer.res`: a `rescript.json` sitting next to `config.yaml`.
+        let config =
+            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), true)
+                .expect("svm config should parse");
+        let project_template =
+            super::ProjectTemplate::from_config(&config).expect("project template");
+
+        let tmp = TempDir::new("envio-codegen-svm-test").expect("create tempdir");
+        let project_root = tmp.path().to_path_buf();
+        project_template
+            .generate_templates(&ParsedProjectPaths {
+                project_root: project_root.clone(),
+                config: project_root.join("config.yaml"),
+                envio_dir: project_root.join(".envio"),
+            })
+            .expect("codegen run");
+
+        assert!(
+            !project_root.join("src/Indexer.res").exists(),
+            "SVM projects must not get a generated Indexer.res",
+        );
     }
 
     /// End-to-end: `generate_templates` writes the four expected artifacts
@@ -3914,6 +3891,50 @@ type GlobalCounter @crossChain {
             ),
             (true, false),
             "Got:\n{out}",
+        );
+    }
+
+    /// Renders the `EvmAllBlockFields` / `EvmAllTransactionFields` records that
+    /// `packages/envio/index.d.ts` declares by hand, from the config-parsing
+    /// enums. Hand-written there so the inline `fields` option types work in a
+    /// project that never ran codegen; rendered here so they can't drift.
+    fn evm_all_fields_dts() -> String {
+        let all = system_config::FieldSelection::all_evm();
+        let selection = super::FieldSelection::new(FieldSelectionOptions {
+            block_fields: all.block_fields,
+            transaction_fields: all.transaction_fields,
+        });
+        let render = |name: &str, fields: &[SelectedFieldTemplate]| {
+            let lines: Vec<String> = fields
+                .iter()
+                .map(|f| {
+                    format!(
+                        "  readonly {}: {};",
+                        f.name.camel,
+                        ProjectTemplate::to_envio_dts_type(&f.ts_type)
+                    )
+                })
+                .collect();
+            format!("export type {name} = {{\n{}\n}};", lines.join("\n"))
+        };
+        format!(
+            "{}\n\n{}",
+            render("EvmAllBlockFields", &selection.block_fields),
+            render("EvmAllTransactionFields", &selection.transaction_fields),
+        )
+    }
+
+    #[test]
+    fn evm_all_fields_dts_matches_hand_written_index_dts() {
+        let rendered = evm_all_fields_dts();
+
+        let index_dts_path = format!("{}/../envio/index.d.ts", env!("CARGO_MANIFEST_DIR"));
+        let index_dts = std::fs::read_to_string(&index_dts_path)
+            .unwrap_or_else(|e| panic!("Failed to read {index_dts_path}: {e}"));
+        assert!(
+            index_dts.contains(&rendered),
+            "packages/envio/index.d.ts is out of sync with the EVM field enums. Replace its \
+             EvmAllBlockFields/EvmAllTransactionFields declarations with:\n\n{rendered}",
         );
     }
 }

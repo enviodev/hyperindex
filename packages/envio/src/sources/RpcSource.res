@@ -463,6 +463,21 @@ let makeFieldRegistry = (addressSchema: S.t<JSON.t>): Utils.Record.t<
 let fieldRegistryLowercase = makeFieldRegistry(lowercaseAddressSchema)
 let fieldRegistryChecksum = makeFieldRegistry(checksumAddressSchema)
 
+// Whether an RPC source can populate a transaction field. The getter skips a
+// field it can't parse, so this is what separates "absent because the chain has
+// none" from "absent because RPC never provides it". `hash` and
+// `transactionIndex` come off the log itself, so they have no registry entry.
+// Blocks need no equivalent: `eth_getBlockByNumber` carries every block field,
+// which `RpcFieldSelection_test.res` holds the registry to.
+let isRpcTransactionField = (name: string) =>
+  switch name {
+  | "transactionIndex" | "hash" => true
+  | _ =>
+    fieldRegistryChecksum
+    ->Utils.Record.get(name->(Utils.magic: string => Internal.evmTransactionField))
+    ->Option.isSome
+  }
+
 type fetchStrategy = NoRpc | TransactionOnly | ReceiptOnly | TransactionAndReceipt
 
 // Parse fields from a raw JSON object into a result dict.
@@ -487,6 +502,30 @@ let parseFieldsFromJson = (
   })
 }
 
+let effectiveGasPriceKey = (Internal.EffectiveGasPrice: Internal.evmTransactionField :> string)
+
+// Pre-EIP-1559 receipts carry no `effectiveGasPrice` — every Optimism block
+// below the Bedrock migration at 105235063, for one. Those chains price every
+// transaction the legacy way, so the transaction's `gasPrice` is the effective
+// price, which is the same substitution HyperSync serves for those blocks.
+// Reads `gasPrice` but stores under `effectiveGasPrice`.
+let effectiveGasPriceFallbackDef = {
+  location: EffectiveGasPrice,
+  jsonKey: "gasPrice",
+  schema: Rpc.hexBigintSchema->toFieldSchema,
+  source: TransactionOnly,
+}
+
+let fillEffectiveGasPriceOrThrow = (mutTransactionAcc: dict<JSON.t>, txJson: JSON.t) => {
+  let gasPrice =
+    txJson->(Utils.magic: JSON.t => dict<JSON.t>)->Utils.Dict.dangerouslyGetNonOption("gasPrice")
+  switch gasPrice {
+  | None =>
+    JsError.throwWithMessage(`Neither "effectiveGasPrice" nor "gasPrice" is present in the RPC response for the transaction. Remove "effectiveGasPrice" from the field selection, or index this chain via HyperSync.`)
+  | Some(_) => parseFieldsFromJson(mutTransactionAcc, [effectiveGasPriceFallbackDef], txJson)
+  }
+}
+
 let makeThrowingGetEventTransaction = (
   ~getTransactionJson: string => promise<JSON.t>,
   ~getReceiptJson: string => promise<JSON.t>,
@@ -507,6 +546,7 @@ let makeThrowingGetEventTransaction = (
           // Classify fields: log-derived vs RPC fields
           let hasTransactionIndex = ref(false)
           let hasHash = ref(false)
+          let hasEffectiveGasPrice = ref(false)
           let txFields: array<fieldDef> = []
           let receiptFields: array<fieldDef> = []
           let bothFields: array<fieldDef> = []
@@ -518,6 +558,15 @@ let makeThrowingGetEventTransaction = (
             | _ =>
               switch fieldRegistry->Utils.Record.get(fieldName) {
               | Some(def) =>
+                // Absent from the receipt means fall back to the transaction's
+                // `gasPrice`, so this one field parses leniently rather than
+                // throwing on a receipt that omits it.
+                let def = if fieldName === EffectiveGasPrice {
+                  hasEffectiveGasPrice := true
+                  {...def, schema: S.nullable(def.schema)->toFieldSchema}
+                } else {
+                  def
+                }
                 switch def.source {
                 | TransactionOnly => txFields->Array.push(def)->ignore
                 | ReceiptOnly => receiptFields->Array.push(def)->ignore
@@ -580,10 +629,8 @@ let makeThrowingGetEventTransaction = (
                 | _ => Promise.resolve(None)
                 }
 
-                Promise.all2((txJsonPromise, receiptJsonPromise))->Promise.thenResolve(((
-                  txJson,
-                  receiptJson,
-                )) => {
+                Promise.all2((txJsonPromise, receiptJsonPromise))
+                ->Promise.then(((txJson, receiptJson)) => {
                   let mutTransactionAcc = Dict.make()
                   setLogFields(mutTransactionAcc, log)
 
@@ -596,6 +643,30 @@ let makeThrowingGetEventTransaction = (
                   | None => ()
                   }
 
+                  // Only the chains that omit it pay for the extra request, and
+                  // only when the receipt has already come back without it.
+                  if (
+                    hasEffectiveGasPrice.contents &&
+                    mutTransactionAcc
+                    ->Utils.Dict.dangerouslyGetNonOption(effectiveGasPriceKey)
+                    ->Option.isNone
+                  ) {
+                    switch txJson {
+                    | Some(json) => {
+                        fillEffectiveGasPriceOrThrow(mutTransactionAcc, json)
+                        Promise.resolve(mutTransactionAcc)
+                      }
+                    | None =>
+                      getTransactionJson(log.transactionHash)->Promise.thenResolve(json => {
+                        fillEffectiveGasPriceOrThrow(mutTransactionAcc, json)
+                        mutTransactionAcc
+                      })
+                    }
+                  } else {
+                    Promise.resolve(mutTransactionAcc)
+                  }
+                })
+                ->Promise.thenResolve(mutTransactionAcc => {
                   mutTransactionAcc->(Utils.magic: dict<JSON.t> => 'a)
                 })
               }
@@ -768,6 +839,12 @@ let make = (
   let transactionLoader = ref(makeTransactionLoader())
   let receiptLoader = ref(makeReceiptLoader())
 
+  let resetCachedLoaders = () => {
+    blockLoader := makeBlockLoader()
+    transactionLoader := makeTransactionLoader()
+    receiptLoader := makeReceiptLoader()
+  }
+
   let getEventBlockOrThrow = makeThrowingGetEventBlock(
     ~getBlockJson=blockNumber => blockLoader.contents->LazyLoader.get(blockNumber),
     ~lowercaseAddresses,
@@ -815,10 +892,16 @@ let make = (
     | None => knownHeight
     }
 
-    let firstBlockParentPromise =
-      fromBlock > 0
+    // The seam block (`fromBlock - 1`) is the only block this range shares with
+    // what the store already scanned, so it is where a reorg at the boundary
+    // shows up. Reading it directly would answer from the block cache — it was
+    // the previous range's `toBlock`, so it is always cached, and always on the
+    // chain that range saw. Read `fromBlock` instead, which no earlier range
+    // touched, and take the seam's hash from its `parentHash`.
+    let firstBlockPromise =
+      fromBlock > 0 && fromBlock <= toBlock
         ? blockLoader.contents
-          ->LazyLoader.get(fromBlock - 1)
+          ->LazyLoader.get(fromBlock)
           ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
         : Promise.resolve(None)
 
@@ -885,9 +968,13 @@ let make = (
       (
         async () => {
           let (block, transaction) = try await Promise.all2((
-            log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
+            log->getEventBlockOrThrow(
+              ~selectedBlockFields=onEventRegistration.fieldSelection.blockFields->(
+                Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmBlockField>
+              ),
+            ),
             log->getEventTransactionOrThrow(
-              ~selectedTransactionFields=eventConfig.selectedTransactionFields->(
+              ~selectedTransactionFields=onEventRegistration.fieldSelection.transactionFields->(
                 Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
               ),
             ),
@@ -931,7 +1018,7 @@ let make = (
             payload: {
               contractName: eventConfig.contractName,
               eventName: eventConfig.name,
-              chainId: chainId,
+              chainId,
               params: decoded,
               block,
               transaction,
@@ -944,55 +1031,66 @@ let make = (
     })
     ->Promise.all
 
-    let optFirstBlockParent = await firstBlockParentPromise
+    let optFirstBlock = await firstBlockPromise
 
     let totalTimeElapsed = startFetchingBatchTimeRef->Performance.secondsSince
 
     // Every fetched block carries `hash` and `parentHash`, so each one yields
     // two confirmed (number, hash) pairs for reorg detection at no extra cost.
-    let blockHashes = []
+    // Both these blocks and the logs' own `blockHash` come from this range's
+    // responses, never from the block cache's older view of the chain. They go
+    // into a hash-only page store merged into the chain store, where hash
+    // comparison happens. The block data itself stays inline on the payload.
+    let observedBlocks: array<BlockStore.inputBlock> = []
     let pushBlockInfo = (b: blockInfo) => {
-      blockHashes->Array.push({ReorgDetection.blockNumber: b.number, blockHash: b.hash})->ignore
+      observedBlocks
+      ->Array.push({
+        BlockStore.blockNumber: b.number,
+        blockHash: b.hash,
+        blockTimestamp: b.timestamp,
+      })
+      ->ignore
       if b.number > 0 {
-        blockHashes
-        ->Array.push({ReorgDetection.blockNumber: b.number - 1, blockHash: b.parentHash})
+        observedBlocks
+        ->Array.push({BlockStore.blockNumber: b.number - 1, blockHash: b.parentHash})
         ->ignore
       }
     }
     pushBlockInfo(latestFetchedBlockInfo)
-    switch optFirstBlockParent {
+    switch optFirstBlock {
     | Some(b) => pushBlockInfo(b)
     | None => ()
     }
     items->Array.forEach(({log}) =>
-      blockHashes
-      ->Array.push({ReorgDetection.blockNumber: log.blockNumber, blockHash: log.blockHash})
+      observedBlocks
+      ->Array.push({BlockStore.blockNumber: log.blockNumber, blockHash: log.blockHash})
       ->ignore
     )
 
     {
-      latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
       latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
-      // RPC keeps the transaction and block inline on the payload; no store pages.
+      // RPC keeps the transaction and block inline on the payload; no
+      // transaction page, and the block page carries only observed hashes.
       transactionStore: None,
-      blockStore: None,
+      blockStore: BlockStore.fromJs(
+        observedBlocks,
+        ~ecosystem=Evm,
+        ~shouldChecksum=!lowercaseAddresses,
+      ),
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },
       knownHeight,
-      blockHashes,
       fromBlockQueried: fromBlock,
       requestStats: drainRequestStats(),
     }
   }
 
-  let onReorg = (~rollbackTargetBlock as _) => {
-    // Drop cached block/transaction/receipt data — after a reorg the cached
-    // entries may refer to orphaned-chain values.
-    blockLoader := makeBlockLoader()
-    transactionLoader := makeTransactionLoader()
-    receiptLoader := makeReceiptLoader()
+  let onReorg = () => {
+    // Drop cached block/transaction/receipt data — after a reorg or an
+    // internally inconsistent response these may refer to orphaned-chain values.
+    resetCachedLoaders()
   }
 
   let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
@@ -1000,21 +1098,29 @@ let make = (
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
     ->Promise.all
     ->Promise.thenResolve(rawBlocks => {
-      let result =
-        rawBlocks
-        ->Array.map(json => {
-          let b = parseBlockInfo(json)
-
-          (
-            {
-              blockNumber: b.number,
-              blockHash: b.hash,
-              blockTimestamp: b.timestamp,
-            }: ReorgDetection.blockDataWithTimestamp
-          )
+      // Each block is fetched in its own request, so responses can mix forks.
+      // The parent hash becomes a minimal extra row: when consecutive blocks
+      // are requested, the page's own hash-collision check cross-validates the
+      // separately fetched responses.
+      let observedBlocks: array<BlockStore.inputBlock> = []
+      rawBlocks->Array.forEach(json => {
+        let b = parseBlockInfo(json)
+        observedBlocks
+        ->Array.push({
+          BlockStore.blockNumber: b.number,
+          blockHash: b.hash,
+          blockTimestamp: b.timestamp,
         })
-        ->Ok
-      {Source.result, requestStats: drainRequestStats()}
+        ->ignore
+        if b.number > 0 {
+          observedBlocks
+          ->Array.push({BlockStore.blockNumber: b.number - 1, blockHash: b.parentHash})
+          ->ignore
+        }
+      })
+      let blockStore =
+        observedBlocks->BlockStore.fromJs(~ecosystem=Evm, ~shouldChecksum=!lowercaseAddresses)
+      {Source.result: Ok(blockStore), requestStats: drainRequestStats()}
     })
     ->Promise.catch(exn =>
       {Source.result: Error(exn), requestStats: drainRequestStats()}->Promise.resolve
@@ -1023,7 +1129,7 @@ let make = (
 
   let createHeightSubscription =
     ws->Option.map(wsUrl =>
-      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId=chainId, ~onHeight)
+      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight)
     )
 
   {

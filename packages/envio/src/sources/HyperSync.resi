@@ -1,23 +1,23 @@
 type logsQueryPage = {
   items: array<HyperSyncClient.EventItems.item>,
-  blocks: array<HyperSyncClient.EventItems.blockHeader>,
   nextBlock: int,
   archiveHeight: int,
-  rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
   transactionStore: TransactionStore.t,
   blockStore: BlockStore.t,
 }
 
-type missingParams = {
-  queryName: string,
-  missingParams: array<string>,
-}
+// Map a native client's `PREFIX:<int>` failure marker onto the exception
+// SourceManager retries on (`RateLimited` / `SourceBehindHead`), falling back to
+// the original cause.
+let mapNativeFailure: Source.nativeRequestFailure => exn
+let mapNativeFailureExn: exn => exn
+let reraiseIfRecoverable: exn => unit
 
-type queryError = UnexpectedMissingParams(missingParams)
-
-let queryErrorToMsq: queryError => string
-
-type queryResponse<'a> = result<'a, queryError>
+// Wrap a native client's paginated block-hash query as a `Source.getBlockHashes`,
+// keeping the request timings whether it succeeds or fails.
+let makeGetBlockHashes: (
+  ~query: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<Source.requestStat>)>,
+) => (~blockNumbers: array<int>, ~logger: Pino.t) => promise<Source.getBlockHashesResponse>
 
 module GetLogs: {
   type error =
@@ -38,27 +38,3 @@ module GetLogs: {
     ~clientFilteredContracts: option<array<string>>,
   ) => promise<logsQueryPage>
 }
-
-let queryBlockData: (
-  ~client: HyperSyncClient.t,
-  ~blockNumber: int,
-  ~sourceName: string,
-  ~chainId: ChainId.t,
-  ~logger: Pino.t,
-) => promise<(
-  queryResponse<option<ReorgDetection.blockDataWithTimestamp>>,
-  array<Source.requestStat>,
-)>
-
-let queryBlockDataMulti: (
-  ~client: HyperSyncClient.t,
-  ~blockNumbers: array<int>,
-  ~sourceName: string,
-  ~chainId: ChainId.t,
-  ~logger: Pino.t,
-) => promise<(
-  queryResponse<array<ReorgDetection.blockDataWithTimestamp>>,
-  array<Source.requestStat>,
-)>
-
-let mapExn: queryResponse<'a> => result<'a, exn>

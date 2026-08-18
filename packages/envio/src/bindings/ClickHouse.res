@@ -14,8 +14,13 @@ type execParams = {query: string}
 @module("@clickhouse/client")
 external createClient: clientConfig => client = "createClient"
 
+// `command`, not `exec`: exec hands its response stream to the caller and holds
+// the socket until it is consumed, which nothing here does. The pool is 10
+// sockets wide, so a schema whose DDL needs more than that — initialize issues
+// 2N+3 statements for N entities — stalled every statement past the tenth until
+// the 30s request timeout freed one. command destroys the stream for us.
 @send
-external exec: (client, execParams) => promise<unit> = "exec"
+external command: (client, execParams) => promise<unit> = "command"
 
 @send
 external close: client => promise<unit> = "close"
@@ -715,21 +720,21 @@ let initialize = async (
       // CLUSTER removes the database from every node — the engine's own log
       // can't replicate the drop of the database it lives in — and SYNC waits
       // for the drop to finish before the CREATE below.
-      await client->exec({
+      await client->command({
         query: `DROP DATABASE IF EXISTS ${database} ON CLUSTER '{cluster}' SYNC`,
       })
     } else {
-      await client->exec({
+      await client->command({
         query: `TRUNCATE DATABASE IF EXISTS ${database}${onClusterClause(~onCluster=ddlOnCluster)}`,
       })
     }
-    await client->exec({
+    await client->command({
       query: `CREATE DATABASE IF NOT EXISTS ${database}${databaseOnClusterClause}${databaseEngineClause}`,
     })
 
     await Promise.all(
       entities->Array.map(entityConfig =>
-        client->exec({
+        client->command({
           query: makeCreateHistoryTableQuery(
             ~entityConfig,
             ~database,
@@ -740,7 +745,7 @@ let initialize = async (
         })
       ),
     )->Utils.Promise.ignoreValue
-    await client->exec({
+    await client->command({
       query: makeCreateCheckpointsTableQuery(
         ~database,
         ~replicated,
@@ -757,14 +762,14 @@ let initialize = async (
     // caught up before creating the views. ON CLUSTER must precede the
     // database name in this command's grammar.
     if hasReplicatedDatabaseEngine {
-      await client->exec({
+      await client->command({
         query: `SYSTEM SYNC DATABASE REPLICA ON CLUSTER '{cluster}' ${database}`,
       })
     }
 
     await Promise.all(
       entities->Array.map(entityConfig =>
-        client->exec({
+        client->command({
           query: makeCreateViewQuery(~entityConfig, ~database, ~onCluster=ddlOnCluster),
         })
       ),
@@ -784,7 +789,7 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
   try {
     // Try to use the database - will throw if it doesn't exist
     try {
-      await client->exec({query: `USE ${database}`})
+      await client->command({query: `USE ${database}`})
     } catch {
     | exn =>
       Logging.errorWithExn(
@@ -804,14 +809,14 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
     await Promise.all(
       tables->Array.map(table => {
         let tableName = table["name"]
-        client->exec({
+        client->command({
           query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->BigInt.toString}`,
         })
       }),
     )->Utils.Promise.ignoreValue
 
     // Delete stale checkpoints
-    await client->exec({
+    await client->command({
       query: `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->BigInt.toString}`,
     })
   } catch {

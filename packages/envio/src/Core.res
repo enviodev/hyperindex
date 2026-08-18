@@ -12,6 +12,8 @@ type transactionStoreCtor
 type blockStoreCtor
 type clickHouseSinkCtor
 type addressStoreCtor
+// Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
+type mockHyperSyncServerCtor
 type fromUserApiOptions = {
   schema?: string,
   env?: dict<string>,
@@ -49,6 +51,8 @@ type addon = {
   // The wire kind Rust expects for a ClickHouse column type. The JS side picks
   // its typed array from this rather than deriving the kind a second time.
   clickhouseColumnKind: string => int,
+  @as("MockHyperSyncServer")
+  mockHyperSyncServer: mockHyperSyncServerCtor,
   // Ordered transaction-field names exposed for the field-code contract test
   // (the ReScript `transactionFields` arrays must match the Rust ordinals).
   evmTransactionFieldNames: unit => array<string>,
@@ -57,6 +61,7 @@ type addon = {
   // must match the Rust ordinals).
   evmBlockFieldNames: unit => array<string>,
   svmBlockFieldNames: unit => array<string>,
+  fuelBlockFieldNames: unit => array<string>,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"
