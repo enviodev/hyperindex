@@ -264,7 +264,22 @@ pub fn validate_deserialized_svm_config_yaml(
             .as_ref()
             .map(|e| e.programs.as_slice())
             .unwrap_or(&[]);
+        // Two programs on one id put their instructions in the same routing
+        // pool with nothing to tell them apart, and the per-program checks
+        // that follow — unique instruction names, distinguishable
+        // discriminators — would each see only half the pool.
+        let mut seen_program_ids: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::new();
         for program in programs {
+            if let Some(existing) = seen_program_ids.insert(&program.program_id, &program.name) {
+                return Err(anyhow!(
+                    "Programs {:?} and {:?} share program_id {:?}. Their instructions compete for \
+                     the same on-chain data — list them under one program instead.",
+                    existing,
+                    program.name,
+                    program.program_id
+                ));
+            }
             if !is_valid_solana_pubkey(&program.program_id) {
                 return Err(anyhow!(
                     "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
@@ -672,6 +687,40 @@ chains:
 "#,
             );
             validate_deserialized_svm_config_yaml(&cfg).unwrap();
+        }
+
+        #[test]
+        fn validation_rejects_two_programs_on_one_id() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: Reads
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: A
+              discriminator: "0x0f"
+        - name: Writes
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: B
+              discriminator: "0x0f"
+"#,
+            );
+            assert_eq!(
+                validate_deserialized_svm_config_yaml(&cfg)
+                    .unwrap_err()
+                    .to_string(),
+                "Programs \"Reads\" and \"Writes\" share program_id \
+                 \"metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\". Their instructions compete for \
+                 the same on-chain data — list them under one program instead."
+            );
         }
 
         #[test]
