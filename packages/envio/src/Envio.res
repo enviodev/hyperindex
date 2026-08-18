@@ -78,6 +78,10 @@ type svmAccountToken = {
  own account keys, so an account with no recorded activity is still listed. */
 type svmAccount = {
   address: SvmTypes.Pubkey.t,
+  /** Message-header flags. `null` on an account the response carried no
+   activity row for. */
+  isSigner: Null.t<bool>,
+  isWritable: Null.t<bool>,
   preLamports: Null.t<bigint>,
   postLamports: Null.t<bigint>,
   token: Null.t<svmAccountToken>,

@@ -157,6 +157,8 @@ expectType<
     SvmAccount,
     {
       readonly address: string;
+      readonly isSigner: boolean | null;
+      readonly isWritable: boolean | null;
       readonly preLamports: bigint | null;
       readonly postLamports: bigint | null;
       readonly token: SvmAccountToken | null;

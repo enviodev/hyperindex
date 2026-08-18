@@ -90,6 +90,11 @@ pub struct SvmAccountTokenOut {
 #[derive(Clone)]
 pub struct SvmAccountOut {
     pub address: String,
+    /// Message-header flags, `null` on an account the response carried no
+    /// activity row for — most of a transaction's keys, since a row exists only
+    /// where something moved.
+    pub is_signer: Option<bool>,
+    pub is_writable: Option<bool>,
     pub pre_lamports: Option<BigInt>,
     pub post_lamports: Option<BigInt>,
     pub token: Option<SvmAccountTokenOut>,

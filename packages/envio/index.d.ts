@@ -1240,6 +1240,11 @@ export type SvmAccountToken = {
  * `field_selection.transaction_fields`. */
 export type SvmAccount = {
   readonly address: string;
+  /** Message-header flags. `null` on an account the response carried no
+   * activity row for — most of a transaction's keys, since a row exists only
+   * where something moved. */
+  readonly isSigner: boolean | null;
+  readonly isWritable: boolean | null;
   readonly preLamports: bigint | null;
   readonly postLamports: bigint | null;
   readonly token: SvmAccountToken | null;

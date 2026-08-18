@@ -472,6 +472,15 @@ impl StoreCol {
         }
     }
 
+    /// Boolean cell, for the account-activity table's direct-by-slot reads.
+    /// Panics on a non-`Bool` column.
+    fn bool_cell(&self, slot: usize) -> bool {
+        match self {
+            StoreCol::Bool(v) => v[slot],
+            _ => panic!("expected a bool column"),
+        }
+    }
+
     /// String-list cell, for the account-activity join's direct-by-slot reads.
     /// Panics on a non-`StrList` column.
     fn str_list_cell(&self, slot: usize) -> Option<&[String]> {
@@ -842,6 +851,17 @@ impl Table<(u64, u32, Box<str>)> {
             return None;
         }
         self.cols[field].as_ref().map(|c| c.u64_cell(slot as usize))
+    }
+
+    /// One boolean field at `slot`, or `None` if it was never populated for
+    /// that row.
+    pub(crate) fn bool_cell(&self, field: usize, slot: u32) -> Option<bool> {
+        if self.masks[slot as usize] & (1u64 << field) == 0 {
+            return None;
+        }
+        self.cols[field]
+            .as_ref()
+            .map(|c| c.bool_cell(slot as usize))
     }
 }
 

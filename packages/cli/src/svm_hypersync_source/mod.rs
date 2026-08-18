@@ -374,10 +374,7 @@ impl SvmHyperSyncClient {
         }
         if built.needs_account_activity {
             // The store keys activity rows by account regardless of what the
-            // consumer selected, so `account` always rides along. The table also
-            // carries the message-header flags (`is_signer`, `is_writable`) and
-            // a derived `token_state`; none are exposed yet, so none are
-            // fetched.
+            // consumer selected, so `account` always rides along.
             let mut columns = vec![
                 "slot",
                 "transaction_index",
@@ -395,7 +392,13 @@ impl SvmHyperSyncClient {
                 // `account_index` is the account's position in the resolved key
                 // list, which orders the accounts an address lookup table
                 // contributed — they aren't in `account_keys`.
-                columns.extend(["pre_balance", "post_balance", "account_index"]);
+                columns.extend([
+                    "pre_balance",
+                    "post_balance",
+                    "account_index",
+                    "is_signer",
+                    "is_writable",
+                ]);
             }
             field_selection.account_activity = parse_columns(&columns).map_err(map_err)?;
         }

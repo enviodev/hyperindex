@@ -384,7 +384,9 @@ const AA_POST_LAMPORTS: usize = 6;
 /// lookup tables' writable then readonly addresses), fetched only for
 /// `allAccounts`.
 const AA_ACCOUNT_INDEX: usize = 7;
-const ACCOUNT_ACTIVITY_FIELDS: usize = 8;
+const AA_IS_SIGNER: usize = 8;
+const AA_IS_WRITABLE: usize = 9;
+const ACCOUNT_ACTIVITY_FIELDS: usize = 10;
 
 /// The token side of an activity row, read directly by slot off the companion
 /// table's columns. `None` on an account that holds no token balance — the mint
@@ -457,6 +459,8 @@ fn account_row(
 ) -> SvmAccountOut {
     SvmAccountOut {
         address: address.to_string(),
+        is_signer: slot.and_then(|slot| table.bool_cell(AA_IS_SIGNER, slot)),
+        is_writable: slot.and_then(|slot| table.bool_cell(AA_IS_WRITABLE, slot)),
         pre_lamports: slot
             .and_then(|slot| table.u64_cell(AA_PRE_LAMPORTS, slot))
             .map(bigint_u64),
@@ -785,6 +789,8 @@ impl TransactionStore {
         cols[AA_PRE_LAMPORTS] = u64_col(|r| r.pre_balance);
         cols[AA_POST_LAMPORTS] = u64_col(|r| r.post_balance);
         cols[AA_ACCOUNT_INDEX] = u64_col(|r| r.account_index.map(u64::from));
+        cols[AA_IS_SIGNER] = crate::field_table::bool_from(&rows, |r| r.is_signer);
+        cols[AA_IS_WRITABLE] = crate::field_table::bool_from(&rows, |r| r.is_writable);
         let keys = rows
             .into_iter()
             .map(|r| {
@@ -858,8 +864,16 @@ mod tests {
     /// `(mint, owner, decimals, preAmount, postAmount)` of a materialised
     /// account's token side.
     type TokenView = (String, Option<String>, Option<u8>, Option<u64>, Option<u64>);
-    /// `(address, preLamports, postLamports, token)` of one materialised account.
-    type AccountView = (String, Option<u64>, Option<u64>, Option<TokenView>);
+    /// `(address, isSigner, isWritable, preLamports, postLamports, token)` of
+    /// one materialised account.
+    type AccountView = (
+        String,
+        Option<bool>,
+        Option<bool>,
+        Option<u64>,
+        Option<u64>,
+        Option<TokenView>,
+    );
 
     /// The `accounts` column as plain comparable values — `BigInt` is neither
     /// `PartialEq` nor `Debug`, so an assert over the whole record needs this.
@@ -875,6 +889,8 @@ mod tests {
                             .map(|a| {
                                 (
                                     a.address.clone(),
+                                    a.is_signer,
+                                    a.is_writable,
                                     amount(&a.pre_lamports),
                                     amount(&a.post_lamports),
                                     a.token.as_ref().map(|t| {
@@ -1150,6 +1166,8 @@ mod tests {
                 slot: Some(5),
                 transaction_index: Some(0),
                 account: Some(svm_key(1)),
+                is_signer: Some(true),
+                is_writable: Some(true),
                 pre_balance: Some(1_000_000),
                 post_balance: Some(900_000),
                 ..Default::default()
@@ -1158,6 +1176,8 @@ mod tests {
                 slot: Some(5),
                 transaction_index: Some(0),
                 account: Some(svm_key(2)),
+                is_signer: Some(false),
+                is_writable: Some(true),
                 pre_balance: Some(0),
                 post_balance: Some(2_039_280),
                 mint: Some(svm_key(0xA1)),
@@ -1170,6 +1190,8 @@ mod tests {
                 slot: Some(5),
                 transaction_index: Some(0),
                 account: Some(svm_key(3)),
+                is_signer: Some(false),
+                is_writable: Some(true),
                 pre_balance: Some(2_039_280),
                 post_balance: Some(0),
                 mint: Some(svm_key(0xA2)),
@@ -1192,6 +1214,8 @@ mod tests {
             vec![Some(vec![
                 (
                     svm_key(1).to_string(),
+                    Some(true),
+                    Some(true),
                     Some(1_000_000),
                     Some(900_000),
                     // A plain SOL account holds no token balance.
@@ -1199,6 +1223,8 @@ mod tests {
                 ),
                 (
                     svm_key(2).to_string(),
+                    Some(false),
+                    Some(true),
                     Some(0),
                     Some(2_039_280),
                     // Opened during the transaction: no amount before it.
@@ -1212,6 +1238,8 @@ mod tests {
                 ),
                 (
                     svm_key(3).to_string(),
+                    Some(false),
+                    Some(true),
                     Some(2_039_280),
                     Some(0),
                     // Closed during the transaction: no amount after it, and the
@@ -1257,7 +1285,7 @@ mod tests {
                 .into_iter()
                 .map(|row| row.map(|accounts| accounts
                     .into_iter()
-                    .map(|(address, pre, _, _)| (address, pre))
+                    .map(|(address, _, _, pre, _, _)| (address, pre))
                     .collect::<Vec<_>>()))
                 .collect::<Vec<_>>(),
             vec![Some(vec![
