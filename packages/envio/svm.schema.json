@@ -212,6 +212,15 @@
     "Chain": {
       "type": "object",
       "properties": {
+        "id": {
+          "description": "Envio-internal id identifying the Svm cluster: 7565164 for Solana mainnet (the default when omitted), 7565165 for Solana devnet. Svm has no native numeric chain id, so these are assigned by Envio and match the ids used for HyperSync usage attribution.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
         "skip": {
           "description": "Excludes the chain from indexing and migrations. Code generation is unaffected. For testing, prefer using a test framework instead.",
           "type": [

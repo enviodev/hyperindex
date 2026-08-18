@@ -1465,7 +1465,9 @@ impl SystemConfig {
                     }
 
                     let chain = Chain {
-                        id: 0, //network.id,
+                        id: network
+                            .id
+                            .unwrap_or(human_config::svm::SOLANA_MAINNET_CHAIN_ID),
                         skip: network.skip.unwrap_or(false),
                         start_block: network.start_block,
                         end_block: network.end_block,
@@ -2953,6 +2955,50 @@ mod test {
             filesystem.to_public_config_json(false).unwrap(),
             memory.to_public_config_json(false).unwrap(),
         );
+    }
+
+    #[test]
+    fn svm_chain_id_defaults_to_solana_mainnet_and_honours_override() {
+        use crate::config_parsing::human_config::svm::{
+            SOLANA_DEVNET_CHAIN_ID, SOLANA_MAINNET_CHAIN_ID,
+        };
+
+        let schema = "type Foo @entity { id: ID! }";
+        let svm_yaml = |id_line: &str| {
+            format!(
+                r#"
+name: svm-chain-id
+ecosystem: svm
+chains:
+  - {id_line}start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: TokenMetadata
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: UpdateMetadataAccountV2
+              discriminator: "0x0f"
+"#
+            )
+        };
+        let parse = |yaml: &str| {
+            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("svm config")
+        };
+
+        // Omitting `id` keeps existing configs working and lands on mainnet,
+        // not the old hardcoded 0 that collided with Fuel testnet (HOS-1880).
+        let default_ids: Vec<_> = parse(&svm_yaml("")).chains.keys().copied().collect();
+        assert_eq!(default_ids, vec![SOLANA_MAINNET_CHAIN_ID]);
+
+        let devnet_ids: Vec<_> = parse(&svm_yaml(&format!("id: {SOLANA_DEVNET_CHAIN_ID}\n    ")))
+            .chains
+            .keys()
+            .copied()
+            .collect();
+        assert_eq!(devnet_ids, vec![SOLANA_DEVNET_CHAIN_ID]);
     }
 
     #[test]

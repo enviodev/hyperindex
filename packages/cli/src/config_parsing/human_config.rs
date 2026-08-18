@@ -1005,13 +1005,23 @@ pub mod svm {
         pub url: String,
     }
 
+    /// Svm clusters have no native numeric chain id, so Envio assigns its own.
+    /// These are the ids HyperSync already stamps onto usage rows (HOS-1682);
+    /// they are Envio-internal, not a cross-vendor standard.
+    pub const SOLANA_MAINNET_CHAIN_ID: u64 = 7565164;
+    pub const SOLANA_DEVNET_CHAIN_ID: u64 = 7565165;
+
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Chain {
-        // #[schemars(
-        //     description = "The cluster's genesis hash used to identify the Svm blockchain."
-        // )]
-        // pub id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Envio-internal id identifying the Svm cluster: 7565164 for Solana \
+                           mainnet (the default when omitted), 7565165 for Solana devnet. Svm has \
+                           no native numeric chain id, so these are assigned by Envio and match \
+                           the ids used for HyperSync usage attribution."
+        )]
+        pub id: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Excludes the chain from indexing and migrations. Code \
                                   generation is unaffected. For testing, prefer using a test \
@@ -1628,6 +1638,21 @@ chains:
                 - position: 0
                   values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
 "#;
+
+        #[test]
+        fn chain_id_defaults_to_none_and_round_trips() {
+            // Omitted `id` stays None here; system_config resolves it to
+            // SOLANA_MAINNET_CHAIN_ID so existing configs keep working.
+            let cfg: HumanConfig = serde_yaml::from_str(METAPLEX_YAML).unwrap();
+            assert_eq!(cfg.chains[0].id, None);
+
+            for id in [SOLANA_MAINNET_CHAIN_ID, SOLANA_DEVNET_CHAIN_ID] {
+                let yaml =
+                    format!("name: x\necosystem: svm\nchains:\n  - id: {id}\n    start_block: 0\n");
+                let cfg: HumanConfig = serde_yaml::from_str(&yaml).unwrap();
+                assert_eq!(cfg.chains[0].id, Some(id));
+            }
+        }
 
         #[test]
         fn deserialize_metaplex_yaml() {
