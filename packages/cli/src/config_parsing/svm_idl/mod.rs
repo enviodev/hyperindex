@@ -6,7 +6,7 @@ mod codama;
 #[cfg(test)]
 mod tests;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::{FieldType, NamedField};
@@ -34,6 +34,10 @@ pub struct EventIdl {
     pub fields: Vec<NamedField>,
 }
 
+/// Names the runtime cannot decode or dispatch, each with the reason, so the
+/// reason survives to whoever asks for that name.
+pub type Unusable = BTreeMap<String, String>;
+
 /// A parsed program IDL, keyed by name rather than by discriminator: the
 /// config addresses instructions by name, and the discriminator is a field.
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +47,18 @@ pub struct ProgramIdl {
     pub instructions: BTreeMap<String, IxIdl>,
     pub events: BTreeMap<String, EventIdl>,
     pub defined_types: BTreeMap<String, FieldType>,
+    /// Instructions the program declares that this runtime cannot decode or
+    /// dispatch. Held aside rather than rejected: an IDL describes a whole
+    /// program while a config indexes a few of its instructions, and the two
+    /// are routinely far apart. SPL Token declares a remainder-encoded string
+    /// that Borsh has no shape for, and every other instruction it declares
+    /// decodes fine — failing the file would put `transfer` out of reach over
+    /// a shape nobody asked to decode.
+    pub unusable: Unusable,
+    /// Declared types whose layout the runtime cannot express. Kept for the
+    /// reason text: an instruction reaching one is unusable for that reason,
+    /// not for the "undefined type" a bare lookup would report.
+    pub unusable_types: Unusable,
 }
 
 /// Discriminator widths the router can probe for. Dispatch reads a fixed-width
@@ -60,7 +76,7 @@ fn parse_validated(json: &str) -> Result<ProgramIdl> {
         .as_object()
         .ok_or_else(|| anyhow!("expected a JSON object at the IDL root"))?;
 
-    let idl = if root.contains_key("rootNode")
+    let mut idl = if root.contains_key("rootNode")
         || root.get("kind").and_then(Value::as_str) == Some("rootNode")
     {
         codama::parse(root)
@@ -73,52 +89,64 @@ fn parse_validated(json: &str) -> Result<ProgramIdl> {
         )
     }?;
 
-    validate(&idl)?;
+    validate(&mut idl);
     Ok(idl)
 }
 
 /// Everything both dialects have to hold true once parsed. Kept here rather
 /// than in each parser so a shape only one dialect can produce still can't
 /// reach codegen through the other.
-fn validate(idl: &ProgramIdl) -> Result<()> {
+///
+/// Failures demote an instruction instead of rejecting the IDL. Whether one
+/// matters is a question about the config, not about the file, so the answer
+/// belongs where the config names an instruction.
+fn validate(idl: &mut ProgramIdl) {
+    let mut demoted = Unusable::new();
     for (name, ix) in &idl.instructions {
         let len = ix.discriminator.len();
         if !DISPATCHABLE_DISCRIMINATOR_LENS.contains(&len) {
-            bail!(
-                "instruction '{name}' has a {len}-byte discriminator; dispatch only probes widths \
-                 {DISPATCHABLE_DISCRIMINATOR_LENS:?}"
+            demoted.insert(
+                name.clone(),
+                format!(
+                    "its {len}-byte discriminator is not one of the widths dispatch probes \
+                     ({DISPATCHABLE_DISCRIMINATOR_LENS:?})"
+                ),
             );
+            continue;
         }
         for arg in &ix.args {
-            check_resolvable(
-                &arg.ty,
-                &idl.defined_types,
-                &format!("instruction '{name}'"),
-            )?;
+            if let Err(e) = check_resolvable(&arg.ty, idl, &mut BTreeSet::new()) {
+                demoted.insert(name.clone(), format!("{e:#}"));
+                break;
+            }
         }
     }
-    for (name, event) in &idl.events {
-        for field in &event.fields {
-            check_resolvable(&field.ty, &idl.defined_types, &format!("event '{name}'"))?;
-        }
+    // Events are parsed but nothing consumes them, so an event payload the
+    // runtime cannot decode is not a reason to withhold an instruction.
+    demote(idl, demoted);
+
+    let collisions = prefix_collisions(&idl.instructions);
+    demote(idl, collisions);
+}
+
+fn demote(idl: &mut ProgramIdl, demoted: Unusable) {
+    for (name, reason) in demoted {
+        idl.instructions.remove(&name);
+        idl.unusable.insert(name, reason);
     }
-    for (name, ty) in &idl.defined_types {
-        check_resolvable(ty, &idl.defined_types, &format!("type '{name}'"))?;
-    }
-    check_no_prefix_collisions(&idl.instructions)?;
-    Ok(())
 }
 
 /// Dispatch probes discriminator widths longest-first, so if one
 /// instruction's discriminator is a prefix of another's, the longer one wins
 /// every match and the shorter one never fires. Equal discriminators are the
-/// degenerate case of the same problem.
-fn check_no_prefix_collisions(instructions: &BTreeMap<String, IxIdl>) -> Result<()> {
+/// degenerate case: neither can be routed to at all.
+fn prefix_collisions(instructions: &BTreeMap<String, IxIdl>) -> Unusable {
     let mut by_bytes: Vec<(&[u8], &str)> = instructions
         .iter()
         .map(|(name, ix)| (ix.discriminator.as_slice(), name.as_str()))
         .collect();
     by_bytes.sort_unstable();
+    let mut out = Unusable::new();
     // A prefix sorts immediately before everything it prefixes, so the
     // adjacent pairs cover every collision.
     for window in by_bytes.windows(2) {
@@ -126,21 +154,28 @@ fn check_no_prefix_collisions(instructions: &BTreeMap<String, IxIdl>) -> Result<
             continue;
         };
         if shorter == longer {
-            bail!(
-                "instructions '{first}' and '{second}' share discriminator 0x{}",
-                crate::hex::encode(shorter)
+            let hex = crate::hex::encode(shorter);
+            out.insert(
+                first.to_string(),
+                format!("it shares discriminator 0x{hex} with '{second}'"),
             );
-        }
-        if longer.starts_with(shorter) {
-            bail!(
-                "instruction '{first}' has discriminator 0x{}, a prefix of '{second}'\'s 0x{}, so \
-                 '{second}' would shadow it",
-                crate::hex::encode(shorter),
-                crate::hex::encode(longer),
+            out.insert(
+                second.to_string(),
+                format!("it shares discriminator 0x{hex} with '{first}'"),
+            );
+        } else if longer.starts_with(shorter) {
+            out.insert(
+                first.to_string(),
+                format!(
+                    "its discriminator 0x{} is a prefix of '{second}'\'s 0x{}, which would shadow \
+                     it",
+                    crate::hex::encode(shorter),
+                    crate::hex::encode(longer),
+                ),
             );
         }
     }
-    Ok(())
+    out
 }
 
 /// The numeric formats both dialects spell the same way. Shared so a width the
@@ -163,33 +198,73 @@ fn numeric_field_type(format: &str) -> Option<FieldType> {
     })
 }
 
-/// Every `Defined` name must be in the registry. An unresolved one is not a
-/// decode-time surprise to leave for the runtime: a mistyped primitive
-/// (`u46`) lands here as a nominal type, and this is what catches it.
+/// Every `Defined` name must resolve to a layout, and so must everything that
+/// layout reaches. An unresolved one is not a decode-time surprise to leave
+/// for the runtime: a mistyped primitive (`u46`) lands here as a nominal type,
+/// and this is what catches it. `visiting` both breaks the cycles a
+/// self-referential type would otherwise spin on and keeps a diamond from
+/// being walked twice.
 fn check_resolvable(
     ty: &FieldType,
-    defined_types: &BTreeMap<String, FieldType>,
-    path: &str,
+    idl: &ProgramIdl,
+    visiting: &mut BTreeSet<String>,
 ) -> Result<()> {
     match ty {
         FieldType::Defined(name) => {
-            if !defined_types.contains_key(name) {
-                bail!("{path} references undefined type '{name}'");
+            if let Some(reason) = idl.unusable_types.get(name) {
+                bail!("it reaches type '{name}', which cannot be decoded: {reason}");
             }
-            Ok(())
+            let Some(target) = idl.defined_types.get(name) else {
+                bail!("it references undefined type '{name}'");
+            };
+            if !visiting.insert(name.clone()) {
+                return Ok(());
+            }
+            let resolved = check_resolvable(target, idl, visiting);
+            visiting.remove(name);
+            resolved
         }
         FieldType::Option(inner) | FieldType::Vec(inner) | FieldType::Array { ty: inner, .. } => {
-            check_resolvable(inner, defined_types, path)
+            check_resolvable(inner, idl, visiting)
         }
         FieldType::Struct(fields) => fields
             .iter()
-            .try_for_each(|f| check_resolvable(&f.ty, defined_types, path)),
+            .try_for_each(|f| check_resolvable(&f.ty, idl, visiting)),
         FieldType::Enum(variants) => variants
             .iter()
             .flat_map(|v| v.fields.iter().flatten())
-            .try_for_each(|f| check_resolvable(&f.ty, defined_types, path)),
+            .try_for_each(|f| check_resolvable(&f.ty, idl, visiting)),
         _ => Ok(()),
     }
+}
+
+/// Parse each entry of a named collection, setting the failures aside instead
+/// of failing the whole IDL. Shared by both dialects so the duplicate-name
+/// rule and the demotion policy cannot drift between them.
+fn collect_named<T>(
+    entries: &[Value],
+    what: &str,
+    mut parse_one: impl FnMut(&str, &Value) -> Result<T>,
+) -> Result<(BTreeMap<String, T>, Unusable)> {
+    let mut out = BTreeMap::new();
+    let mut unusable = Unusable::new();
+    for entry in entries {
+        let name = required_str(entry, "name")
+            .with_context(|| format!("{what}s[].name"))?
+            .to_string();
+        if out.contains_key(&name) || unusable.contains_key(&name) {
+            bail!("IDL declares {what} '{name}' more than once");
+        }
+        match parse_one(&name, entry) {
+            Ok(parsed) => {
+                out.insert(name, parsed);
+            }
+            Err(e) => {
+                unusable.insert(name, format!("{e:#}"));
+            }
+        }
+    }
+    Ok((out, unusable))
 }
 
 /// Shared by both parsers: a required string field, with the offending node in

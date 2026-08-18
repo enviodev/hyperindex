@@ -11,7 +11,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 
-use super::{required_str, IdlAccount, IxIdl, ProgramIdl};
+use super::{collect_named, required_str, IdlAccount, IxIdl, ProgramIdl, Unusable};
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
     // A `.codama` file wraps the root node; a serialized `RootNode` is the
@@ -25,59 +25,52 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
         .and_then(Value::as_object)
         .ok_or_else(|| anyhow!("Codama root node has no 'program'"))?;
 
+    let (defined_types, unusable_types) = parse_defined_types(program)?;
+    let (instructions, unusable) = parse_instructions(program)?;
+
     Ok(ProgramIdl {
         address: program
             .get("publicKey")
             .and_then(Value::as_str)
             .map(str::to_string),
-        instructions: parse_instructions(program)?,
+        instructions,
         // Codama has no event concept; program logs are not modelled.
         events: BTreeMap::new(),
-        defined_types: parse_defined_types(program)?,
+        defined_types,
+        unusable,
+        unusable_types,
     })
 }
 
-fn parse_defined_types(program: &Map<String, Value>) -> Result<BTreeMap<String, FieldType>> {
-    let mut out = BTreeMap::new();
+fn parse_defined_types(
+    program: &Map<String, Value>,
+) -> Result<(BTreeMap<String, FieldType>, Unusable)> {
     let Some(arr) = program.get("definedTypes").and_then(Value::as_array) else {
-        return Ok(out);
+        return Ok(Default::default());
     };
-    for t in arr {
-        let name = required_str(t, "name")
-            .context("definedTypes[].name")?
-            .to_string();
+    collect_named(arr, "type", |name, t| {
         let node = t
             .get("type")
             .ok_or_else(|| anyhow!("defined type '{name}' has no 'type'"))?;
-        let ty = parse_type(node, &format!("definedTypes.{name}"))?;
-        out.insert(name, ty);
-    }
-    Ok(out)
+        parse_type(node, &format!("definedTypes.{name}"))
+    })
 }
 
-fn parse_instructions(program: &Map<String, Value>) -> Result<BTreeMap<String, IxIdl>> {
+fn parse_instructions(program: &Map<String, Value>) -> Result<(BTreeMap<String, IxIdl>, Unusable)> {
     let arr = program
         .get("instructions")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("Codama program has no 'instructions' array"))?;
-    let mut out: BTreeMap<String, IxIdl> = BTreeMap::new();
-    for ix in arr {
-        let name = required_str(ix, "name")
-            .context("instructions[].name")?
-            .to_string();
+    collect_named(arr, "instruction", |name, ix| {
         let (discriminator, encoded_arg_names) = parse_discriminators(ix)
             .with_context(|| format!("instruction '{name}' discriminators"))?;
-        let ix_idl = IxIdl {
+        Ok(IxIdl {
             discriminator,
             accounts: parse_accounts(ix.get("accounts"))
                 .with_context(|| format!("instruction '{name}' accounts"))?,
-            args: parse_arguments(ix.get("arguments"), &encoded_arg_names, &name)?,
-        };
-        if out.insert(name.clone(), ix_idl).is_some() {
-            bail!("IDL declares instruction '{name}' more than once");
-        }
-    }
-    Ok(out)
+            args: parse_arguments(ix.get("arguments"), &encoded_arg_names, name)?,
+        })
+    })
 }
 
 /// Returns the instruction's discriminator bytes plus the names of the

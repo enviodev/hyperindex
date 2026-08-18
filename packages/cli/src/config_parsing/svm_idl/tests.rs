@@ -51,6 +51,12 @@ fn render(idl: &ProgramIdl) -> String {
     for (name, ty) in &idl.defined_types {
         let _ = writeln!(out, "type {name} = {}", render_type(ty));
     }
+    for (name, reason) in &idl.unusable {
+        let _ = writeln!(out, "unusable instruction {name}: {reason}");
+    }
+    for (name, reason) in &idl.unusable_types {
+        let _ = writeln!(out, "unusable type {name}: {reason}");
+    }
     out
 }
 
@@ -505,70 +511,43 @@ fn rejects_undecodable_and_undispatchable_idls() {
                  "discriminators": [{ "kind": "fieldDiscriminatorNode", "name": "tag", "offset": 0 }]
                }] } }"#,
         ),
-        (
-            // SPL Token's real `freezeAuthority`: presence is a zero check, not
-            // a tag byte, so there is no byte for the runtime to consume.
-            "codama zeroable option",
-            r#"{ "kind": "rootNode", "program": { "instructions": [],
-                 "definedTypes": [{ "name": "mint", "type": {
-                   "kind": "zeroableOptionTypeNode", "item": { "kind": "publicKeyTypeNode" } } }] } }"#,
-        ),
-        (
-            "codama option with a wide tag",
-            r#"{ "kind": "rootNode", "program": { "instructions": [],
-                 "definedTypes": [{ "name": "maybeFee", "type": {
-                   "kind": "optionTypeNode",
-                   "item": { "kind": "numberTypeNode", "format": "u64" },
-                   "prefix": { "kind": "numberTypeNode", "format": "u32" } } }] } }"#,
-        ),
-        (
-            "codama vector with a narrow length prefix",
-            r#"{ "kind": "rootNode", "program": { "instructions": [],
-                 "definedTypes": [{ "name": "signers", "type": {
-                   "kind": "arrayTypeNode",
-                   "item": { "kind": "publicKeyTypeNode" },
-                   "count": { "kind": "prefixedCountNode",
-                              "prefix": { "kind": "numberTypeNode", "format": "u8" } } } }] } }"#,
-        ),
-        (
-            "codama string with a narrow size prefix",
-            r#"{ "kind": "rootNode", "program": { "instructions": [],
-                 "definedTypes": [{ "name": "label", "type": {
-                   "kind": "sizePrefixTypeNode",
-                   "type": { "kind": "stringTypeNode", "encoding": "utf8" },
-                   "prefix": { "kind": "numberTypeNode", "format": "u8" } } }] } }"#,
-        ),
     ];
 
     let reported: Vec<String> = cases
         .iter()
         .map(|(label, json)| {
-            let error = parse_idl(json, "Program").expect_err(label);
-            let message = format!("{error:#}")
-                .strip_prefix("parsing IDL for program 'Program': ")
-                .expect("every message is scoped to the program")
-                .to_string();
-            format!("{label}: {message}")
+            let outcome = match parse_idl(json, "Program") {
+                Err(e) => format!(
+                    "fatal: {}",
+                    format!("{e:#}")
+                        .strip_prefix("parsing IDL for program 'Program': ")
+                        .expect("every message is scoped to the program")
+                ),
+                Ok(idl) if !idl.unusable.is_empty() => idl
+                    .unusable
+                    .iter()
+                    .map(|(name, reason)| format!("{name} set aside: {reason}"))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                Ok(_) => "accepted".to_string(),
+            };
+            format!("{label}: {outcome}")
         })
         .collect();
 
     assert_eq!(
         reported,
         vec![
-            "neither dialect: unrecognized IDL: expected an Anchor IDL (top-level 'instructions') or a Codama IDL (a 'rootNode')",
-            "duplicate instruction name: IDL declares instruction 'swap' more than once",
-            "anchor coption: instruction 'initializeMint' args.freezeAuthority: `coption` is not Borsh-compatible and cannot be decoded",
-            "undefined type reference: instruction 'swap' references undefined type 'u46'",
-            "event with no payload type: event 'Swapped' declares no fields and no type named 'Swapped'",
-            "discriminator wider than dispatch probes: instruction 'swap' has a 3-byte discriminator; dispatch only probes widths [1, 2, 4, 8]",
-            "instruction with no discriminator at all: instruction 'swap' has a 0-byte discriminator; dispatch only probes widths [1, 2, 4, 8]",
-            "one discriminator a prefix of another: instruction 'transfer' has discriminator 0x0c, a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' would shadow it",
-            "discriminator field not at offset 0: instruction 'swap' discriminators: discriminator part at offset 8 does not follow the previous part, which ends at 0; dispatch needs one contiguous prefix from offset 0",
-            "discriminator value too wide for its format: instruction 'swap' discriminators: discriminator value 300 does not fit in u8",
-            "codama zeroable option: definedTypes.mint: zeroable options are not Borsh-compatible and cannot be decoded",
-            "codama option with a wide tag: definedTypes.maybeFee.prefix: Borsh needs u8 here, got u32",
-            "codama vector with a narrow length prefix: definedTypes.signers.prefix: Borsh needs u32 here, got u8",
-            "codama string with a narrow size prefix: definedTypes.label.prefix: Borsh needs u32 here, got u8",
+            "neither dialect: fatal: unrecognized IDL: expected an Anchor IDL (top-level 'instructions') or a Codama IDL (a 'rootNode')",
+            "duplicate instruction name: fatal: IDL declares instruction 'swap' more than once",
+            "anchor coption: initializeMint set aside: instruction 'initializeMint' args.freezeAuthority: `coption` is not Borsh-compatible and cannot be decoded",
+            "undefined type reference: swap set aside: it references undefined type 'u46'",
+            "event with no payload type: fatal: event 'Swapped' declares no fields and no type named 'Swapped'",
+            "discriminator wider than dispatch probes: swap set aside: its 3-byte discriminator is not one of the widths dispatch probes ([1, 2, 4, 8])",
+            "instruction with no discriminator at all: swap set aside: its 0-byte discriminator is not one of the widths dispatch probes ([1, 2, 4, 8])",
+            "one discriminator a prefix of another: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, which would shadow it",
+            "discriminator field not at offset 0: swap set aside: instruction 'swap' discriminators: discriminator part at offset 8 does not follow the previous part, which ends at 0; dispatch needs one contiguous prefix from offset 0",
+            "discriminator value too wide for its format: swap set aside: instruction 'swap' discriminators: discriminator value 300 does not fit in u8",
         ]
     );
 }
@@ -645,12 +624,18 @@ fn mutated_fixtures_never_panic() {
     }
 }
 
-/// A Codama IDL carrying one defined type, the smallest shape that puts a type
-/// node in front of the parser.
+/// A Codama IDL with one instruction whose only argument has the given type:
+/// the smallest shape that puts a type node in front of the parser on the path
+/// a config actually takes.
 fn codama_type(type_node: &str) -> String {
     format!(
-        r#"{{ "kind": "rootNode", "program": {{ "instructions": [],
-             "definedTypes": [{{ "name": "probed", "type": {type_node} }}] }} }}"#
+        r#"{{ "kind": "rootNode", "program": {{ "instructions": [{{
+             "kind": "instructionNode", "name": "probe",
+             "discriminators": [{{ "kind": "constantDiscriminatorNode", "offset": 0,
+               "constant": {{ "value": {{ "kind": "bytesValueNode", "data": "01",
+                                          "encoding": "base16" }} }} }}],
+             "arguments": [{{ "kind": "instructionArgumentNode", "name": "probed",
+                              "type": {type_node} }}] }}] }} }}"#
     )
 }
 
@@ -746,6 +731,40 @@ fn refuses_layouts_the_runtime_would_misdecode() {
             ),
         ),
         (
+            // SPL Token's real `freezeAuthority`: presence is a zero check, not
+            // a tag byte, so there is no byte for the runtime to consume.
+            "codama zeroable option",
+            codama_type(
+                r#"{ "kind": "zeroableOptionTypeNode",
+                     "item": { "kind": "publicKeyTypeNode" } }"#,
+            ),
+        ),
+        (
+            "codama option with a wide tag",
+            codama_type(
+                r#"{ "kind": "optionTypeNode",
+                     "prefix": { "kind": "numberTypeNode", "format": "u32" },
+                     "item": { "kind": "publicKeyTypeNode" } }"#,
+            ),
+        ),
+        (
+            "codama vector with a narrow length prefix",
+            codama_type(
+                r#"{ "kind": "arrayTypeNode",
+                     "item": { "kind": "publicKeyTypeNode" },
+                     "count": { "kind": "prefixedCountNode",
+                                "prefix": { "kind": "numberTypeNode", "format": "u8" } } }"#,
+            ),
+        ),
+        (
+            "codama string with a narrow size prefix",
+            codama_type(
+                r#"{ "kind": "sizePrefixTypeNode",
+                     "prefix": { "kind": "numberTypeNode", "format": "u8" },
+                     "type": { "kind": "stringTypeNode", "encoding": "utf8" } }"#,
+            ),
+        ),
+        (
             // Bound at the use site, so it has no layout of its own.
             "anchor generic parameter",
             r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
@@ -757,30 +776,37 @@ fn refuses_layouts_the_runtime_would_misdecode() {
     let reported: Vec<String> = cases
         .iter()
         .map(|(label, json)| {
-            let error = parse_idl(json, "Program").expect_err(label);
-            let message = format!("{error:#}")
-                .strip_prefix("parsing IDL for program 'Program': ")
-                .expect("every message is scoped to the program")
-                .to_string();
-            format!("{label}: {message}")
+            let idl = parse_idl(json, "Program").unwrap_or_else(|e| {
+                panic!("{label} should set the instruction aside, not fail the file: {e:#}")
+            });
+            let (name, reason) = idl
+                .unusable
+                .iter()
+                .next()
+                .unwrap_or_else(|| panic!("{label} left every instruction usable"));
+            format!("{label}: {name}: {reason}")
         })
         .collect();
 
     assert_eq!(
         reported,
         vec![
-            "codama fixed option: definedTypes.probed: a fixed option pads its body when absent, which Borsh does not encode",
-            "codama enum with a wide tag: definedTypes.probed.size: Borsh needs u8 here, got u32",
-            "codama big-endian number: definedTypes.probed: Borsh decodes numbers little-endian, got 'be'",
-            "codama bare string: definedTypes.probed: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
-            "codama bare bytes: definedTypes.probed: a bare bytesTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
-            "codama non-utf8 string: definedTypes.probed: Borsh strings are utf8, got 'base58'",
-            "codama boolean wider than a byte: definedTypes.probed.size: Borsh needs u8 here, got u32",
-            "codama enum variant with its own discriminator: definedTypes.probed.Init: enumEmptyVariantTypeNode carries 'discriminator', which this parser does not model; decoding it would be a guess at the byte layout",
-            "codama size prefix around a struct: definedTypes.probed: a u32 size prefix frames a string or bytes in Borsh, got structTypeNode",
-            "codama big-endian length prefix: definedTypes.probed.prefix: Borsh decodes numbers little-endian, got 'be'",
-            "codama enum tuple variant behind a wrapper: definedTypes.probed.Wrapped: sizePrefixTypeNode carries 'items', which this parser does not model; decoding it would be a guess at the byte layout",
-            "anchor generic parameter: instruction 'swap' args.wrapped: generic parameter 'T' has no concrete layout to decode against",
+            "codama fixed option: probe: instruction 'probe'.probed: a fixed option pads its body when absent, which Borsh does not encode",
+            "codama enum with a wide tag: probe: instruction 'probe'.probed.size: Borsh needs u8 here, got u32",
+            "codama big-endian number: probe: instruction 'probe'.probed: Borsh decodes numbers little-endian, got 'be'",
+            "codama bare string: probe: instruction 'probe'.probed: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
+            "codama bare bytes: probe: instruction 'probe'.probed: a bare bytesTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
+            "codama non-utf8 string: probe: instruction 'probe'.probed: Borsh strings are utf8, got 'base58'",
+            "codama boolean wider than a byte: probe: instruction 'probe'.probed.size: Borsh needs u8 here, got u32",
+            "codama enum variant with its own discriminator: probe: instruction 'probe'.probed.Init: enumEmptyVariantTypeNode carries 'discriminator', which this parser does not model; decoding it would be a guess at the byte layout",
+            "codama size prefix around a struct: probe: instruction 'probe'.probed: a u32 size prefix frames a string or bytes in Borsh, got structTypeNode",
+            "codama big-endian length prefix: probe: instruction 'probe'.probed.prefix: Borsh decodes numbers little-endian, got 'be'",
+            "codama enum tuple variant behind a wrapper: probe: instruction 'probe'.probed.Wrapped: sizePrefixTypeNode carries 'items', which this parser does not model; decoding it would be a guess at the byte layout",
+            "codama zeroable option: probe: instruction 'probe'.probed: zeroable options are not Borsh-compatible and cannot be decoded",
+            "codama option with a wide tag: probe: instruction 'probe'.probed.prefix: Borsh needs u8 here, got u32",
+            "codama vector with a narrow length prefix: probe: instruction 'probe'.probed.prefix: Borsh needs u32 here, got u8",
+            "codama string with a narrow size prefix: probe: instruction 'probe'.probed.prefix: Borsh needs u32 here, got u8",
+            "anchor generic parameter: swap: instruction 'swap' args.wrapped: generic parameter 'T' has no concrete layout to decode against",
         ]
     );
 }
@@ -831,9 +857,11 @@ fn accepts_codama_nodes_that_cannot_change_the_layout() {
     let parsed: Vec<(&str, String)> = cases
         .iter()
         .map(|(label, json)| {
-            let ty = parse_idl(json, "Program")
-                .map(|idl| render_type(&idl.defined_types["probed"]))
-                .unwrap_or_else(|e| format!("REJECTED: {e:#}"));
+            let idl = parse_idl(json, "Program").unwrap_or_else(|e| panic!("{label}: {e:#}"));
+            let ty = match idl.instructions.get("probe") {
+                Some(ix) => render_type(&ix.args[0].ty),
+                None => format!("SET ASIDE: {}", idl.unusable["probe"]),
+            };
             (*label, ty)
         })
         .collect();
@@ -947,4 +975,19 @@ fn template_and_fixture_idls_match() {
     let fixture = std::fs::read_to_string(format!("{root}/test/idls/token-metadata.codama.json"))
         .expect("fixture IDL");
     assert_eq!(template, fixture);
+}
+
+/// Real, unmodified Codama IDLs, straight from the upstream program repos.
+/// Both declare a shape Borsh has no room for — SPL Token's
+/// `uiAmountToAmount` takes a remainder-encoded string, and Memo's entire
+/// payload is one — so they pin the rule that costs an instruction only
+/// itself: 26 of SPL Token's 28 stay indexable.
+#[test]
+fn parses_real_codama_spl_token_idl() {
+    insta::assert_snapshot!(render(&parse_fixture("spl-token.codama")));
+}
+
+#[test]
+fn parses_real_codama_memo_idl() {
+    insta::assert_snapshot!(render(&parse_fixture("memo.codama")));
 }

@@ -1,0 +1,6 @@
+---
+source: packages/cli/src/config_parsing/svm_idl/tests.rs
+expression: "render(&parse_fixture(\"memo.codama\"))"
+---
+address: MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr
+unusable instruction addMemo: instruction 'addMemo'.memo: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix

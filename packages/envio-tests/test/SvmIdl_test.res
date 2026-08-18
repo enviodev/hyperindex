@@ -250,6 +250,29 @@ indexer.onInstruction(
     )
   )
 
+  // An IDL describes a whole program; a config indexes a few of its
+  // instructions. One the runtime cannot decode has to cost only itself, or a
+  // single such shape puts every other instruction in the file out of reach —
+  // SPL Token declares one, and 26 of its 28 instructions decode fine.
+  it("names the reason when an instruction the IDL declares cannot be decoded", t =>
+    t.expect(
+      parseError(
+        ~files=Dict.fromArray([
+          (
+            "idls/swapper.json",
+            anchorIdl->String.replace(
+              `{ "name": "amountIn", "type": "u64" }`,
+              `{ "name": "amountIn", "type": { "coption": "u64" } }`,
+            ),
+          ),
+        ]),
+        ~configYaml=anchorConfigYaml,
+      ),
+    ).toBe(
+      "Config parse error: Layout for instruction 'swap': Instruction 'swap' is declared by the program's IDL, but instruction 'swap' args.amountIn: `coption` is not Borsh-compatible and cannot be decoded.",
+    )
+  )
+
   // Dispatch reads a fixed-width prefix off the instruction data, so a width
   // it never probes matches nothing. Caught at codegen rather than at indexer
   // start, where the config line that caused it is long out of sight.
@@ -273,9 +296,7 @@ chains:
               discriminator: "0xaabbcc"
 `,
       ),
-    ).toBe(
-      `Config parse error: instruction "transfer" in program "SplToken": discriminator "0xaabbcc" must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after stripping a \`0x\` prefix), got 6 digits`,
-    )
+    ).toBe(`Config parse error: instruction "transfer" in program "SplToken": discriminator "0xaabbcc" must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after stripping a \`0x\` prefix), got 6 digits`)
   )
 
   it("rejects an IDL whose address is not the configured program", t =>
@@ -302,7 +323,7 @@ chains:
         ~configYaml=codamaConfigYaml,
       ),
     ).toBe(
-      "Config parse error: Resolving Borsh schema for TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA: parsing IDL for program 'SplToken': instructions 'transfer' and 'transferAgain' share discriminator 0x03",
+      "Config parse error: Layout for instruction 'transfer': Instruction 'transfer' is declared by the program's IDL, but it shares discriminator 0x03 with 'transferAgain'.",
     )
   )
 

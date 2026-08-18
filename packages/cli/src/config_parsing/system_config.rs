@@ -1930,6 +1930,7 @@ fn resolve_program_schema(
                 .map(|(name, ix)| (name.clone(), to_instruction_schema(name, ix)))
                 .collect(),
             defined_types: idl.defined_types,
+            unusable: idl.unusable,
             source: SvmSchemaSource::Idl {
                 path: idl_path.to_string(),
             },
@@ -1954,6 +1955,7 @@ fn resolve_program_schema(
         program_id: program.program_id.clone(),
         instructions: BTreeMap::new(),
         defined_types: BTreeMap::new(),
+        unusable: Default::default(),
         source: SvmSchemaSource::Inline,
     })
 }
@@ -2016,11 +2018,19 @@ fn resolve_instruction(
 
     if matches!(abi.source, SvmSchemaSource::Idl { .. }) {
         let schema = abi.instructions.get(&instr.name).ok_or_else(|| {
-            anyhow!(
-                "Instruction '{}' is not in the program's IDL. Available instructions: {}.",
-                instr.name,
-                abi.instructions.keys().join(", ")
-            )
+            match abi.unusable.get(&instr.name) {
+                // Declared, but the runtime has no way to read it. Say which,
+                // so the name is not reported as a typo.
+                Some(reason) => anyhow!(
+                    "Instruction '{}' is declared by the program's IDL, but {reason}.",
+                    instr.name
+                ),
+                None => anyhow!(
+                    "Instruction '{}' is not in the program's IDL. Available instructions: {}.",
+                    instr.name,
+                    abi.instructions.keys().join(", ")
+                ),
+            }
         })?;
         let derived = format!("0x{}", crate::hex::encode(&schema.discriminator));
         // The IDL is the authority; a hand-written discriminator that
@@ -2207,6 +2217,9 @@ pub struct SvmAbi {
     /// Nominal-type registry referenced by `SvmFieldType::Defined`. Populated
     /// from a parsed IDL, or empty for hand-written ad-hoc schemas.
     pub defined_types: BTreeMap<String, SvmFieldType>,
+    /// Instructions the IDL declares that this runtime cannot decode, with the
+    /// reason. Only reported if the config names one.
+    pub unusable: svm_idl::Unusable,
     pub source: SvmSchemaSource,
 }
 

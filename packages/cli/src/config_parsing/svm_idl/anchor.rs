@@ -19,7 +19,7 @@ use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
-use super::{required_str, EventIdl, IdlAccount, IxIdl, ProgramIdl};
+use super::{collect_named, required_str, EventIdl, IdlAccount, IxIdl, ProgramIdl, Unusable};
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
     let address = root
@@ -32,8 +32,8 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
         })
         .map(str::to_string);
 
-    let defined_types = parse_defined_types(root)?;
-    let instructions = parse_instructions(root)?;
+    let (defined_types, unusable_types) = parse_defined_types(root)?;
+    let (instructions, unusable) = parse_instructions(root)?;
     let events = parse_events(root, &defined_types)?;
 
     Ok(ProgramIdl {
@@ -41,51 +41,43 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
         instructions,
         events,
         defined_types,
+        unusable,
+        unusable_types,
     })
 }
 
-fn parse_defined_types(root: &Map<String, Value>) -> Result<BTreeMap<String, FieldType>> {
-    let mut out = BTreeMap::new();
+fn parse_defined_types(
+    root: &Map<String, Value>,
+) -> Result<(BTreeMap<String, FieldType>, Unusable)> {
     let Some(arr) = root.get("types").and_then(Value::as_array) else {
-        return Ok(out);
+        return Ok(Default::default());
     };
-    for t in arr {
-        let name = required_str(t, "name").context("types[].name")?.to_string();
+    collect_named(arr, "type", |name, t| {
         let node = t
             .get("type")
             .ok_or_else(|| anyhow!("type '{name}' has no 'type'"))?;
-        let ty = parse_type_def(&name, node)?;
-        out.insert(name, ty);
-    }
-    Ok(out)
+        parse_type_def(name, node)
+    })
 }
 
-fn parse_instructions(root: &Map<String, Value>) -> Result<BTreeMap<String, IxIdl>> {
+fn parse_instructions(root: &Map<String, Value>) -> Result<(BTreeMap<String, IxIdl>, Unusable)> {
     let arr = root
         .get("instructions")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("IDL has no 'instructions' array"))?;
-    let mut out: BTreeMap<String, IxIdl> = BTreeMap::new();
-    for ix in arr {
-        let name = required_str(ix, "name")
-            .context("instructions[].name")?
-            .to_string();
+    collect_named(arr, "instruction", |name, ix| {
         let discriminator = match ix.get("discriminator") {
             Some(node) => parse_byte_array(node)
                 .with_context(|| format!("instruction '{name}' discriminator"))?,
             None => hashed_discriminator("global:", &name.to_snake_case()),
         };
-        let ix_idl = IxIdl {
+        Ok(IxIdl {
             discriminator,
             accounts: parse_accounts(ix.get("accounts"))
                 .with_context(|| format!("instruction '{name}' accounts"))?,
             args: parse_named_fields(ix.get("args"), &format!("instruction '{name}' args"))?,
-        };
-        if out.insert(name.clone(), ix_idl).is_some() {
-            bail!("IDL declares instruction '{name}' more than once");
-        }
-    }
-    Ok(out)
+        })
+    })
 }
 
 /// Legacy events carry their fields inline; 0.30+ moves the payload into

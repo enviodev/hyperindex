@@ -654,6 +654,7 @@ impl SystemConfig {
                         Abi::Svm(SvmAbi {
                             program_id,
                             instructions: _,
+                            unusable: _,
                             defined_types,
                             source,
                         }) => Some(SvmAbiJson {
