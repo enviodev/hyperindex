@@ -490,7 +490,8 @@ let disableSource = (sourceManager: t, sourceState: sourceState) => {
     switch sourceState.unsubscribe {
     | Some(unsubscribe) =>
       unsubscribe()
-      // No further status will arrive, so release anyone waiting on one.
+      // The subscription is gone, so the source must not keep looking live to a
+      // wait that is still in flight for it.
       sourceState->markSubscriptionDown
     | None => ()
     }
@@ -619,6 +620,12 @@ let getSourceNewHeight = async (
 
       let pollingFallback = pollingTrigger->Promise.then(async () => {
         let h = ref(iterationHeight)
+        // A reconnect hands the job back to the stream, and brings its own
+        // catch-up poll, so polling past one is wasted load on an endpoint that
+        // was struggling a moment ago. Counting connects rather than reading
+        // subscriptionLive keeps the backstop working: that one polls a stream
+        // which claims to be live but has gone quiet.
+        let connectsWhenTriggered = sourceState.heightStreamConnects
         // newHeight only moves when an iteration settles, so it still being
         // iterationHeight means this race is the one in flight. Stopping once
         // it is over matters: otherwise a source that never returns a new
@@ -626,7 +633,8 @@ let getSourceNewHeight = async (
         let shouldPoll = () =>
           h.contents <= knownHeight &&
           newHeight.contents === iterationHeight &&
-          status.contents !== Done
+          status.contents !== Done &&
+          sourceState.heightStreamConnects === connectsWhenTriggered
         while shouldPoll() {
           try {
             let res = await source.getHeightOrThrow()

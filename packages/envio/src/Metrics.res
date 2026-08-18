@@ -258,22 +258,36 @@ let renderMetrics = (b: builder, metrics: t) => {
     byLabels->Dict.toArray
   }
 
-  let heightStreams =
-    metrics.sourceHeightStreams->Array.map(s => (
-      `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}"}`,
-      s,
-    ))
-  let heightStreamFailures = []
-  metrics.sourceHeightStreams->Array.forEach(s =>
-    s.failuresByReason->Array.forEach(((reason, count)) =>
-      heightStreamFailures
-      ->Array.push((
-        `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}",reason="${reason->escapeLabelValue}"}`,
-        count,
-      ))
-      ->ignore
+  // Aggregated by label set for the same reason as sourceRequests above: two
+  // sources on a chain can share a name, and duplicate samples would make
+  // Prometheus reject the scrape.
+  let addTo = (byLabels: dict<int>, labels, count) =>
+    byLabels->Dict.set(
+      labels,
+      byLabels->Utils.Dict.dangerouslyGetNonOption(labels)->Option.getOr(0) + count,
     )
-  )
+  let heightStreamReconnects = {
+    let byLabels: dict<int> = Dict.make()
+    metrics.sourceHeightStreams->Array.forEach(s =>
+      byLabels->addTo(
+        `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}"}`,
+        s.reconnectCount,
+      )
+    )
+    byLabels->Dict.toArray
+  }
+  let heightStreamFailures = {
+    let byLabels: dict<int> = Dict.make()
+    metrics.sourceHeightStreams->Array.forEach(s =>
+      s.failuresByReason->Array.forEach(((reason, count)) =>
+        byLabels->addTo(
+          `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}",reason="${reason->escapeLabelValue}"}`,
+          count,
+        )
+      )
+    )
+    byLabels->Dict.toArray
+  }
 
   b->single(
     ~name="envio_process_start_time_seconds",
@@ -488,13 +502,13 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~entries=sourceRequests,
     ~value=s => s.seconds !== 0. ? Some(s.seconds) : None,
   )
-  if heightStreams->Array.length > 0 {
+  if heightStreamReconnects->Array.length > 0 {
     b->series(
       ~name="envio_source_height_stream_reconnects_total",
       ~help="The number of times a source's height subscription reconnected after a failure. Subtracting it from the failure total shows how long the current outage has been running.",
       ~kind="counter",
-      ~entries=heightStreams,
-      ~value=s => s.reconnectCount->Int.toFloat,
+      ~entries=heightStreamReconnects,
+      ~value=count => count->Int.toFloat,
     )
     b->series(
       ~name="envio_source_height_stream_failures_total",

@@ -145,6 +145,59 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
     ).toBe(false)
   })
 
+  it("Aggregates height stream samples that share a source name and chain", t => {
+    let metrics: Metrics.t = {
+      startTime: Date.fromTime(0.),
+      metricTime: Date.fromTime(0.),
+      elapsedSeconds: 0.,
+      targetBufferSize: 0,
+      isInReorgThreshold: false,
+      rollbackEnabled: false,
+      maxBatchSize: 0,
+      preloadSeconds: 0.,
+      processingSeconds: 0.,
+      processingStalledOnFetchSeconds: 0.,
+      processingStalledOnStorageWriteSeconds: 0.,
+      rollbackSeconds: 0.,
+      rollbackCount: 0,
+      rollbackEventsCount: 0.,
+      chains: [],
+      handlers: [],
+      effects: [],
+      storageLoads: [],
+      storageWrites: [],
+      historyPrunes: [],
+      sourceRequests: [],
+      sourceHeights: [],
+      // Two RPC urls on the same host share a source name, and duplicate
+      // samples would make Prometheus reject the whole scrape.
+      sourceHeightStreams: [
+        {
+          source: "RPC (rpc.example.com)",
+          chainId: 1->ChainId.fromInt,
+          reconnectCount: 2,
+          failuresByReason: [("closed", 3)],
+        },
+        {
+          source: "RPC (rpc.example.com)",
+          chainId: 1->ChainId.fromInt,
+          reconnectCount: 1,
+          failuresByReason: [("closed", 4), ("stale", 5)],
+        },
+      ],
+    }
+
+    t.expect(
+      Metrics.collect(~metrics=Some(metrics))
+      ->String.split("\n")
+      ->Array.filter(line => line->String.startsWith("envio_source_height_stream")),
+    ).toStrictEqual([
+      `envio_source_height_stream_reconnects_total{source="RPC (rpc.example.com)",chainId="1"} 3`,
+      `envio_source_height_stream_failures_total{source="RPC (rpc.example.com)",chainId="1",reason="closed"} 7`,
+      `envio_source_height_stream_failures_total{source="RPC (rpc.example.com)",chainId="1",reason="stale"} 5`,
+    ])
+  })
+
   it("Renders every metric family from a fully populated snapshot", t => {
     let metrics: Metrics.t = {
       startTime: Date.fromTime(1700000000000.),
