@@ -351,7 +351,9 @@ let writeBatch = (
 
   // Insert-only and idempotent on (chain, address, contract), matching the
   // `ON CONFLICT DO NOTHING` the Postgres write uses.
-  registeredAddresses->Array.forEach(row => {
+  registeredAddresses
+  ->AddressRows.finalizeCheckpoint(~shouldSaveHistory)
+  ->Array.forEach(row => {
     let isStored = state.addresses->Array.some(stored =>
       stored.chainId == row.chainId &&
         stored.contractId === row.contractId &&

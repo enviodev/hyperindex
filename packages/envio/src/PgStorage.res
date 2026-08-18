@@ -1296,7 +1296,7 @@ let rec writeBatch = async (
             setOperations->Array.push(sql =>
               sql->InternalTable.EnvioAddresses.insert(
                 ~pgSchema,
-                ~rows=registeredAddresses,
+                ~rows=registeredAddresses->AddressRows.finalizeCheckpoint(~shouldSaveHistory),
                 ~chainIdMode,
               )
             )

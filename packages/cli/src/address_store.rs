@@ -147,7 +147,7 @@ pub fn split_addresses(
             let width = key_width(ecosystem).ok_or_else(|| {
                 napi::Error::from_reason("SVM addresses can only be split with their lengths.")
             })?;
-            if bytes.len() % width != 0 {
+            if !bytes.len().is_multiple_of(width) {
                 return Err(napi::Error::from_reason(format!(
                     "Packed addresses of {} bytes don't divide into {width}-byte keys.",
                     bytes.len()
@@ -187,7 +187,7 @@ pub fn render_addresses(
             let width = key_width(ecosystem).ok_or_else(|| {
                 napi::Error::from_reason("SVM addresses can only be rendered with their lengths.")
             })?;
-            if bytes.len() % width != 0 {
+            if !bytes.len().is_multiple_of(width) {
                 return Err(napi::Error::from_reason(format!(
                     "Packed addresses of {} bytes don't divide into {width}-byte keys.",
                     bytes.len()

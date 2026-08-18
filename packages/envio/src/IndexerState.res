@@ -815,20 +815,11 @@ let markCommitted = (state: t, ~upToCheckpointId) => {
 let stageRegisteredAddresses = (state: t, rows: array<AddressRows.row>) =>
   state.registeredAddresses = state.registeredAddresses->Array.concat(rows)
 
-// The rows this write covers. Their checkpoint id is what a rollback deletes
-// them by — but checkpoints are only persisted for a history-saving batch, and
-// the id sequence restarts from the last persisted one, so a row stamped with
-// an id that never reached the database could be deleted by an unrelated later
-// rollback. Outside the reorg threshold the write is final anyway, so those
-// rows are stamped 0: no rollback can reach them, and none needs to.
-let snapshotRegisteredAddresses = (state: t, ~upToCheckpointId, ~shouldSaveHistory) =>
-  state.registeredAddresses
-  ->Array.filter(row => row.checkpointId <= upToCheckpointId)
-  ->Array.map(row =>
-    shouldSaveHistory
-      ? row
-      : {...row, checkpointId: AddressRows.configCheckpointId}
-  )
+// The rows this write covers, each still carrying the checkpoint it was
+// registered at. Whether that checkpoint is the one a storage stamps on the row
+// is the storage's call — see `AddressRows.finalizeCheckpoint`.
+let snapshotRegisteredAddresses = (state: t, ~upToCheckpointId) =>
+  state.registeredAddresses->Array.filter(row => row.checkpointId <= upToCheckpointId)
 
 // Reset the in-memory tables and arm the rollback diff that the next write commits.
 let beginRollbackDiff = (
