@@ -2345,6 +2345,13 @@ impl Contract {
         // one whose payload continues with those seven bytes is taken by the
         // long one and decoded at the wrong offset. The equality check above
         // is the degenerate case of this one, and keeps its own message.
+        //
+        // An instruction with no `discriminator` at all is left out rather
+        // than treated as the prefix of everything, unlike the same shape in
+        // an IDL. Here it is a deliberate catch-all with a defined place in
+        // the order — the router falls back to it only once no keyed
+        // registration matched — whereas an IDL instruction missing a prefix
+        // is one nobody chose and nothing bounds.
         let discriminators: Vec<(Vec<u8>, String)> = events
             .iter()
             .filter_map(|event| match &event.kind {
