@@ -2308,7 +2308,12 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       }
     })
 
-    (removals, restoredEntitiesResult)
+    (
+      removals,
+      restoredEntitiesResult
+      ->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
+      ->(Utils.magic: array<unknown> => array<Internal.entity>),
+    )
   }
 
   let writeBatchMethod = async (

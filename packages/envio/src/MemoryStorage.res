@@ -232,11 +232,24 @@ let toInitialState = (state: t, ~cleanRun): Persistence.initialState => {
 let handleLoad = (state: t, ~tableName: string, ~filter: EntityFilter.t): array<
   Internal.entity,
 > => {
-  // Loads for non-entity tables (e.g. effect caches `envio_effect_<name>`) reach
-  // here too. Nothing persists those, so there's nothing to return — an empty
-  // result makes the effect recompute instead of crashing on a missing config.
+  // Effect caches (`envio_effect_<name>`) are loaded through the same call, and
+  // they have no entity config — they're served from the cache `writeBatch`
+  // filled, so a resumed indexer reuses cached outputs instead of recomputing
+  // them the way Postgres would.
   switch state.entityConfigs->Dict.get(tableName) {
-  | None => []
+  | None =>
+    switch state.effectCache->Dict.get(tableName) {
+    | None => []
+    | Some(cacheDict) =>
+      cacheDict
+      ->Dict.valuesToArray
+      ->Array.filter(item =>
+        filter->EntityFilter.matches(
+          ~entity=item->(Utils.magic: Internal.effectCacheItem => dict<EntityFilter.FieldValue.t>),
+        )
+      )
+      ->(Utils.magic: array<Internal.effectCacheItem> => array<Internal.entity>)
+    }
   | Some(entityConfig) =>
     let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
     let matched =
@@ -320,6 +333,17 @@ let writeBatch = (
   | None => ()
   }
 
+  // The rollback diff restates what the reverted state already is, so it is not
+  // a change history should record — and an id it touches needs no backfill
+  // either, because the diff already carries its reverted value. Postgres draws
+  // the same line, keyed on the diff's checkpoint id.
+  let diffCheckpointId = rollback->Option.map(({diffCheckpointId}) => diffCheckpointId)
+  let isDiff = (change: Change.t<Internal.entity>) =>
+    switch diffCheckpointId {
+    | Some(diffCheckpointId) => change->Change.getCheckpointId === diffCheckpointId
+    | None => false
+    }
+
   updatedEntities->Array.forEach(({entityConfig, scope, changes}: Persistence.updatedEntity) => {
     let entityDict = state->getEntityDict(~name=entityConfig.name)
     let historyRows = state->getHistory(~name=entityConfig.name)
@@ -327,9 +351,17 @@ let writeBatch = (
     // onto the stored entity the same way the Postgres write path does.
     let chainIdField = entityConfig.table->Table.getChainIdField
 
+    let idsWithDiff = Utils.Set.make()
+    changes->Array.forEach(change =>
+      if isDiff(change) {
+        idsWithDiff->Utils.Set.add(change->Change.getEntityId->EntityId.toKey)->ignore
+      }
+    )
+
     changes->Array.forEach(change => {
       let entityId = change->Change.getEntityId
-      if shouldSaveHistory {
+      let shouldSaveChangeHistory = shouldSaveHistory && !isDiff(change)
+      if shouldSaveHistory && !(idsWithDiff->Utils.Set.has(entityId->EntityId.toKey)) {
         state->backfillHistory(~entityConfig, ~scope, ~entityId, ~rows=historyRows)
       }
       switch change {
@@ -340,7 +372,7 @@ let writeBatch = (
         | _ => entity
         }
         entityDict->Dict.set(rowKey(~scope, ~entityId), storedEntity)
-        if shouldSaveHistory {
+        if shouldSaveChangeHistory {
           historyRows
           ->Array.push({
             entityId,
@@ -353,7 +385,7 @@ let writeBatch = (
         }
       | Delete({checkpointId}) =>
         entityDict->Utils.Dict.deleteInPlace(rowKey(~scope, ~entityId))
-        if shouldSaveHistory {
+        if shouldSaveChangeHistory {
           historyRows
           ->Array.push({
             entityId,
@@ -472,7 +504,7 @@ let getRollbackData = (
     | Some({action: DELETE, entityId, scope}) =>
       removals->Array.push({Persistence.entityId, scope})->ignore
     | Some({action: SET, entity: Some(entity)}) =>
-      restored->Array.push(entity->(Utils.magic: Internal.entity => unknown))->ignore
+      restored->Array.push(entity)->ignore
     | Some({action: SET, entity: None}) => ()
     }
   })
