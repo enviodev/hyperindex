@@ -991,3 +991,33 @@ fn parses_real_codama_spl_token_idl() {
 fn parses_real_codama_memo_idl() {
     insta::assert_snapshot!(render(&parse_fixture("memo.codama")));
 }
+
+/// Types that share subtrees are ordinary — a struct referenced from two
+/// fields, thirty levels down. Resolving nominal references per occurrence
+/// doubles the work at every level, which reads as a hang rather than as a
+/// wrong answer, so this pins that the cost stays flat.
+#[test]
+fn resolves_shared_type_graphs_without_blowing_up() {
+    let depth = 40;
+    let mut types = vec![r#"{ "name": "T0", "type": { "kind": "struct",
+             "fields": [{ "name": "x", "type": "u8" }] } }"#
+        .to_string()];
+    for i in 1..depth {
+        types.push(format!(
+            r#"{{ "name": "T{i}", "type": {{ "kind": "struct", "fields": [
+                 {{ "name": "a", "type": {{ "defined": "T{prev}" }} }},
+                 {{ "name": "b", "type": {{ "defined": "T{prev}" }} }}] }} }}"#,
+            prev = i - 1
+        ));
+    }
+    let json = format!(
+        r#"{{ "instructions": [{{ "name": "swap", "discriminator": [1],
+             "args": [{{ "name": "deep", "type": {{ "defined": "T{}" }} }}] }}],
+             "types": [{}] }}"#,
+        depth - 1,
+        types.join(",")
+    );
+
+    let idl = parse_idl(&json, "Deep").expect("parse");
+    assert_eq!(idl.instructions.keys().collect::<Vec<_>>(), vec!["swap"]);
+}

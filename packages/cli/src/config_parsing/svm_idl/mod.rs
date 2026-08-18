@@ -6,7 +6,7 @@ mod codama;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::{FieldType, NamedField};
@@ -101,6 +101,7 @@ fn parse_validated(json: &str) -> Result<ProgramIdl> {
 /// matters is a question about the config, not about the file, so the answer
 /// belongs where the config names an instruction.
 fn validate(idl: &mut ProgramIdl) {
+    let bad_types = unresolvable_types(idl);
     let mut demoted = Unusable::new();
     for (name, ix) in &idl.instructions {
         let len = ix.discriminator.len();
@@ -115,8 +116,8 @@ fn validate(idl: &mut ProgramIdl) {
             continue;
         }
         for arg in &ix.args {
-            if let Err(e) = check_resolvable(&arg.ty, idl, &mut BTreeSet::new()) {
-                demoted.insert(name.clone(), format!("{e:#}"));
+            if let Err(reason) = references_resolve(&arg.ty, idl, &bad_types) {
+                demoted.insert(name.clone(), reason);
                 break;
             }
         }
@@ -198,42 +199,58 @@ fn numeric_field_type(format: &str) -> Option<FieldType> {
     })
 }
 
-/// Every `Defined` name must resolve to a layout, and so must everything that
-/// layout reaches. An unresolved one is not a decode-time surprise to leave
-/// for the runtime: a mistyped primitive (`u46`) lands here as a nominal type,
-/// and this is what catches it. `visiting` both breaks the cycles a
-/// self-referential type would otherwise spin on and keeps a diamond from
-/// being walked twice.
-fn check_resolvable(
-    ty: &FieldType,
-    idl: &ProgramIdl,
-    visiting: &mut BTreeSet<String>,
-) -> Result<()> {
+/// One entry per declared type that cannot be resolved, with the reason.
+/// Settled to a fixed point, so a type is condemned by anything it reaches
+/// however deeply, while each type is still inspected a bounded number of
+/// times. Following nominal references per occurrence instead is exponential
+/// on a type graph that shares subtrees, which real IDLs do.
+fn unresolvable_types(idl: &ProgramIdl) -> Unusable {
+    let mut bad = idl.unusable_types.clone();
+    loop {
+        let mut changed = false;
+        for (name, ty) in &idl.defined_types {
+            if bad.contains_key(name) {
+                continue;
+            }
+            if let Err(reason) = references_resolve(ty, idl, &bad) {
+                bad.insert(name.clone(), reason);
+                changed = true;
+            }
+        }
+        if !changed {
+            return bad;
+        }
+    }
+}
+
+/// Whether every nominal reference reachable through `ty`'s own structure
+/// resolves. Deliberately does not follow those references: `unresolvable_types`
+/// has already settled what each name is worth, so this walks one type's shape
+/// and stops. A mistyped primitive (`u46`) arrives here as a nominal type, and
+/// this is what catches it rather than leaving it for the runtime.
+fn references_resolve(ty: &FieldType, idl: &ProgramIdl, bad: &Unusable) -> Result<(), String> {
     match ty {
         FieldType::Defined(name) => {
-            if let Some(reason) = idl.unusable_types.get(name) {
-                bail!("it reaches type '{name}', which cannot be decoded: {reason}");
+            if let Some(reason) = bad.get(name) {
+                Err(format!(
+                    "it reaches type '{name}', which cannot be decoded: {reason}"
+                ))
+            } else if !idl.defined_types.contains_key(name) {
+                Err(format!("it references undefined type '{name}'"))
+            } else {
+                Ok(())
             }
-            let Some(target) = idl.defined_types.get(name) else {
-                bail!("it references undefined type '{name}'");
-            };
-            if !visiting.insert(name.clone()) {
-                return Ok(());
-            }
-            let resolved = check_resolvable(target, idl, visiting);
-            visiting.remove(name);
-            resolved
         }
         FieldType::Option(inner) | FieldType::Vec(inner) | FieldType::Array { ty: inner, .. } => {
-            check_resolvable(inner, idl, visiting)
+            references_resolve(inner, idl, bad)
         }
         FieldType::Struct(fields) => fields
             .iter()
-            .try_for_each(|f| check_resolvable(&f.ty, idl, visiting)),
+            .try_for_each(|f| references_resolve(&f.ty, idl, bad)),
         FieldType::Enum(variants) => variants
             .iter()
             .flat_map(|v| v.fields.iter().flatten())
-            .try_for_each(|f| check_resolvable(&f.ty, idl, visiting)),
+            .try_for_each(|f| references_resolve(&f.ty, idl, bad)),
         _ => Ok(()),
     }
 }
