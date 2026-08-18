@@ -197,6 +197,10 @@ type t = {
   getHeightOrThrowCalls: array<bool>,
   resolveGetHeightOrThrow: int => unit,
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
+  // Answer every height call with `height` from now on, instead of parking it
+  // for `resolveGetHeightOrThrow`. A restarted indexer learns the head on its
+  // own this way, before the test body gets a chance to resolve anything.
+  setAutoHeight: int => unit,
   getItemsOrThrowCalls: array<getItemsOrThrowCall>,
   // How many times the source was told to drop orphaned-chain state.
   reorgCallCount: unit => int,
@@ -238,6 +242,7 @@ let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~polling
   let heightSubscriptionCalls = []
   let heightSubscriptionCallbacks: array<int => unit> = []
   let heightSubscriptionUnsubscribed = ref(false)
+  let autoHeight = ref(None)
   let state: mockSourceState = {onEventRegistrationRef: ref(None)}
 
   // With the function we keep only the pending calls,
@@ -275,6 +280,13 @@ let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~polling
       getHeightOrThrowResolveFns->Array.forEach(resolve =>
         resolve({Source.height, requestStats: []})
       )
+    },
+    setAutoHeight: height => {
+      autoHeight := Some(height)
+      getHeightOrThrowResolveFns->Array.forEach(resolve =>
+        resolve({Source.height, requestStats: []})
+      )
+      getHeightOrThrowResolveFns->Utils.Array.clearInPlace
     },
     rejectGetHeightOrThrow: exn => {
       getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
@@ -352,10 +364,14 @@ let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~polling
         }),
         getHeightOrThrow: implement(#getHeightOrThrow, () => {
           getHeightOrThrowCalls->Array.push(true)->ignore
-          Promise.make((resolve, reject) => {
-            getHeightOrThrowResolveFns->Array.push(resolve)->ignore
-            getHeightOrThrowRejectFns->Array.push(reject)->ignore
-          })
+          switch autoHeight.contents {
+          | Some(height) => Promise.resolve({Source.height, requestStats: []})
+          | None =>
+            Promise.make((resolve, reject) => {
+              getHeightOrThrowResolveFns->Array.push(resolve)->ignore
+              getHeightOrThrowRejectFns->Array.push(reject)->ignore
+            })
+          }
         }),
         getItemsOrThrow: implement(#getItemsOrThrow, (
           ~fromBlock,
