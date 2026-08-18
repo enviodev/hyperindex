@@ -1,12 +1,113 @@
 open Vitest
 
+// Every scalar the DDL knows how to render, an entity whose name is over
+// Postgres' 63-character table-name limit, and a foreign key that carries an
+// index — the shapes the generated SQL below is asserted against.
+let config = TestConfig.make(
+  ~schema=`
+enum AccountType {
+  ADMIN
+  USER
+}
+
+enum GravatarSize {
+  SMALL
+  MEDIUM
+  LARGE
+}
+
+type Gravatar {
+  id: ID!
+  size: GravatarSize!
+}
+
+type A {
+  id: ID!
+  b: B! @index
+  optionalStringToTestLinkedEntities: String
+}
+
+type B {
+  id: ID!
+  a: [A!]! @derivedFrom(field: "b")
+  c: C
+}
+
+type C {
+  id: ID!
+  a: A!
+  stringThatIsMirroredToA: String!
+}
+
+type EntityWith63LenghtName______________________________________one {
+  id: ID!
+}
+
+type EntityWith63LenghtName______________________________________two {
+  id: ID!
+}
+
+type EntityWithAllTypes {
+  id: ID!
+  string: String!
+  optString: String
+  arrayOfStrings: [String!]!
+  int_: Int!
+  optInt: Int
+  arrayOfInts: [Int!]!
+  float_: Float!
+  optFloat: Float
+  arrayOfFloats: [Float!]!
+  bool: Boolean!
+  optBool: Boolean
+  bigInt: BigInt!
+  optBigInt: BigInt
+  arrayOfBigInts: [BigInt!]!
+  bigDecimal: BigDecimal!
+  optBigDecimal: BigDecimal
+  bigDecimalWithConfig: BigDecimal! @config(precision: 10, scale: 8)
+  arrayOfBigDecimals: [BigDecimal!]!
+  timestamp: Timestamp!
+  optTimestamp: Timestamp
+  json: Json!
+  enumField: AccountType!
+  optEnumField: AccountType
+}
+
+type EntityWithAllNonArrayTypes {
+  id: ID!
+  string: String!
+  optString: String
+  int_: Int!
+  optInt: Int
+  float_: Float!
+  optFloat: Float
+  bool: Boolean!
+  optBool: Boolean
+  bigInt: BigInt!
+  optBigInt: BigInt
+  bigDecimal: BigDecimal!
+  optBigDecimal: BigDecimal
+  bigDecimalWithConfig: BigDecimal! @config(precision: 10, scale: 8)
+  enumField: AccountType!
+  optEnumField: AccountType
+  timestamp: Timestamp!
+  optTimestamp: Timestamp
+}
+`,
+)
+
+let ecosystem = config.ecosystem
+let entityConfig = (name: string): Internal.entityConfig =>
+  config->IndexerRunner.entityConfigByName(name)
+
 describe("Test PgStorage SQL generation functions", () => {
   describe("makeCreateTableQuery", () => {
     Async.it(
       "Should create SQL for A entity table",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          MockIndexer.entityConfig("A").table,
+          entityConfig("A").table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
@@ -20,7 +121,7 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should create SQL for B entity table with derived fields",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          MockIndexer.entityConfig("B").table,
+          entityConfig("B").table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
@@ -34,7 +135,7 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should handle default values",
       async t => {
         let query = PgStorage.makeCreateTableQuery(
-          MockIndexer.entityConfig("A").table,
+          entityConfig("A").table,
           ~pgSchema="test_schema",
           ~isNumericArrayAsText=false,
         )
@@ -52,13 +153,13 @@ describe("Test PgStorage SQL generation functions", () => {
       "Should create complete initialization queries",
       async t => {
         let entities = [
-          MockIndexer.entityConfig("A"),
-          MockIndexer.entityConfig("B"),
-          MockIndexer.entityConfig("EntityWith63LenghtName______________________________________one"),
-          MockIndexer.entityConfig("EntityWith63LenghtName______________________________________two"),
-          MockIndexer.entityConfig("EntityWithAllTypes"),
+          entityConfig("A"),
+          entityConfig("B"),
+          entityConfig("EntityWith63LenghtName______________________________________one"),
+          entityConfig("EntityWith63LenghtName______________________________________two"),
+          entityConfig("EntityWithAllTypes"),
         ]
-        let enums = MockIndexer.config.allEnums
+        let enums = config.allEnums
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
@@ -91,10 +192,7 @@ describe("Test PgStorage SQL generation functions", () => {
           ~isHasuraEnabled=true,
         )
 
-        t.expect(
-          queries->Array.length,
-          ~message="Should return a single main DDL query",
-        ).toBe(1)
+        t.expect(queries->Array.length, ~message="Should return a single main DDL query").toBe(1)
 
         let mainQuery = queries->Array.get(0)->Option.getOrThrow
 
@@ -113,12 +211,15 @@ CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_A"("id" TEXT NOT NULL, "
 CREATE TABLE IF NOT EXISTS "test_schema"."B"("id" TEXT NOT NULL, "c_id" TEXT, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_B"("id" TEXT NOT NULL, "c_id" TEXT, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."EntityWith63LenghtName______________________________________one"("id" TEXT NOT NULL, PRIMARY KEY("id"));
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__________________________6"("id" TEXT NOT NULL, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__________________________3"("id" TEXT NOT NULL, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."EntityWith63LenghtName______________________________________two"("id" TEXT NOT NULL, PRIMARY KEY("id"));
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__________________________7"("id" TEXT NOT NULL, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWith63LenghtName__________________________4"("id" TEXT NOT NULL, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."EntityWithAllTypes"("id" TEXT NOT NULL, "string" TEXT NOT NULL, "optString" TEXT, "arrayOfStrings" TEXT[] NOT NULL, "int_" INTEGER NOT NULL, "optInt" INTEGER, "arrayOfInts" INTEGER[] NOT NULL, "float_" DOUBLE PRECISION NOT NULL, "optFloat" DOUBLE PRECISION, "arrayOfFloats" DOUBLE PRECISION[] NOT NULL, "bool" BOOLEAN NOT NULL, "optBool" BOOLEAN, "bigInt" NUMERIC NOT NULL, "optBigInt" NUMERIC, "arrayOfBigInts" TEXT[] NOT NULL, "bigDecimal" NUMERIC NOT NULL, "optBigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8) NOT NULL, "arrayOfBigDecimals" TEXT[] NOT NULL, "timestamp" TIMESTAMP WITH TIME ZONE NOT NULL, "optTimestamp" TIMESTAMP WITH TIME ZONE NULL, "json" JSONB NOT NULL, "enumField" "test_schema".AccountType NOT NULL, "optEnumField" "test_schema".AccountType, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_EntityWithAllTypes"("id" TEXT NOT NULL, "string" TEXT, "optString" TEXT, "arrayOfStrings" TEXT[], "int_" INTEGER, "optInt" INTEGER, "arrayOfInts" INTEGER[], "float_" DOUBLE PRECISION, "optFloat" DOUBLE PRECISION, "arrayOfFloats" DOUBLE PRECISION[], "bool" BOOLEAN, "optBool" BOOLEAN, "bigInt" NUMERIC, "optBigInt" NUMERIC, "arrayOfBigInts" TEXT[], "bigDecimal" NUMERIC, "optBigDecimal" NUMERIC, "bigDecimalWithConfig" NUMERIC(10, 8), "arrayOfBigDecimals" TEXT[], "timestamp" TIMESTAMP WITH TIME ZONE NULL, "optTimestamp" TIMESTAMP WITH TIME ZONE NULL, "json" JSONB, "enumField" "test_schema".AccountType, "optEnumField" "test_schema".AccountType, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
-CREATE INDEX "${IndexDefinition.single(~tableName="A", ~column="b_id")->IndexDefinition.name}" ON "test_schema"."A"("b_id");
+CREATE INDEX "${IndexDefinition.single(
+            ~tableName="A",
+            ~column="b_id",
+          )->IndexDefinition.name}" ON "test_schema"."A"("b_id");
 CREATE VIEW "test_schema"."_meta" AS 
 SELECT 
   "id" AS "chainId",
@@ -167,10 +268,7 @@ VALUES (1, 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false),
           ~isHasuraEnabled=false,
         )
 
-        t.expect(
-          queries->Array.length,
-          ~message="Should return a single main DDL query",
-        ).toBe(1)
+        t.expect(queries->Array.length, ~message="Should return a single main DDL query").toBe(1)
 
         let mainQuery = queries->Array.get(0)->Option.getOrThrow
 
@@ -222,7 +320,7 @@ FROM "test_schema"."envio_chains";`
       "Should create SQL for single entity with indexes",
       async t => {
         // Test with just entity A which has an indexed field
-        let entities = [MockIndexer.entityConfig("A")]
+        let entities = [entityConfig("A")]
 
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="public",
@@ -232,10 +330,7 @@ FROM "test_schema"."envio_chains";`
           ~isHasuraEnabled=false,
         )
 
-        t.expect(
-          queries->Array.length,
-          ~message="Should return a single main DDL query",
-        ).toBe(1)
+        t.expect(queries->Array.length, ~message="Should return a single main DDL query").toBe(1)
 
         let mainQuery = queries->Array.get(0)->Option.getOrThrow
 
@@ -249,7 +344,10 @@ CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("id" BIGINT NOT NULL, "c
 CREATE TABLE IF NOT EXISTS "public"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE TABLE IF NOT EXISTS "public"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_history_A"("id" TEXT NOT NULL, "b_id" TEXT, "optionalStringToTestLinkedEntities" TEXT, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "public".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
-CREATE INDEX "${IndexDefinition.single(~tableName="A", ~column="b_id")->IndexDefinition.name}" ON "public"."A"("b_id");
+CREATE INDEX "${IndexDefinition.single(
+            ~tableName="A",
+            ~column="b_id",
+          )->IndexDefinition.name}" ON "public"."A"("b_id");
 CREATE VIEW "public"."_meta" AS 
 SELECT 
   "id" AS "chainId",
@@ -287,7 +385,7 @@ FROM "public"."envio_chains";`
   })
 
   describe("Deferred schema indexes", () => {
-    let entities = [MockIndexer.entityConfig("A"), MockIndexer.entityConfig("B")]
+    let entities = [entityConfig("A"), entityConfig("B")]
 
     Async.it(
       "Creates no schema index during the initial DDL, but still the tables and views",
@@ -322,10 +420,12 @@ FROM "public"."envio_chains";`
         let definition = IndexDefinition.single(~tableName="A", ~column="b_id")
 
         t.expect(
-          PgStorage.getSchemaIndexes(~entities)->Array.map(definition => (
-            definition->IndexDefinition.name,
-            definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema"),
-          )),
+          PgStorage.getSchemaIndexes(~entities)->Array.map(
+            definition => (
+              definition->IndexDefinition.name,
+              definition->IndexDefinition.makeCreateQuery(~pgSchema="test_schema"),
+            ),
+          ),
           ~message="The @index on A.b and B's derived relationship describe the same index",
         ).toEqual([
           (
@@ -342,7 +442,7 @@ FROM "public"."envio_chains";`
       "Emits the index backing a derived relationship on the referenced table",
       async t => {
         let makeEntity = (name, ~fields): Internal.entityConfig => {
-          ...MockIndexer.entityConfig("A"),
+          ...entityConfig("A"),
           name,
           table: Table.mkTable(name, ~fields),
           storage: {postgres: true, clickhouse: false},
@@ -369,10 +469,12 @@ FROM "public"."envio_chains";`
         ]
 
         t.expect(
-          PgStorage.getSchemaIndexes(~entities)->Array.map(definition => (
-            definition.IndexDefinition.tableName,
-            definition.columns->Array.map(column => column.IndexDefinition.name),
-          )),
+          PgStorage.getSchemaIndexes(~entities)->Array.map(
+            definition => (
+              definition.IndexDefinition.tableName,
+              definition.columns->Array.map(column => column.IndexDefinition.name),
+            ),
+          ),
         ).toEqual([("Order", ["trader_id"])])
       },
     )
@@ -384,8 +486,8 @@ FROM "public"."envio_chains";`
       async t => {
         let tableName = "Entity" ++ "x"->String.repeat(50)
         let names =
-          ["some_long_column_one", "some_long_column_two"]->Array.map(column =>
-            IndexDefinition.single(~tableName, ~column)->IndexDefinition.name
+          ["some_long_column_one", "some_long_column_two"]->Array.map(
+            column => IndexDefinition.single(~tableName, ~column)->IndexDefinition.name,
           )
 
         t.expect((
@@ -498,9 +600,7 @@ FROM "public"."envio_chains";`
         }
 
         t.expect(result).toEqual(
-          Some(
-            `Failed loading "users" from storage. The "and" filter must contain at least one nested filter.`,
-          ),
+          Some(`Failed loading "users" from storage. The "and" filter must contain at least one nested filter.`),
         )
       },
     )
@@ -512,8 +612,8 @@ FROM "public"."envio_chains";`
       async t => {
         let query = PgStorage.makeInsertUnnestSetQuery(
           ~pgSchema="test_schema",
-          ~table=MockIndexer.entityConfig("EntityWithAllNonArrayTypes").table,
-          ~itemSchema=MockIndexer.entityConfig("EntityWithAllNonArrayTypes").schema,
+          ~table=entityConfig("EntityWithAllNonArrayTypes").table,
+          ~itemSchema=entityConfig("EntityWithAllNonArrayTypes").schema,
           ~isRawEvents=false,
         )
 
@@ -548,8 +648,8 @@ SELECT * FROM unnest($1::INTEGER[],$2::BIGINT[],$3::TEXT[],$4::TEXT[],$5::INTEGE
       async t => {
         let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
-          ~table=MockIndexer.entityConfig("A").table,
-          ~itemSchema=MockIndexer.entityConfig("A").schema,
+          ~table=entityConfig("A").table,
+          ~itemSchema=entityConfig("A").schema,
           ~itemsCount=2,
         )
 
@@ -569,8 +669,8 @@ VALUES($1,$3,$5),($2,$4,$6)ON CONFLICT("id") DO UPDATE SET "b_id" = EXCLUDED."b_
       async t => {
         let query = PgStorage.makeInsertValuesSetQuery(
           ~pgSchema="test_schema",
-          ~table=MockIndexer.entityConfig("B").table,
-          ~itemSchema=MockIndexer.entityConfig("B").schema,
+          ~table=entityConfig("B").table,
+          ~itemSchema=entityConfig("B").schema,
           ~itemsCount=1,
         )
 
@@ -910,13 +1010,15 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
     "Throws listing all missing ENVIO_CLICKHOUSE_* env vars when storage.clickhouse=true",
     async t => {
       let config = {
-        ...MockIndexer.config,
-        storage: ({
-    postgres: true,
-    clickhouse: true,
-    postgresColumnNameFormat: Original,
-    clickhouseColumnNameFormat: Original,
-  }: Config.storage),
+        ...config,
+        storage: (
+          {
+            postgres: true,
+            clickhouse: true,
+            postgresColumnNameFormat: Original,
+            clickhouseColumnNameFormat: Original,
+          }: Config.storage
+        ),
       }
       let message = switch try {
         let _ = PgStorage.makeStorageFromEnv(~config)
@@ -937,109 +1039,122 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
     },
   )
 
-  Async.it(
-    "Does not throw when storage.clickhouse=false (default)",
-    async t => {
-      let config = {
-        ...MockIndexer.config,
-        storage: ({
-    postgres: true,
-    clickhouse: false,
-    postgresColumnNameFormat: Original,
-    clickhouseColumnNameFormat: Original,
-  }: Config.storage),
-      }
-      // Just ensure construction succeeds without touching ClickHouse env vars.
-      let _ = PgStorage.makeStorageFromEnv(~config)
-      t.expect(true, ~message="Expected no throw when clickhouse is disabled").toBe(true)
-    },
-  )
+  Async.it("Does not throw when storage.clickhouse=false (default)", async t => {
+    let config = {
+      ...config,
+      storage: (
+        {
+          postgres: true,
+          clickhouse: false,
+          postgresColumnNameFormat: Original,
+          clickhouseColumnNameFormat: Original,
+        }: Config.storage
+      ),
+    }
+    // Just ensure construction succeeds without touching ClickHouse env vars.
+    let _ = PgStorage.makeStorageFromEnv(~config)
+    t.expect(true, ~message="Expected no throw when clickhouse is disabled").toBe(true)
+  })
 
   // `envio dev` applies ENVIO_CLICKHOUSE_* vars via Bin.applyEnv, which runs
   // AFTER Env.res has been imported. If Env.ClickHouse cached reads at module
   // load, those late writes would be invisible and validation would still
   // throw. This test simulates that timing by writing the vars to process.env
   // right before calling makeStorageFromEnv.
-  Async.it(
-    "Picks up ENVIO_CLICKHOUSE_* vars set after Env.res has been loaded",
-    async t => {
-      let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
-      let unsetEnvVar: string => unit = %raw(`(k) => { delete process.env[k]; }`)
-      setEnvVar("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123")
-      setEnvVar("ENVIO_CLICKHOUSE_USERNAME", "default")
-      setEnvVar("ENVIO_CLICKHOUSE_PASSWORD", "testing")
-      setEnvVar("ENVIO_CLICKHOUSE_DATABASE", "envio_indexer")
-      let config = {
-        ...MockIndexer.config,
-        storage: ({
-    postgres: true,
-    clickhouse: true,
-    postgresColumnNameFormat: Original,
-    clickhouseColumnNameFormat: Original,
-  }: Config.storage),
-      }
-      let result = try {
-        let _ = PgStorage.makeStorageFromEnv(~config)
-        Ok()
-      } catch {
-      | JsExn(e) => Error(e->JsExn.message->Option.getOr(""))
-      | _ => Error("non-JsExn")
-      }
-      unsetEnvVar("ENVIO_CLICKHOUSE_HOST")
-      unsetEnvVar("ENVIO_CLICKHOUSE_USERNAME")
-      unsetEnvVar("ENVIO_CLICKHOUSE_PASSWORD")
-      unsetEnvVar("ENVIO_CLICKHOUSE_DATABASE")
-      t.expect(
-        result,
-        ~message="Should read ClickHouse env vars lazily so envio dev's late injection works",
-      ).toEqual(Ok())
-    },
-  )
+  Async.it("Picks up ENVIO_CLICKHOUSE_* vars set after Env.res has been loaded", async t => {
+    let getEnvVar: string => option<string> = %raw(`(k) => process.env[k]`)
+    let setEnvVar: (string, string) => unit = %raw(`(k, v) => { process.env[k] = v; }`)
+    let unsetEnvVar: string => unit = %raw(`(k) => { delete process.env[k]; }`)
+    // The ClickHouse leg points the process at its own database through these
+    // same vars, so deleting them unconditionally would strip the run's wiring
+    // from every test after this one in the file.
+    let restored = [
+      ("ENVIO_CLICKHOUSE_HOST", "http://localhost:8123"),
+      ("ENVIO_CLICKHOUSE_USERNAME", "default"),
+      ("ENVIO_CLICKHOUSE_PASSWORD", "testing"),
+      ("ENVIO_CLICKHOUSE_DATABASE", "envio_indexer"),
+    ]->Array.map(
+      ((key, value)) => {
+        let before = getEnvVar(key)
+        setEnvVar(key, value)
+        (key, before)
+      },
+    )
+    let config = {
+      ...config,
+      storage: (
+        {
+          postgres: true,
+          clickhouse: true,
+          postgresColumnNameFormat: Original,
+          clickhouseColumnNameFormat: Original,
+        }: Config.storage
+      ),
+    }
+    let result = try {
+      let _ = PgStorage.makeStorageFromEnv(~config)
+      Ok()
+    } catch {
+    | JsExn(e) => Error(e->JsExn.message->Option.getOr(""))
+    | _ => Error("non-JsExn")
+    }
+    restored->Array.forEach(
+      ((key, before)) =>
+        switch before {
+        | Some(value) => setEnvVar(key, value)
+        | None => unsetEnvVar(key)
+        },
+    )
+    t.expect(
+      result,
+      ~message="Should read ClickHouse env vars lazily so envio dev's late injection works",
+    ).toEqual(Ok())
+  })
 })
 
 describe("ecosystem.toRawEvent", () => {
   Async.it(
     "Derives a raw event row from a batch item, taking block hash and timestamp from the payload block and stringifying bigint block fields",
     async t => {
-      let srcAddress = "0x00000000000000000000000000000000000000ab"->(Utils.magic: string => Address.t)
+      let srcAddress =
+        "0x00000000000000000000000000000000000000ab"->(Utils.magic: string => Address.t)
       let blockNumber = 5
       let logIndex = 3
 
-      let event =
-        {
-          "block": %raw(`{"number": 5, "timestamp": 9999, "hash": "0xblockhash", "gasUsed": 99n, "miner": "0xminer"}`),
-          "transaction": %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
-          "params": (),
-          "logIndex": logIndex,
-          "srcAddress": srcAddress,
-          "chainId": 137,
-          "contractName": "ERC20",
-          "eventName": "EventWithoutFields",
-        }->(
-          Utils.magic: {
-            "block": JSON.t,
-            "transaction": JSON.t,
-            "params": unit,
-            "logIndex": int,
-            "srcAddress": Address.t,
-            "chainId": int,
-            "contractName": string,
-            "eventName": string,
-          } => Internal.eventPayload
-        )
+      let event = {
+        "block": %raw(`{"number": 5, "timestamp": 9999, "hash": "0xblockhash", "gasUsed": 99n, "miner": "0xminer"}`),
+        "transaction": %raw(`{"hash": "0xtxhash", "transactionIndex": 2}`),
+        "params": (),
+        "logIndex": logIndex,
+        "srcAddress": srcAddress,
+        "chainId": 137,
+        "contractName": "ERC20",
+        "eventName": "EventWithoutFields",
+      }->(
+        Utils.magic: {
+          "block": JSON.t,
+          "transaction": JSON.t,
+          "params": unit,
+          "logIndex": int,
+          "srcAddress": Address.t,
+          "chainId": int,
+          "contractName": string,
+          "eventName": string,
+        } => Internal.eventPayload
+      )
 
-      let eventItem =
-        Internal.Event({
-          onEventRegistration:
-            (MockIndexer.evmOnEventRegistration(~contractName="ERC20") :> Internal.onEventRegistration),
-          chainId: 137->ChainId.fromInt,
-          blockNumber,
-          logIndex,
-          transactionIndex: 0,
-          payload: event,
-        })->Internal.castUnsafeEventItem
+      let eventItem = Internal.Event({
+        onEventRegistration: (EventRegistration.evmOnEventRegistration(
+          ~contractName="ERC20",
+        ) :> Internal.onEventRegistration),
+        chainId: 137->ChainId.fromInt,
+        blockNumber,
+        logIndex,
+        transactionIndex: 0,
+        payload: event,
+      })->Internal.castUnsafeEventItem
 
-      t.expect(MockIndexer.config.ecosystem.toRawEvent(eventItem)).toEqual({
+      t.expect(ecosystem.toRawEvent(eventItem)).toEqual({
         chain_id: 137->ChainId.fromInt,
         event_id: EventUtils.packEventIndex(~logIndex, ~blockNumber),
         event_name: "EventWithoutFields",

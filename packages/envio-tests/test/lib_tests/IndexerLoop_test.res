@@ -1,14 +1,14 @@
 open Vitest
 
 let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) => {
-  let config = Config.load()
+  let config = TestConfig.default
 
   let chainStates = Dict.make()
   config.chainMap
   ->ChainMap.values
   ->Array.forEach(chainConfig => {
     let onEventRegistrations = [
-      (MockIndexer.evmOnEventRegistration(
+      (EventRegistration.evmOnEventRegistration(
         ~id="0",
         ~contractName="Gravatar",
         ~isWildcard=true,
@@ -27,7 +27,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ~chainId=chainConfig.id,
       ~knownHeight=0,
     )
-    let mockSource = MockIndexer.Source.make([], ~chainId=#1)
+    let mockSource = MockSource.make([], ~chainId=1)
     let chainState = ChainState.make(
       ~chainConfig,
       ~fetchState,
@@ -44,7 +44,7 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
 
   IndexerState.make(
     ~config,
-    ~persistence=MockIndexer.defaultPersistence(),
+    ~persistence=TestIndexerState.defaultPersistence(),
     ~chainStates,
     // isInReorgThreshold avoids triggering a fetch on the mock source (which
     // implements no methods) when the processing loop runs to its empty exit.

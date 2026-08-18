@@ -1,6 +1,6 @@
 open Vitest
 
-let baseChainConfig = Config.load().chainMap->ChainMap.values->Utils.Array.firstUnsafe
+let baseChainConfig = TestConfig.default.chainMap->ChainMap.values->Utils.Array.firstUnsafe
 
 let mockEvent = (~blockNumber): Internal.item =>
   Internal.Event({
@@ -63,7 +63,7 @@ let makeChainState = (
     clientFilterAddressThreshold: None,
     buffer: bufferBlocks->Array.map(blockNumber => mockEvent(~blockNumber)),
   }
-  let mockSource = MockIndexer.Source.make([], ~chainId=#1)
+  let mockSource = MockSource.make([], ~chainId=1)
   ChainState.make(
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
@@ -134,7 +134,7 @@ let makeFetchingChainState = (
     firstEventBlock,
     clientFilterAddressThreshold: None,
   }
-  let mockSource = MockIndexer.Source.make([], ~chainId=#1)
+  let mockSource = MockSource.make([], ~chainId=1)
   ChainState.make(
     ~chainConfig={...baseChainConfig, id: chainId},
     ~fetchState,
@@ -171,7 +171,7 @@ let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~targetBufferSiz
 
 let makeRegistration = (~contractName, ~index): Internal.onEventRegistration =>
   ({
-    ...MockIndexer.evmOnEventRegistration(~contractName),
+    ...EventRegistration.evmOnEventRegistration(~contractName),
     index,
   }: Internal.evmOnEventRegistration :> Internal.onEventRegistration)
 
@@ -463,7 +463,7 @@ describe("CrossChainState fetch control", () => {
         firstEventBlock: Some(0),
         clientFilterAddressThreshold: None,
       }
-      let mockSource1 = MockIndexer.Source.make([], ~chainId=#1)
+      let mockSource1 = MockSource.make([], ~chainId=1)
       let a = ChainState.make(
         ~chainConfig={...baseChainConfig, id: 1->ChainId.fromInt},
         ~fetchState=fetchState1,

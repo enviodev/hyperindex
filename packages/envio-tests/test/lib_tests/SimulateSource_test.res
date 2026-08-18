@@ -18,7 +18,7 @@ let registration = (
   ~startBlock=?,
   ~addressFilterParamGroups=?,
 ) => {
-  let base = (MockIndexer.evmOnEventRegistration(
+  let base = (EventRegistration.evmOnEventRegistration(
     ~id=index->Int.toString,
     ~contractName,
     ~isWildcard,

@@ -5,7 +5,7 @@ let runCmd = Some("envio dev")
 
 describe("Test Persistence layer init", () => {
   Async.it("Should initialize the persistence layer without the user entities", async t => {
-    let storageMock = MockIndexer.Storage.make([#isInitialized, #resumeInitialState, #initialize])
+    let storageMock = MockStorage.make([#isInitialized, #resumeInitialState, #initialize])
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
@@ -129,7 +129,7 @@ describe("Test Persistence layer init", () => {
   })
 
   Async.it("Should skip initialization when storage is already initialized", async t => {
-    let storageMock = MockIndexer.Storage.make([#isInitialized, #resumeInitialState])
+    let storageMock = MockStorage.make([#isInitialized, #resumeInitialState])
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
@@ -180,7 +180,7 @@ Although it should load effect caches metadata.`,
     ~resetCommand=resetCmd,
     ~runCommand=runCmd,
   ) => {
-    let storageMock = MockIndexer.Storage.make([#isInitialized, #resumeInitialState])
+    let storageMock = MockStorage.make([#isInitialized, #resumeInitialState])
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
     let resumePromise =
       persistence->Persistence.init(

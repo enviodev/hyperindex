@@ -5,12 +5,32 @@ open Vitest
 // ends up holding.
 let sql = PgStorage.makeClient()
 
-let config = Config.load()
+// A(b_id) is the indexed foreign key the rules act on; B(c_id) is the unrelated
+// column a test parks a same-named index on.
+let config = TestConfig.make(
+  ~schema=`
+type A {
+  id: ID!
+  b: B! @index
+  optionalStringToTestLinkedEntities: String
+}
+type B {
+  id: ID!
+  a: [A!]! @derivedFrom(field: "b")
+  c: C
+}
+type C {
+  id: ID!
+  a: A!
+  stringThatIsMirroredToA: String!
+}
+`,
+)
 let enums =
   config.allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
 
-let entityA = MockIndexer.entityConfig("A")
-let entityB = MockIndexer.entityConfig("B")
+let entityA = config->IndexerRunner.entityConfigByName("A")
+let entityB = config->IndexerRunner.entityConfigByName("B")
 let entities = [entityA, entityB]
 // The storage creates exactly the tables it is handed, so the internal ones a
 // resume reads back have to be in the list too.
@@ -20,7 +40,11 @@ let allEntities = entities->Array.concat([InternalTable.EnvioAddresses.entityCon
 // fail one kind of query — enough to reproduce a read-back that fails after its
 // DDL has already committed. A Proxy rather than a hand-written stand-in, so
 // the storage reaching for a method this test never thought about still works.
-let makeFlakySql: (Postgres.sql, array<string>, string => bool) => Postgres.sql = %raw(`(sql, log, shouldFail) => new Proxy(sql, {
+let makeFlakySql: (
+  Postgres.sql,
+  array<string>,
+  string => bool,
+) => Postgres.sql = %raw(`(sql, log, shouldFail) => new Proxy(sql, {
   get(target, prop, receiver) {
     if (prop === "unsafe") {
       return (query, params, options) => {
@@ -113,8 +137,10 @@ let describeIndex = (entry: IndexCatalog.entry) => (
   entry.method,
 )
 
-let eq = (~fieldName): EntityFilter.t =>
-  Eq({fieldName, fieldValue: "1"->(Utils.magic: string => unknown)})
+let eq = (~fieldName): EntityFilter.t => Eq({
+  fieldName,
+  fieldValue: "1"->(Utils.magic: string => unknown),
+})
 
 let aBId = IndexDefinition.single(~tableName="A", ~column="b_id")
 let aBIdName = aBId->IndexDefinition.name
@@ -122,19 +148,21 @@ let aBIdName = aBId->IndexDefinition.name
 let readyAt = Date.fromString("2024-01-01T00:00:00Z")
 
 let readyAtByChainId = async pgSchema => {
-  let rows: array<{"id": ChainId.t, "ready_at": Null.t<Date.t>}> =
-    await sql->Postgres.unsafe(
-      `SELECT "id", "ready_at" FROM "${pgSchema}"."${InternalTable.Chains.table.tableName}" ORDER BY "id";`,
-    )
+  let rows: array<{
+    "id": ChainId.t,
+    "ready_at": Null.t<Date.t>,
+  }> = await sql->Postgres.unsafe(
+    `SELECT "id", "ready_at" FROM "${pgSchema}"."${InternalTable.Chains.table.tableName}" ORDER BY "id";`,
+  )
   rows->Array.map(row => (row["id"], row["ready_at"]->Null.toOption->Option.isSome))
 }
 
 let catchMessage = promise =>
   promise
   ->Promise.thenResolve(_ => None)
-  ->Utils.Promise.catchResolve(exn =>
-    Some(exn->(Utils.magic: exn => {"message": string})->(error => error["message"]))
-  )
+  ->Utils.Promise.catchResolve(exn => Some(
+    exn->(Utils.magic: exn => {"message": string})->(error => error["message"]),
+  ))
 
 describe("Indexes built against a real schema", () => {
   Async.it("Builds a separate full index when only a partial one exists", async t => {
@@ -149,11 +177,9 @@ describe("Indexes built against a real schema", () => {
     await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
     t.expect(
-      (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(entry => (
-        entry.name,
-        entry.isPartial,
-        entry.isValid,
-      )),
+      (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(
+        entry => (entry.name, entry.isPartial, entry.isValid),
+      ),
       ~message="The partial index stays, and a full index is built beside it",
     ).toEqual([("A_b_id", true, true), (aBIdName, false, true)])
   })
@@ -169,12 +195,10 @@ describe("Indexes built against a real schema", () => {
 
     t.expect(
       (
-        (await findIndexes(~pgSchema, ~tableName="B", ~columns=["c_id"]))->Array.map(entry =>
-          entry.name
+        (await findIndexes(~pgSchema, ~tableName="B", ~columns=["c_id"]))->Array.map(
+          entry => entry.name,
         ),
-        (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(
-          describeIndex,
-        ),
+        (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(describeIndex),
       ),
       ~message="The unrelated index keeps its name, and A(b_id) is still indexed",
     ).toEqual((["A_b_id"], [(aBIdName, true, false, "btree")]))
@@ -205,10 +229,9 @@ describe("Indexes built against a real schema", () => {
     await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
     t.expect(
-      (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(entry => (
-        entry.name,
-        entry.isValid,
-      )),
+      (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(
+        entry => (entry.name, entry.isValid),
+      ),
       ~message="A usable index is built rather than the invalid one being blessed",
     ).toEqual([("A_b_id", false), (aBIdName, true)])
   })
@@ -225,8 +248,8 @@ describe("Indexes built against a real schema", () => {
     await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
     t.expect(
-      (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(entry =>
-        entry.name
+      (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(
+        entry => entry.name,
       ),
       ~message="No second index appears under the generated name",
     ).toEqual(["A_b_id"])
@@ -244,12 +267,7 @@ describe("Indexes built against a real schema", () => {
       (await findIndexes(~pgSchema, ~tableName="A", ~columns=[column]))->Array.map(describeIndex),
       ~message="The second request is served from the catalog, with no second index",
     ).toEqual([
-      (
-        IndexDefinition.single(~tableName="A", ~column)->IndexDefinition.name,
-        true,
-        false,
-        "btree",
-      ),
+      (IndexDefinition.single(~tableName="A", ~column)->IndexDefinition.name, true, false, "btree"),
     ])
   })
 
@@ -282,12 +300,10 @@ describe("Indexes built against a real schema", () => {
     // name and the one we match on had drifted, this would rebuild and fail.
     await storage.finalizeBackfill(~entities=[entity], ~chainIds=[], ~readyAt)
 
-    t.expect(
-      (
-        tableName->String.length,
-        (await findIndexes(~pgSchema, ~tableName, ~columns=["b_id"]))->Array.map(describeIndex),
-      ),
-    ).toEqual((63, [(definition->IndexDefinition.name, true, false, "btree")]))
+    t.expect((
+      tableName->String.length,
+      (await findIndexes(~pgSchema, ~tableName, ~columns=["b_id"]))->Array.map(describeIndex),
+    )).toEqual((63, [(definition->IndexDefinition.name, true, false, "btree")]))
   })
 
   // The DDL commits, then the read-back fails on its own round trip. Without
@@ -299,13 +315,16 @@ describe("Indexes built against a real schema", () => {
     // One-shot: the storage reads the catalog during initialize too, so the
     // failure is armed only once the schema is up.
     let failNextRead = ref(false)
-    let flakySql = makeFlakySql(sql, queries, query =>
-      if failNextRead.contents && query->String.includes("FROM pg_index") {
-        failNextRead := false
-        true
-      } else {
-        false
-      }
+    let flakySql = makeFlakySql(
+      sql,
+      queries,
+      query =>
+        if failNextRead.contents && query->String.includes("FROM pg_index") {
+          failNextRead := false
+          true
+        } else {
+          false
+        },
     )
     let storage = await setup(~pgSchema, ~sql=flakySql)
     let filters = [eq(~fieldName="b_id")]
@@ -328,8 +347,8 @@ describe("Indexes built against a real schema", () => {
     t.expect(
       (
         queries->Array.filter(query => query->String.includes("CREATE INDEX")),
-        (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(entry =>
-          entry.name
+        (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(
+          entry => entry.name,
         ),
       ),
       ~message="Later requests are served from the catalog instead of retrying a doomed create",
@@ -355,17 +374,20 @@ describe("Indexes built against a real schema", () => {
       ),
     }
     let indexNames =
-      ["first_id", "second_id", "third_id"]->Array.map(column =>
-        IndexDefinition.single(~tableName, ~column)->IndexDefinition.name
+      ["first_id", "second_id", "third_id"]->Array.map(
+        column => IndexDefinition.single(~tableName, ~column)->IndexDefinition.name,
       )
     let secondName = indexNames->Array.getUnsafe(1)
 
     let queries = []
     let failSecondBuild = ref(true)
-    let flakySql = makeFlakySql(sql, queries, query =>
-      failSecondBuild.contents &&
+    let flakySql = makeFlakySql(
+      sql,
+      queries,
+      query =>
+        failSecondBuild.contents &&
         query->String.includes("CREATE INDEX") &&
-        query->String.includes(secondName)
+        query->String.includes(secondName),
     )
     let storage = await setup(
       ~pgSchema,
@@ -376,18 +398,24 @@ describe("Indexes built against a real schema", () => {
     let createdIndexNames = async () =>
       (await loadCatalog(pgSchema))
       ->IndexCatalog.entries
-      ->Array.filterMap((entry: IndexCatalog.entry) =>
-        indexNames->Array.includes(entry.name) ? Some(entry.name) : None
+      ->Array.filterMap(
+        (entry: IndexCatalog.entry) =>
+          indexNames->Array.includes(entry.name) ? Some(entry.name) : None,
       )
       ->Array.toSorted(String.compare)
     let attemptedBuilds = () =>
-      indexNames->Array.filter(name =>
-        queries->Array.some(query =>
-          query->String.includes("CREATE INDEX") && query->String.includes(name)
-        )
+      indexNames->Array.filter(
+        name =>
+          queries->Array.some(
+            query => query->String.includes("CREATE INDEX") && query->String.includes(name),
+          ),
       )
 
-    let failure = await storage.finalizeBackfill(~entities=[entity], ~chainIds, ~readyAt)->catchMessage
+    let failure = await storage.finalizeBackfill(
+      ~entities=[entity],
+      ~chainIds,
+      ~readyAt,
+    )->catchMessage
 
     t.expect(
       (
@@ -426,8 +454,8 @@ describe("Indexes built against a real schema", () => {
     await storage.finalizeBackfill(~entities, ~chainIds=[], ~readyAt)
 
     t.expect(
-      (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(entry =>
-        entry.name
+      (await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"]))->Array.map(
+        entry => entry.name,
       ),
     ).toEqual([aBIdName])
   })
