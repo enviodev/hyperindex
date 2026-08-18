@@ -121,6 +121,38 @@ fn validate(idl: &mut ProgramIdl) {
         }
     }
 
+    // An instruction that declares no discriminator has no leading prefix at
+    // all: its data opens with argument values. Those bytes can equal any
+    // discriminator the program declares, so its calls can land on any
+    // registration here — which makes it every other instruction's problem
+    // rather than only its own. Nothing in the file says which calls, so the
+    // whole program goes.
+    let undiscriminated: Option<String> = idl
+        .instructions
+        .iter()
+        .filter(|(_, ix)| ix.discriminator.is_empty())
+        .map(|(name, _)| name.clone())
+        .chain(
+            idl.unusable_discriminators
+                .iter()
+                .filter(|(_, bytes)| bytes.is_empty())
+                .map(|(name, _)| name.clone()),
+        )
+        .next();
+    if let Some(culprit) = undiscriminated {
+        for name in idl.instructions.keys() {
+            if *name == culprit {
+                continue;
+            }
+            demoted.entry(name.clone()).or_insert_with(|| {
+                format!(
+                    "'{culprit}' declares no discriminator, so its calls carry argument bytes \
+                     where a discriminator would be and can match any this program declares"
+                )
+            });
+        }
+    }
+
     // Judged over every discriminator the program declares, not just the ones
     // that survive. Setting an instruction aside does not remove it from the
     // chain: it still occurs, and its data still arrives carrying its own
@@ -209,38 +241,39 @@ fn demote(idl: &mut ProgramIdl, demoted: Unusable) {
 fn prefix_collisions(mut by_bytes: Vec<(&[u8], &str)>) -> Unusable {
     by_bytes.sort_unstable();
     let mut out = Unusable::new();
-    // A prefix sorts immediately before everything it prefixes, so the
-    // adjacent pairs cover every collision.
-    for window in by_bytes.windows(2) {
-        let [(shorter, first), (longer, second)] = window else {
-            continue;
-        };
-        if shorter == longer {
-            let hex = crate::hex::encode(shorter);
-            out.insert(
-                first.to_string(),
-                format!("it shares discriminator 0x{hex} with '{second}'"),
-            );
-            out.insert(
-                second.to_string(),
-                format!("it shares discriminator 0x{hex} with '{first}'"),
-            );
-        } else if longer.starts_with(shorter) {
+    // Sorting puts a discriminator immediately before everything it prefixes,
+    // so each one only has to be weighed against the run that follows it —
+    // but against all of that run, not just the next entry. `0x0c` precedes
+    // both `0x0c02` and `0x0c03`, and is unsafe against each.
+    for (i, (shorter, first)) in by_bytes.iter().enumerate() {
+        for (longer, second) in by_bytes[i + 1..].iter() {
+            if !longer.starts_with(shorter) {
+                break;
+            }
             let (short_hex, long_hex) = (crate::hex::encode(shorter), crate::hex::encode(longer));
-            out.insert(
-                first.to_string(),
+            if shorter == longer {
+                out.insert(
+                    first.to_string(),
+                    format!("it shares discriminator 0x{short_hex} with '{second}'"),
+                );
+                out.insert(
+                    second.to_string(),
+                    format!("it shares discriminator 0x{short_hex} with '{first}'"),
+                );
+                continue;
+            }
+            out.entry(first.to_string()).or_insert_with(|| {
                 format!(
                     "its discriminator 0x{short_hex} is a prefix of '{second}'\'s 0x{long_hex}, so \
                      '{second}' takes every call that would have matched it"
-                ),
-            );
-            out.insert(
-                second.to_string(),
+                )
+            });
+            out.entry(second.to_string()).or_insert_with(|| {
                 format!(
                     "its discriminator 0x{long_hex} extends '{first}'\'s 0x{short_hex}, so a \
                      '{first}' call whose data continues those bytes arrives here instead"
-                ),
-            );
+                )
+            });
         }
     }
     out
