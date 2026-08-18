@@ -3,9 +3,9 @@
 Generated 2026-05-28 by Stream B. Source of truth for `config.yaml` instruction
 names. Codegen errors on any name mismatch, so use these EXACT strings.
 
-## IDL format note (the three Anchor IDLs)
+## IDL format note (all three)
 
-Jupiter, Drift and Kamino are **legacy Anchor format (pre-0.30)**:
+All three fetched IDLs are **legacy Anchor format (pre-0.30)**:
 - Top-level keys: `name`, `version`, `instructions`, `accounts`, `types`, `events`, `errors`.
 - NO top-level `address` field, NO `metadata.spec`, NO per-instruction
   `discriminator` byte arrays. Anchor derives each instruction's 8-byte
@@ -18,22 +18,11 @@ Jupiter, Drift and Kamino are **legacy Anchor format (pre-0.30)**:
 | Jupiter v6 | `jupiter.json` | 77 KB | 0.1.0 | legacy Anchor |
 | Drift v2 | `drift.json` | 439 KB | 2.162.0 | legacy Anchor |
 | Kamino Lend (klend) | `kamino.json` | 173 KB | 1.13.0 (`kamino_lending`) | legacy Anchor |
-| SPL Token | `spl-token.codama.json` | 113 KB | 3.3.0 (`token`) | Codama |
-| SPL Memo | `memo.codama.json` | 1.4 KB | 3.0.1 (`memo`) | Codama |
 
 Sources:
 - jupiter.json: https://raw.githubusercontent.com/jup-ag/jupiter-cpi/main/idl.json
 - drift.json:   https://raw.githubusercontent.com/drift-labs/protocol-v2/master/sdk/src/idl/drift.json
 - kamino.json:  https://raw.githubusercontent.com/Kamino-Finance/klend-sdk/master/src/idl/klend.json
-- spl-token.codama.json: https://raw.githubusercontent.com/solana-program/token/main/idl.json
-- memo.codama.json:      https://raw.githubusercontent.com/solana-program/memo/main/idl.json
-
-The two Codama files are unmodified, and both declare instructions Borsh
-cannot express: SPL Token's `uiAmountToAmount` takes a remainder-encoded
-string and `batch` frames its inner data with a u8, and Memo's entire payload
-is a remainder string. They are fixtures precisely for that — parsing keeps
-the instructions it can decode and sets those aside with a reason, which is
-what keeps the other 26 SPL Token instructions indexable.
 
 NOTE: none of these IDLs embed the on-chain program_id (legacy IDLs omit
 `address`). Program IDs in `config.yaml` come from the spec, not the IDL. The

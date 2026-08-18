@@ -47,8 +47,6 @@ instruction symmetrySwap 0x1172edea9a0cb974 (swapProgram, buyer, fundState:w, pd
 instruction tokenSwap 0xbbc076d43e6d1cd5 (tokenSwapProgram, tokenProgram, swap, authority, userTransferAuthority, source:w, swapSource:w, swapDestination:w, destination:w, poolMint:w, poolFee:w) ()
 instruction tokenSwapV2 0x333091737b5f478a (swapProgram, swap, authority, userTransferAuthority, source:w, swapSource:w, swapDestination:w, destination:w, poolMint:w, poolFee:w, sourceMint, destinationMint, sourceTokenProgram, destinationTokenProgram, poolTokenProgram) ()
 instruction whirlpoolSwap 0x7be5b83f0c005c91 (swapProgram, tokenProgram, tokenAuthority, whirlpool:w, tokenOwnerAccountA:w, tokenVaultA:w, tokenOwnerAccountB:w, tokenVaultB:w, tickArray0:w, tickArray1:w, tickArray2:w, oracle) ()
-event FeeEvent 0x494f4e7fb8d50ddc (account: pubkey, mint: pubkey, amount: u64)
-event SwapEvent 0x40c6cde8260871e2 (amm: pubkey, inputMint: pubkey, inputAmount: u64, outputMint: pubkey, outputAmount: u64)
 type AddLiquidity = {tokenAmountIn: u64, minLpAmountOut: u64, tokenAmountPreSwap: Option<u64>}
 type AmountWithSlippage = {amount: u64, slippageBps: u16}
 type RemoveLiquidity = {lpAmountIn: u64, minAmountOut: u64}

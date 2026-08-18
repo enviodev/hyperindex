@@ -1937,13 +1937,11 @@ fn resolve_program_schema(
         });
     }
 
-    // This program id used to resolve to a schema bundled in the CLI, so a
-    // config that decoded `params` before this release now silently does not.
-    // Advisory rather than fatal: indexing the program untyped stays valid,
-    // and `instruction.accounts`/`instruction.data` are unaffected.
+    // Advisory rather than fatal: indexing this program untyped stays valid,
+    // and `instruction.accounts`/`instruction.data` are unaffected either way.
     if program.program_id == METAPLEX_TOKEN_METADATA_PROGRAM_ID && !any_instruction_carries_schema {
         eprintln!(
-            "warning: program '{}' has no `idl`, and the Metaplex Token Metadata schema that \
+            "Warning: program '{}' has no `idl`, and the Metaplex Token Metadata schema that \
              used to be bundled with the CLI was removed. `instruction.params` will be absent; \
              `instruction.accounts` and `instruction.data` still arrive. Point `idl` at a Token \
              Metadata IDL to decode `params` again.",
@@ -1966,7 +1964,7 @@ struct ResolvedInstruction {
     /// program, which is the lowest routing priority.
     discriminator: Option<String>,
     discriminator_byte_len: u8,
-    accounts: Vec<String>,
+    accounts: Vec<SvmAccountName>,
     args: Vec<SvmNamedField>,
 }
 
@@ -2008,7 +2006,13 @@ fn resolve_instruction(
         return Ok(ResolvedInstruction {
             discriminator,
             discriminator_byte_len,
-            accounts: accounts.clone(),
+            accounts: accounts
+                .iter()
+                .map(|name| SvmAccountName {
+                    name: name.clone(),
+                    optional: false,
+                })
+                .collect(),
             args: args
                 .iter()
                 .map(yaml_arg_to_named_field)
@@ -2021,10 +2025,9 @@ fn resolve_instruction(
             match abi.unusable.get(&instr.name) {
                 // Declared, but the runtime has no way to read it. Say which,
                 // so the name is not reported as a typo.
-                Some(reason) => anyhow!(
-                    "Instruction '{}' is declared by the program's IDL, but {reason}.",
-                    instr.name
-                ),
+                Some(reason) => {
+                    anyhow!("declared by the program's IDL, but {reason}")
+                }
                 None => anyhow!(
                     "Instruction '{}' is not in the program's IDL. Available instructions: {}.",
                     instr.name,
@@ -2047,7 +2050,14 @@ fn resolve_instruction(
         return Ok(ResolvedInstruction {
             discriminator: Some(derived),
             discriminator_byte_len: schema.discriminator.len() as u8,
-            accounts: schema.accounts.iter().map(|a| a.name.clone()).collect(),
+            accounts: schema
+                .accounts
+                .iter()
+                .map(|a| SvmAccountName {
+                    name: a.name.clone(),
+                    optional: a.optional,
+                })
+                .collect(),
             args: schema.args.clone(),
         });
     }
@@ -2458,10 +2468,19 @@ pub struct SvmEventKind {
     pub is_inner: Option<bool>,
     /// Positional account names. Empty when the user supplied no schema and
     /// no IDL applies; in that case `decoded.accounts` is `{}`.
-    pub accounts: Vec<String>,
+    pub accounts: Vec<SvmAccountName>,
     /// Borsh argument layout in declared order. Empty for unknown
     /// instructions; the raw `instruction.data` is still available.
     pub args: Vec<SvmNamedField>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SvmAccountName {
+    pub name: String,
+    /// The decoder pairs names to accounts positionally and stops at whatever
+    /// the transaction supplied, so a slot the transaction left off has no key
+    /// at all — the generated type has to admit that.
+    pub optional: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

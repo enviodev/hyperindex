@@ -36,8 +36,6 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
             .and_then(Value::as_str)
             .map(str::to_string),
         instructions,
-        // Codama has no event concept; program logs are not modelled.
-        events: BTreeMap::new(),
         defined_types,
         unusable,
         unusable_types,
@@ -289,12 +287,18 @@ fn parse_arguments(node: Option<&Value>, encoded_arg_names: &[String]) -> Result
 /// it describes how to show a value, never how to read it.
 const DESCRIPTIVE_KEYS: [&str; 3] = ["kind", "docs", "display"];
 
-/// Codama attaches layout modifiers (`endian`, `fixed`, `size`, `encoding`) to
-/// nodes whose shape is otherwise recognisable, and a modifier the runtime
-/// cannot express shifts every byte decoded after it. Ignoring an unknown key
-/// is therefore never safe: each arm below lists the keys it actually models,
-/// and a node carrying anything else is refused here rather than silently
-/// mis-decoded at indexing time.
+/// Within a type node nothing is ignored. Codama attaches layout modifiers
+/// (`endian`, `fixed`, `size`, `encoding`) to shapes that are otherwise
+/// recognisable, and one the runtime cannot express shifts every byte decoded
+/// after it, so each arm lists the keys it models and refuses the rest.
+///
+/// Account and discriminator nodes are deliberately not held to this. They
+/// carry keys deciding which pubkey fills which slot —
+/// `optionalAccountStrategy`, `remainingAccounts`, per-account `defaultValue`
+/// — which this parser does not model: it pairs names to accounts by
+/// position, as the runtime does. SPL Token declares those keys on nearly
+/// every instruction, so refusing them would cost the whole program to
+/// describe something no name lookup here depends on.
 fn reject_unmodelled_keys(node: &Value, path: &str, modelled: &[&str]) -> Result<()> {
     let Some(obj) = node.as_object() else {
         return Ok(());
@@ -306,7 +310,8 @@ fn reject_unmodelled_keys(node: &Value, path: &str, modelled: &[&str]) -> Result
         }
         bail!(
             "{path}: {kind} carries '{key}', which this parser does not model; decoding it would \
-             be a guess at the byte layout"
+             be a guess at the byte layout. Removing the key from a local copy of the IDL is the \
+             way through if it does not affect the layout"
         );
     }
     Ok(())

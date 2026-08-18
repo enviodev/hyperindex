@@ -1064,7 +1064,12 @@ pub mod svm {
             description = "A unique project-wide name for this program (used in generated code)."
         )]
         pub name: String,
-        #[schemars(description = "Base58-encoded program id (32 bytes).")]
+        #[schemars(
+            description = "Base58-encoded program id (32 bytes). Each program id may appear \
+                           once per chain: two entries sharing one would put their instructions \
+                           in the same routing pool with nothing to tell them apart, so list \
+                           the instructions together instead."
+        )]
         pub program_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional relative path to a file where handlers are \

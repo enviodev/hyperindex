@@ -309,7 +309,7 @@
           "type": "string"
         },
         "program_id": {
-          "description": "Base58-encoded program id (32 bytes).",
+          "description": "Base58-encoded program id (32 bytes). Each program id may appear once per chain: two entries sharing one would put their instructions in the same routing pool with nothing to tell them apart, so list the instructions together instead.",
           "type": "string"
         },
         "handler": {

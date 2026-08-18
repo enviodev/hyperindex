@@ -20,8 +20,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use super::{
-    collect_instructions, collect_named, required_str, EventIdl, IdlAccount, IxIdl, ProgramIdl,
-    Unusable,
+    collect_instructions, collect_named, required_str, IdlAccount, IxIdl, ProgramIdl, Unusable,
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
@@ -37,12 +36,10 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
 
     let (defined_types, unusable_types) = parse_defined_types(root)?;
     let (instructions, unusable, unusable_discriminators) = parse_instructions(root)?;
-    let events = parse_events(root, &defined_types, &unusable_types)?;
 
     Ok(ProgramIdl {
         address,
         instructions,
-        events,
         defined_types,
         unusable,
         unusable_types,
@@ -90,50 +87,6 @@ fn parse_instructions(root: &Map<String, Value>) -> Result<Instructions> {
     )
 }
 
-/// Legacy events carry their fields inline; 0.30+ moves the payload into
-/// `types` under the event's own name and leaves only the discriminator.
-fn parse_events(
-    root: &Map<String, Value>,
-    defined_types: &BTreeMap<String, FieldType>,
-    unusable_types: &Unusable,
-) -> Result<BTreeMap<String, EventIdl>> {
-    let Some(arr) = root.get("events").and_then(Value::as_array) else {
-        return Ok(BTreeMap::new());
-    };
-    // Nothing consumes events yet, so one the runtime could not decode is
-    // dropped rather than held against the instructions, which it has no
-    // bearing on.
-    let (events, _undecodable) = collect_named(arr, "event", "events[].name", |name, ev| {
-        let discriminator = match ev.get("discriminator") {
-            Some(node) => {
-                parse_byte_array(node).with_context(|| format!("event '{name}' discriminator"))?
-            }
-            None => hashed_discriminator("event:", name),
-        };
-        // 0.30+ leaves only the discriminator here and puts the payload in
-        // `types` under the event's own name.
-        let fields = match ev.get("fields") {
-            Some(node) => parse_named_fields(Some(node), "fields")?,
-            None => match defined_types.get(name) {
-                Some(FieldType::Struct(fields)) => fields.clone(),
-                Some(other) => bail!("its payload type is {other:?}, expected a struct"),
-                None => match unusable_types.get(name) {
-                    Some(reason) => bail!("its payload type cannot be decoded: {reason}"),
-                    None => bail!("it declares no fields and no type named '{name}'"),
-                },
-            },
-        };
-        Ok(EventIdl {
-            discriminator,
-            fields,
-        })
-    })?;
-    Ok(events)
-}
-
-/// `sha256(prefix + name)[..8]`, Anchor's derivation for both the pre-0.30
-/// instruction discriminator (`global:` + snake_case) and the event
-/// discriminator (`event:` + the declared name).
 fn hashed_discriminator(prefix: &str, name: &str) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(prefix.as_bytes());

@@ -269,7 +269,7 @@ indexer.onInstruction(
         ~configYaml=anchorConfigYaml,
       ),
     ).toBe(
-      "Config parse error: Layout for instruction 'swap': Instruction 'swap' is declared by the program's IDL, but args.amountIn: `coption` is not Borsh-compatible and cannot be decoded.",
+      "Config parse error: Layout for instruction 'swap': declared by the program's IDL, but args.amountIn: `coption` is not Borsh-compatible and cannot be decoded",
     )
   )
 
@@ -353,7 +353,7 @@ chains:
         ~configYaml=codamaConfigYaml,
       ),
     ).toBe(
-      "Config parse error: Layout for instruction 'transfer': Instruction 'transfer' is declared by the program's IDL, but it shares discriminator 0x03 with 'transferAgain'.",
+      "Config parse error: Layout for instruction 'transfer': declared by the program's IDL, but it shares discriminator 0x03 with 'transferAgain'",
     )
   )
 

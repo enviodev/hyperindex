@@ -54,11 +54,6 @@ instruction withdrawObligationCollateralAndRedeemReserveCollateralV2 0xeb3477989
 instruction withdrawObligationCollateralV2 0xcaf97572e7c02f8a (owner:ws, obligation:w, lendingMarket, lendingMarketAuthority, withdrawReserve:w, reserveSourceCollateral:w, userDestinationCollateral:w, tokenProgram, instructionSysvarAccount, obligationFarmUserState:w?, reserveFarmState:w?, farmsProgram) (collateralAmount: u64)
 instruction withdrawProtocolFee 0x9ec99ebd215da267 (globalConfig, lendingMarket, reserve, reserveLiquidityMint, lendingMarketAuthority, feeVault:w, feeCollectorAta:w, tokenProgram) (amount: u64)
 instruction withdrawReferrerFees 0xab7679c9e98c17e4 (referrer:ws, referrerTokenState:w, reserve:w, reserveLiquidityMint, reserveSupplyLiquidity:w, referrerTokenAccount:w, lendingMarket, lendingMarketAuthority, tokenProgram) ()
-event BorrowOrderCancelEvent 0x58e4e7e6eaf84590 (before: @BorrowOrder)
-event BorrowOrderFullFillEvent 0xb1f1edfa8f140eb7 (before: @BorrowOrder)
-event BorrowOrderPartialFillEvent 0x7151fcc198186354 (before: @BorrowOrder, after: @BorrowOrder)
-event BorrowOrderPlaceEvent 0x2bd3d0ba5ee3dac6 (after: @BorrowOrder)
-event BorrowOrderUpdateEvent 0x1521438330b85a40 (before: @BorrowOrder, after: @BorrowOrder)
 type BigFractionBytes = {value: [u64; 4], padding: [u64; 2]}
 type BorrowOrder = {debtLiquidityMint: pubkey, remainingDebtAmount: u64, filledDebtDestination: pubkey, minDebtTermSeconds: u64, fillableUntilTimestamp: u64, placedAtTimestamp: u64, lastUpdatedAtTimestamp: u64, requestedDebtAmount: u64, maxBorrowRateBps: u32, padding1: [u8; 4], endPadding: [u64; 5]}
 type BorrowOrderConfigArgs = {remainingDebtAmount: u64, maxBorrowRateBps: u32, minDebtTermSeconds: u64, fillableUntilTimestamp: u64}

@@ -28,12 +28,6 @@ pub struct IxIdl {
     pub args: Vec<NamedField>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct EventIdl {
-    pub discriminator: Vec<u8>,
-    pub fields: Vec<NamedField>,
-}
-
 /// Names the runtime cannot decode or dispatch, each with the reason, so the
 /// reason survives to whoever asks for that name.
 pub type Unusable = BTreeMap<String, String>;
@@ -45,7 +39,6 @@ pub struct ProgramIdl {
     /// The IDL's own program address, when it declares one.
     pub address: Option<String>,
     pub instructions: BTreeMap<String, IxIdl>,
-    pub events: BTreeMap<String, EventIdl>,
     pub defined_types: BTreeMap<String, FieldType>,
     /// Instructions the program declares that this runtime cannot decode or
     /// dispatch. Held aside rather than rejected: an IDL describes a whole
@@ -114,8 +107,7 @@ fn validate(idl: &mut ProgramIdl) {
             demoted.insert(
                 name.clone(),
                 format!(
-                    "its {len}-byte discriminator is not one of the widths dispatch probes \
-                     ({DISPATCHABLE_DISCRIMINATOR_LENS:?})"
+                    "its discriminator is {len} bytes, and dispatch matches only 1, 2, 4, or 8"
                 ),
             );
         }
@@ -146,8 +138,8 @@ fn validate(idl: &mut ProgramIdl) {
             }
             demoted.entry(name.clone()).or_insert_with(|| {
                 format!(
-                    "no discriminator could be read for '{culprit}', so its calls carry bytes \
-                     that can match any discriminator this program declares"
+                    "'{culprit}' has no discriminator prefix, so its calls carry bytes that can \
+                     match any discriminator this program declares"
                 )
             });
         }
@@ -192,23 +184,6 @@ fn validate(idl: &mut ProgramIdl) {
                 break;
             }
         }
-    }
-
-    // Nothing reads events yet, so nothing has caught one left holding a
-    // reference to a type about to be pruned. Drop those with the type.
-    let dangling: Vec<String> = idl
-        .events
-        .iter()
-        .filter(|(_, event)| {
-            event
-                .fields
-                .iter()
-                .any(|f| references_resolve(&f.ty, idl, &bad_types).is_err())
-        })
-        .map(|(name, _)| name.clone())
-        .collect();
-    for name in dangling {
-        idl.events.remove(&name);
     }
 
     // Codegen hands `defined_types` to the runtime's type registry whole, so a
@@ -283,7 +258,7 @@ pub(crate) fn prefix_collisions(mut by_bytes: Vec<(&[u8], &str)>) -> Unusable {
     out
 }
 
-/// The numeric formats both dialects spell the same way. Shared so a width the
+/// The numeric formats both dialects spell the same way, so a width the
 /// runtime learns to decode cannot reach one dialect and not the other.
 fn numeric_field_type(format: &str) -> Option<FieldType> {
     Some(match format {
@@ -403,8 +378,8 @@ fn collect_instructions<T>(
 }
 
 /// Parse each entry of a named collection, setting the failures aside instead
-/// of failing the whole IDL. Shared by both dialects so the duplicate-name
-/// rule and the demotion policy cannot drift between them.
+/// of failing the whole IDL, so the duplicate-name rule and the demotion
+/// policy cannot drift between the dialects.
 fn collect_named<T>(
     entries: &[Value],
     noun: &str,
@@ -439,8 +414,8 @@ fn collect_named<T>(
     Ok((out, unusable))
 }
 
-/// Shared by both parsers: a required string field, with the offending node in
-/// the message so a deep IDL doesn't need a path to be diagnosable.
+/// A required string field, with the offending node in the message so a deep
+/// IDL does not need a path to be diagnosable.
 fn required_str<'a>(node: &'a Value, key: &str) -> Result<&'a str> {
     node.get(key)
         .and_then(Value::as_str)

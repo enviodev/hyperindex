@@ -40,14 +40,6 @@ fn render(idl: &ProgramIdl) -> String {
             render_fields(&ix.args)
         );
     }
-    for (name, event) in &idl.events {
-        let _ = writeln!(
-            out,
-            "event {name} 0x{} ({})",
-            crate::hex::encode(&event.discriminator),
-            render_fields(&event.fields)
-        );
-    }
     for (name, ty) in &idl.defined_types {
         let _ = writeln!(out, "type {name} = {}", render_type(ty));
     }
@@ -100,6 +92,14 @@ fn read_fixture(file_stem: &str) -> String {
 
 fn parse_fixture(file_stem: &str) -> ProgramIdl {
     parse_idl(&read_fixture(file_stem), file_stem).expect("parse")
+}
+
+/// Real IDLs kept for this crate's tests alone, unlike the scenario's, which
+/// its own config.yaml indexes.
+fn parse_cli_fixture(file_stem: &str) -> ProgramIdl {
+    let path = format!("{}/test/idls/{file_stem}.json", env!("CARGO_MANIFEST_DIR"));
+    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
+    parse_idl(&raw, file_stem).expect("parse")
 }
 
 #[test]
@@ -175,7 +175,6 @@ fn derives_discriminators_for_legacy_anchor_idl() {
         render(&idl),
         "address: -\n\
          instruction sharedAccountsRoute 0xc1209b3341d69c81 (tokenProgram, userTransferAuthority:ws, platformFeeAccount:w?) (id: u8, routePlan: Vec<@RoutePlanStep>, limitPrice: Option<u64>)\n\
-         event SwapEvent 0x40c6cde8260871e2 (amm: pubkey, inputAmount: u64)\n\
          type RoutePlanStep = {percent: u8, swap: @Swap}\n\
          type Swap = enum {Saber, Serum(side: u8), Raydium(_0: u8, _1: u64)}\n"
     );
@@ -251,7 +250,6 @@ fn parses_anchor_030_idl() {
         render(&idl),
         "address: MyProgram1111111111111111111111111111111111\n\
          instruction initialize 0xafaf6d1f0d989bed (payer:ws, config:w, optionalAuthority:?, systemProgram) (seed: [u8; 32], authority: pubkey, config: @Config)\n\
-         event Initialized 0x0102030405060708 (slot: u64, label: string)\n\
          type Alias = pubkey\n\
          type Config = {fee: u16}\n\
          type Initialized = {slot: u64, label: string}\n"
@@ -466,10 +464,6 @@ fn separates_file_level_defects_from_instruction_level_ones() {
                }] }"#,
         ),
         (
-            "event with no payload type",
-            r#"{ "instructions": [], "events": [{ "name": "Swapped", "discriminator": [1] }] }"#,
-        ),
-        (
             "discriminator wider than dispatch probes",
             r#"{ "instructions": [{ "name": "swap", "discriminator": [1, 2, 3] }] }"#,
         ),
@@ -582,14 +576,6 @@ fn separates_file_level_defects_from_instruction_level_ones() {
                                       "name": "tag", "offset": 0 }] }] } }"#,
         ),
         (
-            // Nothing consumes events, so one that cannot be decoded costs
-            // nothing.
-            "undecodable event payload",
-            r#"{ "instructions": [{ "name": "swap", "discriminator": [1], "args": [] }],
-                 "events": [{ "name": "Swapped", "discriminator": [2],
-                   "fields": [{ "name": "a", "type": { "coption": "u64" } }] }] }"#,
-        ),
-        (
             // Ambiguous for whatever reaches it, harmless for everything else.
             "duplicate type name",
             r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
@@ -631,19 +617,17 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "duplicate instruction name: fatal: IDL declares instruction 'swap' more than once",
             "anchor coption: initializeMint set aside: args.freezeAuthority: `coption` is not Borsh-compatible and cannot be decoded",
             "undefined type reference: swap set aside: it references undefined type 'u46'",
-            "event with no payload type: accepted",
-            "discriminator wider than dispatch probes: swap set aside: its 3-byte discriminator is not one of the widths dispatch probes ([1, 2, 4, 8])",
-            "instruction with no discriminator at all: swap set aside: its 0-byte discriminator is not one of the widths dispatch probes ([1, 2, 4, 8])",
+            "discriminator wider than dispatch probes: swap set aside: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8",
+            "instruction with no discriminator at all: swap set aside: its discriminator is 0 bytes, and dispatch matches only 1, 2, 4, or 8",
             "one discriminator a prefix of another: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferChecked set aside: its discriminator 0x0c02 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead",
             "discriminator field not at offset 0: swap set aside: discriminators: discriminator part at offset 8 does not follow the previous part, which ends at 0; dispatch needs one contiguous prefix from offset 0",
             "discriminator value too wide for its format: swap set aside: discriminators: discriminator value 300 does not fit in u8",
             "instruction shadowed by one set aside for its args: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferChecked set aside: args.amount: `coption` is not Borsh-compatible and cannot be decoded",
-            "instruction whose discriminator cannot be read: burn set aside: no discriminator could be read for 'sub', so its calls carry bytes that can match any discriminator this program declares; sub set aside: discriminator: expected a byte (0-255), got 999",
-            "instruction declaring no discriminator at all: raw set aside: its 0-byte discriminator is not one of the widths dispatch probes ([1, 2, 4, 8]); swap set aside: no discriminator could be read for 'raw', so its calls carry bytes that can match any discriminator this program declares",
+            "instruction whose discriminator cannot be read: burn set aside: 'sub' has no discriminator prefix, so its calls carry bytes that can match any discriminator this program declares; sub set aside: discriminator: expected a byte (0-255), got 999",
+            "instruction declaring no discriminator at all: raw set aside: its discriminator is 0 bytes, and dispatch matches only 1, 2, 4, or 8; swap set aside: 'raw' has no discriminator prefix, so its calls carry bytes that can match any discriminator this program declares",
             "one discriminator a prefix of several others: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferAll set aside: its discriminator 0x0c03 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead; transferChecked set aside: its discriminator 0x0c02 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead",
-            "instruction shadowed by one of an undispatchable width: swap set aside: its discriminator 0x0102 is a prefix of 'swapV2''s 0x010203, so 'swapV2' takes every call that would have matched it; swapV2 set aside: its 3-byte discriminator is not one of the widths dispatch probes ([1, 2, 4, 8])",
+            "instruction shadowed by one of an undispatchable width: swap set aside: its discriminator 0x0102 is a prefix of 'swapV2''s 0x010203, so 'swapV2' takes every call that would have matched it; swapV2 set aside: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8",
             "codama discriminator argument out of declaration order: swap set aside: the discriminator reads [\"tag\"], but the arguments begin [\"amount\"]; their offsets and their declaration order disagree",
-            "undecodable event payload: accepted",
             "duplicate type name: swap set aside: it reaches type 'Fee', which cannot be decoded: the IDL declares type 'Fee' more than once",
         ]
     );
@@ -653,13 +637,6 @@ fn separates_file_level_defects_from_instruction_level_ones() {
 /// untrusted JSON, so no input may panic — every rejection has to arrive as an
 /// `Err`. A seeded walk keeps a failure reproducible from the printed seed.
 ///
-/// This covers panics, not semantics. For semantics the gap that remains is a
-/// Borsh round trip: encode a value against a parsed layout, decode it back,
-/// and assert equality. That would have caught the option-tag and size-prefix
-/// bugs by construction rather than by review, and it wants an encoder the
-/// runtime does not currently expose — worth adding when one exists. A
-/// `cargo-fuzz` target over `parse_idl` is the other natural extension, for
-/// continuous coverage rather than a fixed seed per run.
 #[test]
 fn mutated_fixtures_never_panic() {
     // xorshift64*, so the sequence is fixed across platforms and runs.
@@ -895,10 +872,10 @@ fn refuses_layouts_the_runtime_would_misdecode() {
             "codama bare bytes: probe: args.probed: a bare bytesTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
             "codama non-utf8 string: probe: args.probed: Borsh strings are utf8, got 'base58'",
             "codama boolean wider than a byte: probe: args.probed.size: Borsh needs u8 here, got u32",
-            "codama enum variant with its own discriminator: probe: args.probed.Init: enumEmptyVariantTypeNode carries 'discriminator', which this parser does not model; decoding it would be a guess at the byte layout",
+            "codama enum variant with its own discriminator: probe: args.probed.Init: enumEmptyVariantTypeNode carries 'discriminator', which this parser does not model; decoding it would be a guess at the byte layout. Removing the key from a local copy of the IDL is the way through if it does not affect the layout",
             "codama size prefix around a struct: probe: args.probed: a u32 size prefix frames a string or bytes in Borsh, got structTypeNode",
             "codama big-endian length prefix: probe: args.probed.prefix: Borsh decodes numbers little-endian, got 'be'",
-            "codama enum tuple variant behind a wrapper: probe: args.probed.Wrapped: sizePrefixTypeNode carries 'items', which this parser does not model; decoding it would be a guess at the byte layout",
+            "codama enum tuple variant behind a wrapper: probe: args.probed.Wrapped: sizePrefixTypeNode carries 'items', which this parser does not model; decoding it would be a guess at the byte layout. Removing the key from a local copy of the IDL is the way through if it does not affect the layout",
             "codama zeroable option: probe: args.probed: zeroable options are not Borsh-compatible and cannot be decoded",
             "codama option with a wide tag: probe: args.probed.prefix: Borsh needs u8 here, got u32",
             "codama vector with a narrow length prefix: probe: args.probed.prefix: Borsh needs u32 here, got u8",
@@ -1059,21 +1036,6 @@ fn decodes_instruction_data_through_the_parsed_schema() {
     );
 }
 
-/// The CLI fixture and the `envio init` template ship the same IDL, and
-/// nothing else keeps them in step. A fixture that drifts is a fixture for a
-/// project nobody generates.
-#[test]
-fn template_and_fixture_idls_match() {
-    let root = env!("CARGO_MANIFEST_DIR");
-    let template = std::fs::read_to_string(format!(
-        "{root}/templates/static/svm_metaplex_template/typescript/idls/token-metadata.codama.json"
-    ))
-    .expect("template IDL");
-    let fixture = std::fs::read_to_string(format!("{root}/test/idls/token-metadata.codama.json"))
-        .expect("fixture IDL");
-    assert_eq!(template, fixture);
-}
-
 /// Real, unmodified Codama IDLs, straight from the upstream program repos.
 /// Both declare a shape Borsh has no room for — SPL Token's
 /// `uiAmountToAmount` takes a remainder-encoded string, and Memo's entire
@@ -1081,12 +1043,12 @@ fn template_and_fixture_idls_match() {
 /// itself: 26 of SPL Token's 28 stay indexable.
 #[test]
 fn parses_real_codama_spl_token_idl() {
-    insta::assert_snapshot!(render(&parse_fixture("spl-token.codama")));
+    insta::assert_snapshot!(render(&parse_cli_fixture("spl-token.codama")));
 }
 
 #[test]
 fn parses_real_codama_memo_idl() {
-    insta::assert_snapshot!(render(&parse_fixture("memo.codama")));
+    insta::assert_snapshot!(render(&parse_cli_fixture("memo.codama")));
 }
 
 /// Types that share subtrees are ordinary — a struct referenced from two
@@ -1115,8 +1077,17 @@ fn resolves_shared_type_graphs_without_blowing_up() {
         types.join(",")
     );
 
+    // Bounded, because resolving per occurrence would not fail this assertion
+    // — it would run for hours and surface as a CI timeout pointing nowhere.
+    let started = std::time::Instant::now();
     let idl = parse_idl(&json, "Deep").expect("parse");
-    assert_eq!(idl.instructions.keys().collect::<Vec<_>>(), vec!["swap"]);
+    assert_eq!(
+        (
+            idl.instructions.keys().collect::<Vec<_>>(),
+            started.elapsed() < std::time::Duration::from_secs(5)
+        ),
+        (vec![&"swap".to_string()], true)
+    );
 }
 
 /// Codegen hands `defined_types` to the runtime's type registry whole, so a

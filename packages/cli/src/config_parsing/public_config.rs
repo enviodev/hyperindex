@@ -622,7 +622,11 @@ impl SystemConfig {
                                             })
                                             .collect(),
                                         is_inner: svm_kind.is_inner,
-                                        accounts: svm_kind.accounts.clone(),
+                                        accounts: svm_kind
+                                            .accounts
+                                            .iter()
+                                            .map(|a| a.name.clone())
+                                            .collect(),
                                         args: svm_kind
                                             .args
                                             .iter()
