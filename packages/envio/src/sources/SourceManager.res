@@ -543,16 +543,11 @@ let handleSubscriptionStatus = (
   | Live =>
     if !sourceState.subscriptionLive {
       sourceState.subscriptionLive = true
-      let isReconnect = sourceState.heightStreamConnects > 0
       sourceState.heightStreamConnects = sourceState.heightStreamConnects + 1
-      if isReconnect {
-        // A height that arrived while the stream was down is lost: HyperSync
-        // re-emits the head on connect but eth_subscribe only delivers the next
-        // block, so ask once rather than leaving the chain blind until it
-        // produces another. The first connect needs no catch-up, it follows the
-        // poll that created the subscription.
-        sourceState->catchUpHeight->Promise.ignore
-      }
+      // Any height from before this connection is lost, because eth_subscribe
+      // only ever delivers the next block. Ask once rather than leaving the
+      // chain blind until the next one is mined.
+      sourceState->catchUpHeight->Promise.ignore
     }
   | Down({reason}) =>
     sourceState->recordHeightStreamFailure(~reason)

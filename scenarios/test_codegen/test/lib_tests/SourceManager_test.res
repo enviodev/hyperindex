@@ -2887,8 +2887,8 @@ describe("SourceManager height subscription", () => {
       )
     t.expect(
       mock.getHeightOrThrowCalls->Array.length,
-      ~message="Should only have the poll that created the subscription and the one issued while it had not connected yet",
-    ).toEqual(2)
+      ~message="Should only have the poll that created the subscription, the one issued while it had not connected yet, and the catch-up on connect",
+    ).toEqual(3)
     t.expect(await p2, ~message="Should immediately return cached height").toEqual(105)
   })
 
@@ -2920,8 +2920,8 @@ describe("SourceManager height subscription", () => {
         )
       t.expect(
         mock.getHeightOrThrowCalls->Array.length,
-        ~message="Should only have the poll that created the subscription and the one issued while it had not connected yet",
-      ).toEqual(2)
+        ~message="Should only have the poll that created the subscription, the one issued while it had not connected yet, and the catch-up on connect",
+      ).toEqual(3)
 
       // Trigger new height
       mock.triggerHeightSubscription(102)
@@ -3252,7 +3252,7 @@ describe("SourceManager height subscription", () => {
     t.expect(await waiting).toEqual(102)
   })
 
-  Async.it("Does not poll to catch up on the subscription's first connect", async t => {
+  Async.it("Catches up on the subscription's first connect too", async t => {
     let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(~isRealtime=true, ~sources=[mock.source])
 
@@ -3268,11 +3268,11 @@ describe("SourceManager height subscription", () => {
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
     let pollsAfterLive = mock.getHeightOrThrowCalls->Array.length
-    mock.triggerHeightSubscription(101)
+    mock.resolveGetHeightOrThrow(101)
 
-    // The first connect follows the poll that created the subscription, so
-    // there is no gap for a catch-up poll to close.
-    t.expect((pollsAfterLive - pollsBeforeLive, await waiting)).toStrictEqual((0, 101))
+    // A block mined between the poll that created the subscription and the
+    // node accepting it would otherwise stay invisible until the next one.
+    t.expect((pollsAfterLive - pollsBeforeLive, await waiting)).toStrictEqual((1, 101))
   })
 
   Async.it("Falls back at the interval the source would use, not always its own", async t => {
