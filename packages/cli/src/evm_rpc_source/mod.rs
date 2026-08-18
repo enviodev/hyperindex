@@ -516,7 +516,7 @@ impl EvmRpcClient {
                     .context("log.blockNumber exceeds i64::MAX")?;
                 let log_address = LogAddress {
                     key: &address_key,
-                    contract_name: set_cache.owner_of(&address_key),
+                    owners: set_cache.owners_of(&address_key),
                     block_number,
                 };
                 // Per-registration decode failures are dropped inside

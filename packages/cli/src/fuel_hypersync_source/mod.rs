@@ -265,7 +265,7 @@ fn route_receipts(
         let key: &[u8] = contract_id.as_deref().map_or(&[], |bytes| &bytes[..]);
         let address = ReceiptAddress {
             key,
-            contract_name: set_cache.owner_of(key),
+            owners: set_cache.owners_of(key),
             block_height: receipt.block_height,
         };
 

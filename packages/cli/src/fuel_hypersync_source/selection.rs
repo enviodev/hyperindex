@@ -5,7 +5,7 @@ use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
 use napi_derive::napi;
 
-use crate::address_store::{AddressSet, StoreInner};
+use crate::address_store::{AddressSet, Owners, StoreInner};
 
 // FuelVM receipt type codes (see FuelSDK.receiptType on the JS side).
 const RECEIPT_CALL: u8 = 0;
@@ -90,11 +90,11 @@ pub(crate) struct Registration {
 }
 
 /// The emitter facts a receipt's owner gate reads: the root contract id's store
-/// key (its 32 raw bytes), the contract this partition's set says owns it, and
+/// key (its 32 raw bytes), the contracts this partition's set says own it, and
 /// the receipt's block height.
 pub(crate) struct ReceiptAddress<'a> {
     pub key: &'a [u8],
-    pub contract_name: Option<&'a str>,
+    pub owners: Owners<'a>,
     pub block_height: i64,
 }
 
@@ -124,7 +124,7 @@ impl Registration {
         kind_matches
             && crate::registration_start_block::has_started(self.start_block, address.block_height)
             && (self.is_wildcard
-                || ((force_wildcard || address.contract_name == Some(self.contract_name.as_str()))
+                || ((force_wildcard || address.owners.contains(self.contract_idx))
                     && store.is_indexed_at(address.key, self.contract_idx, address.block_height)))
     }
 }
@@ -383,11 +383,11 @@ mod tests {
         Hash::decode_hex(address).unwrap()
     }
 
-    /// A receipt emitter that the partition's set claims for `contract_name`.
+    /// A receipt emitter with the contracts the partition's set claims it for.
     fn emitter<'a>(set: &'a AddressSet, key: &'a Hash) -> ReceiptAddress<'a> {
         ReceiptAddress {
             key: &key[..],
-            contract_name: set.cache().owner_of(&key[..]),
+            owners: set.cache().owners_of(&key[..]),
             block_height: 0,
         }
     }
@@ -397,7 +397,7 @@ mod tests {
     fn unowned() -> ReceiptAddress<'static> {
         ReceiptAddress {
             key: &UNOWNED_KEY,
-            contract_name: None,
+            owners: Owners::default(),
             block_height: 0,
         }
     }
@@ -467,7 +467,7 @@ mod tests {
                 ),
             ]
         );
-        assert_eq!(set.cache().owner_of(&key_of(ADDR_3)[..]), Some("C2"));
+        assert!(set.cache().owns(&key_of(ADDR_3)[..], 1));
     }
 
     #[test]
@@ -553,7 +553,7 @@ mod tests {
                 None,
                 &ReceiptAddress {
                     key: &key[..],
-                    contract_name: None,
+                    owners: Owners::default(),
                     block_height: 0,
                 },
                 true,
@@ -682,6 +682,7 @@ mod tests {
         // Fuel gets the same temporal gate as EVM: a receipt from before the
         // contract's registration block never reaches its handler.
         let store = AddressStore::new_fuel(vec![crate::address_store::AddressStoreContract {
+            id: 0,
             name: "Owned".to_string(),
             start_block: None,
             depends_on_addresses: true,
@@ -703,7 +704,7 @@ mod tests {
         let owned_key = key_of(ADDR_1);
         let at = |block_height| ReceiptAddress {
             key: &owned_key[..],
-            contract_name: Some("Owned"),
+            owners: Owners::single(0),
             block_height,
         };
         let reg = &built.registrations[0];
@@ -739,7 +740,7 @@ mod tests {
         let at = |block_height| {
             let address = ReceiptAddress {
                 key: &owned_key[..],
-                contract_name: Some("Owned"),
+                owners: Owners::single(0),
                 block_height,
             };
             built

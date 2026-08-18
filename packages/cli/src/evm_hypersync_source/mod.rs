@@ -478,7 +478,7 @@ fn process_response(
             let address_key = log.address.as_ref().context("log.address missing")?;
             let address = LogAddress {
                 key: address_key.as_slice(),
-                contract_name: set_cache.owner_of(address_key.as_slice()),
+                owners: set_cache.owners_of(address_key.as_slice()),
                 block_number: flat.block_number,
             };
             // Only structurally malformed logs (missing topic0, bad topic bytes)

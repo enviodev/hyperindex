@@ -595,7 +595,7 @@ fn build_event_items(
         let program_key = instr.executing_account.as_bytes();
         let address = selection::InstructionAddress {
             key: program_key,
-            contract_name: set_cache.owner_of(program_key),
+            owners: set_cache.owners_of(program_key),
             slot,
         };
         let routed = route_instruction(
