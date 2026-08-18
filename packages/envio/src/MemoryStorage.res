@@ -232,11 +232,24 @@ let toInitialState = (state: t, ~cleanRun): Persistence.initialState => {
 let handleLoad = (state: t, ~tableName: string, ~filter: EntityFilter.t): array<
   Internal.entity,
 > => {
-  // Loads for non-entity tables (e.g. effect caches `envio_effect_<name>`) reach
-  // here too. Nothing persists those, so there's nothing to return — an empty
-  // result makes the effect recompute instead of crashing on a missing config.
+  // Effect caches (`envio_effect_<name>`) are loaded through the same call, and
+  // they have no entity config — they're served from the cache `writeBatch`
+  // filled, so a resumed indexer reuses cached outputs instead of recomputing
+  // them the way Postgres would.
   switch state.entityConfigs->Dict.get(tableName) {
-  | None => []
+  | None =>
+    switch state.effectCache->Dict.get(tableName) {
+    | None => []
+    | Some(cacheDict) =>
+      cacheDict
+      ->Dict.valuesToArray
+      ->Array.filter(item =>
+        filter->EntityFilter.matches(
+          ~entity=item->(Utils.magic: Internal.effectCacheItem => dict<EntityFilter.FieldValue.t>),
+        )
+      )
+      ->(Utils.magic: array<Internal.effectCacheItem> => array<Internal.entity>)
+    }
   | Some(entityConfig) =>
     let entityDict = state.entities->Dict.get(entityConfig.name)->Option.getOr(Dict.make())
     let matched =
