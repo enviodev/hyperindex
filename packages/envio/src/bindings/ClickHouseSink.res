@@ -1,11 +1,13 @@
 // Binding to the Rust `ClickHouseSink` napi class, plus the columnar builders
 // that feed it.
 //
-// A batch crosses the boundary one column at a time — a typed array for numeric
-// columns, one concatenated string plus per-row lengths for text-ish ones —
-// instead of a JS object per row. Rust then encodes RowBinary and sends it from a
-// tokio task, so neither the encode nor the HTTP round trip runs on the Node main
-// thread.
+// A table is registered once, before any batch: Rust parses its column types
+// and hands back a handle. A batch then crosses the boundary as that handle
+// plus one payload per column — a typed array for numeric columns, one
+// concatenated string plus per-row lengths for text-ish ones — instead of a JS
+// object per row, and without re-sending the shape. Rust encodes RowBinary and
+// sends it from a tokio task, so neither the encode nor the HTTP round trip
+// runs on the Node main thread.
 
 type t
 
@@ -17,16 +19,27 @@ type options = {
 }
 
 // The warning callback is how a degradation reaches the indexer's logger while
-// it is still happening: retries run inside a single `flush`, so anything handed
+// it is still happening: retries run inside a single write, so anything handed
 // back at the end would only be read once the episode is over.
 @send external classNew: (Core.clickHouseSinkCtor, options, string => unit) => t = "new"
 
-// Column payload as the Rust `ColumnInput` object expects it: exactly one of the
-// value fields is set.
-type columnInput = {
+// A column as the Rust `ColumnSpec` object expects it.
+type columnSpec = {
   name: string,
   @as("chType")
   chType: string,
+}
+
+// What registration hands back: the handle every batch quotes, and the wire
+// kind each column must be sent as.
+type registeredTable = {
+  handle: int,
+  kinds: array<int>,
+}
+
+// Column payload as the Rust `ColumnValuesInput` object expects it: exactly one
+// of the value fields is set.
+type columnValuesInput = {
   numbers?: Float64Array.t,
   unsigned64?: BigUint64Array.t,
   signed64?: BigInt64Array.t,
@@ -36,17 +49,33 @@ type columnInput = {
 }
 
 @send
-external stage: (t, ~table: string, ~rows: int, ~columns: array<columnInput>) => int = "stage"
-@send external flush: (t, int) => promise<unit> = "flush"
+external registerTable: (t, ~table: string, ~columns: array<columnSpec>) => registeredTable =
+  "registerTable"
+
+@send
+external stage: (t, ~table: int, ~rows: int, ~columns: array<columnValuesInput>) => int = "stage"
+
+// Entity batches go in together and the checkpoints that cover them go last —
+// the ordering the current-state views depend on, enforced where the inserts
+// happen rather than by the caller.
+@send
+external writeBatch: (t, ~entities: array<int>, ~checkpoints: Null.t<int>) => promise<unit> =
+  "writeBatch"
+
+// Frees handles a failed write never reached, so they don't sit staged for the
+// life of the process.
+@send external discard: (t, array<int>) => unit = "discard"
+
+@send external exec: (t, string) => promise<unit> = "exec"
+@send external query: (t, string) => promise<string> = "query"
 
 let make = (~url, ~username, ~password, ~database, ~onWarning) =>
   Core.getAddon().clickHouseSink->classNew({url, username, password, database}, onWarning)
 
-// How a column's values travel. Read back from the column's ClickHouse type
-// rather than mapped from `Table.fieldType` a second time: Rust already derives
-// the kind from that type to decide how to encode, so a JS copy of the mapping
-// could only ever be found wrong at runtime, as a rejected insert against a live
-// table.
+// How a column's values travel. Derived by Rust from the column's ClickHouse
+// type rather than mapped from `Table.fieldType` a second time: a JS copy of
+// that mapping could only ever be found wrong at runtime, as a rejected insert
+// against a live table.
 type kind =
   | @as(0) F64
   | @as(1) U64
@@ -55,15 +84,26 @@ type kind =
 
 external kindOfOrdinal: int => kind = "%identity"
 
-let kindOfClickHouseType = clickHouseType =>
-  Core.getAddon().clickhouseColumnKind(clickHouseType)->kindOfOrdinal
-
-// A column of the target table, with its wire kind resolved. Resolving crosses
-// into Rust to parse the type text, so it belongs to the column set — which is
-// built once per entity and scope — rather than to each batch written through it.
+// A registered table: the handle its batches quote, and its columns with the
+// wire kind Rust resolved for each.
 type column = {name: string, chType: string, kind: kind}
+type table = {handle: int, name: string, columns: array<column>}
 
-let makeColumn = (~name, ~chType) => {name, chType, kind: chType->kindOfClickHouseType}
+// Registering parses every column type once and rejects one this encoder cannot
+// hold, so a table envio cannot write is refused at startup rather than by the
+// first batch that reaches the column.
+let registerTableOrThrow = (sink, ~table, ~columns: array<columnSpec>) => {
+  let {handle, kinds} = sink->registerTable(~table, ~columns)
+  {
+    handle,
+    name: table,
+    columns: columns->Array.mapWithIndex(({name, chType}, index) => {
+      name,
+      chType,
+      kind: kinds->Array.getUnsafe(index)->kindOfOrdinal,
+    }),
+  }
+}
 
 %%private(let isString: unknown => bool = %raw(`(v) => typeof v === "string"`))
 external asString: unknown => string = "%identity"
@@ -85,9 +125,8 @@ let toText = (value: unknown) =>
 // `stage` copies it into Rust memory, and nothing reads it afterwards.
 type builder = {
   name: string,
-  // The column's ClickHouse type, as the DDL declared it. Sent with the values
-  // so Rust encodes against the shape envio created rather than one it has to
-  // go and ask the server for.
+  // Kept for the range messages below; the registered table is what tells Rust
+  // how to encode, so this never crosses the boundary.
   chType: string,
   kind: kind,
   floats: Float64Array.t,
@@ -200,8 +239,8 @@ let writeValue = (builder, ~row, value: unknown) =>
     }
   }
 
-let builderPayload = (builder): columnInput => {
-  let base = {name: builder.name, chType: builder.chType, nulls: ?builder.nulls}
+let builderPayload = (builder): columnValuesInput => {
+  let base = {nulls: ?builder.nulls}
   switch builder.kind {
   | F64 => {...base, numbers: builder.floats}
   | U64 => {...base, unsigned64: builder.unsigned}

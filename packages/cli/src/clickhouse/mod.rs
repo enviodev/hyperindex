@@ -1,24 +1,26 @@
-//! The ClickHouse insert path.
+//! The ClickHouse write path.
 //!
-//! Everything but inserts stays in ReScript: DDL, the current-state views and
-//! the reorg cleanup run once or rarely, and reusing the JS client for them keeps
-//! one place that knows how envio's tables are shaped. Inserts are the hot path,
-//! so they run here instead — column values cross the boundary columnar, get
-//! encoded as RowBinary, and are sent from a tokio task rather than the Node main
-//! thread.
+//! Everything the runtime sends ClickHouse goes through here: the DDL and the
+//! reorg cleanup as plain statements, and the batch inserts as RowBinary. The
+//! hot path never touches the Node main thread — column values cross the
+//! boundary columnar, get encoded in Rust, and are sent from a tokio task.
 //!
-//! Splitting `stage` from `flush` is what makes the second half off-thread work:
-//! a JS value can only be read while holding the isolate, so `stage` copies the
-//! batch into owned Rust memory on the JS thread and `flush` does the encoding
-//! and the HTTP round trip on the tokio pool.
+//! A table is registered once, before any batch. Registration parses each
+//! column's declared type and builds the insert statement, so a batch carries
+//! nothing but values and a handle, and a type this encoder cannot hold is
+//! refused at startup rather than against a live table.
 //!
-//! Column types come with the values. The caller creates these tables, so it
-//! knows their shape, and asking the server to describe them back would only add
-//! a round trip and a second answer to keep in step. The insert names every
-//! column it sends, which is what keeps that safe: the table's own column order
-//! stops mattering, and anything envio does not write — a column a user added, a
-//! DEFAULT or MATERIALIZED expression, a type this encoder has never heard of —
-//! is left for the server to fill.
+//! Splitting `stage` from `write_batch` is what makes the second half
+//! off-thread work: a JS value can only be read while holding the isolate, so
+//! `stage` copies the batch into owned Rust memory on the JS thread and
+//! `write_batch` does the encoding and the HTTP round trips on the tokio pool.
+//!
+//! Column types come from the caller, which is what creates these tables;
+//! asking the server to describe them back would only add a round trip and a
+//! second answer to keep in step. The insert names every column it sends, so
+//! the table's own column order stops mattering and anything envio does not
+//! write — a column a user added, a DEFAULT or MATERIALIZED expression — is
+//! left for the server to fill.
 
 pub mod ch_type;
 #[cfg(test)]
@@ -37,6 +39,7 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::{Env, Status};
 use napi_derive::napi;
 
+use ch_type::{ChType, ColumnKind};
 use row_binary::{Column, EncodedRows, StagedValues};
 
 /// Retries an insert this many times before giving up, matching the JS client's
@@ -100,17 +103,30 @@ impl Tuning {
     }
 }
 
-/// One column of a batch as it crosses the napi boundary. Exactly one of the
-/// value fields is set, chosen from the column's ClickHouse type so both sides
-/// agree without deriving the type twice.
+/// A column of a table the caller is registering: the name it goes by and the
+/// ClickHouse type the DDL declared it with.
 #[napi(object)]
-pub struct ColumnInput {
+pub struct ColumnSpec {
     pub name: String,
-    /// The column's ClickHouse type, the same string the DDL declared it with.
-    /// The caller creates these tables, so it already knows the shape; reading
-    /// it back from `system.columns` would only add a round trip and a second
-    /// place for the answer to come from.
     pub ch_type: String,
+}
+
+/// What a caller needs back to feed a registered table: the handle every batch
+/// quotes, and the wire kind each column must be sent as — derived from the
+/// type parsed here, so the JS side never maps envio's own field types to a
+/// kind a second time.
+#[napi(object)]
+#[derive(Debug)]
+pub struct RegisteredTable {
+    pub handle: u32,
+    pub kinds: Vec<u8>,
+}
+
+/// One column's values as they cross the napi boundary. Exactly one of the
+/// value fields is set, and which one is settled by the registered type rather
+/// than sent alongside every batch.
+#[napi(object)]
+pub struct ColumnValuesInput {
     /// Int32, UInt32, Float64, Bool (0/1), DateTime64 (ticks).
     pub numbers: Option<Float64Array>,
     /// UInt64, which loses precision as an f64.
@@ -127,48 +143,33 @@ pub struct ColumnInput {
     pub nulls: Option<Uint8Array>,
 }
 
-/// A staged column, owned by Rust so it can leave the JS thread.
-struct StagedColumn {
+/// A registered column: the parsed type, plus the kind a batch must send it as.
+struct ColumnSchema {
     name: String,
-    /// The column's ClickHouse type, exactly as the DDL declared it.
-    ch_type: String,
+    ch_type: ChType,
+    kind: ColumnKind,
+}
+
+/// A table's shape, parsed once at registration. The insert statement is built
+/// here too — the column list never changes, so a batch pays for neither the
+/// parse nor the statement.
+struct TableSchema {
+    table: String,
+    columns: Vec<ColumnSchema>,
+    insert_query: String,
+}
+
+/// One column's staged values, owned by Rust so they can leave the JS thread.
+/// The name and type live in the table's schema rather than being re-sent.
+struct StagedColumnValues {
     values: StagedValues,
     nulls: Vec<u8>,
 }
 
-impl StagedColumn {
-    /// Parses the declared type and resolves the text spans — the work that
-    /// needs neither the isolate nor the network, so it runs off the JS thread.
-    fn resolve(self) -> Result<Column> {
-        let ch_type = ch_type::parse(&self.ch_type)
-            .with_context(|| format!("Column `{}` has type `{}`", self.name, self.ch_type))?;
-        // Checked before resolving, so a column sent as the wrong kind is caught
-        // without first scanning its text for span boundaries.
-        let kind = ch_type.column_kind();
-        let staged_kind = self.values.kind();
-        if staged_kind != kind {
-            bail!(
-                "Column `{}` is {ch_type:?} and must be sent as {kind:?}, got {staged_kind:?}",
-                self.name,
-            );
-        }
-        let values = self
-            .values
-            .resolve()
-            .with_context(|| format!("Column `{}`", self.name))?;
-        Ok(Column {
-            name: self.name,
-            ch_type,
-            values,
-            nulls: self.nulls,
-        })
-    }
-}
-
 struct Staged {
-    table: String,
+    schema: Arc<TableSchema>,
     rows: usize,
-    columns: Vec<StagedColumn>,
+    columns: Vec<StagedColumnValues>,
 }
 
 #[napi]
@@ -178,6 +179,7 @@ pub struct ClickHouseSink {
     username: String,
     password: String,
     database: String,
+    tables: Mutex<HashMap<u32, Arc<TableSchema>>>,
     staged: Mutex<HashMap<u32, Staged>>,
     next_handle: AtomicU32,
     tuning: Tuning,
@@ -252,6 +254,7 @@ impl ClickHouseSink {
             username: options.username,
             password: options.password,
             database: options.database,
+            tables: Mutex::new(HashMap::new()),
             staged: Mutex::new(HashMap::new()),
             next_handle: AtomicU32::new(1),
             tuning,
@@ -259,16 +262,71 @@ impl ClickHouseSink {
         })
     }
 
-    /// Copies a batch into Rust memory and returns a handle to pass to `flush`.
-    /// Synchronous by necessity: reading a JS value needs the isolate.
+    /// Parses a table's column types and keeps them under a handle. Every batch
+    /// quotes that handle instead of re-sending the shape, and a type this
+    /// encoder cannot hold is refused here — at startup, against no rows —
+    /// rather than when a live batch first reaches the column.
     #[napi]
-    pub fn stage(&self, table: String, rows: u32, columns: Vec<ColumnInput>) -> napi::Result<u32> {
+    pub fn register_table(
+        &self,
+        table: String,
+        columns: Vec<ColumnSpec>,
+    ) -> napi::Result<RegisteredTable> {
+        if columns.is_empty() {
+            return Err(napi::Error::from_reason(format!(
+                "ClickHouse table `{table}` was registered with no columns"
+            )));
+        }
+        let mut parsed = Vec::with_capacity(columns.len());
+        for ColumnSpec { name, ch_type } in columns {
+            let parsed_type = ch_type::parse(&ch_type)
+                .with_context(|| {
+                    format!("Column `{name}` of ClickHouse table `{table}` has type `{ch_type}`")
+                })
+                .map_err(to_napi)?;
+            parsed.push(ColumnSchema {
+                kind: parsed_type.column_kind(),
+                ch_type: parsed_type,
+                name,
+            });
+        }
+        let kinds = parsed.iter().map(|column| column.kind as u8).collect();
+        let insert_query = insert_query(&self.database, &table, &parsed);
+        let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
+        self.tables.lock().unwrap().insert(
+            handle,
+            Arc::new(TableSchema {
+                table,
+                columns: parsed,
+                insert_query,
+            }),
+        );
+        Ok(RegisteredTable { handle, kinds })
+    }
+
+    /// Copies a batch into Rust memory and returns a handle to pass to
+    /// `write_batch`. Synchronous by necessity: reading a JS value needs the
+    /// isolate. Columns arrive in the order they were registered.
+    #[napi]
+    pub fn stage(
+        &self,
+        table: u32,
+        rows: u32,
+        columns: Vec<ColumnValuesInput>,
+    ) -> napi::Result<u32> {
+        let schema = self.table_schema(table).map_err(to_napi)?;
+        if columns.len() != schema.columns.len() {
+            return Err(napi::Error::from_reason(format!(
+                "ClickHouse table `{}` has {} column(s), got {} in a batch",
+                schema.table,
+                schema.columns.len(),
+                columns.len()
+            )));
+        }
         let rows = rows as usize;
         let mut staged_columns = Vec::with_capacity(columns.len());
-        for column in columns {
-            let ColumnInput {
-                name,
-                ch_type,
+        for (column, spec) in columns.into_iter().zip(&schema.columns) {
+            let ColumnValuesInput {
                 numbers,
                 unsigned64,
                 signed64,
@@ -276,6 +334,7 @@ impl ClickHouseSink {
                 lengths,
                 nulls,
             } = column;
+            let name = &spec.name;
             let values = match (numbers, unsigned64, signed64, text) {
                 (Some(v), None, None, None) => StagedValues::F64(v.to_vec()),
                 (None, Some(v), None, None) => StagedValues::U64(v.to_vec()),
@@ -297,9 +356,16 @@ impl ClickHouseSink {
                     )))
                 }
             };
-            staged_columns.push(StagedColumn {
-                name,
-                ch_type,
+            // Checked against the registered type, so a column sent as the wrong
+            // kind is caught before its text is scanned for span boundaries.
+            let staged_kind = values.kind();
+            if staged_kind != spec.kind {
+                return Err(napi::Error::from_reason(format!(
+                    "Column `{name}` is {:?} and must be sent as {:?}, got {staged_kind:?}",
+                    spec.ch_type, spec.kind
+                )));
+            }
+            staged_columns.push(StagedColumnValues {
                 values,
                 nulls: nulls.map(|n| n.to_vec()).unwrap_or_default(),
             });
@@ -308,7 +374,7 @@ impl ClickHouseSink {
         self.staged.lock().unwrap().insert(
             handle,
             Staged {
-                table,
+                schema,
                 rows,
                 columns: staged_columns,
             },
@@ -316,37 +382,137 @@ impl ClickHouseSink {
         Ok(handle)
     }
 
-    /// Encodes the staged batch as RowBinary and inserts it, retrying by halving
-    /// the batch. The handle is consumed either way, so a failed flush never
-    /// leaves the batch behind. Degradation notices go to the warning callback as
-    /// they happen rather than coming back at the end.
+    /// Inserts every staged batch, then the checkpoints that cover them.
+    ///
+    /// The order is the visibility rule the current-state views depend on: they
+    /// read up to `max(id)` of the checkpoints table, so a checkpoint landing
+    /// before the rows it covers would expose a half-written batch. Keeping it
+    /// here rather than in the caller means the one thing that must not be
+    /// reordered sits next to the code that could reorder it.
+    ///
+    /// Every handle is consumed, so a failed write never leaves a batch behind.
     #[napi]
-    pub async fn flush(&self, handle: u32) -> napi::Result<()> {
-        let staged =
-            self.staged.lock().unwrap().remove(&handle).ok_or_else(|| {
-                napi::Error::from_reason(format!("Unknown staged batch {handle}"))
-            })?;
-        self.insert_staged(staged).await.map_err(to_napi)
+    pub async fn write_batch(
+        &self,
+        entities: Vec<u32>,
+        checkpoints: Option<u32>,
+    ) -> napi::Result<()> {
+        let mut handles = entities;
+        handles.extend(checkpoints);
+        let mut staged = self.take_staged(&handles).map_err(to_napi)?;
+        // Taken last above, so it comes off the end.
+        let checkpoints = checkpoints.and_then(|_| staged.pop());
+
+        futures_util::future::try_join_all(
+            staged.into_iter().map(|staged| self.insert_staged(staged)),
+        )
+        .await
+        .map_err(to_napi)?;
+
+        if let Some(checkpoints) = checkpoints {
+            self.insert_staged(checkpoints).await.map_err(to_napi)?;
+        }
+        Ok(())
+    }
+
+    /// Drops staged batches without sending them, for a caller that fails to
+    /// stage the rest of a write: nothing else consumes those handles, so they
+    /// would sit in the staging map for the life of the process.
+    #[napi]
+    pub fn discard(&self, handles: Vec<u32>) {
+        let mut staged = self.staged.lock().unwrap();
+        for handle in handles {
+            staged.remove(&handle);
+        }
+    }
+
+    /// Runs a statement that returns nothing — the DDL and the reorg cleanup.
+    #[napi]
+    pub async fn exec(&self, query: String) -> napi::Result<()> {
+        self.post_statement(query).await.map(|_| ()).map_err(to_napi)
+    }
+
+    /// Runs a statement and hands back the server's response body verbatim, so
+    /// the caller picks the `FORMAT` it wants to parse.
+    #[napi]
+    pub async fn query(&self, query: String) -> napi::Result<String> {
+        self.post_statement(query).await.map_err(to_napi)
     }
 }
 
 impl ClickHouseSink {
+    fn table_schema(&self, handle: u32) -> Result<Arc<TableSchema>> {
+        self.tables
+            .lock()
+            .unwrap()
+            .get(&handle)
+            .cloned()
+            .with_context(|| format!("Unknown ClickHouse table handle {handle}"))
+    }
+
+    /// Removes every handle from the staging map before any of them is sent, so
+    /// an unknown handle cannot leave the batches beside it stranded there.
+    fn take_staged(&self, handles: &[u32]) -> Result<Vec<Staged>> {
+        let mut staged = self.staged.lock().unwrap();
+        handles
+            .iter()
+            .map(|handle| {
+                staged
+                    .remove(handle)
+                    .with_context(|| format!("Unknown staged ClickHouse batch {handle}"))
+            })
+            .collect()
+    }
+
+    /// Statements go in the body rather than the query string: DDL runs long and
+    /// a URL has a length limit. No `database` parameter — `initialize` creates
+    /// the database, so scoping to it would fail before it exists, and every
+    /// statement names its database anyway.
+    async fn post_statement(&self, query: String) -> Result<String> {
+        let response = self
+            .client
+            .post(&self.url)
+            .basic_auth(&self.username, Some(&self.password))
+            .body(query)
+            .send()
+            .await
+            .context("ClickHouse request failed")?;
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            bail!("ClickHouse returned {status}: {text}");
+        }
+        Ok(text)
+    }
+
     async fn insert_staged(&self, staged: Staged) -> Result<()> {
-        let table = staged.table;
+        let schema = staged.schema;
+        let table = &schema.table;
         let encoded = tokio::task::block_in_place(|| {
-            let columns = staged
+            let columns = schema
                 .columns
-                .into_iter()
-                .map(StagedColumn::resolve)
+                .iter()
+                .zip(staged.columns)
+                .map(|(spec, values)| {
+                    Ok(Column {
+                        name: spec.name.clone(),
+                        ch_type: spec.ch_type.clone(),
+                        values: values
+                            .values
+                            .resolve()
+                            .with_context(|| format!("Column `{}`", spec.name))?,
+                        nulls: values.nulls,
+                    })
+                })
                 .collect::<Result<Vec<_>>>()?;
-            row_binary::encode(&columns, staged.rows).map(|encoded| (encoded, columns))
+            row_binary::encode(&columns, staged.rows)
         })
         .with_context(|| format!("Failed encoding rows for ClickHouse table `{table}`"))?;
-        let (encoded, columns) = encoded;
         if encoded.rows() == 0 {
             return Ok(());
         }
-        self.insert_with_retry(&table, &columns, &encoded).await
+        self.insert_with_retry(table, &schema.insert_query, &encoded)
+            .await
     }
 
     /// Mirrors the JS client's policy: on a transient failure halve the range and
@@ -355,16 +521,15 @@ impl ClickHouseSink {
     async fn insert_with_retry(
         &self,
         table: &str,
-        columns: &[Column],
+        query: &str,
         encoded: &EncodedRows,
     ) -> Result<()> {
-        let query = insert_query(&self.database, table, columns);
         let mut attempted: Vec<String> = Vec::new();
         // Ranges still to send, most recent first; a failed range is replaced by
         // its two halves so the retry never re-sends rows that already landed.
         let mut pending = vec![(0usize, encoded.rows(), self.tuning.attempts)];
         while let Some((start, end, retries)) = pending.pop() {
-            match self.post_rows(&query, encoded.slice(start, end)).await {
+            match self.post_rows(query, encoded.slice(start, end)).await {
                 Ok(()) => continue,
                 Err(err) if retries == 0 => {
                     // The attempts leading here are the diagnosis; returning the
@@ -421,21 +586,10 @@ impl ClickHouseSink {
     }
 }
 
-/// The wire kind a column of this ClickHouse type must be sent as. Exposed so
-/// the JS side can pick a column's typed array from the same derivation the
-/// encoder uses, instead of mapping envio's own field types to a kind a second
-/// time — a mismatch there would only surface as a wrongly encoded column.
-#[napi]
-pub fn clickhouse_column_kind(ch_type: String) -> napi::Result<u8> {
-    ch_type::parse(&ch_type)
-        .map(|parsed| parsed.column_kind() as u8)
-        .map_err(to_napi)
-}
-
 /// Names every column the body carries, so the table's own column order stops
 /// mattering and anything envio does not write — an extra column a user added, a
 /// MATERIALIZED or DEFAULT expression — is left for the server to fill.
-fn insert_query(database: &str, table: &str, columns: &[Column]) -> String {
+fn insert_query(database: &str, table: &str, columns: &[ColumnSchema]) -> String {
     let names = columns
         .iter()
         .map(|column| quote_identifier(&column.name))
@@ -457,55 +611,67 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    /// A staged column of text values, declared as `ty`.
-    fn column(name: &str, ty: &str, values: &[&str]) -> Column {
-        StagedColumn {
+    /// A column of text values as `insert_query` sees it, declared as `ty`.
+    fn column(name: &str, ty: &str) -> ColumnSchema {
+        let ch_type = ch_type::parse(ty).unwrap();
+        ColumnSchema {
+            name: name.to_string(),
+            kind: ch_type.column_kind(),
+            ch_type,
+        }
+    }
+
+    /// Text values packed the way the JS side sends them: one concatenated
+    /// string plus each value's UTF-16 length.
+    fn text_values(values: &[&str]) -> ColumnValuesInput {
+        ColumnValuesInput {
+            numbers: None,
+            unsigned64: None,
+            signed64: None,
+            text: Some(values.concat()),
+            lengths: Some(
+                values
+                    .iter()
+                    .map(|v| v.chars().map(char::len_utf16).sum::<usize>() as u32)
+                    .collect::<Vec<u32>>()
+                    .into(),
+            ),
+            nulls: None,
+        }
+    }
+
+    fn spec(name: &str, ty: &str) -> ColumnSpec {
+        ColumnSpec {
             name: name.to_string(),
             ch_type: ty.to_string(),
-            values: StagedValues::Text {
-                data: values.concat(),
-                utf16_lengths: values.iter().map(|v| v.len() as u32).collect(),
-            },
-            nulls: Vec::new(),
         }
-        .resolve()
-        .unwrap()
     }
 
-    // The caller declares each column's type, so a value that cannot travel as
-    // that type is caught before anything is encoded.
+    // A column's type is parsed when the table is registered, so a type this
+    // encoder cannot hold is refused at startup rather than by the first batch
+    // that reaches the column.
     #[test]
-    fn rejects_values_that_do_not_match_the_declared_type() {
-        let err = StagedColumn {
-            name: "n".to_string(),
-            ch_type: "String".to_string(),
-            values: StagedValues::F64(vec![1.0]),
-            nulls: Vec::new(),
-        }
-        .resolve()
-        .unwrap_err();
-        assert_eq!(
-            format!("{err:#}"),
-            "Column `n` is String and must be sent as Text, got F64"
-        );
-    }
-
-    #[test]
-    fn rejects_a_type_it_cannot_encode() {
-        let err = StagedColumn {
-            name: "t".to_string(),
-            ch_type: "Tuple(String, UInt8)".to_string(),
-            values: StagedValues::Text {
-                data: String::new(),
-                utf16_lengths: vec![0],
+    fn registering_rejects_a_type_it_cannot_encode() {
+        let server_less = ClickHouseSink::build(
+            ClickHouseSinkOptions {
+                url: "http://127.0.0.1:1".to_string(),
+                username: "default".to_string(),
+                password: String::new(),
+                database: "mock".to_string(),
             },
-            nulls: Vec::new(),
-        }
-        .resolve()
-        .unwrap_err();
+            Tuning::default(),
+            Arc::new(|_: &str| {}),
+        )
+        .unwrap();
+
+        let err = server_less
+            .register_table("t".to_string(), vec![spec("t", "Tuple(String, UInt8)")])
+            .unwrap_err();
+
         assert_eq!(
-            format!("{err:#}"),
-            "Column `t` has type `Tuple(String, UInt8)`: unsupported ClickHouse type `Tuple`"
+            err.reason,
+            "Column `t` of ClickHouse table `t` has type `Tuple(String, UInt8)`: \
+             unsupported ClickHouse type `Tuple`"
         );
     }
 
@@ -559,29 +725,19 @@ mod tests {
         )
     }
 
-    /// Stages `values` as a single `String` column named `id`.
+    /// Stages `values` as a single `String` column named `id`, registering the
+    /// table it belongs to.
     fn stage_ids(sink: &ClickHouseSink, values: &[&str]) -> u32 {
-        sink.stage(
-            "t".to_string(),
-            values.len() as u32,
-            vec![ColumnInput {
-                name: "id".to_string(),
-                ch_type: "String".to_string(),
-                numbers: None,
-                unsigned64: None,
-                signed64: None,
-                text: Some(values.concat()),
-                lengths: Some(
-                    values
-                        .iter()
-                        .map(|v| v.len() as u32)
-                        .collect::<Vec<u32>>()
-                        .into(),
-                ),
-                nulls: None,
-            }],
-        )
-        .unwrap()
+        let table = sink
+            .register_table("t".to_string(), vec![spec("id", "String")])
+            .unwrap();
+        sink.stage(table.handle, values.len() as u32, vec![text_values(values)])
+            .unwrap()
+    }
+
+    /// Sends one staged batch, which is what a write with no checkpoints does.
+    async fn write(sink: &ClickHouseSink, handle: u32) -> napi::Result<()> {
+        sink.write_batch(vec![handle], None).await
     }
 
     // A rejected insert is replaced by its two halves, so the rows in the half
@@ -592,7 +748,7 @@ mod tests {
         let sink = sink_for(&server, 4);
         let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
 
-        sink.flush(handle).await.unwrap();
+        write(&sink, handle).await.unwrap();
 
         assert_eq!(
             (
@@ -621,7 +777,7 @@ mod tests {
         let sink = sink_for(&server, 4);
         let handle = stage_ids(&sink, &["only"]);
 
-        sink.flush(handle).await.unwrap();
+        write(&sink, handle).await.unwrap();
 
         assert_eq!(
             (server.accepted_strings(), server.inserts_seen()),
@@ -635,7 +791,7 @@ mod tests {
         let sink = sink_for(&server, 2);
         let handle = stage_ids(&sink, &["a", "b"]);
 
-        let err = sink.flush(handle).await.unwrap_err();
+        let err = write(&sink, handle).await.unwrap_err();
 
         assert_eq!(
             (
@@ -664,7 +820,7 @@ mod tests {
         );
         let handle = stage_ids(&sink, &["a"]);
 
-        let err = sink.flush(handle).await.unwrap_err();
+        let err = write(&sink, handle).await.unwrap_err();
 
         assert_eq!(
             err.reason.contains("operation timed out"),
@@ -682,7 +838,7 @@ mod tests {
         let sink = sink_for(&server, 4);
         for _ in 0..3 {
             let handle = stage_ids(&sink, &["x"]);
-            sink.flush(handle).await.unwrap();
+            write(&sink, handle).await.unwrap();
         }
         assert_eq!((server.inserts_seen(), server.queries_seen()), (3, 0));
     }
@@ -691,24 +847,14 @@ mod tests {
     async fn a_value_the_column_cannot_hold_fails_before_anything_is_sent() {
         let server = mock_server::MockClickHouse::start(0).await;
         let sink = sink_for(&server, 4);
+        let table = sink
+            .register_table("t".to_string(), vec![spec("e", "Enum8('SET' = 1)")])
+            .unwrap();
         let handle = sink
-            .stage(
-                "t".to_string(),
-                1,
-                vec![ColumnInput {
-                    name: "e".to_string(),
-                    ch_type: "Enum8('SET' = 1)".to_string(),
-                    numbers: None,
-                    unsigned64: None,
-                    signed64: None,
-                    text: Some("NOPE".to_string()),
-                    lengths: Some(vec![4u32].into()),
-                    nulls: None,
-                }],
-            )
+            .stage(table.handle, 1, vec![text_values(&["NOPE"])])
             .unwrap();
 
-        let err = sink.flush(handle).await.unwrap_err();
+        let err = write(&sink, handle).await.unwrap_err();
 
         assert_eq!(
             (err.reason.contains("not a variant"), server.inserts_seen()),
@@ -737,7 +883,7 @@ mod tests {
         .unwrap();
         let handle = stage_ids(&sink, &["a"]);
 
-        sink.flush(handle).await.unwrap();
+        write(&sink, handle).await.unwrap();
 
         let head = server.heads().first().cloned().unwrap_or_default();
         // base64("défaut:pässwörd"), which is what a Basic credential carries.
@@ -758,10 +904,7 @@ mod tests {
 
     #[test]
     fn the_insert_names_every_column_it_sends() {
-        let columns = vec![
-            column("id", "String", &["a"]),
-            column("n`quoted", "String", &["1"]),
-        ];
+        let columns = vec![column("id", "String"), column("n`quoted", "String")];
         assert_eq!(
             insert_query("db", "envio_history_A`B", &columns),
             "INSERT INTO `db`.`envio_history_A``B` (`id`, `n``quoted`) FORMAT RowBinary"

@@ -196,7 +196,7 @@ fn put_string(out: &mut Vec<u8>, value: &str) {
 fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
     let text = text.trim();
     if text.is_empty() {
-        return Ok(0);
+        bail!("a Decimal column cannot hold an empty value");
     }
     // bignumber.js renders large or tiny magnitudes in exponential form.
     let (mantissa, exponent) = match text.find(['e', 'E']) {
@@ -282,7 +282,7 @@ fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
     Ok(match ch_type {
         ChType::Int32 => (i32::MIN as i128, i32::MAX as i128),
         ChType::Int64 => (i64::MIN as i128, i64::MAX as i128),
-        ChType::Bool => (0, u8::MAX as i128),
+        ChType::Bool => (0, 1),
         ChType::UInt32 => (0, u32::MAX as i128),
         ChType::UInt64 => (0, u64::MAX as i128),
         ChType::DateTime64 { .. } => (i64::MIN as i128, i64::MAX as i128),
@@ -384,6 +384,12 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
             out.extend_from_slice(&float.to_le_bytes())
         }
         (ChType::String, Value::String(text)) => put_string(out, text),
+        // A String column holds whatever text it is given, and a `[Json!]!`
+        // field's elements are arbitrary JSON. ClickHouse folded these into the
+        // column itself on the JSONEachRow path (its
+        // `input_format_json_read_*_as_strings` defaults), so rendering them
+        // here keeps a schema that used to index from failing to encode.
+        (ChType::String, _) => put_string(out, &value.to_string()),
         (ChType::Enum { .. }, Value::String(text)) => encode_text_scalar(out, ch_type, text)?,
         (ChType::Decimal { .. }, Value::String(text)) => encode_text_scalar(out, ch_type, text)?,
         (ChType::Decimal { scale, .. }, Value::Number(number)) => {
@@ -448,7 +454,13 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
     }
 
     match (&column.values, ch_type) {
-        (ColumnValues::F64(v), ChType::Bool) => out.push(u8::from(v[row] != 0.0)),
+        (ColumnValues::F64(v), ChType::Bool) => {
+            let value = v[row];
+            if !value.is_finite() {
+                bail!("{value} is not a value a Bool column can hold");
+            }
+            out.push(u8::from(value != 0.0))
+        }
         (ColumnValues::F64(v), ChType::Float64) => out.extend_from_slice(&v[row].to_le_bytes()),
         (ColumnValues::F64(v), other) => {
             let value = v[row];
@@ -466,14 +478,12 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
         (ColumnValues::I64(v), other) => put_int(out, v[row] as i128, other)?,
         (ColumnValues::Text { .. }, ChType::Array(_)) => {
             let text = column.values.text_at(row)?;
-            let parsed: serde_json::Value = serde_json::from_str(text)
-                .with_context(|| format!("column `{}` row {row} is not JSON", column.name))?;
-            encode_json_value(out, ch_type, &parsed)
-                .with_context(|| format!("column `{}` row {row}", column.name))?;
+            let parsed: serde_json::Value =
+                serde_json::from_str(text).context("value is not JSON")?;
+            encode_json_value(out, ch_type, &parsed)?;
         }
         (ColumnValues::Text { .. }, other) => {
-            encode_text_scalar(out, other, column.values.text_at(row)?)
-                .with_context(|| format!("column `{}` row {row}", column.name))?
+            encode_text_scalar(out, other, column.values.text_at(row)?)?
         }
     }
     Ok(())
@@ -712,6 +722,64 @@ mod tests {
         let mut expected = vec![3];
         for v in [1u32, 2, 3] {
             expected.extend_from_slice(&v.to_le_bytes());
+        }
+        assert_eq!(encoded.body, expected);
+    }
+
+    // ClickHouse stores a Bool as one byte and reads any non-zero as true, but
+    // the type holds a bit: a number that is neither 0 nor 1 is a value the
+    // column cannot represent, not one to round off.
+    #[test]
+    fn rejects_a_number_a_bool_column_cannot_hold() {
+        let err = encode(&[text_column("flags", "Array(Bool)", &["[7]"])], 1).unwrap_err();
+        assert_eq!(
+            format!("{err:#}"),
+            "encoding column `flags` row 0: 7 is out of range for a Bool column"
+        );
+    }
+
+    // Every other non-numeric text is refused, so an empty one must be too —
+    // storing 0 for it would silently invent a value the handler never wrote.
+    #[test]
+    fn rejects_an_empty_decimal_string() {
+        let err = encode(&[text_column("d", "Decimal(38, 0)", &[""])], 1).unwrap_err();
+        assert_eq!(
+            format!("{err:#}"),
+            "encoding column `d` row 0: a Decimal column cannot hold an empty value"
+        );
+    }
+
+    // The builder reaches Number() on a value the schema never checked, so NaN
+    // can arrive here. Every other float-to-integer path refuses a non-finite
+    // value; a Bool must not be the one that folds it to true.
+    #[test]
+    fn rejects_a_non_finite_float_for_a_bool_column() {
+        let err = encode(&[f64_column("flag", "Bool", &[f64::NAN])], 1).unwrap_err();
+        assert_eq!(
+            format!("{err:#}"),
+            "encoding column `flag` row 0: NaN is not a value a Bool column can hold"
+        );
+    }
+
+    // A `[Json!]!` field maps to Array(String), and its elements are whatever
+    // the handler put there. The JSONEachRow path this replaced had ClickHouse
+    // fold a non-string element into the column's text, so a schema that
+    // indexed fine before must not start failing to encode.
+    #[test]
+    fn a_json_element_of_a_string_array_is_stored_as_its_text() {
+        let encoded = encode(
+            &[text_column(
+                "xs",
+                "Array(String)",
+                &[r#"[{"a":1},2,true,"s"]"#],
+            )],
+            1,
+        )
+        .unwrap();
+        let mut expected = vec![4];
+        for value in [r#"{"a":1}"#, "2", "true", "s"] {
+            expected.push(value.len() as u8);
+            expected.extend_from_slice(value.as_bytes());
         }
         assert_eq!(encoded.body, expected);
     }

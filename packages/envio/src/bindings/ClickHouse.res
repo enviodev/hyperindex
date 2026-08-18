@@ -1,40 +1,6 @@
-// ClickHouse client bindings for @clickhouse/client
-
-type client
-
-type clientConfig = {
-  url?: string,
-  database?: string,
-  username?: string,
-  password?: string,
-}
-
-type execParams = {query: string}
-
-@module("@clickhouse/client")
-external createClient: clientConfig => client = "createClient"
-
-// `command`, not `exec`: exec hands its response stream to the caller and holds
-// the socket until it is consumed, which nothing here does. The pool is 10
-// sockets wide, so a schema whose DDL needs more than that — initialize issues
-// 2N+3 statements for N entities — stalled every statement past the tenth until
-// the 30s request timeout freed one. command destroys the stream for us.
-@send
-external command: (client, execParams) => promise<unit> = "command"
-
-@send
-external close: client => promise<unit> = "close"
-
-type queryParams = {query: string}
-type queryResult<'a>
-
-@send
-external query: (client, queryParams) => promise<queryResult<'a>> = "query"
-
-// The default `JSON` query format resolves to a `ResponseJSON` wrapper whose
-// rows live under `data`, not at the top level.
-@send
-external json: queryResult<'a> => promise<{"data": array<'a>}> = "json"
+// ClickHouse table shapes and the statements that create them. Everything is
+// sent through the Rust sink — one client, so the DDL and the inserts share a
+// connection pool, a timeout policy and a TLS trust store.
 
 let getClickHouseFieldType = (
   ~fieldType: Table.fieldType,
@@ -160,6 +126,13 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
 
 let logger = Logging.createChild(~params={"context": "ClickHouse"})
 
+// Warnings reach the logger as they happen: a retry storm runs inside a single
+// write, so anything handed back at the end would only be read once it is over.
+let makeSink = (~host, ~username, ~password, ~database) =>
+  ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~onWarning=msg =>
+    logger->Logging.childWarn({"msg": msg})
+  )
+
 // The two columns every history table carries beyond the entity's own. Shared
 // with the DDL so the type the encoder is handed is the one the column was
 // created with.
@@ -222,35 +195,18 @@ let checkpointColumns: array<checkpointColumn> = [
   },
 ]
 
-// Resolved per chain-id mode, which is the only thing the column types vary
-// with. Resolving a wire kind crosses into Rust, so it does not belong on the
-// path a batch takes.
-let checkpointSinkColumns = {
-  let cache = Dict.make()
-  (~chainIdMode: ChainId.mode) => {
-    let key = switch chainIdMode {
-    | Int32 => "Int32"
-    | Int64 => "Int64"
-    }
-    switch cache->Utils.Dict.dangerouslyGetNonOption(key) {
-    | Some(columns) => columns
-    | None =>
-      let columns =
-        checkpointColumns->Array.map(({name, fieldType, isNullable}) =>
-          ClickHouseSink.makeColumn(
-            ~name,
-            ~chType=getClickHouseFieldType(~fieldType, ~isNullable, ~isArray=false, ~chainIdMode),
-          )
-        )
-      cache->Dict.set(key, columns)
-      columns
-    }
-  }
-}
+// The checkpoints table's columns as the sink registers and the DDL declares
+// them. One derivation, so a column cannot be created with one type and encoded
+// against another.
+let checkpointColumnSpecs = (~chainIdMode: ChainId.mode): array<ClickHouseSink.columnSpec> =>
+  checkpointColumns->Array.map(({name, fieldType, isNullable}) => {
+    ClickHouseSink.name,
+    chType: getClickHouseFieldType(~fieldType, ~isNullable, ~isArray=false, ~chainIdMode),
+  })
 
 // Every column envio declares on an entity's history table, in DDL order. The
-// CREATE TABLE, the insert and the startup type check all read this, so a column
-// is encoded against the type it was created with.
+// CREATE TABLE and the sink's registration both read this, so a column is
+// encoded against the type it was created with.
 let entityColumnTypes = (~entityConfig: Internal.entityConfig, ~chainIdMode: ChainId.mode): array<(
   string,
   string,
@@ -275,20 +231,34 @@ let entityColumnTypes = (~entityConfig: Internal.entityConfig, ~chainIdMode: Cha
   columns
 }
 
-let checkpointColumnTypes = (~chainIdMode: ChainId.mode): array<(string, string)> =>
-  checkpointColumns->Array.map(({name, fieldType, isNullable}) => (
-    name,
-    getClickHouseFieldType(~fieldType, ~isNullable, ~isArray=false, ~chainIdMode),
-  ))
+let entityColumnSpecs = (~entityConfig, ~chainIdMode): array<ClickHouseSink.columnSpec> =>
+  entityColumnTypes(~entityConfig, ~chainIdMode)->Array.map(((name, chType)) => {
+    ClickHouseSink.name,
+    chType,
+  })
 
-// Column set of an entity history table, resolved once per entity and scope.
-// Only the column list and the compiled serializers are cached; each write
-// allocates its own builders, so two writes can never share storage.
-type entityColumns = {
-  tableName: string,
-  columns: array<ClickHouseSink.column>,
+// The compiled serializers for one entity and chain scope. Only these vary with
+// the scope; the column set does not, so the registered table is shared.
+type converters = {
   convertSetOrThrow: Change.t<Internal.entity> => dict<unknown>,
   convertDeleteOrThrow: Change.t<Internal.entity> => dict<unknown>,
+}
+
+// What a sink needs to write: the tables it has registered, and the serializers
+// it has compiled. The chain-id mode is the only thing column types vary with
+// and it is fixed for the sink, so it lives here rather than on every call.
+type registry = {
+  chainIdMode: ChainId.mode,
+  entities: dict<ClickHouseSink.table>,
+  mutable checkpoints: option<ClickHouseSink.table>,
+  converters: dict<converters>,
+}
+
+let makeRegistry = (~chainIdMode) => {
+  chainIdMode,
+  entities: Dict.make(),
+  checkpoints: None,
+  converters: Dict.make(),
 }
 
 let compileToColumnValues = schema =>
@@ -296,31 +266,20 @@ let compileToColumnValues = schema =>
     Utils.magic: (Change.t<Internal.entity> => JSON.t) => Change.t<Internal.entity> => dict<unknown>
   )
 
-let makeEntityColumns = (
+let makeConverters = (
   ~entityConfig: Internal.entityConfig,
   ~scope: Internal.chainScope,
-  ~chainIdMode: ChainId.mode,
-): entityColumns => {
+): converters => {
   let chainIdField = entityConfig.table->Table.getChainIdField
   let scopeChainId = scope->Internal.chainScopeChainId
   let idSchema = entityConfig.table->Table.getIdSchema
 
-  let columns =
-    entityColumnTypes(~entityConfig, ~chainIdMode)->Array.map(((name, chType)) =>
-      ClickHouseSink.makeColumn(~name, ~chType)
-    )
-
   {
-    tableName: EntityHistory.historyTableName(
-      ~entityName=entityConfig.name,
-      ~entityIndex=entityConfig.index,
-    ),
-    columns,
     convertSetOrThrow: compileToColumnValues(
       EntityHistory.makeSetUpdateSchema(~idSchema, makeClickHouseEntitySchema(entityConfig.table)),
     ),
     // A delete row carries no entity to stamp, so the chain id is baked into
-    // the schema instead — which is why the cache is keyed per scope. Every
+    // the schema instead — which is why these are cached per scope. Every
     // other column is absent and takes its ClickHouse default.
     convertDeleteOrThrow: compileToColumnValues(
       S.object(s => {
@@ -341,46 +300,72 @@ let makeEntityColumns = (
   }
 }
 
-// Copies the batch into the sink and returns the handle to flush. Splitting the
-// two lets a caller attribute a staging failure differently from an insert one.
-let stageBuilders = (sink, ~tableName, ~builders: array<ClickHouseSink.builder>, ~rows) =>
+// Registering parses the column types, which is where a type this encoder
+// cannot hold is refused. `initialize` warms every table so that lands at
+// startup, but an indexer resuming an existing storage never runs it — so the
+// write path registers on demand rather than depending on that.
+let entityTable = (sink, ~registry, ~entityConfig: Internal.entityConfig) =>
+  switch registry.entities->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) {
+  | Some(table) => table
+  | None =>
+    let table =
+      sink->ClickHouseSink.registerTableOrThrow(
+        ~table=EntityHistory.historyTableName(
+          ~entityName=entityConfig.name,
+          ~entityIndex=entityConfig.index,
+        ),
+        ~columns=entityColumnSpecs(~entityConfig, ~chainIdMode=registry.chainIdMode),
+      )
+    registry.entities->Dict.set(entityConfig.name, table)
+    table
+  }
+
+let checkpointsTable = (sink, ~registry) =>
+  switch registry.checkpoints {
+  | Some(table) => table
+  | None =>
+    let table =
+      sink->ClickHouseSink.registerTableOrThrow(
+        ~table=InternalTable.Checkpoints.table.tableName,
+        ~columns=checkpointColumnSpecs(~chainIdMode=registry.chainIdMode),
+      )
+    registry.checkpoints = Some(table)
+    table
+  }
+
+// Copies the batch into the sink and returns the handle to write. Splitting
+// staging from the write is what lets the values be read on the JS thread while
+// the encode and the round trip happen off it.
+let stageBuilders = (sink, ~table: ClickHouseSink.table, ~builders, ~rows) =>
   sink->ClickHouseSink.stage(
-    ~table=tableName,
+    ~table=table.handle,
     ~rows,
     ~columns=builders->Array.map(ClickHouseSink.builderPayload),
   )
 
-let setCheckpointsOrThrow = async (sink, ~batch: Batch.t, ~chainIdMode: ChainId.mode) => {
+let stageCheckpointsOrThrow = (sink, ~registry, ~batch: Batch.t) => {
   let rows = batch.checkpointIds->Array.length
   if rows === 0 {
-    ()
+    Null.null
   } else {
-    let tableName = InternalTable.Checkpoints.table.tableName
-    // Same column list the DDL is built from, so a column added there arrives
-    // here with a builder rather than silently taking the type's default, and
-    // with the values that belong to it rather than a neighbour's.
-    let builders =
-      checkpointSinkColumns(~chainIdMode)->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
+    let table = sink->checkpointsTable(~registry)
     let values = checkpointColumns->Array.map(({valuesOf}) => valuesOf(batch))
-
     try {
-      // Inside the wrapper because writing a value can fail: a checkpoint id
-      // past what UInt64 holds is refused here rather than being reduced to a
-      // different id by the typed array it would land in.
-      for row in 0 to rows - 1 {
-        builders->Array.forEachWithIndex((builder, column) =>
-          builder->ClickHouseSink.writeValue(
-            ~row,
-            values->Array.getUnsafe(column)->Array.getUnsafe(row),
-          )
-        )
-      }
-      await sink->ClickHouseSink.flush(sink->stageBuilders(~tableName, ~builders, ~rows))
+      let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
+      // A checkpoint id past what UInt64 holds is refused here rather than being
+      // reduced to a different id by the typed array it would land in.
+      builders->Array.forEachWithIndex((builder, column) => {
+        let columnValues = values->Array.getUnsafe(column)
+        for row in 0 to rows - 1 {
+          builder->ClickHouseSink.writeValue(~row, columnValues->Array.getUnsafe(row))
+        }
+      })
+      Null.make(sink->stageBuilders(~table, ~builders, ~rows))
     } catch {
     | exn =>
       throw(
         Persistence.StorageError({
-          message: `Failed to insert checkpoints into ClickHouse table "${tableName}"`,
+          message: `Failed to convert checkpoints for ClickHouse table "${table.name}"`,
           reason: exn->Utils.prettifyExn,
         }),
       )
@@ -388,29 +373,26 @@ let setCheckpointsOrThrow = async (sink, ~batch: Batch.t, ~chainIdMode: ChainId.
   }
 }
 
-let setUpdatesOrThrow = async (
+let stageUpdatesOrThrow = (
   sink,
-  ~cache: dict<entityColumns>,
+  ~registry,
   ~changes: array<Change.t<Internal.entity>>,
   ~entityConfig: Internal.entityConfig,
   ~scope: Internal.chainScope,
-  ~chainIdMode: ChainId.mode,
 ) => {
   let rows = changes->Array.length
   if rows === 0 {
-    ()
+    None
   } else {
+    let table = sink->entityTable(~registry, ~entityConfig)
+    let tableName = table.name
     let cacheKey = `${entityConfig.name}|${scope->Internal.chainScopeToString}`
-    let {
-      tableName,
-      columns,
-      convertSetOrThrow,
-      convertDeleteOrThrow,
-    } = switch cache->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
+    let {convertSetOrThrow, convertDeleteOrThrow} = switch registry.converters
+    ->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
     | Some(cached) => cached
     | None =>
-      let cached = makeEntityColumns(~entityConfig, ~scope, ~chainIdMode)
-      cache->Dict.set(cacheKey, cached)
+      let cached = makeConverters(~entityConfig, ~scope)
+      registry.converters->Dict.set(cacheKey, cached)
       cached
     }
 
@@ -422,8 +404,8 @@ let setUpdatesOrThrow = async (
     | _ => None
     }
 
-    let handle = try {
-      let builders = columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
+    try {
+      let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
       for row in 0 to rows - 1 {
         let change = changes->Array.getUnsafe(row)
         // The entity history table is the source of truth for ClickHouse, so
@@ -445,7 +427,7 @@ let setUpdatesOrThrow = async (
           builder->ClickHouseSink.writeValue(~row, values->Dict.getUnsafe(builder.name))
         )
       }
-      sink->stageBuilders(~tableName, ~builders, ~rows)
+      Some(sink->stageBuilders(~table, ~builders, ~rows))
     } catch {
     | exn =>
       throw(
@@ -455,20 +437,23 @@ let setUpdatesOrThrow = async (
         }),
       )
     }
-
-    try {
-      await sink->ClickHouseSink.flush(handle)
-    } catch {
-    | exn =>
-      throw(
-        Persistence.StorageError({
-          message: `Failed to insert items into ClickHouse table "${tableName}"`,
-          reason: exn->Utils.prettifyExn,
-        }),
-      )
-    }
   }
 }
+
+// Sends every staged batch, then the checkpoints that cover them. The ordering
+// is Rust's to keep: the current-state views read up to `max(id)` of the
+// checkpoints table, so a checkpoint visible before its rows would expose a
+// partial batch.
+let writeStagedOrThrow = async (sink, ~entities, ~checkpoints) =>
+  try await sink->ClickHouseSink.writeBatch(~entities, ~checkpoints) catch {
+  | exn =>
+    throw(
+      Persistence.StorageError({
+        message: "Failed to write a batch to ClickHouse",
+        reason: exn->Utils.prettifyExn,
+      }),
+    )
+  }
 
 // A plain database created with ON CLUSTER doesn't turn subsequent DDL into
 // cluster-wide statements; ClickHouse keeps no "this database is clustered"
@@ -592,15 +577,8 @@ let makeCreateCheckpointsTableQuery = (
   let tableEngine = replicated ? "ReplicatedMergeTree" : "MergeTree()"
   let idField = (#id: InternalTable.Checkpoints.field :> string)
   let columns =
-    checkpointColumns
-    ->Array.map(({name, fieldType, isNullable}) =>
-      `  \`${name}\` ${getClickHouseFieldType(
-          ~fieldType,
-          ~isNullable,
-          ~isArray=false,
-          ~chainIdMode,
-        )}`
-    )
+    checkpointColumnSpecs(~chainIdMode)
+    ->Array.map(({name, chType}) => `  \`${name}\` ${chType}`)
     ->Array.join(",\n")
 
   `CREATE TABLE IF NOT EXISTS ${database}.\`${InternalTable.Checkpoints.table.tableName}\`${onClusterClause(
@@ -663,7 +641,8 @@ WHERE \`${EntityHistory.changeFieldName}\` = '${(EntityHistory.RowAction.SET :> 
 
 // Initialize ClickHouse tables for entities
 let initialize = async (
-  client,
+  sink,
+  ~registry,
   ~database: string,
   ~entities: array<Internal.entityConfig>,
   ~enums as _: array<Table.enumConfig<Table.enum>>,
@@ -697,14 +676,15 @@ let initialize = async (
     switch databaseEngine {
     | Some(engineSpec) => {
         let expectedEngineName = engineSpec->databaseEngineName
-        let existingResult = await client->query({
-          query: `SELECT engine FROM system.databases WHERE name = '${database}'`,
-        })
-        let rows = (await existingResult->json)["data"]
-        switch rows->Array.get(0) {
-        | Some(row) if row["engine"] !== expectedEngineName =>
+        let existing =
+          await sink->ClickHouseSink.query(
+            `SELECT engine FROM system.databases WHERE name = '${database}' FORMAT TabSeparated`,
+          )
+        switch existing->String.trim {
+        | "" => ()
+        | engine if engine !== expectedEngineName =>
           JsError.throwWithMessage(
-            `ClickHouse database "${database}" exists with engine "${row["engine"]}" but ENVIO_CLICKHOUSE_DATABASE_ENGINE specifies "${expectedEngineName}". Drop the database manually to change its engine.`,
+            `ClickHouse database "${database}" exists with engine "${engine}" but ENVIO_CLICKHOUSE_DATABASE_ENGINE specifies "${expectedEngineName}". Drop the database manually to change its engine.`,
           )
         | _ => ()
         }
@@ -720,39 +700,34 @@ let initialize = async (
       // CLUSTER removes the database from every node — the engine's own log
       // can't replicate the drop of the database it lives in — and SYNC waits
       // for the drop to finish before the CREATE below.
-      await client->command({
-        query: `DROP DATABASE IF EXISTS ${database} ON CLUSTER '{cluster}' SYNC`,
-      })
+      await sink->ClickHouseSink.exec(
+        `DROP DATABASE IF EXISTS ${database} ON CLUSTER '{cluster}' SYNC`,
+      )
     } else {
-      await client->command({
-        query: `TRUNCATE DATABASE IF EXISTS ${database}${onClusterClause(~onCluster=ddlOnCluster)}`,
-      })
+      await sink->ClickHouseSink.exec(
+        `TRUNCATE DATABASE IF EXISTS ${database}${onClusterClause(~onCluster=ddlOnCluster)}`,
+      )
     }
-    await client->command({
-      query: `CREATE DATABASE IF NOT EXISTS ${database}${databaseOnClusterClause}${databaseEngineClause}`,
-    })
+    await sink->ClickHouseSink.exec(
+      `CREATE DATABASE IF NOT EXISTS ${database}${databaseOnClusterClause}${databaseEngineClause}`,
+    )
 
     await Promise.all(
       entities->Array.map(entityConfig =>
-        client->command({
-          query: makeCreateHistoryTableQuery(
+        sink->ClickHouseSink.exec(
+          makeCreateHistoryTableQuery(
             ~entityConfig,
             ~database,
             ~replicated,
             ~onCluster=ddlOnCluster,
             ~chainIdMode,
           ),
-        })
+        )
       ),
     )->Utils.Promise.ignoreValue
-    await client->command({
-      query: makeCreateCheckpointsTableQuery(
-        ~database,
-        ~replicated,
-        ~onCluster=ddlOnCluster,
-        ~chainIdMode,
-      ),
-    })
+    await sink->ClickHouseSink.exec(
+      makeCreateCheckpointsTableQuery(~database, ~replicated, ~onCluster=ddlOnCluster, ~chainIdMode),
+    )
 
     // The client pools HTTP connections, so consecutive statements may reach
     // different replicas, while a Replicated database applies DDL from its
@@ -762,18 +737,25 @@ let initialize = async (
     // caught up before creating the views. ON CLUSTER must precede the
     // database name in this command's grammar.
     if hasReplicatedDatabaseEngine {
-      await client->command({
-        query: `SYSTEM SYNC DATABASE REPLICA ON CLUSTER '{cluster}' ${database}`,
-      })
+      await sink->ClickHouseSink.exec(
+        `SYSTEM SYNC DATABASE REPLICA ON CLUSTER '{cluster}' ${database}`,
+      )
     }
 
     await Promise.all(
       entities->Array.map(entityConfig =>
-        client->command({
-          query: makeCreateViewQuery(~entityConfig, ~database, ~onCluster=ddlOnCluster),
-        })
+        sink->ClickHouseSink.exec(
+          makeCreateViewQuery(~entityConfig, ~database, ~onCluster=ddlOnCluster),
+        )
       ),
     )->Utils.Promise.ignoreValue
+
+    // Registered here rather than on first use, so a column type this encoder
+    // cannot hold stops the indexer at startup, with nothing written.
+    let _ = sink->checkpointsTable(~registry)
+    entities->Array.forEach(entityConfig =>
+      ignore(sink->entityTable(~registry, ~entityConfig))
+    )
 
     Logging.trace("ClickHouse storage initialization completed successfully")
   } catch {
@@ -785,11 +767,11 @@ let initialize = async (
 }
 
 // Resume ClickHouse sink after reorg by deleting rows with checkpoint IDs higher than target
-let resume = async (client, ~database: string, ~checkpointId: Internal.checkpointId) => {
+let resume = async (sink, ~database: string, ~checkpointId: Internal.checkpointId) => {
   try {
     // Try to use the database - will throw if it doesn't exist
     try {
-      await client->command({query: `USE ${database}`})
+      await sink->ClickHouseSink.exec(`USE ${database}`)
     } catch {
     | exn =>
       Logging.errorWithExn(
@@ -799,26 +781,34 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
       JsError.throwWithMessage("ClickHouse resume failed")
     }
 
-    // Get all history tables
-    let tablesResult = await client->query({
-      query: `SHOW TABLES FROM ${database} LIKE '${EntityHistory.historyTablePrefix}%'`,
-    })
-    let tables = (await tablesResult->json)["data"]
+    // Get all history tables. TabSeparated answers one name per line, which is
+    // all this reads.
+    let tables =
+      await sink->ClickHouseSink.query(
+        `SHOW TABLES FROM ${database} LIKE '${EntityHistory.historyTablePrefix}%' FORMAT TabSeparated`,
+      )
 
     // Delete rows with checkpoint IDs higher than the target for each history table
     await Promise.all(
-      tables->Array.map(table => {
-        let tableName = table["name"]
-        client->command({
-          query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->BigInt.toString}`,
-        })
-      }),
+      tables
+      ->String.split("\n")
+      ->Array.filterMap(tableName =>
+        switch tableName->String.trim {
+        | "" => None
+        | tableName =>
+          Some(
+            sink->ClickHouseSink.exec(
+              `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->BigInt.toString}`,
+            ),
+          )
+        }
+      ),
     )->Utils.Promise.ignoreValue
 
     // Delete stale checkpoints
-    await client->command({
-      query: `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->BigInt.toString}`,
-    })
+    await sink->ClickHouseSink.exec(
+      `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->BigInt.toString}`,
+    )
   } catch {
   | Persistence.StorageError(_) as exn => throw(exn)
   | exn => {

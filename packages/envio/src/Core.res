@@ -48,9 +48,6 @@ type addon = {
   addressStore: addressStoreCtor,
   @as("ClickHouseSink")
   clickHouseSink: clickHouseSinkCtor,
-  // The wire kind Rust expects for a ClickHouse column type. The JS side picks
-  // its typed array from this rather than deriving the kind a second time.
-  clickhouseColumnKind: string => int,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
   // Ordered transaction-field names exposed for the field-code contract test
