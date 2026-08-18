@@ -22,6 +22,9 @@ type sourceMock = {
   methods?: array<MockSource.method>,
   sourceFor?: Source.sourceFor,
   pollingInterval?: int,
+  // Feed this chain's items through a wildcard registration rather than an
+  // address-dependent one, so its partition takes the wildcard path.
+  isWildcard?: bool,
 }
 
 let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
@@ -162,13 +165,14 @@ let run = async (
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let mocks =
-    sources->Array.map(({chain, ?methods, ?sourceFor, ?pollingInterval}) => (
+    sources->Array.map(({chain, ?methods, ?sourceFor, ?pollingInterval, ?isWildcard}) => (
       chain,
       MockSource.make(
         methods->Option.getOr(defaultMethods),
         ~chainId=chain,
         ~sourceFor?,
         ~pollingInterval?,
+        ~isWildcard?,
       ),
     ))
 
