@@ -38,3 +38,8 @@ pub(crate) fn decode_fixed(s: &str, len: usize) -> Option<Vec<u8>> {
     faster_hex::hex_decode(hex.as_bytes(), &mut out).ok()?;
     Some(out)
 }
+
+/// Lowercase hex digits, no `0x` prefix.
+pub(crate) fn encode(bytes: &[u8]) -> String {
+    faster_hex::hex_string(bytes)
+}

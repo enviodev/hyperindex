@@ -48,7 +48,7 @@ pub struct ProgramIdl {
 /// Discriminator widths the router can probe for. Dispatch reads a fixed-width
 /// prefix off `instruction.data`, so a width outside this set parses fine here
 /// and then fails at indexer start, far from the IDL that caused it.
-const DISPATCHABLE_DISCRIMINATOR_LENS: [usize; 4] = [1, 2, 4, 8];
+pub(crate) const DISPATCHABLE_DISCRIMINATOR_LENS: [usize; 4] = [1, 2, 4, 8];
 
 pub fn parse_idl(json: &str, program_name: &str) -> Result<ProgramIdl> {
     parse_validated(json).with_context(|| format!("parsing IDL for program '{program_name}'"))
@@ -128,23 +128,39 @@ fn check_no_prefix_collisions(instructions: &BTreeMap<String, IxIdl>) -> Result<
         if shorter == longer {
             bail!(
                 "instructions '{first}' and '{second}' share discriminator 0x{}",
-                hex(shorter)
+                crate::hex::encode(shorter)
             );
         }
         if longer.starts_with(shorter) {
             bail!(
                 "instruction '{first}' has discriminator 0x{}, a prefix of '{second}'\'s 0x{}, so \
                  '{second}' would shadow it",
-                hex(shorter),
-                hex(longer),
+                crate::hex::encode(shorter),
+                crate::hex::encode(longer),
             );
         }
     }
     Ok(())
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+/// The numeric formats both dialects spell the same way. Shared so a width the
+/// runtime learns to decode cannot reach one dialect and not the other.
+fn numeric_field_type(format: &str) -> Option<FieldType> {
+    Some(match format {
+        "u8" => FieldType::U8,
+        "u16" => FieldType::U16,
+        "u32" => FieldType::U32,
+        "u64" => FieldType::U64,
+        "u128" => FieldType::U128,
+        "i8" => FieldType::I8,
+        "i16" => FieldType::I16,
+        "i32" => FieldType::I32,
+        "i64" => FieldType::I64,
+        "i128" => FieldType::I128,
+        "f32" => FieldType::F32,
+        "f64" => FieldType::F64,
+        _ => return None,
+    })
 }
 
 /// Every `Defined` name must be in the registry. An unresolved one is not a
@@ -182,20 +198,4 @@ fn required_str<'a>(node: &'a Value, key: &str) -> Result<&'a str> {
     node.get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("missing '{key}' in {node}"))
-}
-
-/// PascalCase on `_`/`-`/`.` boundaries: `pump_fun` → `PumpFun`,
-/// `pumpfun` → `Pumpfun`.
-pub fn program_name_from_filename(file_stem: &str) -> String {
-    file_stem
-        .split(['_', '-', '.'])
-        .filter(|segment| !segment.is_empty())
-        .map(|segment| {
-            let mut chars = segment.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
-                None => String::new(),
-            }
-        })
-        .collect()
 }

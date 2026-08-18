@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
+use hypersync_client_solana::decode::{decode_top_level, EnumVariant, FieldType, NamedField};
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -36,7 +36,7 @@ fn render(idl: &ProgramIdl) -> String {
         let _ = writeln!(
             out,
             "instruction {name} 0x{} ({accounts}) ({})",
-            hex(&ix.discriminator),
+            crate::hex::encode(&ix.discriminator),
             render_fields(&ix.args)
         );
     }
@@ -44,7 +44,7 @@ fn render(idl: &ProgramIdl) -> String {
         let _ = writeln!(
             out,
             "event {name} 0x{} ({})",
-            hex(&event.discriminator),
+            crate::hex::encode(&event.discriminator),
             render_fields(&event.fields)
         );
     }
@@ -52,10 +52,6 @@ fn render(idl: &ProgramIdl) -> String {
         let _ = writeln!(out, "type {name} = {}", render_type(ty));
     }
     out
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn render_fields(fields: &[NamedField]) -> String {
@@ -97,11 +93,7 @@ fn read_fixture(file_stem: &str) -> String {
 }
 
 fn parse_fixture(file_stem: &str) -> ProgramIdl {
-    parse_idl(
-        &read_fixture(file_stem),
-        &program_name_from_filename(file_stem),
-    )
-    .expect("parse")
+    parse_idl(&read_fixture(file_stem), file_stem).expect("parse")
 }
 
 #[test]
@@ -581,18 +573,6 @@ fn rejects_undecodable_and_undispatchable_idls() {
     );
 }
 
-#[test]
-fn derives_program_names_from_filenames() {
-    let derived: Vec<String> = ["pump_fun", "pumpfun", "jupiter-v6", "spl.token", "drift"]
-        .iter()
-        .map(|stem| program_name_from_filename(stem))
-        .collect();
-    assert_eq!(
-        derived,
-        vec!["PumpFun", "Pumpfun", "JupiterV6", "SplToken", "Drift"]
-    );
-}
-
 /// Deterministic mutation fuzzing over the real fixtures. `parse_idl` takes
 /// untrusted JSON, so no input may panic — every rejection has to arrive as an
 /// `Err`. A seeded walk keeps a failure reproducible from the printed seed.
@@ -663,4 +643,201 @@ fn mutated_fixtures_never_panic() {
             );
         }
     }
+}
+
+/// A Codama IDL carrying one defined type, the smallest shape that puts a type
+/// node in front of the parser.
+fn codama_type(type_node: &str) -> String {
+    format!(
+        r#"{{ "kind": "rootNode", "program": {{ "instructions": [],
+             "definedTypes": [{{ "name": "probed", "type": {type_node} }}] }} }}"#
+    )
+}
+
+/// Layout modifiers the Borsh runtime cannot honour. Each of these once parsed
+/// clean and decoded at the wrong offset, which is worse than a rejected IDL:
+/// the indexer reports values that are plausible and wrong. A node is refused
+/// unless every key on it is modelled, so a Codama feature this parser has not
+/// learned yet arrives as a codegen error rather than as corrupt data.
+#[test]
+fn refuses_layouts_the_runtime_would_misdecode() {
+    let cases: Vec<(&str, String)> = vec![
+        (
+            // Always occupies prefix + item bytes, zero-padded when absent.
+            "codama fixed option",
+            codama_type(
+                r#"{ "kind": "optionTypeNode", "fixed": true,
+                     "item": { "kind": "publicKeyTypeNode" } }"#,
+            ),
+        ),
+        (
+            "codama enum with a wide tag",
+            codama_type(
+                r#"{ "kind": "enumTypeNode",
+                     "size": { "kind": "numberTypeNode", "format": "u32" },
+                     "variants": [{ "kind": "enumEmptyVariantTypeNode", "name": "Init" }] }"#,
+            ),
+        ),
+        (
+            "codama big-endian number",
+            codama_type(r#"{ "kind": "numberTypeNode", "format": "u32", "endian": "be" }"#),
+        ),
+        (
+            "codama bare string",
+            codama_type(r#"{ "kind": "stringTypeNode", "encoding": "utf8" }"#),
+        ),
+        (
+            "codama bare bytes",
+            codama_type(r#"{ "kind": "bytesTypeNode" }"#),
+        ),
+        (
+            "codama non-utf8 string",
+            codama_type(
+                r#"{ "kind": "sizePrefixTypeNode",
+                     "prefix": { "kind": "numberTypeNode", "format": "u32" },
+                     "type": { "kind": "stringTypeNode", "encoding": "base58" } }"#,
+            ),
+        ),
+        (
+            "codama boolean wider than a byte",
+            codama_type(
+                r#"{ "kind": "booleanTypeNode",
+                     "size": { "kind": "numberTypeNode", "format": "u32" } }"#,
+            ),
+        ),
+        (
+            // Borsh numbers variants by position; an explicit one renumbers them.
+            "codama enum variant with its own discriminator",
+            codama_type(
+                r#"{ "kind": "enumTypeNode", "variants": [
+                     { "kind": "enumEmptyVariantTypeNode", "name": "Init", "discriminator": 3 }] }"#,
+            ),
+        ),
+        (
+            "codama size prefix around a struct",
+            codama_type(
+                r#"{ "kind": "sizePrefixTypeNode",
+                     "prefix": { "kind": "numberTypeNode", "format": "u32" },
+                     "type": { "kind": "structTypeNode", "fields": [] } }"#,
+            ),
+        ),
+        (
+            // Bound at the use site, so it has no layout of its own.
+            "anchor generic parameter",
+            r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
+                 "args": [{ "name": "wrapped", "type": { "generic": "T" } }] }] }"#
+                .to_string(),
+        ),
+    ];
+
+    let reported: Vec<String> = cases
+        .iter()
+        .map(|(label, json)| {
+            let error = parse_idl(json, "Program").expect_err(label);
+            let message = format!("{error:#}")
+                .strip_prefix("parsing IDL for program 'Program': ")
+                .expect("every message is scoped to the program")
+                .to_string();
+            format!("{label}: {message}")
+        })
+        .collect();
+
+    assert_eq!(
+        reported,
+        vec![
+            "codama fixed option: definedTypes.probed: a fixed option pads its body when absent, which Borsh does not encode",
+            "codama enum with a wide tag: definedTypes.probed: Borsh needs a u8 'size', got u32",
+            "codama big-endian number: definedTypes.probed: Borsh decodes numbers little-endian, got 'be'",
+            "codama bare string: definedTypes.probed: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
+            "codama bare bytes: definedTypes.probed: a bare bytesTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
+            "codama non-utf8 string: definedTypes.probed: Borsh strings are utf8, got 'base58'",
+            "codama boolean wider than a byte: definedTypes.probed: Borsh needs a u8 'size', got u32",
+            "codama enum variant with its own discriminator: definedTypes.probed.Init: enumEmptyVariantTypeNode carries 'discriminator', which this parser does not model; decoding it would be a guess at the byte layout",
+            "codama size prefix around a struct: definedTypes.probed: a u32 size prefix frames a string or bytes in Borsh, got structTypeNode",
+            "anchor generic parameter: instruction 'swap' args.wrapped: generic parameter 'T' has no concrete layout to decode against",
+        ]
+    );
+}
+
+/// The parser and the Borsh runtime have to agree byte for byte, and neither
+/// side's own tests can show that: each is self-consistent about a layout they
+/// disagree on. This runs real instruction data through the schema the parser
+/// produced, so a mapping that drifts from the decoder fails here.
+#[test]
+fn decodes_instruction_data_through_the_parsed_schema() {
+    let idl = parse_idl(
+        r#"{
+          "kind": "rootNode",
+          "program": {
+            "kind": "programNode",
+            "publicKey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "instructions": [{
+              "kind": "instructionNode",
+              "name": "probe",
+              "discriminators": [{
+                "kind": "constantDiscriminatorNode",
+                "offset": 0,
+                "constant": { "value": {
+                  "kind": "bytesValueNode", "data": "01", "encoding": "base16" } }
+              }],
+              "arguments": [
+                { "kind": "instructionArgumentNode", "name": "amount",
+                  "type": { "kind": "numberTypeNode", "format": "u64", "endian": "le" } },
+                { "kind": "instructionArgumentNode", "name": "flag",
+                  "type": { "kind": "booleanTypeNode" } },
+                { "kind": "instructionArgumentNode", "name": "label",
+                  "type": { "kind": "sizePrefixTypeNode",
+                            "prefix": { "kind": "numberTypeNode", "format": "u32" },
+                            "type": { "kind": "stringTypeNode", "encoding": "utf8" } } },
+                { "kind": "instructionArgumentNode", "name": "maybe",
+                  "type": { "kind": "optionTypeNode",
+                            "item": { "kind": "numberTypeNode", "format": "u8" } } },
+                { "kind": "instructionArgumentNode", "name": "items",
+                  "type": { "kind": "arrayTypeNode",
+                            "item": { "kind": "numberTypeNode", "format": "u8" },
+                            "count": { "kind": "prefixedCountNode",
+                                       "prefix": { "kind": "numberTypeNode",
+                                                   "format": "u32" } } } },
+                { "kind": "instructionArgumentNode", "name": "trio",
+                  "type": { "kind": "arrayTypeNode",
+                            "item": { "kind": "numberTypeNode", "format": "u8" },
+                            "count": { "kind": "fixedCountNode", "value": 3 } } }
+              ]
+            }],
+            "definedTypes": []
+          }
+        }"#,
+        "Probe",
+    )
+    .expect("parse");
+
+    // Borsh, little-endian, in declared order. Written out by hand so the
+    // expectation comes from the wire format rather than from the parser.
+    let data: Vec<u8> = vec![
+        1, 0, 0, 0, 0, 0, 0, 0, // amount: u64 = 1
+        1, // flag: true
+        2, 0, 0, 0, b'h', b'i', // label: u32 len 2 + "hi"
+        1, 7, // maybe: tag 1 + 7
+        2, 0, 0, 0, 1, 2, // items: u32 len 2 + [1, 2]
+        9, 8, 7, // trio: [9, 8, 7], no length
+    ];
+
+    let decoded = decode_top_level(
+        &FieldType::Struct(idl.instructions["probe"].args.clone()),
+        &idl.defined_types,
+        &data,
+    )
+    .expect("decode");
+
+    assert_eq!(
+        decoded,
+        serde_json::json!({
+            "amount": "1",
+            "flag": true,
+            "label": "hi",
+            "maybe": 7,
+            "items": [1, 2],
+            "trio": [9, 8, 7],
+        })
+    );
 }

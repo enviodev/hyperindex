@@ -178,25 +178,32 @@ fn constant_bytes(constant: &Value) -> Result<Vec<u8>> {
 /// `numberTypeNode` declares. Solana encodes multi-byte discriminators
 /// little-endian, same as Borsh.
 fn number_bytes(value: &Value, ty: &Value) -> Result<Vec<u8>> {
+    // Widened to i128 so the top half of the u64 range stays representable
+    // alongside negative signed values.
     let number = value
         .get("number")
-        .and_then(Value::as_i64)
+        .and_then(|n| {
+            n.as_i64()
+                .map(i128::from)
+                .or_else(|| n.as_u64().map(i128::from))
+        })
         .ok_or_else(|| anyhow!("expected an integer 'number', got {value}"))?;
     let format = ty
         .get("format")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("expected a number type, got {ty}"))?;
+    require_little_endian(ty, "discriminator")?;
     // Signed formats are encoded two's-complement at their own width, so the
     // range check has to be per-format rather than "does it fit in u64".
-    let (width, min, max) = match format {
-        "u8" => (1, 0, u8::MAX as i64),
-        "u16" => (2, 0, u16::MAX as i64),
-        "u32" => (4, 0, u32::MAX as i64),
-        "u64" => (8, 0, i64::MAX),
-        "i8" => (1, i8::MIN as i64, i8::MAX as i64),
-        "i16" => (2, i16::MIN as i64, i16::MAX as i64),
-        "i32" => (4, i32::MIN as i64, i32::MAX as i64),
-        "i64" => (8, i64::MIN, i64::MAX),
+    let (width, min, max): (usize, i128, i128) = match format {
+        "u8" => (1, 0, u8::MAX as i128),
+        "u16" => (2, 0, u16::MAX as i128),
+        "u32" => (4, 0, u32::MAX as i128),
+        "u64" => (8, 0, u64::MAX as i128),
+        "i8" => (1, i8::MIN as i128, i8::MAX as i128),
+        "i16" => (2, i16::MIN as i128, i16::MAX as i128),
+        "i32" => (4, i32::MIN as i128, i32::MAX as i128),
+        "i64" => (8, i64::MIN as i128, i64::MAX as i128),
         other => bail!("unsupported discriminator number format '{other}'"),
     };
     if number < min || number > max {
@@ -261,40 +268,101 @@ fn parse_arguments(
     Ok(out)
 }
 
+/// Keys any node may carry without changing a single decoded byte.
+const DESCRIPTIVE_KEYS: [&str; 2] = ["kind", "docs"];
+
+/// Codama attaches layout modifiers (`endian`, `fixed`, `size`, `encoding`) to
+/// nodes whose shape is otherwise recognisable, and a modifier the runtime
+/// cannot express shifts every byte decoded after it. Ignoring an unknown key
+/// is therefore never safe: each arm below lists the keys it actually models,
+/// and a node carrying anything else is refused here rather than silently
+/// mis-decoded at indexing time.
+fn reject_unmodelled_keys(node: &Value, path: &str, modelled: &[&str]) -> Result<()> {
+    let Some(obj) = node.as_object() else {
+        return Ok(());
+    };
+    let kind = node.get("kind").and_then(Value::as_str).unwrap_or("node");
+    for key in obj.keys() {
+        if DESCRIPTIVE_KEYS.contains(&key.as_str()) || modelled.contains(&key.as_str()) {
+            continue;
+        }
+        bail!(
+            "{path}: {kind} carries '{key}', which this parser does not model; decoding it would \
+             be a guess at the byte layout"
+        );
+    }
+    Ok(())
+}
+
+/// Borsh is little-endian throughout, and `le` is Codama's default — but a
+/// node may say otherwise, and the runtime has no way to honour it.
+fn require_little_endian(node: &Value, path: &str) -> Result<()> {
+    match node.get("endian").and_then(Value::as_str) {
+        None | Some("le") => Ok(()),
+        Some(other) => bail!("{path}: Borsh decodes numbers little-endian, got '{other}'"),
+    }
+}
+
+/// A node's integer-width sub-node (an enum's tag, a boolean's storage), which
+/// Borsh fixes at one byte regardless of what the IDL asks for.
+fn require_number_width(node: &Value, key: &str, expected: &str, path: &str) -> Result<()> {
+    let Some(inner) = node.get(key) else {
+        return Ok(());
+    };
+    let format = required_str(inner, "format").with_context(|| format!("{path}.{key}"))?;
+    if format != expected {
+        bail!("{path}: Borsh needs a {expected} '{key}', got {format}");
+    }
+    require_little_endian(inner, path)
+}
+
 fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
     let kind = required_str(node, "kind").with_context(|| path.to_string())?;
     match kind {
         "numberTypeNode" => {
+            reject_unmodelled_keys(node, path, &["format", "endian"])?;
+            require_little_endian(node, path)?;
             let format = required_str(node, "format").with_context(|| path.to_string())?;
-            match format {
-                "u8" => Ok(FieldType::U8),
-                "u16" => Ok(FieldType::U16),
-                "u32" => Ok(FieldType::U32),
-                "u64" => Ok(FieldType::U64),
-                "u128" => Ok(FieldType::U128),
-                "i8" => Ok(FieldType::I8),
-                "i16" => Ok(FieldType::I16),
-                "i32" => Ok(FieldType::I32),
-                "i64" => Ok(FieldType::I64),
-                "i128" => Ok(FieldType::I128),
-                "f32" => Ok(FieldType::F32),
-                "f64" => Ok(FieldType::F64),
-                other => bail!("{path}: unsupported number format '{other}'"),
-            }
+            super::numeric_field_type(format)
+                .ok_or_else(|| anyhow!("{path}: unsupported number format '{format}'"))
         }
-        "booleanTypeNode" => Ok(FieldType::Bool),
-        "stringTypeNode" => Ok(FieldType::String),
-        "bytesTypeNode" => Ok(FieldType::Bytes),
-        "publicKeyTypeNode" => Ok(FieldType::Pubkey),
-        "definedTypeLinkNode" => Ok(FieldType::Defined(
-            required_str(node, "name")
-                .with_context(|| path.to_string())?
-                .to_string(),
-        )),
+        "booleanTypeNode" => {
+            reject_unmodelled_keys(node, path, &["size"])?;
+            require_number_width(node, "size", "u8", path)?;
+            Ok(FieldType::Bool)
+        }
+        // Borsh has no unframed string or byte run: both carry a u32 length,
+        // which Codama spells as a `sizePrefixTypeNode` wrapper. A bare node
+        // is remainder-encoded, so decoding it as framed would consume four
+        // bytes of content as a length.
+        "stringTypeNode" | "bytesTypeNode" => bail!(
+            "{path}: a bare {kind} carries no length; Borsh needs it wrapped in a \
+             sizePrefixTypeNode with a u32 prefix"
+        ),
+        "publicKeyTypeNode" => {
+            reject_unmodelled_keys(node, path, &[])?;
+            Ok(FieldType::Pubkey)
+        }
+        "definedTypeLinkNode" => {
+            reject_unmodelled_keys(node, path, &["name", "program"])?;
+            Ok(FieldType::Defined(
+                required_str(node, "name")
+                    .with_context(|| path.to_string())?
+                    .to_string(),
+            ))
+        }
         // Borsh tags an option with one byte, which is Codama's default
         // prefix. A wider prefix decodes at the wrong offset.
         "optionTypeNode" => {
+            reject_unmodelled_keys(node, path, &["item", "prefix", "fixed"])?;
             require_prefix(node, "u8", path)?;
+            // A fixed option always occupies prefix + item bytes, zero-padding
+            // the body when absent; Borsh writes the tag on its own.
+            if node.get("fixed").and_then(Value::as_bool) == Some(true) {
+                bail!(
+                    "{path}: a fixed option pads its body when absent, which Borsh does not encode"
+                );
+            }
             Ok(FieldType::Option(Box::new(parse_type(
                 item(node, path)?,
                 &format!("{path}.item"),
@@ -307,12 +375,14 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
             bail!("{path}: zeroable options are not Borsh-compatible and cannot be decoded")
         }
         "arrayTypeNode" => {
+            reject_unmodelled_keys(node, path, &["item", "count"])?;
             let item = parse_type(item(node, path)?, &format!("{path}.item"))?;
             let count = node
                 .get("count")
                 .ok_or_else(|| anyhow!("{path}: array has no 'count'"))?;
             match required_str(count, "kind")? {
                 "fixedCountNode" => {
+                    reject_unmodelled_keys(count, path, &["value"])?;
                     let len = count
                         .get("value")
                         .and_then(Value::as_u64)
@@ -324,6 +394,7 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
                 }
                 // Borsh frames a vector with a u32 length prefix.
                 "prefixedCountNode" => {
+                    reject_unmodelled_keys(count, path, &["prefix"])?;
                     require_prefix(count, "u32", path)?;
                     Ok(FieldType::Vec(Box::new(item)))
                 }
@@ -331,6 +402,7 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
             }
         }
         "structTypeNode" => {
+            reject_unmodelled_keys(node, path, &["fields"])?;
             let fields = node
                 .get("fields")
                 .and_then(Value::as_array)
@@ -352,8 +424,13 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
                     .collect::<Result<Vec<_>>>()?,
             ))
         }
-        "tupleTypeNode" => Ok(FieldType::Struct(positional_fields(node, path)?)),
+        "tupleTypeNode" => {
+            reject_unmodelled_keys(node, path, &["items"])?;
+            Ok(FieldType::Struct(positional_fields(node, path)?))
+        }
         "enumTypeNode" => {
+            reject_unmodelled_keys(node, path, &["variants", "size"])?;
+            require_number_width(node, "size", "u8", path)?;
             let variants = node
                 .get("variants")
                 .and_then(Value::as_array)
@@ -366,17 +443,32 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
             ))
         }
         // A u32 size prefix is exactly how Borsh frames a string or a byte
-        // vector, so this wrapper adds nothing the runtime doesn't already do.
-        // Any other prefix width — and every other wrapper node — shifts the
-        // byte layout in a way the runtime cannot express, and unwrapping one
-        // regardless would misalign every field decoded after it.
+        // vector. Every other prefix width, and every other framed shape,
+        // shifts the byte layout in a way the runtime cannot express.
         "sizePrefixTypeNode" => {
+            reject_unmodelled_keys(node, path, &["type", "prefix"])?;
             require_prefix(node, "u32", path)?;
-            parse_type(
-                node.get("type")
-                    .ok_or_else(|| anyhow!("{path}: {kind} has no 'type'"))?,
-                path,
-            )
+            let inner = node
+                .get("type")
+                .ok_or_else(|| anyhow!("{path}: {kind} has no 'type'"))?;
+            match required_str(inner, "kind").with_context(|| path.to_string())? {
+                "stringTypeNode" => {
+                    reject_unmodelled_keys(inner, path, &["encoding"])?;
+                    match inner.get("encoding").and_then(Value::as_str) {
+                        None | Some("utf8") => Ok(FieldType::String),
+                        Some(other) => {
+                            bail!("{path}: Borsh strings are utf8, got '{other}'")
+                        }
+                    }
+                }
+                "bytesTypeNode" => {
+                    reject_unmodelled_keys(inner, path, &[])?;
+                    Ok(FieldType::Bytes)
+                }
+                other => bail!(
+                    "{path}: a u32 size prefix frames a string or bytes in Borsh, got {other}"
+                ),
+            }
         }
         other => bail!("{path}: unsupported type node '{other}'"),
     }
@@ -385,6 +477,10 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
 fn parse_enum_variant(v: &Value, enum_path: &str) -> Result<EnumVariant> {
     let name = required_str(v, "name").with_context(|| enum_path.to_string())?;
     let path = format!("{enum_path}.{name}");
+    // Borsh numbers variants by position. A variant carrying its own
+    // `discriminator` renumbers the set, so the runtime's positional index
+    // would select the wrong body.
+    reject_unmodelled_keys(v, &path, &["name", "struct", "tuple"])?;
     let fields = match required_str(v, "kind").with_context(|| path.clone())? {
         "enumEmptyVariantTypeNode" => None,
         "enumStructVariantTypeNode" => {

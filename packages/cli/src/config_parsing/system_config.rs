@@ -120,10 +120,6 @@ trait ConfigSource {
     fn load_schema(&self, configured_path: &Option<String>) -> Result<Schema>;
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
     fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
-    /// File names (not paths) directly inside `dir`, sorted. Missing directory
-    /// is an empty listing, not an error.
-    #[allow(dead_code)]
-    fn list_project_relative_dir(&self, dir: &str) -> Result<Vec<String>>;
 }
 
 struct FilesystemConfigSource<'a> {
@@ -181,10 +177,6 @@ impl ConfigSource for FilesystemConfigSource<'_> {
             path: resolved_path,
             raw,
         })
-    }
-
-    fn list_project_relative_dir(&self, _dir: &str) -> Result<Vec<String>> {
-        todo!()
     }
 }
 
@@ -258,10 +250,6 @@ impl ConfigSource for MemoryConfigSource<'_> {
 
     fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
         self.read_virtual_file(path)
-    }
-
-    fn list_project_relative_dir(&self, _dir: &str) -> Result<Vec<String>> {
-        todo!()
     }
 }
 
@@ -1899,6 +1887,8 @@ fn to_instruction_schema(name: String, ix: svm_idl::IxIdl) -> SvmInstructionSche
     }
 }
 
+const METAPLEX_TOKEN_METADATA_PROGRAM_ID: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+
 fn resolve_program_schema(
     program: &human_config::svm::Program,
     source: &dyn ConfigSource,
@@ -1940,10 +1930,22 @@ fn resolve_program_schema(
                 .map(|(name, ix)| (name.clone(), to_instruction_schema(name, ix)))
                 .collect(),
             defined_types: idl.defined_types,
-            source: SvmSchemaSource::AnchorIdl {
+            source: SvmSchemaSource::Idl {
                 path: idl_path.to_string(),
             },
         });
+    }
+
+    // This program id used to resolve to a schema bundled in the CLI. Without
+    // one it now decodes nothing, so name the removal here rather than leave
+    // `params` mysteriously empty at runtime.
+    if program.program_id == METAPLEX_TOKEN_METADATA_PROGRAM_ID && !any_instruction_carries_schema {
+        return Err(anyhow!(
+            "Program '{}': the bundled Metaplex Token Metadata schema was removed. Point `idl` at \
+             a Token Metadata IDL to keep decoded `params`, or declare `accounts` and `args` on \
+             each instruction to opt into raw positional accounts.",
+            program.name
+        ));
     }
 
     Ok(SvmAbi {
@@ -1979,8 +1981,23 @@ fn resolve_instruction(
         .discriminator
         .as_deref()
         .map(|d| {
-            crate::hex::decode_optionally_prefixed(d, "discriminator")
-                .map(|bytes| (format!("0x{}", hex_lower(&bytes)), bytes.len() as u8))
+            let bytes = crate::hex::decode_optionally_prefixed(d, "discriminator")?;
+            // The same widths `svm_idl` enforces for IDL-derived discriminators.
+            // Checked here too, or a hand-written one passes codegen and fails
+            // at indexer start, far from the config line that set it.
+            if !svm_idl::DISPATCHABLE_DISCRIMINATOR_LENS.contains(&bytes.len()) {
+                return Err(anyhow!(
+                    "Instruction '{}': `discriminator: {d}` is {} bytes; dispatch only probes \
+                     widths {:?}.",
+                    instr.name,
+                    bytes.len(),
+                    svm_idl::DISPATCHABLE_DISCRIMINATOR_LENS
+                ));
+            }
+            Ok((
+                format!("0x{}", crate::hex::encode(&bytes)),
+                bytes.len() as u8,
+            ))
         })
         .transpose()?;
 
@@ -2004,7 +2021,7 @@ fn resolve_instruction(
         });
     }
 
-    if matches!(abi.source, SvmSchemaSource::AnchorIdl { .. }) {
+    if matches!(abi.source, SvmSchemaSource::Idl { .. }) {
         let schema = abi.instructions.get(&instr.name).ok_or_else(|| {
             anyhow!(
                 "Instruction '{}' is not in the program's IDL. Available instructions: {}.",
@@ -2012,7 +2029,7 @@ fn resolve_instruction(
                 abi.instructions.keys().join(", ")
             )
         })?;
-        let derived = format!("0x{}", hex_lower(&schema.discriminator));
+        let derived = format!("0x{}", crate::hex::encode(&schema.discriminator));
         // The IDL is the authority; a hand-written discriminator that
         // disagrees with it would route to a layout the program never encodes.
         if let Some((configured, _)) = &yaml_discriminator {
@@ -2046,10 +2063,6 @@ fn split_discriminator(parsed: Option<(String, u8)>) -> (Option<String>, u8) {
         Some((hex, len)) => (Some(hex), len),
         None => (None, 0),
     }
-}
-
-fn hex_lower(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn yaml_arg_to_named_field(arg: &human_config::svm::ArgDef) -> Result<SvmNamedField> {
@@ -2207,7 +2220,7 @@ pub struct SvmAbi {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SvmSchemaSource {
     /// User-supplied `idl: <path>` parsed at codegen time.
-    AnchorIdl { path: String },
+    Idl { path: String },
     /// Hand-written per-instruction `accounts`/`args` in YAML.
     Inline,
 }

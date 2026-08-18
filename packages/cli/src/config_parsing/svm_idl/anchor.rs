@@ -251,30 +251,21 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
             .ok_or_else(|| anyhow!("{path}.defined: expected a type name, got {d}"))?;
         return Ok(FieldType::Defined(name.to_string()));
     }
-    // Generic type parameters resolve at the use site, which the Borsh
-    // runtime does not model; treat them as nominal so `defined_types` can
-    // supply a concrete layout.
+    // A generic parameter is bound at the use site. `defined_types` is keyed
+    // by declared type names, so a parameter could only ever resolve by
+    // coincidence — and would then decode with another type's layout.
     if let Some(name) = obj.get("generic").and_then(Value::as_str) {
-        return Ok(FieldType::Defined(name.to_string()));
+        bail!("{path}: generic parameter '{name}' has no concrete layout to decode against");
     }
     bail!("{path}: unsupported type {node}")
 }
 
 fn parse_primitive(s: &str) -> FieldType {
+    if let Some(numeric) = super::numeric_field_type(s) {
+        return numeric;
+    }
     match s {
         "bool" => FieldType::Bool,
-        "u8" => FieldType::U8,
-        "u16" => FieldType::U16,
-        "u32" => FieldType::U32,
-        "u64" => FieldType::U64,
-        "u128" => FieldType::U128,
-        "i8" => FieldType::I8,
-        "i16" => FieldType::I16,
-        "i32" => FieldType::I32,
-        "i64" => FieldType::I64,
-        "i128" => FieldType::I128,
-        "f32" => FieldType::F32,
-        "f64" => FieldType::F64,
         "string" => FieldType::String,
         "bytes" => FieldType::Bytes,
         "pubkey" | "publicKey" => FieldType::Pubkey,

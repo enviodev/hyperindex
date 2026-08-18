@@ -32,7 +32,7 @@ declare module "envio" {
   "0": { id: 0 };
       }; programs: {
         "TokenMetadata": {
-          "CreateMetadataAccountV3": { readonly args: {}; readonly accounts: Readonly<Record<string, string>>; readonly transaction: {
+          "CreateMetadataAccountV3": { readonly args: { readonly data: { readonly name: string; readonly symbol: string; readonly uri: string; readonly sellerFeeBasisPoints: number; readonly creators: (({ readonly address: string; readonly verified: boolean; readonly share: number })[]) | null; readonly collection: ({ readonly verified: boolean; readonly key: string }) | null; readonly uses: ({ readonly useMethod: { readonly Burn: {} } | { readonly Multiple: {} } | { readonly Single: {} }; readonly remaining: string; readonly total: string }) | null }; readonly isMutable: boolean; readonly collectionDetails: ({ readonly V1: { readonly size: string } }) | null }; readonly accounts: { readonly metadata: string; readonly mint: string; readonly mintAuthority: string; readonly payer: string; readonly updateAuthority: string; readonly systemProgram: string; readonly rent: string }; readonly transaction: {
             /**
              * @deprecated Not selected for this instruction. To enable, add to config.yaml:
              * ```yaml
@@ -175,7 +175,7 @@ declare module "envio" {
              */
             readonly parentHash: FieldNotSelected<"Field 'parentHash' is not selected for the 'CreateMetadataAccountV3' instruction. Add it under field_selection.block_fields in config.yaml.">;
           } };
-          "UpdateMetadataAccountV2": { readonly args: {}; readonly accounts: Readonly<Record<string, string>>; readonly transaction: {
+          "UpdateMetadataAccountV2": { readonly args: { readonly data: ({ readonly name: string; readonly symbol: string; readonly uri: string; readonly sellerFeeBasisPoints: number; readonly creators: (({ readonly address: string; readonly verified: boolean; readonly share: number })[]) | null; readonly collection: ({ readonly verified: boolean; readonly key: string }) | null; readonly uses: ({ readonly useMethod: { readonly Burn: {} } | { readonly Multiple: {} } | { readonly Single: {} }; readonly remaining: string; readonly total: string }) | null }) | null; readonly newUpdateAuthority: (string) | null; readonly primarySaleHappened: (boolean) | null; readonly isMutable: (boolean) | null }; readonly accounts: { readonly metadata: string; readonly updateAuthority: string }; readonly transaction: {
             /**
              * @deprecated Not selected for this instruction. To enable, add to config.yaml:
              * ```yaml
