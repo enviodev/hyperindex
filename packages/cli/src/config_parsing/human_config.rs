@@ -1073,10 +1073,10 @@ pub mod svm {
         pub handler: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional path (relative to config.yaml) to an Anchor IDL JSON file. \
-                           When present, codegen parses the IDL and derives `accounts`/`args` for \
-                           every named instruction. Mutually exclusive with per-instruction \
-                           `accounts`/`args` overrides."
+            description = "Optional path (relative to the project root) to an Anchor or Codama \
+                           IDL JSON file. When present, codegen parses the IDL and derives the \
+                           discriminator and `accounts`/`args` for every named instruction. \
+                           Mutually exclusive with per-instruction `accounts`/`args` overrides."
         )]
         pub idl: Option<String>,
         #[schemars(description = "A list of instructions that should be indexed on this program.")]

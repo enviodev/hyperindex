@@ -1936,16 +1936,18 @@ fn resolve_program_schema(
         });
     }
 
-    // This program id used to resolve to a schema bundled in the CLI. Without
-    // one it now decodes nothing, so name the removal here rather than leave
-    // `params` mysteriously empty at runtime.
+    // This program id used to resolve to a schema bundled in the CLI, so a
+    // config that decoded `params` before this release now silently does not.
+    // Advisory rather than fatal: indexing the program untyped stays valid,
+    // and `instruction.accounts`/`instruction.data` are unaffected.
     if program.program_id == METAPLEX_TOKEN_METADATA_PROGRAM_ID && !any_instruction_carries_schema {
-        return Err(anyhow!(
-            "Program '{}': the bundled Metaplex Token Metadata schema was removed. Point `idl` at \
-             a Token Metadata IDL to keep decoded `params`, or declare `accounts` and `args` on \
-             each instruction to opt into raw positional accounts.",
+        eprintln!(
+            "warning: program '{}' has no `idl`, and the Metaplex Token Metadata schema that \
+             used to be bundled with the CLI was removed. `instruction.params` will be absent; \
+             `instruction.accounts` and `instruction.data` still arrive. Point `idl` at a Token \
+             Metadata IDL to decode `params` again.",
             program.name
-        ));
+        );
     }
 
     Ok(SvmAbi {
@@ -1977,27 +1979,18 @@ fn resolve_instruction(
     instr: &human_config::svm::Instruction,
     abi: &SvmAbi,
 ) -> Result<ResolvedInstruction> {
+    // Width is already enforced by `validate_svm_discriminator`, which runs
+    // over the whole config before any schema is resolved.
     let yaml_discriminator = instr
         .discriminator
         .as_deref()
         .map(|d| {
-            let bytes = crate::hex::decode_optionally_prefixed(d, "discriminator")?;
-            // The same widths `svm_idl` enforces for IDL-derived discriminators.
-            // Checked here too, or a hand-written one passes codegen and fails
-            // at indexer start, far from the config line that set it.
-            if !svm_idl::DISPATCHABLE_DISCRIMINATOR_LENS.contains(&bytes.len()) {
-                return Err(anyhow!(
-                    "Instruction '{}': `discriminator: {d}` is {} bytes; dispatch only probes \
-                     widths {:?}.",
-                    instr.name,
-                    bytes.len(),
-                    svm_idl::DISPATCHABLE_DISCRIMINATOR_LENS
-                ));
-            }
-            Ok((
-                format!("0x{}", crate::hex::encode(&bytes)),
-                bytes.len() as u8,
-            ))
+            crate::hex::decode_optionally_prefixed(d, "discriminator").map(|bytes| {
+                (
+                    format!("0x{}", crate::hex::encode(&bytes)),
+                    bytes.len() as u8,
+                )
+            })
         })
         .transpose()?;
 

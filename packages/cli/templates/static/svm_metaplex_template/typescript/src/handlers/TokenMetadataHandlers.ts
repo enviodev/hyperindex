@@ -33,30 +33,29 @@ async function bumpStats(
   context.ProgramStats.set(next);
 }
 
+// `params` is what the `idl:` entry in config.yaml buys: accounts arrive
+// named instead of positional, and the instruction's Borsh args arrive
+// decoded. It is absent only if the program has no IDL attached.
 indexer.onInstruction(
   { program: "TokenMetadata", instruction: "CreateMetadataAccountV3" },
   async ({ instruction, context }) => {
-    const { accounts } = instruction;
-    // Token Metadata's CreateMetadataAccountV3 instruction layout (Metaplex):
-    //   0 = metadata account (PDA)
-    //   1 = mint
-    //   2 = mint authority
-    //   3 = payer
-    //   4 = update authority
-    const metadataPda = accounts[0];
-    if (metadataPda === undefined) return;
-    const mint = accounts[1] ?? "";
-    const updateAuthority = accounts[4];
+    const params = instruction.params;
+    if (params === undefined) return;
+    const { metadata, mint, updateAuthority } = params.accounts;
+    const { name, symbol, uri } = params.args.data;
     const txSig = instruction.transaction.signature;
 
     context.log.info(
-      `Create: slot=${instruction.block.slot} mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
+      `Create: slot=${instruction.block.slot} mint=${mint.slice(0, 8)}.. name=${name} tx=${(txSig ?? "?").slice(0, 8)}..`,
     );
 
     context.TokenMetadataAccount.set({
-      id: metadataPda,
+      id: metadata,
       mint,
       updateAuthority,
+      name,
+      symbol,
+      uri,
       lastUpdatedSlot: instruction.block.slot,
       updateCount: 0,
       createdAtSlot: instruction.block.slot,
@@ -69,36 +68,31 @@ indexer.onInstruction(
 indexer.onInstruction(
   { program: "TokenMetadata", instruction: "UpdateMetadataAccountV2" },
   async ({ instruction, context }) => {
-    const { accounts } = instruction;
-    const metadataPda = accounts[0];
-    if (metadataPda === undefined) return;
-    const updateAuthority = accounts[1];
+    const params = instruction.params;
+    if (params === undefined) return;
+    const { metadata } = params.accounts;
+    // Every arg of this instruction is optional: the program only writes the
+    // ones that are present.
+    const { data, newUpdateAuthority } = params.args;
     const txSig = instruction.transaction.signature;
 
     context.log.info(
-      `Update: slot=${instruction.block.slot} metadata=${metadataPda.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
+      `Update: slot=${instruction.block.slot} metadata=${metadata.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
     );
 
-    const existing = await context.TokenMetadataAccount.get(metadataPda);
-    if (existing) {
-      context.TokenMetadataAccount.set({
-        ...existing,
-        updateAuthority,
-        lastUpdatedSlot: instruction.block.slot,
-        updateCount: existing.updateCount + 1,
-        lastTxSignature: txSig,
-      });
-    } else {
-      context.TokenMetadataAccount.set({
-        id: metadataPda,
-        mint: "",
-        updateAuthority,
-        lastUpdatedSlot: instruction.block.slot,
-        updateCount: 1,
-        createdAtSlot: instruction.block.slot,
-        lastTxSignature: txSig,
-      });
-    }
+    const existing = await context.TokenMetadataAccount.get(metadata);
+    context.TokenMetadataAccount.set({
+      id: metadata,
+      mint: existing?.mint ?? "",
+      updateAuthority: newUpdateAuthority ?? existing?.updateAuthority,
+      name: data?.name ?? existing?.name,
+      symbol: data?.symbol ?? existing?.symbol,
+      uri: data?.uri ?? existing?.uri,
+      lastUpdatedSlot: instruction.block.slot,
+      updateCount: (existing?.updateCount ?? 0) + 1,
+      createdAtSlot: existing?.createdAtSlot ?? instruction.block.slot,
+      lastTxSignature: txSig,
+    });
     await bumpStats(context, "update");
   },
 );

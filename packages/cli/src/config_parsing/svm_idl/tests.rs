@@ -566,9 +566,9 @@ fn rejects_undecodable_and_undispatchable_idls() {
             "discriminator field not at offset 0: instruction 'swap' discriminators: discriminator part at offset 8 does not follow the previous part, which ends at 0; dispatch needs one contiguous prefix from offset 0",
             "discriminator value too wide for its format: instruction 'swap' discriminators: discriminator value 300 does not fit in u8",
             "codama zeroable option: definedTypes.mint: zeroable options are not Borsh-compatible and cannot be decoded",
-            "codama option with a wide tag: definedTypes.maybeFee: prefix must be u8, got u32",
-            "codama vector with a narrow length prefix: definedTypes.signers: prefix must be u32, got u8",
-            "codama string with a narrow size prefix: definedTypes.label: prefix must be u32, got u8",
+            "codama option with a wide tag: definedTypes.maybeFee.prefix: Borsh needs u8 here, got u32",
+            "codama vector with a narrow length prefix: definedTypes.signers.prefix: Borsh needs u32 here, got u8",
+            "codama string with a narrow size prefix: definedTypes.label.prefix: Borsh needs u32 here, got u8",
         ]
     );
 }
@@ -722,6 +722,30 @@ fn refuses_layouts_the_runtime_would_misdecode() {
             ),
         ),
         (
+            // The length itself is framing: read big-endian, it shifts every
+            // byte after it.
+            "codama big-endian length prefix",
+            codama_type(
+                r#"{ "kind": "arrayTypeNode",
+                     "item": { "kind": "numberTypeNode", "format": "u8" },
+                     "count": { "kind": "prefixedCountNode",
+                                "prefix": { "kind": "numberTypeNode", "format": "u32",
+                                            "endian": "be" } } }"#,
+            ),
+        ),
+        (
+            // Codama types a tuple variant's body as a nested node, so the
+            // wrapper needs the same checks as any other type.
+            "codama enum tuple variant behind a wrapper",
+            codama_type(
+                r#"{ "kind": "enumTypeNode", "variants": [
+                     { "kind": "enumTupleVariantTypeNode", "name": "Wrapped",
+                       "tuple": { "kind": "sizePrefixTypeNode",
+                                  "prefix": { "kind": "numberTypeNode", "format": "u32" },
+                                  "items": [{ "kind": "numberTypeNode", "format": "u8" }] } }] }"#,
+            ),
+        ),
+        (
             // Bound at the use site, so it has no layout of its own.
             "anchor generic parameter",
             r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
@@ -746,15 +770,83 @@ fn refuses_layouts_the_runtime_would_misdecode() {
         reported,
         vec![
             "codama fixed option: definedTypes.probed: a fixed option pads its body when absent, which Borsh does not encode",
-            "codama enum with a wide tag: definedTypes.probed: Borsh needs a u8 'size', got u32",
+            "codama enum with a wide tag: definedTypes.probed.size: Borsh needs u8 here, got u32",
             "codama big-endian number: definedTypes.probed: Borsh decodes numbers little-endian, got 'be'",
             "codama bare string: definedTypes.probed: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
             "codama bare bytes: definedTypes.probed: a bare bytesTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
             "codama non-utf8 string: definedTypes.probed: Borsh strings are utf8, got 'base58'",
-            "codama boolean wider than a byte: definedTypes.probed: Borsh needs a u8 'size', got u32",
+            "codama boolean wider than a byte: definedTypes.probed.size: Borsh needs u8 here, got u32",
             "codama enum variant with its own discriminator: definedTypes.probed.Init: enumEmptyVariantTypeNode carries 'discriminator', which this parser does not model; decoding it would be a guess at the byte layout",
             "codama size prefix around a struct: definedTypes.probed: a u32 size prefix frames a string or bytes in Borsh, got structTypeNode",
+            "codama big-endian length prefix: definedTypes.probed.prefix: Borsh decodes numbers little-endian, got 'be'",
+            "codama enum tuple variant behind a wrapper: definedTypes.probed.Wrapped: sizePrefixTypeNode carries 'items', which this parser does not model; decoding it would be a guess at the byte layout",
             "anchor generic parameter: instruction 'swap' args.wrapped: generic parameter 'T' has no concrete layout to decode against",
+        ]
+    );
+}
+
+/// The other half of deny-by-default: a node that carries something the
+/// parser doesn't read, but which cannot move a byte, has to keep parsing.
+/// Rejecting these would fail real IDLs for decoration — `display` annotates
+/// a `u64` as a token amount, and Codama drops `fields`/`items`/`variants`
+/// entirely rather than writing an empty array.
+#[test]
+fn accepts_codama_nodes_that_cannot_change_the_layout() {
+    let cases: Vec<(&str, String)> = vec![
+        (
+            "number with a display annotation",
+            codama_type(
+                r#"{ "kind": "numberTypeNode", "format": "u64", "endian": "le",
+                     "display": { "kind": "amountNumberDisplayNode", "decimals": 9,
+                                  "unit": "SOL" } }"#,
+            ),
+        ),
+        (
+            "string with a display annotation",
+            codama_type(
+                r#"{ "kind": "sizePrefixTypeNode",
+                     "prefix": { "kind": "numberTypeNode", "format": "u32" },
+                     "type": { "kind": "stringTypeNode", "encoding": "utf8",
+                               "display": { "kind": "stringDisplayNode" } } }"#,
+            ),
+        ),
+        (
+            "struct with no fields",
+            codama_type(r#"{ "kind": "structTypeNode" }"#),
+        ),
+        (
+            "tuple with no items",
+            codama_type(r#"{ "kind": "tupleTypeNode" }"#),
+        ),
+        (
+            "enum with no variants",
+            codama_type(r#"{ "kind": "enumTypeNode" }"#),
+        ),
+        (
+            "documented node",
+            codama_type(r#"{ "kind": "booleanTypeNode", "docs": ["whether the mint is frozen"] }"#),
+        ),
+    ];
+
+    let parsed: Vec<(&str, String)> = cases
+        .iter()
+        .map(|(label, json)| {
+            let ty = parse_idl(json, "Program")
+                .map(|idl| render_type(&idl.defined_types["probed"]))
+                .unwrap_or_else(|e| format!("REJECTED: {e:#}"));
+            (*label, ty)
+        })
+        .collect();
+
+    assert_eq!(
+        parsed,
+        vec![
+            ("number with a display annotation", "u64".to_string()),
+            ("string with a display annotation", "string".to_string()),
+            ("struct with no fields", "{}".to_string()),
+            ("tuple with no items", "{}".to_string()),
+            ("enum with no variants", "enum {}".to_string()),
+            ("documented node", "bool".to_string()),
         ]
     );
 }
@@ -840,4 +932,19 @@ fn decodes_instruction_data_through_the_parsed_schema() {
             "trio": [9, 8, 7],
         })
     );
+}
+
+/// The CLI fixture and the `envio init` template ship the same IDL, and
+/// nothing else keeps them in step. A fixture that drifts is a fixture for a
+/// project nobody generates.
+#[test]
+fn template_and_fixture_idls_match() {
+    let root = env!("CARGO_MANIFEST_DIR");
+    let template = std::fs::read_to_string(format!(
+        "{root}/templates/static/svm_metaplex_template/typescript/idls/token-metadata.codama.json"
+    ))
+    .expect("template IDL");
+    let fixture = std::fs::read_to_string(format!("{root}/test/idls/token-metadata.codama.json"))
+        .expect("fixture IDL");
+    assert_eq!(template, fixture);
 }

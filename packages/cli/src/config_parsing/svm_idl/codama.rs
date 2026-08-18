@@ -257,6 +257,7 @@ fn parse_arguments(
             continue;
         }
         let path = format!("instruction '{ix_name}'.{name}");
+        reject_unmodelled_keys(a, &path, &FIELD_KEYS)?;
         let ty = a
             .get("type")
             .ok_or_else(|| anyhow!("{path}: argument has no 'type'"))?;
@@ -268,8 +269,10 @@ fn parse_arguments(
     Ok(out)
 }
 
-/// Keys any node may carry without changing a single decoded byte.
-const DESCRIPTIVE_KEYS: [&str; 2] = ["kind", "docs"];
+/// Keys any node may carry without changing a single decoded byte. `display`
+/// is Codama's presentation layer (a `u64` annotated as a SOL amount, say):
+/// it describes how to show a value, never how to read it.
+const DESCRIPTIVE_KEYS: [&str; 3] = ["kind", "docs", "display"];
 
 /// Codama attaches layout modifiers (`endian`, `fixed`, `size`, `encoding`) to
 /// nodes whose shape is otherwise recognisable, and a modifier the runtime
@@ -294,6 +297,10 @@ fn reject_unmodelled_keys(node: &Value, path: &str, modelled: &[&str]) -> Result
     Ok(())
 }
 
+/// Keys a named field or instruction argument may carry. The two default
+/// keys shape the client-side API, not the encoded bytes.
+const FIELD_KEYS: [&str; 4] = ["name", "type", "defaultValue", "defaultValueStrategy"];
+
 /// Borsh is little-endian throughout, and `le` is Codama's default — but a
 /// node may say otherwise, and the runtime has no way to honour it.
 fn require_little_endian(node: &Value, path: &str) -> Result<()> {
@@ -304,16 +311,30 @@ fn require_little_endian(node: &Value, path: &str) -> Result<()> {
 }
 
 /// A node's integer-width sub-node (an enum's tag, a boolean's storage), which
-/// Borsh fixes at one byte regardless of what the IDL asks for.
+/// Borsh fixes at one byte regardless of what the IDL asks for. Absent means
+/// Codama's default, which is the width Borsh wants.
 fn require_number_width(node: &Value, key: &str, expected: &str, path: &str) -> Result<()> {
     let Some(inner) = node.get(key) else {
         return Ok(());
     };
-    let format = required_str(inner, "format").with_context(|| format!("{path}.{key}"))?;
-    if format != expected {
-        bail!("{path}: Borsh needs a {expected} '{key}', got {format}");
+    let path = format!("{path}.{key}");
+    check_number_node(inner, expected, &path)
+}
+
+/// A `numberTypeNode` used as framing rather than as a value: an enum tag, a
+/// boolean's storage, a length prefix. Held to the same rules as any other
+/// number, since a wrong width or endianness here shifts everything after it.
+fn check_number_node(node: &Value, expected: &str, path: &str) -> Result<()> {
+    let kind = required_str(node, "kind").with_context(|| path.to_string())?;
+    if kind != "numberTypeNode" {
+        bail!("{path}: expected a numberTypeNode, got {kind}");
     }
-    require_little_endian(inner, path)
+    reject_unmodelled_keys(node, path, &["format", "endian"])?;
+    let format = required_str(node, "format").with_context(|| path.to_string())?;
+    if format != expected {
+        bail!("{path}: Borsh needs {expected} here, got {format}");
+    }
+    require_little_endian(node, path)
 }
 
 fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
@@ -403,15 +424,13 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
         }
         "structTypeNode" => {
             reject_unmodelled_keys(node, path, &["fields"])?;
-            let fields = node
-                .get("fields")
-                .and_then(Value::as_array)
-                .ok_or_else(|| anyhow!("{path}: struct has no 'fields'"))?;
+            let fields = optional_array(node, "fields", path)?;
             Ok(FieldType::Struct(
                 fields
                     .iter()
                     .map(|f| {
                         let name = required_str(f, "name").with_context(|| path.to_string())?;
+                        reject_unmodelled_keys(f, path, &FIELD_KEYS)?;
                         Ok(NamedField {
                             name: name.to_string(),
                             ty: parse_type(
@@ -431,10 +450,7 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
         "enumTypeNode" => {
             reject_unmodelled_keys(node, path, &["variants", "size"])?;
             require_number_width(node, "size", "u8", path)?;
-            let variants = node
-                .get("variants")
-                .and_then(Value::as_array)
-                .ok_or_else(|| anyhow!("{path}: enum has no 'variants'"))?;
+            let variants = optional_array(node, "variants", path)?;
             Ok(FieldType::Enum(
                 variants
                     .iter()
@@ -496,7 +512,13 @@ fn parse_enum_variant(v: &Value, enum_path: &str) -> Result<EnumVariant> {
             let inner = v
                 .get("tuple")
                 .ok_or_else(|| anyhow!("{path}: tuple variant has no 'tuple'"))?;
-            Some(positional_fields(inner, &path)?)
+            // Through `parse_type` rather than straight to `positional_fields`:
+            // Codama types this as a nested node, so the wrapper needs the same
+            // key checks as any other type.
+            match parse_type(inner, &path)? {
+                FieldType::Struct(fields) => Some(fields),
+                other => bail!("{path}: tuple variant resolved to {other:?}"),
+            }
         }
         other => bail!("{path}: unsupported enum variant kind '{other}'"),
     };
@@ -510,14 +532,9 @@ fn parse_enum_variant(v: &Value, enum_path: &str) -> Result<EnumVariant> {
 /// has exactly one width per shape. An absent prefix means Codama's default,
 /// which is what these shapes are checked against.
 fn require_prefix(node: &Value, expected: &str, path: &str) -> Result<()> {
-    let actual = node
-        .get("prefix")
-        .map(|p| required_str(p, "format").with_context(|| path.to_string()))
-        .transpose()?;
-    match actual {
+    match node.get("prefix") {
         None => Ok(()),
-        Some(format) if format == expected => Ok(()),
-        Some(format) => bail!("{path}: prefix must be {expected}, got {format}"),
+        Some(prefix) => check_number_node(prefix, expected, &format!("{path}.prefix")),
     }
 }
 
@@ -526,12 +543,21 @@ fn item<'a>(node: &'a Value, path: &str) -> Result<&'a Value> {
         .ok_or_else(|| anyhow!("{path}: node has no 'item'"))
 }
 
+/// Codama drops `fields`/`items`/`variants` rather than writing an empty
+/// array, so an absent key is a legitimate empty collection, not a defect.
+fn optional_array<'a>(node: &'a Value, key: &str, path: &str) -> Result<&'a [Value]> {
+    match node.get(key) {
+        None => Ok(&[]),
+        Some(value) => value
+            .as_array()
+            .map(Vec::as_slice)
+            .ok_or_else(|| anyhow!("{path}: '{key}' must be an array")),
+    }
+}
+
 /// Tuple items become `_0`, `_1`, … so every decoded body is keyed by name.
 fn positional_fields(node: &Value, path: &str) -> Result<Vec<NamedField>> {
-    let items = node
-        .get("items")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("{path}: tuple has no 'items'"))?;
+    let items = optional_array(node, "items", path)?;
     items
         .iter()
         .enumerate()

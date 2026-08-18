@@ -22,7 +22,7 @@ Open the GraphQL playground at `http://localhost:8080` and query:
 ```graphql
 {
   TokenMetadataAccount(limit: 5, order_by: {lastUpdatedSlot: desc}) {
-    id mint updateAuthority updateCount lastUpdatedSlot
+    id mint name symbol uri updateAuthority updateCount lastUpdatedSlot
   }
   ProgramStats { id totalInstructions createCount updateCount }
 }
@@ -32,7 +32,11 @@ Open the GraphQL playground at `http://localhost:8080` and query:
 
 - Declaring a Solana program + its instructions in `config.yaml`
   (`ecosystem: svm`, `experimental.programs[].instructions[]`).
-- Using `indexer.onInstruction({program, instruction}, handler)` to receive
-  positional accounts + raw instruction data.
+- Attaching a program IDL (`idls/token-metadata.codama.json`, wired up by the
+  `idl:` key in `config.yaml`) so instructions arrive decoded.
+- Using `indexer.onInstruction({program, instruction}, handler)` and reading
+  `instruction.params`, whose `accounts` are named and whose `args` are
+  Borsh-decoded from the IDL. Without an IDL, `params` is absent and only the
+  positional `instruction.accounts` and raw `instruction.data` arrive.
 - Persisting per-instruction state to a typed entity (`TokenMetadataAccount`)
   and a counter (`ProgramStats`).

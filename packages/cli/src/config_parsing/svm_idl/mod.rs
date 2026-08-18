@@ -48,7 +48,7 @@ pub struct ProgramIdl {
 /// Discriminator widths the router can probe for. Dispatch reads a fixed-width
 /// prefix off `instruction.data`, so a width outside this set parses fine here
 /// and then fails at indexer start, far from the IDL that caused it.
-pub(crate) const DISPATCHABLE_DISCRIMINATOR_LENS: [usize; 4] = [1, 2, 4, 8];
+const DISPATCHABLE_DISCRIMINATOR_LENS: [usize; 4] = [1, 2, 4, 8];
 
 pub fn parse_idl(json: &str, program_name: &str) -> Result<ProgramIdl> {
     parse_validated(json).with_context(|| format!("parsing IDL for program '{program_name}'"))

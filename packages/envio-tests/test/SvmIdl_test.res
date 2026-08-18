@@ -250,6 +250,34 @@ indexer.onInstruction(
     )
   )
 
+  // Dispatch reads a fixed-width prefix off the instruction data, so a width
+  // it never probes matches nothing. Caught at codegen rather than at indexer
+  // start, where the config line that caused it is long out of sight.
+  it("rejects a hand-written discriminator dispatch cannot probe", t =>
+    t.expect(
+      parseError(
+        ~files=Dict.fromArray([]),
+        ~configYaml=`
+name: svm-inline
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: SplToken
+          program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+          instructions:
+            - name: transfer
+              discriminator: "0xaabbcc"
+`,
+      ),
+    ).toBe(
+      `Config parse error: instruction "transfer" in program "SplToken": discriminator "0xaabbcc" must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after stripping a \`0x\` prefix), got 6 digits`,
+    )
+  )
+
   it("rejects an IDL whose address is not the configured program", t =>
     t.expect(
       parseError(

@@ -10,76 +10,194 @@
     "docs": [
       "Metaplex Token Metadata. A native program, so instructions are tagged",
       "with a single leading byte rather than an Anchor discriminator — which",
-      "is why this IDL is Codama and not Anchor."
+      "is why this IDL is Codama and not Anchor.",
+      "",
+      "Hand-authored subset covering only the two instructions this project",
+      "indexes, not the program's full surface. Adding another instruction to",
+      "config.yaml means describing it here too, since an instruction absent",
+      "from the IDL is a codegen error. Layouts follow mpl-token-metadata",
+      "1.13.2 (https://github.com/metaplex-foundation/mpl-token-metadata)."
     ],
     "instructions": [
       {
         "kind": "instructionNode",
         "name": "CreateMetadataAccountV3",
         "accounts": [
-          { "kind": "instructionAccountNode", "name": "metadata", "isWritable": true, "isSigner": false },
-          { "kind": "instructionAccountNode", "name": "mint", "isWritable": false, "isSigner": false },
-          { "kind": "instructionAccountNode", "name": "mintAuthority", "isWritable": false, "isSigner": true },
-          { "kind": "instructionAccountNode", "name": "payer", "isWritable": true, "isSigner": true },
-          { "kind": "instructionAccountNode", "name": "updateAuthority", "isWritable": false, "isSigner": false },
-          { "kind": "instructionAccountNode", "name": "systemProgram", "isWritable": false, "isSigner": false },
-          { "kind": "instructionAccountNode", "name": "rent", "isWritable": false, "isSigner": false, "isOptional": true }
-        ],
-        "arguments": [
           {
-            "kind": "instructionArgumentNode",
-            "name": "discriminator",
-            "type": { "kind": "numberTypeNode", "format": "u8", "endian": "le" },
-            "defaultValue": { "kind": "numberValueNode", "number": 33 },
-            "defaultValueStrategy": "omitted"
+            "kind": "instructionAccountNode",
+            "name": "metadata",
+            "isWritable": true,
+            "isSigner": false
           },
-          { "kind": "instructionArgumentNode", "name": "data", "type": { "kind": "definedTypeLinkNode", "name": "DataV2" } },
-          { "kind": "instructionArgumentNode", "name": "isMutable", "type": { "kind": "booleanTypeNode" } },
           {
-            "kind": "instructionArgumentNode",
-            "name": "collectionDetails",
-            "type": { "kind": "optionTypeNode", "item": { "kind": "definedTypeLinkNode", "name": "CollectionDetails" } }
+            "kind": "instructionAccountNode",
+            "name": "mint",
+            "isWritable": false,
+            "isSigner": false
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "mintAuthority",
+            "isWritable": false,
+            "isSigner": true
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "payer",
+            "isWritable": true,
+            "isSigner": true
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "updateAuthority",
+            "isWritable": false,
+            "isSigner": false
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "systemProgram",
+            "isWritable": false,
+            "isSigner": false
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "rent",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": true
           }
         ],
-        "discriminators": [{ "kind": "fieldDiscriminatorNode", "name": "discriminator", "offset": 0 }]
-      },
-      {
-        "kind": "instructionNode",
-        "name": "UpdateMetadataAccountV2",
-        "accounts": [
-          { "kind": "instructionAccountNode", "name": "metadata", "isWritable": true, "isSigner": false },
-          { "kind": "instructionAccountNode", "name": "updateAuthority", "isWritable": false, "isSigner": true }
-        ],
         "arguments": [
           {
             "kind": "instructionArgumentNode",
             "name": "discriminator",
-            "type": { "kind": "numberTypeNode", "format": "u8", "endian": "le" },
-            "defaultValue": { "kind": "numberValueNode", "number": 15 },
+            "type": {
+              "kind": "numberTypeNode",
+              "format": "u8",
+              "endian": "le"
+            },
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 33
+            },
             "defaultValueStrategy": "omitted"
           },
           {
             "kind": "instructionArgumentNode",
             "name": "data",
-            "type": { "kind": "optionTypeNode", "item": { "kind": "definedTypeLinkNode", "name": "DataV2" } }
-          },
-          {
-            "kind": "instructionArgumentNode",
-            "name": "newUpdateAuthority",
-            "type": { "kind": "optionTypeNode", "item": { "kind": "publicKeyTypeNode" } }
-          },
-          {
-            "kind": "instructionArgumentNode",
-            "name": "primarySaleHappened",
-            "type": { "kind": "optionTypeNode", "item": { "kind": "booleanTypeNode" } }
+            "type": {
+              "kind": "definedTypeLinkNode",
+              "name": "DataV2"
+            }
           },
           {
             "kind": "instructionArgumentNode",
             "name": "isMutable",
-            "type": { "kind": "optionTypeNode", "item": { "kind": "booleanTypeNode" } }
+            "type": {
+              "kind": "booleanTypeNode"
+            }
+          },
+          {
+            "kind": "instructionArgumentNode",
+            "name": "collectionDetails",
+            "type": {
+              "kind": "optionTypeNode",
+              "item": {
+                "kind": "definedTypeLinkNode",
+                "name": "CollectionDetails"
+              }
+            }
           }
         ],
-        "discriminators": [{ "kind": "fieldDiscriminatorNode", "name": "discriminator", "offset": 0 }]
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ]
+      },
+      {
+        "kind": "instructionNode",
+        "name": "UpdateMetadataAccountV2",
+        "accounts": [
+          {
+            "kind": "instructionAccountNode",
+            "name": "metadata",
+            "isWritable": true,
+            "isSigner": false
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "updateAuthority",
+            "isWritable": false,
+            "isSigner": true
+          }
+        ],
+        "arguments": [
+          {
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "type": {
+              "kind": "numberTypeNode",
+              "format": "u8",
+              "endian": "le"
+            },
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 15
+            },
+            "defaultValueStrategy": "omitted"
+          },
+          {
+            "kind": "instructionArgumentNode",
+            "name": "data",
+            "type": {
+              "kind": "optionTypeNode",
+              "item": {
+                "kind": "definedTypeLinkNode",
+                "name": "DataV2"
+              }
+            }
+          },
+          {
+            "kind": "instructionArgumentNode",
+            "name": "newUpdateAuthority",
+            "type": {
+              "kind": "optionTypeNode",
+              "item": {
+                "kind": "publicKeyTypeNode"
+              }
+            }
+          },
+          {
+            "kind": "instructionArgumentNode",
+            "name": "primarySaleHappened",
+            "type": {
+              "kind": "optionTypeNode",
+              "item": {
+                "kind": "booleanTypeNode"
+              }
+            }
+          },
+          {
+            "kind": "instructionArgumentNode",
+            "name": "isMutable",
+            "type": {
+              "kind": "optionTypeNode",
+              "item": {
+                "kind": "booleanTypeNode"
+              }
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ]
       }
     ],
     "definedTypes": [
@@ -94,8 +212,14 @@
               "name": "name",
               "type": {
                 "kind": "sizePrefixTypeNode",
-                "type": { "kind": "stringTypeNode", "encoding": "utf8" },
-                "prefix": { "kind": "numberTypeNode", "format": "u32" }
+                "type": {
+                  "kind": "stringTypeNode",
+                  "encoding": "utf8"
+                },
+                "prefix": {
+                  "kind": "numberTypeNode",
+                  "format": "u32"
+                }
               }
             },
             {
@@ -103,8 +227,14 @@
               "name": "symbol",
               "type": {
                 "kind": "sizePrefixTypeNode",
-                "type": { "kind": "stringTypeNode", "encoding": "utf8" },
-                "prefix": { "kind": "numberTypeNode", "format": "u32" }
+                "type": {
+                  "kind": "stringTypeNode",
+                  "encoding": "utf8"
+                },
+                "prefix": {
+                  "kind": "numberTypeNode",
+                  "format": "u32"
+                }
               }
             },
             {
@@ -112,14 +242,24 @@
               "name": "uri",
               "type": {
                 "kind": "sizePrefixTypeNode",
-                "type": { "kind": "stringTypeNode", "encoding": "utf8" },
-                "prefix": { "kind": "numberTypeNode", "format": "u32" }
+                "type": {
+                  "kind": "stringTypeNode",
+                  "encoding": "utf8"
+                },
+                "prefix": {
+                  "kind": "numberTypeNode",
+                  "format": "u32"
+                }
               }
             },
             {
               "kind": "structFieldTypeNode",
               "name": "sellerFeeBasisPoints",
-              "type": { "kind": "numberTypeNode", "format": "u16", "endian": "le" }
+              "type": {
+                "kind": "numberTypeNode",
+                "format": "u16",
+                "endian": "le"
+              }
             },
             {
               "kind": "structFieldTypeNode",
@@ -128,20 +268,41 @@
                 "kind": "optionTypeNode",
                 "item": {
                   "kind": "arrayTypeNode",
-                  "item": { "kind": "definedTypeLinkNode", "name": "Creator" },
-                  "count": { "kind": "prefixedCountNode", "prefix": { "kind": "numberTypeNode", "format": "u32" } }
+                  "item": {
+                    "kind": "definedTypeLinkNode",
+                    "name": "Creator"
+                  },
+                  "count": {
+                    "kind": "prefixedCountNode",
+                    "prefix": {
+                      "kind": "numberTypeNode",
+                      "format": "u32"
+                    }
+                  }
                 }
               }
             },
             {
               "kind": "structFieldTypeNode",
               "name": "collection",
-              "type": { "kind": "optionTypeNode", "item": { "kind": "definedTypeLinkNode", "name": "Collection" } }
+              "type": {
+                "kind": "optionTypeNode",
+                "item": {
+                  "kind": "definedTypeLinkNode",
+                  "name": "Collection"
+                }
+              }
             },
             {
               "kind": "structFieldTypeNode",
               "name": "uses",
-              "type": { "kind": "optionTypeNode", "item": { "kind": "definedTypeLinkNode", "name": "Uses" } }
+              "type": {
+                "kind": "optionTypeNode",
+                "item": {
+                  "kind": "definedTypeLinkNode",
+                  "name": "Uses"
+                }
+              }
             }
           ]
         }
@@ -152,9 +313,28 @@
         "type": {
           "kind": "structTypeNode",
           "fields": [
-            { "kind": "structFieldTypeNode", "name": "address", "type": { "kind": "publicKeyTypeNode" } },
-            { "kind": "structFieldTypeNode", "name": "verified", "type": { "kind": "booleanTypeNode" } },
-            { "kind": "structFieldTypeNode", "name": "share", "type": { "kind": "numberTypeNode", "format": "u8" } }
+            {
+              "kind": "structFieldTypeNode",
+              "name": "address",
+              "type": {
+                "kind": "publicKeyTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "verified",
+              "type": {
+                "kind": "booleanTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "share",
+              "type": {
+                "kind": "numberTypeNode",
+                "format": "u8"
+              }
+            }
           ]
         }
       },
@@ -164,8 +344,20 @@
         "type": {
           "kind": "structTypeNode",
           "fields": [
-            { "kind": "structFieldTypeNode", "name": "verified", "type": { "kind": "booleanTypeNode" } },
-            { "kind": "structFieldTypeNode", "name": "key", "type": { "kind": "publicKeyTypeNode" } }
+            {
+              "kind": "structFieldTypeNode",
+              "name": "verified",
+              "type": {
+                "kind": "booleanTypeNode"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "key",
+              "type": {
+                "kind": "publicKeyTypeNode"
+              }
+            }
           ]
         }
       },
@@ -175,9 +367,32 @@
         "type": {
           "kind": "structTypeNode",
           "fields": [
-            { "kind": "structFieldTypeNode", "name": "useMethod", "type": { "kind": "definedTypeLinkNode", "name": "UseMethod" } },
-            { "kind": "structFieldTypeNode", "name": "remaining", "type": { "kind": "numberTypeNode", "format": "u64", "endian": "le" } },
-            { "kind": "structFieldTypeNode", "name": "total", "type": { "kind": "numberTypeNode", "format": "u64", "endian": "le" } }
+            {
+              "kind": "structFieldTypeNode",
+              "name": "useMethod",
+              "type": {
+                "kind": "definedTypeLinkNode",
+                "name": "UseMethod"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "remaining",
+              "type": {
+                "kind": "numberTypeNode",
+                "format": "u64",
+                "endian": "le"
+              }
+            },
+            {
+              "kind": "structFieldTypeNode",
+              "name": "total",
+              "type": {
+                "kind": "numberTypeNode",
+                "format": "u64",
+                "endian": "le"
+              }
+            }
           ]
         }
       },
@@ -187,9 +402,18 @@
         "type": {
           "kind": "enumTypeNode",
           "variants": [
-            { "kind": "enumEmptyVariantTypeNode", "name": "Burn" },
-            { "kind": "enumEmptyVariantTypeNode", "name": "Multiple" },
-            { "kind": "enumEmptyVariantTypeNode", "name": "Single" }
+            {
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "Burn"
+            },
+            {
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "Multiple"
+            },
+            {
+              "kind": "enumEmptyVariantTypeNode",
+              "name": "Single"
+            }
           ]
         }
       },
@@ -205,7 +429,15 @@
               "struct": {
                 "kind": "structTypeNode",
                 "fields": [
-                  { "kind": "structFieldTypeNode", "name": "size", "type": { "kind": "numberTypeNode", "format": "u64", "endian": "le" } }
+                  {
+                    "kind": "structFieldTypeNode",
+                    "name": "size",
+                    "type": {
+                      "kind": "numberTypeNode",
+                      "format": "u64",
+                      "endian": "le"
+                    }
+                  }
                 ]
               }
             }
