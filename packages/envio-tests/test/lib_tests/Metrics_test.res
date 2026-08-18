@@ -468,11 +468,11 @@ envio_source_request_total{source="HyperSync",chainId="1",method="heightPush"} 7
 # TYPE envio_source_request_seconds_total counter
 envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 33.75
 
-# HELP envio_source_height_stream_reconnects_total The number of times a source's height subscription reconnected after a failure. Its rate is how much the stream is flapping.
+# HELP envio_source_height_stream_reconnects_total The number of times a source's height subscription reconnected after a failure. The series exists only for streams that have failed, so its presence already says one has; its rate says how much it is flapping now.
 # TYPE envio_source_height_stream_reconnects_total counter
 envio_source_height_stream_reconnects_total{source="HyperSync",chainId="1"} 3
 
-# HELP envio_source_height_stream_failures_total The number of times a source's height subscription failed, by reason. Present only once a stream has failed at least once. A stream whose failures keep climbing while its reconnects stay flat is still down, and the indexer is polling for the height in the meantime.
+# HELP envio_source_height_stream_failures_total The number of times a source's height subscription failed, by reason. Like the reconnect counter it appears only once a stream has failed, so a series sitting flat at one is a stream that had a single blip. One whose failures keep climbing while its reconnects stay flat is still down, and the indexer is polling for the height in the meantime.
 # TYPE envio_source_height_stream_failures_total counter
 envio_source_height_stream_failures_total{source="HyperSync",chainId="1",reason="closed"} 4
 envio_source_height_stream_failures_total{source="HyperSync",chainId="1",reason="401"} 1

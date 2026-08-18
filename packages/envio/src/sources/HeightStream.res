@@ -3,6 +3,11 @@ Reconnect driver shared by every height subscription transport. A transport
 supplies `connect`, which wires its socket to the driver callbacks and returns a
 close function; the driver owns retries, staleness detection and status
 reporting so SSE and WebSocket streams behave identically.
+
+Nothing here logs. A height stream failing is not something an operator has to
+act on — the indexer polls for the height instead — so its health is reported
+through the envio_source_height_stream_* counters, and every failure reason has
+to stand on its own as a metric label.
 */
 
 type driver = {

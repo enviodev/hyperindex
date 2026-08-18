@@ -505,14 +505,14 @@ let renderMetrics = (b: builder, metrics: t) => {
   if heightStreamReconnects->Array.length > 0 {
     b->series(
       ~name="envio_source_height_stream_reconnects_total",
-      ~help="The number of times a source's height subscription reconnected after a failure. Its rate is how much the stream is flapping.",
+      ~help="The number of times a source's height subscription reconnected after a failure. The series exists only for streams that have failed, so its presence already says one has; its rate says how much it is flapping now.",
       ~kind="counter",
       ~entries=heightStreamReconnects,
       ~value=count => count->Int.toFloat,
     )
     b->series(
       ~name="envio_source_height_stream_failures_total",
-      ~help="The number of times a source's height subscription failed, by reason. Present only once a stream has failed at least once. A stream whose failures keep climbing while its reconnects stay flat is still down, and the indexer is polling for the height in the meantime.",
+      ~help="The number of times a source's height subscription failed, by reason. Like the reconnect counter it appears only once a stream has failed, so a series sitting flat at one is a stream that had a single blip. One whose failures keep climbing while its reconnects stay flat is still down, and the indexer is polling for the height in the meantime.",
       ~kind="counter",
       ~entries=heightStreamFailures,
       ~value=count => count->Int.toFloat,
