@@ -42,6 +42,8 @@ let subscribe = (
   // A connection is either waiting for traffic or waiting to be retried, never
   // both, so a single slot holds whichever timer is pending.
   let timeoutId = ref(None)
+  // Whether the connection currently being retried had reached Live.
+  let wasLive = ref(false)
 
   let clearPendingTimeout = () => {
     switch timeoutId.contents {
@@ -63,13 +65,21 @@ let subscribe = (
     clearPendingTimeout()
     timeoutId := Some(setTimeout(() => {
           timeoutId := None
-          fail(~reason="stale")
+          fail(~reason="stale", ~fromStaleTimeout=true)
         }, staleTimeout))
   }
-  and fail = (~reason) => {
+  and fail = (~reason, ~fromStaleTimeout=false) => {
     generation := generation.contents + 1
     clearPendingTimeout()
     closeConnection()
+
+    // An established connection going quiet says the endpoint works but has
+    // nothing to send, which is normal on a chain whose block time exceeds the
+    // timeout. Retrying promptly is safe because staleTimeout already spaces
+    // these out; only failures that can repeat immediately need to escalate.
+    if fromStaleTimeout && wasLive.contents {
+      failureCount := 0
+    }
     failureCount := failureCount.contents + 1
 
     let exp = Pervasives.min(failureCount.contents - 1, maxRetryExponent)->Int.toFloat
@@ -88,6 +98,7 @@ let subscribe = (
   }
   and start = () => {
     generation := generation.contents + 1
+    wasLive := false
     let connectionGeneration = generation.contents
     let isCurrent = () => !unsubscribed.contents && generation.contents === connectionGeneration
 
@@ -104,9 +115,13 @@ let subscribe = (
       armStaleTimeout()
     }
 
-    let closeCurrentConnection = connect({
+    // A transport constructor can throw on a malformed url. Left to escape it
+    // would reach a timer callback on the next retry and take the process down.
+    let closeCurrentConnection = try Some(
+      connect({
       onConnected: () =>
         if isCurrent() {
+          wasLive := true
           armStaleTimeout()
           onStatus(Live)
         },
@@ -123,12 +138,22 @@ let subscribe = (
         if isCurrent() {
           fail(~reason)
         },
-    })
+      }),
+    ) catch {
+    | _ => None
+    }
 
-    if isCurrent() {
-      closeConnectionRef := Some(closeCurrentConnection)
-    } else {
-      closeCurrentConnection()
+    switch closeCurrentConnection {
+    | Some(closeCurrentConnection) =>
+      if isCurrent() {
+        closeConnectionRef := Some(closeCurrentConnection)
+      } else {
+        closeCurrentConnection()
+      }
+    | None =>
+      if isCurrent() {
+        fail(~reason="connect-failed")
+      }
     }
   }
 

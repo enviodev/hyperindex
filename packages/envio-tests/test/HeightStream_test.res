@@ -15,7 +15,7 @@ type harness = {
   unsubscribe: unit => unit,
 }
 
-let makeHarness = (~staleTimeout=15_000, ~failOnConnect=?) => {
+let makeHarness = (~staleTimeout=15_000, ~failOnConnect=?, ~throwOnConnect=false) => {
   let statuses = []
   let heights = []
   let drivers = []
@@ -26,6 +26,9 @@ let makeHarness = (~staleTimeout=15_000, ~failOnConnect=?) => {
     ~onStatus=status => statuses->Array.push(status->statusLabel)->ignore,
     ~connect=driver => {
       drivers->Array.push(driver)->ignore
+      if throwOnConnect {
+        JsError.throwWithMessage("Invalid URL")
+      }
       switch failOnConnect {
       | Some(reason) => driver.onFailure(~reason)
       | None => ()
@@ -183,6 +186,42 @@ describe("HeightStream reconnect driver", () => {
       harness.drivers->Array.length,
       harness.closes.contents,
     )).toStrictEqual((["live"], [], 1, 1))
+  })
+
+  Async.it("Retries at the base delay after an established connection goes stale", async t => {
+    let harness = makeHarness()
+    // A chain whose blocks are further apart than the stale timeout ends every
+    // connection this way, and the timeout already spaces the retries out, so
+    // the backoff must not ratchet up on a working endpoint.
+    let connectsAroundRetry = []
+    for attempt in 0 to 3 {
+      (harness->driverAt(attempt)).onConnected()
+      await Vi.advanceTimersByTimeAsync(15_000)
+      await Vi.advanceTimersByTimeAsync(249)
+      let beforeDue = harness.drivers->Array.length
+      await Vi.advanceTimersByTimeAsync(1)
+      connectsAroundRetry->Array.push((beforeDue, harness.drivers->Array.length))->ignore
+    }
+    harness.unsubscribe()
+
+    t.expect(connectsAroundRetry).toStrictEqual([(1, 2), (2, 3), (3, 4), (4, 5)])
+  })
+
+  Async.it("Keeps retrying when the transport throws while connecting", async t => {
+    // Reached through a malformed url: escaping the retry timer would take the
+    // process down instead.
+    let harness = makeHarness(~throwOnConnect=true)
+
+    await Vi.advanceTimersByTimeAsync(249)
+    let beforeRetry = harness.drivers->Array.length
+    await Vi.advanceTimersByTimeAsync(1)
+    harness.unsubscribe()
+
+    t.expect((beforeRetry, harness.drivers->Array.length, harness.statuses)).toStrictEqual((
+      1,
+      2,
+      ["down:connect-failed", "down:connect-failed"],
+    ))
   })
 
   Async.it("Retries rather than waits for staleness when connect fails immediately", async t => {
