@@ -57,7 +57,6 @@ let indexedAddresses: array<Internal.indexingAddress> = [
 let addressStore = () =>
   TestAddresses.makeStore(
     ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
-    ~addresses=indexedAddresses,
     ~shouldChecksum=false,
   )
 
@@ -159,7 +158,10 @@ let makeChainState = (~source: Source.t, ~knownHeight) => {
   let fetchState = FetchState.make(
     ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
     ~addressStore=store,
-    ~addresses=indexedAddresses,
+    ~addressRows=TestAddresses.addressRows(
+      ~addresses=indexedAddresses,
+      ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
+    ),
     ~onBlockRegistrations=[],
     ~startBlock=0,
     ~endBlock=None,

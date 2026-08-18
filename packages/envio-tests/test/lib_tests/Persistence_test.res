@@ -11,8 +11,8 @@ describe("Test Persistence layer init", () => {
 
     t.expect(
       persistence.allEntities,
-      ~message=`All entities should automatically include the indexer core ones`,
-    ).toEqual([InternalTable.EnvioAddresses.entityConfig])
+      ~message=`The indexer's own tables aren't entities, so the user's list is untouched`,
+    ).toEqual([])
     t.expect(
       persistence.allEnums,
       ~message=`All enums should automatically include the indexer core ones`,
@@ -73,6 +73,7 @@ describe("Test Persistence layer init", () => {
 
     let initialState: Persistence.initialState = {
       cleanRun: true,
+      contractNames: [],
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
@@ -148,6 +149,7 @@ describe("Test Persistence layer init", () => {
 
     let initialState: Persistence.initialState = {
       cleanRun: false,
+      contractNames: [],
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
@@ -193,6 +195,7 @@ Although it should load effect caches metadata.`,
     let _ = await Promise.resolve()
     let initialState: Persistence.initialState = {
       cleanRun: false,
+      contractNames: [],
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],

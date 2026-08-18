@@ -43,7 +43,8 @@ let decodeLogs = async (
       let addressStore = AddressStore.make(
         ~ecosystem=Ecosystem.Evm,
         ~shouldChecksum=false,
-        ~contracts=eventRegistrations->Array.map((reg): AddressStore.contract => {
+        ~contracts=eventRegistrations->Array.mapWithIndex((reg, id): AddressStore.contract => {
+          id,
           name: reg.contractName,
           startBlock: None,
           dependsOnAddresses: true,

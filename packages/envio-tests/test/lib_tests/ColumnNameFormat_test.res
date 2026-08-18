@@ -254,7 +254,7 @@ ORDER BY (id, envio_checkpoint_id)`,
       ~isHasuraEnabled=false,
     )
     let _ = await storage.initialize(
-      ~entities=config.allEntities,
+      ~entities=config.userEntities,
       ~enums=config.allEnums->Array.concat([
         EntityHistory.RowAction.config->Table.fromGenericEnumConfig,
       ]),

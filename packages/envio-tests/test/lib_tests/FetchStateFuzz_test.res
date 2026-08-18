@@ -210,12 +210,12 @@ let runSeed = (~seed, ~ops) => {
       registrationBlock: -1,
     },
   ]
-  let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~addresses)
+  let addressStore = TestAddresses.makeStore(~onEventRegistrations)
   let run = {
     fetchState: FetchState.make(
       ~onEventRegistrations,
       ~addressStore,
-      ~addresses,
+      ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=2,

@@ -130,6 +130,46 @@ pub fn pack_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result
     })
 }
 
+/// Splits packed address keys into one buffer per row — the form the write
+/// path binds to a `BYTEA[]`. The widths come from the ecosystem, so nothing
+/// outside this module needs to know how wide a key is.
+#[napi]
+pub fn split_addresses(
+    ecosystem: String,
+    bytes: Buffer,
+    lengths: Option<Vec<u32>>,
+) -> napi::Result<Vec<Buffer>> {
+    let ecosystem = ecosystem_by_name(&ecosystem, false)?;
+    let bytes: &[u8] = &bytes;
+    let widths: Vec<usize> = match lengths {
+        Some(lengths) => lengths.iter().map(|&len| len as usize).collect(),
+        None => {
+            let width = key_width(ecosystem).ok_or_else(|| {
+                napi::Error::from_reason("SVM addresses can only be split with their lengths.")
+            })?;
+            if bytes.len() % width != 0 {
+                return Err(napi::Error::from_reason(format!(
+                    "Packed addresses of {} bytes don't divide into {width}-byte keys.",
+                    bytes.len()
+                )));
+            }
+            vec![width; bytes.len() / width]
+        }
+    };
+    let mut split = Vec::with_capacity(widths.len());
+    let mut offset = 0;
+    for width in widths {
+        if offset + width > bytes.len() {
+            return Err(napi::Error::from_reason(
+                "Packed addresses are shorter than their lengths claim.",
+            ));
+        }
+        split.push(bytes[offset..offset + width].to_vec().into());
+        offset += width;
+    }
+    Ok(split)
+}
+
 /// Renders packed address keys back to the canonical strings the JS side shows.
 /// The inverse of `pack_addresses`, and the only decoder.
 #[napi]
@@ -165,6 +205,44 @@ pub fn render_addresses(
             ));
         }
         rendered.push(address_string(ecosystem, &bytes[offset..offset + width]));
+        offset += width;
+    }
+    Ok(rendered)
+}
+
+/// The addresses of one contract inside a packed column of seeded rows, as
+/// canonical strings — what `chain.<Contract>.addresses` answers before the
+/// indexer state exists and the resumed rows are all there is.
+#[napi]
+pub fn render_contract_addresses(
+    ecosystem: String,
+    should_checksum: bool,
+    bytes: Buffer,
+    lengths: Option<Vec<u32>>,
+    contract_ids: Vec<u32>,
+    contract_id: u32,
+) -> napi::Result<Vec<String>> {
+    let ecosystem = ecosystem_by_name(&ecosystem, should_checksum)?;
+    let bytes: &[u8] = &bytes;
+    let mut rendered = Vec::new();
+    let mut offset = 0;
+    for (idx, &id) in contract_ids.iter().enumerate() {
+        let width = match &lengths {
+            Some(lengths) => *lengths.get(idx).ok_or_else(|| {
+                napi::Error::from_reason("Packed addresses carry fewer lengths than rows.")
+            })? as usize,
+            None => key_width(ecosystem).ok_or_else(|| {
+                napi::Error::from_reason("SVM addresses can only be rendered with their lengths.")
+            })?,
+        };
+        if offset + width > bytes.len() {
+            return Err(napi::Error::from_reason(
+                "Packed addresses are shorter than their lengths claim.",
+            ));
+        }
+        if id == contract_id {
+            rendered.push(address_string(ecosystem, &bytes[offset..offset + width]));
+        }
         offset += width;
     }
     Ok(rendered)
@@ -426,6 +504,13 @@ pub struct RejectedRow {
     pub existing_effective_start_block: Option<i64>,
 }
 
+/// One contract's live registration count, for the per-contract gauge.
+#[napi(object)]
+pub struct ContractAddressCount {
+    pub contract_name: String,
+    pub count: i64,
+}
+
 /// Which of a contract's addresses `makeSet` should take.
 #[napi(object)]
 #[derive(Default)]
@@ -518,6 +603,9 @@ impl AddressStore {
                 "Seeded address columns disagree: {count} contract ids, {} registration blocks.",
                 registration_blocks.len()
             )));
+        }
+        if count == 0 {
+            return Ok(Vec::new());
         }
         let bytes: &[u8] = &addresses;
         let widths: Vec<usize> = match &lengths {
@@ -704,6 +792,22 @@ impl AddressStore {
         };
         let ids = store.sorted_live_ids(0, |entry| entry.contract_idx == contract_idx);
         group_start_blocks(&store, &ids)
+    }
+
+    /// Live registration counts for every contract the chain holds, in id
+    /// order — the per-contract address gauge, read in one pass.
+    #[napi]
+    pub fn contract_counts(&self) -> Vec<ContractAddressCount> {
+        let store = self.read();
+        store
+            .contract_names
+            .iter()
+            .enumerate()
+            .map(|(idx, name)| ContractAddressCount {
+                contract_name: name.clone(),
+                count: i64::from(store.live_count_by_contract[idx]),
+            })
+            .collect()
     }
 
     #[napi]

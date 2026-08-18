@@ -49,6 +49,11 @@ type t = {
   cache: dict<Persistence.effectCacheRecord>,
   effectCache: dict<dict<Internal.effectCacheItem>>,
   mutable envioInfo: option<JSON.t>,
+  // Every indexed address, insert-only — the in-memory twin of envio_addresses.
+  mutable addresses: array<AddressRows.row>,
+  // The canonical contract mapping, assigned at initialize and read back on a
+  // resume just as the stored one is.
+  mutable contractNames: array<string>,
   mutable isInitialized: bool,
 }
 
@@ -61,6 +66,8 @@ let make = (): t => {
   cache: Dict.make(),
   effectCache: Dict.make(),
   envioInfo: None,
+  addresses: [],
+  contractNames: [],
   isInitialized: false,
 }
 
@@ -117,61 +124,67 @@ let registerEntities = (state: t, ~entities: array<Internal.entityConfig>) =>
 
 // Seeds the config's contract addresses, mirroring what PgStorage.initialize
 // writes into `envio_addresses`.
-let seedIndexingAddresses = (state: t, ~chainConfigs: array<Config.chain>) => {
-  let dict = state->getEntityDict(~name=InternalTable.EnvioAddresses.name)
-  chainConfigs->Array.forEach(chainConfig =>
-    chainConfig.contracts->Array.forEach(contract =>
-      contract.addresses->Array.forEach(
-        address => {
-          let entity: InternalTable.EnvioAddresses.t = {
-            id: Config.EnvioAddresses.makeId(~chainId=chainConfig.id, ~address),
-            chainId: chainConfig.id,
-            contractName: contract.name,
-            registrationBlock: -1,
-            registrationLogIndex: -1,
-          }
-          dict->Dict.set(entity.id, entity->Config.EnvioAddresses.castToInternal)
-        },
-      )
+let seedConfigAddresses = (state: t, ~chainConfigs: array<Config.chain>, ~ecosystem) => {
+  state.contractNames = Config.canonicalContractNames(~chainConfigs)
+  chainConfigs->Array.forEach(chainConfig => {
+    let rows = chainConfig->ChainState.configAddressRows(
+      ~ecosystem,
+      ~contractNames=state.contractNames,
     )
-  )
-}
-
-external castToEnvioAddresses: Internal.entity => InternalTable.EnvioAddresses.t = "%identity"
-
-let toIndexingAddress = (dc: InternalTable.EnvioAddresses.t): Internal.indexingAddress => {
-  address: dc->Config.EnvioAddresses.getAddress,
-  contractName: dc.contractName,
-  registrationBlock: dc.registrationBlock,
-}
-
-// All indexing addresses (config-seeded + dynamically registered) grouped by
-// chain id string, derived from the envio_addresses entities.
-let getIndexingAddressesByChain = (state: t): dict<array<Internal.indexingAddress>> => {
-  let byChain = Dict.make()
-  switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
-  | Some(dcDict) =>
-    dcDict
-    ->Dict.valuesToArray
-    ->Array.forEach(entity => {
-      let dc = entity->castToEnvioAddresses
-      let chainIdStr = dc.chainId->ChainId.toString
-      let contracts = switch byChain->Dict.get(chainIdStr) {
-      | Some(arr) => arr
-      | None =>
-        let arr = []
-        byChain->Dict.set(chainIdStr, arr)
-        arr
-      }
-      contracts->Array.push(dc->toIndexingAddress)->ignore
+    Core.getAddon()
+    .splitAddresses(~ecosystem=(ecosystem :> string), ~bytes=rows.addresses, ~lengths=rows.lengths)
+    ->Array.forEachWithIndex((address, idx) => {
+      state.addresses
+      ->Array.push({
+        AddressRows.chainId: chainConfig.id,
+        address,
+        contractId: rows.contractIds->Array.getUnsafe(idx),
+        registrationBlock: AddressRows.configRegistrationBlock,
+        checkpointId: AddressRows.configCheckpointId,
+      })
+      ->ignore
     })
-  | None => ()
-  }
-  byChain
+  })
+}
+
+// The stored rows in the columnar form the address store seeds from, grouped by
+// chain id string. The lengths are always carried, so this side never has to
+// know how wide a key is.
+let addressRowsByChain = (state: t): dict<AddressRows.seedRows> => {
+  let chunks: dict<array<NodeJs.Buffer.t>> = Dict.make()
+  let seedRowsByChain = Dict.make()
+  state.addresses->Array.forEach(row => {
+    let key = row.chainId->ChainId.toString
+    let (rowChunks, seedRows) = switch seedRowsByChain->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some(seedRows) => (chunks->Dict.getUnsafe(key), seedRows)
+    | None =>
+      let seedRows: AddressRows.seedRows = {
+        addresses: NodeJs.Buffer.empty,
+        lengths: Null.make([]),
+        contractIds: [],
+        registrationBlocks: [],
+      }
+      let rowChunks = []
+      seedRowsByChain->Dict.set(key, seedRows)
+      chunks->Dict.set(key, rowChunks)
+      (rowChunks, seedRows)
+    }
+    rowChunks->Array.push(row.address)->ignore
+    seedRows.lengths->Null.getUnsafe->Array.push(row.address->NodeJs.Buffer.length)->ignore
+    seedRows.contractIds->Array.push(row.contractId)->ignore
+    seedRows.registrationBlocks->Array.push(row.registrationBlock)->ignore
+  })
+  seedRowsByChain
+  ->Dict.toArray
+  ->Array.map(((key, seedRows)) => (
+    key,
+    {...seedRows, AddressRows.addresses: NodeJs.Buffer.concat(chunks->Dict.getUnsafe(key))},
+  ))
+  ->Dict.fromArray
 }
 
 let toInitialChainStates = (state: t): array<Persistence.initialChainState> => {
-  let addressesByChain = state->getIndexingAddressesByChain
+  let addressesByChain = state->addressRowsByChain
   state.chains
   ->Dict.valuesToArray
   ->Array.map((chain): Persistence.initialChainState => {
@@ -183,9 +196,9 @@ let toInitialChainStates = (state: t): array<Persistence.initialChainState> => {
     numEventsProcessed: chain.numEventsProcessed,
     firstEventBlockNumber: chain.firstEventBlockNumber,
     timestampCaughtUpToHeadOrEndblock: chain.timestampCaughtUpToHeadOrEndblock,
-    indexingAddresses: addressesByChain
-    ->Dict.get(chain.id->ChainId.toString)
-    ->Option.getOr([]),
+    addressRows: addressesByChain
+    ->Utils.Dict.dangerouslyGetNonOption(chain.id->ChainId.toString)
+    ->Option.getOr(AddressRows.emptySeedRows()),
     sourceBlockNumber: chain.sourceBlockNumber,
   })
 }
@@ -222,6 +235,7 @@ let reorgCheckpoints = (state: t): array<Internal.reorgCheckpoint> =>
 
 let toInitialState = (state: t, ~cleanRun): Persistence.initialState => {
   cleanRun,
+  contractNames: state.contractNames,
   cache: state.cache,
   chains: state->toInitialChainStates,
   checkpointId: state->committedCheckpointId,
@@ -307,6 +321,7 @@ let backfillHistory = (
 
 let applyRollback = (state: t, ~targetCheckpointId) => {
   state.checkpoints = state.checkpoints->Array.filter(cp => cp.id <= targetCheckpointId)
+  state.addresses = state.addresses->Array.filter(row => row.checkpointId <= targetCheckpointId)
   state.history
   ->Dict.toArray
   ->Array.forEach(((name, rows)) =>
@@ -321,6 +336,7 @@ let writeBatch = (
   ~isInReorgThreshold,
   ~config: Config.t,
   ~updatedEntities: array<Persistence.updatedEntity>,
+  ~registeredAddresses: array<AddressRows.row>,
   ~updatedEffectsCache: array<Persistence.updatedEffectCache>,
   ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
 ) => {
@@ -332,6 +348,19 @@ let writeBatch = (
   | Some({targetCheckpointId}) => state->applyRollback(~targetCheckpointId)
   | None => ()
   }
+
+  // Insert-only and idempotent on (chain, address, contract), matching the
+  // `ON CONFLICT DO NOTHING` the Postgres write uses.
+  registeredAddresses->Array.forEach(row => {
+    let isStored = state.addresses->Array.some(stored =>
+      stored.chainId == row.chainId &&
+        stored.contractId === row.contractId &&
+        stored.address == row.address
+    )
+    if !isStored {
+      state.addresses->Array.push(row)->ignore
+    }
+  })
 
   // The rollback diff restates what the reverted state already is, so it is not
   // a change history should record — and an id it touches needs no backfill
@@ -555,7 +584,7 @@ let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
   isInitialized: async () => state.isInitialized,
   initialize: async (~chainConfigs=[], ~entities=[], ~enums as _=[], ~envioInfo) => {
     state->registerEntities(~entities)
-    state->seedIndexingAddresses(~chainConfigs)
+    state->seedConfigAddresses(~chainConfigs, ~ecosystem=config.ecosystem.name)
     chainConfigs->Array.forEach(chainConfig =>
       state.chains->Dict.set(
         chainConfig.id->ChainId.toString,
@@ -680,6 +709,7 @@ let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
     ~allEntities as _,
     ~updatedEffectsCache,
     ~updatedEntities,
+    ~registeredAddresses,
     ~chainMetaData,
     ~onWrite as _,
   ) =>
@@ -689,6 +719,7 @@ let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
       ~isInReorgThreshold,
       ~config,
       ~updatedEntities,
+      ~registeredAddresses,
       ~updatedEffectsCache,
       ~chainMetaData,
     ),

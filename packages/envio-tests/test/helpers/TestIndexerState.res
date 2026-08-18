@@ -28,6 +28,7 @@ let readyPersistence = (~config=config, ~storage) => {
   ...PgStorage.makePersistenceFromConfig(~config, ~storage),
   storageStatus: Persistence.Ready({
     cleanRun: false,
+    contractNames: Config.canonicalContractNames(~chainConfigs=config.chainMap->ChainMap.values),
     cache: Dict.make(),
     chains: [],
     reorgCheckpoints: [],

@@ -5,7 +5,174 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-module EnvioAddresses = Config.EnvioAddresses
+// The canonical contract ids. Written once at initialize from the config's
+// contract names in byte order, so an id names the same contract on every
+// chain and across restarts; read back on resume, where the stored mapping is
+// what every address row means.
+module EnvioContracts = {
+  let table = mkTable(
+    "envio_contracts",
+    ~fields=[
+      mkField("id", SmallInt, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField("name", String, ~fieldSchema=S.string),
+    ],
+  )
+
+  let makeInsertQuery = (~pgSchema) =>
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("id", "name")
+SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(Text: Postgres.columnType :> string)}[]);`
+
+  // `contractNames` is the canonical list: a name's position is its id.
+  let insert = (sql, ~pgSchema, ~contractNames: array<string>) =>
+    sql
+    ->Postgres.preparedUnsafe(
+      makeInsertQuery(~pgSchema),
+      (contractNames->Array.mapWithIndex((_, idx) => idx), contractNames)->(
+        Utils.magic: ((array<int>, array<string>)) => unknown
+      ),
+    )
+    ->Utils.Promise.ignoreValue
+
+  // Ordered by id, so the result is the canonical list itself.
+  let read = async (sql, ~pgSchema): array<string> => {
+    let rows: array<{"name": string}> = await sql->Postgres.unsafe(
+      `SELECT "name" FROM "${pgSchema}"."${table.tableName}" ORDER BY "id";`,
+    )
+    rows->Array.map(row => row["name"])
+  }
+}
+
+// Every address the indexer indexes, one row per (chain, address, contract).
+// A dedicated table rather than an entity: rows are insert-only, so a rollback
+// is a delete by checkpoint and there's no history table to keep — which is
+// what makes tens of millions of addresses affordable.
+module EnvioAddresses = {
+  let name = "envio_addresses"
+
+  type row = AddressRows.row
+  type seedRows = AddressRows.seedRows
+
+  let table = mkTable(
+    name,
+    ~fields=[
+      mkField("chain_id", ChainId, ~fieldSchema=ChainId.schema, ~isPrimaryKey),
+      mkField("address", Bytea, ~fieldSchema=S.string, ~isPrimaryKey),
+      mkField("contract_id", SmallInt, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField("registration_block", Int32, ~fieldSchema=S.int),
+      // Deliberately no foreign key to envio_checkpoints: checkpoints are
+      // pruned while these rows stay, and the 0 sentinel never has one.
+      mkField("envio_checkpoint_id", UInt64, ~fieldSchema=S.bigint),
+    ],
+  )
+
+  let makeInsertQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = Table.getPgFieldType(
+      ~fieldType=ChainId,
+      ~pgSchema,
+      ~isArray=true,
+      ~isNumericArrayAsText=false,
+      ~isNullable=false,
+      ~chainIdMode,
+    )
+    // Idempotent: a batch write retried after a failed transaction re-inserts
+    // rows the store still holds.
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("chain_id", "address", "contract_id", "registration_block", "envio_checkpoint_id")
+SELECT * FROM unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[],$4::${(Integer: Postgres.columnType :> string)}[],$5::${(BigInt: Postgres.columnType :> string)}[])
+ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
+  }
+
+  let insert = (sql, ~pgSchema, ~rows: array<AddressRows.row>, ~chainIdMode: ChainId.mode=Int32) =>
+    sql
+    ->Postgres.preparedUnsafe(
+      makeInsertQuery(~pgSchema, ~chainIdMode),
+      (
+        rows->Array.map(row => row.chainId),
+        sql->Postgres.typed(rows->Array.map(row => row.address), Postgres.byteaArrayOid),
+        rows->Array.map(row => row.contractId),
+        rows->Array.map(row => row.registrationBlock),
+        rows->Array.map(row => row.checkpointId->BigInt.toString),
+      )->(
+        Utils.magic: (
+          (array<ChainId.t>, unknown, array<int>, array<int>, array<string>)
+        ) => unknown
+      ),
+    )
+    ->Utils.Promise.ignoreValue
+
+  // Rows are insert-only, so undoing a rollback's worth of registrations is a
+  // delete by the checkpoint that owned them. Rows stamped 0 are final.
+  let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) =>
+    sql
+    ->Postgres.preparedUnsafe(
+      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "envio_checkpoint_id" > $1;`,
+      [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+    )
+    ->Utils.Promise.ignoreValue
+
+  type rawRow = {
+    chainId: ChainId.t,
+    address: NodeJs.Buffer.t,
+    contractId: int,
+    registrationBlock: int,
+  }
+
+  let makeGetRowsQuery = (~pgSchema) =>
+    `SELECT "chain_id" as "chainId",
+"address" as "address",
+"contract_id" as "contractId",
+"registration_block" as "registrationBlock"
+FROM "${pgSchema}"."${table.tableName}";`
+
+  type mutableGroup = {
+    chunks: array<NodeJs.Buffer.t>,
+    lengths: Null.t<array<int>>,
+    contractIds: array<int>,
+    registrationBlocks: array<int>,
+  }
+
+  // Groups the flat rows into the per-chain columnar form the address store
+  // seeds from. Keyed by the normalized chain id string, matching how the
+  // chains rows are keyed. `isFixedWidth` is false only for SVM, whose base58
+  // keys vary in width and so need their lengths carried alongside.
+  let groupRows = (rows: array<rawRow>, ~isFixedWidth: bool): dict<seedRows> => {
+    let groups: dict<mutableGroup> = Dict.make()
+    rows->Array.forEach(row => {
+      let key = row.chainId->ChainId.normalizeOrThrow->ChainId.toString
+      let group = switch groups->Utils.Dict.dangerouslyGetNonOption(key) {
+      | Some(group) => group
+      | None =>
+        let group = {
+          chunks: [],
+          lengths: isFixedWidth ? Null.null : Null.make([]),
+          contractIds: [],
+          registrationBlocks: [],
+        }
+        groups->Dict.set(key, group)
+        group
+      }
+      group.chunks->Array.push(row.address)->ignore
+      switch group.lengths->Null.toOption {
+      | Some(lengths) => lengths->Array.push(row.address->NodeJs.Buffer.length)->ignore
+      | None => ()
+      }
+      group.contractIds->Array.push(row.contractId)->ignore
+      group.registrationBlocks->Array.push(row.registrationBlock)->ignore
+    })
+    let seedRowsByChain = Dict.make()
+    groups->Utils.Dict.forEachWithKey((group, key) => {
+      seedRowsByChain->Dict.set(
+        key,
+        {
+          AddressRows.addresses: NodeJs.Buffer.concat(group.chunks),
+          lengths: group.lengths,
+          contractIds: group.contractIds,
+          registrationBlocks: group.registrationBlocks,
+        },
+      )
+    })
+    seedRowsByChain
+  }
+}
 
 module Chains = {
   type progressFields = [
@@ -189,7 +356,7 @@ WHERE "${(#id: field :> string)}" = $2
     timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
     numEventsProcessed: float,
     progressBlockNumber: int,
-    indexingAddresses: array<Internal.indexingAddress>,
+    addressRows: EnvioAddresses.seedRows,
     sourceBlockNumber: int,
   }
 
@@ -206,67 +373,31 @@ WHERE "${(#id: field :> string)}" = $2
 FROM "${pgSchema}"."${table.tableName}";`
   }
 
-  type rawIndexingAddress = {
-    chainId: ChainId.t,
-    address: Address.t,
-    contractName: string,
-    registrationBlock: int,
-  }
-
   // Addresses are read as plain rows rather than aggregated per chain with
   // json_agg: a single chain's aggregate can exceed V8's max string length
   // (postgres.js decodes the column with Buffer.toString and throws
   // ERR_STRING_TOO_LONG). Grouping happens in JS instead — see getInitialState.
-  let makeGetIndexingAddressesQuery = (~pgSchema) => {
-    // envio_addresses.id is a composite "{chainId}-{address}" string produced by
-    // Config.EnvioAddresses.makeId; extract the address by taking everything
-    // after the first '-'. Keep in sync with makeId / getAddress.
-    `SELECT "chain_id" as "chainId",
-SUBSTRING("id" FROM POSITION('-' IN "id") + 1) as "address",
-"contract_name" as "contractName",
-"registration_block" as "registrationBlock"
-FROM "${pgSchema}"."${EnvioAddresses.table.tableName}";`
-  }
-
-  let getInitialState = async (sql, ~pgSchema) => {
-    let (rawInitialStates, rawIndexingAddresses) = await Promise.all2((
+  let getInitialState = async (sql, ~pgSchema, ~isFixedWidthAddresses) => {
+    let (rawInitialStates, rawAddressRows) = await Promise.all2((
       sql
       ->Postgres.unsafe(makeGetInitialStateQuery(~pgSchema))
       ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>),
       sql
-      ->Postgres.unsafe(makeGetIndexingAddressesQuery(~pgSchema))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<rawIndexingAddress>>),
+      ->Postgres.unsafe(EnvioAddresses.makeGetRowsQuery(~pgSchema))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<EnvioAddresses.rawRow>>),
     ))
 
-    let indexingAddressesByChainId = Dict.make()
-    rawIndexingAddresses->Array.forEach(row => {
-      // BIGINT chain ids come back as strings; normalizing here keeps the
-      // grouping key identical to the one derived from the chains rows below.
-      let key = row.chainId->ChainId.normalizeOrThrow->ChainId.toString
-      let addresses = switch indexingAddressesByChainId->Dict.get(key) {
-      | Some(addresses) => addresses
-      | None =>
-        let addresses: array<Internal.indexingAddress> = []
-        indexingAddressesByChainId->Dict.set(key, addresses)
-        addresses
-      }
-      addresses
-      ->Array.push({
-        address: row.address,
-        contractName: row.contractName,
-        registrationBlock: row.registrationBlock,
-      })
-      ->ignore
-    })
+    let addressRowsByChainId =
+      rawAddressRows->EnvioAddresses.groupRows(~isFixedWidth=isFixedWidthAddresses)
 
     rawInitialStates->Array.map(rawInitialState => {
       let id = rawInitialState.id->ChainId.normalizeOrThrow
       {
         ...rawInitialState,
         id,
-        indexingAddresses: indexingAddressesByChainId
-        ->Dict.get(id->ChainId.toString)
-        ->Option.getOr([]),
+        addressRows: addressRowsByChainId
+        ->Utils.Dict.dangerouslyGetNonOption(id->ChainId.toString)
+        ->Option.getOr(AddressRows.emptySeedRows()),
       }
     })
   }

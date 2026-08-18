@@ -3,7 +3,11 @@
 
 type t
 
-let configAddresses: Config.chain => array<Internal.indexingAddress>
+let configAddressRows: (
+  Config.chain,
+  ~ecosystem: Ecosystem.name,
+  ~contractNames: array<string>,
+) => AddressRows.seedRows
 
 let make: (
   ~chainConfig: Config.chain,
@@ -29,6 +33,7 @@ let make: (
 let makeFromConfig: (
   Config.chain,
   ~config: Config.t,
+  ~contractNames: array<string>,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~knownHeight: int,
 ) => t
@@ -40,6 +45,7 @@ let makeFromDbState: (
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~config: Config.t,
+  ~contractNames: array<string>,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~reducedPollingInterval: int=?,
 ) => t

@@ -66,6 +66,16 @@ module Process = {
   external getActiveResourcesInfo: unit => array<string> = "getActiveResourcesInfo"
 }
 
+// Node Buffers are only ever moved here — packed address keys crossing to the
+// Rust store and to Postgres. Nothing on this side reads their bytes.
+module Buffer = {
+  type t
+  @val @scope("Buffer") external concat: array<t> => t = "concat"
+  @val @scope("Buffer") external alloc: int => t = "alloc"
+  @get external length: t => int = "length"
+  let empty = alloc(0)
+}
+
 module V8 = {
   type heapSpaceStatistics = {
     @as("space_name") spaceName: string,

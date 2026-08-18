@@ -109,11 +109,9 @@ let asRegisterContext = (context: Internal.contractRegisterContext) =>
 
 // Query only dynamically registered addresses (exclude config addresses with registrationBlock=-1)
 let queryDynamicAddresses = (indexer: IndexerRunner.t) =>
-  (
-    indexer.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
-      array<InternalTable.EnvioAddresses.t>,
-    >
-  )->Promise.thenResolve(rows => rows->Array.filter(r => r.registrationBlock !== -1))
+  indexer.queryAddresses()->Promise.thenResolve(rows =>
+    rows->Array.filter(r => r.registrationBlock !== -1)
+  )
 
 describe("E2E rollback tests", () => {
   let testSingleChainRollback = async (
@@ -1047,12 +1045,9 @@ describe("E2E rollback tests", () => {
         ~message="Added the processed dynamic contract to the db",
       ).toEqual([
         {
-          id: `1337-${Envio.TestHelpers.Addresses.mockAddresses
-            ->Array.getUnsafe(0)
-            ->Address.toString}`,
+          IndexerRunner.address: Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
           chainId: 1337->ChainId.fromInt,
           registrationBlock: 102,
-          registrationLogIndex: -1,
           contractName: "SimpleNft",
         },
       ])
@@ -1145,12 +1140,9 @@ describe("E2E rollback tests", () => {
         ~message="Should have only one dynamic contract in the db. The second one rollbacked from db, the third one rollbacked from fetch state",
       ).toEqual([
         {
-          id: `1337-${Envio.TestHelpers.Addresses.mockAddresses
-            ->Array.getUnsafe(0)
-            ->Address.toString}`,
+          IndexerRunner.address: Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
           chainId: 1337->ChainId.fromInt,
           registrationBlock: 102,
-          registrationLogIndex: -1,
           contractName: "SimpleNft",
         },
       ])
@@ -2949,6 +2941,7 @@ describe("E2E rollback tests", () => {
         ~allEntities,
         ~updatedEffectsCache,
         ~updatedEntities,
+        ~registeredAddresses,
         ~chainMetaData,
         ~onWrite,
       ) => {
@@ -2966,6 +2959,7 @@ describe("E2E rollback tests", () => {
             ~allEntities,
             ~updatedEffectsCache,
             ~updatedEntities,
+            ~registeredAddresses,
             ~chainMetaData,
             ~onWrite,
           )

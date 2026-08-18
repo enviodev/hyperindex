@@ -62,18 +62,43 @@ type t = {
   mutable progressLatencyMs: option<int>,
 }
 
-let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
+// The chain's config-declared addresses in the columnar form storage and the
+// address store both take. The keys are encoded by the Rust codec, so the bytes
+// a clean run writes are exactly the bytes a resume seeds from.
+let configAddressRows = (
+  chainConfig: Config.chain,
+  ~ecosystem: Ecosystem.name,
+  ~contractNames: array<string>,
+): AddressRows.seedRows => {
   let addresses = []
+  let contractIds = []
+  let registrationBlocks = []
   chainConfig.contracts->Array.forEach(contract => {
+    let contractId = switch contractNames->Array.indexOf(contract.name) {
+    | -1 =>
+      JsError.throwWithMessage(
+        `Contract "${contract.name}" is missing from the indexer's contract list.`,
+      )
+    | id => id
+    }
     contract.addresses->Array.forEach(address => {
-      addresses->Array.push({
-        Internal.address,
-        contractName: contract.name,
-        registrationBlock: -1,
-      })
+      addresses->Array.push(address)->ignore
+      contractIds->Array.push(contractId)->ignore
+      registrationBlocks
+      ->Array.push(AddressRows.configRegistrationBlock)
+      ->ignore
     })
   })
-  addresses
+  let packed = Core.getAddon().packAddresses(
+    ~ecosystem=(ecosystem :> string),
+    ~addresses,
+  )
+  {
+    addresses: packed.bytes,
+    lengths: packed.lengths,
+    contractIds,
+    registrationBlocks,
+  }
 }
 
 let validateOnEventRegistrations = (
@@ -142,22 +167,14 @@ let make = (
   }
 }
 
-// Every chain's contracts, not just one chain's: `context.chain.X.add` accepts
-// any config contract, whichever chain declared it, so every chain's address
-// store has to hold the whole set.
-let configContractNames = (config: Config.t) => {
-  let names = Utils.Set.make()
-  config.chainMap
-  ->ChainMap.values
-  ->Array.forEach(chain =>
-    chain.contracts->Array.forEach(contract => names->Utils.Set.add(contract.name)->ignore)
-  )
-  names->Utils.Set.toArray
-}
-
 let makeInternal = (
   ~chainConfig: Config.chain,
-  ~indexingAddresses: array<Internal.indexingAddress>,
+  ~addressRows: AddressRows.seedRows,
+  // Every chain's contracts, not just one chain's: `context.chain.X.add`
+  // accepts any config contract, whichever chain declared it, so every chain's
+  // address store has to hold the whole set — under the same ids, since a
+  // persisted row names its contract by id.
+  ~contractNames: array<string>,
   ~startBlock,
   ~endBlock,
   ~firstEventBlock=None,
@@ -199,16 +216,13 @@ let makeInternal = (
   let addressStore = AddressStore.make(
     ~ecosystem=config.ecosystem.name,
     ~shouldChecksum=!lowercaseAddresses,
-    ~contracts=AddressStore.contractsOf(
-      ~onEventRegistrations,
-      ~configContractNames=config->configContractNames,
-    ),
+    ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractNames),
   )
 
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
     ~addressStore,
-    ~addresses=indexingAddresses,
+    ~addressRows,
     ~progressBlockNumber,
     ~startBlock,
     ~endBlock,
@@ -357,7 +371,7 @@ let makeInternal = (
       ~chainReorgCheckpoints,
     ),
     ~committedProgressBlockNumber=progressBlockNumber,
-    ~perChainEntities=config.allEntities->EntityTables.perChain,
+    ~perChainEntities=config.userEntities->EntityTables.perChain,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
     ~transactionStore=TransactionStore.make(
@@ -373,7 +387,8 @@ let makeInternal = (
 
 let makeFromConfig = (
   chainConfig: Config.chain,
-  ~config,
+  ~config: Config.t,
+  ~contractNames,
   ~registrationsByChainId,
   ~knownHeight,
 ) => {
@@ -382,6 +397,7 @@ let makeFromConfig = (
   makeInternal(
     ~chainConfig,
     ~config,
+    ~contractNames,
     ~registrationsByChainId,
     ~startBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
@@ -391,7 +407,10 @@ let makeFromConfig = (
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0.,
     ~logger,
-    ~indexingAddresses=configAddresses(chainConfig),
+    ~addressRows=chainConfig->configAddressRows(
+      ~ecosystem=config.ecosystem.name,
+      ~contractNames,
+    ),
     ~isInReorgThreshold=false,
     ~isRealtime=false,
     ~knownHeight,
@@ -408,6 +427,7 @@ let makeFromDbState = (
   ~isInReorgThreshold,
   ~isRealtime,
   ~config,
+  ~contractNames,
   ~registrationsByChainId,
   ~reducedPollingInterval=?,
 ) => {
@@ -421,7 +441,8 @@ let makeFromDbState = (
       : resumedChainState.startBlock - 1
 
   makeInternal(
-    ~indexingAddresses=resumedChainState.indexingAddresses,
+    ~addressRows=resumedChainState.addressRows,
+    ~contractNames,
     ~chainConfig,
     ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock,
@@ -1019,6 +1040,9 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   startBlock: cs.fetchState.startBlock,
   endBlock: cs.fetchState.endBlock,
   numAddresses: cs.addressStore->AddressStore.size,
+  addressesByContract: cs.addressStore
+  ->AddressStore.contractCounts
+  ->Array.map(({contractName, count}) => (contractName, count)),
   isReady: cs->isReady,
   sourceBlockNumber: cs.fetchState.knownHeight,
   progressBlockNumber: cs.committedProgressBlockNumber,

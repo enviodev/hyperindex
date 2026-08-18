@@ -341,6 +341,8 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
       progressBlockByChain: Dict.make(),
       entities: Dict.make(),
       entityConfigs,
+      addresses: [],
+      contractNames: [],
       processChanges: [],
     }
   }
@@ -348,6 +350,8 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
   let deletedIdsOf = (~entityConfig: Internal.entityConfig, ~entityId: EntityId.t) => {
     let state = makeState(~entityConfig)
     state->TestIndexer.handleWriteBatch(
+      ~config=idTypesConfig,
+      ~registeredAddresses=[],
       ~updatedEntities=[
         {
           entityConfig,

@@ -65,6 +65,10 @@ type t = {
   // Processed but unwritten. The cycle drains them, splitting each write at a
   // change in isInReorgThreshold so it never mixes history-saving modes.
   mutable processedBatches: array<Batch.t>,
+  // Addresses drained from the chains' address stores, waiting for the write
+  // that covers their checkpoint. Insert-only rows rather than staged entities:
+  // the table they land in has no history and no updates.
+  mutable registeredAddresses: array<AddressRows.row>,
   // Count of processed batches; version-independent progress counter.
   mutable processedBatchesCount: int,
   // The single in-flight write loop, None when idle.
@@ -172,6 +176,7 @@ let make = (
     committedCheckpointId,
     processedCheckpointId: committedCheckpointId,
     processedBatches: [],
+    registeredAddresses: [],
     processedBatchesCount: 0,
     writeFiber: None,
     finalizeFiber: None,
@@ -267,6 +272,7 @@ let makeFromDbState = (
         ~isInReorgThreshold,
         ~isRealtime,
         ~config,
+        ~contractNames=initialState.contractNames,
         ~registrationsByChainId,
         ~reducedPollingInterval?,
       ),
@@ -797,7 +803,32 @@ let takeRollback = (state: t): option<Persistence.rollback> => {
 }
 
 // Advance the committed (durably persisted) frontier after a successful write.
-let markCommitted = (state: t, ~upToCheckpointId) => state.committedCheckpointId = upToCheckpointId
+// Written rows leave the buffer only once the transaction that holds them has
+// committed. A failed write keeps them, and re-inserting a row the database
+// already has is a no-op.
+let markCommitted = (state: t, ~upToCheckpointId) => {
+  state.committedCheckpointId = upToCheckpointId
+  state.registeredAddresses =
+    state.registeredAddresses->Array.filter(row => row.checkpointId > upToCheckpointId)
+}
+
+let stageRegisteredAddresses = (state: t, rows: array<AddressRows.row>) =>
+  state.registeredAddresses = state.registeredAddresses->Array.concat(rows)
+
+// The rows this write covers. Their checkpoint id is what a rollback deletes
+// them by — but checkpoints are only persisted for a history-saving batch, and
+// the id sequence restarts from the last persisted one, so a row stamped with
+// an id that never reached the database could be deleted by an unrelated later
+// rollback. Outside the reorg threshold the write is final anyway, so those
+// rows are stamped 0: no rollback can reach them, and none needs to.
+let snapshotRegisteredAddresses = (state: t, ~upToCheckpointId, ~shouldSaveHistory) =>
+  state.registeredAddresses
+  ->Array.filter(row => row.checkpointId <= upToCheckpointId)
+  ->Array.map(row =>
+    shouldSaveHistory
+      ? row
+      : {...row, checkpointId: AddressRows.configCheckpointId}
+  )
 
 // Reset the in-memory tables and arm the rollback diff that the next write commits.
 let beginRollbackDiff = (
@@ -808,6 +839,9 @@ let beginRollbackDiff = (
 ) => {
   let perChainEntities = state.allEntities->EntityTables.perChain
   state.entities = EntityTables.make(state.allEntities->EntityTables.crossChain)
+  // Every address staged since the last commit was registered by an event the
+  // rollback un-processes; the refetch registers it again.
+  state.registeredAddresses = []
   state->chainStates->Utils.Dict.forEach(cs => cs->ChainState.resetEntities(~perChainEntities))
   state.effectState->EffectState.resetForRollback
   state.rollback = Some({

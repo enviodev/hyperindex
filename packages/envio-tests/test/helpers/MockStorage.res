@@ -175,6 +175,7 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
         ~allEntities as _,
         ~updatedEffectsCache as _,
         ~updatedEntities as _,
+        ~registeredAddresses as _,
         ~chainMetaData as _,
         ~onWrite as _,
       ) => JsError.throwWithMessage("Not implemented"),
@@ -188,6 +189,9 @@ let toPersistence = (storageMock: t, ~config: Config.t) => {
     ...PgStorage.makePersistenceFromConfig(~config, ~storage=storageMock.storage),
     storageStatus: Ready({
       cleanRun: false,
+      contractNames: Config.canonicalContractNames(
+        ~chainConfigs=config.chainMap->ChainMap.values,
+      ),
       cache: Dict.make(),
       chains: [],
       reorgCheckpoints: [],

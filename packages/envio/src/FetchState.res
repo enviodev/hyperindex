@@ -1469,7 +1469,6 @@ let warnAddressRegistration = (
 
 // A rejected registration is simply absent from every partition, so without a
 // warning the user sees a contract that never indexes and nothing saying why.
-// Shared by config-time registration in `make` and by dynamic registration.
 let warnRejectedRegistration = (
   verdict: AddressStore.verdict,
   ~chainId: ChainId.t,
@@ -1477,16 +1476,6 @@ let warnRejectedRegistration = (
   ~contractName: string,
 ) =>
   switch verdict {
-  | Conflict({existingContractName}) =>
-    warnAddressRegistration(
-      ~chainId,
-      ~contractAddress,
-      ~params={
-        "existingContractType": existingContractName,
-        "newContractType": contractName,
-      },
-      `Skipping contract registration: Contract address is already registered for one contract and cannot be registered for another contract.`,
-    )
   | Duplicate({effectiveStartBlock, existingEffectiveStartBlock}) =>
     // FIXME: Instead of filtering out duplicates, we should check the block
     // number first. If a new registration has an earlier block number we
@@ -1723,9 +1712,10 @@ let registerDynamicContracts = (
   // exactly what this batch adds.
   let idCursor = addressStore->AddressStore.nextId
   // The store resolves each address against both what it already holds and the
-  // batch's own earlier entries, so two contracts claiming one address inside a
-  // single batch conflict the same way as across batches. It also decides which
-  // additions this chain fetches for, since it's what holds the contract list.
+  // batch's own earlier entries, so the same address registered twice for one
+  // contract inside a single batch is a duplicate just as it is across batches.
+  // It also decides which additions this chain fetches for, since it's what
+  // holds the contract list.
   let verdicts = addressStore->AddressStore.registerBatch(registrations)
 
   let registeringContractNames = []
@@ -1741,7 +1731,7 @@ let registerDynamicContracts = (
     // no partition to build. The address is still stored and persisted, so a
     // config that later adds address-dependent events picks it up on restart.
     | Added({fetchable: false}) => ()
-    | Conflict(_) | Duplicate(_) | Invalid =>
+    | Duplicate(_) | Invalid =>
       verdict->warnRejectedRegistration(
         ~chainId=fetchState.chainId,
         ~contractAddress=registration.address,
@@ -2627,7 +2617,7 @@ let make = (
   ~endBlock,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
   ~addressStore: AddressStore.t,
-  ~addresses: array<Internal.indexingAddress>,
+  ~addressRows: AddressRows.seedRows,
   ~maxAddrInPartition,
   ~chainId: ChainId.t,
   ~maxOnBlockBufferSize,
@@ -2681,27 +2671,23 @@ let make = (
   )
 
   // Every address the chain indexes goes into the store — including ones whose
-  // contract has no address-dependent events, so a later registration of the
-  // same address still conflicts and the address is still persisted.
+  // contract has no address-dependent events, so the address is still persisted
+  // and a config that later adds events picks it up.
+  //
+  // These rows come from the config or from a resume, so they're already stored
+  // and must never be drained back into a write. Only the rows the store
+  // refuses come back: a resume seeds millions of them.
   addressStore
-  // These come from the config or from a resume, so they're already stored and
-  // must never be drained back into a write.
-  ->AddressStore.seedBatch(
-    addresses->Array.map((contract): AddressStore.registration => {
-      address: contract.address,
-      contractName: contract.contractName,
-      registrationBlock: contract.registrationBlock,
-    }),
-  )
-  // Verdicts are in the batch's order, so they line up with `addresses`. A
-  // config address the store rejects is dropped exactly like a dynamic one, and
-  // needs the same warning — restored dynamic addresses come through here too.
-  ->Array.forEachWithIndex((verdict, idx) => {
-    let contract = addresses->Array.getUnsafe(idx)
-    verdict->warnRejectedRegistration(
+  ->AddressStore.seedRows(addressRows)
+  ->Array.forEach(rejected => {
+    warnAddressRegistration(
       ~chainId,
-      ~contractAddress=contract.address,
-      ~contractName=contract.contractName,
+      ~contractAddress=rejected.address,
+      ~params={
+        "contractName": rejected.contractName,
+        "kind": rejected.kind,
+      },
+      `Skipping stored address: it is already registered for this contract.`,
     )
   })
 
@@ -2709,23 +2695,24 @@ let make = (
   let clientFilteredContracts = Utils.Set.make()
   let registeringSetsByContract = Dict.make()
 
-  addresses->Array.forEach(contract => {
-    let contractName = contract.contractName
-
-    // Only addresses whose contract has events that depend on addresses get
-    // registered for active fetching via partitions.
+  // What each contract needs a partition for is read back off the store rather
+  // than re-derived from the seeded columns: the store is what resolved the
+  // rows, including the ones it refused.
+  contractNamesWithNormalEvents
+  ->Utils.Set.toArray
+  ->Array.forEach(contractName => {
+    if addressStore->AddressStore.contractCount(contractName) > 0 {
+      registeringSetsByContract->Dict.set(
+        contractName,
+        addressStore->AddressStore.makeSet(~contractName),
+      )
+    }
+  })
+  addressStore
+  ->AddressStore.dynamicContractNames
+  ->Array.forEach(contractName => {
     if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
-      if !(registeringSetsByContract->Dict.has(contractName)) {
-        registeringSetsByContract->Dict.set(
-          contractName,
-          addressStore->AddressStore.makeSet(~contractName),
-        )
-      }
-
-      // Detect dynamic contracts by registrationBlock
-      if contract.registrationBlock !== -1 {
-        dynamicContracts->Utils.Set.add(contractName)->ignore
-      }
+      dynamicContracts->Utils.Set.add(contractName)->ignore
     }
   })
 
@@ -2768,7 +2755,7 @@ let make = (
   ) {
     JsError.throwWithMessage(
       `Invalid configuration: Nothing to fetch on chain ${chainId->ChainId.toString}. ` ++
-      `addresses=${addresses->Array.length->Int.toString}, ` ++
+      `addresses=${addressRows.contractIds->Array.length->Int.toString}, ` ++
       `onEventRegistrations=${onEventRegistrations->Array.length->Int.toString}, ` ++
       `normalRegistrations=${normalRegistrations
         ->Array.length

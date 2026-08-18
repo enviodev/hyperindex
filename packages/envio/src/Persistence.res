@@ -27,12 +27,18 @@ type initialChainState = {
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  indexingAddresses: array<Internal.indexingAddress>,
+  // Every address the chain indexes, columnar — config-declared and dynamically
+  // registered alike. The chain's address store seeds straight from it.
+  addressRows: AddressRows.seedRows,
   sourceBlockNumber: int,
 }
 
 type initialState = {
   cleanRun: bool,
+  // The stored contract mapping: a name's position is the id its addresses'
+  // rows carry. On a resume this is what the database holds, not what the
+  // config would derive — the ids must never reshuffle under stored rows.
+  contractNames: array<string>,
   cache: dict<effectCacheRecord>,
   chains: array<initialChainState>,
   checkpointId: Internal.checkpointId,
@@ -163,6 +169,9 @@ type storage = {
     ~allEntities: array<Internal.entityConfig>,
     ~updatedEffectsCache: array<updatedEffectCache>,
     ~updatedEntities: array<updatedEntity>,
+    // Addresses this batch registered, already stamped with the checkpoint a
+    // rollback would delete them by.
+    ~registeredAddresses: array<AddressRows.row>,
     // Chain metadata stale since the last write, persisted in the same
     // transaction so it never races the batch write.
     ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
@@ -196,7 +205,7 @@ let make = (
   ~allEnums,
   ~storage,
 ) => {
-  let allEntities = userEntities->Array.concat([InternalTable.EnvioAddresses.entityConfig])
+  let allEntities = userEntities
   let allEnums =
     allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
@@ -252,6 +261,18 @@ let init = {
           let changedPaths = switch initialState.envioInfo {
           | None => ["envio info is missing — storage initialized by an older envio"]
           | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
+          }
+          // Belt and braces on top of the config diff: every stored address
+          // row names its contract by the id this mapping assigns, so a
+          // mapping that no longer matches the config would silently attribute
+          // addresses to the wrong contract.
+          // Both lists are in canonical order, so comparing them joined is
+          // comparing the mappings themselves.
+          if (
+            initialState.contractNames->Array.joinUnsafe(",") !==
+              Config.canonicalContractNames(~chainConfigs)->Array.joinUnsafe(",")
+          ) {
+            changedPaths->Array.push("contracts")->ignore
           }
           // `storage.clickhouse` is serialized as a plain bool by the
           // public config (see Rust `StorageConfig`), so probe for
