@@ -73,11 +73,14 @@ fn parse_instructions(root: &Map<String, Value>) -> Result<Instructions> {
         .ok_or_else(|| anyhow!("IDL has no 'instructions' array"))?;
     collect_instructions(
         arr,
-        |name, ix| match ix.get("discriminator") {
-            Some(node) => parse_byte_array(node).context("discriminator"),
-            None => Ok(hashed_discriminator("global:", &name.to_snake_case())),
+        |name, ix| {
+            let bytes = match ix.get("discriminator") {
+                Some(node) => parse_byte_array(node).context("discriminator")?,
+                None => hashed_discriminator("global:", &name.to_snake_case()),
+            };
+            Ok((bytes, ()))
         },
-        |ix, discriminator| {
+        |ix, discriminator, ()| {
             Ok(IxIdl {
                 discriminator,
                 accounts: parse_accounts(ix.get("accounts")).context("accounts")?,

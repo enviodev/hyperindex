@@ -68,15 +68,8 @@ fn parse_instructions(program: &Map<String, Value>) -> Result<Instructions> {
         .ok_or_else(|| anyhow!("Codama program has no 'instructions' array"))?;
     collect_instructions(
         arr,
-        |_name, ix| {
-            parse_discriminators(ix)
-                .map(|(bytes, _)| bytes)
-                .context("discriminators")
-        },
-        |ix, discriminator| {
-            // Re-read for the argument names the discriminator consumed: the
-            // runtime decodes the body after the prefix, not those.
-            let (_, encoded_arg_names) = parse_discriminators(ix)?;
+        |_name, ix| parse_discriminators(ix).context("discriminators"),
+        |ix, discriminator, encoded_arg_names| {
             Ok(IxIdl {
                 discriminator,
                 accounts: parse_accounts(ix.get("accounts")).context("accounts")?,
@@ -250,6 +243,28 @@ fn parse_arguments(node: Option<&Value>, encoded_arg_names: &[String]) -> Result
     let Some(arr) = node.and_then(Value::as_array) else {
         return Ok(Vec::new());
     };
+    // Codama encodes arguments in declaration order, so the ones a field
+    // discriminator consumes have to be the leading ones, in the order their
+    // offsets put them. Otherwise the offsets and the declaration disagree and
+    // the body's starting position is a guess — the honest spelling of the
+    // same layout is already rejected for not tiling from offset 0.
+    let leading: Vec<&str> = arr
+        .iter()
+        .take(encoded_arg_names.len())
+        .filter_map(|a| a.get("name").and_then(Value::as_str))
+        .collect();
+    if leading
+        != encoded_arg_names
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+    {
+        bail!(
+            "the discriminator reads {encoded_arg_names:?}, but the arguments begin {leading:?}; \
+             their offsets and their declaration order disagree"
+        );
+    }
+
     let mut out = Vec::with_capacity(arr.len());
     for a in arr {
         let name = required_str(a, "name").context("arguments")?.to_string();

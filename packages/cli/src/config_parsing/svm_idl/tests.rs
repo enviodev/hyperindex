@@ -525,6 +525,30 @@ fn separates_file_level_defects_from_instruction_level_ones() {
                    "args": [{ "name": "amount", "type": { "coption": "u64" } }] }] }"#,
         ),
         (
+            // Nothing routes *to* a 3-byte discriminator, but `swap` holding
+            // its first two bytes still collects its calls.
+            "instruction shadowed by one of an undispatchable width",
+            r#"{ "instructions": [
+                 { "name": "swap", "discriminator": [1, 2], "args": [] },
+                 { "name": "swapV2", "discriminator": [1, 2, 3], "args": [] }] }"#,
+        ),
+        (
+            // The discriminator claims offset 0 for an argument declared
+            // second, so the offsets and the declaration disagree about where
+            // the body starts.
+            "codama discriminator argument out of declaration order",
+            r#"{ "kind": "rootNode", "program": { "instructions": [{
+                 "kind": "instructionNode", "name": "swap",
+                 "arguments": [
+                   { "kind": "instructionArgumentNode", "name": "amount",
+                     "type": { "kind": "numberTypeNode", "format": "u64" } },
+                   { "kind": "instructionArgumentNode", "name": "tag",
+                     "type": { "kind": "numberTypeNode", "format": "u8" },
+                     "defaultValue": { "kind": "numberValueNode", "number": 3 } }],
+                 "discriminators": [{ "kind": "fieldDiscriminatorNode",
+                                      "name": "tag", "offset": 0 }] }] } }"#,
+        ),
+        (
             // Nothing consumes events, so one that cannot be decoded costs
             // nothing.
             "undecodable event payload",
@@ -577,10 +601,12 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "event with no payload type: accepted",
             "discriminator wider than dispatch probes: swap set aside: its 3-byte discriminator is not one of the widths dispatch probes ([1, 2, 4, 8])",
             "instruction with no discriminator at all: swap set aside: its 0-byte discriminator is not one of the widths dispatch probes ([1, 2, 4, 8])",
-            "one discriminator a prefix of another: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, which would shadow it",
+            "one discriminator a prefix of another: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferChecked set aside: its discriminator 0x0c02 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead",
             "discriminator field not at offset 0: swap set aside: discriminators: discriminator part at offset 8 does not follow the previous part, which ends at 0; dispatch needs one contiguous prefix from offset 0",
             "discriminator value too wide for its format: swap set aside: discriminators: discriminator value 300 does not fit in u8",
-            "instruction shadowed by one set aside for its args: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, which would shadow it; transferChecked set aside: args.amount: `coption` is not Borsh-compatible and cannot be decoded",
+            "instruction shadowed by one set aside for its args: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferChecked set aside: args.amount: `coption` is not Borsh-compatible and cannot be decoded",
+            "instruction shadowed by one of an undispatchable width: swap set aside: its discriminator 0x0102 is a prefix of 'swapV2''s 0x010203, so 'swapV2' takes every call that would have matched it; swapV2 set aside: its 3-byte discriminator is not one of the widths dispatch probes ([1, 2, 4, 8])",
+            "codama discriminator argument out of declaration order: swap set aside: the discriminator reads [\"tag\"], but the arguments begin [\"amount\"]; their offsets and their declaration order disagree",
             "undecodable event payload: accepted",
             "duplicate type name: swap set aside: it reaches type 'Fee', which cannot be decoded: the IDL declares type 'Fee' more than once",
         ]

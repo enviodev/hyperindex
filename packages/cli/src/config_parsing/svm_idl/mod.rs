@@ -121,14 +121,17 @@ fn validate(idl: &mut ProgramIdl) {
         }
     }
 
-    // Collisions are judged over every instruction dispatch could still reach,
-    // including the ones about to be set aside for their arguments. Setting an
-    // instruction aside does not remove it from the chain: it still occurs,
-    // and still answers to its discriminator. A survivor holding a prefix of
-    // one would quietly collect its calls and decode them against the wrong
-    // layout. Only the undispatchable widths drop out, since nothing can route
-    // to those at all.
-    let dispatchable: Vec<(&[u8], &str)> = idl
+    // Judged over every discriminator the program declares, not just the ones
+    // that survive. Setting an instruction aside does not remove it from the
+    // chain: it still occurs, and its data still arrives carrying its own
+    // discriminator. What matters is whether that data can reach a survivor —
+    // which is a question about the bytes, not about whether we can decode the
+    // instruction they belong to. A width we cannot dispatch is no exception:
+    // nothing routes *to* a 3-byte discriminator, but a 2-byte survivor
+    // holding its first two bytes still collects its calls. Only an empty
+    // discriminator drops out, being a prefix of everything and evidence of
+    // nothing.
+    let declared: Vec<(&[u8], &str)> = idl
         .instructions
         .iter()
         .map(|(name, ix)| (ix.discriminator.as_slice(), name.as_str()))
@@ -137,11 +140,10 @@ fn validate(idl: &mut ProgramIdl) {
                 .iter()
                 .map(|(name, bytes)| (bytes.as_slice(), name.as_str())),
         )
-        .filter(|(bytes, name)| {
-            !demoted.contains_key(*name) && DISPATCHABLE_DISCRIMINATOR_LENS.contains(&bytes.len())
-        })
+        .filter(|(bytes, _)| !bytes.is_empty())
         .collect();
-    for (name, reason) in prefix_collisions(dispatchable) {
+    for (name, reason) in prefix_collisions(declared) {
+        // A name already set aside keeps the reason it was set aside for.
         if idl.instructions.contains_key(&name) {
             demoted.entry(name).or_insert(reason);
         }
@@ -160,6 +162,23 @@ fn validate(idl: &mut ProgramIdl) {
         }
     }
 
+    // Nothing reads events yet, so nothing has caught one left holding a
+    // reference to a type about to be pruned. Drop those with the type.
+    let dangling: Vec<String> = idl
+        .events
+        .iter()
+        .filter(|(_, event)| {
+            event
+                .fields
+                .iter()
+                .any(|f| references_resolve(&f.ty, idl, &bad_types).is_err())
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    for name in dangling {
+        idl.events.remove(&name);
+    }
+
     // Codegen hands `defined_types` to the runtime's type registry whole, so a
     // type that cannot be resolved must not be in it — even when no
     // instruction reaches it.
@@ -172,15 +191,21 @@ fn validate(idl: &mut ProgramIdl) {
 
 fn demote(idl: &mut ProgramIdl, demoted: Unusable) {
     for (name, reason) in demoted {
-        idl.instructions.remove(&name);
+        if let Some(ix) = idl.instructions.remove(&name) {
+            idl.unusable_discriminators
+                .insert(name.clone(), ix.discriminator);
+        }
         idl.unusable.insert(name, reason);
     }
 }
 
-/// Dispatch probes discriminator widths longest-first, so if one
-/// instruction's discriminator is a prefix of another's, the longer one wins
-/// every match and the shorter one never fires. Equal discriminators are the
-/// degenerate case: neither can be routed to at all.
+/// Dispatch probes discriminator widths longest-first and compares a prefix of
+/// the data, so a discriminator that is a prefix of another leaves neither
+/// instruction routable. The shorter never fires: the longer wins every probe
+/// that reaches it. The longer over-fires: a call to the shorter whose payload
+/// happens to continue with the extra bytes matches it instead, and decodes
+/// against the wrong layout. Equal discriminators are the degenerate case of
+/// the same thing.
 fn prefix_collisions(mut by_bytes: Vec<(&[u8], &str)>) -> Unusable {
     by_bytes.sort_unstable();
     let mut out = Unusable::new();
@@ -201,13 +226,19 @@ fn prefix_collisions(mut by_bytes: Vec<(&[u8], &str)>) -> Unusable {
                 format!("it shares discriminator 0x{hex} with '{first}'"),
             );
         } else if longer.starts_with(shorter) {
+            let (short_hex, long_hex) = (crate::hex::encode(shorter), crate::hex::encode(longer));
             out.insert(
                 first.to_string(),
                 format!(
-                    "its discriminator 0x{} is a prefix of '{second}'\'s 0x{}, which would shadow \
-                     it",
-                    crate::hex::encode(shorter),
-                    crate::hex::encode(longer),
+                    "its discriminator 0x{short_hex} is a prefix of '{second}'\'s 0x{long_hex}, so \
+                     '{second}' takes every call that would have matched it"
+                ),
+            );
+            out.insert(
+                second.to_string(),
+                format!(
+                    "its discriminator 0x{long_hex} extends '{first}'\'s 0x{short_hex}, so a \
+                     '{first}' call whose data continues those bytes arrives here instead"
                 ),
             );
         }
@@ -295,10 +326,10 @@ fn references_resolve(ty: &FieldType, idl: &ProgramIdl, bad: &Unusable) -> Resul
 /// survives a layout failure. Returns the usable instructions, the reasons the
 /// rest were set aside, and the discriminators of those that got far enough to
 /// have one.
-fn collect_instructions(
+fn collect_instructions<T>(
     entries: &[Value],
-    mut discriminator_of: impl FnMut(&str, &Value) -> Result<Vec<u8>>,
-    mut layout_of: impl FnMut(&Value, Vec<u8>) -> Result<IxIdl>,
+    mut discriminator_of: impl FnMut(&str, &Value) -> Result<(Vec<u8>, T)>,
+    mut layout_of: impl FnMut(&Value, Vec<u8>, T) -> Result<IxIdl>,
 ) -> Result<(BTreeMap<String, IxIdl>, Unusable, BTreeMap<String, Vec<u8>>)> {
     let mut out = BTreeMap::new();
     let mut unusable = Unusable::new();
@@ -310,14 +341,14 @@ fn collect_instructions(
         if out.contains_key(&name) || unusable.contains_key(&name) {
             bail!("IDL declares instruction '{name}' more than once");
         }
-        let discriminator = match discriminator_of(&name, entry) {
-            Ok(bytes) => bytes,
+        let (discriminator, carried) = match discriminator_of(&name, entry) {
+            Ok(parsed) => parsed,
             Err(e) => {
                 unusable.insert(name, format!("{e:#}"));
                 continue;
             }
         };
-        match layout_of(entry, discriminator.clone()) {
+        match layout_of(entry, discriminator.clone(), carried) {
             Ok(ix) => {
                 out.insert(name, ix);
             }
