@@ -9,15 +9,12 @@ export default defineConfig({
     ],
     exclude: [
       "test/fixtures/**",
-      "test/helpers/**",
       // Entirely commented-out test files
       "test/integration-raw-events.test.ts",
       "test/topic-hashing.test.ts",
     ],
-    // Files run in parallel: every indexer gets a Postgres schema of its own
-    // (see MockIndexer.Indexer.run), so they no longer share one. Tests within
-    // a file stay sequential — they share the process-global config and
-    // handler registry.
+    // Tests within a file stay sequential — they share the process-global
+    // config and handler registry.
     sequence: {
       concurrent: false,
     },
@@ -29,7 +26,6 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 30_000,
     setupFiles: ["test/setup.ts"],
-    globalSetup: ["../../packages/envio-tests/test/helpers/GlobalSetup.res.mjs"],
     passWithNoTests: true,
     server: {
       deps: {

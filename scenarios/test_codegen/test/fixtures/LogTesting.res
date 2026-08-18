@@ -56,7 +56,20 @@ fatal("This is a fatal message.")
 setLogLevel(#udebug)
 info(`##Current log level: ${(getLogger()->getLevel :> string)}`)
 
-let item = MockEvents.newGravatarLog1->MockEvents.newGravatarEventToBatchItem
+// The per-item logger reads the contract and event names off the registration
+// and the address off the payload; nothing else about the item is logged.
+let item = Internal.Event({
+  chainId: 1337->ChainId.fromInt,
+  blockNumber: 1,
+  logIndex: 11,
+  transactionIndex: 0,
+  onEventRegistration: {
+    "eventConfig": {"contractName": "Gravatar", "name": "NewGravatar"},
+  }->(Utils.magic: {..} => Internal.onEventRegistration),
+  payload: {
+    "srcAddress": "0xabc0000000000000000000000000000000000000"->Address.Evm.fromStringOrThrow,
+  }->(Utils.magic: {..} => Internal.eventPayload),
+})
 
 let userLogger = Ecosystem.getItemUserLogger(item, ~ecosystem)
 userLogger.debug("This is a user debug message.", ~params={"child": "userLogs debug"})
