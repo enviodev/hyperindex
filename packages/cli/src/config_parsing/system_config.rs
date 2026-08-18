@@ -3809,6 +3809,39 @@ type Foo {
         use crate::project_paths::ParsedProjectPaths;
         use pretty_assertions::assert_eq;
 
+        /// The flow-xray scenario is the only config in the tree pointing at
+        /// real, unmodified Anchor IDLs — three of them, hundreds of
+        /// instructions between them. Parsing it whole is what catches a
+        /// change that resolves against hand-written fixtures and not against
+        /// a program as shipped.
+        #[test]
+        fn parses_the_flow_xray_scenario_config() {
+            let root = format!(
+                "{}/../../scenarios/svm_flow_xray",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let project_paths = ParsedProjectPaths::new(&root, "config.yaml").expect("paths");
+            let config = SystemConfig::parse_from_project_files(&project_paths).expect("parse");
+
+            let mut programs: Vec<(String, usize)> = config
+                .contracts
+                .values()
+                .map(|c| (c.name.clone(), c.events.len()))
+                .collect();
+            programs.sort();
+            assert_eq!(
+                programs,
+                vec![
+                    ("Drift".to_string(), 5),
+                    ("Jupiter".to_string(), 2),
+                    ("Kamino".to_string(), 4),
+                    ("Meteora".to_string(), 1),
+                    ("Orca".to_string(), 1),
+                    ("Raydium".to_string(), 1),
+                ]
+            );
+        }
+
         /// End-to-end: the Metaplex YAML fixture deserializes, validates, and
         /// translates into a single Contract whose two Events carry the
         /// expected discriminator + flags. Guards Stage 3 + Stage 4 plumbing

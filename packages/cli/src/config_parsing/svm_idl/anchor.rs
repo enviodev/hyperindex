@@ -19,7 +19,10 @@ use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
-use super::{collect_named, required_str, EventIdl, IdlAccount, IxIdl, ProgramIdl, Unusable};
+use super::{
+    collect_instructions, collect_named, required_str, EventIdl, IdlAccount, IxIdl, ProgramIdl,
+    Unusable,
+};
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
     let address = root
@@ -33,8 +36,8 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
         .map(str::to_string);
 
     let (defined_types, unusable_types) = parse_defined_types(root)?;
-    let (instructions, unusable) = parse_instructions(root)?;
-    let events = parse_events(root, &defined_types)?;
+    let (instructions, unusable, unusable_discriminators) = parse_instructions(root)?;
+    let events = parse_events(root, &defined_types, &unusable_types)?;
 
     Ok(ProgramIdl {
         address,
@@ -43,6 +46,7 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
         defined_types,
         unusable,
         unusable_types,
+        unusable_discriminators,
     })
 }
 
@@ -52,7 +56,7 @@ fn parse_defined_types(
     let Some(arr) = root.get("types").and_then(Value::as_array) else {
         return Ok(Default::default());
     };
-    collect_named(arr, "type", |name, t| {
+    collect_named(arr, "type", "types[].name", |name, t| {
         let node = t
             .get("type")
             .ok_or_else(|| anyhow!("type '{name}' has no 'type'"))?;
@@ -60,24 +64,27 @@ fn parse_defined_types(
     })
 }
 
-fn parse_instructions(root: &Map<String, Value>) -> Result<(BTreeMap<String, IxIdl>, Unusable)> {
+type Instructions = (BTreeMap<String, IxIdl>, Unusable, BTreeMap<String, Vec<u8>>);
+
+fn parse_instructions(root: &Map<String, Value>) -> Result<Instructions> {
     let arr = root
         .get("instructions")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("IDL has no 'instructions' array"))?;
-    collect_named(arr, "instruction", |name, ix| {
-        let discriminator = match ix.get("discriminator") {
-            Some(node) => parse_byte_array(node)
-                .with_context(|| format!("instruction '{name}' discriminator"))?,
-            None => hashed_discriminator("global:", &name.to_snake_case()),
-        };
-        Ok(IxIdl {
-            discriminator,
-            accounts: parse_accounts(ix.get("accounts"))
-                .with_context(|| format!("instruction '{name}' accounts"))?,
-            args: parse_named_fields(ix.get("args"), &format!("instruction '{name}' args"))?,
-        })
-    })
+    collect_instructions(
+        arr,
+        |name, ix| match ix.get("discriminator") {
+            Some(node) => parse_byte_array(node).context("discriminator"),
+            None => Ok(hashed_discriminator("global:", &name.to_snake_case())),
+        },
+        |ix, discriminator| {
+            Ok(IxIdl {
+                discriminator,
+                accounts: parse_accounts(ix.get("accounts")).context("accounts")?,
+                args: parse_named_fields(ix.get("args"), "args")?,
+            })
+        },
+    )
 }
 
 /// Legacy events carry their fields inline; 0.30+ moves the payload into
@@ -85,46 +92,40 @@ fn parse_instructions(root: &Map<String, Value>) -> Result<(BTreeMap<String, IxI
 fn parse_events(
     root: &Map<String, Value>,
     defined_types: &BTreeMap<String, FieldType>,
+    unusable_types: &Unusable,
 ) -> Result<BTreeMap<String, EventIdl>> {
-    let mut out: BTreeMap<String, EventIdl> = BTreeMap::new();
     let Some(arr) = root.get("events").and_then(Value::as_array) else {
-        return Ok(out);
+        return Ok(BTreeMap::new());
     };
-    for ev in arr {
-        let name = required_str(ev, "name")
-            .context("events[].name")?
-            .to_string();
+    // Nothing consumes events yet, so one the runtime could not decode is
+    // dropped rather than held against the instructions, which it has no
+    // bearing on.
+    let (events, _undecodable) = collect_named(arr, "event", "events[].name", |name, ev| {
         let discriminator = match ev.get("discriminator") {
             Some(node) => {
                 parse_byte_array(node).with_context(|| format!("event '{name}' discriminator"))?
             }
-            None => hashed_discriminator("event:", &name),
+            None => hashed_discriminator("event:", name),
         };
         // 0.30+ leaves only the discriminator here and puts the payload in
-        // `types` under the event's own name. A missing payload would decode
-        // as a field-less event rather than fail, so it's an error.
+        // `types` under the event's own name.
         let fields = match ev.get("fields") {
-            Some(node) => parse_named_fields(Some(node), &format!("event '{name}' fields"))?,
-            None => match defined_types.get(&name) {
+            Some(node) => parse_named_fields(Some(node), "fields")?,
+            None => match defined_types.get(name) {
                 Some(FieldType::Struct(fields)) => fields.clone(),
-                Some(other) => bail!("event '{name}' payload type is {other:?}, expected a struct"),
-                None => bail!("event '{name}' declares no fields and no type named '{name}'"),
+                Some(other) => bail!("its payload type is {other:?}, expected a struct"),
+                None => match unusable_types.get(name) {
+                    Some(reason) => bail!("its payload type cannot be decoded: {reason}"),
+                    None => bail!("it declares no fields and no type named '{name}'"),
+                },
             },
         };
-        if out
-            .insert(
-                name.clone(),
-                EventIdl {
-                    discriminator,
-                    fields,
-                },
-            )
-            .is_some()
-        {
-            bail!("IDL declares event '{name}' more than once");
-        }
-    }
-    Ok(out)
+        Ok(EventIdl {
+            discriminator,
+            fields,
+        })
+    })?;
+    Ok(events)
 }
 
 /// `sha256(prefix + name)[..8]`, Anchor's derivation for both the pre-0.30

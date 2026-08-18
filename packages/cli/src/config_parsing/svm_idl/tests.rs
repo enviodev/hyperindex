@@ -437,10 +437,11 @@ fn parses_codama_spl_token_idl() {
 }
 
 /// Shapes that parse as JSON but cannot be decoded, or cannot be dispatched.
-/// Each one would otherwise reach codegen and fail at indexer start, or worse,
-/// decode at the wrong offset and produce plausible garbage.
+/// Only a defect in the file itself is fatal; a defect in one instruction
+/// costs that instruction. An undecodable event costs nothing at all, since
+/// nothing consumes events.
 #[test]
-fn rejects_undecodable_and_undispatchable_idls() {
+fn separates_file_level_defects_from_instruction_level_ones() {
     let cases: Vec<(&str, &str)> = vec![
         ("neither dialect", r#"{ "name": "mystery" }"#),
         (
@@ -511,6 +512,37 @@ fn rejects_undecodable_and_undispatchable_idls() {
                  "discriminators": [{ "kind": "fieldDiscriminatorNode", "name": "tag", "offset": 0 }]
                }] } }"#,
         ),
+        (
+            // Setting an instruction aside does not remove it from the chain.
+            // `transferChecked` still occurs and still carries 0x0c02, so a
+            // surviving `transfer` on 0x0c would collect its calls and decode
+            // them against the wrong layout.
+            "instruction shadowed by one set aside for its args",
+            r#"{ "instructions": [
+                 { "name": "transfer", "discriminator": [12],
+                   "args": [{ "name": "amount", "type": "u64" }] },
+                 { "name": "transferChecked", "discriminator": [12, 2],
+                   "args": [{ "name": "amount", "type": { "coption": "u64" } }] }] }"#,
+        ),
+        (
+            // Nothing consumes events, so one that cannot be decoded costs
+            // nothing.
+            "undecodable event payload",
+            r#"{ "instructions": [{ "name": "swap", "discriminator": [1], "args": [] }],
+                 "events": [{ "name": "Swapped", "discriminator": [2],
+                   "fields": [{ "name": "a", "type": { "coption": "u64" } }] }] }"#,
+        ),
+        (
+            // Ambiguous for whatever reaches it, harmless for everything else.
+            "duplicate type name",
+            r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
+                 "args": [{ "name": "fee", "type": { "defined": "Fee" } }] }],
+                 "types": [
+                   { "name": "Fee", "type": { "kind": "struct",
+                     "fields": [{ "name": "bps", "type": "u16" }] } },
+                   { "name": "Fee", "type": { "kind": "struct",
+                     "fields": [{ "name": "bps", "type": "u32" }] } }] }"#,
+        ),
     ];
 
     let reported: Vec<String> = cases
@@ -540,14 +572,17 @@ fn rejects_undecodable_and_undispatchable_idls() {
         vec![
             "neither dialect: fatal: unrecognized IDL: expected an Anchor IDL (top-level 'instructions') or a Codama IDL (a 'rootNode')",
             "duplicate instruction name: fatal: IDL declares instruction 'swap' more than once",
-            "anchor coption: initializeMint set aside: instruction 'initializeMint' args.freezeAuthority: `coption` is not Borsh-compatible and cannot be decoded",
+            "anchor coption: initializeMint set aside: args.freezeAuthority: `coption` is not Borsh-compatible and cannot be decoded",
             "undefined type reference: swap set aside: it references undefined type 'u46'",
-            "event with no payload type: fatal: event 'Swapped' declares no fields and no type named 'Swapped'",
+            "event with no payload type: accepted",
             "discriminator wider than dispatch probes: swap set aside: its 3-byte discriminator is not one of the widths dispatch probes ([1, 2, 4, 8])",
             "instruction with no discriminator at all: swap set aside: its 0-byte discriminator is not one of the widths dispatch probes ([1, 2, 4, 8])",
             "one discriminator a prefix of another: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, which would shadow it",
-            "discriminator field not at offset 0: swap set aside: instruction 'swap' discriminators: discriminator part at offset 8 does not follow the previous part, which ends at 0; dispatch needs one contiguous prefix from offset 0",
-            "discriminator value too wide for its format: swap set aside: instruction 'swap' discriminators: discriminator value 300 does not fit in u8",
+            "discriminator field not at offset 0: swap set aside: discriminators: discriminator part at offset 8 does not follow the previous part, which ends at 0; dispatch needs one contiguous prefix from offset 0",
+            "discriminator value too wide for its format: swap set aside: discriminators: discriminator value 300 does not fit in u8",
+            "instruction shadowed by one set aside for its args: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, which would shadow it; transferChecked set aside: args.amount: `coption` is not Borsh-compatible and cannot be decoded",
+            "undecodable event payload: accepted",
+            "duplicate type name: swap set aside: it reaches type 'Fee', which cannot be decoded: the IDL declares type 'Fee' more than once",
         ]
     );
 }
@@ -791,22 +826,22 @@ fn refuses_layouts_the_runtime_would_misdecode() {
     assert_eq!(
         reported,
         vec![
-            "codama fixed option: probe: instruction 'probe'.probed: a fixed option pads its body when absent, which Borsh does not encode",
-            "codama enum with a wide tag: probe: instruction 'probe'.probed.size: Borsh needs u8 here, got u32",
-            "codama big-endian number: probe: instruction 'probe'.probed: Borsh decodes numbers little-endian, got 'be'",
-            "codama bare string: probe: instruction 'probe'.probed: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
-            "codama bare bytes: probe: instruction 'probe'.probed: a bare bytesTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
-            "codama non-utf8 string: probe: instruction 'probe'.probed: Borsh strings are utf8, got 'base58'",
-            "codama boolean wider than a byte: probe: instruction 'probe'.probed.size: Borsh needs u8 here, got u32",
-            "codama enum variant with its own discriminator: probe: instruction 'probe'.probed.Init: enumEmptyVariantTypeNode carries 'discriminator', which this parser does not model; decoding it would be a guess at the byte layout",
-            "codama size prefix around a struct: probe: instruction 'probe'.probed: a u32 size prefix frames a string or bytes in Borsh, got structTypeNode",
-            "codama big-endian length prefix: probe: instruction 'probe'.probed.prefix: Borsh decodes numbers little-endian, got 'be'",
-            "codama enum tuple variant behind a wrapper: probe: instruction 'probe'.probed.Wrapped: sizePrefixTypeNode carries 'items', which this parser does not model; decoding it would be a guess at the byte layout",
-            "codama zeroable option: probe: instruction 'probe'.probed: zeroable options are not Borsh-compatible and cannot be decoded",
-            "codama option with a wide tag: probe: instruction 'probe'.probed.prefix: Borsh needs u8 here, got u32",
-            "codama vector with a narrow length prefix: probe: instruction 'probe'.probed.prefix: Borsh needs u32 here, got u8",
-            "codama string with a narrow size prefix: probe: instruction 'probe'.probed.prefix: Borsh needs u32 here, got u8",
-            "anchor generic parameter: swap: instruction 'swap' args.wrapped: generic parameter 'T' has no concrete layout to decode against",
+            "codama fixed option: probe: args.probed: a fixed option pads its body when absent, which Borsh does not encode",
+            "codama enum with a wide tag: probe: args.probed.size: Borsh needs u8 here, got u32",
+            "codama big-endian number: probe: args.probed: Borsh decodes numbers little-endian, got 'be'",
+            "codama bare string: probe: args.probed: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
+            "codama bare bytes: probe: args.probed: a bare bytesTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
+            "codama non-utf8 string: probe: args.probed: Borsh strings are utf8, got 'base58'",
+            "codama boolean wider than a byte: probe: args.probed.size: Borsh needs u8 here, got u32",
+            "codama enum variant with its own discriminator: probe: args.probed.Init: enumEmptyVariantTypeNode carries 'discriminator', which this parser does not model; decoding it would be a guess at the byte layout",
+            "codama size prefix around a struct: probe: args.probed: a u32 size prefix frames a string or bytes in Borsh, got structTypeNode",
+            "codama big-endian length prefix: probe: args.probed.prefix: Borsh decodes numbers little-endian, got 'be'",
+            "codama enum tuple variant behind a wrapper: probe: args.probed.Wrapped: sizePrefixTypeNode carries 'items', which this parser does not model; decoding it would be a guess at the byte layout",
+            "codama zeroable option: probe: args.probed: zeroable options are not Borsh-compatible and cannot be decoded",
+            "codama option with a wide tag: probe: args.probed.prefix: Borsh needs u8 here, got u32",
+            "codama vector with a narrow length prefix: probe: args.probed.prefix: Borsh needs u32 here, got u8",
+            "codama string with a narrow size prefix: probe: args.probed.prefix: Borsh needs u32 here, got u8",
+            "anchor generic parameter: swap: args.wrapped: generic parameter 'T' has no concrete layout to decode against",
         ]
     );
 }
@@ -1020,4 +1055,40 @@ fn resolves_shared_type_graphs_without_blowing_up() {
 
     let idl = parse_idl(&json, "Deep").expect("parse");
     assert_eq!(idl.instructions.keys().collect::<Vec<_>>(), vec!["swap"]);
+}
+
+/// Codegen hands `defined_types` to the runtime's type registry whole, so a
+/// type that cannot be resolved must not travel with it — even when nothing
+/// reaches it and the file is otherwise fine.
+#[test]
+fn prunes_types_it_cannot_resolve_from_the_registry() {
+    let idl = parse_idl(
+        r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
+             "args": [{ "name": "fee", "type": { "defined": "Fee" } }] }],
+             "types": [
+               { "name": "Fee", "type": { "kind": "struct",
+                 "fields": [{ "name": "bps", "type": "u16" }] } },
+               { "name": "Orphan", "type": { "kind": "struct",
+                 "fields": [{ "name": "x", "type": { "defined": "Missing" } }] } }] }"#,
+        "Program",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        (
+            idl.instructions
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            idl.defined_types
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            idl.unusable_types
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        ),
+        (vec!["swap"], vec!["Fee"], vec!["Orphan"])
+    );
 }

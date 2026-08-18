@@ -11,7 +11,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 
-use super::{collect_named, required_str, IdlAccount, IxIdl, ProgramIdl, Unusable};
+use super::{
+    collect_instructions, collect_named, required_str, IdlAccount, IxIdl, ProgramIdl, Unusable,
+};
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
     // A `.codama` file wraps the root node; a serialized `RootNode` is the
@@ -26,7 +28,7 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
         .ok_or_else(|| anyhow!("Codama root node has no 'program'"))?;
 
     let (defined_types, unusable_types) = parse_defined_types(program)?;
-    let (instructions, unusable) = parse_instructions(program)?;
+    let (instructions, unusable, unusable_discriminators) = parse_instructions(program)?;
 
     Ok(ProgramIdl {
         address: program
@@ -39,6 +41,7 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
         defined_types,
         unusable,
         unusable_types,
+        unusable_discriminators,
     })
 }
 
@@ -48,7 +51,7 @@ fn parse_defined_types(
     let Some(arr) = program.get("definedTypes").and_then(Value::as_array) else {
         return Ok(Default::default());
     };
-    collect_named(arr, "type", |name, t| {
+    collect_named(arr, "type", "definedTypes[].name", |name, t| {
         let node = t
             .get("type")
             .ok_or_else(|| anyhow!("defined type '{name}' has no 'type'"))?;
@@ -56,21 +59,31 @@ fn parse_defined_types(
     })
 }
 
-fn parse_instructions(program: &Map<String, Value>) -> Result<(BTreeMap<String, IxIdl>, Unusable)> {
+type Instructions = (BTreeMap<String, IxIdl>, Unusable, BTreeMap<String, Vec<u8>>);
+
+fn parse_instructions(program: &Map<String, Value>) -> Result<Instructions> {
     let arr = program
         .get("instructions")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("Codama program has no 'instructions' array"))?;
-    collect_named(arr, "instruction", |name, ix| {
-        let (discriminator, encoded_arg_names) = parse_discriminators(ix)
-            .with_context(|| format!("instruction '{name}' discriminators"))?;
-        Ok(IxIdl {
-            discriminator,
-            accounts: parse_accounts(ix.get("accounts"))
-                .with_context(|| format!("instruction '{name}' accounts"))?,
-            args: parse_arguments(ix.get("arguments"), &encoded_arg_names, name)?,
-        })
-    })
+    collect_instructions(
+        arr,
+        |_name, ix| {
+            parse_discriminators(ix)
+                .map(|(bytes, _)| bytes)
+                .context("discriminators")
+        },
+        |ix, discriminator| {
+            // Re-read for the argument names the discriminator consumed: the
+            // runtime decodes the body after the prefix, not those.
+            let (_, encoded_arg_names) = parse_discriminators(ix)?;
+            Ok(IxIdl {
+                discriminator,
+                accounts: parse_accounts(ix.get("accounts")).context("accounts")?,
+                args: parse_arguments(ix.get("arguments"), &encoded_arg_names)?,
+            })
+        },
+    )
 }
 
 /// Returns the instruction's discriminator bytes plus the names of the
@@ -233,23 +246,17 @@ fn parse_accounts(node: Option<&Value>) -> Result<Vec<IdlAccount>> {
         .collect()
 }
 
-fn parse_arguments(
-    node: Option<&Value>,
-    encoded_arg_names: &[String],
-    ix_name: &str,
-) -> Result<Vec<NamedField>> {
+fn parse_arguments(node: Option<&Value>, encoded_arg_names: &[String]) -> Result<Vec<NamedField>> {
     let Some(arr) = node.and_then(Value::as_array) else {
         return Ok(Vec::new());
     };
     let mut out = Vec::with_capacity(arr.len());
     for a in arr {
-        let name = required_str(a, "name")
-            .with_context(|| format!("instruction '{ix_name}' arguments"))?
-            .to_string();
+        let name = required_str(a, "name").context("arguments")?.to_string();
         if encoded_arg_names.contains(&name) {
             continue;
         }
-        let path = format!("instruction '{ix_name}'.{name}");
+        let path = format!("args.{name}");
         reject_unmodelled_keys(a, &path, &FIELD_KEYS)?;
         let ty = a
             .get("type")

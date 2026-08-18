@@ -59,6 +59,12 @@ pub struct ProgramIdl {
     /// reason text: an instruction reaching one is unusable for that reason,
     /// not for the "undefined type" a bare lookup would report.
     pub unusable_types: Unusable,
+    /// Discriminators of the instructions in `unusable`, where one was read
+    /// before the layout failed. Setting an instruction aside does not remove
+    /// it from the chain: it still occurs and still answers to its
+    /// discriminator, so it still has to be weighed against everything that
+    /// survived.
+    pub unusable_discriminators: BTreeMap<String, Vec<u8>>,
 }
 
 /// Discriminator widths the router can probe for. Dispatch reads a fixed-width
@@ -101,7 +107,6 @@ fn parse_validated(json: &str) -> Result<ProgramIdl> {
 /// matters is a question about the config, not about the file, so the answer
 /// belongs where the config names an instruction.
 fn validate(idl: &mut ProgramIdl) {
-    let bad_types = unresolvable_types(idl);
     let mut demoted = Unusable::new();
     for (name, ix) in &idl.instructions {
         let len = ix.discriminator.len();
@@ -113,6 +118,38 @@ fn validate(idl: &mut ProgramIdl) {
                      ({DISPATCHABLE_DISCRIMINATOR_LENS:?})"
                 ),
             );
+        }
+    }
+
+    // Collisions are judged over every instruction dispatch could still reach,
+    // including the ones about to be set aside for their arguments. Setting an
+    // instruction aside does not remove it from the chain: it still occurs,
+    // and still answers to its discriminator. A survivor holding a prefix of
+    // one would quietly collect its calls and decode them against the wrong
+    // layout. Only the undispatchable widths drop out, since nothing can route
+    // to those at all.
+    let dispatchable: Vec<(&[u8], &str)> = idl
+        .instructions
+        .iter()
+        .map(|(name, ix)| (ix.discriminator.as_slice(), name.as_str()))
+        .chain(
+            idl.unusable_discriminators
+                .iter()
+                .map(|(name, bytes)| (bytes.as_slice(), name.as_str())),
+        )
+        .filter(|(bytes, name)| {
+            !demoted.contains_key(*name) && DISPATCHABLE_DISCRIMINATOR_LENS.contains(&bytes.len())
+        })
+        .collect();
+    for (name, reason) in prefix_collisions(dispatchable) {
+        if idl.instructions.contains_key(&name) {
+            demoted.entry(name).or_insert(reason);
+        }
+    }
+
+    let bad_types = unresolvable_types(idl);
+    for (name, ix) in &idl.instructions {
+        if demoted.contains_key(name) {
             continue;
         }
         for arg in &ix.args {
@@ -122,12 +159,15 @@ fn validate(idl: &mut ProgramIdl) {
             }
         }
     }
-    // Events are parsed but nothing consumes them, so an event payload the
-    // runtime cannot decode is not a reason to withhold an instruction.
-    demote(idl, demoted);
 
-    let collisions = prefix_collisions(&idl.instructions);
-    demote(idl, collisions);
+    // Codegen hands `defined_types` to the runtime's type registry whole, so a
+    // type that cannot be resolved must not be in it — even when no
+    // instruction reaches it.
+    for name in bad_types.keys() {
+        idl.defined_types.remove(name);
+    }
+    idl.unusable_types.extend(bad_types);
+    demote(idl, demoted);
 }
 
 fn demote(idl: &mut ProgramIdl, demoted: Unusable) {
@@ -141,11 +181,7 @@ fn demote(idl: &mut ProgramIdl, demoted: Unusable) {
 /// instruction's discriminator is a prefix of another's, the longer one wins
 /// every match and the shorter one never fires. Equal discriminators are the
 /// degenerate case: neither can be routed to at all.
-fn prefix_collisions(instructions: &BTreeMap<String, IxIdl>) -> Unusable {
-    let mut by_bytes: Vec<(&[u8], &str)> = instructions
-        .iter()
-        .map(|(name, ix)| (ix.discriminator.as_slice(), name.as_str()))
-        .collect();
+fn prefix_collisions(mut by_bytes: Vec<(&[u8], &str)>) -> Unusable {
     by_bytes.sort_unstable();
     let mut out = Unusable::new();
     // A prefix sorts immediately before everything it prefixes, so the
@@ -255,22 +291,69 @@ fn references_resolve(ty: &FieldType, idl: &ProgramIdl, bad: &Unusable) -> Resul
     }
 }
 
+/// Parse instructions, reading the discriminator before the layout so it
+/// survives a layout failure. Returns the usable instructions, the reasons the
+/// rest were set aside, and the discriminators of those that got far enough to
+/// have one.
+fn collect_instructions(
+    entries: &[Value],
+    mut discriminator_of: impl FnMut(&str, &Value) -> Result<Vec<u8>>,
+    mut layout_of: impl FnMut(&Value, Vec<u8>) -> Result<IxIdl>,
+) -> Result<(BTreeMap<String, IxIdl>, Unusable, BTreeMap<String, Vec<u8>>)> {
+    let mut out = BTreeMap::new();
+    let mut unusable = Unusable::new();
+    let mut discriminators = BTreeMap::new();
+    for entry in entries {
+        let name = required_str(entry, "name")
+            .context("instructions[].name")?
+            .to_string();
+        if out.contains_key(&name) || unusable.contains_key(&name) {
+            bail!("IDL declares instruction '{name}' more than once");
+        }
+        let discriminator = match discriminator_of(&name, entry) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                unusable.insert(name, format!("{e:#}"));
+                continue;
+            }
+        };
+        match layout_of(entry, discriminator.clone()) {
+            Ok(ix) => {
+                out.insert(name, ix);
+            }
+            Err(e) => {
+                unusable.insert(name.clone(), format!("{e:#}"));
+                discriminators.insert(name, discriminator);
+            }
+        }
+    }
+    Ok((out, unusable, discriminators))
+}
+
 /// Parse each entry of a named collection, setting the failures aside instead
 /// of failing the whole IDL. Shared by both dialects so the duplicate-name
 /// rule and the demotion policy cannot drift between them.
 fn collect_named<T>(
     entries: &[Value],
-    what: &str,
+    noun: &str,
+    name_context: &str,
     mut parse_one: impl FnMut(&str, &Value) -> Result<T>,
 ) -> Result<(BTreeMap<String, T>, Unusable)> {
     let mut out = BTreeMap::new();
     let mut unusable = Unusable::new();
     for entry in entries {
         let name = required_str(entry, "name")
-            .with_context(|| format!("{what}s[].name"))?
+            .with_context(|| name_context.to_string())?
             .to_string();
+        // A repeated name makes that name ambiguous for whatever reaches it,
+        // and nothing else. Instructions are stricter — see
+        // `collect_instructions`, where a repeat leaves dispatch with no way
+        // to say which was meant.
         if out.contains_key(&name) || unusable.contains_key(&name) {
-            bail!("IDL declares {what} '{name}' more than once");
+            out.remove(&name);
+            let reason = format!("the IDL declares {noun} '{name}' more than once");
+            unusable.insert(name, reason);
+            continue;
         }
         match parse_one(&name, entry) {
             Ok(parsed) => {

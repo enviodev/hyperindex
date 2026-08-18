@@ -31,5 +31,5 @@ instruction unwrapLamports 0x2d (source:w, destination:w, authority:s) (amount: 
 instruction withdrawExcessLamports 0x26 (source:w, destination:w, authority:s) ()
 type accountState = enum {uninitialized, initialized, frozen}
 type authorityType = enum {mintTokens, freezeAccount, accountOwner, closeAccount}
-unusable instruction batch: instruction 'batch'.data.item.instructionData.prefix: Borsh needs u32 here, got u8
-unusable instruction uiAmountToAmount: instruction 'uiAmountToAmount'.uiAmount: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix
+unusable instruction batch: args.data.item.instructionData.prefix: Borsh needs u32 here, got u8
+unusable instruction uiAmountToAmount: args.uiAmount: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix
