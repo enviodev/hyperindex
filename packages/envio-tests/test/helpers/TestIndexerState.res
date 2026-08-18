@@ -33,7 +33,6 @@ let readyPersistence = (~config=config, ~storage) => {
     chains: [],
     reorgCheckpoints: [],
     checkpointId: 0n,
-    envioInfo: None,
   }),
 }
 

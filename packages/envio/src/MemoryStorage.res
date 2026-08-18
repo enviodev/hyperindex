@@ -240,7 +240,6 @@ let toInitialState = (state: t, ~cleanRun): Persistence.initialState => {
   chains: state->toInitialChainStates,
   checkpointId: state->committedCheckpointId,
   reorgCheckpoints: state->reorgCheckpoints,
-  envioInfo: state.envioInfo,
 }
 
 let handleLoad = (state: t, ~tableName: string, ~filter: EntityFilter.t): array<
@@ -608,6 +607,7 @@ let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
     state.isInitialized = true
     state->toInitialState(~cleanRun=true)
   },
+  readEnvioInfo: async () => state.envioInfo,
   resumeInitialState: async () => state->toInitialState(~cleanRun=false),
   loadOrThrow: async (~filter, ~table: Table.table) =>
     state

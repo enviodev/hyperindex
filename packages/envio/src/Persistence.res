@@ -44,11 +44,6 @@ type initialState = {
   checkpointId: Internal.checkpointId,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
-  // Public config snapshot read from envio_info, used by `Persistence.init`
-  // to compat-check a resume against the running config. None when the
-  // schema pre-dates envio_info or the row is missing — `init` treats that
-  // as a version mismatch.
-  envioInfo: option<JSON.t>,
 }
 
 // Carries the already-resolved cache address (`table`) rather than an effect +
@@ -100,6 +95,11 @@ type storage = {
     ~enums: array<Table.enumConfig<Table.enum>>=?,
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
+  // The public config snapshot stored by the last successful initialize, for
+  // `init`'s compat check. None when the schema pre-dates `envio_info` or the
+  // row was wiped. Read before anything else on a resume: an incompatible
+  // schema must be reported as such rather than as a missing column.
+  readEnvioInfo: unit => promise<option<JSON.t>>,
   resumeInitialState: unit => promise<initialState>,
   // Returns rows matching the filter.
   // Field values are serialized and rows parsed with the table's field schemas.
@@ -253,26 +253,14 @@ let init = {
           }
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
-          let initialState = await persistence.storage.resumeInitialState()
           // Compat-check the running config against what was stored on the
-          // last successful initialize. None means the schema pre-dates
-          // envio_info (or the row was wiped out-of-band) and we can't
-          // compare — treat it as a version mismatch.
-          let changedPaths = switch initialState.envioInfo {
-          | None => ["envio info is missing — storage initialized by an older envio"]
+          // last successful initialize, before reading anything the stored
+          // schema may not have. None means the schema pre-dates envio_info
+          // (or the row was wiped out-of-band) and we can't compare — treat it
+          // as a version mismatch.
+          let changedPaths = switch await persistence.storage.readEnvioInfo() {
+          | None => ["storage was initialized by an older envio version"]
           | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
-          }
-          // Belt and braces on top of the config diff: every stored address
-          // row names its contract by the id this mapping assigns, so a
-          // mapping that no longer matches the config would silently attribute
-          // addresses to the wrong contract.
-          // Both lists are in canonical order, so comparing them joined is
-          // comparing the mappings themselves.
-          if (
-            initialState.contractNames->Array.joinUnsafe(",") !==
-              Config.canonicalContractNames(~chainConfigs)->Array.joinUnsafe(",")
-          ) {
-            changedPaths->Array.push("contracts")->ignore
           }
           // `storage.clickhouse` is serialized as a plain bool by the
           // public config (see Rust `StorageConfig`), so probe for
@@ -290,6 +278,23 @@ let init = {
           | _ => false
           }
           Config.throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
+          let initialState = await persistence.storage.resumeInitialState()
+          // Belt and braces on top of the config diff: every stored address row
+          // names its contract by the id this mapping assigns, so a mapping
+          // that no longer matches the config would silently attribute
+          // addresses to the wrong contract. Both lists are in canonical order,
+          // so comparing them joined is comparing the mappings themselves.
+          if (
+            initialState.contractNames->Array.joinUnsafe(",") !==
+              Config.canonicalContractNames(~chainConfigs)->Array.joinUnsafe(",")
+          ) {
+            Config.throwIfIncompatible(
+              ["contracts"],
+              ~resetCommand,
+              ~runCommand,
+              ~hasClickhouse,
+            )
+          }
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {

@@ -5,6 +5,18 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
+// Postgres SQLSTATE for "undefined_table" — what a read gets when the schema was
+// initialized by an older envio that didn't have the table.
+let undefinedTableSqlState = "42P01"
+
+@get external getSqlStateCode: JsExn.t => option<string> = "code"
+
+let isUndefinedTable = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(e) => e->getSqlStateCode === Some(undefinedTableSqlState)
+  | _ => false
+  }
+
 // The canonical contract ids. Written once at initialize from the config's
 // contract names in byte order, so an id names the same contract on every
 // chain and across restarts; read back on resume, where the stored mapping is
@@ -39,6 +51,19 @@ SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(T
       `SELECT "name" FROM "${pgSchema}"."${table.tableName}" ORDER BY "id";`,
     )
     rows->Array.map(row => row["name"])
+  }
+
+  // Whether the schema carries this table at all. A schema written by an envio
+  // that predates the contract mapping doesn't, and every address row in it is
+  // shaped differently — so a resume has to stop at the compat check rather
+  // than at a missing column.
+  let exists = async (sql, ~pgSchema): bool => {
+    try {
+      let _ = await read(sql, ~pgSchema)
+      true
+    } catch {
+    | exn => isUndefinedTable(exn) ? false : throw(exn)
+    }
   }
 }
 
@@ -493,23 +518,13 @@ module EnvioInfo = {
     ],
   )
 
-  // Postgres SQLSTATE for "undefined_table" — what we get when the schema
-  // was initialized by an older envio that didn't have `envio_info`.
-  let undefinedTableSqlState = "42P01"
-
-  @get external getCode: JsExn.t => option<string> = "code"
-
   let read = async (sql, ~pgSchema): option<JSON.t> => {
     let rows: array<{
       "config": string,
     }> = try await sql->Postgres.unsafe(
       `SELECT "config" FROM "${pgSchema}"."${table.tableName}" LIMIT 1;`,
     ) catch {
-    | exn =>
-      switch exn->JsExn.anyToExnInternal {
-      | JsExn(e) if e->getCode === Some(undefinedTableSqlState) => []
-      | _ => throw(exn)
-      }
+    | exn => isUndefinedTable(exn) ? [] : throw(exn)
     }
     rows->Array.get(0)->Option.map(row => row["config"]->JSON.parseOrThrow)
   }

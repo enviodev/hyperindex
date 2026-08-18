@@ -29,7 +29,9 @@ type t = {
   storage: Persistence.storage,
 }
 
-let make = (methods: array<method>, ~dbEntities=[]) => {
+// `storedEnvioInfo` is what a resume's compat gate reads back, before any of
+// the mocked methods are called.
+let make = (methods: array<method>, ~dbEntities=[], ~storedEnvioInfo=None) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
       fn
@@ -100,6 +102,7 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
           initializeResolveFns->Array.push(resolve)->ignore
         })
       }),
+      readEnvioInfo: () => Promise.resolve(storedEnvioInfo),
       resumeInitialState: implement(#resumeInitialState, () => {
         resumeInitialStateCalls->Array.push(true)->ignore
         Promise.make((resolve, _reject) => {
@@ -196,7 +199,6 @@ let toPersistence = (storageMock: t, ~config: Config.t) => {
       chains: [],
       reorgCheckpoints: [],
       checkpointId: 0n,
-      envioInfo: None,
     }),
   }
 }

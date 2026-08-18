@@ -1809,7 +1809,6 @@ let make = (
       reorgCheckpoints: [],
       // Just-written row; resume's compat check would no-op on a clean run,
       // but keep the field consistent with the resume path's shape.
-      envioInfo: Some(envioInfo),
       contractNames,
       chains: chainConfigs->Array.mapWithIndex((chainConfig, idx): Persistence.initialChainState => {
         id: chainConfig.id,
@@ -2210,7 +2209,7 @@ let make = (
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints, envioInfo, contractNames) = await Promise.all6((
+    let (cache, chains, checkpointIdResult, reorgCheckpoints, contractNames) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
@@ -2249,7 +2248,6 @@ let make = (
           }>,
         >
       ),
-      InternalTable.EnvioInfo.read(sql, ~pgSchema),
       InternalTable.EnvioContracts.read(sql, ~pgSchema),
     ))
 
@@ -2277,7 +2275,6 @@ let make = (
       cache,
       chains,
       checkpointId,
-      envioInfo,
       contractNames,
     }
   }
@@ -2432,6 +2429,12 @@ let make = (
     name: storageName,
     isInitialized,
     initialize,
+    readEnvioInfo: async () =>
+      switch await InternalTable.EnvioInfo.read(sql, ~pgSchema) {
+      | Some(envioInfo) if await InternalTable.EnvioContracts.exists(sql, ~pgSchema) =>
+        Some(envioInfo)
+      | _ => None
+      },
     resumeInitialState,
     loadOrThrow,
     ensureQueryIndexes,

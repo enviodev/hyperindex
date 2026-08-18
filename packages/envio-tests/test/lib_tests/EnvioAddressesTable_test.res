@@ -1,0 +1,187 @@
+open Vitest
+
+// The addresses table is insert-only, so a rollback is a delete by checkpoint
+// rather than a history replay. These run against a real database: what the
+// rows key on, and which of them a rollback reaches, is what matters.
+let sql = PgStorage.makeClient()
+
+// Two contracts, one of them holding the chain's only config address.
+let config = TestConfig.fromUserApi(`
+name: envio-addresses-table
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        events:
+          - event: "TestEvent()"
+      - name: NftFactory
+        events:
+          - event: "TestEvent()"
+`)
+let enums =
+  config.allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
+
+let chainId = (config.chainMap->ChainMap.values->Array.getUnsafe(0)).id
+let contractNames = Config.canonicalContractNames(~chainConfigs=config.chainMap->ChainMap.values)
+
+let createdSchemas = []
+
+Async.afterAll(async () => {
+  let _ = await createdSchemas
+  ->Array.map(pgSchema => sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`))
+  ->Promise.all
+  await sql->Postgres.endSql
+})
+
+let setup = async () => {
+  let pgSchema = TestPgSchema.make()
+  createdSchemas->Array.push(pgSchema)->ignore
+  let storage = PgStorage.make(
+    ~sql,
+    ~pgHost=Env.Db.host,
+    ~pgSchema,
+    ~pgPort=Env.Db.port,
+    ~pgUser=Env.Db.user,
+    ~pgDatabase=Env.Db.database,
+    ~pgPassword=Env.Db.password,
+    ~isHasuraEnabled=false,
+  )
+  let _ = await storage.initialize(
+    ~chainConfigs=config.chainMap->ChainMap.values,
+    ~entities=config.userEntities,
+    ~enums,
+    ~envioInfo=JSON.Encode.object(Dict.make()),
+  )
+  (storage, pgSchema)
+}
+
+let address = index => Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(index)
+
+let configAddress =
+  ((config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts->Array.getUnsafe(0)).addresses
+  ->Array.getUnsafe(0)
+
+// One row per (chain, address, contract), with the keys encoded exactly as the
+// address store encodes them.
+let row = (~address: Address.t, ~contractName, ~registrationBlock, ~checkpointId) => {
+  let packed = Core.getAddon().packAddresses(~ecosystem="evm", ~addresses=[address])
+  {
+    AddressRows.chainId,
+    address: Core.getAddon()
+    .splitAddresses(~ecosystem="evm", ~bytes=packed.bytes, ~lengths=packed.lengths)
+    ->Array.getUnsafe(0),
+    contractId: contractNames->Array.indexOf(contractName),
+    registrationBlock,
+    checkpointId,
+  }
+}
+
+let storedRows = async (~pgSchema) => {
+  let rows: array<InternalTable.EnvioAddresses.rawRow> = await sql->Postgres.unsafe(
+    InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema),
+  )
+  let rendered = Core.getAddon().renderAddresses(
+    ~ecosystem="evm",
+    ~shouldChecksum=true,
+    ~bytes=NodeJs.Buffer.concat(rows->Array.map(row => row.address)),
+    ~lengths=Null.make(rows->Array.map(row => row.address->NodeJs.Buffer.length)),
+  )
+  rows->Array.mapWithIndex((row, idx) => (
+    rendered->Array.getUnsafe(idx),
+    contractNames->Array.getUnsafe(row.contractId),
+    row.registrationBlock,
+  ))
+}
+
+describe("envio_addresses", () => {
+  // https://github.com/enviodev/hyperindex/issues/1187
+  Async.it("rolls back one contract's registration of a shared address", async t => {
+    let (_storage, pgSchema) = await setup()
+
+    await sql->InternalTable.EnvioAddresses.insert(
+      ~pgSchema,
+      ~rows=[
+        row(~address=address(1), ~contractName="Gravatar", ~registrationBlock=10, ~checkpointId=5n),
+        // The same address, registered later for another contract.
+        row(~address=address(1), ~contractName="NftFactory", ~registrationBlock=20, ~checkpointId=9n),
+        row(~address=address(2), ~contractName="NftFactory", ~registrationBlock=20, ~checkpointId=9n),
+      ],
+    )
+
+    await sql->InternalTable.EnvioAddresses.rollback(~pgSchema, ~rollbackTargetCheckpointId=6n)
+
+    t.expect(
+      await storedRows(~pgSchema),
+      ~message="only the registrations above the target are deleted, and the config address stands",
+    ).toEqual([
+      // The config address, stamped with the checkpoint no rollback reaches.
+      (configAddress, "Gravatar", -1),
+      (address(1), "Gravatar", 10),
+    ])
+  })
+
+  // A schema written before the addresses table was reshaped can't be resumed
+  // against: the rows in it are keyed differently. That has to surface as the
+  // incompatible-storage error, not as a missing column halfway through the
+  // resume.
+  Async.it("refuses to resume a schema that predates the contract mapping", async t => {
+    let (storage, pgSchema) = await setup()
+    let _ = await sql->Postgres.unsafe(
+      `DROP TABLE "${pgSchema}"."${InternalTable.EnvioContracts.table.tableName}";`,
+    )
+    let persistence = Persistence.make(
+      ~userEntities=config.userEntities,
+      ~allEnums=config.allEnums,
+      ~storage,
+    )
+    let message = try {
+      await persistence->Persistence.init(
+        ~chainConfigs=config.chainMap->ChainMap.values,
+        ~envioInfo=JSON.Encode.object(Dict.make()),
+        ~resetCommand="envio local db-migrate setup",
+        ~runCommand=None,
+      )
+      "the resume to fail, but it succeeded"
+    } catch {
+    | JsExn(e) => e->JsExn.message->Option.getOr("")
+    | _ => "an error without a message"
+    }
+    t.expect(
+      message->String.includes("storage was initialized by an older envio version"),
+      ~message=message,
+    ).toBe(true)
+  })
+
+  Async.it("takes one row per contract and ignores a repeat of one", async t => {
+    let (_storage, pgSchema) = await setup()
+
+    let shared = row(
+      ~address=address(1),
+      ~contractName="Gravatar",
+      ~registrationBlock=10,
+      ~checkpointId=5n,
+    )
+    await sql->InternalTable.EnvioAddresses.insert(
+      ~pgSchema,
+      ~rows=[
+        shared,
+        {...shared, contractId: contractNames->Array.indexOf("NftFactory")},
+      ],
+    )
+    // A retried batch write re-inserts what it already wrote.
+    await sql->InternalTable.EnvioAddresses.insert(~pgSchema, ~rows=[shared])
+
+    t.expect(
+      (await storedRows(~pgSchema))->Array.filter(((_, _, block)) => block !== -1),
+      ~message="the address is stored once per contract, however often it is written",
+    ).toEqual([
+      (address(1), "Gravatar", 10),
+      (address(1), "NftFactory", 10),
+    ])
+  })
+})
