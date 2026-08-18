@@ -7,7 +7,7 @@ reporting so SSE and WebSocket streams behave identically.
 
 type driver = {
   // The stream is usable: for SSE the connection opened, for WebSocket the
-  // subscription was confirmed. Resets the retry backoff.
+  // subscription was confirmed.
   onConnected: unit => unit,
   // Traffic that proves the connection is alive without carrying a height.
   onKeepAlive: unit => unit,
@@ -96,20 +96,27 @@ let subscribe = (
     // the retry timeout rather than the other way around.
     armStaleTimeout()
 
+    // Traffic, not the connect itself, is what proves an endpoint is worth
+    // retrying quickly. Resetting on connect would let one that accepts a
+    // connection and drops it immediately reconnect at the base delay forever.
+    let onTraffic = () => {
+      failureCount := 0
+      armStaleTimeout()
+    }
+
     let closeCurrentConnection = connect({
       onConnected: () =>
         if isCurrent() {
-          failureCount := 0
           armStaleTimeout()
           onStatus(Live)
         },
       onKeepAlive: () =>
         if isCurrent() {
-          armStaleTimeout()
+          onTraffic()
         },
       onHeight: height =>
         if isCurrent() {
-          armStaleTimeout()
+          onTraffic()
           onHeight(height)
         },
       onFailure: (~reason) =>

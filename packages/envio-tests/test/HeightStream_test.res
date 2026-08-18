@@ -63,7 +63,7 @@ describe("HeightStream reconnect driver", () => {
     )
   })
 
-  Async.it("Resets the backoff once a connection succeeds", async t => {
+  Async.it("Resets the backoff once a connection carries traffic", async t => {
     let harness = makeHarness()
     // Exactly the retry delay each time, so no connection lives long enough to
     // also go stale.
@@ -73,6 +73,7 @@ describe("HeightStream reconnect driver", () => {
     }
     let reconnected = harness->driverAt(3)
     reconnected.onConnected()
+    reconnected.onKeepAlive()
     reconnected.onFailure(~reason="closed")
 
     await Vi.advanceTimersByTimeAsync(249)
@@ -85,6 +86,30 @@ describe("HeightStream reconnect driver", () => {
       5,
       ["down:closed", "down:closed", "down:closed", "live", "down:closed"],
     ))
+  })
+
+  Async.it("Keeps backing off when a connection opens and drops without traffic", async t => {
+    let harness = makeHarness()
+    // An endpoint that accepts the connection and drops it straight away would
+    // otherwise reconnect at the base delay forever, and every reconnect costs
+    // its consumer a catch-up request.
+    let schedule = [250, 500, 1_000, 2_000]
+
+    let connectsAroundRetry = []
+    for attempt in 0 to schedule->Array.length - 1 {
+      let driver = harness->driverAt(attempt)
+      driver.onConnected()
+      driver.onFailure(~reason="closed")
+      await Vi.advanceTimersByTimeAsync(schedule->Array.getUnsafe(attempt) - 1)
+      let beforeDue = harness.drivers->Array.length
+      await Vi.advanceTimersByTimeAsync(1)
+      connectsAroundRetry->Array.push((beforeDue, harness.drivers->Array.length))->ignore
+    }
+    harness.unsubscribe()
+
+    t.expect(connectsAroundRetry).toStrictEqual(
+      schedule->Array.mapWithIndex((_, attempt) => (attempt + 1, attempt + 2)),
+    )
   })
 
   Async.it("Counts a socket that errors and then closes as one failure", async t => {
