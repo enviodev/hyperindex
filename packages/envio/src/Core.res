@@ -80,6 +80,11 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   var path = Nodepath;
   var fs = Nodefs;
 
+  // A caller that has already built the addon points at it, so this process
+  // does not take cargo's lock again. Test runs set it once for every worker.
+  var preBuilt = process.env.ENVIO_DEV_ADDON;
+  if (preBuilt && fs.existsSync(preBuilt)) return req(preBuilt);
+
   var repoRoot = null;
   var dir = path.resolve(envioDir);
   for (var i = 0; i < 10; i++) {
