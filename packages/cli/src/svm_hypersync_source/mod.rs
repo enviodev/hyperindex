@@ -45,7 +45,7 @@ use types::{opt_hex, to_hex, QueryResponse};
 /// `keys` restricts what is stored to the transactions routed items reference;
 /// `None` stores the whole response (the raw `get` query, which builds no
 /// items). `keep_native_only_rows` retains the activity rows of accounts holding
-/// no token balance; only `transaction.accounts` reads them, so a selection that
+/// no token balance; only `transaction.allAccounts` reads them, so a selection that
 /// asks for token balances alone drops them rather than carrying an entry per
 /// account of every matched transaction.
 fn build_svm_store(
@@ -378,20 +378,26 @@ impl SvmHyperSyncClient {
             // carries the message-header flags (`is_signer`, `is_writable`) and
             // a derived `token_state`; none are exposed yet, so none are
             // fetched.
-            field_selection.account_activity = parse_columns(&[
+            let mut columns = vec![
                 "slot",
                 "transaction_index",
                 "account",
-                "pre_balance",
-                "post_balance",
                 "mint",
                 "pre_owner",
                 "post_owner",
                 "token_decimals",
                 "pre_token_balance",
                 "post_token_balance",
-            ])
-            .map_err(map_err)?;
+            ];
+            if built.needs_accounts {
+                // Only `allAccounts` reads the native side; a token-balances
+                // selection would fetch and decode these for nothing.
+                // `account_index` is the account's position in the resolved key
+                // list, which orders the accounts an address lookup table
+                // contributed — they aren't in `account_keys`.
+                columns.extend(["pre_balance", "post_balance", "account_index"]);
+            }
+            field_selection.account_activity = parse_columns(&columns).map_err(map_err)?;
         }
 
         let query = SolanaQuery {
@@ -1096,10 +1102,10 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn native_only_activity_rows_are_stored_only_for_a_selection_reading_accounts() {
+    async fn native_only_activity_rows_are_stored_only_for_a_selection_reading_all_accounts() {
         // A token-balances-only selection would carry an activity row per
         // account of every matched transaction for nothing, so those rows are
-        // dropped as the page is built; `transaction.accounts` is what needs
+        // dropped as the page is built; `transaction.allAccounts` is what needs
         // them.
         let activity = |account: u8, mint: Option<simple::Address>| simple::AccountActivity {
             slot: Some(43),
@@ -1119,20 +1125,20 @@ mod tests {
             }]
         };
 
-        let mask = (1u64 << (crate::transaction_store::SvmTxField::Accounts as u32)) as f64;
+        let mask = (1u64 << (crate::transaction_store::SvmTxField::AllAccounts as u32)) as f64;
         let stored = |keep_native_only_rows| async move {
             let cols = build_svm_store(tx(), rows(), None, keep_native_only_rows)
                 .materialize(vec![43], vec![7], vec![mask])
                 .await
                 .expect("materialize");
-            match column(&cols, "accounts") {
-                Some(crate::field_columns::Column::Accounts(accounts)) => accounts[0]
+            match column(&cols, "allAccounts") {
+                Some(crate::field_columns::Column::AllAccounts(accounts)) => accounts[0]
                     .as_ref()
                     .expect("selected row")
                     .iter()
                     .map(|a| (a.address.clone(), a.pre_lamports.is_some()))
                     .collect::<Vec<_>>(),
-                _ => panic!("expected an accounts column"),
+                _ => panic!("expected an allAccounts column"),
             }
         };
 

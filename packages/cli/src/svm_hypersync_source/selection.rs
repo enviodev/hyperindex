@@ -123,7 +123,7 @@ pub struct SvmOnEventRegistrationInput {
 fn transaction_field_column(field: &str) -> Result<Option<&'static str>> {
     Ok(match field {
         "transactionIndex" | "tokenBalances" => None,
-        "accounts" => Some("account_keys"),
+        "allAccounts" => Some("account_keys"),
         "signature" => Some("transaction_id"),
         "allSignatures" => Some("signatures"),
         "feePayer" => Some("fee_payer"),
@@ -218,10 +218,10 @@ impl Registration {
         let mut needs_account_activity = false;
         let mut needs_accounts = false;
         for field in &input.transaction_fields {
-            if matches!(field.as_str(), "tokenBalances" | "accounts") {
+            if matches!(field.as_str(), "tokenBalances" | "allAccounts") {
                 needs_account_activity = true;
             }
-            if field == "accounts" {
+            if field == "allAccounts" {
                 needs_accounts = true;
             }
             if let Some(column) = transaction_field_column(field)? {
@@ -789,11 +789,11 @@ mod tests {
     }
 
     #[test]
-    fn accounts_fetches_the_key_list_alongside_the_activity_rows() {
-        // `accounts` joins the account_activity table to the transaction's own
+    fn all_accounts_fetches_the_key_list_alongside_the_activity_rows() {
+        // `allAccounts` joins the account_activity table to the transaction's own
         // key list, so it opts into both.
         let mut input = reg(0, PROG_A, Some("0x21"), 1, false);
-        input.transaction_fields = vec!["accounts".to_string()];
+        input.transaction_fields = vec!["allAccounts".to_string()];
         let (_store, _set, built) = build(&[input], &[0], &[]);
         assert_eq!(
             (

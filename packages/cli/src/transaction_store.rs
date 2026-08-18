@@ -133,7 +133,7 @@ pub enum SvmTxField {
     Version = 9,
     TokenBalances = 10,
     AllSignatures = 11,
-    Accounts = 12,
+    AllAccounts = 12,
 }
 
 impl SvmTxField {
@@ -153,7 +153,7 @@ impl SvmTxField {
             Version => "version",
             TokenBalances => "tokenBalances",
             AllSignatures => "allSignatures",
-            Accounts => "accounts",
+            AllAccounts => "allAccounts",
         }
     }
 }
@@ -294,7 +294,7 @@ fn svm_tx_col(field: SvmTxField, txs: &[solana_simple::Transaction]) -> Option<A
         }),
         RecentBlockhash => base58_col(txs, |t| t.recent_blockhash),
         Version => var_from(txs, |t| t.version.as_ref().map(|s| s.as_bytes())),
-        TokenBalances | Accounts => None,
+        TokenBalances | AllAccounts => None,
     }
 }
 
@@ -341,7 +341,7 @@ fn decode_svm_field(
             Column::Big(u64_cells(col, len, |v| Ok(Some(bigint_u64(v))))?)
         }
         TokenBalances => Column::TokenBalances(token_balances.to_vec()),
-        Accounts => Column::Accounts(accounts.to_vec()),
+        AllAccounts => Column::AllAccounts(accounts.to_vec()),
     })
 }
 
@@ -380,7 +380,11 @@ const AA_PRE_AMOUNT: usize = 3;
 const AA_POST_AMOUNT: usize = 4;
 const AA_PRE_LAMPORTS: usize = 5;
 const AA_POST_LAMPORTS: usize = 6;
-const ACCOUNT_ACTIVITY_FIELDS: usize = 7;
+/// Position in the transaction's resolved key list (`account_keys` ++ the
+/// lookup tables' writable then readonly addresses), fetched only for
+/// `allAccounts`.
+const AA_ACCOUNT_INDEX: usize = 7;
+const ACCOUNT_ACTIVITY_FIELDS: usize = 8;
 
 /// The token side of an activity row, read directly by slot off the companion
 /// table's columns. `None` on an account that holds no token balance — the mint
@@ -470,14 +474,16 @@ fn account_row(
 ///
 /// Accounts resolved from an address lookup table aren't in `account_keys` (the
 /// message carries only the static keys), so activity rows that matched no key
-/// follow the joined ones, in address order.
+/// follow the joined ones — which is where the resolved key list puts them —
+/// ordered by `account_index`, their position in that list. Rows the response
+/// gave no index sort after those, by address, so the order stays deterministic.
 fn gather_accounts(
     txs: &Table<(u64, u32)>,
     activity: &Table<(u64, u32, Box<str>)>,
     keys: &[Option<(u64, u32)>],
     masks: &[u64],
 ) -> Vec<Option<Vec<SvmAccountOut>>> {
-    let bit = 1u64 << (SvmTxField::Accounts as u32);
+    let bit = 1u64 << (SvmTxField::AllAccounts as u32);
     keys.iter()
         .zip(masks)
         .map(|(key, &m)| {
@@ -500,8 +506,21 @@ fn gather_accounts(
                 .iter()
                 .map(|address| account_row(activity, address, unjoined.remove(address.as_str())))
                 .collect();
+            let mut lookup_table: Vec<(&str, u32)> = unjoined.into_iter().collect();
+            // A row the response gave no index sorts last, not first, which is
+            // what `Option`'s own ordering would do.
+            let position = |slot: u32| {
+                activity
+                    .u64_cell(AA_ACCOUNT_INDEX, slot)
+                    .unwrap_or(u64::MAX)
+            };
+            lookup_table.sort_by(|&(a_address, a_slot), &(b_address, b_slot)| {
+                position(a_slot)
+                    .cmp(&position(b_slot))
+                    .then_with(|| a_address.cmp(b_address))
+            });
             rows.extend(
-                unjoined
+                lookup_table
                     .into_iter()
                     .map(|(address, slot)| account_row(activity, address, Some(slot))),
             );
@@ -765,6 +784,7 @@ impl TransactionStore {
         cols[AA_POST_AMOUNT] = u64_col(|r| r.post_token_balance);
         cols[AA_PRE_LAMPORTS] = u64_col(|r| r.pre_balance);
         cols[AA_POST_LAMPORTS] = u64_col(|r| r.post_balance);
+        cols[AA_ACCOUNT_INDEX] = u64_col(|r| r.account_index.map(u64::from));
         let keys = rows
             .into_iter()
             .map(|r| {
@@ -845,8 +865,8 @@ mod tests {
     /// `PartialEq` nor `Debug`, so an assert over the whole record needs this.
     fn account_views(cols: &Columns) -> Vec<Option<Vec<AccountView>>> {
         let amount = |v: &Option<BigInt>| v.as_ref().map(|b| b.clone().get_u64().1);
-        match column(cols, "accounts") {
-            Some(Column::Accounts(rows)) => rows
+        match column(cols, "allAccounts") {
+            Some(Column::AllAccounts(rows)) => rows
                 .iter()
                 .map(|row| {
                     row.as_ref().map(|accounts| {
@@ -872,7 +892,10 @@ mod tests {
                     })
                 })
                 .collect(),
-            other => panic!("expected accounts column, got present={}", other.is_some()),
+            other => panic!(
+                "expected allAccounts column, got present={}",
+                other.is_some()
+            ),
         }
     }
 
@@ -1113,7 +1136,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn accounts_join_carries_lamports_and_the_three_token_states() {
+    async fn all_accounts_join_carries_lamports_and_the_three_token_states() {
         // One transaction touching a token account created during it, one closed
         // during it, and a plain SOL account: `token` is absent on the SOL
         // account, and the created/closed pair is told apart by which amount is
@@ -1160,7 +1183,7 @@ mod tests {
         // Only `accounts` is selected: the join reads the stored account keys
         // whether or not the consumer asked for `accountKeys` too.
         let cols = store
-            .materialize(vec![5], vec![0], vec![svm_mask(SvmTxField::Accounts)])
+            .materialize(vec![5], vec![0], vec![svm_mask(SvmTxField::AllAccounts)])
             .await
             .expect("materialize");
 
@@ -1206,7 +1229,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn accounts_list_every_key_and_append_lookup_table_accounts() {
+    async fn all_accounts_list_every_key_and_append_lookup_table_accounts() {
         // The key list is what the transaction touched, so an account with no
         // activity row is still listed. An account resolved from an address
         // lookup table isn't in the key list at all, so its row follows the
@@ -1225,7 +1248,7 @@ mod tests {
         store.insert_svm_account_activity(vec![activity(2, 20), activity(9, 90), activity(7, 70)]);
 
         let cols = store
-            .materialize(vec![5], vec![0], vec![svm_mask(SvmTxField::Accounts)])
+            .materialize(vec![5], vec![0], vec![svm_mask(SvmTxField::AllAccounts)])
             .await
             .expect("materialize");
 
@@ -1249,13 +1272,13 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn accounts_of_a_transaction_without_a_stored_row_is_empty() {
+    async fn all_accounts_of_a_transaction_without_a_stored_row_is_empty() {
         // A selected row whose transaction was never fetched has no key list to
         // join against, so it materialises `[]` rather than a missing field —
         // the same contract `tokenBalances` keeps.
         let store = TransactionStore::new_svm();
         let cols = store
-            .materialize(vec![5], vec![0], vec![svm_mask(SvmTxField::Accounts)])
+            .materialize(vec![5], vec![0], vec![svm_mask(SvmTxField::AllAccounts)])
             .await
             .expect("materialize");
         assert_eq!(account_views(&cols), vec![Some(vec![])]);
@@ -1449,7 +1472,7 @@ mod tests {
                 "version",
                 "tokenBalances",
                 "allSignatures",
-                "accounts",
+                "allAccounts",
             ]
         );
     }

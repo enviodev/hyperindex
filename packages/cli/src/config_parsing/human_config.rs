@@ -1294,7 +1294,7 @@ pub mod svm {
         RecentBlockhash,
         Version,
         AllSignatures,
-        Accounts,
+        AllAccounts,
     }
 
     /// Selectable block field names (camelCase), matching the public

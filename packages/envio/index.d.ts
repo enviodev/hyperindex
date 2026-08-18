@@ -1235,7 +1235,9 @@ export type SvmAccountToken = {
 /** One account the transaction touched: its native lamport change and, when it
  * is a token account, its token balance. Every entry comes from the
  * transaction's own account keys, so an account with no recorded activity is
- * still listed. Select via `field_selection.transaction_fields`. */
+ * still listed; accounts an address lookup table contributed follow those, in
+ * resolved-key-list order. Select `allAccounts` via
+ * `field_selection.transaction_fields`. */
 export type SvmAccount = {
   readonly address: string;
   readonly preLamports: bigint | null;

@@ -269,11 +269,11 @@ if (0) {
 `)
   )
 
-  it("narrows transaction.accounts from the config selection", _ =>
+  it("narrows transaction.allAccounts from the config selection", _ =>
     InternalTestIndexer.fromUserApi(
       ~schema=ApiTypesFixtures.schema,
       ~configYaml=`
-name: svm-accounts
+name: svm-all-accounts
 ecosystem: svm
 chains:
   - start_block: 0
@@ -287,7 +287,7 @@ chains:
             - name: swap
               discriminator: "0x09"
               field_selection:
-                transaction_fields: [accounts]
+                transaction_fields: [allAccounts]
 `,
       ~handlers=`
 import { indexer } from "envio";
@@ -297,8 +297,8 @@ import { expectType, type TypeEqual } from "ts-expect";
 indexer.onInstruction(
   { program: "Swapper", instruction: "swap" },
   async ({ instruction: { transaction } }) => {
-    expectType<TypeEqual<typeof transaction.accounts, readonly SvmAccount[]>>(true);
-    for (const account of transaction.accounts) {
+    expectType<TypeEqual<typeof transaction.allAccounts, readonly SvmAccount[]>>(true);
+    for (const account of transaction.allAccounts) {
       expectType<TypeEqual<typeof account.address, string>>(true);
       // Every property is set, so the three token states are all null checks:
       // no token side, opened during the transaction, closed during it.

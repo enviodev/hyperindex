@@ -98,7 +98,7 @@ type svmTransaction = {
   /** Every signature on the transaction, in message order; the first is
    `signature`. Longer than one element only for a multi-signer transaction. */
   allSignatures: array<string>,
-  accounts?: array<svmAccount>,
+  allAccounts?: array<svmAccount>,
   tokenBalances?: array<svmTokenBalance>,
 }
 

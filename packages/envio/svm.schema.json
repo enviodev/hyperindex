@@ -521,7 +521,7 @@
         "recentBlockhash",
         "version",
         "allSignatures",
-        "accounts"
+        "allAccounts"
       ]
     },
     "SvmBlockField": {

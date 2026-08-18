@@ -60,11 +60,15 @@ pub struct SvmTokenBalanceOut {
     pub post_amount: Option<BigInt>,
 }
 
-/// The token side of a materialised SVM account, absent on an account that
+/// The token side of a materialised SVM account, `null` on an account that
 /// holds no SPL token balance. `preAmount`/`postAmount` carry the other two
-/// states: absent before means the token account was opened during the
-/// transaction, absent after means it was closed.
-#[napi(object)]
+/// states: `null` before means the token account was opened during the
+/// transaction, `null` after means it was closed.
+///
+/// `use_nullable` is what makes those three states readable: without it
+/// napi-derive guards each optional field's `set` and the property is missing
+/// rather than `null`, so a `=== null` check never fires.
+#[napi(object, use_nullable = true)]
 #[derive(Clone)]
 pub struct SvmAccountTokenOut {
     pub mint: String,
@@ -80,8 +84,9 @@ pub struct SvmAccountTokenOut {
 
 /// One account of a transaction: its native lamport change and, when it is a
 /// token account, its token balance. Materialised by joining the account
-/// activity rows to the transaction's account keys.
-#[napi(object)]
+/// activity rows to the transaction's account keys. Nullable rather than
+/// optional — see `SvmAccountTokenOut`.
+#[napi(object, use_nullable = true)]
 #[derive(Clone)]
 pub struct SvmAccountOut {
     pub address: String,
@@ -104,7 +109,7 @@ pub enum Column {
     AccessList(Vec<Option<Vec<AccessListItem>>>),
     AuthList(Vec<Option<Vec<AuthorizationItem>>>),
     TokenBalances(Vec<Option<Vec<SvmTokenBalanceOut>>>),
-    Accounts(Vec<Option<Vec<SvmAccountOut>>>),
+    AllAccounts(Vec<Option<Vec<SvmAccountOut>>>),
 }
 
 impl Column {
@@ -126,7 +131,7 @@ impl Column {
             Column::AccessList(v) => set_col(env, objs, key, v),
             Column::AuthList(v) => set_col(env, objs, key, v),
             Column::TokenBalances(v) => set_col(env, objs, key, v),
-            Column::Accounts(v) => set_col(env, objs, key, v),
+            Column::AllAccounts(v) => set_col(env, objs, key, v),
         }
     }
 }
