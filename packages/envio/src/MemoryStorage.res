@@ -472,7 +472,7 @@ let getRollbackData = (
     | Some({action: DELETE, entityId, scope}) =>
       removals->Array.push({Persistence.entityId, scope})->ignore
     | Some({action: SET, entity: Some(entity)}) =>
-      restored->Array.push(entity->(Utils.magic: Internal.entity => unknown))->ignore
+      restored->Array.push(entity)->ignore
     | Some({action: SET, entity: None}) => ()
     }
   })
