@@ -152,6 +152,18 @@ struct EntityClickHouseOptionsJson {
     order_by: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ttl: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    indices: Option<Vec<EntityClickHouseIndexJson>>,
+}
+
+#[derive(Serialize, Debug)]
+struct EntityClickHouseIndexJson {
+    name: String,
+    expr: String,
+    #[serde(rename = "type")]
+    index_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    granularity: Option<u32>,
 }
 
 impl From<&entity_parsing::ClickHouseEntityStorage> for EntityClickHouseStorageJson {
@@ -163,6 +175,17 @@ impl From<&entity_parsing::ClickHouseEntityStorage> for EntityClickHouseStorageJ
                     partition_by: options.partition_by.clone(),
                     order_by: options.order_by.clone(),
                     ttl: options.ttl.clone(),
+                    indices: options.indices.as_ref().map(|indices| {
+                        indices
+                            .iter()
+                            .map(|index| EntityClickHouseIndexJson {
+                                name: index.name.clone(),
+                                expr: index.expr.clone(),
+                                index_type: index.index_type.clone(),
+                                granularity: index.granularity,
+                            })
+                            .collect()
+                    }),
                 })
             }
         }

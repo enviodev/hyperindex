@@ -317,7 +317,8 @@ chains:
 type Transfer @storage(clickhouse: {
   partitionBy: "toYYYYMM(timestamp)",
   orderBy: ["timestamp"],
-  ttl: "timestamp + INTERVAL 2 YEAR"
+  ttl: "timestamp + INTERVAL 2 YEAR",
+  indices: [{ name: "idx_amount", expr: "amount", type: "minmax", granularity: 4 }]
 }) {
   id: ID!
   timestamp: Timestamp!
@@ -344,6 +345,7 @@ chains:
         partitionBy: "toYYYYMM(timestamp)",
         orderBy: ["timestamp"],
         ttl: "timestamp + INTERVAL 2 YEAR",
+        indices: [{name: "idx_amount", expr: "amount", type_: "minmax", granularity: 4}],
       },
     })
   })
@@ -1566,7 +1568,7 @@ type Token @storage(clickhouse: {indexGranularity: 1024}) {
   id: ID!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Invalid @storage directive on \`Token\`. Unknown \`clickhouse\` option \`indexGranularity\`. Expected options from {partitionBy, orderBy, ttl}, e.g. clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}.",
+      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Invalid @storage directive on \`Token\`. Unknown \`clickhouse\` option \`indexGranularity\`. Expected options from {partitionBy, orderBy, ttl, indices}, e.g. clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}.",
     ),
     (
       "rejects clickhouse orderBy referencing missing fields",

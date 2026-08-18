@@ -782,12 +782,23 @@ let fuelTransferParamsSchema = S.schema(s => {
 
 type entity = private {id: string}
 
+// A data skipping index emitted into the history table DDL as
+// `INDEX <name> <expr> TYPE <type> GRANULARITY <granularity>`.
+type clickhouseIndex = {
+  name: string,
+  expr: string,
+  @as("type")
+  type_: string,
+  granularity?: int,
+}
+
 // Raw ClickHouse expressions/field names from the entity's
 // @storage(clickhouse: {...}) directive, applied to the history table DDL.
 type clickhouseTableOptions = {
   partitionBy?: string,
   orderBy?: array<string>,
   ttl?: string,
+  indices?: array<clickhouseIndex>,
 }
 
 // Per-entity storage resolved at parse time against the global storage

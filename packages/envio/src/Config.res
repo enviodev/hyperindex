@@ -348,10 +348,18 @@ let propertySchema = S.schema(s =>
   }
 )
 
+let clickhouseIndexSchema: S.t<Internal.clickhouseIndex> = S.object(s => {
+  Internal.name: s.field("name", S.string),
+  expr: s.field("expr", S.string),
+  type_: s.field("type", S.string),
+  granularity: ?s.field("granularity", S.option(S.int)),
+})
+
 let clickhouseTableOptionsSchema: S.t<Internal.clickhouseTableOptions> = S.object(s => {
   Internal.partitionBy: ?s.field("partitionBy", S.option(S.string)),
   orderBy: ?s.field("orderBy", S.option(S.array(S.string))),
   ttl: ?s.field("ttl", S.option(S.string)),
+  indices: ?s.field("indices", S.option(S.array(clickhouseIndexSchema))),
 })
 
 // The entity's `clickhouse` storage arg mirrors the @storage directive:
