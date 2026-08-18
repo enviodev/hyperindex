@@ -103,6 +103,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       historyPrunes: [],
       sourceRequests: [],
       sourceHeights: [],
+      sourceHeightStreams: [],
     }
 
     t.expect(
@@ -110,6 +111,38 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
         `envio_effect_call_total{effect="a\\",b=c",scope="d\\"e"} 2`,
       ),
     ).toBe(true)
+  })
+
+  it("Omits the height stream families entirely when no stream has failed", t => {
+    let metrics: Metrics.t = {
+      startTime: Date.fromTime(0.),
+      metricTime: Date.fromTime(0.),
+      elapsedSeconds: 0.,
+      targetBufferSize: 0,
+      isInReorgThreshold: false,
+      rollbackEnabled: false,
+      maxBatchSize: 0,
+      preloadSeconds: 0.,
+      processingSeconds: 0.,
+      processingStalledOnFetchSeconds: 0.,
+      processingStalledOnStorageWriteSeconds: 0.,
+      rollbackSeconds: 0.,
+      rollbackCount: 0,
+      rollbackEventsCount: 0.,
+      chains: [],
+      handlers: [],
+      effects: [],
+      storageLoads: [],
+      storageWrites: [],
+      historyPrunes: [],
+      sourceRequests: [],
+      sourceHeights: [],
+      sourceHeightStreams: [],
+    }
+
+    t.expect(
+      Metrics.collect(~metrics=Some(metrics))->String.includes("envio_source_height_stream"),
+    ).toBe(false)
   })
 
   it("Renders every metric family from a fully populated snapshot", t => {
@@ -243,6 +276,14 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           height: 305,
         },
       ],
+      sourceHeightStreams: [
+        {
+          source: "HyperSync",
+          chainId: 1->ChainId.fromInt,
+          reconnectCount: 3,
+          failuresByReason: [("closed", 4), ("401", 1)],
+        },
+      ],
     }
 
     t.expect(Metrics.collect(~metrics=Some(metrics))).toBe(`# HELP envio_info Information about the indexer
@@ -373,6 +414,15 @@ envio_source_request_total{source="HyperSync",chainId="1",method="heightPush"} 7
 # HELP envio_source_request_seconds_total Cumulative time spent on data source requests.
 # TYPE envio_source_request_seconds_total counter
 envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 33.75
+
+# HELP envio_source_height_stream_reconnects_total The number of times a source's height subscription reconnected after a failure. Subtracting it from the failure total shows how long the current outage has been running.
+# TYPE envio_source_height_stream_reconnects_total counter
+envio_source_height_stream_reconnects_total{source="HyperSync",chainId="1"} 3
+
+# HELP envio_source_height_stream_failures_total The number of times a source's height subscription failed, by reason. Present only once a stream has failed at least once.
+# TYPE envio_source_height_stream_failures_total counter
+envio_source_height_stream_failures_total{source="HyperSync",chainId="1",reason="closed"} 4
+envio_source_height_stream_failures_total{source="HyperSync",chainId="1",reason="401"} 1
 
 # HELP envio_source_known_height The latest known block number reported by the source. This value may lag behind the actual chain height, as it is updated only when queried.
 # TYPE envio_source_known_height gauge

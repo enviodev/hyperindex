@@ -1,14 +1,11 @@
 /*
 WebSocket-based implementation for real-time block height tracking.
 Uses eth_subscribe("newHeads") for low-latency block detection.
-Falls back behavior is handled by SourceManager when subscription fails.
 */
 
-let retryCount = 9
-let baseDuration = 125
-// Close and reconnect if no new block head arrives within this period.
-// Detects silently dropped server-side subscriptions.
-let staleTimeMillis = 60_000
+// newHeads carries no keep-alive, so this has to tolerate slow chains rather
+// than the seconds an SSE ping allows.
+let staleTimeout = 60_000
 
 type wsMessage =
   | NewHead(int)
@@ -53,123 +50,31 @@ let wsMessageSchema = S.union([
   }),
 ])
 
-let subscribe = (~wsUrl, ~chainId, ~onHeight: int => unit): (unit => unit) => {
-  let wsRef: ref<option<WebSocket.t>> = ref(None)
-  let isUnsubscribed = ref(false)
-  let errorCount = ref(0)
-  let staleTimeoutId: ref<option<timeoutId>> = ref(None)
+let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
+  HeightStream.subscribe(~staleTimeout, ~onHeight, ~onStatus, ~connect=driver => {
+    let ws = WebSocket.create(wsUrl)
 
-  let clearStaleTimeout = () => {
-    switch staleTimeoutId.contents {
-    | Some(id) =>
-      clearTimeout(id)
-      staleTimeoutId := None
-    | None => ()
-    }
-  }
+    ws->WebSocket.onopen(() => ws->WebSocket.send(subscribeRequestJson))
 
-  let resetStaleTimeout = () => {
-    clearStaleTimeout()
-    staleTimeoutId := Some(setTimeout(() => {
-          // Connection went stale - close to trigger reconnect
-          switch wsRef.contents {
-          | Some(ws) => ws->WebSocket.close
-          | None => ()
-          }
-        }, staleTimeMillis))
-  }
+    ws->WebSocket.onmessage(event => {
+      let message = try {
+        Some(event.data->JSON.parseOrThrow->S.parseOrThrow(wsMessageSchema))
+      } catch {
+      | _ => None
+      }
+      switch message {
+      | Some(NewHead(blockNumber)) => driver.onHeight(blockNumber)
+      // An open socket isn't usable until the node accepts the subscription.
+      | Some(SubscriptionConfirmed(_)) => driver.onConnected()
+      | Some(ErrorResponse) => driver.onFailure(~reason="subscribe-rejected")
+      // Not counted as traffic, so a stream of messages we can't read goes
+      // stale and reconnects instead of looking healthy forever.
+      | None => ()
+      }
+    })
 
-  let rec scheduleReconnect = () => {
-    if !isUnsubscribed.contents && errorCount.contents < retryCount {
-      let duration =
-        baseDuration * Math.pow(2.0, ~exp=errorCount.contents->Int.toFloat)->Float.toInt
-      let _ = setTimeout(() => {
-        if !isUnsubscribed.contents {
-          startConnection()
-        }
-      }, duration)
-    }
-  }
-  and startConnection = () => {
-    if isUnsubscribed.contents || errorCount.contents >= retryCount {
-      ()
-    } else {
-      let ws = WebSocket.create(wsUrl)
-      wsRef := Some(ws)
+    ws->WebSocket.onerror(_ => driver.onFailure(~reason="error"))
+    ws->WebSocket.onclose(() => driver.onFailure(~reason="closed"))
 
-      ws->WebSocket.onopen(() => {
-        ws->WebSocket.send(subscribeRequestJson)
-        resetStaleTimeout()
-      })
-
-      ws->WebSocket.onmessage(event => {
-        try {
-          switch event.data->JSON.parseOrThrow->S.parseOrThrow(wsMessageSchema) {
-          | NewHead(blockNumber) =>
-            errorCount := 0
-            resetStaleTimeout()
-            onHeight(blockNumber)
-          | SubscriptionConfirmed(_) => resetStaleTimeout()
-          | ErrorResponse =>
-            if errorCount.contents < retryCount {
-              errorCount := errorCount.contents + 1
-            }
-            switch wsRef.contents {
-            | Some(ws) => ws->WebSocket.close
-            | None => ()
-            }
-          }
-        } catch {
-        | S.Raised(_) =>
-          Logging.warn({
-            "msg": "WebSocket height stream received unrecognized message",
-            "chainId": chainId,
-            "data": event.data,
-          })
-        | JsExn(_) as e =>
-          Logging.warn({
-            "msg": "WebSocket height stream failed to parse message",
-            "chainId": chainId,
-            "err": e->Utils.prettifyExn,
-            "data": event.data,
-          })
-        | e =>
-          Logging.error({
-            "msg": "Unexpected error in WebSocket height stream message handler",
-            "chainId": chainId,
-            "err": e->Utils.prettifyExn,
-            "data": event.data,
-          })
-          throw(e)
-        }
-      })
-
-      ws->WebSocket.onerror(_error => {
-        if errorCount.contents < retryCount {
-          errorCount := errorCount.contents + 1
-        }
-        switch wsRef.contents {
-        | Some(ws) if ws->WebSocket.readyState === Open => ws->WebSocket.close
-        | _ => ()
-        }
-      })
-
-      ws->WebSocket.onclose(() => {
-        wsRef := None
-        clearStaleTimeout()
-        scheduleReconnect()
-      })
-    }
-  }
-
-  startConnection()
-
-  () => {
-    isUnsubscribed := true
-    clearStaleTimeout()
-    switch wsRef.contents {
-    | Some(ws) => ws->WebSocket.close
-    | None => ()
-    }
-  }
-}
+    () => ws->WebSocket.close
+  })

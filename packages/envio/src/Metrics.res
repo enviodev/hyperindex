@@ -96,6 +96,15 @@ type sourceHeightMetrics = {
   height: int,
 }
 
+// Health of a source's height subscription. Only sources whose stream has
+// failed at least once appear, so a healthy indexer renders none of it.
+type sourceHeightStreamMetrics = {
+  source: string,
+  chainId: ChainId.t,
+  reconnectCount: int,
+  failuresByReason: array<(string, int)>,
+}
+
 type t = {
   startTime: Date.t,
   // Wall clock when this snapshot was built, so a scrape can be dated.
@@ -122,6 +131,7 @@ type t = {
   historyPrunes: array<historyPruneMetrics>,
   sourceRequests: array<sourceRequestMetrics>,
   sourceHeights: array<sourceHeightMetrics>,
+  sourceHeightStreams: array<sourceHeightStreamMetrics>,
 }
 
 // Prometheus floats keep at most 3 decimals; integral values render without a
@@ -247,6 +257,23 @@ let renderMetrics = (b: builder, metrics: t) => {
     })
     byLabels->Dict.toArray
   }
+
+  let heightStreams =
+    metrics.sourceHeightStreams->Array.map(s => (
+      `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}"}`,
+      s,
+    ))
+  let heightStreamFailures = []
+  metrics.sourceHeightStreams->Array.forEach(s =>
+    s.failuresByReason->Array.forEach(((reason, count)) =>
+      heightStreamFailures
+      ->Array.push((
+        `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}",reason="${reason->escapeLabelValue}"}`,
+        count,
+      ))
+      ->ignore
+    )
+  )
 
   b->single(
     ~name="envio_process_start_time_seconds",
@@ -461,6 +488,22 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~entries=sourceRequests,
     ~value=s => s.seconds !== 0. ? Some(s.seconds) : None,
   )
+  if heightStreams->Array.length > 0 {
+    b->series(
+      ~name="envio_source_height_stream_reconnects_total",
+      ~help="The number of times a source's height subscription reconnected after a failure. Subtracting it from the failure total shows how long the current outage has been running.",
+      ~kind="counter",
+      ~entries=heightStreams,
+      ~value=s => s.reconnectCount->Int.toFloat,
+    )
+    b->series(
+      ~name="envio_source_height_stream_failures_total",
+      ~help="The number of times a source's height subscription failed, by reason. Present only once a stream has failed at least once.",
+      ~kind="counter",
+      ~entries=heightStreamFailures,
+      ~value=count => count->Int.toFloat,
+    )
+  }
   b->series(
     ~name="envio_source_known_height",
     ~help="The latest known block number reported by the source. This value may lag behind the actual chain height, as it is updated only when queried.",

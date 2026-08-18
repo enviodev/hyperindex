@@ -1025,6 +1025,7 @@ module Source = {
     // Height subscription mocking
     heightSubscriptionCalls: array<bool>,
     triggerHeightSubscription: int => unit,
+    setHeightSubscriptionStatus: Source.heightSubscriptionStatus => unit,
     unsubscribeHeightSubscription: unit => unit,
   }
 
@@ -1048,6 +1049,9 @@ module Source = {
     // Height subscription state
     let heightSubscriptionCalls = []
     let heightSubscriptionCallbacks: array<int => unit> = []
+    let heightSubscriptionStatusCallbacks: array<
+      Source.heightSubscriptionStatus => unit,
+    > = []
     let heightSubscriptionUnsubscribed = ref(false)
     let state: mockSourceState = {onEventRegistrationRef: ref(None)}
 
@@ -1144,9 +1148,15 @@ module Source = {
           heightSubscriptionCallbacks->Array.forEach(callback => callback(height))
         }
       },
+      setHeightSubscriptionStatus: status => {
+        if !heightSubscriptionUnsubscribed.contents {
+          heightSubscriptionStatusCallbacks->Array.forEach(callback => callback(status))
+        }
+      },
       unsubscribeHeightSubscription: () => {
         heightSubscriptionUnsubscribed := true
         heightSubscriptionCallbacks->Utils.Array.clearInPlace
+        heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
       },
       source: {
         let source: Source.t = {
@@ -1319,13 +1329,15 @@ module Source = {
           createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
           | true =>
             Some(
-              (~onHeight) => {
+              (~onHeight, ~onStatus) => {
                 heightSubscriptionCalls->Array.push(true)->ignore
                 heightSubscriptionCallbacks->Array.push(onHeight)->ignore
+                heightSubscriptionStatusCallbacks->Array.push(onStatus)->ignore
                 heightSubscriptionUnsubscribed := false
                 () => {
                   heightSubscriptionUnsubscribed := true
                   heightSubscriptionCallbacks->Utils.Array.clearInPlace
+                  heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
                 }
               },
             )

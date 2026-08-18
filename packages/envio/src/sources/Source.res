@@ -130,6 +130,13 @@ exception GetItemsError(getItemsError)
 
 type sourceFor = Sync | Fallback | Realtime
 
+// Connection state of a height subscription, reported by every transport.
+// `Down` repeats on each failed retry while the stream stays broken, and `Live`
+// fires on every (re)connect, so consumers must treat both as idempotent.
+// `reason` is pre-bucketed for use as a metric label: an HTTP status, "stale",
+// "closed", "error" or "subscribe-rejected".
+type heightSubscriptionStatus = Live | Down({reason: string})
+
 type t = {
   name: string,
   sourceFor: sourceFor,
@@ -160,7 +167,10 @@ type t = {
     ~retry: int,
     ~logger: Pino.t,
   ) => promise<blockRangeFetchResponse>,
-  createHeightSubscription?: (~onHeight: int => unit) => unit => unit,
+  createHeightSubscription?: (
+    ~onHeight: int => unit,
+    ~onStatus: heightSubscriptionStatus => unit,
+  ) => unit => unit,
   // Invoked when a reorg or internally inconsistent response means local state
   // may point at an orphaned chain (e.g. the RPC block cache): drop all of it.
   // Deliberately takes no rollback target — the deepest reorged block isn't

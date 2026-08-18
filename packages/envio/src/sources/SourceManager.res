@@ -10,6 +10,15 @@ type sourceState = {
   mutable knownHeight: int,
   mutable unsubscribe: option<unit => unit>,
   mutable pendingHeightResolvers: array<int => unit>,
+  // Whether the height subscription is currently delivering. While it isn't,
+  // waiters poll straight away instead of sitting on the staleness backstop.
+  mutable subscriptionLive: bool,
+  mutable pendingSubscriptionDownResolvers: array<unit => unit>,
+  // Successful (re)connections of the height subscription, and failures keyed
+  // by reason. Both stay empty for a stream that has never failed, which keeps
+  // the envio_source_height_stream_* series off a healthy indexer's scrape.
+  mutable heightStreamConnects: int,
+  heightStreamFailures: dict<int>,
   mutable disabled: bool,
   // Timestamp (ms) when this source last failed during executeQuery.
   // Used to decide when to attempt recovery to this source.
@@ -26,6 +35,33 @@ let recordRequestStats = (sourceState: sourceState, requestStats: array<Source.r
     | None => sourceState.requestStats->Dict.set(method, {count: 1, seconds})
     }
   })
+}
+
+// Hand the height to everyone waiting on this source and remember it.
+let resolveHeight = (sourceState: sourceState, height: int) => {
+  sourceState.knownHeight = height
+  let resolvers = sourceState.pendingHeightResolvers
+  sourceState.pendingHeightResolvers = []
+  resolvers->Array.forEach(resolve => resolve(height))
+}
+
+// Counted per reason so envio_source_height_stream_failures_total shows what
+// kind of trouble a flapping stream is in.
+let recordHeightStreamFailure = (sourceState: sourceState, ~reason) =>
+  sourceState.heightStreamFailures->Dict.set(
+    reason,
+    switch sourceState.heightStreamFailures->Utils.Dict.dangerouslyGetNonOption(reason) {
+    | Some(count) => count + 1
+    | None => 1
+    },
+  )
+
+// Wake every waiter sitting on the staleness backstop so it starts polling now.
+let markSubscriptionDown = (sourceState: sourceState) => {
+  sourceState.subscriptionLive = false
+  let resolvers = sourceState.pendingSubscriptionDownResolvers
+  sourceState.pendingSubscriptionDownResolvers = []
+  resolvers->Array.forEach(resolve => resolve())
 }
 
 // Flattened (source, method) aggregates for Metrics.renderSourceRequests to
@@ -113,6 +149,42 @@ let getSourceHeightSamples = (sourceManager: t): array<sourceHeightSample> => {
         sourceName: sourceState.source.name,
         chainId: sourceState.source.chainId,
         height: sourceState.knownHeight,
+      })
+    }
+  })
+  samples
+}
+
+// Per-source height subscription health for envio_source_height_stream_*.
+// Sources whose stream has never failed are skipped entirely, so the metrics
+// appear only once there is something to see.
+type heightStreamSample = {
+  sourceName: string,
+  chainId: ChainId.t,
+  reconnectCount: int,
+  failures: array<(string, int)>,
+}
+
+let getHeightStreamSamples = (sourceManager: t): array<heightStreamSample> => {
+  let samples = []
+  sourceManager.sourcesState->Array.forEach(sourceState => {
+    // Sorted because a dict orders integer-like keys (HTTP statuses) ahead of
+    // the named reasons, which would make the rendered order depend on which
+    // reasons a stream happened to hit.
+    let failures =
+      sourceState.heightStreamFailures
+      ->Dict.toArray
+      ->Array.toSorted(((a, _), (b, _)) =>
+        a < b ? Ordering.less : a > b ? Ordering.greater : Ordering.equal
+      )
+    if failures->Array.length > 0 {
+      samples->Array.push({
+        sourceName: sourceState.source.name,
+        chainId: sourceState.source.chainId,
+        // The first connect isn't a reconnect, and a stream that failed before
+        // ever connecting has none at all.
+        reconnectCount: Pervasives.max(sourceState.heightStreamConnects - 1, 0),
+        failures,
       })
     }
   })
@@ -312,6 +384,10 @@ let make = (
       knownHeight: 0,
       unsubscribe: None,
       pendingHeightResolvers: [],
+      subscriptionLive: false,
+      pendingSubscriptionDownResolvers: [],
+      heightStreamConnects: 0,
+      heightStreamFailures: Dict.make(),
       disabled: false,
       lastFailedAt: None,
       requestStats: Dict.make(),
@@ -412,7 +488,10 @@ let disableSource = (sourceManager: t, sourceState: sourceState) => {
   if !sourceState.disabled {
     sourceState.disabled = true
     switch sourceState.unsubscribe {
-    | Some(unsubscribe) => unsubscribe()
+    | Some(unsubscribe) =>
+      unsubscribe()
+      // No further status will arrive, so release anyone waiting on one.
+      sourceState->markSubscriptionDown
     | None => ()
     }
     if sourceState.source.sourceFor === Realtime {
@@ -429,6 +508,56 @@ let disableSource = (sourceManager: t, sourceState: sourceState) => {
   }
 }
 
+// One-shot poll after the height subscription reconnects, closing the gap left
+// by heights emitted while it was down. Failures are ignored: the stream is
+// live again and the wait loop's own polling still covers the height.
+let catchUpHeight = async (sourceState: sourceState) => {
+  try {
+    let res = await sourceState.source.getHeightOrThrow()
+    sourceState->recordRequestStats(res.requestStats)
+    if res.height > sourceState.knownHeight {
+      sourceState->resolveHeight(res.height)
+    }
+  } catch {
+  | _ => ()
+  }
+}
+
+let handlePushedHeight = (sourceState: sourceState, pushedHeight: int) =>
+  // Ignore non-increasing heights. The height stream re-emits the current head
+  // on every (re)connect; waking the wait loop on a height we already know
+  // spins it and leaks fallback pollers (#1270).
+  if pushedHeight > sourceState.knownHeight {
+    sourceState->recordRequestStats([{Source.method: "heightPush", seconds: 0.}])
+    sourceState->resolveHeight(pushedHeight)
+  } else {
+    sourceState->recordRequestStats([{Source.method: "heightPushIgnored", seconds: 0.}])
+  }
+
+let handleSubscriptionStatus = (
+  sourceState: sourceState,
+  status: Source.heightSubscriptionStatus,
+) =>
+  switch status {
+  | Live =>
+    if !sourceState.subscriptionLive {
+      sourceState.subscriptionLive = true
+      let isReconnect = sourceState.heightStreamConnects > 0
+      sourceState.heightStreamConnects = sourceState.heightStreamConnects + 1
+      if isReconnect {
+        // A height that arrived while the stream was down is lost: HyperSync
+        // re-emits the head on connect but eth_subscribe only delivers the next
+        // block, so ask once rather than leaving the chain blind until it
+        // produces another. The first connect needs no catch-up, it follows the
+        // poll that created the subscription.
+        sourceState->catchUpHeight->Promise.ignore
+      }
+    }
+  | Down({reason}) =>
+    sourceState->recordHeightStreamFailure(~reason)
+    sourceState->markSubscriptionDown
+  }
+
 let getSourceNewHeight = async (
   sourceManager,
   ~sourceState: sourceState,
@@ -443,27 +572,62 @@ let getSourceNewHeight = async (
   let initialHeight = sourceState.knownHeight
   let newHeight = ref(initialHeight)
   let retry = ref(0)
+  let pollingInterval = () =>
+    if reducedPolling {
+      sourceManager.reducedPollingInterval
+    } else if status.contents === Stalled {
+      sourceManager.stalledPollingInterval
+    } else {
+      source.pollingInterval
+    }
 
   while newHeight.contents <= knownHeight && status.contents !== Done {
     switch sourceState.unsubscribe {
     | Some(_) =>
+      // The height this iteration has to beat. Not initialHeight: the
+      // subscription may have already pushed a height that advanced newHeight
+      // without reaching knownHeight, and a poll loop that measured itself
+      // against initialHeight would then return without polling, spinning this
+      // loop on resolved promises.
+      let iterationHeight = newHeight.contents
+      // Both resolvers are dropped once the race settles, so a healthy stream
+      // doesn't accumulate one closure per block in the pending arrays.
+      let heightResolver = ref(None)
+      let downResolver = ref(None)
       let subscriptionPromise = Promise.make((resolve, _reject) => {
+        heightResolver := Some(resolve)
         sourceState.pendingHeightResolvers->Array.push(resolve)
       })
-      // If the subscription goes quiet for half the stall timeout, fall back to REST
-      // polling. Jitter the trigger across [stallTimeout/2, stallTimeout) so indexers
-      // that go quiet together don't all start polling at the same instant.
-      let half = stallTimeout / 2
-      let pollingFallback = Utils.delay(
-        half + (Math.random() *. half->Int.toFloat)->Float.toInt,
-      )->Promise.then(async () => {
-        logger->Logging.childTrace({
-          "msg": "onHeight subscription stale, switching to polling fallback",
-          "source": source.name,
-          "chainId": source.chainId,
+
+      let pollingTrigger = if sourceState.subscriptionLive {
+        let subscriptionDown = Promise.make((resolve, _reject) => {
+          downResolver := Some(resolve)
+          sourceState.pendingSubscriptionDownResolvers->Array.push(resolve)
         })
-        let h = ref(initialHeight)
-        while h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
+        // A live subscription that simply goes quiet is caught by a backstop
+        // instead. Jitter it across [stallTimeout/2, stallTimeout) so indexers
+        // that go quiet together don't all start polling at the same instant.
+        let half = stallTimeout / 2
+        Promise.race([
+          subscriptionDown,
+          Utils.delay(half + (Math.random() *. half->Int.toFloat)->Float.toInt),
+        ])
+      } else {
+        // Nothing is pushing heights, so don't wait to start asking for them.
+        Promise.resolve()
+      }
+
+      let pollingFallback = pollingTrigger->Promise.then(async () => {
+        let h = ref(iterationHeight)
+        // newHeight only moves when an iteration settles, so it still being
+        // iterationHeight means this race is the one in flight. Stopping once
+        // it is over matters: otherwise a source that never returns a new
+        // height leaves a poller running for the rest of the process.
+        let shouldPoll = () =>
+          h.contents <= knownHeight &&
+          newHeight.contents === iterationHeight &&
+          status.contents !== Done
+        while shouldPoll() {
           try {
             let res = await source.getHeightOrThrow()
             sourceState->recordRequestStats(res.requestStats)
@@ -471,16 +635,28 @@ let getSourceNewHeight = async (
           } catch {
           | _ => ()
           }
-          if h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
-            await Utils.delay(source.pollingInterval)
+          if shouldPoll() {
+            await Utils.delay(pollingInterval())
           }
         }
         h.contents
       })
       let height = await Promise.race([subscriptionPromise, pollingFallback])
 
-      // Only accept heights greater than initialHeight
-      if height > initialHeight {
+      switch heightResolver.contents {
+      | Some(resolve) =>
+        sourceState.pendingHeightResolvers =
+          sourceState.pendingHeightResolvers->Array.filter(pending => pending !== resolve)
+      | None => ()
+      }
+      switch downResolver.contents {
+      | Some(resolve) =>
+        sourceState.pendingSubscriptionDownResolvers =
+          sourceState.pendingSubscriptionDownResolvers->Array.filter(pending => pending !== resolve)
+      | None => ()
+      }
+
+      if height > newHeight.contents {
         newHeight := height
       }
     | None =>
@@ -498,31 +674,14 @@ let getSourceNewHeight = async (
           // create subscription instead of polling
           switch source.createHeightSubscription {
           | Some(createSubscription) if isRealtime =>
-            let unsubscribe = createSubscription(~onHeight=newHeight => {
-              // Ignore non-increasing heights. The height stream re-emits the current
-              // head on every (re)connect; waking the wait loop on a height we already
-              // know spins it and leaks fallback pollers (#1270).
-              if newHeight > sourceState.knownHeight {
-                sourceState->recordRequestStats([{Source.method: "heightPush", seconds: 0.}])
-                sourceState.knownHeight = newHeight
-                let resolvers = sourceState.pendingHeightResolvers
-                sourceState.pendingHeightResolvers = []
-                resolvers->Array.forEach(resolve => resolve(newHeight))
-              } else {
-                sourceState->recordRequestStats([{Source.method: "heightPushIgnored", seconds: 0.}])
-              }
-            })
+            let unsubscribe = createSubscription(
+              ~onHeight=height => sourceState->handlePushedHeight(height),
+              ~onStatus=status => sourceState->handleSubscriptionStatus(status),
+            )
             sourceState.unsubscribe = Some(unsubscribe)
           | _ =>
             // Slowdown polling when the chain isn't progressing
-            let pollingInterval = if reducedPolling {
-              sourceManager.reducedPollingInterval
-            } else if status.contents === Stalled {
-              sourceManager.stalledPollingInterval
-            } else {
-              source.pollingInterval
-            }
-            await Utils.delay(pollingInterval)
+            await Utils.delay(pollingInterval())
           }
         }
       } catch {
