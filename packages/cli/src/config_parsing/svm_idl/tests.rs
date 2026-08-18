@@ -1092,3 +1092,38 @@ fn prunes_types_it_cannot_resolve_from_the_registry() {
         (vec!["swap"], vec!["Fee"], vec!["Orphan"])
     );
 }
+
+/// A type that reaches itself is ordinary — a linked list, a tree node — and
+/// decodable, since the `Option` terminates it. Condemning one would take
+/// every instruction that touches it out of reach.
+#[test]
+fn resolves_self_referential_types() {
+    let idl = parse_idl(
+        r#"{ "instructions": [{ "name": "walk", "discriminator": [1],
+             "args": [{ "name": "head", "type": { "defined": "Node" } }] }],
+             "types": [
+               { "name": "Node", "type": { "kind": "struct", "fields": [
+                 { "name": "value", "type": "u64" },
+                 { "name": "next", "type": { "option": { "defined": "Node" } } },
+                 { "name": "peer", "type": { "option": { "defined": "Other" } } }] } },
+               { "name": "Other", "type": { "kind": "struct", "fields": [
+                 { "name": "back", "type": { "option": { "defined": "Node" } } }] } }] }"#,
+        "Program",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        (
+            idl.instructions
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            idl.unusable.keys().map(String::as_str).collect::<Vec<_>>(),
+            idl.unusable_types
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        ),
+        (vec!["walk"], Vec::new(), Vec::new())
+    );
+}
