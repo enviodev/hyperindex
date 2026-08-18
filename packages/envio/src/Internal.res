@@ -181,36 +181,6 @@ type svmBlockField =
 let allSvmBlockFields: array<svmBlockField> = [Height, ParentSlot, ParentHash]
 let svmBlockFieldSchema = S.enum(allSvmBlockFields)
 
-// Per-account fields of a matched instruction. Nested paths are flattened into
-// a single constructor (`token.mint` → `TokenMint`) so the axis stays a flat
-// enum of strings, like the block and transaction axes.
-@unboxed
-type svmAccountField =
-  | @as("address") Address
-  | @as("token.mint") TokenMint
-  | @as("token.owner") TokenOwner
-  | @as("token.decimals") TokenDecimals
-  | @as("token.preAmount") TokenPreAmount
-  | @as("token.postAmount") TokenPostAmount
-
-let allSvmAccountFields: array<svmAccountField> = [
-  Address,
-  TokenMint,
-  TokenOwner,
-  TokenDecimals,
-  TokenPreAmount,
-  TokenPostAmount,
-]
-let svmAccountFieldSchema = S.enum(allSvmAccountFields)
-
-// The three SVM selection axes as the user writes them, before they're
-// compiled to the string sets and masks of `fieldSelection`.
-type svmFieldSelection = {
-  transaction: array<svmTransactionField>,
-  block: array<svmBlockField>,
-  account: array<svmAccountField>,
-}
-
 // Static sets of field names whose source schemas must be wrapped with S.nullable.
 let evmNullableBlockFields = Utils.Set.fromArray(
   (
@@ -447,19 +417,6 @@ type indexingContract = {
   registrationBlock: int,
   effectiveStartBlock: int,
 }
-
-// A raw registration matches by shape rather than by ABI identity, so it has
-// no contract or event name to be keyed by.
-@unboxed
-type rawKind =
-  | @as("log") Log
-  | @as("instruction") Instruction
-
-// How a registration is addressed. `Raw` registrations are program-less, so
-// they're distinguished by their kind plus the order they were registered in.
-type registrationIdentity =
-  | Named({contractName: string, eventName: string})
-  | Raw({kind: rawKind, ordinal: int})
 
 // What a single registration fetches and materialises. Field names are strings
 // so every ecosystem shares one type — the typed field variants are strings at

@@ -126,7 +126,6 @@ chains:
             - name: transfer
 `
 
-
 let parseError = (~files, ~configYaml) =>
   try {
     InternalTestIndexer.fromUserApi(~files, ~configYaml)->ignore
@@ -162,14 +161,23 @@ indexer.onInstruction(
   async ({ instruction }) => {
     const params = instruction.params;
     if (!params) return;
-    expectType<TypeEqual<typeof params.args.amountIn, string>>(true);
-    expectType<TypeEqual<typeof params.args.slippageBps, number>>(true);
-    expectType<TypeEqual<typeof params.args.route.percent, number>>(true);
-    expectType<TypeEqual<typeof params.args.route.hops, string[]>>(true);
-    expectType<TypeEqual<typeof params.args.memo, string | null>>(true);
-    expectType<TypeEqual<typeof params.accounts.source, string>>(true);
-    expectType<TypeEqual<typeof params.accounts.destination, string>>(true);
-    expectType<TypeEqual<typeof params.accounts.authority, string>>(true);
+    expectType<
+      TypeEqual<
+        typeof params.args,
+        {
+          readonly amountIn: string;
+          readonly slippageBps: number;
+          readonly route: { readonly hops: string[]; readonly percent: number };
+          readonly memo: string | null;
+        }
+      >
+    >(true);
+    expectType<
+      TypeEqual<
+        typeof params.accounts,
+        { readonly source: string; readonly destination: string; readonly authority: string }
+      >
+    >(true);
   },
 );
 `)
@@ -185,9 +193,13 @@ indexer.onInstruction(
   async ({ instruction }) => {
     const params = instruction.params;
     if (!params) return;
-    expectType<TypeEqual<typeof params.args.amount, string>>(true);
-    expectType<TypeEqual<typeof params.accounts.source, string>>(true);
-    expectType<TypeEqual<typeof params.accounts.destination, string>>(true);
+    expectType<TypeEqual<typeof params.args, { readonly amount: string }>>(true);
+    expectType<
+      TypeEqual<
+        typeof params.accounts,
+        { readonly source: string; readonly destination: string }
+      >
+    >(true);
   },
 );
 `)
@@ -204,16 +216,15 @@ indexer.onInstruction(
     let ids =
       config.chainMap
       ->ChainMap.values
-      ->Array.flatMap(chain =>
-        chain.contracts->Array.flatMap(contract =>
-          contract.events->Array.map(event => (contract.name, event.name, event.id))
-        )
+      ->Array.flatMap(
+        chain =>
+          chain.contracts->Array.flatMap(
+            contract => contract.events->Array.map(event => (contract.name, event.name, event.id)),
+          ),
       )
     t.expect(ids).toEqual([("Swapper", "swap", "0x0102030405060708")])
   })
 
-  // A name the IDL doesn't have used to fall through to an untyped
-  // instruction; nothing told the user their handler would never see args.
   it("rejects an instruction name the IDL does not declare", t =>
     t.expect(
       parseError(
