@@ -15,7 +15,12 @@ type driver = {
   onFailure: (~reason: string) => unit,
 }
 
-let baseRetryMillis = 1_000
+// While a stream is down its consumer polls instead, so the retry delay is what
+// that fallback costs: a load balancer rotating a connection heals on the first
+// retry, and every polling interval spent waiting for it is an avoidable
+// request. Small first step, with the doubling to protect an endpoint that is
+// genuinely in trouble.
+let baseRetryMillis = 250
 let maxRetryMillis = 60_000
 // Keeps the doubling from overflowing on a stream that has been failing for
 // days. The delay reaches maxRetryMillis long before this.

@@ -83,6 +83,9 @@ describe("Multichain: chain with height subscription stuck at head", () => {
             subscriptionOpened(),
             ~message="realtime transition should open the height subscription",
           ).toBe(true)
+          // The stream connects, so the wait relies on the staleness backstop
+          // rather than the immediate fallback a never-connected stream gets.
+          stuckChain.setHeightSubscriptionStatus(Live)
           // Release any pre-realtime wait still REST-polling at the same height so
           // it exits and gets discarded as stale.
           try stuckChain.resolveGetHeightOrThrow(101) catch {
@@ -111,10 +114,6 @@ describe("Multichain: chain with height subscription stuck at head", () => {
             stuckChain.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
             ~message="the newly known block 102 should be queried",
           ).toEqual([102])
-          // Baseline taken while the chain is still querying, because the
-          // fallback poll now fires as soon as the wait sees the subscription is
-          // not live rather than after the stall window.
-          let heightCallsBefore = stuckChain.getHeightOrThrowCalls->Array.length
           stuckChain.resolveGetItemsOrThrow(
             [{blockNumber: 102, logIndex: 0}],
             ~latestFetchedBlockNumber=102,
@@ -147,6 +146,7 @@ describe("Multichain: chain with height subscription stuck at head", () => {
           // polling within the realtime stall window (10..20s). On v3.3.0 the
           // fallback short-circuits without a single getHeight request and the
           // chain stays stuck at head forever.
+          let heightCallsBefore = stuckChain.getHeightOrThrowCalls->Array.length
           let pollDeadline = Date.now() +. 25_000.
           while (
             stuckChain.getHeightOrThrowCalls->Array.length === heightCallsBefore &&

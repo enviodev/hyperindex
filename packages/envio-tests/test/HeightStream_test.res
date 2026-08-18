@@ -46,7 +46,7 @@ describe("HeightStream reconnect driver", () => {
     let harness = makeHarness()
     // Deliberately longer than the 9 retries the WebSocket stream used to stop
     // after, so a regression back to giving up fails here.
-    let schedule = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000, 60_000, 60_000, 60_000]
+    let schedule = [250, 500, 1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000, 60_000]
 
     let connectsAroundRetry = []
     for attempt in 0 to schedule->Array.length - 1 {
@@ -69,13 +69,13 @@ describe("HeightStream reconnect driver", () => {
     // also go stale.
     for attempt in 0 to 2 {
       (harness->driverAt(attempt)).onFailure(~reason="closed")
-      await Vi.advanceTimersByTimeAsync(1_000 * Math.Int.pow(2, ~exp=attempt))
+      await Vi.advanceTimersByTimeAsync(250 * Math.Int.pow(2, ~exp=attempt))
     }
     let reconnected = harness->driverAt(3)
     reconnected.onConnected()
     reconnected.onFailure(~reason="closed")
 
-    await Vi.advanceTimersByTimeAsync(999)
+    await Vi.advanceTimersByTimeAsync(249)
     let beforeFirstStep = harness.drivers->Array.length
     await Vi.advanceTimersByTimeAsync(1)
     harness.unsubscribe()
@@ -94,7 +94,7 @@ describe("HeightStream reconnect driver", () => {
     driver.onFailure(~reason="error")
     driver.onFailure(~reason="closed")
 
-    await Vi.advanceTimersByTimeAsync(1_000)
+    await Vi.advanceTimersByTimeAsync(250)
     harness.unsubscribe()
 
     t.expect((harness.statuses, harness.closes.contents, harness.drivers->Array.length)).toStrictEqual((
@@ -163,7 +163,7 @@ describe("HeightStream reconnect driver", () => {
   Async.it("Retries rather than waits for staleness when connect fails immediately", async t => {
     let harness = makeHarness(~failOnConnect="401")
 
-    await Vi.advanceTimersByTimeAsync(999)
+    await Vi.advanceTimersByTimeAsync(249)
     let beforeRetry = harness.drivers->Array.length
     await Vi.advanceTimersByTimeAsync(1)
     harness.unsubscribe()
@@ -349,7 +349,7 @@ describe("RpcWebSocketHeightStream", () => {
       ~onStatus=status => statuses->Array.push(status->statusLabel)->ignore,
     )
 
-    // Long enough for the first retry (1s) to reconnect and be rejected again.
+    // Long enough for the first retry to reconnect and be rejected again.
     await waitUntil(() => statuses->Array.length > 1)
     unsubscribe()
     await Promise.make((resolve, _reject) => server->WsServer.close(() => resolve()))
