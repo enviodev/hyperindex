@@ -2329,6 +2329,35 @@ impl Contract {
             }
         }
 
+        // Distinctness is not enough for SVM: the router probes widths
+        // longest-first and compares a prefix of the data, so `0x0c` and
+        // `0x0c00000000000000` are one key, not two. Every call to the short
+        // one whose payload continues with those seven bytes is taken by the
+        // long one and decoded at the wrong offset. The equality check above
+        // is the degenerate case of this one, and keeps its own message.
+        let discriminators: Vec<(Vec<u8>, String)> = events
+            .iter()
+            .filter_map(|event| match &event.kind {
+                EventKind::Svm(svm) => svm
+                    .discriminator
+                    .as_deref()
+                    .and_then(|d| crate::hex::decode_optionally_prefixed(d, "discriminator").ok())
+                    .map(|bytes| (bytes, event.name.clone())),
+                _ => None,
+            })
+            .collect();
+        let by_bytes: Vec<(&[u8], &str)> = discriminators
+            .iter()
+            .map(|(bytes, event_name)| (bytes.as_slice(), event_name.as_str()))
+            .collect();
+        if let Some((instruction, reason)) = svm_idl::prefix_collisions(by_bytes).into_iter().next()
+        {
+            return Err(anyhow!(
+                "Contract {name} has two instructions the indexer can't tell apart: \
+                 '{instruction}' is unroutable because {reason}. Please remove one of them."
+            ));
+        }
+
         Ok(Self {
             name,
             events,

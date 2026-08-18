@@ -238,7 +238,7 @@ fn demote(idl: &mut ProgramIdl, demoted: Unusable) {
 /// happens to continue with the extra bytes matches it instead, and decodes
 /// against the wrong layout. Equal discriminators are the degenerate case of
 /// the same thing.
-fn prefix_collisions(mut by_bytes: Vec<(&[u8], &str)>) -> Unusable {
+pub(crate) fn prefix_collisions(mut by_bytes: Vec<(&[u8], &str)>) -> Unusable {
     by_bytes.sort_unstable();
     let mut out = Unusable::new();
     // Sorting puts a discriminator immediately before everything it prefixes,

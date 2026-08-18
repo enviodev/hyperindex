@@ -273,6 +273,36 @@ indexer.onInstruction(
     )
   )
 
+  // Distinct hex strings, one dispatch key: the router probes widths
+  // longest-first, so every `Short` call whose payload continues with seven
+  // zero bytes is taken by `Long` and decoded eight bytes in.
+  it("rejects a hand-written discriminator that is a prefix of another", t =>
+    t.expect(
+      parseError(
+        ~files=Dict.fromArray([]),
+        ~configYaml=`
+name: svm-inline
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: SplToken
+          program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+          instructions:
+            - name: Short
+              discriminator: "0x0c"
+            - name: Long
+              discriminator: "0x0c00000000000000"
+`,
+      ),
+    ).toBe(
+      "Config parse error: Contract SplToken has two instructions the indexer can't tell apart: 'Long' is unroutable because its discriminator 0x0c00000000000000 extends 'Short''s 0x0c, so a 'Short' call whose data continues those bytes arrives here instead. Please remove one of them.",
+    )
+  )
+
   // Dispatch reads a fixed-width prefix off the instruction data, so a width
   // it never probes matches nothing. Caught at codegen rather than at indexer
   // start, where the config line that caused it is long out of sight.
