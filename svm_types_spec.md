@@ -54,6 +54,7 @@ because that column carries only the message's static keys.
 | Discriminator payload | One `instruction.discriminator` (`0x`-hex of the matched prefix). Drop `d1`/`d2`/`d4`/`d8` from the handler payload. |
 | `tokenChanges` | Do not add. |
 | Identity | `instruction.accounts.<name>.activity` and `transaction.accountActivities[i]` are the same object when a row exists. |
+| Native side | Nested `lamports: { pre, post } \| undefined`. `undefined` = unchanged. `pre`/`post` are required `bigint` when `lamports` is present (always a pair). |
 
 ## Types
 
@@ -63,8 +64,7 @@ type AccountActivity = {
   transactionAccountIndex: number
   isSigner: boolean
   isWritable: boolean
-  preLamports: bigint | undefined
-  postLamports: bigint | undefined
+  lamports: { pre: bigint; post: bigint } | undefined
   token: {
     mint: string
     owner: string
@@ -107,6 +107,15 @@ IDL `signer` / `writable` / `optional` flags stay off the payload. Those are
 schema requirements; the activity row's `isSigner` / `isWritable` are message
 facts, and they only exist when a row exists.
 
+`lamports` and `token` are the two **sides** of the row, not moves — the row
+is already the activity. `lamports` is the native pair; `undefined` means
+unchanged, and when present both `pre` and `post` are `bigint` (measured:
+never one-sided, never `pre == post`). `token` is the token side: identity
+(`mint` / `owner` / `decimals`) plus amounts. Amounts stay `preAmount` /
+`postAmount` (SPL's word) and may be `undefined` on a defined `token`
+(opened / closed / opened-and-closed). `user.activity.token.mint` reads;
+`tokenMove` would not.
+
 `InstructionAccount` rather than `Account`: it is a slot on this instruction,
 not the on-chain account and not a user GraphQL entity. The field stays
 `accounts.user` (Anchor-shaped). `accountArguments` stays `string[]` so the
@@ -131,19 +140,20 @@ absent.” Same convention as EVM (`from: Address | undefined`).
 | `undefined` | Meaning | Only valid when |
 | --- | --- | --- |
 | `InstructionAccount.activity` | No activity row — this account did not move | `accountActivity` fields were selected |
-| `preLamports` / `postLamports` | Lamports unchanged (always absent as a pair) | those fields were selected |
+| `lamports` | Lamports unchanged (token-only row) | at least one `lamports.*` field was selected |
 | `token` | Not a token account | at least one `token.*` field was selected |
 | `token.preAmount` | Token account opened during this transaction | `preAmount` was selected |
 | `token.postAmount` | Token account closed during this transaction | `postAmount` was selected |
 | `instruction.args` | Borsh decode failed | `args` was selected |
 
 If you did not select `token.*`, `token` is `FieldNotSelected` — you did not
-fetch `mint`, so you do not know “not a token account.” Same for `isSigner`:
-unselected is a compile error, not `false`.
+fetch `mint`, so you do not know “not a token account.” Same for `lamports`
+and `isSigner`: unselected is a compile error, not `false` / `undefined`.
 
-Lamports stay **flat**, not nested under a `native` object. An undefined pair
-carries “unchanged” without a level of narrowing, and keeps
-`accountActivity: ["postLamports"]` expressible.
+Nesting `lamports` encodes the pair invariant the flat `preLamports` /
+`postLamports` could only document. Selection uses the same dotted paths as
+token: `"lamports.post"`. Flat names were rejected so `undefined` on one side
+could not mean “unchanged” while the other was a value.
 
 Never emit `null`. Drop `#[napi(object, use_nullable = true)]`. napi's default
 omits unset fields at runtime; that is fine — read `user.activity`, never
@@ -158,8 +168,9 @@ exist.
 `instructionName` are always included (the registration).
 
 Once selected, a field a row always carries stays required (`isSigner`,
-`token.mint`). `| undefined` is only for documented absences, not “we might
-have forgotten to set it.”
+`token.mint`, `lamports.pre` / `lamports.post` when `lamports` is present).
+`| undefined` is only for documented absences, not “we might have forgotten
+to set it.”
 
 ## Payload fields
 
@@ -255,6 +266,7 @@ Selecting a subset is allowed (`log: ["kind"]`). There is no log-level
 | `null` / `?:` for semantic absence | `T \| undefined` once selected. `FieldNotSelected` if not. napi omits at runtime; do not emit `null`. |
 | `transaction: ["accountActivities"]` | Implied by `fields.accountActivity`. |
 | `logs: true` | Implied by `fields.log`. No default column set. |
+| Flat `preLamports` / `postLamports` | Nested `lamports: { pre, post } \| undefined` so the pair is in the type. |
 
 Dropping the join also deletes the lookup-table special case: no `BTreeMap` of
 unjoined rows, no address-order tail, and no forced `account_keys` fetch.
@@ -273,7 +285,7 @@ indexer.onInstruction(
     fields: {
       instruction: ["args", "accounts", "accountArguments", "discriminator"],
       transaction: ["signature", "accountKeys"],
-      accountActivity: ["transactionAccountIndex", "postLamports", "token.mint"],
+      accountActivity: ["transactionAccountIndex", "lamports.post", "token.mint"],
       block: ["hash", "time"],
       log: ["kind", "message"],
     },
@@ -288,14 +300,14 @@ indexer.onInstruction(
 
 Rules:
 
-- Nested selection implies the parent array. `accountActivity: ["postLamports"]`
+- Nested selection implies the parent array. `accountActivity: ["lamports.post"]`
   is enough to put `transaction.accountActivities` on the payload. Do not also
   list `accountActivities` under `transaction`. Same for `log` ⇒
   `instruction.logs`. An empty nested list is a config error.
 - No implied column set inside the nested type. You get exactly the fields
   listed.
-- Dotted paths for nested token fields: `"token.mint"`. If no `token.*` is
-  listed, `token` is `FieldNotSelected`.
+- Dotted paths for nested sides: `"lamports.post"`, `"token.mint"`. If no
+  `token.*` is listed, `token` is `FieldNotSelected`. Same for `lamports`.
 - `accountKeys` and `accountArguments` take no sub-selection (`string[]`).
 - `args` is all-or-nothing (`instruction: ["args"]`). Per-field arg selection
   copies a HyperSync cost model onto local Borsh decode.
@@ -318,6 +330,10 @@ if (t?.preAmount !== undefined && t.postAmount !== undefined) {
   const delta = t.postAmount - t.preAmount
 }
 
+// named SOL flow — undefined lamports is a zero delta, not a zero balance
+const sol = instruction.accounts.user.activity?.lamports
+const solDelta = sol === undefined ? 0n : sol.post - sol.pre
+
 // tx-level movements, no key table billed
 for (const a of instruction.transaction.accountActivities) {
   if (a.token) { /* … */ }
@@ -328,9 +344,9 @@ const addr = instruction.accountArguments[8]
 const row = instruction.transaction.accountActivities.find(a => a.address === addr)
 ```
 
-`(post ?? 0n) - (pre ?? 0n)` is a correct **delta** when the native pair is
-absent (unchanged ⇒ 0) and a wrong **snapshot** (you cannot recover the
-balance). Document that; do not add `lamportsDelta` on the row.
+`lamports === undefined` is a correct **delta** of 0 and a wrong **snapshot**
+(you cannot recover the balance). Document that; do not add `lamportsDelta`
+on the row.
 
 ## Open
 
