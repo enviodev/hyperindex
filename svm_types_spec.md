@@ -82,7 +82,7 @@ type InstructionAccount = {
 }
 
 type Log = {
-  kind: "invoke" | "success" | "failed" | "consumed" | "log" | "data" | "other"
+  kind: "invoke" | "success" | "failed" | "consumed" | "log" | "data" | (string & {})
   message: string
 }
 ```
@@ -226,7 +226,10 @@ the log to this instruction (exact `instruction_address` match) and are not on
 the handler object. Unscoped logs (`instruction_address` missing) are dropped.
 `program_id` would duplicate `instruction.programId` after that scoping.
 
-`kind` is the Solana log line class (prefix stripped from `message`):
+`kind` is the Solana log line class (prefix stripped from `message`). Known
+literals stay in the union for autocomplete; `(string & {})` keeps it open so
+`other` and any later kind type-check without a breaking change. Bare `string`
+would collapse the union and drop completions.
 
 | kind | Source line |
 | --- | --- |
@@ -236,7 +239,7 @@ the handler object. Unscoped logs (`instruction_address` missing) are dropped.
 | `consumed` | `Program <id> consumed <n> of <m> compute units` |
 | `log` | `Program log: <msg>` |
 | `data` | `Program data: <base64>` |
-| `other` | anything else, kept verbatim (e.g. `Program return: …`) |
+| `other` (and anything else) | kept verbatim (e.g. `Program return: …`) |
 
 SQD-ingested ranges and default RPC ranges only persist `log` / `data` /
 `other`. Framing `invoke` / `success` / `failed` / `consumed` are dropped for
