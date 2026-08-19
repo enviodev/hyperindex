@@ -67,6 +67,20 @@ describe("subgraph translation: unsupported features", () => {
     )
   })
 
+  it("does not run when events and call handlers are on the same data source", t => {
+    translate(
+      ~schema=baseSchema,
+      ~manifest=manifestWith(`${plainEventHandler}
+      callHandlers:
+        - function: approve(address,uint256)
+          handler: handleApprove`),
+    )->expectFindingHelper(
+      t,
+      ~headline="Envio Subgraph doesn't support call handlers yet.",
+      ~location=`data source "Token" → callHandlers → "handleApprove"`,
+    )
+  })
+
   it("refuses a call-filtered block handler", t => {
     translate(
       ~schema=baseSchema,

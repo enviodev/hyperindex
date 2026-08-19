@@ -66,17 +66,20 @@ const GRAPH_NETWORK_ALIASES: &[(&str, &str)] = &[
     ("hyperevm", "hyper-evm"),
 ];
 
-/// subgraph.yaml `network:` is The Graph's identifier, not Envio's. Falling
-/// back to `Network::from_str` hid mismatches (`hyperevm` vs `hyperliquid`).
+/// Graph's identifier first, then Envio's kebab-case so `hyperliquid` still
+/// works when someone writes our name.
 fn network_to_chain_id(network: &str) -> Option<u64> {
     let canonical = GRAPH_NETWORK_ALIASES
         .iter()
         .find(|(alias, _)| *alias == network)
         .map(|(_, name)| *name)
         .unwrap_or(network);
-    serde_json::from_value::<GraphNetwork>(serde_json::Value::String(canonical.to_string()))
-        .ok()
-        .map(|n| Network::from(n).get_network_id())
+    if let Ok(graph) = serde_json::from_value::<GraphNetwork>(serde_json::Value::String(
+        canonical.to_string(),
+    )) {
+        return Some(Network::from(graph).get_network_id());
+    }
+    Network::from_str(network).ok().map(|n| n.get_network_id())
 }
 
 /// A YAML mapping being read, tracking which keys were consumed so the rest can
@@ -421,14 +424,6 @@ fn parse_data_source(
                 {
                     Some(ecosystem) => report.unsupported(
                         format!("{ecosystem} subgraphs — Envio Subgraph indexes EVM chains"),
-                        where_("network"),
-                    ),
-                    None if Network::from_str(network).is_ok() => report.unknown(
-                        format!(
-                            "the network \"{network}\" (that's Envio's chain name — subgraph.yaml \
-                             uses The Graph's, e.g. mainnet not ethereum-mainnet, hyper-evm not \
-                             hyperliquid)"
-                        ),
                         where_("network"),
                     ),
                     None => report.unknown(format!("the network \"{network}\""), where_("network")),
@@ -830,21 +825,23 @@ templates:
                 network_to_chain_id("arbitrum-one"),
                 network_to_chain_id("hyperevm"),
                 network_to_chain_id("hyper-evm"),
-                network_to_chain_id("not-a-chain"),
-            ],
-            [Some(1), Some(1), Some(137), Some(42161), Some(999), Some(999), None]
-        );
-    }
-
-    #[test]
-    fn rejects_envio_chain_names_that_are_not_graph_names() {
-        assert_eq!(
-            [
                 network_to_chain_id("hyperliquid"),
                 network_to_chain_id("ethereum-mainnet"),
                 network_to_chain_id("polygon"),
+                network_to_chain_id("not-a-chain"),
             ],
-            [None, None, None]
+            [
+                Some(1),
+                Some(1),
+                Some(137),
+                Some(42161),
+                Some(999),
+                Some(999),
+                Some(999),
+                Some(1),
+                Some(137),
+                None,
+            ]
         );
     }
 
@@ -994,16 +991,12 @@ dataSources:
     }
 
     #[test]
-    fn refuses_envio_network_names_with_a_graph_name_hint() {
+    fn accepts_envio_network_names_as_a_fallback() {
         let yaml = GRAVITY.replace("network: mainnet", "network: hyperliquid");
-        let rendered = parse_ok(&yaml).1.to_string();
+        let (manifest, report) = parse_ok(&yaml);
         assert_eq!(
-            (
-                rendered.contains("doesn't know the network \"hyperliquid\""),
-                rendered.contains("The Graph's"),
-                rendered.contains("hyper-evm"),
-            ),
-            (true, true, true)
+            (manifest.unwrap().data_sources[0].chain_id, report.is_empty()),
+            (Some(999), true)
         );
     }
 

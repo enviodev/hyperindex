@@ -533,6 +533,33 @@ type Gravatar @entity {
     }
 
     #[test]
+    fn refuses_to_run_when_a_data_source_has_call_handlers() {
+        let manifest = MANIFEST.replace(
+            "      eventHandlers:",
+            "      callHandlers:\n        - function: setGravatar(string)\n          handler: \
+             handleSetGravatar\n      eventHandlers:",
+        );
+        let error = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            (
+                error.contains("doesn't support call handlers"),
+                error.contains("callHandlers → \"handleSetGravatar\""),
+            ),
+            (true, true)
+        );
+    }
+
+    #[test]
     fn maps_hyperevm_to_hyperliquid() {
         let yaml = MANIFEST.replace("network: mainnet", "network: hyperevm");
         let translation =

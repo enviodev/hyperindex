@@ -6,7 +6,8 @@
   "scripts": {
     "build": "rescript",
     "watch": "rescript watch",
-    "test": "rescript && vitest run"
+    "test": "rescript && vitest run",
+    "check-subgraph-codegen": "bash test/fixtures/subgraph-codegen/check.sh"
   },
   "devDependencies": {
     "@rescript/runtime": "12.2.0",
