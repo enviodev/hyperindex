@@ -1692,6 +1692,17 @@ export function changetype<T>(value: unknown): T {
   return value as T;
 }
 
+// `changetype<GeneratedTuple>(result[0].toTuple())` is a pointer reinterpret
+// in AssemblyScript; in JS the named getters live on the generated class.
+// The load hook rewrites that call to this helper so `.value` etc. resolve.
+export function retagChangetype(ctor: unknown, value: unknown): unknown {
+  if (value !== null && typeof value === "object" && typeof ctor === "function") {
+    const proto = (ctor as Function).prototype;
+    if (proto) Object.setPrototypeOf(value, proto);
+  }
+  return changetype(value);
+}
+
 /**
  * AssemblyScript's primitives are namespaces as well as types: `i32.MAX_VALUE`
  * reads a bound, `i32(x)` truncates to one. Both are ordinary source in a

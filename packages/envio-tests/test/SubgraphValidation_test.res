@@ -17,6 +17,8 @@ type Token @entity {
 }
 `
 
+let transferAbi = `[{"type":"event","name":"Transfer","anonymous":false,"inputs":[{"name":"from","type":"address","indexed":true},{"name":"to","type":"address","indexed":true},{"name":"value","type":"uint256","indexed":false}]}]`
+
 let manifestWith = mapping => `
 specVersion: 0.0.5
 schema:
@@ -200,6 +202,35 @@ describe("subgraph translation: unknown things", () => {
       ~headline=`Envio Subgraph doesn't know the feature "timeTravel".`,
       ~location="features[0]",
     )
+  })
+
+  it("accepts specVersion 0.0.2", t => {
+    let {config} = InternalTestIndexer.fromSubgraph(
+      ~schema=baseSchema,
+      ~manifest=manifestWith(plainEventHandler)
+      ->String.replace("specVersion: 0.0.5", "specVersion: 0.0.2")
+      ->String.replace(
+        "      abis: []",
+        "      abis:\n        - name: Token\n          file: ./abis/Token.json",
+      ),
+      ~files=Dict.fromArray([("./abis/Token.json", transferAbi)]),
+    )
+    t.expect(config.chainMap->ChainMap.keys->Array.length).toEqual(1)
+  })
+
+  it("maps network ethereum to chain 1", t => {
+    let {config} = InternalTestIndexer.fromSubgraph(
+      ~schema=baseSchema,
+      ~manifest=manifestWith(plainEventHandler)
+      ->String.replace("network: mainnet", "network: ethereum")
+      ->String.replace(
+        "      abis: []",
+        "      abis:\n        - name: Token\n          file: ./abis/Token.json",
+      ),
+      ~files=Dict.fromArray([("./abis/Token.json", transferAbi)]),
+    )
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    t.expect(chain.id->ChainId.toString).toEqual("1")
   })
 
   it("refuses a specVersion newer than it understands", t => {

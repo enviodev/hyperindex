@@ -101,9 +101,10 @@ let completionsAt = (~schema=?, ~env=?, ~files=?, ~handlers, ~configYaml): array
 let fromSubgraph = (~env=?, ~files=?, ~mappings=Dict.make(), ~test=?, ~manifest, ~schema): parsed => {
   let site = callSite()
   let root = pathJoin([tmpDir, `subgraph-${site->String.replaceRegExp(%re("/[^a-zA-Z0-9]+/g"), "-")}-${randomUUID()->String.slice(~start=0, ~end=8)}`])
-  mkdirSync(pathJoin([root, "src"]), {"recursive": true})
   mappings->Dict.forEachWithKey((source, relativePath) => {
-    writeFileSync(pathJoin([root, relativePath]), source)
+    let dest = pathJoin([root, relativePath])
+    mkdirSync(pathDirname(dest), {"recursive": true})
+    writeFileSync(dest, source)
   })
 
   let {config: configJson} = Core.fromSubgraph(~manifest, ~schema, ~env?, ~files?, ~root)
