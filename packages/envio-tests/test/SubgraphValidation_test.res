@@ -218,6 +218,21 @@ describe("subgraph translation: unknown things", () => {
     t.expect(config.chainMap->ChainMap.keys->Array.length).toEqual(1)
   })
 
+  it("maps network hyperevm to chain 999", t => {
+    let {config} = InternalTestIndexer.fromSubgraph(
+      ~schema=baseSchema,
+      ~manifest=manifestWith(plainEventHandler)
+      ->String.replace("network: mainnet", "network: hyperevm")
+      ->String.replace(
+        "      abis: []",
+        "      abis:\n        - name: Token\n          file: ./abis/Token.json",
+      ),
+      ~files=Dict.fromArray([("./abis/Token.json", transferAbi)]),
+    )
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    t.expect(chain.id->ChainId.toString).toEqual("999")
+  })
+
   it("maps network ethereum to chain 1", t => {
     let {config} = InternalTestIndexer.fromSubgraph(
       ~schema=baseSchema,

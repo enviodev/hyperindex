@@ -533,6 +533,14 @@ type Gravatar @entity {
     }
 
     #[test]
+    fn maps_hyperevm_to_hyperliquid() {
+        let yaml = MANIFEST.replace("network: mainnet", "network: hyperevm");
+        let translation =
+            translate(&yaml, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous()).unwrap();
+        assert_eq!(translation.human_config.chains[0].id, 999);
+    }
+
+    #[test]
     fn builds_an_evm_config_from_a_manifest() {
         let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous()).unwrap();
         let config = &translation.human_config;
