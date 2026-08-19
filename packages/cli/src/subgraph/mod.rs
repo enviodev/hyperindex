@@ -525,6 +525,14 @@ type Gravatar @entity {
 "#;
 
     #[test]
+    fn maps_the_ethereum_network_alias_to_chain_1() {
+        let yaml = MANIFEST.replace("network: mainnet", "network: ethereum");
+        let translation =
+            translate(&yaml, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous()).unwrap();
+        assert_eq!(translation.human_config.chains[0].id, 1);
+    }
+
+    #[test]
     fn builds_an_evm_config_from_a_manifest() {
         let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous()).unwrap();
         let config = &translation.human_config;
@@ -846,6 +854,25 @@ dataSources:
                 json.contains("\"mappingFile\": \"./src/gravity.ts\""),
             ),
             (true, true, true, true, true, true)
+        );
+    }
+
+    #[test]
+    fn tells_the_user_to_generate_subgraph_yaml_from_a_template() {
+        let dir = tempdir::TempDir::new("envio-subgraph-template").unwrap();
+        let root = dir.path();
+        fs::write(root.join("subgraph.template.yaml"), "specVersion: 0.0.2\n").unwrap();
+        let project_paths =
+            ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = SystemConfig::parse_from_project_files(&project_paths)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            (
+                err.contains("Found subgraph.template.yaml but no subgraph.yaml"),
+                err.contains("graph build --network"),
+            ),
+            (true, true)
         );
     }
 }

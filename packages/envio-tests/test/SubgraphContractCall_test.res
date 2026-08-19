@@ -72,6 +72,11 @@ class Token extends ethereum.SmartContract {
       ethereum.Value.fromUnsignedBigInt(index),
     ]);
   }
+  // What graph codegen emits for a struct/tuple return.
+  getMarginRatio(): any {
+    let result = this.call("getMarginRatio", "getMarginRatio():((uint256))", []);
+    return result[0].toTuple();
+  }
 }
 
 export function handlePing(event: any): void {
@@ -99,6 +104,15 @@ export function handlePing(event: any): void {
     probe.setString("name", odd.reverted ? "reverted" : odd.value[0].toString());
     probe.setBoolean("reverted", odd.reverted);
     store.set("Probe", "odd", probe);
+    return;
+  }
+
+  if (nonce === 5) {
+    let fields = token.getMarginRatio();
+    let probe = new Entity();
+    probe.setString("name", fields[0].toBigInt().toString());
+    probe.setBoolean("reverted", false);
+    store.set("Probe", "ratio", probe);
     return;
   }
 
@@ -130,6 +144,9 @@ const ODD_NAME_SELECTOR = "0x4d9386ad";
 const SLOT_SELECTOR = "0xb2025e4f";
 const SLOT_RESULT =
   "0x000000000000000000000000000000000000000000000000000000000000002a";
+const RATIO_SELECTOR = "0x4f3c1542";
+const RATIO_RESULT =
+  "0x0000000000000000000000000000000000000000000000000000000000000064";
 
 // A bytes32 name from a pre-ERC20 token, which can't be decoded as the string
 // the signature declares.
@@ -152,6 +169,7 @@ beforeAll(async () => {
       if (data.startsWith(NAME_SELECTOR)) return reply(NAME_RESULT);
       if (data.startsWith(ODD_NAME_SELECTOR)) return reply(ODD_NAME_RESULT);
       if (data.startsWith(SLOT_SELECTOR)) return reply(SLOT_RESULT);
+      if (data.startsWith(RATIO_SELECTOR)) return reply(RATIO_RESULT);
       if (data.startsWith(BOOM_SELECTOR)) {
         return res.end(
           JSON.stringify({
@@ -203,6 +221,22 @@ describe("contract calls", () => {
       id: "odd",
       name: "reverted",
       reverted: true,
+    });
+  });
+
+  it("unwraps a tuple return the way graph codegen does", async (t) => {
+    const indexer = createTestIndexer();
+
+    await indexer.process({
+      chains: {
+        1: { simulate: [{ contract: "Token", event: "Ping", params: { nonce: 5n } }] },
+      },
+    });
+
+    t.expect(await indexer.Probe.getOrThrow("ratio")).toEqual({
+      id: "ratio",
+      name: "100",
+      reverted: false,
     });
   });
 

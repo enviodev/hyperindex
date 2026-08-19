@@ -653,6 +653,14 @@ export class Value {
   toArray(): Value[] {
     return this.data as Value[];
   }
+  // Official `ethereum.Value` exposes these; generated bindings call
+  // `result[0].toTuple()` on every struct/tuple return.
+  toTuple(): Value[] {
+    return this.toArray();
+  }
+  toTupleArray(): Value[][] {
+    return this.toArray().map(value => value.toArray());
+  }
   toMatrix(): Value[][] {
     return this.toArray().map((row) => row.toArray());
   }
@@ -1172,7 +1180,9 @@ function callContract(
 }
 
 function toEthereumValue(value: unknown): EthereumValue {
-  return toValue(value) as EthereumValue;
+  if (value instanceof EthereumValue) return value;
+  const wrapped = toValue(value);
+  return new EthereumValue(wrapped.kind, wrapped.data);
 }
 
 /** A graph-ts value as the plain JS an ABI encoder takes. */

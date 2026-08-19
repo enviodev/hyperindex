@@ -1662,6 +1662,20 @@ impl SystemConfig {
             return Self::parse_subgraph_from_project_files(project_paths);
         }
 
+        if !project_paths.config.exists()
+            && project_paths
+                .project_root
+                .join("subgraph.template.yaml")
+                .exists()
+        {
+            return Err(anyhow!(
+                "Found subgraph.template.yaml but no subgraph.yaml.\n\
+                 This project generates its manifest — run the package prepare script \
+                 (mustache / `graph build --network <network>`), then run envio from \
+                 the directory that now contains subgraph.yaml."
+            ));
+        }
+
         let human_config_string =
             std::fs::read_to_string(&project_paths.config).context(format!(
                 "Failed to resolve config path {0} (--config {1} resolved relative to --directory \
