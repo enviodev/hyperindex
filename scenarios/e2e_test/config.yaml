@@ -23,3 +23,52 @@ chains:
     contracts:
       - name: ERC20
         address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+# Written by config.yaml, not by a handler. No `as_entity`, so it stays out of
+# the handler context — and out of Hasura's `_by_pk` root, which only makes
+# sense for a table whose ids a caller can name.
+tables:
+  transfer_totals:
+    storage:
+      postgres: true
+      clickhouse: false
+    from: evm.events
+    where:
+      contractName: ERC20
+      eventName: Transfer
+    select:
+      id: params.to
+      received:
+        _sum: params.value
+        _description: "Total received by this account"
+  # No `where` at all, so every configured event feeds this table — which
+  # works because `select` reads nothing event-specific. Leading underscores
+  # keep it out of the way alphabetically; generated code reaches it as
+  # `Block_totals`. Its id is an Int, so the reference below carries an Int.
+  _block_totals:
+    storage:
+      postgres: true
+      clickhouse: false
+    from: evm.events
+    select:
+      id: block.number
+      transfers:
+        _sum: 1
+  transfer_blocks:
+    storage:
+      postgres: true
+      clickhouse: false
+    from: evm.events
+    where:
+      contractName: ERC20
+      eventName: Transfer
+    select:
+      id:
+        _concat:
+          separator: "-"
+          values:
+            - transaction.hash
+            - logIndex
+      block:
+        _ref:
+          table: _block_totals
+          id: block.number

@@ -126,6 +126,17 @@
           "type": "null"
         }
       ]
+    },
+    "tables": {
+      "description": "Tables the indexer materializes from `evm.events` with no handler code: each declares `from` + `select`, and its schema is inferred from the events it reads. Requires `disable_default_cross_chain: true`. Tables written by handlers stay in schema.graphql. Present but empty means the indexer has no entities on purpose.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Tables"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -757,6 +768,304 @@
       "enum": [
         "checksum",
         "lowercase"
+      ]
+    },
+    "Tables": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "cross_chain": {
+            "description": "Keep one row per id across all chains instead of one per chain. Only meaningful with `disable_default_cross_chain: true`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "wildcard": {
+            "description": "Read this event from every address that emits it, not only the addresses configured for the contract. Needed when the contract has no `address` in config.yaml.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "storage": {
+            "description": "Where this table is stored, overriding the top-level `storage`. `postgres` and `clickhouse` each take true/false, or an object of settings (which also turns the backend on).",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TableStorage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "as_entity": {
+            "description": "Let handlers read this table, under this name: `as_entity: Account` gives them `context.Account`. Left out, the table is still stored and queryable over GraphQL, just not visible to handlers. Handlers can never write it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "with": {
+            "description": "Intermediate queries this table can read through `from`, like SQL CTEs. A list of queries is read as one combined result, so every query in it must select the same columns.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {
+              "$ref": "#/$defs/Queries"
+            }
+          },
+          "from": {
+            "description": "Where the rows come from: `evm.events`, or the name of one of this table's own `with` queries.",
+            "type": "string"
+          },
+          "where": {
+            "description": "Conditions a row must match, all of them. A plain value means equals (`eventName: Transfer`); an object is either a nested field (`block: {number: {_gte: 100}}`) or a comparison (`_eq`, `_neq`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and` and `_or` take lists of conditions.",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "select": {
+            "description": "The table's columns. A plain string is a field of the event; numbers, booleans and null are values as written. Add `_description` beside a column's value to document it.",
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "description": "A field of the event (\"params.owner\"), a number, boolean or null, or an object holding one of `_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "_description": {
+                      "description": "What this column holds. Becomes the column's description in GraphQL and its comment in the database.",
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "from",
+          "select"
+        ]
+      }
+    },
+    "TableStorage": {
+      "description": "Per-table storage, mirroring the `@storage` directive an entity carries.",
+      "type": "object",
+      "properties": {
+        "postgres": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PostgresStorage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "clickhouse": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClickHouseStorage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "PostgresStorage": {
+      "description": "A boolean, or table options that imply the backend is enabled.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/PostgresOptions"
+        }
+      ]
+    },
+    "PostgresOptions": {
+      "type": "object",
+      "properties": {
+        "indexes": {
+          "description": "Extra indexes for this table. An entry is a field name, a list of field names for an index over several fields, or `{field, direction}` to sort a field descending. `id` is already indexed.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Index"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Index": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "direction": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/IndexDirection"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "field"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "direction": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/IndexDirection"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "field"
+            ]
+          }
+        }
+      ]
+    },
+    "IndexDirection": {
+      "type": "string",
+      "enum": [
+        "asc",
+        "desc"
+      ]
+    },
+    "ClickHouseStorage": {
+      "description": "A boolean, or table options that imply the backend is enabled.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/ClickHouseOptions"
+        }
+      ]
+    },
+    "ClickHouseOptions": {
+      "type": "object",
+      "properties": {
+        "partition_by": {
+          "description": "Raw ClickHouse expression emitted as `PARTITION BY <expr>`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "order_by": {
+          "description": "Fields to sort the stored rows by, in place of the default `id`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "ttl": {
+          "description": "Raw ClickHouse expression emitted as `TTL <expr>`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Queries": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "from": {
+              "description": "Source to read from. Currently only `evm.events`.",
+              "type": "string"
+            },
+            "where": {
+              "description": "Conditions a row must match, all of them. A plain value means equals (`eventName: Transfer`); an object is either a nested field (`block: {number: {_gte: 100}}`) or a comparison (`_eq`, `_neq`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and` and `_or` take lists of conditions.",
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "select": {
+              "type": "object",
+              "additionalProperties": {
+                "description": "A field of the event (\"params.owner\"), a number, boolean or null, or an object holding one of `_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`."
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "from",
+            "select"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "description": "Source to read from. Currently only `evm.events`.",
+                "type": "string"
+              },
+              "where": {
+                "description": "Conditions a row must match, all of them. A plain value means equals (`eventName: Transfer`); an object is either a nested field (`block: {number: {_gte: 100}}`) or a comparison (`_eq`, `_neq`, `_gt`, `_gte`, `_lt`, `_lte`, `_in`, `_nin`). `_and` and `_or` take lists of conditions.",
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "select": {
+                "type": "object",
+                "additionalProperties": {
+                  "description": "A field of the event (\"params.owner\"), a number, boolean or null, or an object holding one of `_value`, `_literal`, `_negate`, `_sum`, `_concat`, `_ref`, `_derived_from`."
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "from",
+              "select"
+            ]
+          }
+        }
       ]
     }
   }

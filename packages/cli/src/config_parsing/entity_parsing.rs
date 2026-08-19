@@ -59,6 +59,31 @@ impl Schema {
     }
 
     fn from_document(document: Document<String>) -> anyhow::Result<Self> {
+        let (entities, enums) = Self::definitions_from_document(document)?;
+        Self::new(entities, enums)
+    }
+
+    /// Parse `sdl` and validate it together with this schema, so a generated
+    /// table may reference an entity the user wrote and vice versa. The parsed
+    /// definitions go first, keeping the merged order stable.
+    pub fn extended_with(&self, sdl: &str) -> anyhow::Result<Self> {
+        if sdl.trim().is_empty() {
+            return Ok(self.clone());
+        }
+        let document = graphql_parser::parse_schema::<String>(sdl)
+            .context("Failed to parse the generated schema as a document")?;
+        let (mut entities, mut enums) = Self::definitions_from_document(document)?;
+        for entity in &mut entities {
+            entity.materialized = true;
+        }
+        entities.extend(self.entities.values().cloned());
+        enums.extend(self.enums.values().cloned());
+        Self::new(entities, enums)
+    }
+
+    fn definitions_from_document(
+        document: Document<String>,
+    ) -> anyhow::Result<(Vec<Entity>, Vec<GraphQLEnum>)> {
         let entities = document
             .definitions
             .iter()
@@ -89,7 +114,7 @@ impl Schema {
             .collect::<anyhow::Result<Vec<GraphQLEnum>>>()
             .context("Failed constructing enums in schema from document")?;
 
-        Self::new(entities, enums)
+        Ok((entities, enums))
     }
 
     pub fn parse_from_file(
@@ -192,9 +217,15 @@ impl Schema {
     // capitalized name, so entities whose names differ only by the first
     // letter's case (e.g. `user` and `User`) would map to the same accessor
     // and silently shadow each other at runtime.
+    // A table from `tables` is exempt: it can be given a name of its own with
+    // `as_entity`, so the capitalized name isn't what code calls it, and the
+    // compiler checks the names it really uses before it gets here.
     fn check_capitalized_entity_name_collisions(self) -> anyhow::Result<Self> {
         let mut by_capitalized: HashMap<String, Vec<String>> = HashMap::new();
-        for name in self.entities.keys() {
+        for (name, entity) in &self.entities {
+            if entity.materialized {
+                continue;
+            }
             by_capitalized
                 .entry(name.capitalize())
                 .or_default()
@@ -458,6 +489,10 @@ pub struct Entity {
     // `@crossChain` on the entity. Only meaningful when the config sets
     // `disable_default_cross_chain: true`; otherwise codegen rejects it.
     pub cross_chain: bool,
+    // Declared under `tables` in config.yaml rather than written by hand in
+    // schema.graphql. Validations that would break a schema that has been valid
+    // since before `tables` existed apply to these only.
+    pub materialized: bool,
 }
 
 impl Entity {
@@ -566,6 +601,7 @@ impl Entity {
             postgres,
             clickhouse,
             cross_chain,
+            materialized: false,
         })
     }
 
@@ -1708,11 +1744,12 @@ impl UserDefinedFieldType {
             DynSolType::Tuple(_) => Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::Json)))),
             DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => {
                 match inner.as_ref() {
-                    DynSolType::Tuple(_) => {
+                    // A nested array has no column shape of its own, so it
+                    // flows through as JSON like a tuple does — the handler
+                    // assigns the decoded value directly and the row stores it
+                    // without inventing per-dimension columns.
+                    DynSolType::Tuple(_) | DynSolType::Array(_) | DynSolType::FixedArray(_, _) => {
                         Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::Json))))
-                    }
-                    DynSolType::Array(_) | DynSolType::FixedArray(_, _) => {
-                        Err(anyhow!("Unhandled contract import type 'array of array'"))
                     }
                     // Primitive-element arrays map to `[Scalar!]!`.
                     DynSolType::Bool

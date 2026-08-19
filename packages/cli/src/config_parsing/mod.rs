@@ -7,6 +7,7 @@ pub mod event_parsing;
 pub mod field_types;
 pub mod human_config;
 pub mod hypersync_endpoints;
+pub mod materialization;
 pub mod public_config;
 pub mod system_config;
 pub mod validation;

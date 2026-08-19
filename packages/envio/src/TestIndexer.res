@@ -731,7 +731,7 @@ let createTestIndexer = (): t<'processConfig> => {
     // Only create ops for user entities (not internal tables like envio_addresses)
     if entityConfig.name !== InternalTable.EnvioAddresses.name {
       entityOpsDict->Dict.set(
-        entityConfig.name,
+        entityConfig.codeName,
         {
           get: makeEntityGet(~state, ~entityConfig),
           getAll: makeEntityGetAll(~state, ~entityConfig),
@@ -815,9 +815,11 @@ let createTestIndexer = (): t<'processConfig> => {
   entityOpsDict
   ->Dict.toArray
   ->Array.forEach(((name, ops)) => {
-    // Expose the capitalized accessor (indexer.Pool_snapshots) the generated
-    // types declare, matching the handler-context keys.
-    result->Dict.set(name->Utils.String.capitalize, ops->(Utils.magic: entityOperations => unknown))
+    // Expose the code-facing accessor (indexer.Pool_snapshots, or an
+    // `as_entity` name) the generated types declare. Unlike the handler
+    // context this includes tables hidden from handlers — materialized output
+    // still has to be assertable from a test.
+    result->Dict.set(name, ops->(Utils.magic: entityOperations => unknown))
   })
 
   result->Dict.set(

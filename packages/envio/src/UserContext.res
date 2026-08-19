@@ -113,17 +113,22 @@ let initEffect = (params: contextParams) => {
   makeCaller(~caller=None)
 }
 
+// Which accessor produced this entity context. The materializer's is the one
+// path allowed to write a table config.yaml maintains.
+type reachedBy =
+  | Handler
+  | Materializer
+
 type entityContextParams = {
   ...contextParams,
   entityConfig: Internal.entityConfig,
+  reachedBy: reachedBy,
 }
 
 // The handler context is always chain-scoped, so a per-chain entity resolves to
 // the chain the handler runs on and a cross-chain one to the shared partition.
 let entityScope = (params: entityContextParams) =>
-  params.entityConfig->InMemoryStore.entityScope(
-    ~chainId=params.item->Internal.getItemChainId,
-  )
+  params.entityConfig->InMemoryStore.entityScope(~chainId=params.item->Internal.getItemChainId)
 
 let getWhereHandler = (params: entityContextParams, filter: dict<dict<unknown>>) => {
   let entityConfig = params.entityConfig
@@ -166,6 +171,13 @@ let throwClickHouseReadOnly = (entityConfig: Internal.entityConfig, op: string) 
     `context.${entityConfig.name}.${op}() is unavailable: ClickHouse storage is currently write-only. Follow Envio releases to be notified when ClickHouse supports both reads and writes from handlers.`,
   )
 
+// The rows come from the table's `select`, so a handler write would be undone
+// the next time the event it reads is processed.
+let throwMaterializedReadOnly = (entityConfig: Internal.entityConfig, op: string): 'a =>
+  JsError.throwWithMessage(
+    `context.${entityConfig.codeName}.${op}() is unavailable: config.yaml writes \`${entityConfig.name}\` from its \`select\`, so handlers can only read it. To write it from a handler, define the table in schema.graphql instead.`,
+  )
+
 let entityTraps: Utils.Proxy.traps<entityContextParams> = {
   get: (~target as params, ~prop: unknown) => {
     let prop = prop->(Utils.magic: unknown => string)
@@ -176,7 +188,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
       ? noopSet
       : (entity: Internal.entity) => {
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
+          ->InMemoryStore.getInMemTable(
+            ~entityConfig=params.entityConfig,
+            ~scope=params->entityScope,
+          )
           ->InMemoryTable.Entity.set(
             ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Set({
@@ -188,6 +203,16 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
         }
 
     switch prop {
+    // A table config.yaml maintains, reached the ordinary way: the one pairing
+    // that isn't allowed to write.
+    | "set" | "getOrCreate" | "deleteUnsafe"
+      if switch (params.entityConfig.written, params.reachedBy) {
+      | (Materialized(_), Handler) => true
+      | (Materialized(_), Materializer) | (Handlers | Internal, _) => false
+      } =>
+      (
+        (_: unknown) => throwMaterializedReadOnly(params.entityConfig, prop)
+      )->(Utils.magic: (unknown => unit) => unknown)
     | "get" =>
       if isClickHouseOnly {
         ((_entityId: string) => throwClickHouseReadOnly(params.entityConfig, "get"))->(
@@ -288,7 +313,10 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
       } else {
         entityId => {
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
+          ->InMemoryStore.getInMemTable(
+            ~entityConfig=params.entityConfig,
+            ~scope=params->entityScope,
+          )
           ->InMemoryTable.Entity.set(
             ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
             Delete({
@@ -303,6 +331,23 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     }
   },
 }
+
+let makeEntityContext = (params: contextParams, ~entityConfig, ~reachedBy) =>
+  {
+    item: params.item,
+    isPreload: params.isPreload,
+    indexerState: params.indexerState,
+    loadManager: params.loadManager,
+    persistence: params.persistence,
+    checkpointId: params.checkpointId,
+    chains: params.chains,
+    isResolved: params.isResolved,
+    config: params.config,
+    entityConfig,
+    reachedBy,
+  }
+  ->Utils.Proxy.make(entityTraps)
+  ->(Utils.magic: entityContextParams => unknown)
 
 let handlerTraps: Utils.Proxy.traps<contextParams> = {
   get: (~target as params, ~prop: unknown) => {
@@ -335,27 +380,37 @@ let handlerTraps: Utils.Proxy.traps<contextParams> = {
       params.chains
       ->ChainId.Dict.dangerouslyGetNonOption(chainId)
       ->(Utils.magic: option<Internal.chainInfo> => unknown)
+    | _ if prop === Internal.materializerProp =>
+      (
+        // By schema name, not the handler-context key: a table without
+        // `as_entity` is deliberately absent from that lookup.
+        (table: string) =>
+          switch params.config.entitiesByTableName->Utils.Dict.dangerouslyGetNonOption(table) {
+          | Some(entityConfig) => params->makeEntityContext(~entityConfig, ~reachedBy=Materializer)
+          | None => JsError.throwWithMessage(`Table '${table}' is missing from the config.`)
+          }
+      )->(Utils.magic: (string => unknown) => unknown)
     | _ =>
       switch params.config.userEntitiesByName->Utils.Dict.dangerouslyGetNonOption(prop) {
-      | Some(entityConfig) =>
-        {
-          item: params.item,
-          isPreload: params.isPreload,
-          indexerState: params.indexerState,
-          loadManager: params.loadManager,
-          persistence: params.persistence,
-          checkpointId: params.checkpointId,
-          chains: params.chains,
-          isResolved: params.isResolved,
-          config: params.config,
-          entityConfig,
-        }
-        ->Utils.Proxy.make(entityTraps)
-        ->(Utils.magic: entityContextParams => unknown)
+      | Some(entityConfig) => params->makeEntityContext(~entityConfig, ~reachedBy=Handler)
       | None =>
-        JsError.throwWithMessage(
-          `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
-        )
+        // A materialized table that didn't opt in is absent on purpose, so say
+        // that rather than sending the user to regenerate code.
+        switch params.config.userEntities->Array.find(entityConfig =>
+          switch entityConfig.written {
+          | Materialized({hidden: true}) => entityConfig.codeName === prop
+          | Handlers | Materialized({hidden: false}) | Internal => false
+          }
+        ) {
+        | Some(entityConfig) =>
+          JsError.throwWithMessage(
+            `context.${prop} is unavailable: config.yaml writes the table \`${entityConfig.name}\` but doesn't expose it to handlers. Add \`as_entity: ${prop}\` to it in config.yaml to read it here.`,
+          )
+        | None =>
+          JsError.throwWithMessage(
+            `Invalid context access by '${prop}' property. ${EntityFilter.codegenHelpMessage}`,
+          )
+        }
       }
     }
   },
