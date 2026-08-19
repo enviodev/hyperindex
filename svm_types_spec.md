@@ -39,143 +39,309 @@ instructions pass the same account twice), they are ordered by the program
 rather than the protocol, and 12% of them are not in `account_keys` at all
 because that column carries only the message's static keys.
 
+## Settled
+
+| Decision | Call |
+| --- | --- |
+| Named-account type | `InstructionAccount`. Field `instruction.accounts.user`. `accountArguments` stays `string[]`. |
+| Activity type | `AccountActivity` / `accountActivities` / `.activity` — not `Change` |
+| Presence | Undefinable (`T \| undefined`), never `null`, never `?:`. Selected + absent = `undefined`. Unselected is `FieldNotSelected`. |
+| Indexes | `instructionAccountIndex` on `InstructionAccount`; `transactionAccountIndex` on `AccountActivity`. Never both as `accountIndex`. |
+| `params` | Gone. `instruction.args`, `instruction.accounts`. No `extraAccounts`, no `params.name` (`instructionName` is the registration). |
+| Remaining accounts | No `remainingAccounts`. Escape hatch is `accountArguments`. |
+| `accountKeys` | Resolved list: static ++ ALT writable ++ ALT readonly. `accountKeys[activity.transactionAccountIndex] === activity.address`. Static-only, if ever needed, is a separate field. |
+| Field selection | Handler `fields` only. No `field_selection` in SVM `config.yaml`. No default column sets. Nested selection implies the parent array (`accountActivity: [...]` ⇒ `transaction.accountActivities`; `log: [...]` ⇒ `instruction.logs`). |
+| Discriminator payload | One `instruction.discriminator` (`0x`-hex of the matched prefix). Drop `d1`/`d2`/`d4`/`d8` from the handler payload. |
+| `tokenChanges` | Do not add. |
+| Identity | `instruction.accounts.<name>.activity` and `transaction.accountActivities[i]` are the same object when a row exists. |
+
 ## Types
 
 ```ts
-type AccountChange = {
+type AccountActivity = {
   address: string
-  accountIndex: number
+  transactionAccountIndex: number
   isSigner: boolean
   isWritable: boolean
-  preLamports: bigint | null
-  postLamports: bigint | null
+  preLamports: bigint | undefined
+  postLamports: bigint | undefined
   token: {
     mint: string
     owner: string
     decimals: number
-    preAmount: bigint | null
-    postAmount: bigint | null
-  } | null
+    preAmount: bigint | undefined
+    postAmount: bigint | undefined
+  } | undefined
 }
 
-type Account = {
+type InstructionAccount = {
   address: string
-  change: AccountChange | null
+  accountName: string
+  instructionAccountIndex: number
+  activity: AccountActivity | undefined
+}
+
+type Log = {
+  kind: "invoke" | "success" | "failed" | "consumed" | "log" | "data" | "other"
+  message: string
 }
 ```
 
-`AccountChange` is a row: it exists because something moved, so everything a row
-always carries is non-null. `Account` is a slot in an instruction's argument
-list: the address is always known, the change may not exist.
+`AccountActivity` is a row: it exists because something moved, so everything a
+row always carries is required once selected (`isSigner`, `isWritable`,
+`transactionAccountIndex`, `address`). `InstructionAccount` is a named IDL
+slot: the address is always known, `activity` is `undefined` when this account
+did not move.
 
-The wrapper is the same move §5 already makes for `token` — one null check gates
-a correlated group. Without it, `AccountChange.isSigner` would have to be typed
-nullable purely to accommodate the named-account case, despite being present on
-every row. The cost is one `?.` on the common read.
+`isSigner` / `isWritable` do not live on `InstructionAccount`. Reading them
+requires narrowing `activity`. That is the whole point of the wrapper — today's
+`SvmAccount.isSigner: boolean | null` is the lie (null means "no row", not
+"not a signer").
 
-## Nullability
+`accountName` and `instructionAccountIndex` come from the IDL. They are
+instruction-scoped: the same pubkey is `user` in one ix and `authority` in
+another. Do not put them on `AccountActivity`. `transactionAccountIndex` is
+the resolved key-list position and belongs only on the row.
 
-Every `null` means exactly one thing, and they are all distinguishable:
+IDL `signer` / `writable` / `optional` flags stay off the payload. Those are
+schema requirements; the activity row's `isSigner` / `isWritable` are message
+facts, and they only exist when a row exists.
 
-| Null | Meaning |
-| --- | --- |
-| `Account.change` | No activity row — this account did not move |
-| `preLamports` / `postLamports` | Lamports unchanged by this transaction (always absent as a pair) |
-| `token` | Not a token account |
-| `token.preAmount` | Token account opened during this transaction |
-| `token.postAmount` | Token account closed during this transaction |
+`InstructionAccount` rather than `Account`: it is a slot on this instruction,
+not the on-chain account and not a user GraphQL entity. The field stays
+`accounts.user` (Anchor-shaped). `accountArguments` stays `string[]` so the
+positional hatch does not grow a richer API than the named path.
 
-Lamports stay **flat**, not nested under a `native` object. Nesting was proposed
-to model the omission before we knew it meant "unchanged"; a documented null
-carries that meaning without a level of narrowing, and keeps
-`accountChange: ["postLamports"]` expressible as §5 intended.
+## Presence
 
-Nullable fields must be emitted as `null`, never omitted. In Rust that means
-`#[napi(object, use_nullable = true)]` — the default guards each optional
-field's `set`, so the property goes missing and a `=== null` check never fires.
+Three representations, never mixed:
+
+| State | Type | Meaning |
+| --- | --- | --- |
+| Unselected | `FieldNotSelected` | Compile error. You did not ask for this field. |
+| Selected, absent | `T \| undefined` | Documented semantic absence (table below). |
+| Selected, present | `T` | The value. |
+
+Undefinable (`activity: AccountActivity | undefined`), not optional
+(`activity?: AccountActivity`) and not nullable (`activity: AccountActivity | null`).
+`?:` means “this field might not be part of the shape,” which is
+`FieldNotSelected`. `| undefined` means “you selected it; the value may be
+absent.” Same convention as EVM (`from: Address | undefined`).
+
+| `undefined` | Meaning | Only valid when |
+| --- | --- | --- |
+| `InstructionAccount.activity` | No activity row — this account did not move | `accountActivity` fields were selected |
+| `preLamports` / `postLamports` | Lamports unchanged (always absent as a pair) | those fields were selected |
+| `token` | Not a token account | at least one `token.*` field was selected |
+| `token.preAmount` | Token account opened during this transaction | `preAmount` was selected |
+| `token.postAmount` | Token account closed during this transaction | `postAmount` was selected |
+| `instruction.args` | Borsh decode failed | `args` was selected |
+
+If you did not select `token.*`, `token` is `FieldNotSelected` — you did not
+fetch `mint`, so you do not know “not a token account.” Same for `isSigner`:
+unselected is a compile error, not `false`.
+
+Lamports stay **flat**, not nested under a `native` object. An undefined pair
+carries “unchanged” without a level of narrowing, and keeps
+`accountActivity: ["postLamports"]` expressible.
+
+Never emit `null`. Drop `#[napi(object, use_nullable = true)]`. napi's default
+omits unset fields at runtime; that is fine — read `user.activity`, never
+`'activity' in user`. JSON.stringify drops `undefined` too.
+
+Row identity that the join already paid for is always on the object:
+`AccountActivity.address`, `InstructionAccount.address` / `accountName`. That
+is the EVM `block.number` exception. Everything else is listed or it does not
+exist.
+
+`block.slot` is always included (the item's key). `programName` /
+`instructionName` are always included (the registration).
+
+Once selected, a field a row always carries stays required (`isSigner`,
+`token.mint`). `| undefined` is only for documented absences, not “we might
+have forgotten to set it.”
 
 ## Payload fields
 
 ```ts
-transaction.accountKeys      // string[]          the message's key table
-transaction.accountChanges   // AccountChange[]   accounts that moved, by accountIndex
+transaction.accountKeys         // string[]              resolved key table
+transaction.accountActivities   // AccountActivity[]     implied by fields.accountActivity
 
-instruction.accounts.user    // Account           IDL-named
-instruction.accountArguments // string[]          every account passed, in program order
+instruction.accounts.user       // InstructionAccount    IDL-named
+instruction.accountArguments    // string[]              every account passed, in program order
+instruction.args                // decoded args | undefined  decode failed
+instruction.discriminator       // string                0x-hex of the matched prefix
+instruction.logs                // Log[]                 implied by fields.log
 ```
 
 **`accountKeys` vs `accountArguments` are deliberately different names** because
 they are different kinds of collection: a unique, protocol-ordered key table
-versus a possibly-repeating, program-ordered argument sequence. Uniform naming
-would imply an interchangeability the data contradicts.
+versus a possibly-repeating, program-ordered argument sequence.
 
-`accountArguments` also pairs with `args`: an instruction takes account
-arguments and data arguments, which is the on-chain model
-(`Instruction { program_id, accounts, data }`). It matches the wire column name.
+`accountArguments` pairs with `args`: an instruction takes account arguments
+and data arguments (`Instruction { program_id, accounts, data }`). It matches
+the wire column.
 
-**Addresses, not indexes**, on the instruction. An address is already a unique
-key within a transaction, so an index carries no extra information; it is only
-compactness, and it fails self-containment (`accounts[0] === 3` needs
-`accountKeys` selected to mean anything). `accountIndexes` stays available as a
-purely additive field if profiling ever asks for it — the wire serves it on
-every instruction.
+Named accounts do not depend on Borsh decode. `instruction.accounts.user.address`
+is IDL names zipped onto `account_arguments`. `instruction.args` is the only
+decode product, and is `undefined` when decode fails (IDL drift). That is
+runtime absence, not field selection.
 
-Raw instructions have no IDL and therefore no `accounts`; they carry
-`accountArguments` alone. This removes §5's overload of one name for two shapes.
+Raw instructions have no IDL and therefore no `accounts` and no `args`; they
+carry `accountArguments` and `discriminator` alone.
+
+Selecting named accounts does not fetch `account_activity`. `.activity` is on
+the type only when `accountActivity` fields are selected; otherwise it is
+`FieldNotSelected`.
 
 ## Object identity
 
-`transaction.accountChanges[i]` and `instruction.accounts.<name>.change` are the
-**same object** for the same account. Payloads sharing a `(slot,
+`transaction.accountActivities[i]` and `instruction.accounts.<name>.activity`
+are the **same object** for the same account. Payloads sharing a `(slot,
 transactionIndex)` already share one transaction object via `groupBatchItems` /
-`applyTransactionGroups`; the account objects are built once per transaction and
+`applyTransactionGroups`; activity objects are built once per transaction and
 referenced. Identity comparison works, and a transaction with many instructions
 holds one copy.
+
+`InstructionAccount` objects are per instruction slot, not shared.
+
+## Logs
+
+Wire `LogField`: `slot`, `transaction_index`, `instruction_address`,
+`program_id`, `kind`, `message`.
+
+Payload exposes **`kind` and `message`**. The rest are join keys used to attach
+the log to this instruction (exact `instruction_address` match) and are not on
+the handler object. Unscoped logs (`instruction_address` missing) are dropped.
+`program_id` would duplicate `instruction.programId` after that scoping.
+
+`kind` is the Solana log line class (prefix stripped from `message`):
+
+| kind | Source line |
+| --- | --- |
+| `invoke` | `Program <id> invoke [<depth>]` |
+| `success` | `Program <id> success` |
+| `failed` | `Program <id> failed: <err>` |
+| `consumed` | `Program <id> consumed <n> of <m> compute units` |
+| `log` | `Program log: <msg>` |
+| `data` | `Program data: <base64>` |
+| `other` | anything else, kept verbatim (e.g. `Program return: …`) |
+
+SQD-ingested ranges and default RPC ranges only persist `log` / `data` /
+`other`. Framing `invoke` / `success` / `failed` / `consumed` are dropped for
+cross-source parity. Do not assume every invocation has an `invoke` row.
+
+No `logs: true` default. List the log columns; that implies `instruction.logs`:
+
+```ts
+fields: { log: ["kind", "message"] }
+```
+
+Selecting a subset is allowed (`log: ["kind"]`). There is no log-level
+`programId` on the payload unless we later add it as an explicit field.
 
 ## Removed
 
 | Removed | Reason |
 | --- | --- |
-| `transaction.tokenBalances` | `accountChanges.filter(c => c.token)`; the split makes it free to drop |
-| `token_balance_fields` config toggle | Selection moves to `fields` (§7) |
-| `transaction.allAccounts` | Replaced by `accountKeys` + `accountChanges` |
-| `params.extraAccounts` | Derivable from `accountArguments` beyond the schema's count |
-| The `Account` left join | No key-list join; `accountChanges` orders by `accountIndex` |
+| `params` (and `SvmInstructionParams`) | Bag around args + accounts + name + extra. Accounts moved; name duplicated `instructionName`; extra is `accountArguments`. |
+| `transaction.tokenBalances` | `accountActivities.filter(a => a.token)` |
+| `token_balance_fields` / `field_selection` in YAML | Handler `fields` only |
+| `transaction.allAccounts` | Replaced by `accountKeys` + `accountActivities` |
+| `remainingAccounts` / `params.extraAccounts` | Derivable from `accountArguments` beyond the schema's count; a named list would compete with `accounts.<name>` |
+| `d1` / `d2` / `d4` / `d8` on the payload | One `discriminator` (matched prefix). Wire columns still used for query matching. |
+| The `Account` left join | No key-list join; `accountActivities` orders by `transactionAccountIndex` |
+| `transaction.tokenChanges` | Same objects, second name. Add only if handlers ask twice. |
+| `null` / `?:` for semantic absence | `T \| undefined` once selected. `FieldNotSelected` if not. napi omits at runtime; do not emit `null`. |
+| `transaction: ["accountActivities"]` | Implied by `fields.accountActivity`. |
+| `logs: true` | Implied by `fields.log`. No default column set. |
 
 Dropping the join also deletes the lookup-table special case: no `BTreeMap` of
 unjoined rows, no address-order tail, and no forced `account_keys` fetch.
 
-## Field selection (§7)
+## Field selection
+
+SVM has **no** `field_selection` in `config.yaml`. Selection lives on the
+handler, next to the code that reads it, and is the source of truth for both
+the query and the types (same as EVM inline `fields`, without a YAML fallback).
 
 ```ts
-fields: {
-  transaction: ["signature", "accountKeys", "accountChanges"],
-  accountChange: ["isSigner", "postLamports", "token.mint"],
-}
+indexer.onInstruction(
+  {
+    program: "Jupiter",
+    instruction: "route",
+    fields: {
+      instruction: ["args", "accounts", "accountArguments", "discriminator"],
+      transaction: ["signature", "accountKeys"],
+      accountActivity: ["transactionAccountIndex", "postLamports", "token.mint"],
+      block: ["hash", "time"],
+      log: ["kind", "message"],
+    },
+  },
+  async ({ instruction }) => {
+    const mint = instruction.accounts.destinationMint.address
+    const inAmount = instruction.args.inAmount
+    const t = instruction.accounts.userSourceTokenAccount.activity?.token
+  },
+)
 ```
 
-`account` singular becomes `accountChange`, naming the type it governs.
-`accountKeys` and `accountArguments` are `string[]` and take no sub-selection.
+Rules:
 
-This is what makes the split pay: `accountChanges` needs no transaction column,
-so a token-flow indexer stops paying for the key table. The old `allAccounts`
-always billed for both.
+- Nested selection implies the parent array. `accountActivity: ["postLamports"]`
+  is enough to put `transaction.accountActivities` on the payload. Do not also
+  list `accountActivities` under `transaction`. Same for `log` ⇒
+  `instruction.logs`. An empty nested list is a config error.
+- No implied column set inside the nested type. You get exactly the fields
+  listed.
+- Dotted paths for nested token fields: `"token.mint"`. If no `token.*` is
+  listed, `token` is `FieldNotSelected`.
+- `accountKeys` and `accountArguments` take no sub-selection (`string[]`).
+- `args` is all-or-nothing (`instruction: ["args"]`). Per-field arg selection
+  copies a HyperSync cost model onto local Borsh decode.
+- YAML still declares discriminator, IDL `accounts` / `args`, `account_filters`,
+  `is_inner`. That is schema and filtering, not payload selection.
+
+This is what makes the split pay: `accountActivity` fields need no transaction
+column, so a token-flow indexer stops paying for the key table. The old
+`allAccounts` always billed for both. Named addresses do not bill activity.
+
+## Handler reads
+
+```ts
+// named address (once `accounts` is selected — no activity fetch)
+const mint = instruction.accounts.destinationMint.address
+
+// named token flow
+const t = instruction.accounts.userSourceTokenAccount.activity?.token
+if (t?.preAmount !== undefined && t.postAmount !== undefined) {
+  const delta = t.postAmount - t.preAmount
+}
+
+// tx-level movements, no key table billed
+for (const a of instruction.transaction.accountActivities) {
+  if (a.token) { /* … */ }
+}
+
+// remaining / raw: strings, join yourself
+const addr = instruction.accountArguments[8]
+const row = instruction.transaction.accountActivities.find(a => a.address === addr)
+```
+
+`(post ?? 0n) - (pre ?? 0n)` is a correct **delta** when the native pair is
+absent (unchanged ⇒ 0) and a wrong **snapshot** (you cannot recover the
+balance). Document that; do not add `lamportsDelta` on the row.
 
 ## Open
 
-1. **`accountKeys` is incomplete.** It carries only the message's static keys —
-   12% of instruction arguments and 11% of activity rows fall outside it, via
-   address lookup tables. The wire serves `loaded_addresses_writable` and
-   `loaded_addresses_readonly` separately. Decide whether `accountKeys` exposes
-   the static column as-is (documented) or the resolved list
-   (`static ++ ALT writable ++ ALT readonly`), which is what `accountIndex`
-   indexes into and would make `accountKeys[accountIndex]` a valid lookup.
-2. **`transaction.tokenChanges`** as a derived view over the same objects — one
-   filter at materialisation, no extra fetch. Add only if handler code wants it
-   often enough to earn a second name for the same rows.
-3. **`token_state`** is served and authoritative; the implementation currently
-   infers the token side from `mint` presence. Internal change, no payload
-   impact.
+### Implementation only
+
+`token_state` is served and authoritative; the implementation currently infers
+the token side from `mint` presence. Internal change, no payload impact.
+
+`token.owner` is `post ?? pre`. The wire splits `pre_owner` / `post_owner`
+(`SetAuthority(AccountOwner)`). Single `owner` for v1; do not pretend the
+split was measured as "never differs."
 
 ## Asks for the HyperSync team
 
