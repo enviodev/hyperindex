@@ -18,7 +18,7 @@ use serde::Serialize;
 use crate::config_parsing::human_config::{
     evm::{
         AddressFormat, BlockField, Chain, ContractConfig, EventConfig, FieldSelection, For,
-        HumanConfig, Rpc, RpcBlockField, RpcSelection, RpcTransactionField, TransactionField,
+        HumanConfig, Rpc, RpcSelection, RpcTransactionField, TransactionField,
     },
     BaseConfig, ChainContract, GlobalContract,
 };
@@ -165,16 +165,16 @@ fn field_selection_for(receipt: bool, rpc_only: bool, usage: &usage::FieldUsage)
             }
         }
     }
-    // An RPC serves a narrower set than HyperSync. Selecting a field it can't
-    // serve is rejected at config time, so a mapping indexing over RPC gets
-    // whatever RPC has rather than failing to start.
-    let mut block_fields = match &usage.block {
+    // Transaction `accessList` / `authorizationList` have no RPC parser; a
+    // mapping indexing over RPC gets whatever RPC can serve rather than failing
+    // to start. Every selectable block field comes back from
+    // `eth_getBlockByNumber`.
+    let block_fields = match &usage.block {
         Some(fields) => fields.clone(),
         None => DEFAULT_BLOCK_FIELDS.to_vec(),
     };
     if rpc_only {
         transaction_fields.retain(|field| RpcTransactionField::try_from(field.clone()).is_ok());
-        block_fields.retain(|field| RpcBlockField::try_from(field.clone()).is_ok());
     }
     FieldSelection {
         transaction_fields: Some(transaction_fields),
@@ -683,7 +683,7 @@ type Gravatar @entity {
     }
 
     #[test]
-    fn narrows_the_field_selection_when_rpc_is_the_sync_source() {
+    fn rpc_sync_keeps_the_default_field_selection() {
         let over_rpc = translate(
             MANIFEST,
             SCHEMA,
@@ -697,33 +697,13 @@ type Gravatar @entity {
         let over_hypersync = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous())
             .unwrap();
 
-        let fields = |t: &Translation| {
+        let selection = |t: &Translation| {
             t.human_config.contracts.as_ref().unwrap()[0].config.events[0]
                 .field_selection
-                .as_ref()
-                .unwrap()
-                .transaction_fields
                 .clone()
-                .unwrap()
         };
 
-        assert_eq!(
-            (
-                fields(&over_rpc).contains(&TransactionField::Gas),
-                fields(&over_rpc).contains(&TransactionField::Nonce),
-                fields(&over_rpc).contains(&TransactionField::Hash),
-                fields(&over_hypersync).contains(&TransactionField::Gas),
-                over_rpc.human_config.contracts.as_ref().unwrap()[0].config.events[0]
-                    .field_selection
-                    .as_ref()
-                    .unwrap()
-                    .block_fields
-                    .as_ref()
-                    .unwrap()
-                    .contains(&BlockField::Size),
-            ),
-            (false, false, true, true, false)
-        );
+        assert_eq!(selection(&over_rpc), selection(&over_hypersync));
     }
 
     #[test]
