@@ -147,6 +147,57 @@ describe("Scenario rollback and history", () => {
   )
 
   scenario->Scenario.it(
+    "restores the pre-target value of an entity the rollback reverts",
+    ~sources=[{chain: 1, methods}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1)
+      await Utils.delay(0)
+      source.resolveGetHeightOrThrow(300)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      // Written below the reorg threshold, so it survives the rollback and is
+      // what the reverted entity has to be restored to. The removal case above
+      // never reaches the restore path, and a BigInt column is where the two
+      // storages disagree about how a restored row is encoded.
+      await MockSource.waitItemsQuery(source)
+      source.resolveGetItemsOrThrow(
+        [setCounter(~block=50, ~count=1n)],
+        ~latestFetchedBlockNumber=100,
+      )
+      await indexer.getBatchWritePromise()
+
+      await MockSource.waitItemsQuery(source)
+      source.resolveGetItemsOrThrow(
+        [setCounter(~block=200, ~count=2n)],
+        ~latestFetchedBlockNumber=300,
+      )
+      await indexer.getBatchWritePromise()
+
+      t.expect(
+        await indexer.query("Counter"),
+        ~message="the post-threshold write is committed before the reorg",
+      ).toEqual([{id: "total", count: 2n}])
+
+      source.resolveGetHeightOrThrow(301)
+      await MockSource.waitItemsQuery(source)
+      source.resolveGetItemsOrThrow(
+        [],
+        ~latestFetchedBlockNumber=301,
+        ~prevRangeLastBlock={blockNumber: 300, blockHash: "0x300a"},
+      )
+      await driveRollback(~source, ~validUpTo=100)
+      await indexer.waitUntilIdle()
+
+      let counters: array<counter> = await indexer.query("Counter")
+      t.expect(
+        counters,
+        ~message="the block-200 change is reverted to the value written at block 50",
+      ).toEqual([{id: "total", count: 1n}])
+    },
+  )
+
+  scenario->Scenario.it(
     "resumes from what the previous indexer persisted",
     ~sources=[{chain: 1, methods}],
     async (~t, ~indexer, ~source) => {

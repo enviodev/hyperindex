@@ -1,15 +1,92 @@
 open Vitest
 
+// `EntityWithAllTypes` covers every scalar, list and enum column the schema
+// language offers, so one entity pins the ClickHouse type mapping for all of
+// them. Parsed straight from the user API rather than through `Scenario`: these
+// cases assert on generated DDL, so the backend must not reshape the config.
+let allTypesConfig = InternalTestIndexer.fromUserApi(
+  ~schema=`
+enum AccountType {
+  ADMIN
+  USER
+}
+
+type EntityWithAllTypes {
+  id: ID!
+  string: String!
+  optString: String
+  arrayOfStrings: [String!]!
+  int_: Int!
+  optInt: Int
+  arrayOfInts: [Int!]!
+  float_: Float!
+  optFloat: Float
+  arrayOfFloats: [Float!]!
+  bool: Boolean!
+  optBool: Boolean
+  bigInt: BigInt!
+  optBigInt: BigInt
+  arrayOfBigInts: [BigInt!]!
+  bigDecimal: BigDecimal!
+  optBigDecimal: BigDecimal
+  bigDecimalWithConfig: BigDecimal! @config(precision: 10, scale: 8)
+  arrayOfBigDecimals: [BigDecimal!]!
+  timestamp: Timestamp!
+  optTimestamp: Timestamp
+  json: Json!
+  enumField: AccountType!
+  optEnumField: AccountType
+}
+`,
+  ~configYaml=`
+name: clickhouse-all-types
+chains:
+  - id: 1
+    start_block: 0
+`,
+).config
+
+let allTypesEntityConfig = allTypesConfig.userEntitiesByName->Dict.getUnsafe("EntityWithAllTypes")
+
+// The generated entity record, restated. Enum columns are plain strings here —
+// the variant only exists in a generated project.
+type entityWithAllTypes = {
+  id: string,
+  string: string,
+  optString: option<string>,
+  arrayOfStrings: array<string>,
+  int_: int,
+  optInt: option<int>,
+  arrayOfInts: array<int>,
+  float_: float,
+  optFloat: option<float>,
+  arrayOfFloats: array<float>,
+  bool: bool,
+  optBool: option<bool>,
+  bigInt: bigint,
+  optBigInt: option<bigint>,
+  arrayOfBigInts: array<bigint>,
+  bigDecimal: BigDecimal.t,
+  optBigDecimal: option<BigDecimal.t>,
+  bigDecimalWithConfig: BigDecimal.t,
+  arrayOfBigDecimals: array<BigDecimal.t>,
+  timestamp: Date.t,
+  optTimestamp: option<Date.t>,
+  json: JSON.t,
+  enumField: string,
+  optEnumField: option<string>,
+}
+
 describe("Test makeClickHouseEntitySchema", () => {
   Async.it("Should serialize Date fields using getTime() instead of ISO string", async t => {
-    let entityConfig = MockIndexer.entityConfig("EntityWithAllTypes")
+    let entityConfig = allTypesEntityConfig
 
     // Create a schema using makeClickHouseEntitySchema
     let clickHouseSchema = ClickHouse.makeClickHouseEntitySchema(entityConfig.table)
 
     // Create a test entity with nullable timestamp
     let testDate = Date.fromTime(1234567890123.0)
-    let testEntity: Indexer.Entities.EntityWithAllTypes.t = {
+    let testEntity: entityWithAllTypes = {
       id: "test-id",
       string: "test",
       optString: None,
@@ -32,14 +109,14 @@ describe("Test makeClickHouseEntitySchema", () => {
       timestamp: testDate,
       optTimestamp: Some(testDate),
       json: %raw(`{}`),
-      enumField: ADMIN,
+      enumField: "ADMIN",
       optEnumField: None,
     }
 
     // Serialize the entity using the ClickHouse schema
     let serialized =
       testEntity
-      ->(Utils.magic: Indexer.Entities.EntityWithAllTypes.t => Internal.entity)
+      ->(Utils.magic: entityWithAllTypes => Internal.entity)
       ->S.reverseConvertToJsonOrThrow(clickHouseSchema)
 
     t.expect(serialized, ~message="Entity should be serialized with timestamps as numbers").toEqual(
@@ -162,7 +239,7 @@ ORDER BY (id)`
     Async.it(
       "Should create SQL for A entity history table",
       async t => {
-        let entityConfig = MockIndexer.entityConfig("EntityWithAllTypes")
+        let entityConfig = allTypesEntityConfig
         let query = ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database="test_db")
 
         let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_history_EntityWithAllTypes\` (
@@ -205,7 +282,7 @@ ORDER BY (id, envio_checkpoint_id)`
     Async.it(
       "Should add ON CLUSTER and ReplicatedMergeTree when replicated",
       async t => {
-        let entityConfig = MockIndexer.entityConfig("EntityWithAllTypes")
+        let entityConfig = allTypesEntityConfig
         let query = ClickHouse.makeCreateHistoryTableQuery(
           ~entityConfig,
           ~database="test_db",
@@ -418,7 +495,7 @@ TTL \`trade_time\` + INTERVAL 1 YEAR DELETE WHERE \`base_token_id\` != ''`)
     Async.it(
       "Should create SQL for A entity view",
       async t => {
-        let entity = MockIndexer.entityConfig("EntityWithAllTypes")
+        let entity = allTypesEntityConfig
         let query = ClickHouse.makeCreateViewQuery(~entityConfig=entity, ~database="test_db")
 
         let expectedQuery = `CREATE VIEW IF NOT EXISTS test_db.\`EntityWithAllTypes\` AS
@@ -439,7 +516,7 @@ WHERE \`envio_change\` = 'SET'`
     Async.it(
       "Should add ON CLUSTER when replicated",
       async t => {
-        let entity = MockIndexer.entityConfig("EntityWithAllTypes")
+        let entity = allTypesEntityConfig
         let query = ClickHouse.makeCreateViewQuery(
           ~entityConfig=entity,
           ~database="test_db",
