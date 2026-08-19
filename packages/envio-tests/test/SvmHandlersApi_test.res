@@ -21,10 +21,36 @@ chains:
                 - source
                 - destination
               field_selection:
-                transaction_fields: [signatures]
+                transaction_fields: [signature]
 `
 
 let check = handlers => InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
+
+// `onInstruction` shares its registration path with EVM's `onEvent`, so the
+// EVM-only fields option reaches it whenever the project doesn't type-check.
+// SVM takes its selection from the config, so a dropped option would leave the
+// handler reading fields it never selected — it has to be rejected instead.
+InternalTestIndexer.fromUserApi(
+  ~schema=ApiTypesFixtures.schema,
+  ~configYaml,
+  ~test=`
+import { describe, it } from "vitest";
+import { indexer } from "envio";
+
+describe("the EVM-only fields option on an SVM instruction", () => {
+  it("is rejected at the registration call site", (t) => {
+    t.expect(() =>
+      indexer.onInstruction(
+        { program: "Swapper", instruction: "swap", fields: { block: ["slot"] } } as never,
+        async () => {},
+      ),
+    ).toThrowError(
+      \`The fields option of the "swap" event registration on contract "Swapper" is only supported on EVM. Select the fields in your config instead.\`,
+    );
+  });
+});
+`,
+)->ignore
 
 describe("SVM API types", () => {
   it("resolves config-bound SVM chain name and id unions", _ =>
@@ -123,7 +149,19 @@ expectType<TypeEqual<SvmInstructionBlock["hash"], string>>(true);
 expectType<TypeEqual<SvmInstructionBlock["time"], number | undefined>>(true);
 
 expectType<TypeEqual<SvmLog, { readonly kind: string; readonly message: string }>>(true);
-expectType<TypeEqual<SvmTokenBalance["mint"], string | undefined>>(true);
+expectType<
+  TypeEqual<
+    SvmTokenBalance,
+    {
+      readonly account?: string;
+      readonly mint?: string;
+      readonly owner?: string;
+      readonly decimals?: number;
+      readonly preAmount?: bigint;
+      readonly postAmount?: bigint;
+    }
+  >
+>(true);
 `)
   )
 
@@ -154,12 +192,12 @@ expectType<
   >
 >(true);
 
-// The configured instruction selects the signatures transaction field;
+// The configured instruction selects the signature transaction field;
 // unselected fields carry the FieldNotSelected sentinel.
 type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
   ? true
   : false;
-expectType<TypeEqual<SvmTransaction["signatures"], readonly string[]>>(true);
+expectType<TypeEqual<SvmTransaction["signature"], string>>(true);
 expectType<IsNotSelected<SvmTransaction["feePayer"]>>(true);
 `)
   )
@@ -184,6 +222,11 @@ if (0) {
   indexer.onInstruction(
     // @ts-expect-error - "badInstr" is not an instruction of Swapper
     { program: "Swapper", instruction: "badInstr" },
+    async () => {},
+  );
+  indexer.onInstruction(
+    // @ts-expect-error - the inline fields selection is EVM-only
+    { program: "Swapper", instruction: "swap", fields: { block: ["slot"] } },
     async () => {},
   );
   indexer.onInstruction(

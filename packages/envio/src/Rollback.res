@@ -10,27 +10,29 @@ let getLastKnownValidBlock = async (
   ~reorgBlockNumber: int,
   ~isRealtime: bool,
 ) => {
-  // Don't include the reorg block itself — different source instances
+  // Before the search, not after: it re-fetches the scanned hashes through the
+  // sources, and a source answering from a cache it filled on the orphaned
+  // chain would confirm blocks that no longer exist - stopping the rollback
+  // short of the real fork.
+  chainState->ChainState.sourceManager->SourceManager.onReorg
+
+  // Don't include the reorg block itself - different source instances
   // may have mismatching hashes at the head, so we always rollback
   // the block where we detected the reorg.
   let scannedBlockNumbers =
-    chainState
-    ->ChainState.reorgDetection
-    ->ReorgDetection.getThresholdBlockNumbersBelowBlock(
-      ~blockNumber=reorgBlockNumber,
-      ~knownHeight=chainState->ChainState.knownHeight,
-    )
+    chainState->ChainState.getReorgThresholdBlockNumbersBelow(~blockNumber=reorgBlockNumber)
 
   switch scannedBlockNumbers {
   | [] => chainState->ChainState.getHighestBlockBelowThreshold
   | _ => {
-      let blockNumbersAndHashes = await chainState
+      let blockStore = await chainState
       ->ChainState.sourceManager
       ->SourceManager.getBlockHashes(~blockNumbers=scannedBlockNumbers, ~isRealtime)
 
-      switch chainState
-      ->ChainState.reorgDetection
-      ->ReorgDetection.getLatestValidScannedBlock(~blockNumbersAndHashes) {
+      switch chainState->ChainState.getLatestValidScannedBlock(
+        ~blockStore,
+        ~blockNumbers=scannedBlockNumbers,
+      ) {
       | Some(blockNumber) => blockNumber
       | None => chainState->ChainState.getHighestBlockBelowThreshold
       }
@@ -54,14 +56,11 @@ let rec rollback = async (
       let chainState = state->IndexerState.getChainState(~chainId)
 
       state->IndexerState.enterFindingReorgDepth
+
       let rollbackTargetBlockNumber = await chainState->getLastKnownValidBlock(
         ~reorgBlockNumber,
         ~isRealtime=state->IndexerState.isRealtime,
       )
-
-      chainState
-      ->ChainState.sourceManager
-      ->SourceManager.onReorg(~rollbackTargetBlock=rollbackTargetBlockNumber)
 
       state->IndexerState.foundReorgDepth(~chainId, ~rollbackTargetBlockNumber)
       // Rendezvous with the processing loop: whichever of {depth found, loop

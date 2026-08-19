@@ -128,13 +128,44 @@ mod tests {
     use crate::clap_definitions::{FetchDocsArgs, SearchDocsArgs};
     use serde_json::json;
 
+    /// The docs are published from another repo and get edited without warning,
+    /// so this asserts the shape of a search result and the one rewrite this
+    /// command makes to it — not the prose, which is the server's to change.
     #[tokio::test]
     async fn search_docs_clickhouse_support() {
         let subcommand = ToolsSubcommand::SearchDocs(SearchDocsArgs {
             query: "clickhouse support".to_string(),
         });
         let text = run_to_string(subcommand).await.expect("live MCP call");
-        insta::assert_snapshot!(text);
+
+        let header = text.lines().next().unwrap_or_default();
+        let reported: usize = header
+            .strip_prefix("Found ")
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or_else(|| panic!("unexpected result header: {header}"));
+
+        let urls: Vec<&str> = text
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("URL: "))
+            .collect();
+
+        assert_eq!(
+            (
+                urls.is_empty(),
+                reported >= urls.len(),
+                urls.iter()
+                    .all(|url| url.starts_with("https://docs.envio.dev/docs/")),
+                text.contains("ClickHouse"),
+                text.contains(
+                    "Use `envio tools fetch-docs <url>` to retrieve the full page content."
+                ),
+                text.contains("Use docs_fetch with the URL"),
+            ),
+            (false, true, true, true, true, false),
+            "search reported {reported} result(s) and listed {} URL(s):\n{text}",
+            urls.len(),
+        );
     }
 
     #[tokio::test]

@@ -202,7 +202,7 @@ describe("svmEventDescriptorSchema", () => {
     let json: JSON.t = %raw(`{
       "discriminator": "0x0c",
       "discriminatorByteLen": 1,
-      "transactionFields": ["signatures"],
+      "transactionFields": ["signature"],
       "includeLogs": false,
       "accountFilters": [
         [{"position": 1, "values": ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]}],

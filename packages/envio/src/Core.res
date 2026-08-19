@@ -11,6 +11,8 @@ type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
 type addressStoreCtor
+// Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
+type mockHyperSyncServerCtor
 type fromUserApiOptions = {
   schema?: string,
   env?: dict<string>,
@@ -51,6 +53,8 @@ type addon = {
   blockStore: blockStoreCtor,
   @as("AddressStore")
   addressStore: addressStoreCtor,
+  @as("MockHyperSyncServer")
+  mockHyperSyncServer: mockHyperSyncServerCtor,
   // Ordered transaction-field names exposed for the field-code contract test
   // (the ReScript `transactionFields` arrays must match the Rust ordinals).
   evmTransactionFieldNames: unit => array<string>,
@@ -59,6 +63,7 @@ type addon = {
   // must match the Rust ordinals).
   evmBlockFieldNames: unit => array<string>,
   svmBlockFieldNames: unit => array<string>,
+  fuelBlockFieldNames: unit => array<string>,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"

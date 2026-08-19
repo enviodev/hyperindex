@@ -1,3 +1,4 @@
+import { availableParallelism } from "node:os";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -8,18 +9,20 @@ export default defineConfig({
     ],
     exclude: [
       "test/fixtures/**",
-      "test/helpers/**",
       // Entirely commented-out test files
       "test/integration-raw-events.test.ts",
       "test/topic-hashing.test.ts",
     ],
-    // Run tests sequentially - both file-wide and test-wide
-    fileParallelism: false,
+    // Tests within a file stay sequential — they share the process-global
+    // config and handler registry.
     sequence: {
       concurrent: false,
     },
     pool: "forks",
-    maxWorkers: 1,
+    // Vitest defaults to one fewer worker than the machine has; the suite is
+    // not CPU-saturated enough for that to pay off, and the extra worker is
+    // worth ~20% of the wall clock.
+    maxWorkers: availableParallelism(),
     testTimeout: 30_000,
     hookTimeout: 30_000,
     setupFiles: ["test/setup.ts"],
