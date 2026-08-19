@@ -155,7 +155,7 @@ pub enum Network {
     )]
     EthereumMainnet = 1,
 
-    #[subenum(HypersyncChain)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Etherlink = 42793,
 
     #[subenum(NetworkWithExplorer)]
