@@ -13,7 +13,9 @@
   },
   "scripts": {
     "build": "rescript",
-    "watch": "rescript watch"
+    "watch": "rescript watch",
+    "generate-graph-ts-types": "node scripts/generate-graph-ts-types.mjs",
+    "check-graph-ts": "tsc -p tsconfig.conformance.json"
   },
   "author": "envio contributors <about@envio.dev>",
   "license": "SEE LICENSE IN licenses/README.md",
@@ -75,6 +77,9 @@
   },
   "devDependencies": {
     "rescript": "12.2.0",
-    "vitest": "4.1.0"
+    "vitest": "4.1.0",
+    "@graphprotocol/graph-ts": "0.38.1",
+    "typescript": "6.0.3",
+    "@types/node": "24.12.2"
   }
 }
