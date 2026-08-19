@@ -784,7 +784,7 @@ type entity = private {id: string}
 
 // A data skipping index emitted into the history table DDL as
 // `INDEX <name> <expr> TYPE <type> GRANULARITY <granularity>`.
-type clickhouseIndex = {
+type clickhouseSkippingIndex = {
   name: string,
   expr: string,
   @as("type")
@@ -798,7 +798,7 @@ type clickhouseTableOptions = {
   partitionBy?: string,
   orderBy?: array<string>,
   ttl?: string,
-  indices?: array<clickhouseIndex>,
+  skippingIndexes?: array<clickhouseSkippingIndex>,
 }
 
 // Per-entity storage resolved at parse time against the global storage

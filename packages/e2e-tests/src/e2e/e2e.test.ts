@@ -520,9 +520,9 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     });
   });
 
-  it("ClickHouse history table has the schema-declared skip indices", async () => {
-    // Transfer declares two bloom-filter indices via
-    // @storage(clickhouse: {indices: [...]}). An omitted granularity falls
+  it("ClickHouse history table has the schema-declared skipping indexes", async () => {
+    // Transfer declares two bloom-filter skipping indexes via
+    // @storage(clickhouse: {skippingIndexes: [...]}). An omitted granularity falls
     // back to ClickHouse's default of 1.
     const result = await queryClickHouse<
       ClickHouseResult<{ name: string; type_full: string; granularity: number }>

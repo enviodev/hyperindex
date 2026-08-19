@@ -3,7 +3,7 @@
 
 "An ERC-20 transfer event"
 type Transfer @crossChain @storage(postgres: true, clickhouse: {
-  indices: [
+  skippingIndexes: [
     { name: "idx_from", expr: "from", type: "bloom_filter(0.01)", granularity: 4 }
     { name: "idx_to", expr: "to", type: "bloom_filter(0.01)" }
   ]

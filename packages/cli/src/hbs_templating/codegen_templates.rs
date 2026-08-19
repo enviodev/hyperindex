@@ -3420,7 +3420,7 @@ mod test {
                             "partitionBy": "toYYYYMM(timestamp)",
                             "orderBy": ["timestamp"],
                             "ttl": "timestamp + INTERVAL 2 YEAR",
-                            "indices": [
+                            "skippingIndexes": [
                                 {
                                     "name": "idx_from",
                                     "expr": "fromAddress",

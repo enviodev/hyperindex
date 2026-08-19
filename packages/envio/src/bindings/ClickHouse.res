@@ -395,8 +395,8 @@ let makeCreateHistoryTableQuery = (
     }
   })
 
-  let (partitionBy, orderBy, ttl, indices) = switch entityConfig.storage.clickhouseOptions {
-  | Some(options) => (options.partitionBy, options.orderBy, options.ttl, options.indices)
+  let (partitionBy, orderBy, ttl, skippingIndexes) = switch entityConfig.storage.clickhouseOptions {
+  | Some(options) => (options.partitionBy, options.orderBy, options.ttl, options.skippingIndexes)
   | None => (None, None, None, None)
   }
 
@@ -461,11 +461,11 @@ let makeCreateHistoryTableQuery = (
   | None => ""
   }
 
-  // Data skipping indices live inside the column list, after the last column.
+  // Data skipping indexes live inside the column list, after the last column.
   // GRANULARITY is omitted when unset, leaving ClickHouse's default of 1.
-  let skipIndexDefinitions = switch indices {
-  | Some(indices) =>
-    indices
+  let skippingIndexDefinitions = switch skippingIndexes {
+  | Some(skippingIndexes) =>
+    skippingIndexes
     ->Array.map(index => {
       let granularityClause = switch index.granularity {
       | Some(granularity) => ` GRANULARITY ${granularity->Int.toString}`
@@ -491,7 +491,7 @@ let makeCreateHistoryTableQuery = (
       ~fieldType=Enum({config: EntityHistory.RowAction.config->Table.fromGenericEnumConfig}),
       ~isNullable=false,
       ~isArray=false,
-    )}${skipIndexDefinitions}
+    )}${skippingIndexDefinitions}
 )
 ENGINE = ${tableEngine}${partitionByClause}
 ORDER BY (${orderByColumns})${ttlClause}`

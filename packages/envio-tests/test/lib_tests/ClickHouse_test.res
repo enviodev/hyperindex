@@ -205,17 +205,19 @@ ORDER BY (id)`
 ENGINE = ReplicatedMergeTree
 ORDER BY (id)`
 
-        t.expect(
-          query,
-          ~message="Replicated checkpoints table SQL should match exactly",
-        ).toBe(expectedQuery)
+        t.expect(query, ~message="Replicated checkpoints table SQL should match exactly").toBe(
+          expectedQuery,
+        )
       },
     )
 
     Async.it(
       "Should use ReplicatedMergeTree without ON CLUSTER for Replicated database engine",
       async t => {
-        let query = ClickHouse.makeCreateCheckpointsTableQuery(~database="test_db", ~replicated=true)
+        let query = ClickHouse.makeCreateCheckpointsTableQuery(
+          ~database="test_db",
+          ~replicated=true,
+        )
 
         let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_checkpoints\` (
   \`id\` UInt64,
@@ -321,10 +323,9 @@ ORDER BY (id, envio_checkpoint_id)`
 ENGINE = ReplicatedMergeTree
 ORDER BY (id, envio_checkpoint_id)`
 
-        t.expect(
-          query,
-          ~message="Replicated entity history table SQL should match exactly",
-        ).toBe(expectedQuery)
+        t.expect(query, ~message="Replicated entity history table SQL should match exactly").toBe(
+          expectedQuery,
+        )
       },
     )
   })
@@ -491,14 +492,14 @@ TTL \`trade_time\` + INTERVAL 1 YEAR DELETE WHERE \`base_token_id\` != ''`)
     )
 
     Async.it(
-      "Should emit data skipping indices with expressions resolved to columns",
+      "Should emit data skipping indexes with expressions resolved to columns",
       async t => {
         // https://github.com/enviodev/hyperindex/issues/1524
         let config = InternalTestIndexer.fromUserApi(
           ~schema=`
 type Transfer @storage(clickhouse: {
   orderBy: ["timestamp"],
-  indices: [
+  skippingIndexes: [
     { name: "idx_from", expr: "fromAddress", type: "bloom_filter(0.01)", granularity: 4 },
     { name: "idx_amount", expr: "amount", type: "minmax" }
   ]
@@ -510,7 +511,7 @@ type Transfer @storage(clickhouse: {
 }
 `,
           ~configYaml=`
-name: clickhouse-skip-indices
+name: clickhouse-skipping-indexes
 storage:
   postgres:
     default: true
@@ -530,7 +531,7 @@ chains:
             "storage": entityConfig.storage,
             "query": query,
           },
-          ~message="Skip indices should reach the entity storage and the history table SQL",
+          ~message="Skipping indexes should reach the entity storage and the history table SQL",
         ).toEqual({
           "storage": (
             {
@@ -538,7 +539,7 @@ chains:
               clickhouse: true,
               clickhouseOptions: {
                 orderBy: ["timestamp"],
-                indices: [
+                skippingIndexes: [
                   {
                     name: "idx_from",
                     expr: "fromAddress",
@@ -567,12 +568,12 @@ ORDER BY (\`timestamp\`, envio_checkpoint_id)`,
     )
 
     Async.it(
-      "Should create the declared skip indices on a live ClickHouse",
+      "Should create the declared skipping indexes on a live ClickHouse",
       async t => {
         let config = InternalTestIndexer.fromUserApi(
           ~schema=`
 type Transfer @storage(clickhouse: {
-  indices: [
+  skippingIndexes: [
     { name: "idx_from", expr: "fromAddress", type: "bloom_filter(0.01)", granularity: 4 },
     { name: "idx_amount", expr: "amount", type: "minmax" }
   ]
@@ -583,7 +584,7 @@ type Transfer @storage(clickhouse: {
 }
 `,
           ~configYaml=`
-name: clickhouse-skip-indices-live
+name: clickhouse-skipping-indexes-live
 storage:
   postgres:
     default: true
