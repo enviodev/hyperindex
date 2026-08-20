@@ -16,7 +16,9 @@ module Gate = {
     // reads as parked rather than as work `settle` would sit and wait out.
     // Called from the test body, which is where the run exists — and first
     // thing, since the loop is already running by then and a gate it reaches
-    // before the hand-off is entered unparked.
+    // before the hand-off is entered unparked. Every entry is parked once this
+    // is set, so it suits a gate on one thing the loop does at a time; see
+    // `park`'s own contract for where that holds.
     parkWith: ((unit => promise<unit>) => promise<unit>) => unit,
   }
 
@@ -221,6 +223,9 @@ type t = {
   // for better logging during debugging
   getHeightOrThrowCalls: array<bool>,
   resolveGetHeightOrThrow: int => unit,
+  // Height calls waiting on an answer. A chain parked at its head polls on a
+  // timer, so a settled indexer isn't always one with a poll outstanding.
+  pendingHeightCalls: unit => int,
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
   // Answer every height call with `height` from now on, instead of parking it
   // for `resolveGetHeightOrThrow`. A restarted indexer learns the head on its
@@ -309,13 +314,16 @@ let make = (
 
   {
     getHeightOrThrowCalls,
+    pendingHeightCalls: () => getHeightOrThrowResolveFns->Array.length,
     resolveGetHeightOrThrow: height => {
       if getHeightOrThrowResolveFns->Utils.Array.isEmpty {
         JsError.throwWithMessage("getHeightOrThrowResolveFns is empty")
       }
-      getHeightOrThrowResolveFns->Array.forEach(resolve =>
-        resolve({Source.height, requestStats: []})
-      )
+      let pending = getHeightOrThrowResolveFns->Utils.Array.copy
+      // Cleared as they are answered, so a second resolve with nothing
+      // outstanding says so instead of quietly re-settling answered promises.
+      getHeightOrThrowResolveFns->Utils.Array.clearInPlace
+      pending->Array.forEach(resolve => resolve({Source.height, requestStats: []}))
     },
     setAutoHeight: height => {
       autoHeight := Some(height)

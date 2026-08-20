@@ -59,7 +59,11 @@ describe("Polling-stall loophole", () => {
 
       let deadline = Date.now() +. 50.
       while Date.now() < deadline {
-        source.resolveGetHeightOrThrow(300)
+        // The poll runs on a timer, so most passes through this window find
+        // nothing outstanding to answer.
+        if source.pendingHeightCalls() > 0 {
+          source.resolveGetHeightOrThrow(300)
+        }
         await Utils.delay(2)
       }
 

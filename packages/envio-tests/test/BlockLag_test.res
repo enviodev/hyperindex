@@ -45,12 +45,6 @@ describe("E2E blockLag tests", () => {
         ~message="Should be in reorg threshold",
       ).toEqual([{value: "1", labels: Dict.make()}])
 
-      // Wait for the next query dispatch after entering reorg threshold
-      await indexer.settle()
-
-      // After entering reorg threshold, a new height poll fires.
-      // Resolve it so the indexer can proceed.
-      sourceMock.resolveGetHeightOrThrow(300)
       await indexer.settle()
 
       // After entering reorg threshold, blockLag is updated to chainConfig.blockLag=1.
@@ -79,7 +73,13 @@ describe("E2E blockLag tests", () => {
         ~message="Chain with blockLag=1 should be synced to head because progress (299) >= knownHeight (300) - blockLag (1)",
       ).toEqual([{value: "1", labels: Dict.make()}])
 
-      // The chain advanced to 301, which opens the next fetch range.
+      // The chain advanced to 301, which opens the next fetch range. A chain
+      // parked at its head polls on a timer, so wait for a poll to be
+      // outstanding rather than assuming a settled indexer has one.
+      await indexer.settleUntil(
+        () => sourceMock.pendingHeightCalls() > 0,
+        ~message="the next height poll",
+      )
       sourceMock.resolveGetHeightOrThrow(301)
       await Scenario.waitQuery(~indexer, ~source=sourceMock)
 

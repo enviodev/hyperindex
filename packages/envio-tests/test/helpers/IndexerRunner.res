@@ -51,15 +51,17 @@ type rec t = {
   // so the loop reads as parked on the test rather than as working. Without it
   // `settle` would wait out a block only the test can lift.
   //
-  // It discounts the frame it is called from, so it is only valid where the
-  // scheduler is counting one: a handler, a contract register, or a storage
-  // call the processing or finalize path makes. Not from a test body, and not
-  // from the write loop's own calls (`writeBatch`, `setChainMeta`) — those run
-  // off the scheduler, and `settle` covers them through the flush instead.
-  // Called from anywhere else it puts the count into deficit, which `settle`
-  // reports by name rather than sitting on. It isn't checked here: several
-  // frames park at once (concurrent contract registers, preloading handlers),
-  // so the count says nothing about whether this particular caller had one.
+  // It discounts one unit of scheduled work, so it is only valid where the
+  // scheduler is counting one, and only one park at a time: the whole
+  // processing run counts as a single unit, not each of the handlers and
+  // contract registers running concurrently inside it, so two gates held open
+  // at once discount it twice over. Not from a test body either, and not from
+  // the write loop's own calls (`writeBatch`, `setChainMeta`) — those run off
+  // the scheduler, and `settle` covers them through the flush instead.
+  //
+  // Used anywhere else it puts the count into deficit, which `settle` reports
+  // by name rather than sitting on. That report is the check: the count says
+  // nothing about whether this particular caller had a unit to discount.
   park: 'a. (unit => promise<'a>) => promise<'a>,
   waitUntilReady: unit => promise<unit>,
   // Batches processed but not yet written. A test that stalls a write watches
