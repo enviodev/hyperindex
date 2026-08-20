@@ -301,13 +301,15 @@ let makeInternal = (
         }),
       ]
     }
-  | Config.SimulateSourceConfig({items, endBlock}) => [
+  | Config.SimulateSourceConfig({items, endBlock, ?transactionStore, ?blockStore}) => [
       SimulateSource.make(
         ~items,
         ~endBlock,
         ~chainId,
         ~addressStore,
         ~ecosystem=config.ecosystem.name,
+        ~transactionStore,
+        ~blockStore,
       ),
     ]
   // For tests: use ready-to-use sources directly

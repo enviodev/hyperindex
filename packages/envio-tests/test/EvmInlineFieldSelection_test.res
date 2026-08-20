@@ -77,7 +77,7 @@ describe("a rejected inline selection", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "notAField" field in the fields.block option of the "Transfer" event registration on contract "Token". Valid block fields: number, timestamp, hash, parentHash, nonce, sha3Uncles, logsBloom, transactionsRoot, stateRoot, receiptsRoot, miner, difficulty, totalDifficulty, extraData, size, gasLimit, gasUsed, uncles, baseFeePerGas, blobGasUsed, excessBlobGas, parentBeaconBlockRoot, withdrawalsRoot, l1BlockNumber, sendCount, sendRoot, mixHash.\`,
+      \`Invalid "notAField" field in the fields.block option of the "Transfer" event registration on contract "Token". Valid block fields: "number", "timestamp", "hash", "parentHash", "nonce", "sha3Uncles", "logsBloom", "transactionsRoot", "stateRoot", "receiptsRoot", "miner", "difficulty", "totalDifficulty", "extraData", "size", "gasLimit", "gasUsed", "uncles", "baseFeePerGas", "blobGasUsed", "excessBlobGas", "parentBeaconBlockRoot", "withdrawalsRoot", "l1BlockNumber", "sendCount", "sendRoot", "mixHash".\`,
     );
   });
 
@@ -113,7 +113,7 @@ describe("a rejected inline selection", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "blocks" key in the fields option of the "Transfer" event registration on contract "Token". Valid keys: block, transaction.\`,
+      \`Invalid "blocks" key in the fields option of the "Transfer" event registration on contract "Token". Valid keys: "block", "transaction".\`,
     );
   });
 
@@ -128,7 +128,7 @@ describe("a rejected inline selection", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "instruction" key in the fields option of the "Transfer" event registration on contract "Token". Valid keys: block, transaction.\`,
+      \`Invalid "instruction" key in the fields option of the "Transfer" event registration on contract "Token". Valid keys: "block", "transaction".\`,
     );
   });
 
@@ -223,20 +223,26 @@ let register = (~config, fn) => {
   HandlerRegister.finishRegistration(~config)
 }
 
-let setHandler = (~fields=?, ~where=?, ()) =>
+let setHandler = (~fields: option<Internal.evmFieldsSelection>=?, ~where=?, ()) =>
   HandlerRegister.setHandler(
     ~contractName="Token",
     ~eventName="Transfer",
     %raw(`() => Promise.resolve()`),
-    ~eventOptions=Some({?fields, ?where}),
+    ~eventOptions=Some({
+      fields: ?fields->Option.map(f => f->(Utils.magic: Internal.evmFieldsSelection => unknown)),
+      ?where,
+    }),
   )
 
-let setContractRegister = (~fields=?, ~where=?, ()) =>
+let setContractRegister = (~fields: option<Internal.evmFieldsSelection>=?, ~where=?, ()) =>
   HandlerRegister.setContractRegister(
     ~contractName="Token",
     ~eventName="Transfer",
     %raw(`() => Promise.resolve()`),
-    ~eventOptions=Some({?fields, ?where}),
+    ~eventOptions=Some({
+      fields: ?fields->Option.map(f => f->(Utils.magic: Internal.evmFieldsSelection => unknown)),
+      ?where,
+    }),
   )
 
 describe("EVM inline field selection", () => {

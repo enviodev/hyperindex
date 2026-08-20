@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 use hypersync_client::simple_types;
 use hypersync_client_solana::simple_types as solana_simple;
+use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 use strum::VariantArray;
 
@@ -352,15 +353,7 @@ fn decode_svm_columns(
         transaction_indices.len(),
         |f| f as u32,
         |f| f.name(),
-        |f| {
-            decode_svm_field(
-                f,
-                scratch,
-                account_activities,
-                transaction_indices,
-                masks,
-            )
-        },
+        |f| decode_svm_field(f, scratch, account_activities, transaction_indices, masks),
     )
 }
 
@@ -438,7 +431,11 @@ fn gather_account_activities(
                 table
                     .u64_cell(AA_ACCOUNT_INDEX, *a_slot)
                     .unwrap_or(u64::MAX)
-                    .cmp(&table.u64_cell(AA_ACCOUNT_INDEX, *b_slot).unwrap_or(u64::MAX))
+                    .cmp(
+                        &table
+                            .u64_cell(AA_ACCOUNT_INDEX, *b_slot)
+                            .unwrap_or(u64::MAX),
+                    )
                     .then_with(|| a_key.2.cmp(&b_key.2))
             });
             Some(
@@ -458,26 +455,41 @@ struct Stores {
 }
 
 #[napi(object)]
-pub struct SvmTestTransaction {
+pub struct SvmTxInput {
     pub slot: i64,
     pub transaction_index: u32,
 }
 
 #[napi(object)]
-pub struct SvmTestActivity {
+pub struct SvmActivityInput {
     pub slot: i64,
     pub transaction_index: u32,
     pub account: String,
     pub account_index: Option<u32>,
     pub is_signer: Option<bool>,
     pub is_writable: Option<bool>,
-    pub pre_balance: Option<i64>,
-    pub post_balance: Option<i64>,
+    pub pre_balance: Option<BigInt>,
+    pub post_balance: Option<BigInt>,
     pub mint: Option<String>,
     pub owner: Option<String>,
     pub decimals: Option<u8>,
-    pub pre_amount: Option<i64>,
-    pub post_amount: Option<i64>,
+    pub pre_amount: Option<BigInt>,
+    pub post_amount: Option<BigInt>,
+}
+
+fn bigint_to_u64(value: BigInt, field: &str) -> napi::Result<u64> {
+    if value.sign_bit {
+        return Err(napi::Error::from_reason(format!(
+            "{field} must be non-negative"
+        )));
+    }
+    match value.words.as_slice() {
+        [] => Ok(0),
+        [word] => Ok(*word),
+        _ => Err(napi::Error::from_reason(format!(
+            "{field} does not fit in u64"
+        ))),
+    }
 }
 
 #[napi]
@@ -621,14 +633,14 @@ impl TransactionStore {
         }
     }
 
-    /// Load a fixture page of SVM transactions and account-activity rows so
-    /// tests can drive `materialize` without a HyperSync response.
-    #[napi]
-    pub fn insert_svm_test_page(
-        &self,
-        transactions: Vec<SvmTestTransaction>,
-        activities: Vec<SvmTestActivity>,
-    ) -> napi::Result<()> {
+    /// Page built from JS transaction and account-activity objects, for sources
+    /// that construct SVM pages in JS (simulate) the way HyperSync does in Rust.
+    #[napi(factory)]
+    pub fn from_js_svm(
+        transactions: Vec<SvmTxInput>,
+        activities: Vec<SvmActivityInput>,
+    ) -> napi::Result<Self> {
+        let store = Self::with_ecosystem(Ecosystem::Svm);
         let txs = transactions
             .into_iter()
             .map(|t| {
@@ -642,7 +654,7 @@ impl TransactionStore {
                 })
             })
             .collect::<napi::Result<Vec<_>>>()?;
-        self.insert_svm_txs(txs);
+        store.insert_svm_txs(txs);
 
         let rows = activities
             .into_iter()
@@ -652,14 +664,8 @@ impl TransactionStore {
                         napi::Error::from_reason(format!("{field} {value:?} is not a pubkey: {e}"))
                     })
                 };
-                let to_u64 = |v: Option<i64>, field: &str| {
-                    v.map(|n| {
-                        u64::try_from(n).map_err(|_| {
-                            napi::Error::from_reason(format!("{field} must be non-negative"))
-                        })
-                    })
-                    .transpose()
-                };
+                let to_u64 =
+                    |v: Option<BigInt>, field: &str| v.map(|n| bigint_to_u64(n, field)).transpose();
                 Ok(solana_simple::AccountActivity {
                     slot: Some(
                         u64::try_from(a.slot)
@@ -694,8 +700,8 @@ impl TransactionStore {
                 })
             })
             .collect::<napi::Result<Vec<_>>>()?;
-        self.insert_svm_account_activity(rows);
-        Ok(())
+        store.insert_svm_account_activity(rows);
+        Ok(store)
     }
 }
 
@@ -861,7 +867,6 @@ mod tests {
     }
 
     use crate::field_columns::test_support::column;
-    use napi::bindgen_prelude::BigInt;
 
     fn bit(field: EvmTxField) -> u64 {
         1u64 << (field as u32)
@@ -896,7 +901,9 @@ mod tests {
                                     a.transaction_account_index,
                                     a.is_signer,
                                     a.is_writable,
-                                    a.lamports.as_ref().map(|l| (amount(&l.pre), amount(&l.post))),
+                                    a.lamports
+                                        .as_ref()
+                                        .map(|l| (amount(&l.pre), amount(&l.post))),
                                     a.token.as_ref().map(|t| {
                                         (
                                             t.mint.clone(),

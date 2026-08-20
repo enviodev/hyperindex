@@ -394,6 +394,14 @@ mod tests {
             names(INSTRUCTION),
             dts_string_union(&dts, "SvmInstructionFieldName")
         );
+        assert_eq!(
+            names(TRANSACTION)
+                .into_iter()
+                .filter(|name| *name != "accountActivities")
+                .collect::<Vec<_>>(),
+            dts_string_union(&dts, "SvmTransactionFieldName")
+        );
+        assert_eq!(names(BLOCK), dts_string_union(&dts, "SvmBlockFieldName"));
     }
 
     fn quoted_names_between(src: &str, start_marker: &str, end_marker: &str) -> Vec<String> {
@@ -437,12 +445,27 @@ mod tests {
             )
         );
         assert_eq!(
+            names(TRANSACTION)
+                .into_iter()
+                .filter(|name| *name != "accountActivities")
+                .collect::<Vec<_>>(),
+            quoted_names_between(
+                &res,
+                "let validSvmTransactionFields",
+                "let validSvmAccountActivityFields"
+            )
+        );
+        assert_eq!(
             names(ACCOUNT_ACTIVITY),
             quoted_names_between(
                 &res,
                 "let validSvmAccountActivityFields",
                 "let validSvmBlockFields"
             )
+        );
+        assert_eq!(
+            names(BLOCK),
+            quoted_names_between(&res, "let validSvmBlockFields", "let validSvmLogFields")
         );
         assert_eq!(
             names(LOG),

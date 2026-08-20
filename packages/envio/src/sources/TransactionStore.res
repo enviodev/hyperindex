@@ -31,33 +31,36 @@ let fieldCodes = FieldMask.fieldCodes
 // Drain another store (a fetch-response page) into this one.
 @send external merge: (t, t) => unit = "merge"
 
-type svmTestTransaction = {
+type svmTxInput = {
   slot: int,
   transactionIndex: int,
 }
 
-type svmTestActivity = {
+type svmActivityInput = {
   slot: int,
   transactionIndex: int,
   account: string,
   accountIndex?: int,
   isSigner?: bool,
   isWritable?: bool,
-  preBalance?: int,
-  postBalance?: int,
+  preBalance?: bigint,
+  postBalance?: bigint,
   mint?: string,
   owner?: string,
   decimals?: int,
-  preAmount?: int,
-  postAmount?: int,
+  preAmount?: bigint,
+  postAmount?: bigint,
 }
 
 @send
-external insertSvmTestPage: (
-  t,
-  array<svmTestTransaction>,
-  array<svmTestActivity>,
-) => unit = "insertSvmTestPage"
+external fromJsSvm: (
+  Core.transactionStoreCtor,
+  array<svmTxInput>,
+  array<svmActivityInput>,
+) => t = "fromJsSvm"
+
+let fromSvmJs = (transactions: array<svmTxInput>, activities: array<svmActivityInput>): t =>
+  Core.getAddon().transactionStore->fromJsSvm(transactions, activities)
 
 // Bulk-materialise transactions off the JS thread, one row per
 // (blockNumbers[i], transactionIndices[i]) key, decoding only the fields set in

@@ -239,7 +239,7 @@ let getGlobalIndexer = (): 'indexer => {
           "event": unknown,
           "wildcard": option<bool>,
           "where": option<JSON.t>,
-          "fields": option<Internal.fieldsSelection>,
+          "fields": option<unknown>,
         }
       )
     // Detect format: if "contract" is a string, it's the TS format
@@ -295,7 +295,7 @@ let getGlobalIndexer = (): 'indexer => {
           "program": unknown,
           "instruction": unknown,
           "where": option<JSON.t>,
-          "fields": option<Internal.svmFieldsSelection>,
+          "fields": option<unknown>,
         }
       )
     let (programName, instructionName) = if typeof(raw["program"]) === #string {

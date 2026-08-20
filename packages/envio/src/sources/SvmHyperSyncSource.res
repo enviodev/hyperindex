@@ -67,44 +67,37 @@ let toSvmInstruction = (
   ~eventConfig: Internal.svmInstructionEventConfig,
   ~fieldSelection: Internal.fieldSelection,
 ): Envio.svmInstruction => {
-  let hasInstruction = name => fieldSelection.instructionFields->Utils.Set.has(name)
+  let hasSelection = name => fieldSelection.instructionFields->Utils.Set.has(name)
   let discriminator = switch eventConfig.discriminator {
   | Some(d) => d
-  | None =>
-    switch (item.d8, item.d4, item.d2, item.d1) {
-    | (Some(d), _, _, _) => d
-    | (_, Some(d), _, _) => d
-    | (_, _, Some(d), _) => d
-    | (_, _, _, Some(d)) => d
-    | _ => item.data
-    }
+  | None => item.data
   }
   let out = Dict.make()
   out->setField("programName", programName)
   out->setField("instructionName", instructionName)
   out->setField("discriminator", discriminator)
-  if hasInstruction("programId") {
+  if hasSelection("programId") {
     out->setField("programId", item.programId->SvmTypes.Pubkey.fromStringUnsafe)
   }
-  if hasInstruction("data") {
+  if hasSelection("data") {
     out->setField("data", item.data)
   }
-  if hasInstruction("path") {
-    out->setField("path", item.instructionAddress)
+  if hasSelection("path") {
+    out->setField("path", item.path)
   }
-  if hasInstruction("isInner") {
+  if hasSelection("isInner") {
     out->setField("isInner", item.isInner)
   }
-  if hasInstruction("args") {
+  if hasSelection("args") {
     out->setField("args", item.decoded->Option.map(parseArgs))
   }
-  if hasInstruction("accounts") {
+  if hasSelection("accounts") {
     out->setField(
       "accounts",
       namedAccounts(~idlNames=eventConfig.accounts, ~accountArguments=item.accounts),
     )
   }
-  if hasInstruction("accountArguments") {
+  if hasSelection("accountArguments") {
     out->setField("accountArguments", item.accounts->SvmTypes.Pubkey.fromStringsUnsafe)
   }
   if fieldSelection.logFields->Utils.Set.size > 0 {
@@ -213,13 +206,13 @@ let make = (
         onEventRegistration,
         chainId,
         blockNumber: item.slot,
-        // A slot orders by `(transactionIndex, instructionAddress)` — the
+        // A slot orders by `(transactionIndex, path)` — the
         // transaction, then the instruction's position in its CPI tree. Both
         // ride the item so the buffer comparator can order on the pair
         // directly; no single integer can hold it (Solana allows a CPI depth
         // of 5, which needs more bits than a JS integer is exact to).
         logIndex: item.transactionIndex,
-        orderPath: item.instructionAddress,
+        orderPath: item.path,
         // The parent transaction is materialised from the store at batch prep.
         transactionIndex: item.transactionIndex,
         payload: payload->(Utils.magic: Envio.svmInstruction => Internal.eventPayload),

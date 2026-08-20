@@ -43,23 +43,14 @@ indexer.onInstruction(
     },
   },
   async ({ instruction, context }) => {
-    const metadataPda = instruction.accounts.metadata.address;
-    const mint = instruction.accounts.mint.address;
-    const updateAuthority = instruction.accounts.update_authority.address;
-    const txSig = instruction.transaction.signature;
-
-    context.log.info(
-      `Create: slot=${instruction.block.slot} mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
-    );
-
     context.TokenMetadataAccount.set({
-      id: metadataPda,
-      mint,
-      updateAuthority,
+      id: instruction.accounts.metadata.address,
+      mint: instruction.accounts.mint.address,
+      updateAuthority: instruction.accounts.update_authority.address,
       lastUpdatedSlot: instruction.block.slot,
       updateCount: 0,
       createdAtSlot: instruction.block.slot,
-      lastTxSignature: txSig,
+      lastTxSignature: instruction.transaction.signature,
     });
     await bumpStats(context, "create");
   },
@@ -75,34 +66,22 @@ indexer.onInstruction(
     },
   },
   async ({ instruction, context }) => {
-    const metadataPda = instruction.accounts.metadata.address;
-    const updateAuthority = instruction.accounts.update_authority.address;
-    const txSig = instruction.transaction.signature;
-
-    context.log.info(
-      `Update: slot=${instruction.block.slot} metadata=${metadataPda.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
-    );
-
-    const existing = await context.TokenMetadataAccount.get(metadataPda);
-    if (existing) {
-      context.TokenMetadataAccount.set({
-        ...existing,
-        updateAuthority,
-        lastUpdatedSlot: instruction.block.slot,
-        updateCount: existing.updateCount + 1,
-        lastTxSignature: txSig,
-      });
-    } else {
-      context.TokenMetadataAccount.set({
-        id: metadataPda,
-        mint: "",
-        updateAuthority,
-        lastUpdatedSlot: instruction.block.slot,
-        updateCount: 1,
-        createdAtSlot: instruction.block.slot,
-        lastTxSignature: txSig,
-      });
-    }
+    const account = await context.TokenMetadataAccount.getOrCreate({
+      id: instruction.accounts.metadata.address,
+      mint: "",
+      updateAuthority: instruction.accounts.update_authority.address,
+      lastUpdatedSlot: instruction.block.slot,
+      updateCount: 0,
+      createdAtSlot: instruction.block.slot,
+      lastTxSignature: instruction.transaction.signature,
+    });
+    context.TokenMetadataAccount.set({
+      ...account,
+      updateAuthority: instruction.accounts.update_authority.address,
+      lastUpdatedSlot: instruction.block.slot,
+      updateCount: account.updateCount + 1,
+      lastTxSignature: instruction.transaction.signature,
+    });
     await bumpStats(context, "update");
   },
 );

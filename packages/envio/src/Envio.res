@@ -69,7 +69,7 @@ type svmLog = {
   message: string,
 }
 
-type svmBlockWithoutInstruction = {
+type svmBlock = {
   slot: int,
   time?: int,
   hash?: string,
@@ -91,7 +91,7 @@ type svmInstruction = {
   accountArguments?: array<SvmTypes.Pubkey.t>,
   transaction?: svmTransaction,
   logs?: array<svmLog>,
-  block?: svmBlockWithoutInstruction,
+  block?: svmBlock,
 }
 
 /** Arguments passed to handlers registered via `indexer.onInstruction`. */
@@ -275,6 +275,22 @@ type fuelSimulateItem = {
   logIndex?: int,
   block?: fuelBlockInput,
   transaction?: fuelTransactionInput,
+}
+
+type svmSimulateItem = {
+  program: string,
+  instruction: string,
+  slot?: int,
+  path?: array<int>,
+  programId?: string,
+  data?: string,
+  isInner?: bool,
+  args?: JSON.t,
+  accounts?: dict<{address: string}>,
+  accountArguments?: array<string>,
+  logs?: array<{kind?: string, message?: string}>,
+  block?: svmBlock,
+  transaction?: unknown,
 }
 
 // Detects contexts where a full-screen TUI is counter-productive: piped/redirected

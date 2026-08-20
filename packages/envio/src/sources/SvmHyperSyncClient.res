@@ -27,7 +27,6 @@ module Registration = {
     // Earliest slot this registration accepts; `None` is unrestricted.
     startBlock: option<int>,
     discriminator?: string,
-    discriminatorByteLen: int,
     isInner?: bool,
     // DNF: outer array is OR of AND-groups.
     accountFilters: array<array<accountFilter>>,
@@ -57,7 +56,6 @@ module Registration = {
         isWildcard: reg.isWildcard,
         startBlock: reg.startBlock,
         discriminator: ?eventConfig.discriminator,
-        discriminatorByteLen: eventConfig.discriminatorByteLen,
         isInner: ?eventConfig.isInner,
         accountFilters: eventConfig.accountFilters->Array.map(group =>
           group->Array.map(
@@ -219,14 +217,10 @@ module EventItems = {
     onEventRegistrationIndex: int,
     slot: int,
     transactionIndex: int,
-    instructionAddress: array<int>,
+    path: array<int>,
     programId: string,
     accounts: array<string>,
     data: string,
-    d1?: string,
-    d2?: string,
-    d4?: string,
-    d8?: string,
     isInner: bool,
     decoded?: ResponseTypes.decodedInstruction,
     // Present only when the routed registration selected `fields.log`.

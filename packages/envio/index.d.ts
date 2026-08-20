@@ -1190,16 +1190,16 @@ export type SvmAccountActivity = {
 };
 
 export type SvmInstructionAccount<
-  Activity = undefined,
+  Activity = SvmAccountActivity,
   Name extends string = string,
 > = {
   readonly address: string;
   readonly accountName: Name;
   readonly instructionAccountIndex: number;
-  readonly activity: Activity;
+  readonly activity: Activity | undefined;
 };
 
-export type SvmBlockWithoutInstruction = {
+export type SvmBlock = {
   readonly slot: number;
   readonly time: number;
   readonly hash: string;
@@ -1233,7 +1233,18 @@ export type SvmInstructionFieldName =
   | "data"
   | "path"
   | "isInner";
-export type SvmTransactionFieldName = keyof SvmTransaction & string;
+export type SvmTransactionFieldName =
+  | "transactionIndex"
+  | "signature"
+  | "feePayer"
+  | "success"
+  | "err"
+  | "fee"
+  | "computeUnitsConsumed"
+  | "accountKeys"
+  | "recentBlockhash"
+  | "version"
+  | "allSignatures";
 export type SvmAccountActivityFieldName =
   | "address"
   | "transactionAccountIndex"
@@ -1248,7 +1259,13 @@ export type SvmAccountActivityFieldName =
   | "token.decimals"
   | "token.preAmount"
   | "token.postAmount";
-export type SvmBlockFieldName = keyof SvmBlockWithoutInstruction & string;
+export type SvmBlockFieldName =
+  | "slot"
+  | "time"
+  | "hash"
+  | "height"
+  | "parentSlot"
+  | "parentHash";
 export type SvmLogFieldName = "kind" | "message";
 
 export type SvmFieldsSelection = {
@@ -1364,10 +1381,10 @@ type SvmSelectedTransaction<Fields> = {
 };
 
 type SvmSelectedBlock<Fields> = {
-  readonly [K in keyof SvmBlockWithoutInstruction]: K extends "slot"
-    ? SvmBlockWithoutInstruction[K]
+  readonly [K in keyof SvmBlock]: K extends "slot"
+    ? SvmBlock[K]
     : K extends SvmListedFields<Fields, "block">
-      ? SvmBlockWithoutInstruction[K]
+      ? SvmBlock[K]
       : FieldNotSelected<`Field '${K & string}' is not selected for this handler. Add it to fields.block in the registration options.`>;
 };
 
@@ -1819,14 +1836,71 @@ type FuelTestIndexerChainConfig<Config extends IndexerConfigTypes = GlobalConfig
   simulate?: FuelSimulateItem<Config>[];
 };
 
-/** Configuration for a single SVM chain in the test indexer. SVM has no
- * `onEvent` handlers yet, so simulate items aren't supported — only slot
- * range overrides for driving `indexer.onSlot` block handlers under test. */
-type SvmTestIndexerChainConfig = {
+/** Simulate item type for SVM ecosystem. */
+type SvmSimulateItem<Config extends IndexerConfigTypes = GlobalConfig> =
+  Config["svm"] extends { programs: infer Programs extends Record<string, Record<string, any>> }
+    ? {
+        [P in keyof Programs]: {
+          [I in keyof Programs[P]]: {
+            /** Program name as declared under `chains[].programs[].name`. */
+            program: P;
+            /** Instruction name as declared under the program. */
+            instruction: I;
+            /** Override the slot. Auto-increments by default. */
+            slot?: number;
+            /** Instruction path in the CPI tree. Defaults to `[0]`. */
+            path?: readonly number[];
+            /** Override the program id. Defaults to the configured `program_id`. */
+            programId?: string;
+            /** Raw instruction data, `0x`-prefixed hex. */
+            data?: string;
+            /** Whether this is a CPI-invoked inner instruction. */
+            isInner?: boolean;
+            /** Decoded args. Keys match the instruction's arg names. */
+            args?: Programs[P][I] extends { args: infer A } ? A : unknown;
+            /** Named accounts. Keys match the instruction's account names. */
+            accounts?: Programs[P][I] extends { accounts: infer Acc extends Record<string, unknown> }
+              ? { readonly [K in keyof Acc]?: { readonly address: string } }
+              : Record<string, { readonly address: string }>;
+            /** Positional account addresses, zipped onto IDL names when `accounts` is omitted. */
+            accountArguments?: readonly string[];
+            /** Logs scoped to this instruction. */
+            logs?: readonly { readonly kind?: string; readonly message?: string }[];
+            /** Override block fields. */
+            block?: Partial<SvmBlock>;
+            /** Override transaction fields. `accountActivities` are joined onto named accounts at process time. */
+            transaction?: Partial<SvmTransaction> & {
+              readonly accountActivities?: readonly {
+                readonly address: string;
+                readonly transactionAccountIndex?: number;
+                readonly isSigner?: boolean;
+                readonly isWritable?: boolean;
+                readonly lamports?: {
+                  readonly pre?: bigint;
+                  readonly post?: bigint;
+                };
+                readonly token?: {
+                  readonly mint?: string;
+                  readonly owner?: string;
+                  readonly decimals?: number;
+                  readonly preAmount?: bigint;
+                  readonly postAmount?: bigint;
+                };
+              }[];
+            };
+          };
+        }[keyof Programs[P]];
+      }[keyof Programs]
+    : never;
+
+/** Configuration for a single SVM chain in the test indexer. */
+type SvmTestIndexerChainConfig<Config extends IndexerConfigTypes = GlobalConfig> = {
   /** The slot number to start processing from. Defaults to config startBlock or progressBlock+1. */
   startBlock?: number;
-  /** The slot number to stop processing at. */
+  /** The slot number to stop processing at. Defaults to max simulate slot when simulate is provided. */
   endBlock?: number;
+  /** Simulate items to process instead of fetching from real sources. */
+  simulate?: SvmSimulateItem<Config>[];
 };
 
 /** Entity change value containing sets and/or deleted IDs. */
@@ -1934,7 +2008,7 @@ type FuelTestChains<Config extends IndexerConfigTypes = GlobalConfig> =
 
 type SvmTestChains<Config extends IndexerConfigTypes = GlobalConfig> =
   HasSvm<Config> extends true
-    ? { [K in SvmChainIds<Config>]?: SvmTestIndexerChainConfig }
+    ? { [K in SvmChainIds<Config>]?: SvmTestIndexerChainConfig<Config> }
     : {};
 
 /** Process configuration for the test indexer, with chains keyed by chain ID. */

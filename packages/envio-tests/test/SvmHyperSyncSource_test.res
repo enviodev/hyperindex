@@ -74,11 +74,10 @@ let mockResponse: SvmHyperSyncClient.EventItems.response = {
       onEventRegistrationIndex: 0,
       slot,
       transactionIndex: 965,
-      instructionAddress: [1],
+      path: [1],
       programId: metaplexProgramId,
       accounts: [],
       data: "0x21",
-      d1: "0x21",
       isInner: false,
       decoded: {
         name: "CreateMetadataAccountV3",
@@ -208,7 +207,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
         Some({
           "blockNumber": blockNumber,
-          // A slot orders by (transactionIndex, instructionAddress); the pair
+          // A slot orders by (transactionIndex, path); the pair
           // rides the item as (logIndex, orderPath).
           "logIndex": logIndex,
           "orderPath": orderPath,
@@ -267,7 +266,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         isWildcard: false,
         startBlock: None,
         discriminator: "0x21",
-        discriminatorByteLen: 1,
         accountFilters: [],
         transactionFields: [],
         blockFields: [],

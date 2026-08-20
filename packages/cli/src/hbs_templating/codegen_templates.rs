@@ -3561,24 +3561,20 @@ type GlobalCounter @crossChain {
         let dts =
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../envio/index.d.ts"))
                 .expect("read index.d.ts");
-        let dts_fields: Vec<String> = parse_type_fields(
-            &dts,
-            "export type SvmBlockWithoutInstruction = {",
-            "readonly ",
-        )
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect();
+        let dts_fields: Vec<String> =
+            parse_type_fields(&dts, "export type SvmBlock = {", "readonly ")
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect();
         let res = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../envio/src/Envio.res"
         ))
         .expect("read Envio.res");
-        let res_fields: Vec<String> =
-            parse_type_fields(&res, "type svmBlockWithoutInstruction = {", "")
-                .into_iter()
-                .map(|(name, _)| name)
-                .collect();
+        let res_fields: Vec<String> = parse_type_fields(&res, "type svmBlock = {", "")
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
         assert_eq!(dts_fields, res_fields);
     }
 

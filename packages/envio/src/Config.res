@@ -33,7 +33,12 @@ type sourceConfig =
   // A `simulate` run: the items the test fed in, parsed against the chain's
   // registrations. The source itself is built with the chain's address store,
   // like every other source, so it can apply the same gates.
-  | SimulateSourceConfig({items: array<Internal.item>, endBlock: int})
+  | SimulateSourceConfig({
+      items: array<Internal.item>,
+      endBlock: int,
+      transactionStore?: TransactionStore.t,
+      blockStore?: BlockStore.t,
+    })
   // For tests: pass custom sources directly
   | CustomSources(array<Source.t>)
 

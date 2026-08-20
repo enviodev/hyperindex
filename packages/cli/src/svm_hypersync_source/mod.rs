@@ -34,7 +34,7 @@ use borsh_decoder::{DecodedInstructionJson, InstructionSchemaInput};
 use config::SvmClientConfig;
 use query::SvmQuery;
 use selection::{route_instruction, SelectionBuilder, SvmOnEventRegistrationInput};
-use types::{opt_hex, to_hex, QueryResponse};
+use types::{to_hex, QueryResponse};
 
 /// Move the response's transactions and account activity into a
 /// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept in Rust so
@@ -505,16 +505,12 @@ pub struct EventItem {
     pub on_event_registration_index: i64,
     pub slot: i64,
     pub transaction_index: i64,
-    pub instruction_address: Vec<i64>,
+    pub path: Vec<i64>,
     pub program_id: String,
     pub accounts: Vec<String>,
     /// Raw instruction data, `0x`-prefixed hex; decoded params ride on
     /// `decoded` when the registration carries a Borsh schema.
     pub data: String,
-    pub d1: Option<String>,
-    pub d2: Option<String>,
-    pub d4: Option<String>,
-    pub d8: Option<String>,
     pub is_inner: bool,
     pub decoded: Option<DecodedInstructionJson>,
     /// Logs scoped to this instruction; `Some` only when the routed
@@ -544,7 +540,7 @@ fn project_logs(logs: &[LogItem], columns: &[&str]) -> Vec<LogItem> {
 }
 
 /// Fans each committed instruction out to the registrations it routes to.
-/// Logs group per (slot, transactionIndex, instructionAddress) and attach only
+/// Logs group per (slot, transactionIndex, path) and attach only
 /// to items whose registration selected `fields.log`; logs without an
 /// instruction address attach to no instruction (rare; usually only system
 /// messages). Borsh decoding runs once per instruction against its program's
@@ -628,7 +624,7 @@ fn build_event_items(
                 on_event_registration_index: reg.index,
                 slot,
                 transaction_index: i64::from(instr.transaction_index),
-                instruction_address: instr
+                path: instr
                     .instruction_address
                     .iter()
                     .map(|&v| i64::from(v))
@@ -636,10 +632,6 @@ fn build_event_items(
                 program_id: instr.executing_account.clone(),
                 accounts: instr.account_arguments.clone(),
                 data: to_hex(&instr.data),
-                d1: opt_hex(&instr.d1),
-                d2: opt_hex(&instr.d2),
-                d4: opt_hex(&instr.d4),
-                d8: opt_hex(&instr.d8),
                 is_inner: instr.is_inner,
                 decoded: if reg.selects_args {
                     decoded.clone()
@@ -825,7 +817,6 @@ mod tests {
             is_wildcard: true,
             start_block: None,
             discriminator: Some(discriminator.to_string()),
-            discriminator_byte_len: 1,
             is_inner: None,
             account_filters: vec![],
             transaction_fields: vec![],
@@ -1064,7 +1055,6 @@ mod tests {
                 is_wildcard: false,
                 start_block: None,
                 discriminator: Some(discriminator.to_string()),
-                discriminator_byte_len: 1,
                 is_inner: None,
                 account_filters: vec![],
                 transaction_fields: vec![],

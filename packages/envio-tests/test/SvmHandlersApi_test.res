@@ -111,7 +111,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "logs" key in the fields option of the "swap" event registration on contract "Swapper". Valid keys: instruction, transaction, accountActivity, block, log.\`,
+      \`Invalid "logs" key in the fields option of the "swap" event registration on contract "Swapper". Valid keys: "instruction", "transaction", "accountActivity", "block", "log".\`,
     );
   });
 
@@ -126,7 +126,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "accountActivities" field in the fields.transaction option of the "swap" event registration on contract "Swapper". Valid transaction fields: transactionIndex, signature, feePayer, success, err, fee, computeUnitsConsumed, accountKeys, recentBlockhash, version, allSignatures.\`,
+      \`Invalid "accountActivities" field in the fields.transaction option of the "swap" event registration on contract "Swapper". Valid transaction fields: "transactionIndex", "signature", "feePayer", "success", "err", "fee", "computeUnitsConsumed", "accountKeys", "recentBlockhash", "version", "allSignatures".\`,
     );
   });
 
@@ -141,7 +141,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "params" field in the fields.instruction option of the "swap" event registration on contract "Swapper". Valid instruction fields: args, accounts, accountArguments, programId, data, path, isInner.\`,
+      \`Invalid "params" field in the fields.instruction option of the "swap" event registration on contract "Swapper". Valid instruction fields: "args", "accounts", "accountArguments", "programId", "data", "path", "isInner".\`,
     );
   });
 
@@ -156,7 +156,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "discriminator" field in the fields.instruction option of the "swap" event registration on contract "Swapper". Valid instruction fields: args, accounts, accountArguments, programId, data, path, isInner.\`,
+      \`Invalid "discriminator" field in the fields.instruction option of the "swap" event registration on contract "Swapper". Valid instruction fields: "args", "accounts", "accountArguments", "programId", "data", "path", "isInner".\`,
     );
   });
 });
@@ -240,10 +240,12 @@ expectType<SvmOnSlotFilter>(_empty);
 import type {
   SvmAccountActivity,
   SvmAccountTokenActivity,
-  SvmBlockWithoutInstruction,
+  SvmBlock,
+  SvmBlockFieldName,
   SvmInstruction,
   SvmInstructionAccount,
   SvmLog,
+  SvmTransactionFieldName,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
@@ -259,9 +261,28 @@ expectType<IsNotSelected<SvmInstruction["data"]>>(true);
 expectType<IsNotSelected<SvmInstruction["path"]>>(true);
 expectType<IsNotSelected<SvmInstruction["isInner"]>>(true);
 
-expectType<TypeEqual<SvmBlockWithoutInstruction["slot"], number>>(true);
-expectType<TypeEqual<SvmBlockWithoutInstruction["time"], number>>(true);
+expectType<TypeEqual<SvmBlock["slot"], number>>(true);
+expectType<TypeEqual<SvmBlock["time"], number>>(true);
 expectType<TypeEqual<SvmAccountTokenActivity["mint"], string>>(true);
+expectType<
+  TypeEqual<
+    SvmTransactionFieldName,
+    | "transactionIndex"
+    | "signature"
+    | "feePayer"
+    | "success"
+    | "err"
+    | "fee"
+    | "computeUnitsConsumed"
+    | "accountKeys"
+    | "recentBlockhash"
+    | "version"
+    | "allSignatures"
+  >
+>(true);
+expectType<
+  TypeEqual<SvmBlockFieldName, "slot" | "time" | "hash" | "height" | "parentSlot" | "parentHash">
+>(true);
 
 expectType<
   TypeEqual<
@@ -298,7 +319,7 @@ expectType<
       readonly address: string;
       readonly accountName: string;
       readonly instructionAccountIndex: number;
-      readonly activity: undefined;
+      readonly activity: SvmAccountActivity | undefined;
     }
   >
 >(true);
@@ -330,6 +351,8 @@ type _AllTx = import("envio").SvmAllTransactionFields;
 type _OldBlock = import("envio").SvmInstructionBlock;
 // @ts-expect-error - SvmTokenAll is gone
 type _TokenAll = import("envio").SvmTokenAll;
+// @ts-expect-error - SvmBlockWithoutInstruction is gone
+type _Without = import("envio").SvmBlockWithoutInstruction;
 `)
   )
 

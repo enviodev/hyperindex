@@ -167,23 +167,6 @@ let allSvmTransactionFields: array<svmTransactionField> = [
   AccountActivities,
 ]
 
-// Handler `fields.transaction` — `accountActivities` is implied by
-// `fields.accountActivity`, not listed here.
-let svmHandlerTransactionFields: array<svmTransactionField> = [
-  TransactionIndex,
-  Signature,
-  FeePayer,
-  Success,
-  Err,
-  Fee,
-  ComputeUnitsConsumed,
-  AccountKeys,
-  RecentBlockhash,
-  Version,
-  AllSignatures,
-]
-let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
-
 // All SVM block fields. `slot` is always included (the item's key); the rest
 // are selectable via handler `fields.block`.
 type svmBlockField =
@@ -193,10 +176,6 @@ type svmBlockField =
   | @as("height") Height
   | @as("parentSlot") ParentSlot
   | @as("parentHash") ParentHash
-
-let allSvmBlockFields: array<svmBlockField> = [Slot, Time, Hash, Height, ParentSlot, ParentHash]
-let svmHandlerBlockFields: array<svmBlockField> = allSvmBlockFields
-let svmBlockFieldSchema = S.enum([Height, ParentSlot, ParentHash])
 
 // Static sets of field names whose source schemas must be wrapped with S.nullable.
 let evmNullableBlockFields = Utils.Set.fromArray(
@@ -775,29 +754,17 @@ let getItemChainId = item =>
   | Block({onBlockRegistration: {chainId}}) => chainId
   }
 
-// The `fields` option of an `onEvent` registration. EVM (and Fuel, which
-// rejects `fields` at registration) only names block and transaction.
+// EVM `fields` bag. Parsed from the JS object as `unknown` at registration;
+// this record exists so ReScript tests can construct a typed EVM selection.
 type evmFieldsSelection = {
   block?: array<string>,
   transaction?: array<string>,
 }
 
-// The `fields` option of an `onInstruction` registration.
-type svmFieldsSelection = {
-  instruction?: array<string>,
-  transaction?: array<string>,
-  accountActivity?: array<string>,
-  block?: array<string>,
-  log?: array<string>,
-}
-
-// JS `fields` object. EVM reads block/transaction; SVM reads the rest.
-type fieldsSelection = svmFieldsSelection
-
 type eventOptions<'where> = {
   wildcard?: bool,
   where?: 'where,
-  fields?: fieldsSelection,
+  fields?: unknown,
 }
 
 type fuelSupplyParams = {
