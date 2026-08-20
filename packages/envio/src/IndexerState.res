@@ -831,8 +831,10 @@ let beginRollbackDiff = (
 ) => {
   let perChainEntities = state.allEntities->EntityTables.perChain
   state.entities = EntityTables.make(state.allEntities->EntityTables.crossChain)
-  // Every address staged since the last commit was registered by an event the
-  // rollback un-processes; the refetch registers it again.
+  // `Rollback.run` flushes the write loop before it gets here, so this is
+  // empty unless a write failed — and that already took the indexer down
+  // through `onError`. Anything left was registered by an event the rollback
+  // un-processes; the refetch registers it again.
   state.registeredAddresses = []
   state->chainStates->Utils.Dict.forEach(cs => cs->ChainState.resetEntities(~perChainEntities))
   state.effectState->EffectState.resetForRollback

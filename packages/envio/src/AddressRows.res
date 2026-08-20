@@ -51,7 +51,9 @@ let configRegistrationBlock = -1
 // restarts from the last persisted one — so stamping an id that never reached
 // storage would let an unrelated later rollback delete the row. A batch written
 // without history is final anyway, so its rows are stamped 0: no rollback can
-// reach them, and none needs to.
+// reach them, and none needs to. The stamp outlives the checkpoint it names
+// (checkpoint pruning doesn't rewrite these rows), which costs nothing: a
+// rollback target is always at or above the pruning boundary.
 let finalizeCheckpoint = (rows: array<row>, ~shouldSaveHistory) =>
   shouldSaveHistory ? rows : rows->Array.map(row => {...row, checkpointId: configCheckpointId})
 

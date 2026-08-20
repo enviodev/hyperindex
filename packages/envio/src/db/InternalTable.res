@@ -123,9 +123,12 @@ ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
     )
     ->Utils.Promise.ignoreValue
 
-  // Only the rows a rollback can reach are indexed: everything final is
-  // stamped 0, which is most of a table meant to hold tens of millions of
-  // rows. Without it every reorg would seq-scan the whole thing.
+  // Without an index every reorg would seq-scan a table meant to hold tens of
+  // millions of rows. Partial, because a row written outside the reorg
+  // threshold is stamped 0 and no rollback can reach it — that's every row of
+  // a backfill, and everything a `shouldRollbackOnReorg` indexer writes while
+  // it is behind the head. Under `shouldSaveFullHistory` every batch saves
+  // history, so there the index does span the table.
   let checkpointIndexName = "envio_addresses_rollback"
 
   let makeCreateCheckpointIndexQuery = (~pgSchema) =>
