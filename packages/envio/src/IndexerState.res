@@ -534,15 +534,17 @@ let exitInFlight = (state: t) => {
   state.inFlight = state.inFlight - 1
   if state.inFlight < 0 {
     // Every exit pairs with an entry, so a count below zero means a fan-out was
-    // counted once for work that runs many times over. The count never returns
-    // to zero after that, which would leave the indexer unable to tell it has
-    // gone quiet — a fatal accounting bug, not something to limp along with.
-    // Routed through errorExit rather than thrown: this runs in a promise
-    // reaction nobody awaits, where a throw would bypass onError entirely.
+    // counted once for work that runs many times over — a fatal accounting bug.
+    // Reported through errorExit rather than thrown, because this runs in a
+    // promise reaction nobody awaits, where a throw would bypass onError. The
+    // count is put back to zero so the reported failure is the one that
+    // surfaces, rather than every later wait on idleness hanging behind it.
+    state.inFlight = 0
     state->errorExit(
       Utils.Error.make("In-flight loop work counted below zero")->ErrorHandling.make,
     )
-  } else if state.inFlight === 0 {
+  }
+  if state.inFlight === 0 {
     let waiters = state.idleWaiters
     state.idleWaiters = []
     waiters->Array.forEach(resolve => resolve())

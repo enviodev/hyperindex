@@ -122,15 +122,15 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       )
       await drainTo(sibling, ~latest=300, ~items=[setCounter(~block=200, ~count=2n)])
       // Serve the dynamic partition's catch-up queries until the chain is quiet.
-      let attempts = ref(0)
-      while attempts.contents < 200 {
-        attempts := attempts.contents + 1
-        if victim.getItemsOrThrowCalls->Array.length > 0 {
-          victim.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+      let rounds = ref(0)
+      while victim.getItemsOrThrowCalls->Utils.Array.notEmpty {
+        rounds := rounds.contents + 1
+        if rounds.contents > 200 {
+          JsError.throwWithMessage("The victim chain kept issuing catch-up queries")
         }
+        victim.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
         await indexer.settle()
       }
-      await indexer.settle()
       await indexer.waitUntilReady()
 
       // New block on the victim chain. The first partition queries it; its
@@ -147,11 +147,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
         await indexer.settle()
       }
       victim.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
-      let attempts = ref(0)
-      while victim.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 1000 {
-        attempts := attempts.contents + 1
-        await indexer.settle()
-      }
+      await Scenario.waitQuery(~indexer, ~source=victim)
       t.expect(
         victim.getItemsOrThrowCalls->Array.length,
         ~message="the second victim partition should now be querying the new head block",
@@ -182,12 +178,9 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       | _ => victim.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=301)
       }
       // The rollback target usually comes from the recorded safe checkpoints;
-      // serve getBlockHashes only if the depth search asks for it.
-      let attempts = ref(0)
-      while sibling.getBlockHashesCalls->Array.length === 0 && attempts.contents < 100 {
-        attempts := attempts.contents + 1
-        await indexer.settle()
-      }
+      // serve getBlockHashes only if the depth search asks for it. A settled
+      // indexer has either asked by now or is never going to.
+      await indexer.settle()
       if sibling.getBlockHashesCalls->Array.length > 0 {
         sibling.resolveGetBlockHashes([
           {blockNumber: 100, blockHash: "0x100", blockTimestamp: 100},

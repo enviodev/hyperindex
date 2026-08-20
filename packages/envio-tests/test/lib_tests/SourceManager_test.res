@@ -1,5 +1,8 @@
 open Vitest
 
+// determinism-lint: no indexer loop — SourceManager is exercised on its own,
+// and its dispatch behaviour is defined in terms of ticks.
+
 // Spread into query literals so the common fields don't have to be repeated;
 // every other field is overridden at the call site.
 let defaultQuery: FetchState.query = {

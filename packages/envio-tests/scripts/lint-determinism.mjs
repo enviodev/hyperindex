@@ -1,12 +1,15 @@
-// A scenario test drives a real indexer loop, so `Utils.delay(0)` there is a
-// guess at how many await hops the loop needs to reach the next observable
-// state. The guess is unwritable without trial and error, breaks whenever
-// production code gains an await, and — worse — makes a negative assertion pass
-// vacuously when it comes up short. `indexer.settle()` and its condition-based
-// peers wait on the loop's own in-flight count instead.
+// A test that drives the indexer loop can't wait on `Utils.delay(0)`: the count
+// of ticks is a guess at how many await hops the loop needs to reach the next
+// observable state. The guess is unwritable without trial and error, breaks
+// whenever production code gains an await, and — worse — makes a negative
+// assertion pass vacuously when it comes up short. `indexer.settle()` and its
+// condition-based peers wait on the loop's own in-flight count instead.
 //
-// Unit tests that never build an indexer keep it: there is no loop to settle,
-// and a tick is exactly what they mean.
+// The ban is on every test by default. A unit test that never builds an indexer
+// has no loop to settle and means the tick literally, so it opts out by name
+// with the marker below — one line that says which kind of test it is, rather
+// than a pattern that quietly stops matching when a test moves its body into a
+// helper.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -14,10 +17,8 @@ import { fileURLToPath } from "node:url";
 
 const testRoot = fileURLToPath(new URL("../test", import.meta.url));
 
-const banned = /Utils\.delay\(0\)/;
-// Files that reach for the scenario harness at all: they own an indexer, so
-// they have something to settle.
-const drivesAnIndexer = /\bIndexerRunner\.t\b|\bScenario\.(it|run)\b/;
+const banned = /Utils\.delay\(\s*0\s*\)/;
+const optOut = "determinism-lint: no indexer loop";
 
 const resFiles = (dir) =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -29,7 +30,7 @@ const resFiles = (dir) =>
 const violations = [];
 for (const path of resFiles(testRoot)) {
   const source = readFileSync(path, "utf8");
-  if (!drivesAnIndexer.test(source)) continue;
+  if (source.includes(optOut)) continue;
   source.split("\n").forEach((line, index) => {
     if (banned.test(line)) {
       violations.push(`${relative(process.cwd(), path)}:${index + 1}: ${line.trim()}`);
@@ -40,15 +41,18 @@ for (const path of resFiles(testRoot)) {
 if (violations.length > 0) {
   console.error(
     [
-      "Utils.delay(0) in a test that drives an indexer:",
+      "Utils.delay(0) counts ticks instead of waiting on the indexer:",
       "",
       ...violations,
       "",
-      "Wait on the loop instead of on ticks:",
+      "Wait on the loop:",
       "  indexer.settle()                     — every scheduled step ran, nothing left but the outside world",
       "  indexer.settleUntil(cond, ~message)  — re-settles until a condition arrives on its own cadence",
       "  indexer.park(() => gate)             — a wait the test itself holds closed, so settle doesn't wait it out",
       "  Scenario.expectQueries(...)          — settles, then asserts the whole pending query set",
+      "  Scenario.waitUntil(cond, ~message)   — for state only observable from outside the loop",
+      "",
+      `A unit test that never builds an indexer opts out with a comment: ${optOut}`,
     ].join("\n"),
   );
   process.exit(1);

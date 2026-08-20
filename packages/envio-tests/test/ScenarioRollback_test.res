@@ -69,7 +69,12 @@ let enterThresholdAndIndex = async (~indexer: IndexerRunner.t, ~source: MockSour
 // when a settled indexer has stopped asking.
 let driveRollback = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~validUpTo) => {
   let answered = ref(true)
+  let rounds = ref(0)
   while answered.contents {
+    rounds := rounds.contents + 1
+    if rounds.contents > 300 {
+      JsError.throwWithMessage("The rollback kept asking for block hashes and ranges")
+    }
     await indexer.settle()
     answered := false
     if source.getBlockHashesCalls->Array.length > 0 {
