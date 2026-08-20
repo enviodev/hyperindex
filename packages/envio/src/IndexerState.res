@@ -533,22 +533,32 @@ let enterInFlight = (state: t) => state.inFlight = state.inFlight + 1
 let exitInFlight = (state: t) => {
   state.inFlight = state.inFlight - 1
   if state.inFlight < 0 {
-    // Every exit pairs with an entry, so a negative count means a fan-out was
-    // counted once for work that runs many times over — and idleness would
-    // never be observable again.
-    JsError.throwWithMessage("Internal error: in-flight loop work counted below zero")
-  }
-  if state.inFlight === 0 {
+    // Every exit pairs with an entry, so a count below zero means a fan-out was
+    // counted once for work that runs many times over. The count never returns
+    // to zero after that, which would leave the indexer unable to tell it has
+    // gone quiet — a fatal accounting bug, not something to limp along with.
+    // Routed through errorExit rather than thrown: this runs in a promise
+    // reaction nobody awaits, where a throw would bypass onError entirely.
+    state->errorExit(
+      Utils.Error.make("In-flight loop work counted below zero")->ErrorHandling.make,
+    )
+  } else if state.inFlight === 0 {
     let waiters = state.idleWaiters
     state.idleWaiters = []
     waiters->Array.forEach(resolve => resolve())
   }
 }
 
-// Counts `work` as loop work for as long as its promise is pending.
+// Counts `work` as loop work for as long as its promise is pending. A thunk
+// that throws before returning a promise still settles the count.
 let trackInFlight = (state: t, work: unit => promise<'a>): promise<'a> => {
   state->enterInFlight
-  work()->Promise.finally(() => state->exitInFlight)
+  switch work() {
+  | promise => promise->Promise.finally(() => state->exitInFlight)
+  | exception exn =>
+    state->exitInFlight
+    throw(exn)
+  }
 }
 
 // The inverse: the caller is parked on something the indexer can't advance on
@@ -556,7 +566,12 @@ let trackInFlight = (state: t, work: unit => promise<'a>): promise<'a> => {
 // until the answer lands.
 let suspendInFlight = (state: t, work: unit => promise<'a>): promise<'a> => {
   state->exitInFlight
-  work()->Promise.finally(() => state->enterInFlight)
+  switch work() {
+  | promise => promise->Promise.finally(() => state->enterInFlight)
+  | exception exn =>
+    state->enterInFlight
+    throw(exn)
+  }
 }
 
 let epoch = (state: t) => state.epoch

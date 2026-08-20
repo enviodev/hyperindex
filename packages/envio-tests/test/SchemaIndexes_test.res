@@ -211,6 +211,7 @@ describe("Deferred schema indexes", () => {
     },
     async (~t, ~indexer, ~source) => {
       let gate = gate.contents
+      gate.parkWith(indexer.park)
       let source = source(1337)
       let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
       await indexer.settle()
@@ -218,9 +219,7 @@ describe("Deferred schema indexes", () => {
       source.resolveGetHeightOrThrow(100)
       await indexer.settle()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      while gate.entered.contents === 0 {
-        await indexer.settle()
-      }
+      await indexer.settle()
 
       t.expect(
         (
@@ -266,6 +265,7 @@ describe("Deferred schema indexes", () => {
     },
     async (~t, ~indexer, ~source) => {
       let gate = joinGate.contents
+      gate.parkWith(indexer.park)
       let finalizeCalls = joinFinalizeCalls
       let source = source(1337)
       await indexer.settle()
@@ -273,9 +273,7 @@ describe("Deferred schema indexes", () => {
       source.resolveGetHeightOrThrow(100)
       await indexer.settle()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      while gate.entered.contents === 0 {
-        await indexer.settle()
-      }
+      await indexer.settle()
 
       t.expect(
         (finalizeCalls.contents, await indexer.metric("envio_progress_ready")),
@@ -287,11 +285,7 @@ describe("Deferred schema indexes", () => {
       source.resolveGetHeightOrThrow(200)
       await Scenario.waitQuery(~indexer, ~source=source)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200)
-      let ticks = ref(0)
-      while ticks.contents < 20 {
-        ticks := ticks.contents + 1
-        await indexer.settle()
-      }
+      await indexer.settle()
 
       t.expect(
         (finalizeCalls.contents, await indexer.metric("envio_progress_ready")),

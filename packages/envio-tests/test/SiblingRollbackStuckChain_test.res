@@ -102,11 +102,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       // Drive both chains to head 300 through the reorg-threshold transition,
       // resolving every query as it appears.
       let drainTo = async (source: MockSource.t, ~latest, ~items=[]) => {
-        let attempts = ref(0)
-        while source.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 1000 {
-          attempts := attempts.contents + 1
-          await indexer.settle()
-        }
+        await Scenario.waitQuery(~indexer, ~source)
         source.resolveGetItemsOrThrow(items, ~latestFetchedBlockNumber=latest)
         await indexer.settle()
       }

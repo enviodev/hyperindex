@@ -7,20 +7,28 @@ module Gate = {
     entered: ref<int>,
     wait: unit => promise<unit>,
     release: unit => unit,
+    // Hands the gate the run's `park`, so a closed gate inside indexer work
+    // reads as parked rather than as work `settle` would sit and wait out.
+    // Called from the test body, which is where the run exists.
+    parkWith: ((unit => promise<unit>) => promise<unit>) => unit,
   }
 
   let make = () => {
     let waiting = []
     let isOpen = ref(false)
     let entered = ref(0)
+    let park = ref(work => work())
     {
       entered,
+      parkWith: parkWork => park := parkWork,
       wait: () => {
         entered := entered.contents + 1
         if isOpen.contents {
           Promise.resolve()
         } else {
-          Promise.make((resolve, _reject) => waiting->Array.push(() => resolve())->ignore)
+          park.contents(() =>
+            Promise.make((resolve, _reject) => waiting->Array.push(() => resolve())->ignore)
+          )
         }
       },
       release: () => {

@@ -472,8 +472,7 @@ describe("E2E rollback tests", () => {
       sourceMock1337.getHeightOrThrowCalls->Utils.Array.clearInPlace
       sourceMock100.getHeightOrThrowCalls->Utils.Array.clearInPlace
 
-      // Allow async operations to settle
-      await indexer.settle()
+      await restarted.settle()
 
       // After restart, we should still be in reorg threshold because
       // progressBlockNumber (110) > sourceBlockNumber (300) - maxReorgDepth (200) = 100
@@ -594,39 +593,6 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=103,
       )
       await indexer.settle()
-
-      // getBatchWritePromise can observe the loop between the response resolving
-      // and processing starting, so wait until this specific batch is visible.
-      let shouldKeepWaitingForHistory = ref(true)
-      let rec waitForRecreatedEntityHistory = async () => {
-        if shouldKeepWaitingForHistory.contents {
-          let hasRecreatedEntityHistory =
-            (
-              await (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>)
-            )->Array.length === 3
-          if shouldKeepWaitingForHistory.contents && !hasRecreatedEntityHistory {
-            await Utils.delay(1)
-            await waitForRecreatedEntityHistory()
-          }
-        }
-      }
-      let historyWaitTimeoutId = ref(None)
-      let historyWaitTimeout = Promise.make((resolve, _reject) => {
-        historyWaitTimeoutId := Some(setTimeout(resolve, 5_000))
-      })
-      let historyWaitResult = await Promise.race([
-        waitForRecreatedEntityHistory()->Promise.thenResolve(_ => Ok()),
-        indexerErrorPromise->Promise.thenResolve(errHandler => Error(Some(errHandler))),
-        historyWaitTimeout->Promise.thenResolve(_ => Error(None)),
-      ])
-      shouldKeepWaitingForHistory := false
-      historyWaitTimeoutId.contents->Option.forEach(clearTimeout)
-      switch historyWaitResult {
-      | Ok() => ()
-      | Error(Some(errHandler)) => errHandler->ErrorHandling.raiseExn
-      | Error(None) =>
-        JsError.throwWithMessage("Timed out waiting for SET -> DELETE -> SET history")
-      }
 
       t.expect(
         await Promise.all2((
@@ -2145,7 +2111,7 @@ describe("E2E rollback tests", () => {
       // Restart immediately without writing any batches
       // At this point: progressBlockNumber=-1, sourceBlockNumber=0 in DB
       let restarted = await indexer.restart()
-      await indexer.settle()
+      await restarted.settle()
 
       t.expect(
         await restarted.metric("envio_reorg_threshold"),
@@ -2295,13 +2261,6 @@ describe("E2E rollback tests", () => {
         },
         ~resolveAt=#first,
       )
-
-      // Allow microtask queue to process the fetch response callbacks,
-      // which dispatch ValidatePartitionQueryResponse and transition
-      // the state from RollbackReady → ReorgDetected.
-      // Without this, getRollbackReadyPromise would immediately resolve
-      // from the FIRST rollback's RollbackReady state.
-      await indexer.settle()
 
       await indexer.settle()
 

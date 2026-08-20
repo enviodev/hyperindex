@@ -496,11 +496,10 @@ describe("Resuming a backfill that never finalized", () => {
       await restarted.waitUntilReady()
       // The repair runs alongside indexing rather than blocking the loop, so it
       // isn't done by the time readiness is observable.
-      let attempts = ref(0)
-      while !(await hasIndex(aBIdIndex, ~sql, ~pgSchema)) && attempts.contents < 100 {
-        attempts := attempts.contents + 1
-        await Utils.delay(10)
-      }
+      await Scenario.waitUntilAsync(
+        () => hasIndex(aBIdIndex, ~sql, ~pgSchema),
+        ~message="the background repair to recreate the missing index",
+      )
 
       t.expect(
         (
@@ -561,11 +560,10 @@ describe("Resuming a backfill that never finalized", () => {
 
       // The resumed run sees head 150 and queries 101-150 while finalize is still
       // parked on the gate.
-      let attempts = ref(0)
-      while source.getItemsOrThrowCalls->Utils.Array.isEmpty && attempts.contents < 200 {
-        attempts := attempts.contents + 1
-        await Utils.delay(5)
-      }
+      await Scenario.waitUntil(
+        () => source.getItemsOrThrowCalls->Utils.Array.notEmpty,
+        ~message="the resumed run to query the new range while finalize is parked",
+      )
       t.expect(
         (finalizeCalls.contents, source.getItemsOrThrowCalls->Array.length),
         ~message="A catch-up query is in flight while finalization is still open",
@@ -577,11 +575,10 @@ describe("Resuming a backfill that never finalized", () => {
       // That query was issued under the old epoch, so its response is dropped
       // before handleQueryResult can retire it.
       source.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=150)
-      let attempts = ref(0)
-      while source.getItemsOrThrowCalls->Utils.Array.isEmpty && attempts.contents < 200 {
-        attempts := attempts.contents + 1
-        await Utils.delay(5)
-      }
+      await Scenario.waitUntil(
+        () => source.getItemsOrThrowCalls->Utils.Array.notEmpty,
+        ~message="the partition to re-ask for the range its discarded response owed",
+      )
 
       // Blocks 101-150 are still owed; a partition left holding the discarded
       // query would never ask for them again.

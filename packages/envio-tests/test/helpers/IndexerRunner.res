@@ -41,7 +41,10 @@ type rec t = {
   settleUntil: (unit => bool, ~message: string) => promise<unit>,
   // Wraps a wait the test itself holds closed — a gate inside a handler, say —
   // so the loop reads as parked on the test rather than as working. Without it
-  // `settle` would wait out a block only the test can lift.
+  // `settle` would wait out a block only the test can lift. Only valid from
+  // inside work the loop is running (a handler, a contract register, a mocked
+  // storage call): it discounts the frame it is called from, and a test body
+  // has no frame to discount.
   park: 'a. (unit => promise<'a>) => promise<'a>,
   waitUntilReady: unit => promise<unit>,
   query: 'entity. string => promise<array<'entity>>,
@@ -228,19 +231,24 @@ let run = async (
     // Settles, then keeps settling until `predicate` holds, waiting on the
     // clock between rounds for conditions that only arrive once a polling
     // interval elapses. Bounded, so a condition that never comes says what it
-    // was waiting for instead of timing out the whole suite.
+    // was waiting for instead of timing out the whole suite. The budget starts
+    // after the first settle: settling is bounded on its own, and on a real
+    // database it can take seconds that have nothing to do with the condition.
     let rec settleUntil = async (predicate, ~message, ~deadline) => {
       await settle()
       if !predicate() {
+        let deadline = switch deadline {
+        | Some(deadline) => deadline
+        | None => Date.now() +. 5000.
+        }
         if Date.now() > deadline {
           JsError.throwWithMessage(`Timed out waiting for ${message}`)
         }
         await Utils.delay(1)
-        await settleUntil(predicate, ~message, ~deadline)
+        await settleUntil(predicate, ~message, ~deadline=Some(deadline))
       }
     }
-    let settleUntil = (predicate, ~message) =>
-      settleUntil(predicate, ~message, ~deadline=Date.now() +. 5000.)
+    let settleUntil = (predicate, ~message) => settleUntil(predicate, ~message, ~deadline=None)
 
     // Persist before stopping, else a resumed indexer loses uncommitted state,
     // then let any in-flight batch or write settle so nothing from this run

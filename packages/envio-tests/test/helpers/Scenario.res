@@ -361,12 +361,18 @@ let enterReorgThreshold = async (
 
 // Polls until `predicate` holds. Bounded so a condition that never arrives
 // fails with what it was waiting for, rather than as a suite-level timeout.
-let waitUntil = async (predicate, ~message, ~timeoutMs=5000.) => {
+// For anything the loop itself brings about, prefer `indexer.settleUntil`: this
+// one is for state the test can only observe from outside the loop — a gate's
+// entry count, a database the repair pass writes to on its own.
+let waitUntilAsync = async (predicate, ~message, ~timeoutMs=5000.) => {
   let deadline = Date.now() +. timeoutMs
-  while !predicate() {
+  while !(await predicate()) {
     if Date.now() > deadline {
       JsError.throwWithMessage(`Timed out waiting for ${message}`)
     }
     await Utils.delay(1)
   }
 }
+
+let waitUntil = (predicate, ~message, ~timeoutMs=?) =>
+  waitUntilAsync(() => Promise.resolve(predicate()), ~message, ~timeoutMs?)

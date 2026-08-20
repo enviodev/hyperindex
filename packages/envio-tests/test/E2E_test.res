@@ -422,7 +422,7 @@ describe("E2E tests", () => {
     ])
 
     let restarted = await indexer.restart()
-    await indexer.settle()
+    await restarted.settle()
 
     t.expect(
       await restarted.metric("envio_effect_call_total"),
