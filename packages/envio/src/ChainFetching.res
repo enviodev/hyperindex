@@ -334,8 +334,8 @@ let fetchChain = async (
     // query, response handling, or dispatch itself) must stop the indexer.
     try {
       // `dispatch` only waits: it parks on a new block, or joins the queries it
-      // fanned out. Each of those does its own in-flight accounting, so this
-      // frame stays suspended for the whole call rather than reading as work.
+      // fanned out. Each of those does its own accounting, so this frame stays
+      // suspended for the whole call rather than reading as work.
       await state->IndexerState.suspendInFlight(() =>
         chainState->ChainState.dispatch(
           ~waitForNewBlock=(~knownHeight) =>
@@ -355,6 +355,11 @@ let fetchChain = async (
               // rejects: dispatch spins a side-chain off it that would otherwise
               // become an unhandled rejection.
               try {
+                // Parked, not working: the loop can't advance until a source
+                // answers. The boundary is the whole call rather than the
+                // request inside it, so a retry's backoff is parked too — a
+                // test that settles mid-backoff sees no pending query and fails
+                // on the missing one, rather than reading the gap as quiet.
                 let response = await state->IndexerState.suspendInFlight(() =>
                   sourceManager->SourceManager.executeQuery(
                     ~query,

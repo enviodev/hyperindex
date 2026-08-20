@@ -179,34 +179,42 @@ let run = async (
     // One macrotask hop, which drains every pending microtask behind it.
     let drainTick = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => resolve()))
 
+    // Well under vitest's own 30s: a settle that never comes back should say
+    // what the loop was still doing, rather than surfacing as a bare test
+    // timeout — but a flush against a real database can take seconds that have
+    // nothing wrong with them, so the bound is generous.
+    let settleTimeoutMs = 15_000
+
     // Runs until the loop has nothing left to do on its own. `whenIdle` alone
     // isn't enough twice over: a source response that resolved this tick hasn't
     // reached its handler yet (the parked frame only rejoins the count when it
     // resumes), and the write loop is driven by the store rather than by the
     // scheduler. Draining the tick settles the first, `flush` the second, and
-    // the re-check catches whatever either of them started.
-    let rec settleLoop = async () => {
+    // the re-check catches whatever either of them started. `timedOut` stops the
+    // recursion once the caller has given up, so a wedged run doesn't keep
+    // driving the store for the rest of the worker.
+    let rec settleLoop = async (~timedOut) => {
       await state->IndexerState.whenIdle
       await drainTick()
       await state->Writing.flush
-      if state->IndexerState.inFlight > 0 || state->IndexerState.writeFiber->Option.isSome {
-        await settleLoop()
+      if (
+        !timedOut.contents &&
+        (state->IndexerState.inFlight > 0 || state->IndexerState.writeFiber->Option.isSome)
+      ) {
+        await settleLoop(~timedOut)
       }
     }
 
-    // A wait the test holds closed keeps the loop busy for good, so bound the
-    // settle and report what was still running — a suite-level timeout says
-    // nothing about which step never came back.
     let settle = async () => {
       let timeoutId = ref(None)
       let timedOut = ref(false)
       await Promise.race([
-        settleLoop(),
+        settleLoop(~timedOut),
         Promise.make((resolve, _) => {
           timeoutId := Some(setTimeout(() => {
               timedOut := true
               resolve()
-            }, 5_000))
+            }, settleTimeoutMs))
         }),
       ])
       timeoutId.contents->Option.forEach(clearTimeout)
@@ -215,6 +223,11 @@ let run = async (
           [
             state->IndexerState.inFlight > 0
               ? Some(`${state->IndexerState.inFlight->Int.toString} scheduled step(s)`)
+              : None,
+            state->IndexerState.inFlight < 0
+              ? Some(
+                  `a broken in-flight count (${state->IndexerState.inFlight->Int.toString}) — some fan-out is counted once for work that runs many times over`,
+                )
               : None,
             state->IndexerState.isProcessing ? Some("a batch being processed") : None,
             state->IndexerState.writeFiber->Option.isSome ? Some("a write") : None,

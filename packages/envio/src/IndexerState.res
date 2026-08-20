@@ -114,6 +114,13 @@ type t = {
   // spent parked on a source response. Zero means every scheduled step ran to
   // completion and nothing new was scheduled, so the indexer can only move
   // again once the outside world answers.
+  //
+  // Nothing in the loop reads it — it exists so a test can tell quiescence from
+  // a pause, without counting await hops. Every entry pairs with an exit, so a
+  // count that drifts below zero means a fan-out was counted once for work that
+  // runs many times over; it stays visibly wrong rather than being clamped,
+  // because the harness reports it and a wrong count must never change how the
+  // indexer itself behaves.
   mutable inFlight: int,
   // Woken when inFlight falls back to zero.
   mutable idleWaiters: array<unit => unit>,
@@ -532,18 +539,6 @@ let enterInFlight = (state: t) => state.inFlight = state.inFlight + 1
 
 let exitInFlight = (state: t) => {
   state.inFlight = state.inFlight - 1
-  if state.inFlight < 0 {
-    // Every exit pairs with an entry, so a count below zero means a fan-out was
-    // counted once for work that runs many times over — a fatal accounting bug.
-    // Reported through errorExit rather than thrown, because this runs in a
-    // promise reaction nobody awaits, where a throw would bypass onError. The
-    // count is put back to zero so the reported failure is the one that
-    // surfaces, rather than every later wait on idleness hanging behind it.
-    state.inFlight = 0
-    state->errorExit(
-      Utils.Error.make("In-flight loop work counted below zero")->ErrorHandling.make,
-    )
-  }
   if state.inFlight === 0 {
     let waiters = state.idleWaiters
     state.idleWaiters = []
