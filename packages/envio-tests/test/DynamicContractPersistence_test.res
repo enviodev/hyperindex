@@ -78,11 +78,10 @@ let withIndexer = body =>
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
     async (~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       sourceMock.resolveGetHeightOrThrow(1000)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       await body(sourceMock, indexer)
     },
@@ -108,11 +107,11 @@ describe("Dynamic contract persistence", () => {
           ~resolveAt=#all,
           ~latestFetchedBlockNumber=200,
         )
-        await indexer.getBatchWritePromise()
+        await indexer.settle()
         // Registering spawns a partition for the new address, and the chain can't
         // progress past the registering block until it has fetched.
         sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all, ~latestFetchedBlockNumber=200)
-        await indexer.getBatchWritePromise()
+        await indexer.settle()
 
         t.expect(
           await queryAddresses(indexer),
@@ -141,11 +140,11 @@ describe("Dynamic contract persistence", () => {
           ~resolveAt=#all,
           ~latestFetchedBlockNumber=200,
         )
-        await indexer.getBatchWritePromise()
+        await indexer.settle()
         // Registering spawns a partition for the new address, and the chain can't
         // progress past the registering block until it has fetched.
         sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all, ~latestFetchedBlockNumber=200)
-        await indexer.getBatchWritePromise()
+        await indexer.settle()
 
         t.expect(
           await queryAddresses(indexer),
@@ -176,7 +175,7 @@ describe("Dynamic contract persistence", () => {
           ~resolveAt=#all,
           ~latestFetchedBlockNumber=200,
         )
-        await indexer.getBatchWritePromise()
+        await indexer.settle()
         // Nothing is written yet: the chain hasn't progressed to block 10, so both
         // registrations sit pending across this write.
         let afterFirstWrite = await queryAddresses(indexer)
@@ -185,11 +184,11 @@ describe("Dynamic contract persistence", () => {
         // two registration blocks, so the drain has to split the queue: block 10 is
         // covered, block 150 stays pending.
         sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all, ~latestFetchedBlockNumber=50)
-        await indexer.getBatchWritePromise()
+        await indexer.settle()
         let afterPartialDrain = await queryAddresses(indexer)
 
         sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all, ~latestFetchedBlockNumber=200)
-        await indexer.getBatchWritePromise()
+        await indexer.settle()
 
         t.expect(
           (afterFirstWrite, afterPartialDrain, await queryAddresses(indexer)),

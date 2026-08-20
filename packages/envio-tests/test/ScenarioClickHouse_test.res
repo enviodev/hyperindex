@@ -42,10 +42,9 @@ describe("Scenario ClickHouse sink", () => {
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       let source = source(1)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetHeightOrThrow(10)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetItemsOrThrow(
         [
@@ -60,7 +59,7 @@ describe("Scenario ClickHouse sink", () => {
         ],
         ~latestFetchedBlockNumber=10,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // The current-state view the sink builds over its history table, which is
       // what mirrors the Postgres row.

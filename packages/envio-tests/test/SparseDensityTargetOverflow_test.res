@@ -49,20 +49,19 @@ describe("Sparse-density target overflow", () => {
     ~reducedPollingInterval=1,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       sourceMock.resolveGetHeightOrThrow(30_000)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // One event over the whole 30k-block range: the batch seeds the chain
       // density at ~1/30000 events per block.
-      await MockSource.waitItemsQuery(sourceMock)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock)
       sourceMock.resolveGetItemsOrThrow(
         [{blockNumber: 5, logIndex: 0}],
         ~latestFetchedBlockNumber=30_000,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // A new block arrives. The chain is one block behind the head and must
       // query it — on the broken version the wrapped target block leaves every

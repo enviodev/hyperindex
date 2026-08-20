@@ -79,10 +79,9 @@ describe("Scenario isolation", () => {
       ~sources=[{chain: 1337}],
       async (~indexer, ~source) => {
         let source = source(1337)
-        await Utils.delay(0)
+        await indexer.settle()
         source.resolveGetHeightOrThrow(10)
-        await Utils.delay(0)
-        await Utils.delay(0)
+        await indexer.settle()
 
         source.resolveGetItemsOrThrow(
           [
@@ -97,7 +96,7 @@ describe("Scenario isolation", () => {
           ],
           ~latestFetchedBlockNumber=10,
         )
-        await indexer.getBatchWritePromise()
+        await indexer.settle()
 
         let accounts: array<account> = await indexer.query("Account")
         t.expect(accounts).toEqual([{id: "token-1", balance: 7n}])
@@ -113,10 +112,9 @@ describe("Scenario isolation", () => {
       ~sources=[{chain: 4242}],
       async (~indexer, ~source) => {
         let source = source(4242)
-        await Utils.delay(0)
+        await indexer.settle()
         source.resolveGetHeightOrThrow(10)
-        await Utils.delay(0)
-        await Utils.delay(0)
+        await indexer.settle()
 
         source.resolveGetItemsOrThrow(
           [
@@ -131,7 +129,7 @@ describe("Scenario isolation", () => {
           ],
           ~latestFetchedBlockNumber=10,
         )
-        await indexer.getBatchWritePromise()
+        await indexer.settle()
 
         let owners: array<owner> = await indexer.query("Owner")
         t.expect(owners).toEqual([{id: "owner-1", count: 3n}])

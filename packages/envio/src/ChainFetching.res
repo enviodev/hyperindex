@@ -333,42 +333,50 @@ let fetchChain = async (
     // Owns its error boundary: launch doesn't catch, so any failure here (the
     // query, response handling, or dispatch itself) must stop the indexer.
     try {
-      await chainState->ChainState.dispatch(
-        ~waitForNewBlock=(~knownHeight) =>
-          sourceManager->SourceManager.waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling),
-        ~onNewBlock=(~knownHeight) =>
-          finishWaitingForNewBlock(
-            state,
-            ~chainId,
-            ~knownHeight,
-            ~stateId,
-            ~scheduleFetch,
-            ~scheduleProcessing,
-          ),
-        ~executeQuery=async query => {
-          // Caught here (not just by the outer try) so the query promise never
-          // rejects: dispatch spins a side-chain off it that would otherwise
-          // become an unhandled rejection.
-          try {
-            let response = await sourceManager->SourceManager.executeQuery(
-              ~query,
-              ~knownHeight=chainState->ChainState.knownHeight,
-              ~isRealtime,
-            )
-            await onQueryResponse(
+      // `dispatch` only waits: it parks on a new block, or joins the queries it
+      // fanned out. Each of those does its own in-flight accounting, so this
+      // frame stays suspended for the whole call rather than reading as work.
+      await state->IndexerState.suspendInFlight(() =>
+        chainState->ChainState.dispatch(
+          ~waitForNewBlock=(~knownHeight) =>
+            sourceManager->SourceManager.waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling),
+          ~onNewBlock=(~knownHeight) =>
+            finishWaitingForNewBlock(
               state,
-              {chainId, response, query},
+              ~chainId,
+              ~knownHeight,
               ~stateId,
               ~scheduleFetch,
               ~scheduleProcessing,
-              ~scheduleRollback,
-            )
-          } catch {
-          | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
-          }
-        },
-        ~action,
-        ~stateId,
+            ),
+          ~executeQuery=query =>
+            state->IndexerState.trackInFlight(async () => {
+              // Caught here (not just by the outer try) so the query promise never
+              // rejects: dispatch spins a side-chain off it that would otherwise
+              // become an unhandled rejection.
+              try {
+                let response = await state->IndexerState.suspendInFlight(() =>
+                  sourceManager->SourceManager.executeQuery(
+                    ~query,
+                    ~knownHeight=chainState->ChainState.knownHeight,
+                    ~isRealtime,
+                  )
+                )
+                await onQueryResponse(
+                  state,
+                  {chainId, response, query},
+                  ~stateId,
+                  ~scheduleFetch,
+                  ~scheduleProcessing,
+                  ~scheduleRollback,
+                )
+              } catch {
+              | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
+              }
+            }),
+          ~action,
+          ~stateId,
+        )
       )
     } catch {
     | exn =>

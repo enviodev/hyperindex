@@ -31,9 +31,18 @@ let selectedBackend: backend = switch %raw(`process.env.ENVIO_TEST_STORAGE`)->Nu
 }
 
 type rec t = {
-  getBatchWritePromise: unit => promise<unit>,
-  getRollbackReadyPromise: unit => promise<unit>,
-  waitUntilIdle: unit => promise<unit>,
+  // Resolves once the indexer has run every scheduled step to completion and
+  // can only move again when a source answers or the test acts. Nothing to
+  // count in ticks: the loop reports its own in-flight work.
+  settle: unit => promise<unit>,
+  // Settles, then keeps settling until the condition holds — for state that
+  // only arrives once a polling interval elapses. `message` names what was
+  // being waited for when it never does.
+  settleUntil: (unit => bool, ~message: string) => promise<unit>,
+  // Wraps a wait the test itself holds closed — a gate inside a handler, say —
+  // so the loop reads as parked on the test rather than as working. Without it
+  // `settle` would wait out a block only the test can lift.
+  park: 'a. (unit => promise<'a>) => promise<'a>,
   waitUntilReady: unit => promise<unit>,
   query: 'entity. string => promise<array<'entity>>,
   queryHistory: 'entity. string => promise<array<Change.t<'entity>>>,
@@ -164,6 +173,75 @@ let run = async (
     )
     state->IndexerLoop.start
 
+    // One macrotask hop, which drains every pending microtask behind it.
+    let drainTick = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => resolve()))
+
+    // Runs until the loop has nothing left to do on its own. `whenIdle` alone
+    // isn't enough twice over: a source response that resolved this tick hasn't
+    // reached its handler yet (the parked frame only rejoins the count when it
+    // resumes), and the write loop is driven by the store rather than by the
+    // scheduler. Draining the tick settles the first, `flush` the second, and
+    // the re-check catches whatever either of them started.
+    let rec settleLoop = async () => {
+      await state->IndexerState.whenIdle
+      await drainTick()
+      await state->Writing.flush
+      if state->IndexerState.inFlight > 0 || state->IndexerState.writeFiber->Option.isSome {
+        await settleLoop()
+      }
+    }
+
+    // A wait the test holds closed keeps the loop busy for good, so bound the
+    // settle and report what was still running — a suite-level timeout says
+    // nothing about which step never came back.
+    let settle = async () => {
+      let timeoutId = ref(None)
+      let timedOut = ref(false)
+      await Promise.race([
+        settleLoop(),
+        Promise.make((resolve, _) => {
+          timeoutId := Some(setTimeout(() => {
+              timedOut := true
+              resolve()
+            }, 5_000))
+        }),
+      ])
+      timeoutId.contents->Option.forEach(clearTimeout)
+      if timedOut.contents {
+        let busy =
+          [
+            state->IndexerState.inFlight > 0
+              ? Some(`${state->IndexerState.inFlight->Int.toString} scheduled step(s)`)
+              : None,
+            state->IndexerState.isProcessing ? Some("a batch being processed") : None,
+            state->IndexerState.writeFiber->Option.isSome ? Some("a write") : None,
+          ]->Array.filterMap(x => x)
+        JsError.throwWithMessage(
+          `Timed out waiting for the indexer to settle, still in flight: ${switch busy {
+            | [] => "nothing — the loop settled and started again"
+            | busy => busy->Array.join(", ")
+            }}. A wait the test itself holds closed has to go through \`indexer.park\`, or the settle waits it out.`,
+        )
+      }
+    }
+
+    // Settles, then keeps settling until `predicate` holds, waiting on the
+    // clock between rounds for conditions that only arrive once a polling
+    // interval elapses. Bounded, so a condition that never comes says what it
+    // was waiting for instead of timing out the whole suite.
+    let rec settleUntil = async (predicate, ~message, ~deadline) => {
+      await settle()
+      if !predicate() {
+        if Date.now() > deadline {
+          JsError.throwWithMessage(`Timed out waiting for ${message}`)
+        }
+        await Utils.delay(1)
+        await settleUntil(predicate, ~message, ~deadline)
+      }
+    }
+    let settleUntil = (predicate, ~message) =>
+      settleUntil(predicate, ~message, ~deadline=Date.now() +. 5000.)
+
     // Persist before stopping, else a resumed indexer loses uncommitted state,
     // then let any in-flight batch or write settle so nothing from this run
     // lands on the database afterwards.
@@ -269,104 +347,18 @@ let run = async (
       }
 
     {
-      getBatchWritePromise: () => {
-        Utils.Promise.makeAsync(async (resolve, _reject) => {
-          let before = state->IndexerState.processedBatchesCount
-          // Wait until a new batch is processed and written. A reorg batch can
-          // land before this call (e.g. while the test awaits the rollback), so
-          // also stop once the indexer has fully settled.
-          let idleChecks = ref(0)
-          let rec wait = async () => {
-            await state->Writing.flush
-            let isIdle =
-              !(state->IndexerState.isProcessing) &&
-              state->IndexerState.writeFiber->Option.isNone &&
-              state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
-
-            // Catching up hands off to the FinalizingIndexes phase, which is
-            // where readiness is decided — so a batch isn't settled until that
-            // phase is over. The idle fallback below still bounds the wait.
-            if (
-              before < state->IndexerState.processedBatchesCount &&
-                !(state->IndexerState.isFinalizingIndexes)
-            ) {
-              ()
-            } else if isIdle && idleChecks.contents >= 5 {
-              ()
-            } else {
-              idleChecks := if isIdle {
-                  idleChecks.contents + 1
-                } else {
-                  0
-                }
-              await Utils.delay(1)
-              await wait()
-            }
-          }
-          await wait()
-          // Skip extra microtasks for indexer to fire follow-up actions
-          // (e.g. the NextQuery dispatch that schedules the next
-          // getItemsOrThrow call). Without this, callers that immediately
-          // call resolveGetItemsOrThrow can race the dispatch and observe
-          // an empty calls array.
-          await Utils.delay(0)
-          await Utils.delay(0)
-          resolve()
-        })
-      },
-      waitUntilIdle: async () => {
-        await state->Writing.flush
-        // Settling takes several ticks: the loop dispatches follow-up actions
-        // (the next query, the finalize pass) from inside the tick that looks
-        // idle, so one observation isn't enough.
-        let settled = ref(0)
-        let attempts = ref(0)
-        while settled.contents < 5 && attempts.contents < 5000 {
-          attempts := attempts.contents + 1
-          settled := if (
-              !(state->IndexerState.isProcessing) &&
-              state->IndexerState.writeFiber->Option.isNone &&
-              !(state->IndexerState.isFinalizingIndexes) &&
-              state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
-            ) {
-              settled.contents + 1
-            } else {
-              0
-            }
-          await Utils.delay(0)
-        }
-        if settled.contents < 5 {
-          JsError.throwWithMessage("Timed out waiting for the indexer to go idle")
-        }
-      },
-      waitUntilReady: async () => {
-        let isReady = () =>
-          state
-          ->IndexerState.chainStates
-          ->Dict.valuesToArray
-          ->Array.every(chainState => chainState->ChainState.isReady)
-        let attempts = ref(0)
-        while !isReady() && attempts.contents < 5000 {
-          attempts := attempts.contents + 1
-          await Utils.delay(0)
-        }
-        if !isReady() {
-          JsError.throwWithMessage("Timed out waiting for the indexer to report ready")
-        }
-      },
-      getRollbackReadyPromise: () => {
-        Utils.Promise.makeAsync(async (resolve, _reject) => {
-          // Wait for the in-progress rollback to be fully applied. RollbackReady
-          // itself is transient (the reprocessing batch consumes it), so observe
-          // the rollback flag clearing instead.
-          while state->IndexerState.isResolvingReorg {
-            await Utils.delay(1)
-          }
-          // Skip an extra microtask for indexer to fire actions
-          await Utils.delay(0)
-          resolve()
-        })
-      },
+      settle,
+      settleUntil,
+      park: work => state->IndexerState.suspendInFlight(work),
+      waitUntilReady: () =>
+        settleUntil(
+          () =>
+            state
+            ->IndexerState.chainStates
+            ->Dict.valuesToArray
+            ->Array.every(chainState => chainState->ChainState.isReady),
+          ~message="the indexer to report ready",
+        ),
       query: (type entity, name) =>
         queryEntity(config->entityConfigByName(name))->(
           Utils.magic: promise<array<unknown>> => promise<array<entity>>

@@ -106,6 +106,17 @@ let keepProcessAlive: t => bool
 let exitAfterFirstEventBlock: t => bool
 let onExit: t => option<unit => unit>
 let isStopped: t => bool
+
+// Loop work started and not yet settled, discounting time parked on a source
+// response. Zero means the indexer has run every scheduled step to completion
+// and can only move again once the outside world answers.
+let inFlight: t => int
+// Resolves the next time `inFlight` falls to zero. Callers re-check the count
+// afterwards: work that settled in the same tick can schedule more.
+let whenIdle: t => promise<unit>
+let trackInFlight: (t, unit => promise<'a>) => promise<'a>
+let suspendInFlight: (t, unit => promise<'a>) => promise<'a>
+
 let epoch: t => int
 let lastPrunedAtMillis: t => dict<float>
 let simulateDeadInputTracker: t => option<SimulateDeadInputTracker.t>

@@ -49,7 +49,11 @@ type mockSourceEvent = {
 // MockSource items choose their callback at response time, after ChainState has
 // already been created. Install one stable registration up front and dispatch
 // through callback metadata carried only by the test payload.
-let makeMockSourceRegistration = (~index, ~contractName, ~isWildcard): Internal.onEventRegistration => {
+let makeMockSourceRegistration = (
+  ~index,
+  ~contractName,
+  ~isWildcard,
+): Internal.onEventRegistration => {
   let handler: Internal.handler = args => {
     let event = args.event->(Utils.magic: Internal.event => mockSourceEvent)
     if args.context.isPreload {
@@ -182,8 +186,10 @@ type itemMock = {
   contractRegister?: mockSourceContractRegister,
 }
 
+type queryPayload = {"fromBlock": int, "toBlock": option<int>, "retry": int, "p": string}
+
 type getItemsOrThrowCall = {
-  payload: {"fromBlock": int, "toBlock": option<int>, "retry": int, "p": string},
+  payload: queryPayload,
   resolve: (
     array<itemMock>,
     ~latestFetchedBlockNumber: int=?,
@@ -206,6 +212,9 @@ type t = {
   // own this way, before the test body gets a chance to resolve anything.
   setAutoHeight: int => unit,
   getItemsOrThrowCalls: array<getItemsOrThrowCall>,
+  // Payloads of the queries already answered, oldest first. A pending set that
+  // came out empty says nothing on its own; this says what ran instead.
+  answeredQueries: array<queryPayload>,
   // How many times the source was told to drop orphaned-chain state.
   reorgCallCount: unit => int,
   // TODO: Remove in favor of getItemsOrThrowCalls
@@ -245,6 +254,7 @@ let make = (
   let getHeightOrThrowResolveFns = []
   let getHeightOrThrowRejectFns = []
   let getItemsOrThrowCalls = []
+  let answeredQueries = []
   let reorgCalls = ref(0)
   let getBlockHashesCalls = []
   let getBlockHashesResolveFns = []
@@ -257,24 +267,25 @@ let make = (
 
   // With the function we keep only the pending calls,
   // and remove the resolved ones automatically.
-  let keepOnlyPendingCalls = (~array, ~fn) => {
+  let keepOnlyPendingCalls = (~array, ~onSettled, ~fn) => {
     Promise.make((resolve, reject) => {
       let callRef = ref(%raw(`null`))
+      let settle = () => {
+        let indexOf = array->Array.indexOf(callRef.contents)
+        if indexOf !== -1 {
+          array->Array.splice(~start=indexOf, ~remove=1, ~insert=[])->ignore
+          onSettled(callRef.contents)
+        }
+      }
       callRef :=
         fn(
           ~resolve=arg => {
             resolve(arg)
-            let indexOf = array->Array.indexOf(callRef.contents)
-            if indexOf !== -1 {
-              array->Array.splice(~start=indexOf, ~remove=1, ~insert=[])->ignore
-            }
+            settle()
           },
           ~reject=arg => {
             reject(arg)
-            let indexOf = array->Array.indexOf(callRef.contents)
-            if indexOf !== -1 {
-              array->Array.splice(~start=indexOf, ~remove=1, ~insert=[])->ignore
-            }
+            settle()
           },
         )
       array->Array.push(callRef.contents)->ignore
@@ -302,6 +313,7 @@ let make = (
       getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
     },
     getItemsOrThrowCalls,
+    answeredQueries,
     reorgCallCount: () => reorgCalls.contents,
     resolveGetItemsOrThrow: (
       items,
@@ -339,7 +351,7 @@ let make = (
       let blockStore = BlockStore.fromJs(
         blockHashes->Array.map((block): BlockStore.inputBlock => {
           ...block,
-          blockHash: ?block.blockHash->Option.map(evmBlockHash),
+          blockHash: ?(block.blockHash->Option.map(evmBlockHash)),
         }),
         ~ecosystem=Evm,
         ~shouldChecksum=false,
@@ -394,91 +406,93 @@ let make = (
           ~retry,
           ~logger as _,
         ) => {
-          keepOnlyPendingCalls(~array=getItemsOrThrowCalls, ~fn=(~resolve, ~reject) => {
-            let payload = {
-              "fromBlock": fromBlock,
-              "toBlock": toBlock,
-              "retry": retry,
-              "p": partitionId,
-            }
-            // Non-enumerable so it stays out of `toEqual` comparisons of the
-            // payload while remaining inspectable from a test.
-            payload->defineAddresses(addressSet->AddressSet.addresses)
-            {
-              payload,
-              resolve: (
-                items,
-                ~latestFetchedBlockNumber=?,
-                ~latestFetchedBlockHash=?,
-                ~knownHeight=knownHeight,
-                ~prevRangeLastBlock=?,
-              ) => {
-                let latestFetchedBlockNumber =
-                  latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
+          keepOnlyPendingCalls(
+            ~array=getItemsOrThrowCalls,
+            ~onSettled=call => answeredQueries->Array.push(call.payload)->ignore,
+            ~fn=(~resolve, ~reject) => {
+              let payload = {
+                "fromBlock": fromBlock,
+                "toBlock": toBlock,
+                "retry": retry,
+                "p": partitionId,
+              }
+              // Non-enumerable so it stays out of `toEqual` comparisons of the
+              // payload while remaining inspectable from a test.
+              payload->defineAddresses(addressSet->AddressSet.addresses)
+              {
+                payload,
+                resolve: (
+                  items,
+                  ~latestFetchedBlockNumber=?,
+                  ~latestFetchedBlockHash=?,
+                  ~knownHeight=knownHeight,
+                  ~prevRangeLastBlock=?,
+                ) => {
+                  let latestFetchedBlockNumber =
+                    latestFetchedBlockNumber->Option.getOr(toBlock->Option.getOr(fromBlock))
 
-                // The store takes 32-byte hashes, so widen the decimal marker.
-                let mockBlockHash = blockNumber => evmBlockHash(`0x${blockNumber->Int.toString}`)
-                let latestFetchedBlockHash = switch latestFetchedBlockHash {
-                | Some(latestFetchedBlockHash) => latestFetchedBlockHash
-                | None => mockBlockHash(latestFetchedBlockNumber)
-                }
-                let observedBlocks = [
-                  (
-                    {
-                      blockNumber: latestFetchedBlockNumber,
-                      blockHash: evmBlockHash(latestFetchedBlockHash),
-                    }: BlockStore.inputBlock
-                  ),
-                ]
-                let prevEntry = switch prevRangeLastBlock {
-                | Some(prevRangeLastBlock: ReorgDetection.blockData) =>
-                  Some(
+                  // The store takes 32-byte hashes, so widen the decimal marker.
+                  let mockBlockHash = blockNumber => evmBlockHash(`0x${blockNumber->Int.toString}`)
+                  let latestFetchedBlockHash = switch latestFetchedBlockHash {
+                  | Some(latestFetchedBlockHash) => latestFetchedBlockHash
+                  | None => mockBlockHash(latestFetchedBlockNumber)
+                  }
+                  let observedBlocks = [
                     (
                       {
-                        blockNumber: prevRangeLastBlock.blockNumber,
-                        blockHash: evmBlockHash(prevRangeLastBlock.blockHash),
+                        blockNumber: latestFetchedBlockNumber,
+                        blockHash: evmBlockHash(latestFetchedBlockHash),
                       }: BlockStore.inputBlock
                     ),
-                  )
-                | None =>
-                  if fromBlock > 0 {
+                  ]
+                  let prevEntry = switch prevRangeLastBlock {
+                  | Some(prevRangeLastBlock: ReorgDetection.blockData) =>
                     Some(
                       (
                         {
-                          blockNumber: fromBlock - 1,
-                          blockHash: mockBlockHash(fromBlock - 1),
+                          blockNumber: prevRangeLastBlock.blockNumber,
+                          blockHash: evmBlockHash(prevRangeLastBlock.blockHash),
                         }: BlockStore.inputBlock
                       ),
                     )
-                  } else {
-                    None
+                  | None =>
+                    if fromBlock > 0 {
+                      Some(
+                        (
+                          {
+                            blockNumber: fromBlock - 1,
+                            blockHash: mockBlockHash(fromBlock - 1),
+                          }: BlockStore.inputBlock
+                        ),
+                      )
+                    } else {
+                      None
+                    }
                   }
-                }
-                switch prevEntry {
-                | Some(prev) => observedBlocks->Array.unshift(prev)->ignore
-                | None => ()
-                }
-                // A real source returns the header of every block a matched
-                // item came from, so those blocks carry a hash too. Without
-                // them the store only ever learns the range's seam and end,
-                // and reorg detection never sees the blocks events landed on.
-                items->Array.forEach(item => {
-                  if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
-                    observedBlocks->Array.push({
-                      blockNumber: item.blockNumber,
-                      blockHash: mockBlockHash(item.blockNumber),
-                    })
+                  switch prevEntry {
+                  | Some(prev) => observedBlocks->Array.unshift(prev)->ignore
+                  | None => ()
                   }
-                })
-                let responseBlockStore = BlockStore.make(~ecosystem=Evm, ~shouldChecksum=false)
-                observedBlocks->Array.forEach(block => {
-                  let page = BlockStore.fromJs([block], ~ecosystem=Evm, ~shouldChecksum=false)
-                  responseBlockStore->BlockStore.appendPage(page)
-                })
-                resolve({
-                  Source.knownHeight,
-                  parsedQueueItems: items->Array.map(
-                    item => {
+                  // A real source returns the header of every block a matched
+                  // item came from, so those blocks carry a hash too. Without
+                  // them the store only ever learns the range's seam and end,
+                  // and reorg detection never sees the blocks events landed on.
+                  items->Array.forEach(item => {
+                    if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
+                      observedBlocks->Array.push({
+                        blockNumber: item.blockNumber,
+                        blockHash: mockBlockHash(item.blockNumber),
+                      })
+                    }
+                  })
+                  let responseBlockStore = BlockStore.make(~ecosystem=Evm, ~shouldChecksum=false)
+                  observedBlocks->Array.forEach(block => {
+                    let page = BlockStore.fromJs([block], ~ecosystem=Evm, ~shouldChecksum=false)
+                    responseBlockStore->BlockStore.appendPage(page)
+                  })
+                  resolve({
+                    Source.knownHeight,
+                    parsedQueueItems: items->Array.map(item => {
                       let onEventRegistration =
                         state.onEventRegistrationRef.contents->Option.getOrThrow(
                           ~message="MockSource on-event registration was not installed before resolving items",
@@ -508,21 +522,21 @@ let make = (
                         transactionIndex: 0,
                         payload: payload->Evm.fromPayload,
                       })
+                    }),
+                    transactionStore: None,
+                    blockStore: responseBlockStore,
+                    fromBlockQueried: fromBlock,
+                    latestFetchedBlockNumber,
+                    stats: {
+                      totalTimeElapsed: 0.,
                     },
-                  ),
-                  transactionStore: None,
-                  blockStore: responseBlockStore,
-                  fromBlockQueried: fromBlock,
-                  latestFetchedBlockNumber,
-                  stats: {
-                    totalTimeElapsed: 0.,
-                  },
-                  requestStats: [],
-                })
-              },
-              reject: reject->Utils.magic,
-            }
-          })
+                    requestStats: [],
+                  })
+                },
+                reject: reject->Utils.magic,
+              }
+            },
+          )
         }),
         onReorg: () => reorgCalls := reorgCalls.contents + 1,
         createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
@@ -544,19 +558,5 @@ let make = (
       setMockSourceState(source, state)
       source
     },
-  }
-}
-
-// Wait until the source has a pending getItemsOrThrow call. Queries are
-// serialized by the cross-chain budget waterfall, so a chain's query only
-// appears after the more-behind chains' responses release the budget.
-let waitItemsQuery = async (sourceMock: t) => {
-  let attempts = ref(0)
-  while sourceMock.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 1000 {
-    attempts := attempts.contents + 1
-    await Utils.delay(0)
-  }
-  if sourceMock.getItemsOrThrowCalls->Array.length === 0 {
-    JsError.throwWithMessage("Timed out waiting for a getItemsOrThrow call")
   }
 }

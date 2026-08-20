@@ -57,9 +57,13 @@ let rec rollback = async (
 
       state->IndexerState.enterFindingReorgDepth
 
-      let rollbackTargetBlockNumber = await chainState->getLastKnownValidBlock(
-        ~reorgBlockNumber,
-        ~isRealtime=state->IndexerState.isRealtime,
+      // Re-fetching the scanned hashes is a source round trip, so the loop is
+      // parked here rather than working.
+      let rollbackTargetBlockNumber = await state->IndexerState.suspendInFlight(() =>
+        chainState->getLastKnownValidBlock(
+          ~reorgBlockNumber,
+          ~isRealtime=state->IndexerState.isRealtime,
+        )
       )
 
       state->IndexerState.foundReorgDepth(~chainId, ~rollbackTargetBlockNumber)

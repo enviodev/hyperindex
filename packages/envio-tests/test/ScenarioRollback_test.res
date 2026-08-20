@@ -49,26 +49,31 @@ let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #g
 // Head 300 with maxReorgDepth 200: the pre-threshold query stops at block 100,
 // and the next one reaches the head.
 let enterThresholdAndIndex = async (~indexer: IndexerRunner.t, ~source: MockSource.t) => {
-  await Utils.delay(0)
+  await indexer.settle()
   source.resolveGetHeightOrThrow(300)
-  await Utils.delay(0)
-  await Utils.delay(0)
+  await indexer.settle()
 
-  await MockSource.waitItemsQuery(source)
+  await Scenario.waitQuery(~indexer, ~source=source)
   source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-  await indexer.getBatchWritePromise()
+  await indexer.settle()
 
-  await MockSource.waitItemsQuery(source)
+  await Scenario.waitQuery(~indexer, ~source=source)
   source.resolveGetItemsOrThrow([setCounter(~block=200, ~count=1n)], ~latestFetchedBlockNumber=300)
-  await indexer.getBatchWritePromise()
+  await indexer.settle()
 }
 
 // Answers whatever the reorg resolution asks for: block hashes for the depth
 // search (blocks past `validUpTo` come back re-orged), and empty responses for
 // the re-fetch queries the rollback schedules.
-let driveRollback = async (~source: MockSource.t, ~validUpTo) => {
-  for _ in 0 to 300 {
+// Each settle parks on whatever the rollback asks for next, so the loop ends
+// when a settled indexer has stopped asking.
+let driveRollback = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~validUpTo) => {
+  let answered = ref(true)
+  while answered.contents {
+    await indexer.settle()
+    answered := false
     if source.getBlockHashesCalls->Array.length > 0 {
+      answered := true
       let requested = source.getBlockHashesCalls->Array.copy
       source.resolveGetBlockHashes(
         requested
@@ -86,9 +91,9 @@ let driveRollback = async (~source: MockSource.t, ~validUpTo) => {
       source.getBlockHashesCalls->Utils.Array.clearInPlace
     }
     if source.getItemsOrThrowCalls->Array.length > 0 {
+      answered := true
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
     }
-    await Utils.delay(0)
   }
 }
 
@@ -108,7 +113,7 @@ describe("Scenario rollback and history", () => {
       // Block 300 comes back with a different hash, so everything after the
       // last valid block is rolled back — including the block-200 write.
       source.resolveGetHeightOrThrow(301)
-      await MockSource.waitItemsQuery(source)
+      await Scenario.waitQuery(~indexer, ~source=source)
       source.resolveGetItemsOrThrow(
         [],
         ~latestFetchedBlockNumber=301,
@@ -118,8 +123,8 @@ describe("Scenario rollback and history", () => {
       // The depth search asks which blocks still hold. Only those up to 100 do,
       // so the rollback target is the checkpoint at block 100 and the block-200
       // write has no history at or before it — it's removed rather than restored.
-      await driveRollback(~source, ~validUpTo=100)
-      await indexer.waitUntilIdle()
+      await driveRollback(~indexer, ~source, ~validUpTo=100)
+      await indexer.settle()
 
       let counters: array<counter> = await indexer.query("Counter")
       t.expect(counters, ~message="the rolled-back write is gone").toEqual([])
@@ -151,28 +156,27 @@ describe("Scenario rollback and history", () => {
     ~sources=[{chain: 1, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Written below the reorg threshold, so it survives the rollback and is
       // what the reverted entity has to be restored to. The removal case above
       // never reaches the restore path, and a BigInt column is where the two
       // storages disagree about how a restored row is encoded.
-      await MockSource.waitItemsQuery(source)
+      await Scenario.waitQuery(~indexer, ~source=source)
       source.resolveGetItemsOrThrow(
         [setCounter(~block=50, ~count=1n)],
         ~latestFetchedBlockNumber=100,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
-      await MockSource.waitItemsQuery(source)
+      await Scenario.waitQuery(~indexer, ~source=source)
       source.resolveGetItemsOrThrow(
         [setCounter(~block=200, ~count=2n)],
         ~latestFetchedBlockNumber=300,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await indexer.query("Counter"),
@@ -180,14 +184,14 @@ describe("Scenario rollback and history", () => {
       ).toEqual([{id: "total", count: 2n}])
 
       source.resolveGetHeightOrThrow(301)
-      await MockSource.waitItemsQuery(source)
+      await Scenario.waitQuery(~indexer, ~source=source)
       source.resolveGetItemsOrThrow(
         [],
         ~latestFetchedBlockNumber=301,
         ~prevRangeLastBlock={blockNumber: 300, blockHash: "0x300a"},
       )
-      await driveRollback(~source, ~validUpTo=100)
-      await indexer.waitUntilIdle()
+      await driveRollback(~indexer, ~source, ~validUpTo=100)
+      await indexer.settle()
 
       let counters: array<counter> = await indexer.query("Counter")
       t.expect(

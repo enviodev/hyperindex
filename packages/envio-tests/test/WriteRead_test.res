@@ -224,15 +224,14 @@ let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
 // Head 300 against maxReorgDepth 200: one query opens at block 1, and its
 // response is what every case below rides in on.
-let reachFirstQuery = async (~t: Vitest.testContext, ~source: MockSource.t) => {
-  await Utils.delay(0)
+let reachFirstQuery = async (~t: Vitest.testContext, ~indexer: IndexerRunner.t, ~source: MockSource.t) => {
+  await indexer.settle()
   t.expect(
     source.getHeightOrThrowCalls->Array.length,
     ~message="should have called getHeightOrThrow to get initial height",
   ).toEqual(1)
   source.resolveGetHeightOrThrow(300)
-  await Utils.delay(0)
-  await Utils.delay(0)
+  await indexer.settle()
 }
 
 describe("Write/read tests", () => {
@@ -241,7 +240,7 @@ describe("Write/read tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await reachFirstQuery(~t, ~source)
+      await reachFirstQuery(~t, ~indexer, ~source)
 
       let entityWithAllTypes = {
         id: "1",
@@ -309,7 +308,7 @@ describe("Write/read tests", () => {
           },
         },
       ])
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await (indexer.query("EntityWithAllTypes"): promise<array<entityWithAllTypes>>),
@@ -385,7 +384,7 @@ describe("Write/read tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await reachFirstQuery(~t, ~source)
+      await reachFirstQuery(~t, ~indexer, ~source)
 
       source.resolveGetItemsOrThrow([
         {
@@ -398,9 +397,9 @@ describe("Write/read tests", () => {
           },
         },
       ])
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
-      await MockSource.waitItemsQuery(source)
+      await Scenario.waitQuery(~indexer, ~source=source)
       source.resolveGetItemsOrThrow([
         {
           blockNumber: 51,
@@ -415,7 +414,7 @@ describe("Write/read tests", () => {
           },
         },
       ])
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await (indexer.queryHistory("SimpleEntity"): promise<array<Change.t<simpleEntity>>>),
@@ -494,7 +493,7 @@ describe("Write/read tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await reachFirstQuery(~t, ~source)
+      await reachFirstQuery(~t, ~indexer, ~source)
 
       let results = Dict.make()
       let record = (name, tokens: array<token>) => results->Dict.set(name, tokens->Array.length)
@@ -566,7 +565,7 @@ describe("Write/read tests", () => {
           },
         },
       ])
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         results,
@@ -592,7 +591,7 @@ describe("Write/read tests", () => {
 
       // Deleting a token has to drop it from the index the getWhere above built.
       let afterDelete = ref(-1)
-      await MockSource.waitItemsQuery(source)
+      await Scenario.waitQuery(~indexer, ~source=source)
       source.resolveGetItemsOrThrow([
         {
           blockNumber: 51,
@@ -605,7 +604,7 @@ describe("Write/read tests", () => {
           },
         },
       ])
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         afterDelete.contents,
@@ -619,7 +618,7 @@ describe("Write/read tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await reachFirstQuery(~t, ~source)
+      await reachFirstQuery(~t, ~indexer, ~source)
 
       let error = ref("")
 
@@ -638,7 +637,7 @@ describe("Write/read tests", () => {
           },
         },
       ])
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         error.contents,

@@ -158,13 +158,12 @@ describe("Resuming a backfill that never finalized", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         (
@@ -221,13 +220,12 @@ describe("Resuming a backfill that never finalized", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       await indexer.waitUntilReady()
 
       let readyAtBefore = await persistedReadyAt(~sql, ~pgSchema)
@@ -266,13 +264,12 @@ describe("Resuming a backfill that never finalized", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         (
@@ -318,15 +315,14 @@ describe("Resuming a backfill that never finalized", () => {
       let source1 = source(1)
       let source1337 = source(1337)
       let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
+      await indexer.settle()
 
       source1337.resolveGetHeightOrThrow(100)
       source1.resolveGetHeightOrThrow(55)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       source1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=55)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         (
@@ -379,13 +375,12 @@ describe("Resuming a backfill that never finalized", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         (
@@ -427,13 +422,12 @@ describe("Resuming a backfill that never finalized", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       await indexer.waitUntilReady()
 
       // Rewind only the readiness stamp, leaving the indexes the first run built.
@@ -483,13 +477,12 @@ describe("Resuming a backfill that never finalized", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       await indexer.waitUntilReady()
 
       let readyAtBefore = await persistedReadyAt(~sql, ~pgSchema)
@@ -549,13 +542,12 @@ describe("Resuming a backfill that never finalized", () => {
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
       let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         (finalizeCalls.contents, await persistedChains(~sql, ~pgSchema)),
@@ -615,15 +607,14 @@ describe("Resuming a backfill that never finalized", () => {
       let source1 = source(1)
       let source1337 = source(1337)
       let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
+      await indexer.settle()
 
       source1337.resolveGetHeightOrThrow(100)
       source1.resolveGetHeightOrThrow(55)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       source1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=55)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       await indexer.waitUntilReady()
 
       // Stand in for a chain joining a synced indexer: chain 1 keeps the stamp it

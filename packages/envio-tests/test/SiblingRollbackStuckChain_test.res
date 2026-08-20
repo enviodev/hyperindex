@@ -94,11 +94,10 @@ describe("Sibling-chain rollback with an in-flight query", () => {
     async (~t, ~indexer, ~source) => {
       let victim = source(1)
       let sibling = source(137)
-      await Utils.delay(0)
+      await indexer.settle()
       victim.resolveGetHeightOrThrow(300)
       sibling.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Drive both chains to head 300 through the reorg-threshold transition,
       // resolving every query as it appears.
@@ -106,17 +105,16 @@ describe("Sibling-chain rollback with an in-flight query", () => {
         let attempts = ref(0)
         while source.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 1000 {
           attempts := attempts.contents + 1
-          await Utils.delay(0)
+          await indexer.settle()
         }
         source.resolveGetItemsOrThrow(items, ~latestFetchedBlockNumber=latest)
-        await Utils.delay(0)
-        await Utils.delay(0)
+        await indexer.settle()
       }
 
       // Pre-threshold queries stop at 100 (head - maxReorgDepth).
       await drainTo(victim, ~latest=100)
       await drainTo(sibling, ~latest=100)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Post-threshold queries reach the head. The victim's response also
       // registers a dynamic Token address at block 250, spawning a catch-up
@@ -134,9 +132,9 @@ describe("Sibling-chain rollback with an in-flight query", () => {
         if victim.getItemsOrThrowCalls->Array.length > 0 {
           victim.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
         }
-        await Utils.delay(0)
+        await indexer.settle()
       }
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       await indexer.waitUntilReady()
 
       // New block on the victim chain. The first partition queries it; its
@@ -150,13 +148,13 @@ describe("Sibling-chain rollback with an in-flight query", () => {
         try victim.resolveGetHeightOrThrow(301) catch {
         | _ => ()
         }
-        await Utils.delay(0)
+        await indexer.settle()
       }
       victim.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
       let attempts = ref(0)
       while victim.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 1000 {
         attempts := attempts.contents + 1
-        await Utils.delay(0)
+        await indexer.settle()
       }
       t.expect(
         victim.getItemsOrThrowCalls->Array.length,
@@ -173,14 +171,14 @@ describe("Sibling-chain rollback with an in-flight query", () => {
         try sibling.resolveGetHeightOrThrow(301) catch {
         | _ => ()
         }
-        await Utils.delay(0)
+        await indexer.settle()
       }
       sibling.resolveGetItemsOrThrow(
         [],
         ~latestFetchedBlockNumber=301,
         ~prevRangeLastBlock={blockNumber: 300, blockHash: "0x300a"},
       )
-      await Utils.delay(0)
+      await indexer.settle()
       // The victim's in-flight response lands inside the rollback window —
       // after the reorg was detected but before the rollback applied.
       switch victim.getItemsOrThrowCalls->Array.length {
@@ -192,7 +190,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       let attempts = ref(0)
       while sibling.getBlockHashesCalls->Array.length === 0 && attempts.contents < 100 {
         attempts := attempts.contents + 1
-        await Utils.delay(0)
+        await indexer.settle()
       }
       if sibling.getBlockHashesCalls->Array.length > 0 {
         sibling.resolveGetBlockHashes([
@@ -200,7 +198,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
           {blockNumber: 200, blockHash: "0x200", blockTimestamp: 200},
         ])
       }
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       // The rollback dropped the victim's pending query bookkeeping; its
       // response arrives now, carrying the old epoch, and is discarded.
@@ -208,8 +206,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       | 0 => ()
       | _ => victim.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=301)
       }
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Both chains must resume fetching after the rollback and refetch their
       // rolled-back ranges — including re-registering the pruned dynamic

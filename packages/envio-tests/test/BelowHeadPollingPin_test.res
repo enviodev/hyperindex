@@ -55,16 +55,15 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
     async (~t, ~indexer, ~source) => {
       let chainAtLaggedHead = source(100)
       let chainWithThresholdWork = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
       chainAtLaggedHead.resolveGetHeightOrThrow(1000)
       chainWithThresholdWork.resolveGetHeightOrThrow(1000)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Chain 100 wins the initial priority tie. Its events seed a density
       // signal, which is required for it to establish the bad alignment line
       // after the threshold despite having no query of its own to run.
-      await MockSource.waitItemsQuery(chainAtLaggedHead)
+      await Scenario.waitQuery(~indexer, ~source=chainAtLaggedHead)
       t.expect(
         chainAtLaggedHead.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
         ~message="the high-lag chain first fetches to its pre-threshold head",
@@ -81,9 +80,9 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
         ~latestFetchedBlockNumber=300,
         ~knownHeight=1000,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
-      await MockSource.waitItemsQuery(chainWithThresholdWork)
+      await Scenario.waitQuery(~indexer, ~source=chainWithThresholdWork)
       t.expect(
         chainWithThresholdWork.getItemsOrThrowCalls->Array.map(
           call => call.payload["fromBlock"],
@@ -95,12 +94,12 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
         ~latestFetchedBlockNumber=400,
         ~knownHeight=1000,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Commit firstEventBlock before the response that reaches the lagged
       // head. Otherwise the threshold tick sees this chain at synthetic 0%
       // progress and lets it lead, which sidesteps the production ordering.
-      await MockSource.waitItemsQuery(chainWithThresholdWork)
+      await Scenario.waitQuery(~indexer, ~source=chainWithThresholdWork)
       t.expect(
         chainWithThresholdWork.getItemsOrThrowCalls->Array.map(
           call => call.payload["fromBlock"],
@@ -112,7 +111,7 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
         ~latestFetchedBlockNumber=800,
         ~knownHeight=1000,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await indexer.metric("envio_reorg_threshold"),
@@ -133,14 +132,10 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
           let heightCallCount = chainAtLaggedHead.getHeightOrThrowCalls->Array.length
           chainAtLaggedHead.resolveGetHeightOrThrow(1000)
 
-          let attempts = ref(0)
-          while (
-            chainAtLaggedHead.getHeightOrThrowCalls->Array.length <= heightCallCount &&
-              attempts.contents < 1000
-          ) {
-            attempts := attempts.contents + 1
-            await Utils.delay(0)
-          }
+          await indexer.settleUntil(
+            () => chainAtLaggedHead.getHeightOrThrowCalls->Array.length > heightCallCount,
+            ~message="the stuck source to poll its height again",
+          )
           t.expect(
             chainAtLaggedHead.getHeightOrThrowCalls->Array.length > heightCallCount,
             ~message="the stuck source continues polling at the unchanged height",
@@ -166,7 +161,7 @@ describe("PIN: chains keep indexing after entering the reorg threshold", () => {
         ~latestFetchedBlockNumber=1000,
         ~knownHeight=1000,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await indexer.metric("hyperindex_synced_to_head"),

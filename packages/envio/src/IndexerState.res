@@ -110,6 +110,13 @@ type t = {
   // Set once on any fatal error. Every loop checks it to stop iterating and
   // every launch skips when it's set, so a single failure quiesces the indexer.
   mutable isStopped: bool,
+  // Loop work that has been started and hasn't settled, ignoring the stretches
+  // spent parked on a source response. Zero means every scheduled step ran to
+  // completion and nothing new was scheduled, so the indexer can only move
+  // again once the outside world answers.
+  mutable inFlight: int,
+  // Woken when inFlight falls back to zero.
+  mutable idleWaiters: array<unit => unit>,
   // Bumped when in-flight fetch work must be invalidated: on a reorg (responses
   // requested against pre-reorg state) and on the realtime transition (the
   // waitForNewBlock waiter is bound to the old, pre-realtime source). A fetch
@@ -197,6 +204,8 @@ let make = (
     onError,
     onExit,
     isStopped: false,
+    inFlight: 0,
+    idleWaiters: [],
     epoch: 0,
     simulateDeadInputTracker: SimulateDeadInputTracker.makeFromConfig(config),
     preloadSeconds: 0.,
@@ -505,6 +514,51 @@ let keepProcessAlive = (state: t) => state.keepProcessAlive
 let exitAfterFirstEventBlock = (state: t) => state.exitAfterFirstEventBlock
 let onExit = (state: t) => state.onExit
 let isStopped = (state: t) => state.isStopped
+
+let inFlight = (state: t) => state.inFlight
+
+// Resolves the next time no loop work is running. Callers re-check the count
+// after awaiting: work resolved in the same tick can schedule more.
+let whenIdle = (state: t): promise<unit> =>
+  if state.inFlight === 0 {
+    Promise.resolve()
+  } else {
+    Promise.make((resolve, _) => {
+      state.idleWaiters->Array.push(resolve)->ignore
+    })
+  }
+
+let enterInFlight = (state: t) => state.inFlight = state.inFlight + 1
+
+let exitInFlight = (state: t) => {
+  state.inFlight = state.inFlight - 1
+  if state.inFlight < 0 {
+    // Every exit pairs with an entry, so a negative count means a fan-out was
+    // counted once for work that runs many times over — and idleness would
+    // never be observable again.
+    JsError.throwWithMessage("Internal error: in-flight loop work counted below zero")
+  }
+  if state.inFlight === 0 {
+    let waiters = state.idleWaiters
+    state.idleWaiters = []
+    waiters->Array.forEach(resolve => resolve())
+  }
+}
+
+// Counts `work` as loop work for as long as its promise is pending.
+let trackInFlight = (state: t, work: unit => promise<'a>): promise<'a> => {
+  state->enterInFlight
+  work()->Promise.finally(() => state->exitInFlight)
+}
+
+// The inverse: the caller is parked on something the indexer can't advance on
+// its own — a source response, a poll interval — so it doesn't count as work
+// until the answer lands.
+let suspendInFlight = (state: t, work: unit => promise<'a>): promise<'a> => {
+  state->exitInFlight
+  work()->Promise.finally(() => state->enterInFlight)
+}
+
 let epoch = (state: t) => state.epoch
 let lastPrunedAtMillis = (state: t) => state.lastPrunedAtMillis
 let simulateDeadInputTracker = (state: t) => state.simulateDeadInputTracker

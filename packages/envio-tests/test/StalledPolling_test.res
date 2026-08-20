@@ -36,13 +36,12 @@ describe("Polling-stall loophole", () => {
       },
     ],
     ~reducedPollingInterval=10,
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Handler that never resolves keeps the batch in-progress,
       // so isReady stays false while the buffer sits at the head.

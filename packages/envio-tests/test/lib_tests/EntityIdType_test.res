@@ -198,7 +198,7 @@ describe("Non-string entity id — end-to-end via the in-process indexer", () =>
         ],
         ~latestFetchedBlockNumber=300,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       let chains: array<chainEntity> = await indexer.query("Chain")
       let vaults: array<vaultEntity> = await indexer.query("Vault")

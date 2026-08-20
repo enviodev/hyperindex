@@ -210,7 +210,7 @@ describe("E2E rollback tests", () => {
       ~latestFetchedBlockNumber=102,
     )
 
-    await indexer.getBatchWritePromise()
+    await indexer.settle()
 
     t.expect(
       await Promise.all3((
@@ -321,8 +321,7 @@ describe("E2E rollback tests", () => {
         blockHash: "0x102a",
       },
     )
-    await Utils.delay(0)
-    await Utils.delay(0)
+    await indexer.settle()
 
     t.expect(
       sourceMock.getBlockHashesCalls,
@@ -335,7 +334,7 @@ describe("E2E rollback tests", () => {
       {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
     ])
 
-    await indexer.getRollbackReadyPromise()
+    await indexer.settle()
 
     t.expect(
       sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
@@ -369,7 +368,7 @@ describe("E2E rollback tests", () => {
       },
     ])
 
-    await indexer.getBatchWritePromise()
+    await indexer.settle()
 
     t.expect(
       await Promise.all3((
@@ -426,7 +425,7 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let _ = await Promise.all2((
         Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
@@ -448,7 +447,7 @@ describe("E2E rollback tests", () => {
         }),
       )
       sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         sourceMock1337.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
@@ -462,7 +461,7 @@ describe("E2E rollback tests", () => {
         }),
       )
       sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=110)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(await indexer.metric("envio_reorg_threshold")).toEqual([
         {value: "1", labels: Dict.make()},
@@ -474,9 +473,7 @@ describe("E2E rollback tests", () => {
       sourceMock100.getHeightOrThrowCalls->Utils.Array.clearInPlace
 
       // Allow async operations to settle
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // After restart, we should still be in reorg threshold because
       // progressBlockNumber (110) > sourceBlockNumber (300) - maxReorgDepth (200) = 100
@@ -506,7 +503,7 @@ describe("E2E rollback tests", () => {
 
       sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200, ~knownHeight=320)
 
-      await restarted.getBatchWritePromise()
+      await restarted.settle()
 
       t.expect(
         sourceMock1337.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
@@ -532,7 +529,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
       await testSingleChainRollback(~t, ~sourceMock, ~indexer)
@@ -557,7 +554,7 @@ describe("E2E rollback tests", () => {
     },
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
 
       sourceMock.resolveGetItemsOrThrow(
@@ -581,7 +578,7 @@ describe("E2E rollback tests", () => {
         ],
         ~latestFetchedBlockNumber=102,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       sourceMock.resolveGetItemsOrThrow(
         [
@@ -596,7 +593,7 @@ describe("E2E rollback tests", () => {
         ],
         ~latestFetchedBlockNumber=103,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // getBatchWritePromise can observe the loop between the response resolving
       // and processing starting, so wait until this specific batch is visible.
@@ -661,8 +658,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=104,
         ~prevRangeLastBlock={blockNumber: 103, blockHash: "0x0103ee"},
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       t.expect(
         sourceMock.getBlockHashesCalls,
@@ -675,7 +671,7 @@ describe("E2E rollback tests", () => {
       ])
 
       switch await Promise.race([
-        indexer.getRollbackReadyPromise()->Promise.thenResolve(_ => Ok()),
+        indexer.settle()->Promise.thenResolve(_ => Ok()),
         indexerErrorPromise->Promise.thenResolve(errHandler => Error(errHandler)),
       ]) {
       | Ok() => ()
@@ -688,7 +684,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=103,
         ~latestFetchedBlockHash="0x0103ee",
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
@@ -703,7 +699,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
 
       // Hold the block-101 batch open inside its handler so a reorg can be detected
@@ -719,7 +715,7 @@ describe("E2E rollback tests", () => {
             handler: async args => {
               let context = args.context->asContext
               context.simpleEntity.set({id: "1", value: "from-reorged-block"})
-              await handlerGate
+              await indexer.park(() => handlerGate)
             },
           },
         ],
@@ -727,11 +723,13 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockHash="0x0101",
       )
 
-      // Wait until the processing loop has launched the next fetch — the batch is now
-      // in flight, blocked in the handler above.
-      while sourceMock.getItemsOrThrowCalls->Utils.Array.isEmpty {
-        await Utils.delay(0)
-      }
+      // The batch is now in flight, blocked in the handler above, and the
+      // processing loop has launched the next fetch.
+      await indexer.settle()
+      t.expect(
+        sourceMock.getItemsOrThrowCalls->Utils.Array.notEmpty,
+        ~message="the processing loop launches the next fetch while the batch is held open",
+      ).toBe(true)
 
       // A reorg lands mid-batch: block 101 came back with a different hash.
       sourceMock.resolveGetItemsOrThrow(
@@ -739,8 +737,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=102,
         ~prevRangeLastBlock={blockNumber: 101, blockHash: "0x101a"},
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // The rollback starts finding its depth even though the batch hasn't finished.
       t.expect(
@@ -754,7 +751,7 @@ describe("E2E rollback tests", () => {
       // Releasing the handler lets the batch finish; its progress is applied and the
       // parked rollback then executes and re-requests from the rolled-back block.
       releaseHandler.contents()
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       t.expect(
         sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)->Utils.Array.last,
@@ -777,7 +774,7 @@ describe("E2E rollback tests", () => {
       })
 
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
       await testSingleChainRollback(~t, ~sourceMock, ~indexer)
@@ -796,13 +793,13 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
 
       sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
 
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await indexer.queryCheckpoints(),
@@ -825,12 +822,12 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
 
       sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       sourceMock.resolveGetItemsOrThrow(
         [],
@@ -840,8 +837,7 @@ describe("E2E rollback tests", () => {
           blockHash: "0x102a",
         },
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       t.expect(
         sourceMock.getBlockHashesCalls,
@@ -852,7 +848,7 @@ describe("E2E rollback tests", () => {
         {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
       ])
 
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
       t.expect(
         sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
         ~message="Should rollback fetch state and re-request items",
@@ -871,7 +867,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=102,
         ~latestFetchedBlockHash="0x102a",
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await indexer.queryCheckpoints(),
@@ -895,7 +891,7 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1 = source(1337)
       let sourceMock2 = source(100)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let _ = await Promise.all2((
         Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1),
@@ -921,7 +917,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
 
@@ -980,7 +976,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=104,
       )
 
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         (calls, sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)),
@@ -1021,7 +1017,7 @@ describe("E2E rollback tests", () => {
         ~resolveAt=#first,
         ~latestFetchedBlockNumber=102,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       t.expect(
         (calls, sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)),
         ~message=`Should process the block 102 after DC partition finished fetching it`,
@@ -1058,7 +1054,7 @@ describe("E2E rollback tests", () => {
       ])
 
       sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=103)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       t.expect(
         (await queryDynamicAddresses(indexer))->Array.length,
         ~message="Should add the processed dynamic contracts to the db",
@@ -1073,8 +1069,7 @@ describe("E2E rollback tests", () => {
           blockHash: "0x103a",
         },
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       t.expect(
         sourceMock.getBlockHashesCalls,
@@ -1089,7 +1084,7 @@ describe("E2E rollback tests", () => {
 
       sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       t.expect(
         sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
@@ -1122,9 +1117,7 @@ describe("E2E rollback tests", () => {
 
       sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
       sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       sourceMock.resolveGetItemsOrThrow(
         [
@@ -1138,7 +1131,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=104,
       )
 
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await queryDynamicAddresses(indexer),
@@ -1170,7 +1163,7 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let _ = await Promise.all2((
         Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
@@ -1208,7 +1201,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=103,
         ~resolveAt=#first,
       )
-      await MockSource.waitItemsQuery(sourceMock1337)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock1337)
       sourceMock1337.resolveGetItemsOrThrow(
         [
           {
@@ -1225,7 +1218,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=103,
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       sourceMock1337.resolveGetItemsOrThrow(
         [
           {
@@ -1237,7 +1230,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=106,
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       sourceMock100.resolveGetItemsOrThrow(
         [
           {
@@ -1249,7 +1242,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=106,
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       sourceMock1337.resolveGetItemsOrThrow(
         [
           {
@@ -1261,7 +1254,7 @@ describe("E2E rollback tests", () => {
         ~resolveAt=#first,
         ~latestFetchedBlockNumber=109,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await Promise.all3((
@@ -1419,8 +1412,7 @@ describe("E2E rollback tests", () => {
         },
         ~resolveAt=#first,
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       t.expect(
         sourceMock1337.getBlockHashesCalls,
@@ -1436,7 +1428,7 @@ describe("E2E rollback tests", () => {
       sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
       sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       t.expect(
         await indexer.metric("envio_progress_events"),
@@ -1525,7 +1517,7 @@ describe("E2E rollback tests", () => {
         ~resolveAt=#first,
       )
 
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await Promise.all3((
@@ -1611,7 +1603,7 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let _ = await Promise.all2((
         Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
@@ -1649,7 +1641,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=103,
         ~resolveAt=#first,
       )
-      await MockSource.waitItemsQuery(sourceMock1337)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock1337)
       sourceMock1337.resolveGetItemsOrThrow(
         [
           {
@@ -1666,7 +1658,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=103,
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       sourceMock1337.resolveGetItemsOrThrow(
         [
           {
@@ -1678,7 +1670,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=106,
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       sourceMock100.resolveGetItemsOrThrow(
         [
           {
@@ -1701,7 +1693,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=106,
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       sourceMock1337.resolveGetItemsOrThrow(
         [
           {
@@ -1713,7 +1705,7 @@ describe("E2E rollback tests", () => {
         ~resolveAt=#first,
         ~latestFetchedBlockNumber=109,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await Promise.all3((
@@ -1856,8 +1848,7 @@ describe("E2E rollback tests", () => {
         },
         ~resolveAt=#first,
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       t.expect(
         sourceMock1337.getBlockHashesCalls,
@@ -1873,7 +1864,7 @@ describe("E2E rollback tests", () => {
       sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
       sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       t.expect(
         (
@@ -1928,7 +1919,7 @@ describe("E2E rollback tests", () => {
         ~resolveAt=#first,
       )
 
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await Promise.all3((
@@ -2040,12 +2031,12 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
 
       sourceMock.resolveGetItemsOrThrow([])
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Process initial events - 1 event across block 102
       sourceMock.resolveGetItemsOrThrow([
@@ -2061,7 +2052,7 @@ describe("E2E rollback tests", () => {
           },
         },
       ])
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Check initial metrics - should have 3 events processed
       t.expect(
@@ -2077,8 +2068,7 @@ describe("E2E rollback tests", () => {
           blockHash: "0x102a",
         },
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       t.expect(
         sourceMock.getBlockHashesCalls,
@@ -2091,7 +2081,7 @@ describe("E2E rollback tests", () => {
         {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
       ])
 
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       // Check metrics after first rollback - should have rolled back all 3 events
       t.expect(
@@ -2108,8 +2098,7 @@ describe("E2E rollback tests", () => {
         },
       )
 
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       t.expect(
         sourceMock.getBlockHashesCalls,
@@ -2119,7 +2108,7 @@ describe("E2E rollback tests", () => {
       sourceMock.resolveGetBlockHashes([
         {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
       ])
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       // Check metrics after processing - should have 2 events
       t.expect(
@@ -2129,7 +2118,7 @@ describe("E2E rollback tests", () => {
 
       // Process batch after rollback
       sourceMock.resolveGetItemsOrThrow([])
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
@@ -2152,7 +2141,7 @@ describe("E2E rollback tests", () => {
       // Restart immediately without writing any batches
       // At this point: progressBlockNumber=-1, sourceBlockNumber=0 in DB
       let restarted = await indexer.restart()
-      await Utils.delay(0)
+      await indexer.settle()
 
       t.expect(
         await restarted.metric("envio_reorg_threshold"),
@@ -2175,7 +2164,7 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Both chains enter reorg threshold (blocks 1-100 fetched, knownHeight=300)
       let _ = await Promise.all2((
@@ -2208,7 +2197,7 @@ describe("E2E rollback tests", () => {
       )
       // Chain 1337's query appears once the leader's (chain 100) response
       // releases the budget.
-      await MockSource.waitItemsQuery(sourceMock1337)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock1337)
       sourceMock1337.resolveGetItemsOrThrow(
         [
           {
@@ -2223,7 +2212,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=103,
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         {
@@ -2251,8 +2240,7 @@ describe("E2E rollback tests", () => {
         },
         ~resolveAt=#first,
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // getBlockHashes called with [100, 102]: both are stored in the
       // threshold below 103. Block 100 still matches and 102 came back on
@@ -2265,7 +2253,7 @@ describe("E2E rollback tests", () => {
       // Clean up pending calls from before rollback
       sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       t.expect(
         {
@@ -2291,11 +2279,9 @@ describe("E2E rollback tests", () => {
       // No getBlockHashes call needed: getThresholdBlockNumbersBelowBlock(~blockNumber=100) = []
       // so getHighestBlockBelowThreshold = 300 - 200 = 100 is used directly.
       // Wait for the SetRollbackState tasks (NextQuery, ProcessEventBatch) to be scheduled
-      await Utils.delay(0)
+      await indexer.settle()
 
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       sourceMock1337.resolveGetItemsOrThrow(
         [],
@@ -2311,10 +2297,9 @@ describe("E2E rollback tests", () => {
       // the state from RollbackReady → ReorgDetected.
       // Without this, getRollbackReadyPromise would immediately resolve
       // from the FIRST rollback's RollbackReady state.
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       // THE BUG: After second rollback, chain 100's event counter goes negative
       // because the rollback subtracts events that were already rolled back.
@@ -2364,7 +2349,7 @@ describe("E2E rollback tests", () => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
       let sourceMock137 = source(137)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // All three chains enter reorg threshold
       let _ = await Promise.all3((
@@ -2399,9 +2384,9 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=103,
         ~resolveAt=#first,
       )
-      await MockSource.waitItemsQuery(sourceMock100)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock100)
       sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300, ~resolveAt=#first)
-      await MockSource.waitItemsQuery(sourceMock137)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock137)
       sourceMock137.resolveGetItemsOrThrow(
         [
           {
@@ -2424,9 +2409,9 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=103,
         ~resolveAt=#first,
       )
-      await MockSource.waitItemsQuery(sourceMock137)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock137)
       sourceMock137.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300, ~resolveAt=#first)
-      await MockSource.waitItemsQuery(sourceMock1337)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock1337)
       sourceMock1337.resolveGetItemsOrThrow(
         [
           {
@@ -2441,7 +2426,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=103,
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         {
@@ -2473,15 +2458,14 @@ describe("E2E rollback tests", () => {
         },
         ~resolveAt=#first,
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       sourceMock1337.resolveGetBlockHashes([
         {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
         {blockNumber: 102, blockHash: "0x102a", blockTimestamp: 102},
       ])
 
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       t.expect(
         {
@@ -2506,7 +2490,7 @@ describe("E2E rollback tests", () => {
 
       // === SECOND REORG on chain 1337 at block 100 ===
       // After the rollback the reorg chain's refetch query goes out directly.
-      await MockSource.waitItemsQuery(sourceMock1337)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock1337)
 
       sourceMock1337.resolveGetItemsOrThrow(
         [],
@@ -2517,10 +2501,9 @@ describe("E2E rollback tests", () => {
         ~resolveAt=#first,
       )
 
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       // The root cause bug: without restoring ALL chains' counters,
       // chain 100 and chain 137 would be at -2 instead of 0.
@@ -2555,7 +2538,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
 
@@ -2565,7 +2548,7 @@ describe("E2E rollback tests", () => {
       | [call] => call.resolve([{blockNumber: 101, logIndex: 0}], ~latestFetchedBlockNumber=103)
       | _ => JsError.throwWithMessage("Step 3 should have a single pending call")
       }
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Query 2: 104-106 (range=3) -> enables prevSourceRangeCapacity=3
       // After this, chunking will be enabled with chunkRange=min(3,3)=3
@@ -2574,7 +2557,7 @@ describe("E2E rollback tests", () => {
       | [call] => call.resolve([{blockNumber: 104, logIndex: 0}], ~latestFetchedBlockNumber=106)
       | _ => JsError.throwWithMessage("Step 3 should have a single pending call")
       }
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // 4. Chunking is active (chunkRange=3 -> chunkSize=ceil(3*1.8)=6). Uniform
       // chunks tiled from 107: 107-112, 113-118, 119-124, ...
@@ -2596,7 +2579,7 @@ describe("E2E rollback tests", () => {
       // to 115, detects the gap, and creates a gap-fill query.
       findChunk(107).resolve([], ~latestFetchedBlockNumber=112)
 
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       let payloads = sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)
       let gapFills = payloads->Array.filter(p => p["fromBlock"] == 116 && p["toBlock"] == Some(118))
@@ -2614,8 +2597,7 @@ describe("E2E rollback tests", () => {
         },
         ~resolveAt=#first,
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       t.expect(
         sourceMock.getBlockHashesCalls,
@@ -2635,7 +2617,7 @@ describe("E2E rollback tests", () => {
       // Clean up pending calls from before rollback
       sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       t.expect(
         sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
@@ -2660,7 +2642,7 @@ describe("E2E rollback tests", () => {
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
 
@@ -2669,7 +2651,7 @@ describe("E2E rollback tests", () => {
       | [call] => call.resolve([{blockNumber: 101, logIndex: 0}], ~latestFetchedBlockNumber=103)
       | _ => JsError.throwWithMessage("Should have a single pending call for query 1")
       }
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Query 2: 104-106 (range=3) -> enables prevSourceRangeCapacity=3
       // After this, chunking will be enabled with chunkRange=min(3,3)=3
@@ -2677,7 +2659,7 @@ describe("E2E rollback tests", () => {
       | [call] => call.resolve([{blockNumber: 104, logIndex: 0}], ~latestFetchedBlockNumber=106)
       | _ => JsError.throwWithMessage("Should have a single pending call for query 2")
       }
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Chunked queries: chunkRange=3 -> chunkSize=ceil(3*1.8)=6. Uniform chunks
       // tiled from 107: 107-112, 113-118, 119-124, ...
@@ -2702,7 +2684,7 @@ describe("E2E rollback tests", () => {
       // (to 115). The partition consumes up to 115 and detects the 116-118 gap.
       chunk1.resolve([], ~latestFetchedBlockNumber=112)
       chunk2.resolve([], ~latestFetchedBlockNumber=115) // first half of 113-118
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       // lfb=115
 
       // Resolve the 116-118 continuation, storing a reorg checkpoint at block 118.
@@ -2716,7 +2698,7 @@ describe("E2E rollback tests", () => {
         JsError.throwWithMessage("Should have a pending continuation call with fromBlock == 116")
       }
       continuationCall.resolve([], ~latestFetchedBlockNumber=118)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Trigger rollback on a tail query that starts after 118, so the reorged
       // prevRangeLastBlock=118 is that query's real parent block rather than
@@ -2732,8 +2714,7 @@ describe("E2E rollback tests", () => {
           blockHash: "0x118a",
         },
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Stored checkpoints below reorgBlockNumber(118): [100, 103, 106, 112, 115]
       t.expect(
@@ -2755,7 +2736,7 @@ describe("E2E rollback tests", () => {
       // Clean up pending calls from before rollback
       sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       // The reorg is at block 118, so the rollback lands just below it and the
       // partition refetches only from 118 onward — never re-fetching 107-117.
@@ -2786,7 +2767,7 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1 = source(1337)
       let sourceMock2 = source(100)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let _ = await Promise.all2((
         Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1),
@@ -2814,7 +2795,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=101,
         ~resolveAt=#first,
       )
-      await MockSource.waitItemsQuery(sourceMock1)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock1)
 
       // Chain 1337 fetches block 101 with 0 events.
       // registerReorgGuard stores block hash "0x101" for block 101.
@@ -2826,8 +2807,7 @@ describe("E2E rollback tests", () => {
       //    which dispatches NextQuery + ProcessEventBatch tasks
       // 3. NextQuery starts fetches, ProcessEventBatch creates batch
       // We need 3 delays to let all layers fire.
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       // After this delay:
       // - NextQuery started a fetch for block 102 — but both chains are
       //   equally behind now, so only the leader (chain 100, tie broken by
@@ -2836,10 +2816,10 @@ describe("E2E rollback tests", () => {
       // - ProcessEventBatch created batch: with batchSize=1, chain 100's
       //   1 event fills the batch. Chain 1337 is SKIPPED — no checkpoint.
       //   The batch write is async and still in-flight.
-      await Utils.delay(0)
+      await indexer.settle()
 
       sourceMock2.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102, ~resolveAt=#first)
-      await MockSource.waitItemsQuery(sourceMock1)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock1)
 
       // Chain 1337 now has a pending fetch from block 102 (started by NextQuery
       // once chain 100's budget released). Resolve it with prevRangeLastBlock
@@ -2857,8 +2837,7 @@ describe("E2E rollback tests", () => {
         },
         ~resolveAt=#first,
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       t.expect(
         sourceMock1.getBlockHashesCalls,
@@ -2868,7 +2847,7 @@ describe("E2E rollback tests", () => {
         {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
       ])
 
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       // The rollback resets every chain's fetch frontier to a consistent
       // checkpoint, so chain 100 also has a fresh (and a stale pre-rollback)
@@ -2878,7 +2857,7 @@ describe("E2E rollback tests", () => {
       // caps the refetch reservation, so the budget reaches chain 1337 right
       // after.
       sourceMock2.resolveGetItemsOrThrow([], ~resolveAt=#all)
-      await MockSource.waitItemsQuery(sourceMock1)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock1)
 
       let actualPayloads = sourceMock1.getItemsOrThrowCalls->Array.map(c => c.payload)
       t.expect(
@@ -2906,7 +2885,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockHash="0x101a",
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Verify no second reorg is detected (no infinite loop)
       t.expect(
@@ -2976,7 +2955,7 @@ describe("E2E rollback tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let _ = await Promise.all2((
         Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337),
@@ -3004,7 +2983,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=103,
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       sourceMock1337.resolveGetItemsOrThrow(
         [
@@ -3023,7 +3002,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=103,
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       sourceMock1337.resolveGetItemsOrThrow(
         [
@@ -3042,7 +3021,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=106,
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Stall the next batch write so it stays in-flight during the rollback
       let resolveStall = ref(() => ())
@@ -3066,10 +3045,10 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=106,
         ~resolveAt=#first,
       )
-      // Wait until the batch is processed and its (stalled) write has started
-      while writeBatchCalls.contents == writeBatchCallsBeforeStall {
-        await Utils.delay(1)
-      }
+      await Scenario.waitUntil(
+        () => writeBatchCalls.contents != writeBatchCallsBeforeStall,
+        ~message="the batch to be processed and its stalled write to start",
+      )
 
       // Reorg on chain 1337 while chain 100's batch write is still in-flight
       sourceMock1337.resolveGetItemsOrThrow(
@@ -3080,8 +3059,12 @@ describe("E2E rollback tests", () => {
         },
         ~resolveAt=#first,
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      // The stalled write pins the write loop, so this case waits on the
+      // rollback's own progress rather than on the indexer settling.
+      await Scenario.waitUntil(
+        () => sourceMock1337.getBlockHashesCalls->Utils.Array.notEmpty,
+        ~message="the rollback depth search to query block hashes",
+      )
 
       t.expect(
         sourceMock1337.getBlockHashesCalls,
@@ -3105,7 +3088,7 @@ describe("E2E rollback tests", () => {
       sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
       sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       t.expect(
         rollbackReadBeforeFlush.contents,
@@ -3157,7 +3140,7 @@ describe("E2E rollback tests", () => {
         ~latestFetchedBlockNumber=106,
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         (
