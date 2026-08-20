@@ -237,6 +237,10 @@ jobs:
         env:
           ENVIO_TEST_STORAGE: clickhouse
 
+      - name: CLI subprocess tests
+        working-directory: packages/e2e-tests
+        run: pnpm test:cli
+
       - name: test_codegen
         working-directory: scenarios/test_codegen
         env:

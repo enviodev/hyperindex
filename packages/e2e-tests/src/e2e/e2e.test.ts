@@ -520,6 +520,26 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     });
   });
 
+  it("ClickHouse history table has the schema-declared skipping indexes", async () => {
+    // Transfer declares two bloom-filter skipping indexes via
+    // @storage(clickhouse: {skippingIndexes: [...]}). An omitted granularity falls
+    // back to ClickHouse's default of 1.
+    const result = await queryClickHouse<
+      ClickHouseResult<{ name: string; type_full: string; granularity: number }>
+    >(
+      `SELECT name, type_full, toUInt32(granularity) as granularity
+       FROM system.data_skipping_indices
+       WHERE database = '${CH_DATABASE}' AND table = 'envio_history_Transfer'
+       ORDER BY name
+       FORMAT JSON`
+    );
+
+    expect(result.data).toEqual([
+      { name: "idx_from", type_full: "bloom_filter(0.01)", granularity: 4 },
+      { name: "idx_to", type_full: "bloom_filter(0.01)", granularity: 1 },
+    ]);
+  });
+
   // --- Per-entity @storage routing ---
   //
   // The e2e_test schema declares:
