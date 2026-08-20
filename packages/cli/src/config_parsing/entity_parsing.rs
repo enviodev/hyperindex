@@ -475,6 +475,9 @@ pub struct Entity {
     // `@crossChain` on the entity. Only meaningful when the config sets
     // `disable_default_cross_chain: true`; otherwise codegen rejects it.
     pub cross_chain: bool,
+    // `@internal` on the entity: stored and usable in handlers as normal, but
+    // never exposed through the GraphQL API (no Hasura tracking).
+    pub internal: bool,
 }
 
 impl Entity {
@@ -486,6 +489,7 @@ impl Entity {
         postgres: Option<bool>,
         clickhouse: Option<ClickHouseEntityStorage>,
         cross_chain: bool,
+        internal: bool,
     ) -> anyhow::Result<Self> {
         // Check for duplicate field names
         let mut field_names_set = HashSet::new();
@@ -583,6 +587,7 @@ impl Entity {
             postgres,
             clickhouse,
             cross_chain,
+            internal,
         })
     }
 
@@ -689,6 +694,7 @@ impl Entity {
 
         let (postgres, clickhouse) = parse_storage_directive(obj)?;
         let cross_chain = parse_cross_chain_directive(obj)?;
+        let internal = parse_internal_directive(obj)?;
 
         Self::new(
             name,
@@ -698,6 +704,7 @@ impl Entity {
             postgres,
             clickhouse,
             cross_chain,
+            internal,
         )
         .context(format!("Failed constructing entity {name}"))
     }
@@ -842,6 +849,38 @@ fn parse_cross_chain_directive(obj: &ObjectType<String>) -> anyhow::Result<bool>
         }
         _ => Err(anyhow!(
             "Invalid @crossChain directive on `{}`. Only one @crossChain directive is allowed per \
+             entity.",
+            obj.name
+        )),
+    }
+}
+
+/// Parse the optional `@internal` directive on an entity. It takes no
+/// arguments. An internal entity is stored and usable in handlers as normal,
+/// but never tracked in Hasura, so it has no GraphQL surface. Relationships
+/// from non-internal entities to it are rejected in `system_config.rs`.
+fn parse_internal_directive(obj: &ObjectType<String>) -> anyhow::Result<bool> {
+    let directives: Vec<&Directive<'_, String>> = obj
+        .directives
+        .iter()
+        .filter(|directive| directive.name == "internal")
+        .collect();
+
+    match directives.len() {
+        0 => Ok(false),
+        1 => {
+            let directive = directives[0];
+            if let Some((arg_name, _)) = directive.arguments.first() {
+                return Err(anyhow!(
+                    "Invalid @internal directive on `{}`. It takes no arguments, but got `{}`.",
+                    obj.name,
+                    arg_name
+                ));
+            }
+            Ok(true)
+        }
+        _ => Err(anyhow!(
+            "Invalid @internal directive on `{}`. Only one @internal directive is allowed per \
              entity.",
             obj.name
         )),
@@ -3448,6 +3487,48 @@ type TestEntity @storage(clickhouse: {skippingIndexes: [
   {name: "idx", expr: "id", type: "set(100)"}
 ]}) { id: ID! }"#,
             "lists index name `idx` more than once",
+        );
+    }
+
+    // --- @internal directive (hide entity from the GraphQL API) ---
+
+    #[test]
+    fn internal_directive_omitted_defaults_to_false() {
+        let schema_str = r#"
+type TestEntity { id: ID! }
+        "#;
+        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        assert_eq!(entity.internal, false);
+    }
+
+    #[test]
+    fn internal_directive_sets_flag() {
+        let schema_str = r#"
+type TestEntity @internal { id: ID! }
+        "#;
+        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        assert_eq!(entity.internal, true);
+    }
+
+    #[test]
+    fn internal_directive_errors() {
+        let assert_error_contains = |schema_str: &str, expected: &str| {
+            let err = Entity::from_object(&get_first_entity_from_string(schema_str))
+                .expect_err(&format!("expected error containing '{expected}'"));
+            let message = format!("{err:#}");
+            assert!(
+                message.contains(expected),
+                "expected error containing '{expected}', got: {message}"
+            );
+        };
+
+        assert_error_contains(
+            r#"type TestEntity @internal(foo: true) { id: ID! }"#,
+            "Invalid @internal directive on `TestEntity`. It takes no arguments, but got `foo`.",
+        );
+        assert_error_contains(
+            r#"type TestEntity @internal @internal { id: ID! }"#,
+            "Only one @internal directive is allowed per entity.",
         );
     }
 

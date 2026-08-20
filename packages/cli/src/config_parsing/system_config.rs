@@ -843,6 +843,44 @@ pub fn validate_cross_chain_relationships(
     ))
 }
 
+/// An @internal entity has no GraphQL surface, so a relationship from an
+/// exposed entity to it cannot be served: an object reference would break
+/// Hasura relationship creation against the untracked table, and a
+/// @derivedFrom field would silently vanish from the API. Reject both at
+/// codegen. References from @internal entities are fine — nothing is exposed
+/// on their side.
+pub fn validate_internal_relationships(schema: &Schema) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut invalid: Vec<String> = vec![];
+    for entity in &entities {
+        if entity.internal {
+            continue;
+        }
+        for (field, related) in entity.get_related_entities(schema)? {
+            if related.internal {
+                invalid.push(format!(
+                    "  - `{}`.`{}` references `{}`, which is @internal.",
+                    entity.name, field.name, related.name
+                ));
+            }
+        }
+    }
+
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "Schema validation failed:\n\nEntities exposed through the GraphQL API reference \
+         @internal entities:\n{}\n\nAn @internal entity is not exposed through the GraphQL API, \
+         so the relationship cannot be served. Fixes:\n  - Mark the referencing entities \
+         @internal too, or\n  - Replace the reference with a plain id field (e.g. `secretId: \
+         String!`), or\n  - Remove @internal from the referenced entities.",
+        invalid.join("\n")
+    ))
+}
+
 /// Per-chain entities get a chain-id field appended, so no schema field may
 /// claim its name. Both spellings are reserved whatever the backends and their
 /// `column_name_format` are, so the name a user may give a field never depends
@@ -1049,6 +1087,7 @@ impl SystemConfig {
         validate_cross_chain_directives(default_cross_chain, &schema)?;
         validate_chain_id_field_names(&schema, default_cross_chain)?;
         validate_cross_chain_relationships(&schema, default_cross_chain)?;
+        validate_internal_relationships(&schema)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
         let final_project_paths = source.project_paths().clone();
@@ -3440,6 +3479,7 @@ mod test {
                 postgres,
                 clickhouse: clickhouse.map(ClickHouseEntityStorage::Enabled),
                 cross_chain: false,
+                internal: false,
             }
         }
 
@@ -3567,6 +3607,79 @@ mod test {
                 entity("Order", None, Some(true)),
             ]);
             assert!(validate_relationship_storage(&multi(false, false), &schema).is_ok());
+        }
+    }
+
+    // --- validate_internal_relationships: no public -> @internal references ---
+
+    mod internal_relationship_validation {
+        use super::super::validate_internal_relationships;
+        use crate::config_parsing::entity_parsing::Schema;
+
+        #[test]
+        fn public_reference_to_internal_entity_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Trader {
+  id: ID!
+  secret: Secret!
+}
+type Secret @internal {
+  id: ID!
+}"#,
+            )
+            .unwrap();
+            let err = validate_internal_relationships(&schema)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("`Trader`.`secret` references `Secret`, which is @internal."),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn public_derived_from_internal_entity_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Trader {
+  id: ID!
+  orders: [Order!]! @derivedFrom(field: "trader")
+}
+type Order @internal {
+  id: ID!
+  trader: Trader!
+}"#,
+            )
+            .unwrap();
+            let err = validate_internal_relationships(&schema)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("`Trader`.`orders` references `Order`, which is @internal."),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn internal_references_are_allowed() {
+            let schema = Schema::from_string(
+                r#"
+type PublicUser {
+  id: ID!
+}
+type SecretA @internal {
+  id: ID!
+  user: PublicUser!
+  other: SecretB!
+}
+type SecretB @internal {
+  id: ID!
+  entries: [SecretA!]! @derivedFrom(field: "other")
+}"#,
+            )
+            .unwrap();
+            assert!(validate_internal_relationships(&schema).is_ok());
         }
     }
 

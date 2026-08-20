@@ -183,6 +183,7 @@ module EnvioAddresses = {
     // The table already keys rows by chain through the composite `id`, so the
     // per-chain mode must not append a second chain-id column to it.
     crossChain: true,
+    internal: true,
   }->Internal.fromGenericEntityConfig
 }
 
@@ -385,6 +386,7 @@ let entityJsonSchema = S.schema(s =>
     "name": s.matches(S.string),
     "crossChain": s.matches(S.option(S.bool)),
     "storage": s.matches(S.option(entityStorageSchema)),
+    "internal": s.matches(S.option(S.bool)),
     "properties": s.matches(S.array(propertySchema)),
     "derivedFields": s.matches(S.option(S.array(derivedFieldSchema))),
     "compositeIndices": s.matches(S.option(S.array(S.array(compositeIndexFieldSchema)))),
@@ -588,6 +590,7 @@ let parseEntitiesFromJson = (
       table,
       storage,
       crossChain,
+      internal: entityJson["internal"]->Option.getOr(false),
     }->Internal.fromGenericEntityConfig
   })
 }
