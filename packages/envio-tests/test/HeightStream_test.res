@@ -100,6 +100,30 @@ describe("HeightStream reconnect driver", () => {
     ))
   })
 
+  Async.it("Resets the backoff for a connection that outlasted the wait before it", async t => {
+    // The WebSocket transport tolerates a full minute of silence, and a provider
+    // rotating connections faster than that serves each one perfectly well. The
+    // wait before a connection, not the staleness window, is what it has to beat.
+    let harness = makeHarness(~staleTimeout=60_000)
+    (harness->driverAt(0)).onFailure(~reason="closed")
+    await Vi.advanceTimersByTimeAsync(250)
+    (harness->driverAt(1)).onFailure(~reason="closed")
+    await Vi.advanceTimersByTimeAsync(500)
+
+    let rotated = harness->driverAt(2)
+    rotated.onConnected()
+    rotated.onHeight(101)
+    await Vi.advanceTimersByTimeAsync(30_000)
+    rotated.onFailure(~reason="closed")
+
+    await Vi.advanceTimersByTimeAsync(249)
+    let beforeBaseDelay = harness.drivers->Array.length
+    await Vi.advanceTimersByTimeAsync(1)
+    harness.unsubscribe()
+
+    t.expect((beforeBaseDelay, harness.drivers->Array.length)).toStrictEqual((3, 4))
+  })
+
   Async.it("Keeps backing off when short connections deliver a height each time", async t => {
     let harness = makeHarness()
     // HyperSync sends the head as soon as it connects, so an endpoint that

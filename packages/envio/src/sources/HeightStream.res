@@ -54,6 +54,8 @@ let subscribe = (
   // both, so a single slot holds whichever timer is pending.
   let timeoutId = ref(None)
   let connectionStartedAt = ref(Performance.now())
+  // How long we waited before starting the current connection.
+  let lastRetryMillis = ref(0)
   let sawUnreadable = ref(false)
 
   let clearPendingTimeout = () => {
@@ -95,13 +97,16 @@ let subscribe = (
     clearPendingTimeout()
     closeConnection()
 
-    // A connection that lasted a full staleness window did its job, however it
-    // ended, and deserves a prompt retry. Duration rather than whether it
-    // connected or carried traffic, because HyperSync sends a height the moment
-    // it connects: an endpoint accepting and dropping connections would
-    // otherwise look healthy every time and never back off.
+    // A connection that outlasted the wait before it was worth making, so the
+    // backoff starts over. Duration rather than whether it connected or carried
+    // traffic, because HyperSync sends a height the moment it connects: an
+    // endpoint accepting and dropping connections would otherwise look healthy
+    // every time and never back off. Measured against that wait rather than the
+    // staleness window, so a provider rotating connections faster than the
+    // window — a full minute of it, on the WebSocket transport — doesn't
+    // escalate over connections that served it perfectly well.
     //
-    // The staleness timer knows it waited the window out, and says so rather
+    // The staleness timer knows it waited its window out, and says so rather
     // than leaving it to be re-derived: a timer can reach its own deadline a
     // fraction of a millisecond before the clock agrees. So those failures never
     // escalate, which is what a chain whose blocks are further apart than the
@@ -110,7 +115,7 @@ let subscribe = (
     // those retries a whole window apart.
     if (
       windowElapsed ||
-        Performance.now() -. connectionStartedAt.contents >= staleTimeout->Int.toFloat
+        Performance.now() -. connectionStartedAt.contents > lastRetryMillis.contents->Int.toFloat
     ) {
       failureCount := 0
     }
@@ -121,6 +126,7 @@ let subscribe = (
       baseRetryMillis * Math.pow(2.0, ~exp)->Float.toInt,
       maxRetryMillis,
     )
+    lastRetryMillis := retryMillis
     // Scheduled before reporting, so a consumer that throws can't be what makes
     // the stream give up.
     timeoutId := Some(setTimeout(() => {
