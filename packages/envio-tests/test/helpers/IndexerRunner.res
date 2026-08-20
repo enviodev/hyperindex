@@ -55,6 +55,10 @@ type rec t = {
   // call the processing or finalize path makes. Not from a test body, and not
   // from the write loop's own calls (`writeBatch`, `setChainMeta`) — those run
   // off the scheduler, and `settle` covers them through the flush instead.
+  // Called from anywhere else it puts the count into deficit, which `settle`
+  // reports by name rather than sitting on. It isn't checked here: several
+  // frames park at once (concurrent contract registers, preloading handlers),
+  // so the count says nothing about whether this particular caller had one.
   park: 'a. (unit => promise<'a>) => promise<'a>,
   waitUntilReady: unit => promise<unit>,
   // Batches processed but not yet written. A test that stalls a write watches
@@ -226,16 +230,27 @@ let run = async (
     let settle = async () => {
       let timeoutId = ref(None)
       let timedOut = ref(false)
-      await Promise.race([
-        settleLoop(~timedOut),
-        Promise.make((resolve, _) => {
-          timeoutId := Some(setTimeout(() => {
-              timedOut := true
-              resolve()
-            }, settleTimeoutMs))
-        }),
-      ])
+      // Cleared whichever way the race ends: a timer left running holds the
+      // vitest worker's event loop open for its whole span.
+      let failure = try {
+        await Promise.race([
+          settleLoop(~timedOut),
+          Promise.make((resolve, _) => {
+            timeoutId := Some(setTimeout(() => {
+                timedOut := true
+                resolve()
+              }, settleTimeoutMs))
+          }),
+        ])
+        None
+      } catch {
+      | exn => Some(exn)
+      }
       timeoutId.contents->Option.forEach(clearTimeout)
+      switch failure {
+      | Some(exn) => throw(exn)
+      | None => ()
+      }
       if timedOut.contents {
         let busy =
           [
@@ -244,7 +259,7 @@ let run = async (
               : None,
             state->IndexerState.inFlight < 0
               ? Some(
-                  `a broken in-flight count (${state->IndexerState.inFlight->Int.toString}) — some fan-out is counted once for work that runs many times over`,
+                  `a broken in-flight count (${state->IndexerState.inFlight->Int.toString}) — either a fan-out counted once for work that runs many times over, or an \`indexer.park\` from a frame the scheduler wasn't counting`,
                 )
               : None,
             state->IndexerState.isProcessing ? Some("a batch being processed") : None,
@@ -388,17 +403,7 @@ let run = async (
     {
       settle,
       settleUntil,
-      park: work =>
-        if state->IndexerState.inFlight <= 0 {
-          // Nothing to discount means the caller isn't inside work the loop is
-          // counting. Refused rather than allowed to drive the count negative,
-          // which no later settle could recover from.
-          JsError.throwWithMessage(
-            "indexer.park was called where the loop is running nothing: it belongs inside a handler, a contract register, or a storage call the processing or finalize path makes.",
-          )
-        } else {
-          state->IndexerState.suspendInFlight(work)
-        },
+      park: work => state->IndexerState.suspendInFlight(work),
       queuedWrites: () => state->IndexerState.processedBatches->Array.length,
       waitUntilReady: () =>
         settleUntil(

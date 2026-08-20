@@ -69,6 +69,9 @@ let executeQuery: (
   ~query: FetchState.query,
   ~knownHeight: int,
   ~isRealtime: bool,
+  ~park: (unit => promise<Source.blockRangeFetchResponse>) => promise<
+    Source.blockRangeFetchResponse,
+  >=?,
 ) => promise<Source.blockRangeFetchResponse>
 
 let makeGetHeightRetryInterval: (

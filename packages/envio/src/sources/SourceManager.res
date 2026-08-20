@@ -880,6 +880,12 @@ let executeQuery = async (
   ~query: FetchState.query,
   ~knownHeight,
   ~isRealtime,
+  // Wraps the request itself, so a caller tracking what the loop is doing can
+  // tell the round trip apart from the retry backoffs around it — those are
+  // the loop biding its time, not waiting on an answer.
+  ~park: (unit => promise<Source.blockRangeFetchResponse>) => promise<
+    Source.blockRangeFetchResponse,
+  >=work => work(),
 ) => {
   let noSourcesError = "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
 
@@ -930,16 +936,18 @@ let executeQuery = async (
     )
 
     try {
-      let response = await source.getItemsOrThrow(
-        ~fromBlock=query.fromBlock,
-        ~toBlock,
-        ~addressSet=query.addresses,
-        ~partitionId=query.partitionId,
-        ~knownHeight,
-        ~selection=query.selection->FetchState.narrowSelectionToRange(~toBlock),
-        ~itemsTarget=query.itemsTarget,
-        ~retry,
-        ~logger,
+      let response = await park(() =>
+        source.getItemsOrThrow(
+          ~fromBlock=query.fromBlock,
+          ~toBlock,
+          ~addressSet=query.addresses,
+          ~partitionId=query.partitionId,
+          ~knownHeight,
+          ~selection=query.selection->FetchState.narrowSelectionToRange(~toBlock),
+          ~itemsTarget=query.itemsTarget,
+          ~retry,
+          ~logger,
+        )
       )
       sourceState->recordRequestStats(response.requestStats)
       validateResponseBlockStore(~method="getItems", ~blockStore=response.blockStore)
