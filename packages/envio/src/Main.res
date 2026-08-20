@@ -239,7 +239,7 @@ let getGlobalIndexer = (): 'indexer => {
           "event": unknown,
           "wildcard": option<bool>,
           "where": option<JSON.t>,
-          "fields": option<Internal.evmFieldsSelection>,
+          "fields": option<Internal.fieldsSelection>,
         }
       )
     // Detect format: if "contract" is a string, it's the TS format
@@ -295,7 +295,7 @@ let getGlobalIndexer = (): 'indexer => {
           "program": unknown,
           "instruction": unknown,
           "where": option<JSON.t>,
-          "fields": option<Internal.evmFieldsSelection>,
+          "fields": option<Internal.svmFieldsSelection>,
         }
       )
     let (programName, instructionName) = if typeof(raw["program"]) === #string {
@@ -308,9 +308,6 @@ let getGlobalIndexer = (): 'indexer => {
       (inst["contract"], inst["_0"])
     }
     let where = raw["where"]
-    // SVM takes its selection from the config, so `fields` is carried through
-    // only to be rejected by the registration — dropping it here would leave a
-    // plain-JS caller with a silently ignored option.
     let fields = raw["fields"]
     let eventOptions: option<Internal.eventOptions<_>> = switch (where, fields) {
     | (None, None) => None

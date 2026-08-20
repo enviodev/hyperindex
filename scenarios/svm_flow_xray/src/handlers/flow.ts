@@ -113,7 +113,7 @@ async function record(context: SvmOnSlotContext, e: FlowEvent): Promise<void> {
 
 
 const flowFields = {
-  instruction: ["args", "accounts"],
+  instruction: ["args", "accounts", "programId", "path", "isInner"],
   transaction: ["signature", "feePayer", "success", "fee", "computeUnitsConsumed"],
   accountActivity: ["address", "token.mint", "token.owner", "token.preAmount", "token.postAmount"],
 } as const;
@@ -130,11 +130,11 @@ indexer.onInstruction({ fields: flowFields, program: "Jupiter", instruction: "ro
   const args = instruction.args;
   await record(context, {
     program: "Jupiter",
-    ixName: instruction.instructionName ?? "route",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,
@@ -152,11 +152,11 @@ indexer.onInstruction({ fields: flowFields, program: "Jupiter", instruction: "sh
   const args = instruction.args;
   await record(context, {
     program: "Jupiter",
-    ixName: instruction.instructionName ?? "sharedAccountsRoute",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,
@@ -174,11 +174,11 @@ indexer.onInstruction({ fields: flowFields, program: "Kamino", instruction: "dep
   const tx = instruction.transaction;
   await record(context, {
     program: "Kamino",
-    ixName: instruction.instructionName ?? "depositReserveLiquidityAndObligationCollateral",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,
@@ -194,11 +194,11 @@ indexer.onInstruction({ fields: flowFields, program: "Kamino", instruction: "bor
   const tx = instruction.transaction;
   await record(context, {
     program: "Kamino",
-    ixName: instruction.instructionName ?? "borrowObligationLiquidity",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,
@@ -214,11 +214,11 @@ indexer.onInstruction({ fields: flowFields, program: "Kamino", instruction: "rep
   const tx = instruction.transaction;
   await record(context, {
     program: "Kamino",
-    ixName: instruction.instructionName ?? "repayObligationLiquidity",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,
@@ -234,11 +234,11 @@ indexer.onInstruction({ fields: flowFields, program: "Kamino", instruction: "wit
   const tx = instruction.transaction;
   await record(context, {
     program: "Kamino",
-    ixName: instruction.instructionName ?? "withdrawObligationCollateralAndRedeemReserveCollateral",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,
@@ -254,11 +254,11 @@ indexer.onInstruction({ fields: flowFields, program: "Drift", instruction: "plac
   const tx = instruction.transaction;
   await record(context, {
     program: "Drift",
-    ixName: instruction.instructionName ?? "placePerpOrder",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,
@@ -273,11 +273,11 @@ indexer.onInstruction({ fields: flowFields, program: "Drift", instruction: "fill
   const tx = instruction.transaction;
   await record(context, {
     program: "Drift",
-    ixName: instruction.instructionName ?? "fillPerpOrder",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,
@@ -294,11 +294,11 @@ indexer.onInstruction({ fields: flowFields, program: "Drift", instruction: "liqu
   const liabilityAmount = bi(args?.liquidatorMaxBaseAssetAmount);
   await record(context, {
     program: "Drift",
-    ixName: instruction.instructionName ?? "liquidatePerp",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,
@@ -318,11 +318,11 @@ indexer.onInstruction({ fields: flowFields, program: "Drift", instruction: "liqu
   const liabilityAmount = bi(args?.liquidatorMaxLiabilityTransfer);
   await record(context, {
     program: "Drift",
-    ixName: instruction.instructionName ?? "liquidateSpot",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,
@@ -339,11 +339,11 @@ indexer.onInstruction({ fields: flowFields, program: "Drift", instruction: "sett
   const tx = instruction.transaction;
   await record(context, {
     program: "Drift",
-    ixName: instruction.instructionName ?? "settlePnl",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,
@@ -361,11 +361,11 @@ indexer.onInstruction({ fields: flowFields, program: "Raydium", instruction: "sw
   const args = instruction.args;
   await record(context, {
     program: "Raydium",
-    ixName: instruction.instructionName ?? "swap",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,
@@ -383,11 +383,11 @@ indexer.onInstruction({ fields: flowFields, program: "Orca", instruction: "swap"
   const tx = instruction.transaction;
   await record(context, {
     program: "Orca",
-    ixName: instruction.instructionName ?? "swap",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,
@@ -401,11 +401,11 @@ indexer.onInstruction({ fields: flowFields, program: "Meteora", instruction: "sw
   const tx = instruction.transaction;
   await record(context, {
     program: "Meteora",
-    ixName: instruction.instructionName ?? "swap",
+    ixName: instruction.instructionName,
     programId: instruction.programId,
     isInner: instruction.isInner,
     slot: instruction.block.slot,
-    addr: instruction.instructionAddress,
+    addr: instruction.path,
     txSig: tx.signature,
     feePayer: tx.feePayer,
     success: tx.success,

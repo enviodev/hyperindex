@@ -69,7 +69,7 @@ type svmLog = {
   message: string,
 }
 
-type svmInstructionBlock = {
+type svmBlockWithoutInstruction = {
   slot: int,
   time?: int,
   hash?: string,
@@ -81,17 +81,17 @@ type svmInstructionBlock = {
 type svmInstruction = {
   programName: string,
   instructionName: string,
-  programId: SvmTypes.Pubkey.t,
-  data: string,
-  instructionAddress: array<int>,
-  isInner: bool,
+  discriminator: string,
+  programId?: SvmTypes.Pubkey.t,
+  data?: string,
+  path?: array<int>,
+  isInner?: bool,
   args?: JSON.t,
   accounts?: dict<svmInstructionAccount>,
   accountArguments?: array<SvmTypes.Pubkey.t>,
-  discriminator?: string,
   transaction?: svmTransaction,
   logs?: array<svmLog>,
-  block?: svmInstructionBlock,
+  block?: svmBlockWithoutInstruction,
 }
 
 /** Arguments passed to handlers registered via `indexer.onInstruction`. */

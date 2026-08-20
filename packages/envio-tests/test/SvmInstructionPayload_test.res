@@ -34,7 +34,7 @@ indexer.onInstruction(
     program: "Swapper",
     instruction: "swap",
     fields: {
-      instruction: ["args", "accounts", "accountArguments", "discriminator"],
+      instruction: ["args", "accounts", "accountArguments", "programId", "data", "path", "isInner"],
       transaction: ["signature", "accountKeys"],
       accountActivity: [
         "transactionAccountIndex",
@@ -82,7 +82,7 @@ describe("SVM handler fields registration", () => {
       "block": fs.blockFields->Utils.Set.toArray->Array.toSorted(String.compare),
       "log": fs.logFields->Utils.Set.toArray->Array.toSorted(String.compare),
     }).toEqual({
-      "instruction": ["accountArguments", "accounts", "args", "discriminator"],
+      "instruction": ["accountArguments", "accounts", "args", "data", "isInner", "path", "programId"],
       "transaction": ["accountActivities", "accountKeys", "signature"],
       "accountActivity": [
         "lamports.post",
@@ -127,7 +127,9 @@ describe("SVM instruction payload assembly", () => {
       "destination": instruction.accounts->Option.getOrThrow->Dict.getUnsafe("destination"),
       "args": instruction.args,
       "discriminator": instruction.discriminator,
+      "path": instruction.path,
       "accountArguments": instruction.accountArguments,
+      "hasInstructionAddress": %raw(`Object.prototype.hasOwnProperty.call(instruction, "instructionAddress")`),
     }).toEqual({
       "source": {
         Envio.address: "Src111111111111111111111111111111111111111"->SvmTypes.Pubkey.fromStringUnsafe,
@@ -140,13 +142,15 @@ describe("SVM instruction payload assembly", () => {
         instructionAccountIndex: 1,
       },
       "args": None,
-      "discriminator": Some("0x09"),
+      "discriminator": "0x09",
+      "path": Some([0]),
       "accountArguments": Some(
         [
           "Src111111111111111111111111111111111111111",
           "Dst111111111111111111111111111111111111111",
         ]->SvmTypes.Pubkey.fromStringsUnsafe,
       ),
+      "hasInstructionAddress": false,
     })
   })
 
@@ -230,10 +234,16 @@ describe("SVM instruction payload assembly", () => {
       "kind": log.kind,
       "hasMessage": %raw(`Object.prototype.hasOwnProperty.call(log, "message")`),
       "hasKind": %raw(`Object.prototype.hasOwnProperty.call(log, "kind")`),
+      "discriminator": instruction.discriminator,
+      "hasPath": %raw(`Object.prototype.hasOwnProperty.call(instruction, "path")`),
+      "hasProgramId": %raw(`Object.prototype.hasOwnProperty.call(instruction, "programId")`),
     }).toEqual({
       "kind": "data",
       "hasMessage": false,
       "hasKind": true,
+      "discriminator": "0x09",
+      "hasPath": false,
+      "hasProgramId": false,
     })
   })
 })
@@ -305,10 +315,15 @@ describe("SVM activity join through the store", () => {
         transactionIndex: 0,
         payload: instruction->(Utils.magic: Envio.svmInstruction => Internal.eventPayload),
       })
+      let blockStore = BlockStore.fromJs(
+        [{blockNumber: slot, blockTimestamp: 1_700_000_000}],
+        ~ecosystem=Ecosystem.Svm,
+        ~shouldChecksum=false,
+      )
       await ChainState.materializePageItems(
         ~items=[item],
         ~transactionStore=Some(store),
-        ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Svm, ~shouldChecksum=false),
+        ~blockStore,
       )
 
       let accounts = instruction.accounts->Option.getOrThrow
@@ -331,6 +346,9 @@ describe("SVM activity join through the store", () => {
         "closedPostAmount": closed->Option.flatMap(a => a.token)->Option.flatMap(t => t.postAmount),
         "activityCount": activities->Option.map(Array.length),
         "logs": instruction.logs,
+        "path": instruction.path,
+        "discriminator": instruction.discriminator,
+        "time": instruction.block->Option.flatMap(b => b.time),
       }).toEqual({
         "namedWithoutRow": None,
         "sourceSameObject": true,
@@ -341,6 +359,9 @@ describe("SVM activity join through the store", () => {
         "closedPostAmount": None,
         "activityCount": Some(2),
         "logs": Some([]),
+        "path": Some([0]),
+        "discriminator": "0x09",
+        "time": Some(1_700_000_000),
       })
     },
   )

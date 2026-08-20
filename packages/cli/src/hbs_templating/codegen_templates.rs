@@ -3535,7 +3535,7 @@ type GlobalCounter @crossChain {
 
     #[test]
     fn svm_public_transaction_fields_match_materializer() {
-        // Handler `fields.transaction` is typed from `SvmAllTransactionFields`;
+        // Handler `fields.transaction` is typed from `SvmTransaction`;
         // `accountActivities` is implied by `fields.accountActivity`. Pin the
         // pair to `SvmTxField` so a store column can't ship without a public name.
         use std::collections::BTreeSet;
@@ -3544,7 +3544,7 @@ type GlobalCounter @crossChain {
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../envio/index.d.ts"))
                 .expect("read index.d.ts");
         let mut names: BTreeSet<String> =
-            parse_type_fields(&dts, "export type SvmAllTransactionFields = {", "readonly ")
+            parse_type_fields(&dts, "export type SvmTransaction = {", "readonly ")
                 .into_iter()
                 .map(|(name, _)| name)
                 .collect();
@@ -3561,20 +3561,24 @@ type GlobalCounter @crossChain {
         let dts =
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../envio/index.d.ts"))
                 .expect("read index.d.ts");
-        let dts_fields: Vec<String> =
-            parse_type_fields(&dts, "export type SvmInstructionBlock = {", "readonly ")
-                .into_iter()
-                .map(|(name, _)| name)
-                .collect();
+        let dts_fields: Vec<String> = parse_type_fields(
+            &dts,
+            "export type SvmBlockWithoutInstruction = {",
+            "readonly ",
+        )
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
         let res = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../envio/src/Envio.res"
         ))
         .expect("read Envio.res");
-        let res_fields: Vec<String> = parse_type_fields(&res, "type svmInstructionBlock = {", "")
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
+        let res_fields: Vec<String> =
+            parse_type_fields(&res, "type svmBlockWithoutInstruction = {", "")
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect();
         assert_eq!(dts_fields, res_fields);
     }
 

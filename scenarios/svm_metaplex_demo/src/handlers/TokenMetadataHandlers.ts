@@ -24,28 +24,25 @@ async function bumpStats(
   context.ProgramStats.set(next);
 }
 
-const metaplexFields = {
-  instruction: ["args", "accounts"],
-  transaction: ["signature"],
-  block: ["time"],
-} as const;
-
 indexer.onInstruction(
-  { program: "TokenMetadata", instruction: "CreateMetadataAccountV3", fields: metaplexFields },
+  {
+    program: "TokenMetadata",
+    instruction: "CreateMetadataAccountV3",
+    fields: {
+      instruction: ["args", "accounts"],
+      transaction: ["signature"],
+      block: ["time"],
+    },
+  },
   async ({ instruction, context }) => {
     const args = instruction.args;
     if (!args) {
-      console.warn("CreateMetadataAccountV3: no decoded payload");
       return;
     }
     const metadataPda = instruction.accounts.metadata.address;
     const mint = instruction.accounts.mint.address;
     const updateAuthority = instruction.accounts.update_authority.address;
     const txSig = instruction.transaction.signature;
-
-    console.log(
-      `[Create] slot=${instruction.block.slot} name='${args.data.name}' symbol='${args.data.symbol}' mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
-    );
 
     context.TokenMetadataAccount.set({
       id: metadataPda,
@@ -62,20 +59,23 @@ indexer.onInstruction(
 );
 
 indexer.onInstruction(
-  { program: "TokenMetadata", instruction: "UpdateMetadataAccountV2", fields: metaplexFields },
+  {
+    program: "TokenMetadata",
+    instruction: "UpdateMetadataAccountV2",
+    fields: {
+      instruction: ["args", "accounts"],
+      transaction: ["signature"],
+      block: ["time"],
+    },
+  },
   async ({ instruction, context }) => {
     const args = instruction.args;
     if (!args) {
-      console.warn("UpdateMetadataAccountV2: no decoded payload");
       return;
     }
     const metadataPda = instruction.accounts.metadata.address;
     const updateAuthority = args.update_authority ?? instruction.accounts.update_authority.address;
     const txSig = instruction.transaction.signature;
-
-    console.log(
-      `[Update] slot=${instruction.block.slot} metadata=${metadataPda.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
-    );
 
     const existing = await context.TokenMetadataAccount.get(metadataPda);
     if (existing) {

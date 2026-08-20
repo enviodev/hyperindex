@@ -117,6 +117,21 @@ describe("a rejected inline selection", () => {
     );
   });
 
+  it("rejects SVM field-selection keys", (t) => {
+    t.expect(() =>
+      indexer.onEvent(
+        {
+          contract: "Token",
+          event: "Transfer",
+          fields: { instruction: ["args"], accountActivity: ["address"], log: ["kind"] } as never,
+        },
+        async () => {},
+      ),
+    ).toThrowError(
+      \`Invalid "instruction" key in the fields option of the "Transfer" event registration on contract "Token". Valid keys: block, transaction.\`,
+    );
+  });
+
   it("rejects a fields option that isn't an object of selections", (t) => {
     t.expect(() =>
       indexer.onEvent(

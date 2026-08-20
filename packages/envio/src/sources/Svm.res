@@ -61,16 +61,18 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   logger,
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   toEventLogger: eventItem => {
-    let instruction =
-      eventItem.payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
+    let eventConfig =
+      eventItem.onEventRegistration.eventConfig->(
+        Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig
+      )
     Logging.createChildFrom(
       ~logger,
       ~params={
-        "program": eventItem.onEventRegistration.eventConfig.contractName,
-        "instruction": eventItem.onEventRegistration.eventConfig.name,
+        "program": eventConfig.contractName,
+        "instruction": eventConfig.name,
         "chainId": eventItem.chainId,
         "slot": eventItem.blockNumber,
-        "programId": instruction.programId,
+        "programId": eventConfig.programId,
       },
     )
   },

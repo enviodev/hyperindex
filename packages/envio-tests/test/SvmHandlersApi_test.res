@@ -54,7 +54,7 @@ indexer.onInstruction(
     program: "Swapper",
     instruction: "swap",
     fields: {
-      instruction: ["args", "accounts", "accountArguments", "discriminator"],
+      instruction: ["args", "accounts", "accountArguments", "programId", "data", "path", "isInner"],
       transaction: ["signature", "accountKeys"],
       accountActivity: ["transactionAccountIndex", "lamports.post", "token.mint"],
       block: ["hash", "time"],
@@ -66,6 +66,8 @@ indexer.onInstruction(
     instruction.accounts.source.address;
     instruction.accountArguments;
     instruction.discriminator;
+    instruction.path;
+    instruction.programId;
     instruction.transaction.signature;
     instruction.transaction.accountKeys;
     instruction.transaction.accountActivities;
@@ -139,7 +141,22 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "params" field in the fields.instruction option of the "swap" event registration on contract "Swapper". Valid instruction fields: args, accounts, accountArguments, discriminator.\`,
+      \`Invalid "params" field in the fields.instruction option of the "swap" event registration on contract "Swapper". Valid instruction fields: args, accounts, accountArguments, programId, data, path, isInner.\`,
+    );
+  });
+
+  it("rejects discriminator as a selectable instruction field", (t) => {
+    t.expect(() =>
+      indexer.onInstruction(
+        {
+          program: "Swapper",
+          instruction: "swap",
+          fields: { instruction: ["discriminator" as never] },
+        },
+        async () => {},
+      ),
+    ).toThrowError(
+      \`Invalid "discriminator" field in the fields.instruction option of the "swap" event registration on contract "Swapper". Valid instruction fields: args, accounts, accountArguments, programId, data, path, isInner.\`,
     );
   });
 });
@@ -222,21 +239,29 @@ expectType<SvmOnSlotFilter>(_empty);
     check(`
 import type {
   SvmAccountActivity,
+  SvmAccountTokenActivity,
+  SvmBlockWithoutInstruction,
   SvmInstruction,
   SvmInstructionAccount,
-  SvmInstructionBlock,
   SvmLog,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
+type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
+  ? true
+  : false;
+
 expectType<TypeEqual<SvmInstruction["programName"], string>>(true);
 expectType<TypeEqual<SvmInstruction["instructionName"], string>>(true);
-expectType<TypeEqual<SvmInstruction["programId"], string>>(true);
-expectType<TypeEqual<SvmInstruction["data"], string>>(true);
-expectType<TypeEqual<SvmInstruction["isInner"], boolean>>(true);
-expectType<TypeEqual<SvmInstruction["instructionAddress"], readonly number[]>>(true);
+expectType<TypeEqual<SvmInstruction["discriminator"], string>>(true);
+expectType<IsNotSelected<SvmInstruction["programId"]>>(true);
+expectType<IsNotSelected<SvmInstruction["data"]>>(true);
+expectType<IsNotSelected<SvmInstruction["path"]>>(true);
+expectType<IsNotSelected<SvmInstruction["isInner"]>>(true);
 
-expectType<TypeEqual<SvmInstructionBlock["slot"], number>>(true);
+expectType<TypeEqual<SvmBlockWithoutInstruction["slot"], number>>(true);
+expectType<TypeEqual<SvmBlockWithoutInstruction["time"], number>>(true);
+expectType<TypeEqual<SvmAccountTokenActivity["mint"], string>>(true);
 
 expectType<
   TypeEqual<
@@ -273,7 +298,7 @@ expectType<
       readonly address: string;
       readonly accountName: string;
       readonly instructionAccountIndex: number;
-      readonly activity: SvmAccountActivity | undefined;
+      readonly activity: undefined;
     }
   >
 >(true);
@@ -295,12 +320,22 @@ type _Extra = import("envio").SvmInstructionParams;
 type _Tb = import("envio").SvmTokenBalance;
 // @ts-expect-error - SvmAccount left-join type is gone
 type _Acc = import("envio").SvmAccount;
+// @ts-expect-error - instructionAddress was renamed to path
+type _Addr = SvmInstruction["instructionAddress"];
+// @ts-expect-error - SvmInstructionWithFields is gone
+type _With = import("envio").SvmInstructionWithFields;
+// @ts-expect-error - SvmAllTransactionFields is gone
+type _AllTx = import("envio").SvmAllTransactionFields;
+// @ts-expect-error - SvmInstructionBlock is gone
+type _OldBlock = import("envio").SvmInstructionBlock;
+// @ts-expect-error - SvmTokenAll is gone
+type _TokenAll = import("envio").SvmTokenAll;
 `)
   )
 
   it("generated program table carries only schema args and accounts", _ =>
     check(`
-import type { Global, SvmAllTransactionFields, SvmTransaction } from "envio";
+import type { Global, SvmTransaction } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 type Programs = Global extends { config: { svm: { programs: infer P } } } ? P : never;
@@ -314,7 +349,8 @@ type _Tx = Swap["transaction"];
 // @ts-expect-error - block is not config-bound; handler fields.block selects it
 type _Block = Swap["block"];
 
-expectType<TypeEqual<SvmTransaction, SvmAllTransactionFields>>(true);
+expectType<TypeEqual<SvmTransaction["signature"], string>>(true);
+expectType<TypeEqual<keyof SvmTransaction, "transactionIndex" | "signature" | "feePayer" | "success" | "err" | "fee" | "computeUnitsConsumed" | "accountKeys" | "recentBlockhash" | "version" | "allSignatures">>(true);
 `)
   )
 
@@ -334,13 +370,18 @@ if (0) {
       expectType<IsNotSelected<typeof instruction.args>>(true);
       expectType<IsNotSelected<typeof instruction.accounts>>(true);
       expectType<IsNotSelected<typeof instruction.accountArguments>>(true);
-      expectType<IsNotSelected<typeof instruction.discriminator>>(true);
+      expectType<IsNotSelected<typeof instruction.programId>>(true);
+      expectType<IsNotSelected<typeof instruction.data>>(true);
+      expectType<IsNotSelected<typeof instruction.path>>(true);
+      expectType<IsNotSelected<typeof instruction.isInner>>(true);
       expectType<IsNotSelected<typeof instruction.logs>>(true);
       expectType<IsNotSelected<typeof instruction.transaction.signature>>(true);
       expectType<IsNotSelected<typeof instruction.transaction.accountActivities>>(true);
       expectType<IsNotSelected<typeof instruction.block.hash>>(true);
       expectType<TypeEqual<typeof instruction.block.slot, number>>(true);
       expectType<TypeEqual<typeof instruction.programName, string>>(true);
+      expectType<TypeEqual<typeof instruction.instructionName, string>>(true);
+      expectType<TypeEqual<typeof instruction.discriminator, string>>(true);
       // @ts-expect-error - d1 is gone from the payload
       instruction.d1;
     },
@@ -364,7 +405,7 @@ if (0) {
       program: "Swapper",
       instruction: "swap",
       fields: {
-        instruction: ["args", "accounts", "accountArguments", "discriminator"],
+        instruction: ["args", "accounts", "accountArguments", "programId", "data", "path", "isInner"],
         transaction: ["signature", "accountKeys"],
         accountActivity: ["transactionAccountIndex", "lamports.post", "token.mint"],
         block: ["hash", "time"],
@@ -378,6 +419,10 @@ if (0) {
       expectType<TypeEqual<typeof instruction.accounts.source.instructionAccountIndex, number>>(true);
       expectType<TypeEqual<typeof instruction.accountArguments, readonly string[]>>(true);
       expectType<TypeEqual<typeof instruction.discriminator, string>>(true);
+      expectType<TypeEqual<typeof instruction.programId, string>>(true);
+      expectType<TypeEqual<typeof instruction.data, string>>(true);
+      expectType<TypeEqual<typeof instruction.path, readonly number[]>>(true);
+      expectType<TypeEqual<typeof instruction.isInner, boolean>>(true);
       expectType<TypeEqual<typeof instruction.transaction.signature, string>>(true);
       expectType<TypeEqual<typeof instruction.transaction.accountKeys, readonly string[]>>(true);
       expectType<TypeEqual<typeof instruction.transaction.accountActivities[number]["address"], string>>(true);
@@ -390,7 +435,7 @@ if (0) {
       expectType<TypeEqual<typeof instruction.logs[number]["kind"], "invoke" | "success" | "failed" | "consumed" | "log" | "data" | (string & {})>>(true);
       expectType<TypeEqual<typeof instruction.logs[number]["message"], string>>(true);
       expectType<TypeEqual<typeof instruction.block.hash, string>>(true);
-      expectType<TypeEqual<typeof instruction.block.time, number | undefined>>(true);
+      expectType<TypeEqual<typeof instruction.block.time, number>>(true);
       expectType<TypeEqual<typeof instruction.block.slot, number>>(true);
       expectType<IsNotSelected<typeof instruction.block.height>>(true);
     },

@@ -168,8 +168,9 @@ pub const LOG: &[HandlerField] = &[
 ];
 
 /// Instruction handler fields do not add HyperSync columns of their own.
-/// Routing and the always-on payload fields use [`INSTRUCTION_REQUIRED`];
-/// `accounts` / `accountArguments` add `account_arguments` when selected.
+/// Routing uses [`INSTRUCTION_REQUIRED`]; `accounts` / `accountArguments`
+/// add `account_arguments` when selected. `programId` / `data` / `path` /
+/// `isInner` are payload-only — already covered by the required query set.
 pub const INSTRUCTION: &[HandlerField] = &[
     HandlerField {
         js_name: "args",
@@ -184,7 +185,19 @@ pub const INSTRUCTION: &[HandlerField] = &[
         columns: &[],
     },
     HandlerField {
-        js_name: "discriminator",
+        js_name: "programId",
+        columns: &[],
+    },
+    HandlerField {
+        js_name: "data",
+        columns: &[],
+    },
+    HandlerField {
+        js_name: "path",
+        columns: &[],
+    },
+    HandlerField {
+        js_name: "isInner",
         columns: &[],
     },
 ];
@@ -194,8 +207,9 @@ pub const TX_KEYS: &[&str] = &["slot", "transaction_index"];
 pub const ACTIVITY_KEYS: &[&str] = &["slot", "transaction_index", "account"];
 pub const LOG_KEYS: &[&str] = &["slot", "transaction_index", "instruction_address"];
 
-/// Always fetched: routing plus the instruction fields that always sit on the
-/// payload (`programId`, `data`, `instructionAddress`, `isInner`).
+/// Always fetched for routing and join keys. Handler `fields.instruction`
+/// then decides which of `programId` / `data` / `path` / `isInner` land on
+/// the payload. HyperSync column is `instruction_address`; handler field is `path`.
 ///
 /// `d1`–`d8` and `a0`–`a9` are not listed — prefixes are derived from `data`,
 /// and account filters ride the query selection, not the response columns.

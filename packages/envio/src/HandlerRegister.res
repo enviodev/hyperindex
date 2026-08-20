@@ -304,7 +304,7 @@ let addOnEventRegistration = (
     | Evm =>
       Some(
         EventConfigBuilder.resolveInlineFieldSelection(
-          fields,
+          fields->(Utils.magic: Internal.fieldsSelection => Internal.evmFieldsSelection),
           ~contractName,
           ~eventName,
           ~enableRawEvents=registration.config.enableRawEvents,
@@ -312,7 +312,11 @@ let addOnEventRegistration = (
       )
     | Svm =>
       Some(
-        EventConfigBuilder.resolveSvmInlineFieldSelection(fields, ~contractName, ~eventName),
+        EventConfigBuilder.resolveSvmInlineFieldSelection(
+          fields,
+          ~contractName,
+          ~eventName,
+        ),
       )
     | Fuel =>
       JsError.throwWithMessage(

@@ -318,12 +318,12 @@ let svmSelectionKinds = ["instruction", "transaction", "accountActivity", "block
 // dropping every field `config.yaml` selected. Rejected here so the option is
 // held to the same shape whether or not the project type-checks it.
 let validateFieldsShapeOrThrow = (
-  fields: Internal.evmFieldsSelection,
+  fields: 'fields,
   ~registration: string,
   ~validKeys: array<string>,
   ~shapeNoun: string,
 ) => {
-  let raw = fields->(Utils.magic: Internal.evmFieldsSelection => unknown)
+  let raw = fields->(Utils.magic: 'fields => unknown)
   if typeof(raw) !== #object || raw === %raw(`null`) || Array.isArray(raw) {
     JsError.throwWithMessage(
       `The fields option of ${registration} must be an object of ${shapeNoun} field names.`,
@@ -519,7 +519,15 @@ let buildEvmOnEventRegistration = (
 // whether or not the handler listed it.
 let alwaysIncludedSvmBlockFields = ["slot"]
 
-let validSvmInstructionFields = Utils.Set.fromArray(["args", "accounts", "accountArguments", "discriminator"])
+let validSvmInstructionFields = Utils.Set.fromArray([
+  "args",
+  "accounts",
+  "accountArguments",
+  "programId",
+  "data",
+  "path",
+  "isInner",
+])
 let validSvmTransactionFields = Utils.Set.fromArray(
   Internal.svmHandlerTransactionFields->(Utils.magic: array<Internal.svmTransactionField> => array<string>),
 )
@@ -544,7 +552,7 @@ let validSvmBlockFields = Utils.Set.fromArray(
 let validSvmLogFields = Utils.Set.fromArray(["kind", "message"])
 
 let resolveSvmInlineFieldSelection = (
-  fields: Internal.evmFieldsSelection,
+  fields: Internal.svmFieldsSelection,
   ~contractName: string,
   ~eventName: string,
 ): Internal.fieldSelection => {

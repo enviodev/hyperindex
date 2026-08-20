@@ -54,8 +54,12 @@ let selectedLog = (log: SvmHyperSyncClient.EventItems.log, ~logFields: Utils.Set
   out->(Utils.magic: dict<string> => Envio.svmLog)
 }
 
+let setField = (out: dict<unknown>, name: string, value: 'a) =>
+  out->Dict.set(name, value->(Utils.magic: 'a => unknown))
+
 // `block` and `transaction` are omitted; they're materialised from the stores
 // at batch prep. Named-account `.activity` is attached then too.
+// Unselected instruction keys must be omitted, not assigned `undefined`.
 let toSvmInstruction = (
   item: SvmHyperSyncClient.EventItems.item,
   ~programName,
@@ -75,43 +79,43 @@ let toSvmInstruction = (
     | _ => item.data
     }
   }
-  {
-    programName,
-    instructionName,
-    programId: item.programId->SvmTypes.Pubkey.fromStringUnsafe,
-    data: item.data,
-    instructionAddress: item.instructionAddress,
-    isInner: item.isInner,
-    args: ?if hasInstruction("args") {
-      item.decoded->Option.map(parseArgs)
-    } else {
-      None
-    },
-    accounts: ?if hasInstruction("accounts") {
-      Some(namedAccounts(~idlNames=eventConfig.accounts, ~accountArguments=item.accounts))
-    } else {
-      None
-    },
-    accountArguments: ?if hasInstruction("accountArguments") {
-      Some(item.accounts->SvmTypes.Pubkey.fromStringsUnsafe)
-    } else {
-      None
-    },
-    discriminator: ?if hasInstruction("discriminator") {
-      Some(discriminator)
-    } else {
-      None
-    },
-    logs: ?if fieldSelection.logFields->Utils.Set.size > 0 {
-      Some(
-        item.logs
-        ->Option.getOr([])
-        ->Array.map(log => selectedLog(log, ~logFields=fieldSelection.logFields)),
-      )
-    } else {
-      None
-    },
+  let out = Dict.make()
+  out->setField("programName", programName)
+  out->setField("instructionName", instructionName)
+  out->setField("discriminator", discriminator)
+  if hasInstruction("programId") {
+    out->setField("programId", item.programId->SvmTypes.Pubkey.fromStringUnsafe)
   }
+  if hasInstruction("data") {
+    out->setField("data", item.data)
+  }
+  if hasInstruction("path") {
+    out->setField("path", item.instructionAddress)
+  }
+  if hasInstruction("isInner") {
+    out->setField("isInner", item.isInner)
+  }
+  if hasInstruction("args") {
+    out->setField("args", item.decoded->Option.map(parseArgs))
+  }
+  if hasInstruction("accounts") {
+    out->setField(
+      "accounts",
+      namedAccounts(~idlNames=eventConfig.accounts, ~accountArguments=item.accounts),
+    )
+  }
+  if hasInstruction("accountArguments") {
+    out->setField("accountArguments", item.accounts->SvmTypes.Pubkey.fromStringsUnsafe)
+  }
+  if fieldSelection.logFields->Utils.Set.size > 0 {
+    out->setField(
+      "logs",
+      item.logs
+      ->Option.getOr([])
+      ->Array.map(log => selectedLog(log, ~logFields=fieldSelection.logFields)),
+    )
+  }
+  out->(Utils.magic: dict<unknown> => Envio.svmInstruction)
 }
 
 let make = (

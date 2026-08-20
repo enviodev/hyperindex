@@ -775,20 +775,29 @@ let getItemChainId = item =>
   | Block({onBlockRegistration: {chainId}}) => chainId
   }
 
-// The `fields` option of an `onEvent`/`onInstruction` registration. EVM uses
-// `block`/`transaction`; SVM also uses `instruction`/`accountActivity`/`log`.
+// The `fields` option of an `onEvent` registration. EVM (and Fuel, which
+// rejects `fields` at registration) only names block and transaction.
 type evmFieldsSelection = {
   block?: array<string>,
   transaction?: array<string>,
+}
+
+// The `fields` option of an `onInstruction` registration.
+type svmFieldsSelection = {
   instruction?: array<string>,
+  transaction?: array<string>,
   accountActivity?: array<string>,
+  block?: array<string>,
   log?: array<string>,
 }
+
+// JS `fields` object. EVM reads block/transaction; SVM reads the rest.
+type fieldsSelection = svmFieldsSelection
 
 type eventOptions<'where> = {
   wildcard?: bool,
   where?: 'where,
-  fields?: evmFieldsSelection,
+  fields?: fieldsSelection,
 }
 
 type fuelSupplyParams = {
