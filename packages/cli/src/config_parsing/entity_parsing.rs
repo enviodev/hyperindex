@@ -693,8 +693,8 @@ impl Entity {
             .context(format!("Failed parsing fields on entity {name}"))?;
 
         let (postgres, clickhouse) = parse_storage_directive(obj)?;
-        let cross_chain = parse_cross_chain_directive(obj)?;
-        let internal = parse_internal_directive(obj)?;
+        let cross_chain = parse_flag_directive(obj, "crossChain")?;
+        let internal = parse_flag_directive(obj, "internal")?;
 
         Self::new(
             name,
@@ -824,14 +824,16 @@ const STORAGE_DIRECTIVE_HINT: &str =
      @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \
      \"timestamp + INTERVAL 2 YEAR\"}).";
 
-/// Parse the optional `@crossChain` directive on an entity. It takes no
-/// arguments — whether it is legal at all depends on the config's
-/// `disable_default_cross_chain`, which is checked in `system_config.rs`.
-fn parse_cross_chain_directive(obj: &ObjectType<String>) -> anyhow::Result<bool> {
+/// Parse an optional argument-free entity directive (`@crossChain`,
+/// `@internal`): present at most once, with no arguments. Their semantics are
+/// checked elsewhere — `@crossChain` legality depends on the config's
+/// `disable_default_cross_chain`, and `@internal` relationship rules live in
+/// `system_config.rs`.
+fn parse_flag_directive(obj: &ObjectType<String>, directive_name: &str) -> anyhow::Result<bool> {
     let directives: Vec<&Directive<'_, String>> = obj
         .directives
         .iter()
-        .filter(|directive| directive.name == "crossChain")
+        .filter(|directive| directive.name == directive_name)
         .collect();
 
     match directives.len() {
@@ -840,7 +842,8 @@ fn parse_cross_chain_directive(obj: &ObjectType<String>) -> anyhow::Result<bool>
             let directive = directives[0];
             if let Some((arg_name, _)) = directive.arguments.first() {
                 return Err(anyhow!(
-                    "Invalid @crossChain directive on `{}`. It takes no arguments, but got `{}`.",
+                    "Invalid @{directive_name} directive on `{}`. It takes no arguments, but got \
+                     `{}`.",
                     obj.name,
                     arg_name
                 ));
@@ -848,40 +851,8 @@ fn parse_cross_chain_directive(obj: &ObjectType<String>) -> anyhow::Result<bool>
             Ok(true)
         }
         _ => Err(anyhow!(
-            "Invalid @crossChain directive on `{}`. Only one @crossChain directive is allowed per \
-             entity.",
-            obj.name
-        )),
-    }
-}
-
-/// Parse the optional `@internal` directive on an entity. It takes no
-/// arguments. An internal entity is stored and usable in handlers as normal,
-/// but never tracked in Hasura, so it has no GraphQL surface. Relationships
-/// from non-internal entities to it are rejected in `system_config.rs`.
-fn parse_internal_directive(obj: &ObjectType<String>) -> anyhow::Result<bool> {
-    let directives: Vec<&Directive<'_, String>> = obj
-        .directives
-        .iter()
-        .filter(|directive| directive.name == "internal")
-        .collect();
-
-    match directives.len() {
-        0 => Ok(false),
-        1 => {
-            let directive = directives[0];
-            if let Some((arg_name, _)) = directive.arguments.first() {
-                return Err(anyhow!(
-                    "Invalid @internal directive on `{}`. It takes no arguments, but got `{}`.",
-                    obj.name,
-                    arg_name
-                ));
-            }
-            Ok(true)
-        }
-        _ => Err(anyhow!(
-            "Invalid @internal directive on `{}`. Only one @internal directive is allowed per \
-             entity.",
+            "Invalid @{directive_name} directive on `{}`. Only one @{directive_name} directive is \
+             allowed per entity.",
             obj.name
         )),
     }

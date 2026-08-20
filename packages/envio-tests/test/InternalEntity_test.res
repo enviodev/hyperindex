@@ -1,7 +1,5 @@
 open Vitest
 
-// https://github.com/enviodev/hyperindex - @internal entities: stored and
-// usable in handlers, but never exposed through the GraphQL API.
 let parsed = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: internal-entities
