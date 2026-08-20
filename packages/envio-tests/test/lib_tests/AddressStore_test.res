@@ -264,13 +264,18 @@ describe("AddressStore", () => {
         {address: addr(1), contractName: "A", registrationBlock: 10},
       ])
 
-    t.expect(() => store->AddressStore.drainForWrite(20, [9])).toThrow()
+    let threw = try {
+      let _ = store->AddressStore.drainForWrite(20, [9])
+      false
+    } catch {
+    | _ => true
+    }
     t.expect(
       // The failed drain consumed nothing, so the registration is still there
       // to be written by a batch that does cover it.
-      store->AddressStore.pendingEntries->Array.map(ia => ia.address),
+      (threw, store->AddressStore.pendingEntries->Array.map(ia => ia.address)),
       ~message="a failed drain leaves the queue intact",
-    ).toEqual([addr(1)])
+    ).toEqual((true, [addr(1)]))
   })
 
   // https://github.com/enviodev/hyperindex/issues/1187

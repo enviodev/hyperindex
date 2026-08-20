@@ -55,8 +55,8 @@ type rejectedRow = {
 }
 
 // A registration the store handed over for persistence, paired with the
-// checkpoint that owns its row. `checkpointIdx` indexes the block numbers
-// passed to `drainForWrite` — the ids stay on the JS side.
+// checkpoint whose event registered it. `checkpointIdx` indexes the block
+// numbers passed to `drainForWrite` — the ids stay on the JS side.
 type drainedAddress = {
   // The raw store key, the same bytes the persisted row holds.
   address: NodeJs.Buffer.t,
@@ -102,8 +102,8 @@ let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool, ~contracts: array
 //
 // A contract whose events are all wildcard is fetched without consulting
 // addresses, so registering one changes nothing about what's queried — it
-// carries `dependsOnAddresses: false` just like a contract named only by
-// `configContractNames`. Either way the addresses are stored and persisted,
+// carries `dependsOnAddresses: false` just like a contract the config names but
+// registers no events for. Either way the addresses are stored and persisted,
 // never fetched.
 let contractsOf = (
   ~onEventRegistrations: array<Internal.onEventRegistration>,

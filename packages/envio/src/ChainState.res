@@ -489,7 +489,7 @@ let contractAddresses = (cs: t, ~contractName) =>
 
 // Hands over the dynamically registered addresses the database hasn't seen yet,
 // up to the block the caller is about to commit, each paired with the checkpoint
-// that owns its row. Destructive: the caller must persist them or take the
+// that registered it. Destructive: the caller must persist them or take the
 // indexer down. Throws with nothing consumed when a registration's block has no
 // checkpoint in the batch.
 let drainAddressesForWrite = (cs: t, ~toBlockInclusive, ~checkpointBlockNumbers) =>

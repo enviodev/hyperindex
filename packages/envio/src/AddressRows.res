@@ -52,9 +52,9 @@ let keyOf = (row: row): key => {
   contractId: row.contractId,
 }
 
-// The columnar form the address store seeds from. `isFixedWidth` is false only
-// for SVM, whose base58 keys vary in width and so need their lengths carried
-// alongside.
+// The columnar form the address store seeds from. `isFixedWidth` drops the
+// lengths column, which only a caller that knows every key is a fixed stride
+// may do — the resume path, which has the ecosystem to decide it.
 let seedRowsOf = (rows: array<row>, ~isFixedWidth: bool): seedRows => {
   addresses: NodeJs.Buffer.concat(rows->Array.map(row => row.address)),
   lengths: isFixedWidth

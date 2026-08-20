@@ -140,6 +140,9 @@ fn key_slices<'a>(
 ) -> napi::Result<Vec<&'a [u8]>> {
     let widths: Vec<usize> = match lengths {
         Some(lengths) => lengths.iter().map(|&len| len as usize).collect(),
+        // An empty column has no key to measure, so it needs no width — a chain
+        // with no stored addresses seeds one, SVM included.
+        None if bytes.is_empty() => Vec::new(),
         None => {
             let width = key_width(ecosystem).ok_or_else(|| {
                 napi::Error::from_reason("SVM addresses can only be read with their lengths.")
@@ -465,7 +468,7 @@ pub struct RolledBackAddress {
     pub contract_id: u32,
 }
 
-/// A drained registration paired with the checkpoint that must own its row.
+/// A drained registration paired with the checkpoint whose event registered it.
 /// The address crosses as the raw store key — the same bytes the
 /// `envio_addresses` row holds — so nothing outside this module encodes one.
 #[napi(object)]
@@ -1906,6 +1909,24 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    // A chain with no stored addresses seeds an empty column, and SVM carries no
+    // fixed key width to fall back on — asking for its contract's addresses must
+    // still answer with none rather than refuse to read the column.
+    #[test]
+    fn an_empty_column_renders_as_no_addresses_without_lengths() {
+        assert_eq!(
+            (
+                render_contract_addresses("svm".to_string(), false, vec![].into(), None, vec![], 0)
+                    .unwrap(),
+                render_addresses("svm".to_string(), false, vec![].into(), None).unwrap(),
+                split_addresses("svm".to_string(), vec![].into(), None)
+                    .unwrap()
+                    .len(),
+            ),
+            (Vec::<String>::new(), Vec::<String>::new(), 0)
+        );
     }
 
     #[test]
