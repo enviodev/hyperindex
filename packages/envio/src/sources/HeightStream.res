@@ -17,9 +17,9 @@ type driver = {
   // Traffic that proves the connection is alive without carrying a height.
   onKeepAlive: unit => unit,
   onHeight: int => unit,
-  // A message the transport couldn't read. Not a failure by itself, and
-  // deliberately not counted as traffic, but it is why the connection that
-  // follows goes quiet, so it names that failure.
+  // A message the transport couldn't read. Not a failure by itself, but from
+  // then on only a height we can read counts as the connection still being
+  // useful, so a stream of them goes quiet and fails as "unreadable".
   onUnreadable: unit => unit,
   onFailure: (~reason: string) => unit,
 }
@@ -156,7 +156,11 @@ let subscribe = (
           goLive()
         },
       onKeepAlive: () =>
-        if isCurrent() {
+        // Stops counting once something unreadable has arrived. A stream whose
+        // heights are all malformed would otherwise be held open indefinitely
+        // by the keep-alives between them, never failing and so never reporting
+        // anything, while its consumer sat on the staleness backstop.
+        if isCurrent() && !sawUnreadable.contents {
           armStaleTimeout()
         },
       onHeight: height =>
