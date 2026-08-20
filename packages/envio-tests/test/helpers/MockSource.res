@@ -285,6 +285,20 @@ let make = (
   let autoHeight = ref(None)
   let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
 
+  // A height call is outstanding until it is answered either way, so both sides
+  // are dropped together — otherwise `pendingHeightCalls` counts calls that have
+  // already been settled, and answering again re-settles a promise nobody is
+  // waiting on any more.
+  let clearHeightCalls = () => {
+    getHeightOrThrowResolveFns->Utils.Array.clearInPlace
+    getHeightOrThrowRejectFns->Utils.Array.clearInPlace
+  }
+  let answerHeightCalls = answer => {
+    let pending = getHeightOrThrowResolveFns->Utils.Array.copy
+    clearHeightCalls()
+    pending->Array.forEach(answer)
+  }
+
   // With the function we keep only the pending calls,
   // and remove the resolved ones automatically.
   let keepOnlyPendingCalls = (~array, ~onSettled, ~fn) => {
@@ -319,21 +333,16 @@ let make = (
       if getHeightOrThrowResolveFns->Utils.Array.isEmpty {
         JsError.throwWithMessage("getHeightOrThrowResolveFns is empty")
       }
-      let pending = getHeightOrThrowResolveFns->Utils.Array.copy
-      // Cleared as they are answered, so a second resolve with nothing
-      // outstanding says so instead of quietly re-settling answered promises.
-      getHeightOrThrowResolveFns->Utils.Array.clearInPlace
-      pending->Array.forEach(resolve => resolve({Source.height, requestStats: []}))
+      answerHeightCalls(resolve => resolve({Source.height, requestStats: []}))
     },
     setAutoHeight: height => {
       autoHeight := Some(height)
-      getHeightOrThrowResolveFns->Array.forEach(resolve =>
-        resolve({Source.height, requestStats: []})
-      )
-      getHeightOrThrowResolveFns->Utils.Array.clearInPlace
+      answerHeightCalls(resolve => resolve({Source.height, requestStats: []}))
     },
     rejectGetHeightOrThrow: exn => {
-      getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
+      let rejects = getHeightOrThrowRejectFns->Utils.Array.copy
+      clearHeightCalls()
+      rejects->Array.forEach(reject => reject(exn->Obj.magic))
     },
     getItemsOrThrowCalls,
     answeredQueries,

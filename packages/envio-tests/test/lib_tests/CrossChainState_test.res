@@ -239,7 +239,7 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~isRealtime=true)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+    cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
       dispatched->Array.push((chainId->ChainId.toInt, action))->ignore
       Promise.resolve()
     })
@@ -269,7 +269,7 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=100)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action as _) => {
+    cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action as _) => {
       dispatched->Array.push(chainId->ChainId.toInt)->ignore
       Promise.resolve()
     })
@@ -285,7 +285,7 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize=1)
 
     let dispatched = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+    cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
       dispatched
       ->Array.push((
         chainId->ChainId.toInt,
@@ -314,7 +314,7 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[buffered, fetching], ~targetBufferSize)
     let admitted = []
 
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+    cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
       switch action {
       | Ready(queries) =>
         admitted
@@ -354,7 +354,7 @@ describe("CrossChainState fetch control", () => {
     )
     let dispatched = []
 
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+    cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
       dispatched->Array.push((chainId->ChainId.toInt, action))->ignore
       Promise.resolve()
     })
@@ -378,7 +378,7 @@ describe("CrossChainState fetch control", () => {
     let cm = makeCrossChainState(~chainStatesList=[first, second, buffered], ~targetBufferSize=100)
     let firstTickQueries = []
 
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+    cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
       switch action {
       | Ready(queries) =>
         firstTickQueries->Array.push((chainId->ChainId.toInt, queries))->ignore
@@ -401,7 +401,7 @@ describe("CrossChainState fetch control", () => {
     )
 
     let secondTickChains = []
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+    cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
       switch action {
       | Ready(_) => secondTickChains->Array.push(chainId->ChainId.toInt)->ignore
       | _ => ()
@@ -488,7 +488,7 @@ describe("CrossChainState fetch control", () => {
       let cm = makeCrossChainState(~chainStatesList=[a, b], ~isRealtime, ~targetBufferSize=3000)
 
       let dispatchedItemsByChain = Dict.make()
-      await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+      cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
         dispatchedItemsByChain->ChainId.Dict.set(
           chainId,
           switch action {
@@ -537,7 +537,7 @@ describe("CrossChainState fetch control", () => {
       let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=3000)
 
       let actionsByChain = Dict.make()
-      await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+      cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
         actionsByChain->ChainId.Dict.set(
           chainId,
           switch action {
@@ -586,7 +586,7 @@ describe("CrossChainState fetch control", () => {
       )
 
       let estimatesByChain = Dict.make()
-      await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+      cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
         estimatesByChain->ChainId.Dict.set(
           chainId,
           switch action {
@@ -738,7 +738,7 @@ describe("ChainState cold start", () => {
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=10_000)
 
     let dispatchedItemsByChain = Dict.make()
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+    cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
       dispatchedItemsByChain->ChainId.Dict.set(
         chainId,
         switch action {
@@ -777,7 +777,7 @@ describe("ChainState cold start", () => {
     let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=10_000)
 
     let actionsByChain = Dict.make()
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+    cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
       actionsByChain->ChainId.Dict.set(
         chainId,
         switch action {
@@ -822,7 +822,7 @@ describe("ChainState cold start", () => {
     )
 
     let dispatchedItemsByChain = Dict.make()
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+    cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
       dispatchedItemsByChain->ChainId.Dict.set(
         chainId,
         switch action {
@@ -845,7 +845,7 @@ describe("ChainState cold start", () => {
       let cs = makeFetchingChainState(~chainId=1->ChainId.fromInt, ~knownHeight=1_000_000, ~latestFetchedBlock=0)
       let cm = makeCrossChainState(~chainStatesList=[cs], ~targetBufferSize)
       let dispatched = ref(0.)
-      await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId as _, ~action) => {
+      cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId as _, ~action) => {
         switch action {
         | Ready(queries) =>
           dispatched :=
@@ -909,7 +909,7 @@ describe("ChainState cold start", () => {
     )
 
     let itemsByChain = Dict.make()
-    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+    cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
       itemsByChain->ChainId.Dict.set(
         chainId,
         switch action {

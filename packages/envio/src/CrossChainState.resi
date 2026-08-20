@@ -38,7 +38,10 @@ let markReady: (t, ~readyAt: Date.t) => unit
 
 // Fetch control.
 let priorityOrder: t => array<ChainState.t>
+// Dispatches a fetch for every chain that has work and budget. Returns as soon
+// as they are all under way: each chain's fetch owns its error boundary and
+// re-enters the loop itself, so there is nothing here to wait for.
 let checkAndFetch: (
   t,
   ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
-) => promise<unit>
+) => unit

@@ -16,24 +16,23 @@ let launch = (state: IndexerState.t, work: unit => promise<unit>) =>
 // (fetch kicks process/rollback, which kick fetch again), so they're defined as
 // one `let rec` block and threaded into the operations as the only way back in.
 let start = (state: IndexerState.t) => {
-  // `checkAndFetch` fans out one fetch per chain and joins them, so each chain's
-  // fetch is its own unit of work and the join is a wait rather than work.
+  // `checkAndFetch` decides what to fetch and dispatches one per chain, so each
+  // chain's fetch is a unit of work in its own right; this frame covers only
+  // the decision.
   let rec scheduleFetch = () =>
-    launch(state, () =>
-      state->IndexerState.suspendInFlight(() =>
-        state
-        ->IndexerState.crossChainState
-        ->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) =>
-          state->IndexerState.trackInFlight(() =>
-            ChainFetching.fetchChain(
-              state,
-              chainId,
-              ~action,
-              ~stateId=state->IndexerState.epoch,
-              ~scheduleFetch,
-              ~scheduleProcessing,
-              ~scheduleRollback,
-            )
+    launch(state, async () =>
+      state
+      ->IndexerState.crossChainState
+      ->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) =>
+        state->IndexerState.trackInFlight(() =>
+          ChainFetching.fetchChain(
+            state,
+            chainId,
+            ~action,
+            ~stateId=state->IndexerState.epoch,
+            ~scheduleFetch,
+            ~scheduleProcessing,
+            ~scheduleRollback,
           )
         )
       )
