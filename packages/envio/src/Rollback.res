@@ -164,8 +164,7 @@ and executeRollback = async (
   ->Utils.Dict.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
     let fromBlock = cs->ChainState.committedProgressBlockNumber
-    rolledBackAddresses
-    ->Array.pushMany(
+    let killedAddresses =
       cs->ChainState.rollback(
         ~newProgressBlockNumber=newProgressBlockNumberPerChain->ChainId.Dict.dangerouslyGetNonOption(
           chainId,
@@ -175,9 +174,8 @@ and executeRollback = async (
         ),
         ~rollbackTargetBlockNumber,
         ~isReorgChain=chainId === reorgChain,
-      ),
-    )
-    ->ignore
+      )
+    rolledBackAddresses->Array.pushMany(killedAddresses)->ignore
     let toBlock = cs->ChainState.committedProgressBlockNumber
     if fromBlock !== toBlock {
       rolledBackChains

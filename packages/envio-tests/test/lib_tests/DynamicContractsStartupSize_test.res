@@ -51,8 +51,8 @@ describe("Dynamic contracts startup size", () => {
           let rowCount = 30_000_000
 
           let _ = await sql->Postgres.unsafe(
-            `INSERT INTO "${pgSchema}"."${InternalTable.EnvioAddresses.name}" ("chain_id", "address", "contract_id", "registration_block", "envio_checkpoint_id")
-  SELECT ${chainId->ChainId.toString}, decode(lpad(to_hex(g), 40, '0'), 'hex'), 0, 0, 0
+            `INSERT INTO "${pgSchema}"."${InternalTable.EnvioAddresses.name}" ("chain_id", "address", "contract_id", "registration_block")
+  SELECT ${chainId->ChainId.toString}, decode(lpad(to_hex(g), 40, '0'), 'hex'), 0, 0
   FROM generate_series(1, ${rowCount->Int.toString}) AS g
   ON CONFLICT DO NOTHING;`,
           )

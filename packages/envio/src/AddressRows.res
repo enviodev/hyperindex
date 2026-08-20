@@ -3,8 +3,7 @@
 // Rust address store encodes — never as a rendered string, so the bytes a row
 // holds and the bytes the store keys on can't fork.
 
-// The primary key of a stored address: what a rollback deletes by, and what the
-// in-memory storages dedupe on.
+// The primary key of a stored address: what a rollback deletes by.
 type key = {
   chainId: ChainId.t,
   address: NodeJs.Buffer.t,
@@ -19,10 +18,8 @@ type row = {
   registrationBlock: int,
 }
 
-// A row on its way to storage, with the checkpoint whose event registered it.
-// That checkpoint decides which write covers the row (and which checkpoint the
-// test indexer reports it under); it is never stored, because a rollback
-// deletes by primary key rather than by checkpoint.
+// A row on its way to storage. The checkpoint that registered it decides which
+// write covers it, and is never stored: a rollback deletes by primary key.
 type staged = {
   row: row,
   checkpointId: Internal.checkpointId,

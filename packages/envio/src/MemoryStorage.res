@@ -286,12 +286,13 @@ let backfillHistory = (
 let applyRollback = (state: t, ~targetCheckpointId, ~rolledBackAddresses) => {
   state.checkpoints = state.checkpoints->Array.filter(cp => cp.id <= targetCheckpointId)
   // Addresses are removed by primary key, exactly like the Postgres delete.
-  let dead = rolledBackAddresses->Array.map(AddressRows.storageKey)->Utils.Set.fromArray
+  rolledBackAddresses->Array.forEach(key =>
+    state.addressKeys->Utils.Set.delete(key->AddressRows.storageKey)->ignore
+  )
   state.addresses =
-    state.addresses->Array.filter(row => {
-      let key = row->AddressRows.keyOf->AddressRows.storageKey
-      dead->Utils.Set.has(key) ? state.addressKeys->Utils.Set.delete(key)->ignore->(_ => false) : true
-    })
+    state.addresses->Array.filter(row =>
+      state.addressKeys->Utils.Set.has(row->AddressRows.keyOf->AddressRows.storageKey)
+    )
   state.history
   ->Dict.toArray
   ->Array.forEach(((name, rows)) =>

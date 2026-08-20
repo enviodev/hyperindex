@@ -82,7 +82,7 @@ let row = (~address: Address.t, ~contractName, ~registrationBlock): AddressRows.
 }
 
 let storedRows = async (~pgSchema) => {
-  let rows: array<InternalTable.EnvioAddresses.rawRow> = await sql->Postgres.unsafe(
+  let rows: array<AddressRows.row> = await sql->Postgres.unsafe(
     InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema),
   )
   let rendered = Core.getAddon().renderAddresses(

@@ -389,7 +389,7 @@ let run = async (
       queryAddresses: async () => {
         let rows = switch pg {
         | None =>
-          memoryState.addresses->Array.map((row): InternalTable.EnvioAddresses.rawRow => {
+          memoryState.addresses->Array.map((row): AddressRows.row => {
             chainId: row.chainId,
             address: row.address,
             contractId: row.contractId,
@@ -398,7 +398,7 @@ let run = async (
         | Some({sql, pgSchema}) =>
           (await sql->Postgres.unsafe(
             InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema),
-          ))->(Utils.magic: unknown => array<InternalTable.EnvioAddresses.rawRow>)
+          ))->(Utils.magic: unknown => array<AddressRows.row>)
         }
         let contractNames = Config.canonicalContractNames(
           ~chainConfigs=config.chainMap->ChainMap.values,

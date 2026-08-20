@@ -146,8 +146,6 @@ WHERE "${table.tableName}"."chain_id" = dead.chain_id
     )
     ->Utils.Promise.ignoreValue
 
-  type rawRow = AddressRows.row
-
   let makeGetRowsQuery = (~pgSchema) =>
     `SELECT "chain_id" as "chainId",
 "address" as "address",
@@ -366,7 +364,7 @@ FROM "${pgSchema}"."${table.tableName}";`
       ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>),
       sql
       ->Postgres.unsafe(EnvioAddresses.makeGetRowsQuery(~pgSchema))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<EnvioAddresses.rawRow>>),
+      ->(Utils.magic: promise<array<unknown>> => promise<array<AddressRows.row>>),
     ))
 
     let addressRowsByChainId =
