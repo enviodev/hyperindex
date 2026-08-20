@@ -638,16 +638,25 @@ let getSourceNewHeight = async (
           !settled.contents &&
           status.contents !== Done &&
           sourceState.heightStreamCatchUps === catchUpsWhenTriggered
+        let pollRetry = ref(0)
         while shouldPoll() {
-          try {
+          let interval = try {
             let res = await source.getHeightOrThrow()
             sourceState->recordRequestStats(res.requestStats)
             h := res.height
+            pollRetry := 0
+            pollingInterval()
           } catch {
-          | _ => ()
+          | _ =>
+            // An endpoint whose stream just dropped is often the one failing
+            // these too, so escalate the way the no-subscription branch does
+            // rather than asking again every polling interval.
+            let retryInterval = sourceManager.getHeightRetryInterval(~retry=pollRetry.contents)
+            pollRetry := pollRetry.contents + 1
+            retryInterval
           }
           if shouldPoll() {
-            await Utils.delay(pollingInterval())
+            await Utils.delay(interval)
           }
         }
         h.contents

@@ -103,9 +103,9 @@ let subscribe = (
     //
     // The staleness path satisfies this by construction, so those failures
     // never escalate. That is what a chain whose blocks are further apart than
-    // the timeout needs, and it costs nothing on an endpoint that is simply
-    // silent, because reaching the timeout is what already spaces those retries
-    // a whole window apart.
+    // the timeout needs, and it costs nothing on an endpoint that is silent or
+    // unreadable either, because reaching the timeout is what already spaces
+    // those retries a whole window apart.
     if Performance.now() -. connectionStartedAt.contents >= staleTimeout->Int.toFloat {
       failureCount := 0
     }

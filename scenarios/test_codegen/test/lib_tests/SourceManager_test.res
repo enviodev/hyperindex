@@ -3222,6 +3222,46 @@ describe("SourceManager height subscription", () => {
     t.expect((pollsLater - pollsAfterReconnect, await waiting)).toStrictEqual((0, 102))
   })
 
+  Async.it("Backs the fallback off when the source keeps failing", async t => {
+    let pollingInterval = 10
+    let retryInterval = 300
+    let mock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval,
+    )
+    let sourceManager = SourceManager.make(
+      ~isRealtime=true,
+      ~sources=[mock.source],
+      ~newBlockStallTimeoutRealtime=5_000,
+      ~getHeightRetryInterval=(~retry as _) => retryInterval,
+    )
+    await subscribeAndGoLive(mock, sourceManager, ~knownHeight=100)
+
+    let waiting =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=true,
+        ~knownHeight=101,
+        ~reducedPolling=false,
+      )
+    await Utils.delay(0)
+    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    await Utils.delay(0)
+    let pollsBefore = mock.getHeightOrThrowCalls->Array.length
+
+    // The endpoint whose stream just dropped fails these too. Asking again every
+    // polling interval would issue one per round here; the retry interval is far
+    // longer than the whole window.
+    for _round in 1 to 5 {
+      mock.rejectGetHeightOrThrow("height unavailable")
+      await Utils.delay(pollingInterval)
+    }
+    let pollsDuringBackoff = mock.getHeightOrThrowCalls->Array.length - pollsBefore
+
+    mock.triggerHeightSubscription(102)
+
+    t.expect((pollsDuringBackoff, await waiting)).toStrictEqual((0, 102))
+  })
+
   Async.it("Polls once on reconnect to pick up a height missed while down", async t => {
     let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
@@ -3386,6 +3426,9 @@ describe("SourceManager height subscription", () => {
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=5_000,
+      // Retry at the polling cadence, so this stays about whether the loop is
+      // still running rather than about how far it backs off.
+      ~getHeightRetryInterval=(~retry as _) => pollingInterval,
     )
     await subscribeAndGoLive(mock, sourceManager, ~knownHeight=100)
 
