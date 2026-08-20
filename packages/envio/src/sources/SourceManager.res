@@ -41,7 +41,6 @@ let recordRequestStats = (sourceState: sourceState, requestStats: array<Source.r
   })
 }
 
-// Hand the height to everyone waiting on this source and remember it.
 let resolveHeight = (sourceState: sourceState, height: int) => {
   sourceState.knownHeight = height
   let resolvers = sourceState.pendingHeightResolvers
@@ -516,9 +515,10 @@ let disableSource = (sourceManager: t, sourceState: sourceState) => {
   }
 }
 
-// One-shot poll after the height subscription reconnects, closing the gap left
-// by heights emitted while it was down. Failures are ignored: the stream is
-// live again and the wait loop's own polling still covers the height.
+// One-shot poll on every height stream connect, closing the gap left by heights
+// emitted before this connection existed. A failure deliberately leaves the
+// count alone: the fallback poller retires against a completed catch-up, so not
+// counting a failed one is what keeps that poller going.
 let catchUpHeight = async (sourceState: sourceState) => {
   try {
     let res = await sourceState.source.getHeightOrThrow()
