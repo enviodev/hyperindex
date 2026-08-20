@@ -534,12 +534,12 @@ let hasInFlightDeficit = (state: t) => state.hasInFlightDeficit
 
 let isInFlightIdle = (state: t) => state.inFlight === 0 && !state.hasInFlightDeficit
 
-// Resolves the next time no loop work is running, and once when a deficit
-// latches — after that no idle reading is coming, so a waiter would never
-// return. Callers re-check the count after awaiting: work resolved in the same
-// tick can schedule more.
+// Resolves the next time no loop work is running. Callers re-check the count
+// after awaiting: work resolved in the same tick can schedule more — and once
+// a deficit has latched this returns at once without the loop being idle at
+// all, because no idle reading is coming and a waiter would never return.
 let whenIdle = (state: t): promise<unit> =>
-  if state->isInFlightIdle {
+  if state->isInFlightIdle || state.hasInFlightDeficit {
     Promise.resolve()
   } else {
     Promise.make((resolve, _) => {

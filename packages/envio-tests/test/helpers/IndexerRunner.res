@@ -221,6 +221,9 @@ let run = async (
       }
 
     let rec settleLoop = async (~timedOut) => {
+      // `whenIdle` returns at once on a latched deficit rather than waiting for
+      // an idle reading that can never come, so this catches one that predates
+      // the settle as well as one that lands during it.
       await state->IndexerState.whenIdle
       throwOnDeficit()
       await drainTick()
@@ -243,10 +246,6 @@ let run = async (
     }
 
     let settle = async () => {
-      // A deficit that predates the call would leave `whenIdle` waiting for an
-      // idle reading that can never come; one that appears during the settle
-      // releases the waiter and is caught inside the loop.
-      throwOnDeficit()
       let timeoutId = ref(None)
       let timedOut = ref(false)
       // Cleared whichever way the race ends: a timer left running holds the

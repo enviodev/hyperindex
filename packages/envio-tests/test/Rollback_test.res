@@ -2247,9 +2247,6 @@ describe("E2E rollback tests", () => {
       // We override to trigger reorg: block 100 hash changed
       // No getBlockHashes call needed: getThresholdBlockNumbersBelowBlock(~blockNumber=100) = []
       // so getHighestBlockBelowThreshold = 300 - 200 = 100 is used directly.
-      // Wait for the SetRollbackState tasks (NextQuery, ProcessEventBatch) to be scheduled
-      await indexer.settle()
-
       await indexer.settle()
 
       sourceMock1337.resolveGetItemsOrThrow(
@@ -2462,8 +2459,6 @@ describe("E2E rollback tests", () => {
         },
         ~resolveAt=#first,
       )
-
-      await indexer.settle()
 
       await indexer.settle()
 
@@ -2770,7 +2765,6 @@ describe("E2E rollback tests", () => {
       //    which dispatches NextQuery + ProcessEventBatch tasks
       // 3. NextQuery starts fetches, ProcessEventBatch creates batch
       // We need 3 delays to let all layers fire.
-      await indexer.settle()
       // After this delay:
       // - NextQuery started a fetch for block 102 — but both chains are
       //   equally behind now, so only the leader (chain 100, tie broken by
