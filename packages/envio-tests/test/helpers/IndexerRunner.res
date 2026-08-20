@@ -229,6 +229,10 @@ let run = async (
       // land on a schema that no longer exists.
       if !timedOut.contents {
         await state->Writing.flush
+        // Re-checked before deciding this round settled anything: a deficit
+        // that latched during the drain or the flush makes `inFlight > 0` read
+        // as quiet for a count that is anything but.
+        throwOnDeficit()
         if (
           !timedOut.contents &&
           (state->IndexerState.inFlight > 0 || state->IndexerState.writeFiber->Option.isSome)
