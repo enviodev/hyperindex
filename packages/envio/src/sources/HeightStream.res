@@ -126,11 +126,23 @@ let subscribe = (
     // the retry timeout rather than the other way around.
     armStaleTimeout()
 
+    // A height is proof the stream is delivering, so it reports Live as well as
+    // onConnected does. Without that, a transport that never reports the
+    // connection usable would leave its consumer polling at full rate next to a
+    // stream that works.
+    let reportedLive = ref(false)
+    let goLive = () => {
+      armStaleTimeout()
+      if !reportedLive.contents {
+        reportedLive := true
+        onStatus(Live)
+      }
+    }
+
     let driver = {
       onConnected: () =>
         if isCurrent() {
-          armStaleTimeout()
-          onStatus(Live)
+          goLive()
         },
       onKeepAlive: () =>
         if isCurrent() {
@@ -141,7 +153,7 @@ let subscribe = (
           // Reading a height proves the shape is fine again, so one stray
           // message doesn't relabel a failure hours later.
           sawUnreadable := false
-          armStaleTimeout()
+          goLive()
           onHeight(height)
         },
       onUnreadable: () =>

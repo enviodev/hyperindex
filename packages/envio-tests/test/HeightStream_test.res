@@ -180,6 +180,20 @@ describe("HeightStream reconnect driver", () => {
     ))
   })
 
+  Async.it("Treats a delivered height as proof the stream is live", async t => {
+    let harness = makeHarness()
+    let driver = harness->driverAt(0)
+
+    // A transport that delivers heights without ever reporting the connection
+    // usable would otherwise leave its consumer polling at full rate for the
+    // life of the process, next to a stream that works.
+    driver.onHeight(101)
+    driver.onHeight(102)
+    harness.unsubscribe()
+
+    t.expect((harness.statuses, harness.heights)).toStrictEqual((["live"], [101, 102]))
+  })
+
   Async.it("Keeps a connection alive on keep-alive traffic and on heights", async t => {
     let harness = makeHarness()
     let driver = harness->driverAt(0)
