@@ -173,11 +173,10 @@ describe("Non-string entity id — end-to-end via the in-process indexer", () =>
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetItemsOrThrow(
         [

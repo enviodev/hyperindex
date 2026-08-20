@@ -6,7 +6,8 @@
   "scripts": {
     "build": "rescript",
     "watch": "rescript watch",
-    "test": "rescript && vitest run"
+    "test": "node scripts/lint-determinism.mjs && rescript && vitest run",
+    "lint": "node scripts/lint-determinism.mjs"
   },
   "devDependencies": {
     "@rescript/runtime": "12.2.0",
