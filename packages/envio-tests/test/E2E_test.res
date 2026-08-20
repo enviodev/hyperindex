@@ -462,7 +462,7 @@ describe("E2E tests", () => {
     )
 
     sourceMock.resolveGetHeightOrThrow(300)
-    await indexer.settle()
+    await restarted.settle()
     sourceMock.resolveGetItemsOrThrow(
       [
         {
