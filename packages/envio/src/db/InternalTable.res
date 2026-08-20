@@ -69,7 +69,7 @@ SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(T
 
 // Every address the indexer indexes, one row per (chain, address, contract).
 // A dedicated table rather than an entity: rows are insert-only, so a rollback
-// is a delete by checkpoint and there's no history table to keep — which is
+// is a delete by primary key and there's no history table to keep — which is
 // what makes tens of millions of addresses affordable.
 module EnvioAddresses = {
   let name = "envio_addresses"

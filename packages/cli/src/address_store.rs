@@ -485,18 +485,14 @@ pub struct RolledBackAddress {
     pub contract_id: u32,
 }
 
-/// A drained registration paired with the checkpoint that must own its row.
-/// The address crosses as the raw store key — the same bytes the
-/// `envio_addresses` row holds — so nothing outside this module encodes one.
+/// A registration handed over for persistence. The address crosses as the raw
+/// store key — the same bytes the `envio_addresses` row holds — so nothing
+/// outside this module encodes one.
 #[napi(object)]
 pub struct DrainedAddress {
     pub address: Buffer,
     pub contract_id: u32,
     pub registration_block: i64,
-    /// Index into the `checkpoint_block_numbers` passed to `drain_for_write`.
-    /// The ids themselves are bigints the caller already holds, so only the
-    /// pairing crosses the boundary.
-    pub checkpoint_idx: u32,
 }
 
 /// A seeded row the store refused, rendered for the caller's warning. Only the
@@ -573,9 +569,10 @@ impl AddressStore {
     }
 
     /// Registers a batch of dynamic registrations, resolving each address
-    /// against both the store and the batch's own earlier entries, so two
-    /// contracts claiming one address inside a single batch conflict just as
-    /// they would across batches. What it adds is marked pending persistence.
+    /// against both the store and the batch's own earlier entries, so the same
+    /// address registered twice for one contract inside a single batch is a
+    /// duplicate just as it is across batches. What it adds is marked pending
+    /// persistence.
     #[napi]
     pub fn register_batch(
         &self,
@@ -671,19 +668,9 @@ impl AddressStore {
 
     /// Drains the registrations awaiting persistence whose registration block is
     /// at or below `to_block_inclusive` — everything the batch being written
-    /// covers — pairing each with the checkpoint at its registration block.
-    /// What sits above that block stays pending for a later batch.
-    ///
-    /// A drained registration with no checkpoint at its block means it came from
-    /// an event this batch never processed, so the caller has no write to
-    /// attribute it to. That errors with the queue untouched, so the caller can
-    /// fail without the store having lied about what is still pending.
+    /// covers. What sits above that block stays pending for a later batch.
     #[napi]
-    pub fn drain_for_write(
-        &self,
-        to_block_inclusive: i64,
-        checkpoint_block_numbers: Vec<i64>,
-    ) -> napi::Result<Vec<DrainedAddress>> {
+    pub fn drain_for_write(&self, to_block_inclusive: i64) -> Vec<DrainedAddress> {
         let mut store = self.inner.write().unwrap();
         let mut drained = Vec::new();
         let mut pending = Vec::new();
@@ -693,31 +680,17 @@ impl AddressStore {
                 pending.push(id);
                 continue;
             }
-            let Some(checkpoint_idx) = checkpoint_block_numbers
-                .iter()
-                .position(|&block| block == entry.registration_block)
-            else {
-                return Err(napi::Error::from_reason(format!(
-                    "Registered address {} at block {} has no checkpoint in the batch that writes \
-                     it.",
-                    address_string(store.ecosystem, &entry.key),
-                    entry.registration_block
-                )));
-            };
             drained.push(DrainedAddress {
                 address: entry.key.to_vec().into(),
                 contract_id: entry.contract_idx,
                 registration_block: entry.registration_block,
-                checkpoint_idx: checkpoint_idx as u32,
             });
         }
         store.unwritten = pending;
-        Ok(drained)
+        drained
     }
 
-    /// How many registrations await persistence. Lets the write path skip
-    /// assembling a batch's checkpoints for the common chain that registered
-    /// nothing.
+    /// How many registrations await persistence.
     #[napi]
     pub fn pending_count(&self) -> i64 {
         self.read().unwritten.len() as i64
@@ -1907,25 +1880,14 @@ mod tests {
             .collect()
     }
 
-    fn drained(
-        store: &AddressStore,
-        to_block: i64,
-        checkpoints: &[i64],
-    ) -> Vec<(String, i64, u32)> {
+    fn drained(store: &AddressStore, to_block: i64) -> Vec<(String, i64)> {
         let ecosystem = Ecosystem::Evm {
             should_checksum: false,
         };
         store
-            .drain_for_write(to_block, checkpoints.to_vec())
-            .unwrap()
+            .drain_for_write(to_block)
             .into_iter()
-            .map(|e| {
-                (
-                    address_string(ecosystem, &e.address),
-                    e.registration_block,
-                    e.checkpoint_idx,
-                )
-            })
+            .map(|e| (address_string(ecosystem, &e.address), e.registration_block))
             .collect()
     }
 
@@ -1940,33 +1902,11 @@ mod tests {
         assert_eq!(
             (
                 // The seeded address is already stored, so it never drains.
-                drained(&store, 300, &[100, 200]),
-                drained(&store, 300, &[100, 200]),
-                drained(&store, 400, &[400]),
+                drained(&store, 300),
+                drained(&store, 300),
+                drained(&store, 400),
             ),
-            (
-                vec![(B.to_string(), 200, 1)],
-                vec![],
-                vec![(C.to_string(), 400, 0)]
-            )
-        );
-    }
-
-    #[test]
-    fn draining_without_a_checkpoint_errors_and_keeps_the_queue() {
-        let store = store();
-        store
-            .register_batch(vec![reg(A, "C", 100), reg(B, "C", 200)])
-            .unwrap();
-
-        // Block 200 has no checkpoint: the batch never processed the event that
-        // registered B, so the row would be unreachable by a rollback.
-        assert!(store.drain_for_write(300, vec![100]).is_err());
-        // Nothing was consumed, so a retry with the right checkpoints still
-        // sees both — the failed drain didn't silently swallow A.
-        assert_eq!(
-            drained(&store, 300, &[100, 200]),
-            vec![(A.to_string(), 100, 0), (B.to_string(), 200, 1)]
+            (vec![(B.to_string(), 200)], vec![], vec![(C.to_string(), 400)])
         );
     }
 
@@ -1994,8 +1934,8 @@ mod tests {
         store.register_batch(vec![reg(B, "C", 500)]).unwrap();
 
         assert_eq!(
-            drained(&store, 1000, &[100, 500]),
-            vec![(A.to_string(), 100, 0), (B.to_string(), 500, 1)]
+            drained(&store, 1000),
+            vec![(A.to_string(), 100), (B.to_string(), 500)]
         );
     }
 

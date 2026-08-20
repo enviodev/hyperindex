@@ -816,8 +816,6 @@ let markCommitted = (state: t, ~upToCheckpointId) => {
 let stageRegisteredAddresses = (state: t, rows: array<AddressRows.staged>) =>
   state.registeredAddresses = state.registeredAddresses->Array.concat(rows)
 
-// The rows this write covers, each with the checkpoint it was registered at.
-// That checkpoint decides the window; it never reaches the table.
 let snapshotRegisteredAddresses = (state: t, ~upToCheckpointId) =>
   state.registeredAddresses->Array.filter(row => row.checkpointId <= upToCheckpointId)
 
@@ -838,6 +836,14 @@ let beginRollbackDiff = (
   state.registeredAddresses = []
   state->chainStates->Utils.Dict.forEach(cs => cs->ChainState.resetEntities(~perChainEntities))
   state.effectState->EffectState.resetForRollback
+  // The address store reports only what each rollback killed, and never
+  // re-reports a registration it already tombstoned. A rollback that lands
+  // before the previous one has been written must therefore carry the earlier
+  // keys too, or their rows outlive every rollback that could delete them.
+  let rolledBackAddresses = switch state.rollback {
+  | Some({rolledBackAddresses: pending}) => pending->Array.concat(rolledBackAddresses)
+  | None => rolledBackAddresses
+  }
   state.rollback = Some({
     targetCheckpointId,
     diffCheckpointId,

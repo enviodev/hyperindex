@@ -388,13 +388,7 @@ let run = async (
         ),
       queryAddresses: async () => {
         let rows = switch pg {
-        | None =>
-          memoryState.addresses->Array.map((row): AddressRows.row => {
-            chainId: row.chainId,
-            address: row.address,
-            contractId: row.contractId,
-            registrationBlock: row.registrationBlock,
-          })
+        | None => memoryState.addresses
         | Some({sql, pgSchema}) =>
           (await sql->Postgres.unsafe(
             InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema),

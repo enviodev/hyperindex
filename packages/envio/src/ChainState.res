@@ -403,38 +403,6 @@ let makeInternal = (
   )
 }
 
-let makeFromConfig = (
-  chainConfig: Config.chain,
-  ~config: Config.t,
-  ~contractNames,
-  ~registrationsByChainId,
-  ~knownHeight,
-) => {
-  let logger = Logging.createChild(~params={"chainId": chainConfig.id})
-
-  makeInternal(
-    ~chainConfig,
-    ~config,
-    ~contractNames,
-    ~registrationsByChainId,
-    ~startBlock=chainConfig.startBlock,
-    ~endBlock=chainConfig.endBlock,
-    ~reorgCheckpoints=[],
-    ~maxReorgDepth=chainConfig.maxReorgDepth,
-    ~progressBlockNumber=-1,
-    ~timestampCaughtUpToHeadOrEndblock=None,
-    ~numEventsProcessed=0.,
-    ~logger,
-    ~addressRows=chainConfig->configAddressRows(
-      ~ecosystem=config.ecosystem.name,
-      ~contractNames,
-    ),
-    ~isInReorgThreshold=false,
-    ~isRealtime=false,
-    ~knownHeight,
-  )
-}
-
 /**
  * This function allows a chain state to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
@@ -543,12 +511,10 @@ let contractAddresses = (cs: t, ~contractName) =>
   cs.addressStore->AddressStore.contractAddresses(contractName)
 
 // Hands over the dynamically registered addresses the database hasn't seen yet,
-// up to the block the caller is about to commit, each paired with the checkpoint
-// that owns its row. Destructive: the caller must persist them or take the
-// indexer down. Throws with nothing consumed when a registration's block has no
-// checkpoint in the batch.
-let drainAddressesForWrite = (cs: t, ~toBlockInclusive, ~checkpointBlockNumbers) =>
-  cs.addressStore->AddressStore.drainForWrite(toBlockInclusive, checkpointBlockNumbers)
+// up to the block the caller is about to commit. Destructive: the caller must
+// persist them or take the indexer down.
+let drainAddressesForWrite = (cs: t, ~toBlockInclusive) =>
+  cs.addressStore->AddressStore.drainForWrite(toBlockInclusive)
 let hasAddressesToWrite = (cs: t) => cs.addressStore->AddressStore.pendingCount > 0
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount

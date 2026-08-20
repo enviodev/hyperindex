@@ -66,8 +66,6 @@ module Process = {
   external getActiveResourcesInfo: unit => array<string> = "getActiveResourcesInfo"
 }
 
-// Node Buffers are only ever moved here — packed address keys crossing to the
-// Rust store and to Postgres. Nothing on this side reads their bytes.
 module Buffer = {
   type t
   @val @scope("Buffer") external concat: array<t> => t = "concat"

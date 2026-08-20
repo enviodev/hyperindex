@@ -18,8 +18,8 @@ type row = {
   registrationBlock: int,
 }
 
-// A row on its way to storage. The checkpoint that registered it decides which
-// write covers it, and is never stored: a rollback deletes by primary key.
+// A row on its way to storage, tagged with the checkpoint that decides which
+// write covers it. Never stored: a rollback deletes by primary key.
 type staged = {
   row: row,
   checkpointId: Internal.checkpointId,

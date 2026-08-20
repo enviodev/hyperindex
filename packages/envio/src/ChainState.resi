@@ -36,14 +36,6 @@ let make: (
   ~logger: Pino.t,
 ) => t
 
-let makeFromConfig: (
-  Config.chain,
-  ~config: Config.t,
-  ~contractNames: array<string>,
-  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
-  ~knownHeight: int,
-) => t
-
 let makeFromDbState: (
   Config.chain,
   ~resumedChainState: Persistence.initialChainState,
@@ -93,11 +85,7 @@ let setRollbackTargetBlock: (t, ~blockNumber: int) => unit
 // Fetch-frontier reads.
 let knownHeight: t => int
 let contractAddresses: (t, ~contractName: string) => array<Address.t>
-let drainAddressesForWrite: (
-  t,
-  ~toBlockInclusive: int,
-  ~checkpointBlockNumbers: array<int>,
-) => array<AddressStore.drainedAddress>
+let drainAddressesForWrite: (t, ~toBlockInclusive: int) => array<AddressStore.drainedAddress>
 let hasAddressesToWrite: t => bool
 let bufferSize: t => int
 let bufferReadyCount: t => int

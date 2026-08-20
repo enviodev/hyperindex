@@ -54,15 +54,11 @@ type rejectedRow = {
   existingEffectiveStartBlock: int,
 }
 
-// A registration the store handed over for persistence, paired with the
-// checkpoint that owns its row. `checkpointIdx` indexes the block numbers
-// passed to `drainForWrite` — the ids stay on the JS side.
 type drainedAddress = {
   // The raw store key, the same bytes the persisted row holds.
   address: NodeJs.Buffer.t,
   contractId: int,
   registrationBlock: int,
-  checkpointIdx: int,
 }
 
 type makeSetOptions = {
@@ -179,14 +175,9 @@ let seedRows = (store: t, rows: AddressRows.seedRows) =>
   store->seedRowsRaw(rows.addresses, rows.lengths, rows.contractIds, rows.registrationBlocks)
 
 // Drains the registrations awaiting persistence at or below the given block —
-// what the batch being written covers — pairing each with the checkpoint at its
-// registration block. Later registrations stay pending. Throws, with the queue
-// untouched, when a drained registration's block has no checkpoint in the batch.
-@send
-external drainForWrite: (t, int, array<int>) => array<drainedAddress> = "drainForWrite"
+// what the batch being written covers. Later registrations stay pending.
+@send external drainForWrite: (t, int) => array<drainedAddress> = "drainForWrite"
 
-// How many registrations await persistence — lets a caller skip the work of
-// assembling what `drainForWrite` needs.
 @send external pendingCount: t => int = "pendingCount"
 
 // The registrations still awaiting persistence. For assertions.

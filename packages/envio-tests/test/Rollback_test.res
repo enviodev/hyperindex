@@ -2027,6 +2027,83 @@ describe("E2E rollback tests", () => {
   )
 
   scenario->Scenario.it(
+    "Deletes a rolled back address when a second reorg lands before the write",
+    ~sources=[{chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await Utils.delay(0)
+
+      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+
+      sourceMock.resolveGetItemsOrThrow([])
+      await indexer.getBatchWritePromise()
+
+      sourceMock.resolveGetItemsOrThrow([
+        {
+          blockNumber: 102,
+          logIndex: 0,
+          contractRegister: async args => {
+            let context = args.context->asRegisterContext
+            context.chain.simpleNft.add(
+              Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
+            )
+          },
+          handler: async _ => (),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+      // The registration only reaches storage once the partition created for it
+      // has fetched the block that registered it.
+      sourceMock.resolveGetItemsOrThrow(
+        [{blockNumber: 102, logIndex: 1, handler: async _ => ()}],
+        ~resolveAt=#first,
+        ~latestFetchedBlockNumber=102,
+      )
+      await indexer.getBatchWritePromise()
+      t.expect(
+        (await queryDynamicAddresses(indexer))->Array.length,
+        ~message="the registration is stored before any reorg",
+      ).toEqual(1)
+
+      // First reorg: rolls back past block 102, so the address store drops the
+      // registration and hands its row over for deletion.
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+      sourceMock.resolveGetBlockHashes([
+        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+      ])
+      await indexer.getRollbackReadyPromise()
+
+      // Second reorg before any batch is written: the store has already
+      // tombstoned the registration, so it reports nothing this time round.
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~prevRangeLastBlock={blockNumber: 101, blockHash: "0x101a"},
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+      sourceMock.resolveGetBlockHashes([
+        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+      ])
+      await indexer.getRollbackReadyPromise()
+
+      sourceMock.resolveGetItemsOrThrow([])
+      await indexer.getBatchWritePromise()
+
+      t.expect(
+        await queryDynamicAddresses(indexer),
+        ~message="the write carries both rollbacks' deletions, not just the last one's",
+      ).toEqual([])
+    },
+  )
+
+  scenario->Scenario.it(
     "Double reorg should NOT cause negative event counter (regression test)",
     ~sources=[{chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
