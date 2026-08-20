@@ -73,6 +73,10 @@ type t = {
   // that reaches the FinalizingIndexes phase awaits this one instead of
   // starting a second pass over the same indexes.
   mutable finalizeFiber: option<promise<unit>>,
+  // The resume-time index repair, None when it isn't running. The loop never
+  // waits on it — it runs alongside indexing — but a shutdown does, so the DDL
+  // can't outlive the schema it is building in.
+  mutable repairFiber: option<promise<unit>>,
   // Set once a write throws, to stop the loop. The error itself goes to onError.
   mutable hasFailedWrite: bool,
   // Resolved after every commit so capacity/flush waiters can re-evaluate.
@@ -194,6 +198,7 @@ let make = (
     processedBatchesCount: 0,
     writeFiber: None,
     finalizeFiber: None,
+    repairFiber: None,
     hasFailedWrite: false,
     commitWaiters: [],
     chainMeta: Dict.make(),
@@ -500,6 +505,7 @@ let processedBatches = (state: t) => state.processedBatches
 let processedBatchesCount = (state: t) => state.processedBatchesCount
 let writeFiber = (state: t) => state.writeFiber
 let finalizeFiber = (state: t) => state.finalizeFiber
+let repairFiber = (state: t) => state.repairFiber
 let hasFailedWrite = (state: t) => state.hasFailedWrite
 let chainMetaDirty = (state: t) => state.chainMetaDirty
 let chainMetaThrottler = (state: t) => state.chainMetaThrottler
@@ -915,6 +921,8 @@ let endWriteFiber = (state: t) => state.writeFiber = None
 
 let beginFinalizeFiber = (state: t, fiber) => state.finalizeFiber = Some(fiber)
 let endFinalizeFiber = (state: t) => state.finalizeFiber = None
+let beginRepairFiber = (state: t, fiber) => state.repairFiber = Some(fiber)
+let endRepairFiber = (state: t) => state.repairFiber = None
 
 // Resolve and clear everyone waiting on a commit so they can re-evaluate.
 let wakeCommitWaiters = (state: t) => {

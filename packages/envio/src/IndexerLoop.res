@@ -49,7 +49,7 @@ let start = (state: IndexerState.t) => {
   // on purpose: it runs alongside indexing rather than gating it, and counting
   // it would make the whole indexer read as busy for the length of a rebuild.
   if state->IndexerState.isRealtime && !(state->IndexerState.isStopped) {
-    FinalizeBackfill.repairSchemaIndexes(state)->Promise.ignore
+    FinalizeBackfill.repairSchemaIndexes(state)
   }
 
   scheduleFetch()

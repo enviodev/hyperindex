@@ -89,6 +89,9 @@ let processedBatches: t => array<Batch.t>
 let processedBatchesCount: t => int
 let writeFiber: t => option<promise<unit>>
 let finalizeFiber: t => option<promise<unit>>
+// The resume-time index repair, which runs alongside indexing rather than
+// gating it. Awaited on shutdown so its DDL can't outlive the schema.
+let repairFiber: t => option<promise<unit>>
 let hasFailedWrite: t => bool
 let chainMetaDirty: t => bool
 let chainMetaThrottler: t => Throttler.t
@@ -164,6 +167,8 @@ let beginWriteFiber: (t, promise<unit>) => unit
 let endWriteFiber: t => unit
 let beginFinalizeFiber: (t, promise<unit>) => unit
 let endFinalizeFiber: t => unit
+let beginRepairFiber: (t, promise<unit>) => unit
+let endRepairFiber: t => unit
 let wakeCommitWaiters: t => unit
 let addCommitWaiter: (t, unit => unit) => unit
 let stageChainMeta: (t, dict<InternalTable.Chains.metaFields>) => unit

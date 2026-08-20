@@ -310,16 +310,20 @@ let run = async (
       let remaining = deadline -. Date.now()
       // A sliver of budget left is the condition never arriving, not a settle
       // worth starting — and a settle given no time reports its own timeout
-      // instead of what was being waited for.
+      // instead of what was being waited for. Checked once more first: the
+      // condition may have arrived during the wait that used the budget up.
       if remaining < 100. {
-        JsError.throwWithMessage(`Timed out waiting for ${message}`)
-      }
-      await settleWithin(
-        ~timeoutMs=Pervasives.min(settleTimeoutMs->Int.toFloat, remaining)->Float.toInt,
-      )
-      if !predicate() {
-        await Utils.delay(1)
-        await settleUntil(predicate, ~message, ~deadline)
+        if !predicate() {
+          JsError.throwWithMessage(`Timed out waiting for ${message}`)
+        }
+      } else {
+        await settleWithin(
+          ~timeoutMs=Pervasives.min(settleTimeoutMs->Int.toFloat, remaining)->Float.toInt,
+        )
+        if !predicate() {
+          await Utils.delay(1)
+          await settleUntil(predicate, ~message, ~deadline)
+        }
       }
     }
     let settleUntil = (predicate, ~message) =>
@@ -353,6 +357,12 @@ let run = async (
             let writeDeadline = Date.now() +. 30_000.
             while state->IndexerState.writeFiber->Option.isSome && Date.now() < writeDeadline {
               await Utils.delay(1)
+            }
+            // The resume-time index repair runs off the loop, so nothing above
+            // waits for it; its DDL would otherwise land on the dropped schema.
+            switch state->IndexerState.repairFiber {
+            | Some(fiber) => await fiber
+            | None => ()
             }
           }
         )()
