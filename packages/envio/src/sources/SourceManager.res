@@ -647,11 +647,16 @@ let getSourceNewHeight = async (
             pollRetry := 0
             pollingInterval()
           } catch {
-          | _ =>
+          | exn =>
             // An endpoint whose stream just dropped is often the one failing
-            // these too, so escalate the way the no-subscription branch does
-            // rather than asking again every polling interval.
+            // these too, so escalate and report the way the no-subscription
+            // branch does rather than asking again every polling interval.
             let retryInterval = sourceManager.getHeightRetryInterval(~retry=pollRetry.contents)
+            logger->Logging.childTrace({
+              "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
+              "source": source.name,
+              "err": exn->Utils.prettifyExn,
+            })
             pollRetry := pollRetry.contents + 1
             retryInterval
           }
