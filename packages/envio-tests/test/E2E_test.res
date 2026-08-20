@@ -78,10 +78,7 @@ let noRollbackMultichainScenario = makeScenario(
 )
 
 // The `storage` label on the load metrics is whichever storage answered.
-let storageName = switch IndexerRunner.selectedBackend {
-| #memory => "memory"
-| #postgres | #clickhouse => "postgres"
-}
+let storageName = "postgres"
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 

@@ -8,25 +8,23 @@ type metric = {
 // client the run won't clean up.
 type pg = {sql: Postgres.sql, pgSchema: string}
 
-// Which persistence a run is exercised against. Locally the whole suite runs
-// on memory; CI runs it once per backend.
-type backend = [#memory | #postgres | #clickhouse]
+// Which persistence a run is exercised against. Postgres either way — the
+// ClickHouse leg indexes the same scenario with the sink switched on.
+type backend = [#postgres | #clickhouse]
 
 let backendName = (backend: backend) =>
   switch backend {
-  | #memory => "memory"
   | #postgres => "postgres"
   | #clickhouse => "clickhouse"
   }
 
 let selectedBackend: backend = switch %raw(`process.env.ENVIO_TEST_STORAGE`)->Nullable.toOption {
-| None | Some("") => #memory
-| Some("memory") => #memory
+| None | Some("") => #postgres
 | Some("postgres") => #postgres
 | Some("clickhouse") => #clickhouse
 | Some(other) =>
   JsError.throwWithMessage(
-    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected memory, postgres or clickhouse.`,
+    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected postgres or clickhouse.`,
   )
 }
 
@@ -76,9 +74,8 @@ type rec t = {
     ~scope: Internal.chainScope,
   ) => promise<array<{"id": string, "output": JSON.t}>>,
   metric: string => promise<array<metric>>,
-  // Present only on the postgres-backed backends. A test that reads SQL
-  // directly is a postgres-only test, and says so by reaching through this.
-  pg: option<pg>,
+  // The run's schema and client, for a test that reads SQL directly.
+  pg: pg,
   // Quiesce the run: its loops keep driving the database otherwise, and the
   // schema is dropped out from under them at the end of `run`.
   stop: unit => promise<unit>,
@@ -87,15 +84,6 @@ type rec t = {
 
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
-
-let pgOrThrow = (indexer: t) =>
-  switch indexer.pg {
-  | Some(pg) => pg
-  | None =>
-    JsError.throwWithMessage(
-      "This test reads Postgres directly, so it only runs on a postgres-backed backend. Mark #memory unsupported on the scenario.",
-    )
-  }
 
 // Runs `body` against a fresh indexer in a Postgres schema of its own, then
 // tears both down — so tests never stop an indexer by hand, and files can run
@@ -116,20 +104,16 @@ let run = async (
   body: t => promise<unit>,
 ) => {
   // Postgres resources this run owns: one schema, plus every client and
-  // indexer built inside it (`restart` adds more). Unused on `#memory`.
+  // indexer built inside it (`restart` adds more).
   let pgSchema = TestPgSchema.make()
   let clients = []
   let stops = []
-
-  // Outlives every indexer the run builds, so a restart resumes from what the
-  // previous one persisted — the same way a postgres schema does.
-  let memoryState = MemoryStorage.make()
 
   // The ClickHouse leg writes through the sink Postgres storage attaches, into
   // a database of this run's own.
   let clickHouseDatabase = switch backend {
   | #clickhouse => Some(TestClickHouse.make())
-  | #memory | #postgres => None
+  | #postgres => None
   }
 
   // The builder is only reachable here and from `restart`, so it takes just
@@ -144,26 +128,18 @@ let run = async (
     let registrationsByChainId = await resolveRegistrations()
     MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
 
-    let (persistence, pg) = switch backend {
-    | #memory =>
-      let storage = mapStorage(memoryState->MemoryStorage.toStorage(~config))
-      (
-        Persistence.make(~userEntities=config.userEntities, ~allEnums=config.allEnums, ~storage),
-        None,
-      )
-    | #postgres | #clickhouse =>
-      switch clickHouseDatabase {
-      | Some(database) => TestClickHouse.use(~database)
-      | None => ()
-      }
-      let sql = PgStorage.makeClient()
-      clients->Array.push(sql)->ignore
-      let storage = mapStorage(
-        // Tracking tables in Hasura costs ~1.9 seconds per indexer.
-        PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
-      )
-      (PgStorage.makePersistenceFromConfig(~config, ~storage), Some({sql, pgSchema}))
+    switch clickHouseDatabase {
+    | Some(database) => TestClickHouse.use(~database)
+    | None => ()
     }
+    let sql = PgStorage.makeClient()
+    clients->Array.push(sql)->ignore
+    let pg = {sql, pgSchema}
+    let storage = mapStorage(
+      // Tracking tables in Hasura costs ~1.9 seconds per indexer.
+      PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
+    )
+    let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
 
     let onError = switch onError {
     | Some(onError) => onError
@@ -371,31 +347,17 @@ let run = async (
       }
     stops->Array.push(stop)->ignore
 
-    // Both backends hand back decoded entities, so an assertion reads the same
-    // either way: postgres parses its rows with the table's field schemas, and
-    // the memory store never encoded them in the first place.
+    // Rows come back decoded, parsed with the table's own field schemas, so an
+    // assertion reads the entity rather than its storage encoding.
     let queryEntity = (entityConfig: Internal.entityConfig) =>
-      switch pg {
-      | None =>
-        Promise.resolve(
-          memoryState
-          ->MemoryStorage.currentRows(~entityConfig)
-          ->(Utils.magic: array<Internal.entity> => array<unknown>),
-        )
-      | Some({sql, pgSchema}) =>
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
-        )
-        ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
-      }
+      sql
+      ->Postgres.unsafe(
+        PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
+      )
+      ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
 
     let queryEntityHistory = (entityConfig: Internal.entityConfig) =>
-      switch pg {
-      | None =>
-        Promise.resolve(memoryState->MemoryStorage.historyChanges(~entityConfig))
-      | Some({sql, pgSchema}) =>
-        sql
+      sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
             ~pgSchema,
@@ -437,7 +399,6 @@ let run = async (
             }
           })
         })
-      }
 
     {
       settle,
@@ -466,32 +427,21 @@ let run = async (
           Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
         ),
       queryCheckpoints: () =>
-        switch pg {
-        | None => Promise.resolve(memoryState->MemoryStorage.checkpointRows)
-        | Some({sql, pgSchema}) =>
-          sql
-          ->Postgres.unsafe(
-            PgStorage.makeLoadAllQuery(
-              ~pgSchema,
-              ~tableName=InternalTable.Checkpoints.table.tableName,
-            ),
-          )
-          ->Promise.thenResolve(rows =>
-            rows
-            ->(Utils.magic: unknown => array<unknown>)
-            ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
-          )
-        },
+        sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=InternalTable.Checkpoints.table.tableName),
+        )
+        ->Promise.thenResolve(rows =>
+          rows
+          ->(Utils.magic: unknown => array<unknown>)
+          ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
+        ),
       queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope) => {
         let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
         let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
-        switch pg {
-        | None => Promise.resolve(memoryState->MemoryStorage.effectCacheRows(~tableName))
-        | Some({sql, pgSchema}) =>
-          sql
-          ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
-          ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
-        }
+        sql
+        ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
+        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {
         // Parse the metric's samples back out of the rendered /metrics text.

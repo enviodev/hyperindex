@@ -43,7 +43,6 @@ type EntityWithTimestamp @storage(clickhouse: {}) {
 }
 `,
   ~unsupported=[
-    {backend: #memory, reason: "asserts on the Postgres schema's history tables"},
     {
       backend: #postgres,
       reason: "the ClickHouse-only entity needs a ClickHouse database to write into",
@@ -135,7 +134,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
       t.expect(
         (
           missingHistoryRelationError->String.includes(
-            `relation "${(indexer->IndexerRunner.pgOrThrow).pgSchema}.envio_history_${chOnlyEntityName}" does not exist`,
+            `relation "${(indexer.pg).pgSchema}.envio_history_${chOnlyEntityName}" does not exist`,
           ),
           await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
         ),

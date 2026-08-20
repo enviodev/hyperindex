@@ -34,18 +34,10 @@ let chainYaml = (chainId, address, extra) =>
 let gravatar1337 = "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 let gravatar1 = "0x3B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
 
-let unsupported = [
-  {
-    Scenario.backend: #memory,
-    reason: "reads envio_chains and the Postgres index catalog directly",
-  },
-]
-
 let scenario = Scenario.make(
   ~configYaml=`
 name: resume-finalize${contractsYaml}chains:${chainYaml(1337, gravatar1337, "")}`,
   ~schema,
-  ~unsupported,
 )
 
 let endBlockScenario = Scenario.make(
@@ -56,7 +48,6 @@ name: resume-finalize-end-block${contractsYaml}chains:${chainYaml(
       "\n    end_block: 100",
     )}`,
   ~schema,
-  ~unsupported,
 )
 
 let multichainScenario = Scenario.make(
@@ -67,7 +58,6 @@ name: resume-finalize-multichain${contractsYaml}chains:${chainYaml(1, gravatar1,
       "",
     )}`,
   ~schema,
-  ~unsupported,
 )
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
@@ -157,7 +147,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
@@ -219,7 +209,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
@@ -263,7 +253,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onExit=() => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
@@ -314,7 +304,7 @@ describe("Resuming a backfill that never finalized", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source1337 = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       await indexer.settle()
 
       source1337.resolveGetHeightOrThrow(100)
@@ -374,7 +364,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
@@ -421,7 +411,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
@@ -476,7 +466,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
@@ -540,7 +530,7 @@ describe("Resuming a backfill that never finalized", () => {
     ~onError=_ => (),
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
@@ -603,7 +593,7 @@ describe("Resuming a backfill that never finalized", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source1337 = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       await indexer.settle()
 
       source1337.resolveGetHeightOrThrow(100)
