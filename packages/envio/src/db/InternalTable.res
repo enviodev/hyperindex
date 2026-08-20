@@ -17,6 +17,7 @@ module Chains = {
   type field = [
     | progressFields
     | #id
+    | #ecosystem
     | #start_block
     | #end_block
     | #max_reorg_depth
@@ -29,6 +30,7 @@ module Chains = {
 
   let fields: array<field> = [
     #id,
+    #ecosystem,
     #start_block,
     #end_block,
     #max_reorg_depth,
@@ -57,6 +59,7 @@ module Chains = {
 
   type t = {
     @as("id") id: ChainId.t,
+    @as("ecosystem") ecosystem: string,
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Null.t<int>,
     @as("max_reorg_depth") maxReorgDepth: int,
@@ -70,6 +73,10 @@ module Chains = {
     "envio_chains",
     ~fields=[
       mkField((#id: field :> string), ChainId, ~fieldSchema=ChainId.schema, ~isPrimaryKey),
+      // Which ecosystem the chain belongs to (evm / fuel / svm). Chain ids are
+      // only unique within an ecosystem (HOS-1880: Svm ids are Envio-assigned),
+      // so consumers should treat (ecosystem, id) as the chain's identity.
+      mkField((#ecosystem: field :> string), String, ~fieldSchema=S.string),
       // Values populated from config
       mkField((#start_block: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#end_block: field :> string), Int32, ~fieldSchema=S.null(S.int), ~isNullable),
@@ -104,6 +111,7 @@ module Chains = {
   let initialFromConfig = (chainConfig: Config.chain) => {
     {
       id: chainConfig.id,
+      ecosystem: (chainConfig.ecosystem: Ecosystem.name :> string),
       startBlock: chainConfig.startBlock,
       endBlock: chainConfig.endBlock->Null.fromOption,
       maxReorgDepth: chainConfig.maxReorgDepth,
@@ -131,6 +139,7 @@ module Chains = {
           let value = initialValues->(Utils.magic: t => dict<unknown>)->Dict.get((field :> string))
           switch typeof(value) {
           | #object => "NULL"
+          | #string => `'${value->(Utils.magic: option<unknown> => string)}'`
           | #number => value->(Utils.magic: option<unknown> => int)->Int.toString
           | #bigint => value->(Utils.magic: option<unknown> => bigint)->BigInt.toString
           | #boolean => value->(Utils.magic: option<unknown> => bool) ? "true" : "false"
@@ -648,6 +657,7 @@ module Views = {
     `CREATE VIEW "${pgSchema}"."${metaViewName}" AS 
 SELECT 
   "${(#id: Chains.field :> string)}" AS "chainId",
+  "${(#ecosystem: Chains.field :> string)}" AS "ecosystem",
   "${(#start_block: Chains.field :> string)}" AS "startBlock", 
   "${(#end_block: Chains.field :> string)}" AS "endBlock",
   "${(#progress_block: Chains.field :> string)}" AS "progressBlock",
@@ -666,6 +676,7 @@ ORDER BY "${(#id: Chains.field :> string)}";`
 SELECT 
   "${(#source_block: Chains.field :> string)}" AS "block_height",
   "${(#id: Chains.field :> string)}" AS "chain_id",
+  "${(#ecosystem: Chains.field :> string)}" AS "ecosystem",
   "${(#end_block: Chains.field :> string)}" AS "end_block", 
   "${(#first_event_block: Chains.field :> string)}" AS "first_event_block_number",
   "${(#_is_hyper_sync: Chains.field :> string)}" AS "is_hyper_sync",

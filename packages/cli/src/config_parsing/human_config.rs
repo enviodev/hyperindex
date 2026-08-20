@@ -1011,17 +1011,43 @@ pub mod svm {
     pub const SOLANA_MAINNET_CHAIN_ID: u64 = 7565164;
     pub const SOLANA_DEVNET_CHAIN_ID: u64 = 7565165;
 
+    /// The chain id of an Svm chain: either a known cluster label or an
+    /// explicit number (for private chains, rollups, or custom clusters).
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(untagged)]
+    pub enum ChainId {
+        Label(ChainLabel),
+        Id(u64),
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum ChainLabel {
+        Solana,
+        SolanaDevnet,
+    }
+
+    impl ChainId {
+        pub fn to_u64(&self) -> u64 {
+            match self {
+                ChainId::Label(ChainLabel::Solana) => SOLANA_MAINNET_CHAIN_ID,
+                ChainId::Label(ChainLabel::SolanaDevnet) => SOLANA_DEVNET_CHAIN_ID,
+                ChainId::Id(id) => *id,
+            }
+        }
+    }
+
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Chain {
-        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Envio-internal id identifying the Svm cluster: 7565164 for Solana \
-                           mainnet (the default when omitted), 7565165 for Solana devnet. Svm has \
-                           no native numeric chain id, so these are assigned by Envio and match \
-                           the ids used for HyperSync usage attribution."
+            description = "Identifies the Svm cluster: the label \"solana\" (7565164) or \
+                           \"solana-devnet\" (7565165), or an explicit number of your choosing \
+                           for other clusters. Svm has no native numeric chain id, so the label \
+                           ids are assigned by Envio and match the ids used for HyperSync usage \
+                           attribution."
         )]
-        pub id: Option<u64>,
+        pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Excludes the chain from indexing and migrations. Code \
                                   generation is unaffected. For testing, prefer using a test \
@@ -1622,7 +1648,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 name: metaplex-token-metadata
 ecosystem: svm
 chains:
-  - start_block: 200000000
+  - id: solana
+    start_block: 200000000
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1640,18 +1667,42 @@ chains:
 "#;
 
         #[test]
-        fn chain_id_defaults_to_none_and_round_trips() {
-            // Omitted `id` stays None here; system_config resolves it to
-            // SOLANA_MAINNET_CHAIN_ID so existing configs keep working.
-            let cfg: HumanConfig = serde_yaml::from_str(METAPLEX_YAML).unwrap();
-            assert_eq!(cfg.chains[0].id, None);
+        fn chain_id_accepts_labels_and_numbers_and_round_trips() {
+            let parse_chain = |id_yaml: &str| -> Chain {
+                let yaml = format!(
+                    "name: x\necosystem: svm\nchains:\n  - id: {id_yaml}\n    start_block: 0\n"
+                );
+                let mut cfg: HumanConfig = serde_yaml::from_str(&yaml).unwrap();
+                cfg.chains.remove(0)
+            };
 
-            for id in [SOLANA_MAINNET_CHAIN_ID, SOLANA_DEVNET_CHAIN_ID] {
-                let yaml =
-                    format!("name: x\necosystem: svm\nchains:\n  - id: {id}\n    start_block: 0\n");
-                let cfg: HumanConfig = serde_yaml::from_str(&yaml).unwrap();
-                assert_eq!(cfg.chains[0].id, Some(id));
+            let cases = [
+                (
+                    "solana",
+                    ChainId::Label(ChainLabel::Solana),
+                    SOLANA_MAINNET_CHAIN_ID,
+                ),
+                (
+                    "solana-devnet",
+                    ChainId::Label(ChainLabel::SolanaDevnet),
+                    SOLANA_DEVNET_CHAIN_ID,
+                ),
+                ("42", ChainId::Id(42), 42),
+            ];
+            for (id_yaml, expected, expected_u64) in cases {
+                let chain = parse_chain(id_yaml);
+                assert_eq!(chain.id, expected, "parsing id: {id_yaml}");
+                assert_eq!(chain.id.to_u64(), expected_u64, "resolving id: {id_yaml}");
+                // Round trip: serialization preserves the label-vs-number form.
+                let reparsed: Chain =
+                    serde_yaml::from_str(&serde_yaml::to_string(&chain).unwrap()).unwrap();
+                assert_eq!(reparsed, chain, "round trip for id: {id_yaml}");
             }
+
+            // `id` is required: omitting it is a parse error.
+            let missing: Result<HumanConfig, _> =
+                serde_yaml::from_str("name: x\necosystem: svm\nchains:\n  - start_block: 0\n");
+            assert!(missing.is_err(), "config without chain id must be rejected");
         }
 
         #[test]
