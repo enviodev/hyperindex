@@ -63,8 +63,8 @@ describe("Height subscription push metrics", () => {
       let subscriptionOpened = () => sourceMock.heightSubscriptionCalls->Array.length > 0
       let deadline = Date.now() +. 5_000.
       while !subscriptionOpened() && Date.now() < deadline {
-        try sourceMock.resolveGetHeightOrThrow(100) catch {
-        | _ => ()
+        if sourceMock.pendingHeightCalls() > 0 {
+          sourceMock.resolveGetHeightOrThrow(100)
         }
         await Utils.delay(1)
       }

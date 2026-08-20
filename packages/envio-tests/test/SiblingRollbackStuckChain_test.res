@@ -141,8 +141,8 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       let attempts = ref(0)
       while victim.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 1000 {
         attempts := attempts.contents + 1
-        try victim.resolveGetHeightOrThrow(301) catch {
-        | _ => ()
+        if victim.pendingHeightCalls() > 0 {
+          victim.resolveGetHeightOrThrow(301)
         }
         await indexer.settle()
       }
@@ -154,14 +154,14 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       ).toEqual(1)
 
       // Reorg on the sibling chain: block 300 comes back with a different hash.
-      try sibling.resolveGetHeightOrThrow(301) catch {
-      | _ => ()
+      if sibling.pendingHeightCalls() > 0 {
+        sibling.resolveGetHeightOrThrow(301)
       }
       let attempts = ref(0)
       while sibling.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 1000 {
         attempts := attempts.contents + 1
-        try sibling.resolveGetHeightOrThrow(301) catch {
-        | _ => ()
+        if sibling.pendingHeightCalls() > 0 {
+          sibling.resolveGetHeightOrThrow(301)
         }
         await indexer.settle()
       }
@@ -224,11 +224,11 @@ describe("Sibling-chain rollback with an in-flight query", () => {
         if sibling.getItemsOrThrowCalls->Array.length > 0 {
           sibling.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=302)
         }
-        try victim.resolveGetHeightOrThrow(302) catch {
-        | _ => ()
+        if victim.pendingHeightCalls() > 0 {
+          victim.resolveGetHeightOrThrow(302)
         }
-        try sibling.resolveGetHeightOrThrow(302) catch {
-        | _ => ()
+        if sibling.pendingHeightCalls() > 0 {
+          sibling.resolveGetHeightOrThrow(302)
         }
         await Utils.delay(1)
       }

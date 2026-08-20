@@ -289,7 +289,7 @@ let run = async (
           `Timed out waiting for the indexer to settle, still in flight: ${switch busy {
             | [] => "nothing — the loop settled and started again"
             | busy => busy->Array.join(", ")
-            }}. A wait the test itself holds closed has to go through \`indexer.park\`, or the settle waits it out.`,
+            }}. Either the loop is genuinely still working — a retry's backoff, a rate-limit reset — or a wait the test itself holds closed needs to go through \`indexer.park\`, which the settle otherwise sits and waits out.`,
         )
       }
     }
@@ -303,7 +303,10 @@ let run = async (
     // stacking two settle bounds past the suite's own timeout.
     let rec settleUntil = async (predicate, ~message, ~deadline) => {
       let remaining = deadline -. Date.now()
-      if remaining <= 0. {
+      // A sliver of budget left is the condition never arriving, not a settle
+      // worth starting — and a settle given no time reports its own timeout
+      // instead of what was being waited for.
+      if remaining < 100. {
         JsError.throwWithMessage(`Timed out waiting for ${message}`)
       }
       await settleWithin(

@@ -288,13 +288,13 @@ let describeQuery = (payload: MockSource.queryPayload) =>
     | None => "head"
     }}${payload["retry"] === 0 ? "" : ` retry${payload["retry"]->Int.toString}`}`
 
-// How many answered queries the failure message recalls. Enough to place the
+// How many settled queries the failure message recalls. Enough to place the
 // pending set in the run's history without burying the diff.
-let answeredQueriesInMessage = 5
+let settledQueriesInMessage = 5
 
 // Settles the indexer, then asserts the source's whole pending query set at
-// once. The message recalls the queries already answered, so an unexpected
-// empty set reads as "these ran instead" rather than as nothing at all.
+// once. The message recalls the queries that have already come and gone, so an
+// unexpected empty set reads as "these ran instead" rather than as nothing.
 let expectQueries = async (
   ~t: Vitest.testContext,
   ~indexer: IndexerRunner.t,
@@ -303,17 +303,17 @@ let expectQueries = async (
   expected: array<MockSource.queryPayload>,
 ) => {
   await indexer.settle()
-  let answered = source.answeredQueries
+  let settled = source.settledQueries
   let recalled =
-    answered
+    settled
     ->Array.slice(
-      ~start=max(answered->Array.length - answeredQueriesInMessage, 0),
-      ~end=answered->Array.length,
+      ~start=max(settled->Array.length - settledQueriesInMessage, 0),
+      ~end=settled->Array.length,
     )
     ->Array.map(describeQuery)
   t.expect(
     source.getItemsOrThrowCalls->Array.map(call => call.payload),
-    ~message=`${message} (answered so far: ${switch recalled {
+    ~message=`${message} (no longer pending: ${switch recalled {
       | [] => "nothing"
       | recalled => recalled->Array.join(", ")
       }})`,

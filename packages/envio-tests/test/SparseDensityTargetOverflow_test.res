@@ -69,8 +69,8 @@ describe("Sparse-density target overflow", () => {
       let attempts = ref(0)
       while sourceMock.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 2000 {
         attempts := attempts.contents + 1
-        try sourceMock.resolveGetHeightOrThrow(30_001) catch {
-        | _ => ()
+        if sourceMock.pendingHeightCalls() > 0 {
+          sourceMock.resolveGetHeightOrThrow(30_001)
         }
         await Utils.delay(1)
       }

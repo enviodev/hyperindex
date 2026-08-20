@@ -100,8 +100,8 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       let subscriptionOpened = () => stuckChain.heightSubscriptionCalls->Array.length > 0
       let deadline = Date.now() +. 5_000.
       while !subscriptionOpened() && Date.now() < deadline {
-        try stuckChain.resolveGetHeightOrThrow(100) catch {
-        | _ => ()
+        if stuckChain.pendingHeightCalls() > 0 {
+          stuckChain.resolveGetHeightOrThrow(100)
         }
         await Utils.delay(1)
       }
@@ -111,8 +111,8 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       ).toBe(true)
       // Release any pre-realtime wait still REST-polling at the same height so
       // it exits and gets discarded as stale.
-      try stuckChain.resolveGetHeightOrThrow(101) catch {
-      | _ => ()
+      if stuckChain.pendingHeightCalls() > 0 {
+        stuckChain.resolveGetHeightOrThrow(101)
       }
 
       // The stream finds block 101.
@@ -154,8 +154,8 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       // Meanwhile the other chain keeps progressing, so the cross-chain
       // scheduler keeps ticking — ticks alone must not be needed to heal the
       // stuck chain's wait.
-      try healthyChain.resolveGetHeightOrThrow(101) catch {
-      | _ => ()
+      if healthyChain.pendingHeightCalls() > 0 {
+        healthyChain.resolveGetHeightOrThrow(101)
       }
       await Scenario.waitQuery(~indexer, ~source=healthyChain)
       healthyChain.resolveGetItemsOrThrow(

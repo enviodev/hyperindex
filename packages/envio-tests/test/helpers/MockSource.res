@@ -235,9 +235,10 @@ type t = {
   // own this way, before the test body gets a chance to resolve anything.
   setAutoHeight: int => unit,
   getItemsOrThrowCalls: array<getItemsOrThrowCall>,
-  // Payloads of the queries already answered, oldest first. A pending set that
-  // came out empty says nothing on its own; this says what ran instead.
-  answeredQueries: array<queryPayload>,
+  // Payloads of the queries that are no longer pending — answered or rejected —
+  // oldest first. A pending set that came out empty says nothing on its own;
+  // this says what ran instead.
+  settledQueries: array<queryPayload>,
   // How many times the source was told to drop orphaned-chain state.
   reorgCallCount: unit => int,
   // TODO: Remove in favor of getItemsOrThrowCalls
@@ -277,7 +278,7 @@ let make = (
   let getHeightOrThrowResolveFns = []
   let getHeightOrThrowRejectFns = []
   let getItemsOrThrowCalls = []
-  let answeredQueries = []
+  let settledQueries = []
   let reorgCalls = ref(0)
   let getBlockHashesCalls = []
   let getBlockHashesResolveFns = []
@@ -348,7 +349,7 @@ let make = (
       rejects->Array.forEach(reject => reject(exn->Obj.magic))
     },
     getItemsOrThrowCalls,
-    answeredQueries,
+    settledQueries,
     reorgCallCount: () => reorgCalls.contents,
     resolveGetItemsOrThrow: (
       items,
@@ -443,7 +444,7 @@ let make = (
         ) => {
           keepOnlyPendingCalls(
             ~array=getItemsOrThrowCalls,
-            ~onSettled=call => answeredQueries->Array.push(call.payload)->ignore,
+            ~onSettled=call => settledQueries->Array.push(call.payload)->ignore,
             ~fn=(~resolve, ~reject) => {
               let payload = {
                 "fromBlock": fromBlock,
