@@ -680,6 +680,13 @@ let getSourceNewHeight = async (
       if height > newHeight.contents {
         newHeight := height
       }
+      // A catch-up's continuation can land between this race resolving and this
+      // line, recording a head into knownHeight with the resolvers already
+      // drained. Taking it here keeps the next iteration from starting behind
+      // what the source already knows.
+      if sourceState.knownHeight > newHeight.contents {
+        newHeight := sourceState.knownHeight
+      }
     | None =>
       // No subscription, use REST polling
       try {

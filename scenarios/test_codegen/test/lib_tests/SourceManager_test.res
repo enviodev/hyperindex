@@ -3461,6 +3461,37 @@ describe("SourceManager height subscription", () => {
     t.expect((pollsKeptComing, await waiting)).toStrictEqual((true, 102))
   })
 
+  Async.it("Takes a head the catch-up recorded while the race was settling", async t => {
+    let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
+    let sourceManager = SourceManager.make(
+      ~isRealtime=true,
+      ~sources=[mock.source],
+      ~newBlockStallTimeoutRealtime=5_000,
+    )
+    await subscribeAndGoLive(mock, sourceManager, ~knownHeight=100)
+
+    let waiting =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=true,
+        ~knownHeight=104,
+        ~reducedPolling=false,
+      )
+    await Utils.delay(0)
+    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    await Utils.delay(0)
+    mock.setHeightSubscriptionStatus(Live)
+    await Utils.delay(0)
+
+    // The catch-up's continuation is queued first, then the push drains the
+    // waiters and queues the race continuation behind it. The catch-up's 105
+    // therefore lands in knownHeight with nobody left to hand it to, while the
+    // race settles on the push's 103 — which isn't enough to end this wait.
+    mock.resolveGetHeightOrThrow(105)
+    mock.triggerHeightSubscription(103)
+
+    t.expect(await waiting).toEqual(105)
+  })
+
   Async.it("Runs one poll loop when a push settles a wait without advancing it", async t => {
     let pollingInterval = 20
     let mock = MockIndexer.Source.make(
