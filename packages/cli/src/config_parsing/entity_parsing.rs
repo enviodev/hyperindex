@@ -481,6 +481,7 @@ pub struct Entity {
 }
 
 impl Entity {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         name: &str,
         fields: Vec<Field>,
