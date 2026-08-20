@@ -2,15 +2,13 @@
 // connection as dead.
 let staleTimeout = 15_000
 
-// A rejected token still gets its actionable log line, from the query path in
-// EvmHyperSyncSource that hits the same 401.
-let failureReason = (error: EventSource.errorEvent) =>
+let failure = (error: EventSource.errorEvent) =>
   switch (error.code, error.message) {
-  | (Some(code), _) => code->Int.toString
-  | (None, Some(_)) => "error"
+  | (Some(code), message) => (code->Int.toString, message)
+  | (None, Some(message)) => ("error", Some(message))
   // The stream ended without an HTTP error, which is how a load balancer
   // rotating connections shows up.
-  | (None, None) => "closed"
+  | (None, None) => ("closed", None)
   }
 
 let subscribe = (~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>
@@ -35,12 +33,15 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>
     )
 
     es->EventSource.onopen(_ => driver.onConnected())
-    es->EventSource.onerror(error => driver.onFailure(~reason=error->failureReason))
+    es->EventSource.onerror(error => {
+      let (reason, detail) = error->failure
+      driver.onFailure(~reason, ~detail?)
+    })
     es->EventSource.addEventListener("ping", _ => driver.onKeepAlive())
     es->EventSource.addEventListener("height", event =>
       switch event.data->Int.fromString {
       | Some(height) => driver.onHeight(height)
-      | None => driver.onUnreadable()
+      | None => driver.onUnreadable(~detail=event.data)
       }
     )
 

@@ -66,8 +66,8 @@ let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
       | Some(NewHead(blockNumber)) => driver.onHeight(blockNumber)
       // An open socket isn't usable until the node accepts the subscription.
       | Some(SubscriptionConfirmed(_)) => driver.onConnected()
-      | Some(ErrorResponse) => driver.onFailure(~reason="subscribe-rejected")
-      | None => driver.onUnreadable()
+      | Some(ErrorResponse) => driver.onFailure(~reason="subscribe-rejected", ~detail=event.data)
+      | None => driver.onUnreadable(~detail=event.data)
       }
     })
 
