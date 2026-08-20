@@ -71,21 +71,20 @@ describe("HeightStream reconnect driver", () => {
     )
   })
 
-  Async.it("Resets the backoff once a connection has lasted", async t => {
+  Async.it("Resets the backoff once a connection carries traffic past its first", async t => {
     let harness = makeHarness()
-    // Exactly the retry delay each time, so no connection lives long enough to
-    // also go stale.
     for attempt in 0 to 2 {
       (harness->driverAt(attempt)).onFailure(~reason="closed")
       await Vi.advanceTimersByTimeAsync(250 * Math.Int.pow(2, ~exp=attempt))
     }
     let reconnected = harness->driverAt(3)
     reconnected.onConnected()
-    // Kept alive across more than a staleness window, so the connection counts
-    // as having worked.
-    await Vi.advanceTimersByTimeAsync(14_000)
+    // Two pings, so this connection delivered something past whatever it sends
+    // on connect.
+    await Vi.advanceTimersByTimeAsync(5_000)
     reconnected.onKeepAlive()
-    await Vi.advanceTimersByTimeAsync(14_000)
+    await Vi.advanceTimersByTimeAsync(5_000)
+    reconnected.onKeepAlive()
     reconnected.onFailure(~reason="closed")
 
     await Vi.advanceTimersByTimeAsync(249)
@@ -100,10 +99,10 @@ describe("HeightStream reconnect driver", () => {
     ))
   })
 
-  Async.it("Resets the backoff for a connection that outlasted the wait before it", async t => {
-    // The WebSocket transport tolerates a full minute of silence, and a provider
-    // rotating connections faster than that serves each one perfectly well. The
-    // wait before a connection, not the staleness window, is what it has to beat.
+  Async.it("Resets the backoff for a connection that kept delivering", async t => {
+    // A provider rotating connections faster than the staleness window serves
+    // each one perfectly well, so it must not escalate however long the wait
+    // before it had grown.
     let harness = makeHarness(~staleTimeout=60_000)
     (harness->driverAt(0)).onFailure(~reason="closed")
     await Vi.advanceTimersByTimeAsync(250)
@@ -114,6 +113,7 @@ describe("HeightStream reconnect driver", () => {
     rotated.onConnected()
     rotated.onHeight(101)
     await Vi.advanceTimersByTimeAsync(30_000)
+    rotated.onHeight(102)
     rotated.onFailure(~reason="closed")
 
     await Vi.advanceTimersByTimeAsync(249)
@@ -124,11 +124,12 @@ describe("HeightStream reconnect driver", () => {
     t.expect((beforeBaseDelay, harness.drivers->Array.length)).toStrictEqual((3, 4))
   })
 
-  Async.it("Keeps backing off when short connections deliver a height each time", async t => {
+  Async.it("Keeps backing off when connections deliver only their first event", async t => {
     let harness = makeHarness()
     // HyperSync sends the head as soon as it connects, so an endpoint that
-    // accepts a connection and drops it straight away still looks like it
-    // carried traffic. Only its lifetime says otherwise.
+    // accepts a connection and drops it still looks like it carried traffic.
+    // Staying open a while doesn't change that — nothing arrived after the head
+    // — which is why this is counted rather than timed.
     let schedule = [250, 500, 1_000, 2_000]
 
     let connectsAroundRetry = []
@@ -136,6 +137,7 @@ describe("HeightStream reconnect driver", () => {
       let driver = harness->driverAt(attempt)
       driver.onConnected()
       driver.onHeight(100 + attempt)
+      await Vi.advanceTimersByTimeAsync(300)
       driver.onFailure(~reason="closed")
       await Vi.advanceTimersByTimeAsync(schedule->Array.getUnsafe(attempt) - 1)
       let beforeDue = harness.drivers->Array.length

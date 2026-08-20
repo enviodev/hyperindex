@@ -53,9 +53,10 @@ let subscribe = (
   // A connection is either waiting for traffic or waiting to be retried, never
   // both, so a single slot holds whichever timer is pending.
   let timeoutId = ref(None)
-  let connectionStartedAt = ref(Performance.now())
-  // How long we waited before starting the current connection.
-  let lastRetryMillis = ref(0)
+  // Traffic the current connection has carried. The first event proves nothing:
+  // HyperSync sends the head the moment it connects, so an endpoint that accepts
+  // and drops looks identical to a working one until a second arrives.
+  let trafficCount = ref(0)
   let sawUnreadable = ref(false)
 
   let clearPendingTimeout = () => {
@@ -97,26 +98,14 @@ let subscribe = (
     clearPendingTimeout()
     closeConnection()
 
-    // A connection that outlasted the wait before it was worth making, so the
-    // backoff starts over. Duration rather than whether it connected or carried
-    // traffic, because HyperSync sends a height the moment it connects: an
-    // endpoint accepting and dropping connections would otherwise look healthy
-    // every time and never back off. Measured against that wait rather than the
-    // staleness window, so a provider rotating connections faster than the
-    // window — a full minute of it, on the WebSocket transport — doesn't
-    // escalate over connections that served it perfectly well.
-    //
-    // The staleness timer knows it waited its window out, and says so rather
-    // than leaving it to be re-derived: a timer can reach its own deadline a
-    // fraction of a millisecond before the clock agrees. So those failures never
-    // escalate, which is what a chain whose blocks are further apart than the
-    // timeout needs, and costs nothing on an endpoint that is silent or
-    // unreadable either, because reaching the timeout is what already spaces
-    // those retries a whole window apart.
-    if (
-      windowElapsed ||
-        Performance.now() -. connectionStartedAt.contents > lastRetryMillis.contents->Int.toFloat
-    ) {
+    // The backoff resets when the connection delivered — which noteTraffic
+    // decides — or when the staleness timer says it waited its window out. The
+    // timer says so rather than leaving it to be re-derived from a clock it can
+    // beat to its own deadline by a fraction of a millisecond. So a chain whose
+    // blocks are further apart than the timeout never escalates, and neither
+    // does a silent or unreadable endpoint, because reaching the timeout is what
+    // already spaces those retries a whole window apart.
+    if windowElapsed {
       failureCount := 0
     }
     failureCount := failureCount.contents + 1
@@ -126,7 +115,6 @@ let subscribe = (
       baseRetryMillis * Math.pow(2.0, ~exp)->Float.toInt,
       maxRetryMillis,
     )
-    lastRetryMillis := retryMillis
     // Scheduled before reporting, so a consumer that throws can't be what makes
     // the stream give up.
     timeoutId := Some(setTimeout(() => {
@@ -138,7 +126,7 @@ let subscribe = (
   }
   and start = () => {
     generation := generation.contents + 1
-    connectionStartedAt := Performance.now()
+    trafficCount := 0
     sawUnreadable := false
     let connectionGeneration = generation.contents
     let isCurrent = () => !unsubscribed.contents && generation.contents === connectionGeneration
@@ -152,6 +140,17 @@ let subscribe = (
     // onConnected does. Without that, a transport that never reports the
     // connection usable would leave its consumer polling at full rate next to a
     // stream that works.
+    // A connection that carried traffic past its connect burst was worth making,
+    // so the backoff starts over. Counting rather than timing it: any duration
+    // bar is either one a provider rotating connections can't clear, or one an
+    // endpoint that drops immediately can.
+    let noteTraffic = () => {
+      trafficCount := trafficCount.contents + 1
+      if trafficCount.contents > 1 {
+        failureCount := 0
+      }
+    }
+
     let reportedLive = ref(false)
     let goLive = () => {
       armStaleTimeout()
@@ -176,6 +175,7 @@ let subscribe = (
         // its consumer sat on the staleness backstop. Being wrong about a lone
         // glitch costs one reconnect.
         if isCurrent() && !sawUnreadable.contents {
+          noteTraffic()
           armStaleTimeout()
         },
       onHeight: height =>
@@ -185,6 +185,7 @@ let subscribe = (
           // the pings between them would clear this and the staleness that
           // followed would look like a chain with nothing to report.
           sawUnreadable := false
+          noteTraffic()
           goLive()
           onHeight(height)
         },
