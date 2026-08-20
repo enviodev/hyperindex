@@ -820,14 +820,14 @@ describe("E2E rollback tests", () => {
         ~source=sourceMock,
         ~message="Should rollback fetch state and re-request items",
         [
-        {
-          "fromBlock": 101,
-          "toBlock": None,
-          "retry": 0,
-          // IDs reset on rollback, recreated partition starts at 0
-          "p": "0",
-        },
-      ],
+          {
+            "fromBlock": 101,
+            "toBlock": None,
+            "retry": 0,
+            // IDs reset on rollback, recreated partition starts at 0
+            "p": "0",
+          },
+        ],
       )
 
       sourceMock.resolveGetItemsOrThrow(
@@ -1052,28 +1052,27 @@ describe("E2E rollback tests", () => {
 
       sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
-
       await Scenario.expectQueries(
         ~t,
         ~indexer,
         ~source=sourceMock,
         ~message="Should rollback fetch state and re-request items",
         [
-        // Normal partition (recreated fresh, no chunking)
-        {
-          "fromBlock": 103,
-          "toBlock": None,
-          "retry": 0,
-          "p": "0",
-        },
-        // DC partition (recreated fresh, no chunking since chunk history lost)
-        {
-          "fromBlock": 103,
-          "toBlock": None,
-          "retry": 0,
-          "p": "1",
-        },
-      ],
+          // Normal partition (recreated fresh, no chunking)
+          {
+            "fromBlock": 103,
+            "toBlock": None,
+            "retry": 0,
+            "p": "0",
+          },
+          // DC partition (recreated fresh, no chunking since chunk history lost)
+          {
+            "fromBlock": 103,
+            "toBlock": None,
+            "retry": 0,
+            "p": "1",
+          },
+        ],
       )
 
       // Asserted here rather than after the re-fetch below: the rollback is
@@ -2580,21 +2579,20 @@ describe("E2E rollback tests", () => {
       // Clean up pending calls from before rollback
       sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
-
       await Scenario.expectQueries(
         ~t,
         ~indexer,
         ~source=sourceMock,
         ~message="Should NOT have duplicate queries - only partition 0, no partition 1",
         [
-        // Partition recreated fresh (no chunk history), single unchunked query
-        {
-          "fromBlock": 115,
-          "toBlock": None,
-          "retry": 0,
-          "p": "0",
-        },
-      ],
+          // Partition recreated fresh (no chunk history), single unchunked query
+          {
+            "fromBlock": 115,
+            "toBlock": None,
+            "retry": 0,
+            "p": "0",
+          },
+        ],
       )
     },
   )

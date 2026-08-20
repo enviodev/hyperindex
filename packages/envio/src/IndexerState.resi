@@ -113,8 +113,10 @@ let isStopped: t => bool
 let inFlight: t => int
 // Latched once the count has gone below zero, after which it means nothing.
 let hasInFlightDeficit: t => bool
-// Resolves the next time `inFlight` falls to zero. Callers re-check the count
-// afterwards: work that settled in the same tick can schedule more.
+// Resolves the next time `inFlight` falls to zero, and once when a deficit
+// latches — after that the count means nothing and no idle reading is coming,
+// so waiting on one would never return. Callers re-check the count afterwards:
+// work that settled in the same tick can schedule more.
 let whenIdle: t => promise<unit>
 let trackInFlight: (t, unit => promise<'a>) => promise<'a>
 let suspendInFlight: (t, unit => promise<'a>) => promise<'a>

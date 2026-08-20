@@ -23,7 +23,7 @@ const testRoot = fileURLToPath(new URL("../test", import.meta.url));
 // formatter wrapped across lines is still caught.
 const banned = /Utils\s*\.\s*delay\(\s*0\s*,?\s*\)/g;
 const optOut = "determinism-lint: no indexer loop";
-const drivesAnIndexer = /\bIndexerRunner\.|\bScenario\.|\bindexer\./;
+const drivesAnIndexer = /\bIndexerRunner\.|\bScenario\.|\bindexer\.|\bInternalTestIndexer\.|\bcreateTestIndexer\b|\bIndexerLoop\.start\b/;
 
 const resFiles = (dir) =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {

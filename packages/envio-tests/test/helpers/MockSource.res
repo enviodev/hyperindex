@@ -14,7 +14,9 @@ module Gate = {
     release: unit => unit,
     // Hands the gate the run's `park`, so a closed gate inside indexer work
     // reads as parked rather than as work `settle` would sit and wait out.
-    // Called from the test body, which is where the run exists.
+    // Called from the test body, which is where the run exists — and first
+    // thing, since the loop is already running by then and a gate it reaches
+    // before the hand-off is entered unparked.
     parkWith: ((unit => promise<unit>) => promise<unit>) => unit,
   }
 
