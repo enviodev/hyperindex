@@ -1257,60 +1257,6 @@ pub mod svm {
         }
     }
 
-    /// Selectable parent-transaction field names (camelCase), matching the
-    /// public `svmTransaction` shape. `accountActivities` is implied by handler
-    /// `fields.accountActivity`, so it isn't listed here.
-    #[derive(
-        Debug,
-        Serialize,
-        Deserialize,
-        Clone,
-        PartialEq,
-        Eq,
-        Hash,
-        JsonSchema,
-        strum::Display,
-        strum::EnumIter,
-    )]
-    #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    #[strum(serialize_all = "camelCase")]
-    pub enum SvmTransactionField {
-        TransactionIndex,
-        Signature,
-        FeePayer,
-        Success,
-        Err,
-        Fee,
-        ComputeUnitsConsumed,
-        AccountKeys,
-        RecentBlockhash,
-        Version,
-        AllSignatures,
-    }
-
-    /// Selectable block field names (camelCase), matching the public
-    /// `instruction.block` shape. `slot` is always present; the rest are
-    /// selected via handler `fields.block`.
-    #[derive(
-        Debug,
-        Serialize,
-        Deserialize,
-        Clone,
-        PartialEq,
-        Eq,
-        Hash,
-        JsonSchema,
-        strum::Display,
-        strum::EnumIter,
-    )]
-    #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    #[strum(serialize_all = "camelCase")]
-    pub enum SvmBlockField {
-        Height,
-        ParentSlot,
-        ParentHash,
-    }
-
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[schemars(
         title = "Envio Svm Config Schema",

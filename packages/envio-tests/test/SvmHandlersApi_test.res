@@ -298,6 +298,26 @@ type _Acc = import("envio").SvmAccount;
 `)
   )
 
+  it("generated program table carries only schema args and accounts", _ =>
+    check(`
+import type { Global, SvmAllTransactionFields, SvmTransaction } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+type Programs = Global extends { config: { svm: { programs: infer P } } } ? P : never;
+type Swap = Programs["Swapper"]["swap"];
+
+expectType<TypeEqual<keyof Swap, "args" | "accounts">>(true);
+expectType<TypeEqual<Swap["args"], { readonly amountIn: string; readonly minAmountOut: string }>>(true);
+expectType<TypeEqual<Swap["accounts"], { readonly source: string; readonly destination: string }>>(true);
+// @ts-expect-error - transaction is not config-bound; handler fields.transaction selects it
+type _Tx = Swap["transaction"];
+// @ts-expect-error - block is not config-bound; handler fields.block selects it
+type _Block = Swap["block"];
+
+expectType<TypeEqual<SvmTransaction, SvmAllTransactionFields>>(true);
+`)
+  )
+
   it("unselected fields are FieldNotSelected when fields is omitted", _ =>
     check(`
 import { indexer } from "envio";

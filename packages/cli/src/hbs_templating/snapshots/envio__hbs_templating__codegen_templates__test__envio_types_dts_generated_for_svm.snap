@@ -1,6 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
-assertion_line: 3755
+assertion_line: 3489
 expression: project_template.envio_types_dts
 ---
 /**
@@ -11,11 +11,6 @@ expression: project_template.envio_types_dts
  */
 
 import type { Address, BigDecimal, SingleOrMultiple } from "envio";
-
-/** Marks a block/transaction field that this instruction's handler `fields` doesn't include.
- * Reading such a field is a type error; the message tells you which field to add to
- * `fields` on the handler registration to make it available. */
-type FieldNotSelected<Message extends string> = { readonly __fieldNotSelected: Message };
 
 declare namespace FuelTypes {}
 type Enums = {};
@@ -33,152 +28,8 @@ declare module "envio" {
   "0": { id: 0 };
       }; programs: {
         "TokenMetadata": {
-          "CreateMetadataAccountV3": { readonly args: { readonly data: { readonly name: string; readonly symbol: string; readonly uri: string; readonly seller_fee_basis_points: number; readonly creators: (({ readonly address: string; readonly verified: boolean; readonly share: number })[]) | null; readonly collection: ({ readonly verified: boolean; readonly key: string }) | null; readonly uses: ({ readonly use_method: { readonly Burn: {} } | { readonly Multiple: {} } | { readonly Single: {} }; readonly remaining: string; readonly total: string }) | null }; readonly is_mutable: boolean; readonly collection_details: ({ readonly V1: { readonly size: string } }) | null }; readonly accounts: { readonly metadata: string; readonly mint: string; readonly mint_authority: string; readonly payer: string; readonly update_authority: string; readonly system_program: string; readonly rent: string }; readonly transaction: {
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly transactionIndex: FieldNotSelected<"Field 'transactionIndex' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly signature: FieldNotSelected<"Field 'signature' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly feePayer: FieldNotSelected<"Field 'feePayer' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly success: FieldNotSelected<"Field 'success' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly err: FieldNotSelected<"Field 'err' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly fee: FieldNotSelected<"Field 'fee' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly computeUnitsConsumed: FieldNotSelected<"Field 'computeUnitsConsumed' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly accountKeys: FieldNotSelected<"Field 'accountKeys' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly recentBlockhash: FieldNotSelected<"Field 'recentBlockhash' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly version: FieldNotSelected<"Field 'version' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly allSignatures: FieldNotSelected<"Field 'allSignatures' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.accountActivity on the handler registration.
-             */
-            readonly accountActivities: FieldNotSelected<"Field 'accountActivities' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.accountActivity in the registration options.">;
-          }; readonly block: {
-            /** The slot field. */
-            readonly slot: number;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.block on the handler registration.
-             */
-            readonly time: FieldNotSelected<"Field 'time' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.block in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.block on the handler registration.
-             */
-            readonly hash: FieldNotSelected<"Field 'hash' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.block in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.block on the handler registration.
-             */
-            readonly height: FieldNotSelected<"Field 'height' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.block in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.block on the handler registration.
-             */
-            readonly parentSlot: FieldNotSelected<"Field 'parentSlot' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.block in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.block on the handler registration.
-             */
-            readonly parentHash: FieldNotSelected<"Field 'parentHash' is not selected for the 'CreateMetadataAccountV3' instruction. Add it to fields.block in the registration options.">;
-          } };
-          "UpdateMetadataAccountV2": { readonly args: { readonly data: ({ readonly name: string; readonly symbol: string; readonly uri: string; readonly seller_fee_basis_points: number; readonly creators: (({ readonly address: string; readonly verified: boolean; readonly share: number })[]) | null; readonly collection: ({ readonly verified: boolean; readonly key: string }) | null; readonly uses: ({ readonly use_method: { readonly Burn: {} } | { readonly Multiple: {} } | { readonly Single: {} }; readonly remaining: string; readonly total: string }) | null }) | null; readonly update_authority: (string) | null; readonly primary_sale_happened: (boolean) | null; readonly is_mutable: (boolean) | null }; readonly accounts: { readonly metadata: string; readonly update_authority: string }; readonly transaction: {
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly transactionIndex: FieldNotSelected<"Field 'transactionIndex' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly signature: FieldNotSelected<"Field 'signature' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly feePayer: FieldNotSelected<"Field 'feePayer' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly success: FieldNotSelected<"Field 'success' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly err: FieldNotSelected<"Field 'err' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly fee: FieldNotSelected<"Field 'fee' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly computeUnitsConsumed: FieldNotSelected<"Field 'computeUnitsConsumed' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly accountKeys: FieldNotSelected<"Field 'accountKeys' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly recentBlockhash: FieldNotSelected<"Field 'recentBlockhash' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly version: FieldNotSelected<"Field 'version' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
-             */
-            readonly allSignatures: FieldNotSelected<"Field 'allSignatures' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.transaction in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.accountActivity on the handler registration.
-             */
-            readonly accountActivities: FieldNotSelected<"Field 'accountActivities' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.accountActivity in the registration options.">;
-          }; readonly block: {
-            /** The slot field. */
-            readonly slot: number;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.block on the handler registration.
-             */
-            readonly time: FieldNotSelected<"Field 'time' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.block in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.block on the handler registration.
-             */
-            readonly hash: FieldNotSelected<"Field 'hash' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.block in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.block on the handler registration.
-             */
-            readonly height: FieldNotSelected<"Field 'height' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.block in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.block on the handler registration.
-             */
-            readonly parentSlot: FieldNotSelected<"Field 'parentSlot' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.block in the registration options.">;
-            /**
-             * @deprecated Not selected for this instruction. Add it to fields.block on the handler registration.
-             */
-            readonly parentHash: FieldNotSelected<"Field 'parentHash' is not selected for the 'UpdateMetadataAccountV2' instruction. Add it to fields.block in the registration options.">;
-          } };
+          "CreateMetadataAccountV3": { readonly args: { readonly data: { readonly name: string; readonly symbol: string; readonly uri: string; readonly seller_fee_basis_points: number; readonly creators: (({ readonly address: string; readonly verified: boolean; readonly share: number })[]) | null; readonly collection: ({ readonly verified: boolean; readonly key: string }) | null; readonly uses: ({ readonly use_method: { readonly Burn: {} } | { readonly Multiple: {} } | { readonly Single: {} }; readonly remaining: string; readonly total: string }) | null }; readonly is_mutable: boolean; readonly collection_details: ({ readonly V1: { readonly size: string } }) | null }; readonly accounts: { readonly metadata: string; readonly mint: string; readonly mint_authority: string; readonly payer: string; readonly update_authority: string; readonly system_program: string; readonly rent: string } };
+          "UpdateMetadataAccountV2": { readonly args: { readonly data: ({ readonly name: string; readonly symbol: string; readonly uri: string; readonly seller_fee_basis_points: number; readonly creators: (({ readonly address: string; readonly verified: boolean; readonly share: number })[]) | null; readonly collection: ({ readonly verified: boolean; readonly key: string }) | null; readonly uses: ({ readonly use_method: { readonly Burn: {} } | { readonly Multiple: {} } | { readonly Single: {} }; readonly remaining: string; readonly total: string }) | null }) | null; readonly update_authority: (string) | null; readonly primary_sale_happened: (boolean) | null; readonly is_mutable: (boolean) | null }; readonly accounts: { readonly metadata: string; readonly update_authority: string } };
         };
       } };
       entities: Entities;

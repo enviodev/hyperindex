@@ -2063,7 +2063,6 @@ type EvmContractsT  = GlobalConfig extends { evm:  { contracts: infer X extends 
 type FuelChainsT    = GlobalConfig extends { fuel: { chains:    infer X extends Record<string, { id: number }> } } ? X : {};
 type FuelContractsT = GlobalConfig extends { fuel: { contracts: infer X extends Record<string, Record<string, any>> } } ? X : {};
 type SvmChainsT     = GlobalConfig extends { svm:  { chains:    infer X extends Record<string, { id: number }> } } ? X : {};
-type SvmProgramsT   = GlobalConfig extends { svm:  { programs:  infer X extends Record<string, Record<string, any>> } } ? X : {};
 type EntitiesT      = GlobalConfig extends { entities: infer X extends Record<string, object> } ? X : {};
 type EnumsT         = GlobalConfig extends { enums: infer X extends Record<string, any> } ? X : {};
 
@@ -2085,17 +2084,10 @@ export type FuelChainId = IsEmptyObject<FuelChainsT> extends true ? NotConfigure
 /** Union of all configured SVM chain IDs. */
 export type SvmChainId  = IsEmptyObject<SvmChainsT>  extends true ? NotConfigured<"SvmChainId",  "Configure SVM chains">  : SvmChainsT [keyof SvmChainsT ]["id"];
 
-/** The SVM parent-transaction type generated from this project's
- *  `field_selection`: the union of every instruction's `transaction` shape,
- *  with unselected fields typed as `FieldNotSelected<...>`. Resolves to a
- *  `NotConfigured` hint until `envio codegen` augments {@link Global}. */
-export type SvmTransaction = IsEmptyObject<SvmProgramsT> extends true
-  ? NotConfigured<"SvmTransaction", "Configure SVM programs">
-  : {
-      [P in keyof SvmProgramsT]: {
-        [I in keyof SvmProgramsT[P]]: SvmProgramsT[P][I]["transaction"];
-      }[keyof SvmProgramsT[P]];
-    }[keyof SvmProgramsT];
+/** All SVM parent-transaction fields when selected. Handler
+ *  `fields.transaction` narrows this; `accountActivities` is implied by
+ *  `fields.accountActivity`. */
+export type SvmTransaction = SvmAllTransactionFields;
 
 /** Lookup an EVM event type by contract and event name. Without generics,
  *  resolves to the discriminated union of every EVM event in the project. */

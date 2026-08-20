@@ -2282,10 +2282,6 @@ type testIndexer = {{
             // Handlers reach them via the literal-typed `onInstruction`
             // overload in index.d.ts.
             svm_programs_body = if cfg.get_ecosystem() == Ecosystem::Svm {
-                // Built once; the canonical field list is the same for every
-                // instruction (only the per-instruction `selected` set differs).
-                let svm_tx_specs = svm_transaction_field_specs();
-                let svm_block_specs = svm_block_field_specs();
                 let mut program_entries: Vec<String> = Vec::new();
                 for contract in cfg.contracts.values() {
                     use crate::config_parsing::system_config::{Abi, EventKind};
@@ -2330,26 +2326,12 @@ type testIndexer = {{
                                 .join("; ");
                             format!("{{ {fields} }}")
                         };
-                        let transaction_ts = svm_transaction_ts_type(
-                            &svm_tx_specs,
-                            &[],
-                            &event.name,
-                            "            ",
-                        );
-                        let block_ts = svm_block_ts_type(
-                            &svm_block_specs,
-                            &[],
-                            &event.name,
-                            "            ",
-                        );
                         instruction_entries.push(format!(
                             "          \"{instr}\": {{ readonly args: {args}; readonly accounts: \
-                             {accs}; readonly transaction: {tx}; readonly block: {block} }};",
+                             {accs} }};",
                             instr = event.name,
                             args = args_ts,
                             accs = accounts_ts,
-                            tx = transaction_ts,
-                            block = block_ts,
                         ));
                     }
                     if !instruction_entries.is_empty() {
@@ -2544,17 +2526,16 @@ type testIndexer = {{
             .collect::<Vec<_>>()
             .join("\n");
 
-        let field_not_selected_doc = match ecosystem {
-            Ecosystem::Svm => {
-                "/** Marks a block/transaction field that this instruction's handler `fields` \
-                 doesn't include.\n * Reading such a field is a type error; the message tells you \
-                 which field to add to\n * `fields` on the handler registration to make it \
-                 available. */"
-            }
+        let field_not_selected = match ecosystem {
+            // SVM selection is handler `fields` in index.d.ts, not codegen.
+            Ecosystem::Svm => String::new(),
             Ecosystem::Evm | Ecosystem::Fuel => {
                 "/** Marks a block/transaction field that this event's `field_selection` doesn't \
                  include.\n * Reading such a field is a type error; the message tells you which \
-                 field to add to\n * `field_selection` in config.yaml to make it available. */"
+                 field to add to\n * `field_selection` in config.yaml to make it available. \
+                 */\ntype FieldNotSelected<Message extends string> = { readonly \
+                 __fieldNotSelected: Message };\n\n"
+                    .to_string()
             }
         };
 
@@ -2563,11 +2544,10 @@ type testIndexer = {{
              schema.graphql.\n * Do not edit manually.\n * If your project's types look out of \
              date, run `envio codegen`\n * (or your package manager's `codegen` script, e.g. \
              `pnpm codegen`).\n */\n\nimport type {{ Address, BigDecimal, SingleOrMultiple }} \
-             from \"envio\";\n\n{field_not_selected_doc}\ntype FieldNotSelected<Message extends \
-             string> = {{ readonly __fieldNotSelected: Message }};\n\n{file_level_types}\n\n\
+             from \"envio\";\n\n{field_not_selected}{file_level_types}\n\n\
              declare module \"envio\" {{\n{I2}interface Global {{\n{I4}config: \
              {{\n{config_block}\n{I4}}};\n{I2}}}\n\n{entity_aliases}\n}}\n",
-            field_not_selected_doc = field_not_selected_doc,
+            field_not_selected = field_not_selected,
             file_level_types = file_level_types,
             entity_aliases = entity_aliases,
         )
@@ -2710,21 +2690,6 @@ fn ts_unselected_field(
     )
 }
 
-fn ts_unselected_handler_field(
-    name: &str,
-    knob: &str,
-    noun: &str,
-    owner: &str,
-    indent: &str,
-) -> String {
-    format!(
-        "{indent}/**\n{indent} * @deprecated Not selected for this {noun}. Add it to fields.{knob} \
-         on the handler registration.\n{indent} \
-         */\n{indent}readonly {name}: FieldNotSelected<\"Field '{name}' is not selected for the \
-         '{owner}' {noun}. Add it to fields.{knob} in the registration options.\">;"
-    )
-}
-
 /// Wrap rendered field lines into a TS object type literal, closing the brace
 /// two spaces shallower than the field indent.
 fn wrap_ts_record(field_lines: &[String], indent: &str) -> String {
@@ -2733,199 +2698,6 @@ fn wrap_ts_record(field_lines: &[String], indent: &str) -> String {
         field_lines.join("\n"),
         &indent[..indent.len().saturating_sub(2)]
     )
-}
-
-/// One SVM parent-transaction field: TS value type, whether it can be
-/// `undefined` even when selected, and the handler `fields` knob that enables
-/// it.
-struct SvmTransactionFieldSpec {
-    name: String,
-    ts_type: &'static str,
-    optional: bool,
-    knob: &'static str,
-}
-
-/// Canonical SVM parent-transaction fields in declaration order. Field names
-/// come from `SvmTransactionField` (the config-parsing enum, so they can't drift
-/// from what YAML accepts). The underlying materializer columns
-/// (`transaction_store.rs` `decode_svm_columns`) are `Option`-typed for nearly
-/// every field, but that reflects two different things: selecting a field adds
-/// its column to every query this chain issues, so a selected field's column is
-/// never actually absent — only fields with a genuine per-transaction reason to
-/// be null even when selected (`err` on a successful tx, `version` on a legacy
-/// tx) are optional here. The match is exhaustive, so a new variant won't
-/// compile until its type is declared. `accountActivities` is implied by
-/// handler `fields.accountActivity`, hence its different knob.
-fn svm_transaction_field_specs() -> Vec<SvmTransactionFieldSpec> {
-    use crate::config_parsing::human_config::svm::SvmTransactionField;
-    use strum::IntoEnumIterator;
-
-    let specs: Vec<SvmTransactionFieldSpec> = SvmTransactionField::iter()
-        .map(|field| {
-            let (ts_type, optional) = match field {
-                SvmTransactionField::TransactionIndex => ("number", false),
-                SvmTransactionField::Signature => ("string", false),
-                SvmTransactionField::FeePayer => ("string", false),
-                SvmTransactionField::Success => ("boolean", false),
-                SvmTransactionField::Err => ("string", true),
-                SvmTransactionField::Fee => ("bigint", false),
-                // Solana's own RPC docs describe this as "reported when available":
-                // compute-unit metering post-dates mainnet launch, so older/legacy
-                // transactions can lack it even when selected.
-                SvmTransactionField::ComputeUnitsConsumed => ("bigint", true),
-                SvmTransactionField::AccountKeys => ("readonly string[]", false),
-                SvmTransactionField::RecentBlockhash => ("string", false),
-                SvmTransactionField::Version => ("string", true),
-                SvmTransactionField::AllSignatures => ("readonly string[]", false),
-            };
-            SvmTransactionFieldSpec {
-                name: field.to_string(),
-                ts_type,
-                optional,
-                knob: "transaction",
-            }
-        })
-        .collect();
-    let mut specs = specs;
-    specs.push(SvmTransactionFieldSpec {
-        name: "accountActivities".to_string(),
-        ts_type: "readonly SvmAccountActivity[]",
-        optional: false,
-        knob: "accountActivity",
-    });
-    specs
-}
-
-/// Render one field line of a per-instruction SVM field record: the field's real
-/// type when selected (nullable as `T | undefined`), else an `@deprecated` handler
-/// `fields` hint plus a `FieldNotSelected<...>` sentinel. Shared by the
-/// transaction and block record builders.
-fn svm_field_line(
-    name: &str,
-    ts_type: &str,
-    optional: bool,
-    knob: &str,
-    selected: bool,
-    instruction_name: &str,
-    indent: &str,
-) -> String {
-    if selected {
-        let value = if optional {
-            format!("{ts_type} | undefined")
-        } else {
-            ts_type.to_string()
-        };
-        ts_selected_field(name, &value, indent)
-    } else {
-        ts_unselected_handler_field(name, knob, "instruction", instruction_name, indent)
-    }
-}
-
-/// Per-instruction SVM parent-transaction TS type for the generated program
-/// table: selected fields get their real type (nullable ones as `T | undefined`);
-/// unselected fields get an `@deprecated` hint plus `FieldNotSelected<...>`.
-/// `indent` is the indentation of the field lines; the closing brace sits two
-/// spaces shallower.
-fn svm_transaction_ts_type(
-    specs: &[SvmTransactionFieldSpec],
-    selected: &[String],
-    instruction_name: &str,
-    indent: &str,
-) -> String {
-    let selected: std::collections::HashSet<&str> = selected.iter().map(String::as_str).collect();
-    let fields: Vec<String> = specs
-        .iter()
-        .map(|spec| {
-            svm_field_line(
-                &spec.name,
-                spec.ts_type,
-                spec.optional,
-                spec.knob,
-                selected.contains(spec.name.as_str()),
-                instruction_name,
-                indent,
-            )
-        })
-        .collect();
-    wrap_ts_record(&fields, indent)
-}
-
-/// One selectable SVM block field: TS value type and whether it can be
-/// `undefined` even when selected. Selecting a field adds its HyperSync column
-/// to every query this chain issues (`SvmHyperSyncSource` unions selections
-/// chain-wide), so once selected the store's decoded value is the real one,
-/// not a "column wasn't requested" placeholder — none of these are nullable
-/// once selected.
-struct SvmBlockFieldSpec {
-    name: String,
-    ts_type: &'static str,
-    optional: bool,
-}
-
-fn svm_block_field_specs() -> Vec<SvmBlockFieldSpec> {
-    use crate::config_parsing::human_config::svm::SvmBlockField;
-    use strum::IntoEnumIterator;
-
-    SvmBlockField::iter()
-        .map(|field| {
-            let (ts_type, optional) = match field {
-                SvmBlockField::Height => ("number", false),
-                SvmBlockField::ParentSlot => ("number", false),
-                SvmBlockField::ParentHash => ("string", false),
-            };
-            SvmBlockFieldSpec {
-                name: field.to_string(),
-                ts_type,
-                optional,
-            }
-        })
-        .collect()
-}
-
-/// Per-instruction SVM block TS type for the generated program table.
-/// `slot` always renders as present; `time` still renders as `T | undefined`
-/// when selected, since HyperSync/Solana may not report a block time for
-/// every slot. Selected fields get their real type (nullable ones as
-/// `T | undefined`); unselected fields get an `@deprecated` hint plus
-/// `FieldNotSelected<...>`. Mirrors `svm_transaction_ts_type`.
-fn svm_block_ts_type(
-    specs: &[SvmBlockFieldSpec],
-    selected: &[String],
-    instruction_name: &str,
-    indent: &str,
-) -> String {
-    let selected: std::collections::HashSet<&str> = selected.iter().map(String::as_str).collect();
-    let mut fields: Vec<String> = vec![ts_selected_field("slot", "number", indent)];
-    fields.push(svm_field_line(
-        "time",
-        "number",
-        true,
-        "block",
-        selected.contains("time"),
-        instruction_name,
-        indent,
-    ));
-    fields.push(svm_field_line(
-        "hash",
-        "string",
-        false,
-        "block",
-        selected.contains("hash"),
-        instruction_name,
-        indent,
-    ));
-    for spec in specs {
-        fields.push(svm_field_line(
-            &spec.name,
-            spec.ts_type,
-            spec.optional,
-            "block",
-            selected.contains(spec.name.as_str()),
-            instruction_name,
-            indent,
-        ));
-    }
-    wrap_ts_record(&fields, indent)
 }
 
 /// Quote a TypeScript property name when it isn't a bare identifier.
@@ -3741,23 +3513,6 @@ type GlobalCounter @crossChain {
         insta::assert_snapshot!(json);
     }
 
-    #[test]
-    fn svm_transaction_field_specs_match_materializer() {
-        // The codegen field set must match the runtime materializer's
-        // `SvmTxField` (transaction_store.rs `decode_svm_columns`) one-for-one,
-        // so a field added to one but not the other fails here instead of
-        // silently generating a type that can't be materialised (or vice versa).
-        use std::collections::BTreeSet;
-        use strum::VariantArray;
-        let specs = svm_transaction_field_specs();
-        let spec_names: BTreeSet<&str> = specs.iter().map(|s| s.name.as_str()).collect();
-        let materializer_names: BTreeSet<&str> = crate::transaction_store::SvmTxField::VARIANTS
-            .iter()
-            .map(|f| f.name())
-            .collect();
-        assert_eq!(spec_names, materializer_names);
-    }
-
     /// Extract `(field name, is_optional)` pairs from a `{ ... }` type body,
     /// stripping `prefix` (e.g. `readonly ` for TS) off each field line.
     fn parse_type_fields(src: &str, opener: &str, prefix: &str) -> Vec<(String, bool)> {
@@ -3779,79 +3534,48 @@ type GlobalCounter @crossChain {
     }
 
     #[test]
-    fn svm_transaction_field_specs_match_runtime() {
-        // The per-instruction transaction type is generated from
-        // `svm_transaction_field_specs()`; pin its field set to the runtime
-        // `svmTransaction` (Envio.res), the source of truth it mirrors, so a
-        // missing field (the bug that dropped `transactionIndex`) can't ship.
-        // Only names are compared: generated optionality is field-selection
-        // contextual, so it diverges from the standalone runtime type by design.
+    fn svm_public_transaction_fields_match_materializer() {
+        // Handler `fields.transaction` is typed from `SvmAllTransactionFields`;
+        // `accountActivities` is implied by `fields.accountActivity`. Pin the
+        // pair to `SvmTxField` so a store column can't ship without a public name.
+        use std::collections::BTreeSet;
+        use strum::VariantArray;
+        let dts =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../envio/index.d.ts"))
+                .expect("read index.d.ts");
+        let mut names: BTreeSet<String> =
+            parse_type_fields(&dts, "export type SvmAllTransactionFields = {", "readonly ")
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect();
+        names.insert("accountActivities".to_string());
+        let materializer: BTreeSet<String> = crate::transaction_store::SvmTxField::VARIANTS
+            .iter()
+            .map(|f| f.name().to_string())
+            .collect();
+        assert_eq!(names, materializer);
+    }
+
+    #[test]
+    fn svm_public_block_fields_match_runtime() {
+        let dts =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../envio/index.d.ts"))
+                .expect("read index.d.ts");
+        let dts_fields: Vec<String> =
+            parse_type_fields(&dts, "export type SvmInstructionBlock = {", "readonly ")
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect();
         let res = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../envio/src/Envio.res"
         ))
         .expect("read Envio.res");
-        let res_fields: Vec<String> = parse_type_fields(&res, "type svmTransaction = {", "")
-            .into_iter()
-            .map(|(name, _optional)| name)
-            .collect();
-        let spec_fields: Vec<String> = svm_transaction_field_specs()
-            .into_iter()
-            .map(|spec| spec.name)
-            .collect();
-        assert_eq!(spec_fields, res_fields);
-    }
-
-    #[test]
-    fn svm_block_field_specs_match_runtime() {
-        // The per-instruction block type is generated from `svm_block_field_specs()`;
-        // pin its field set to the runtime `svmInstructionBlock` (Envio.res),
-        // excluding the always-present `slot`/`time`/`hash`. Only names are
-        // compared: `Envio.res` is a pre-narrowing fallback shape that stays
-        // optional for any individually-selectable field (it may not be selected
-        // by a given event), while the generated per-instruction type's
-        // optionality reflects genuine nullability once selected — the two
-        // diverge by design (matching `svm_transaction_field_specs_match_runtime`).
-        let res = std::fs::read_to_string(
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../envio/src/Envio.res"),
-        )
-        .expect("read Envio.res");
         let res_fields: Vec<String> = parse_type_fields(&res, "type svmInstructionBlock = {", "")
             .into_iter()
-            .map(|(name, _optional)| name)
-            .filter(|name| name != "slot" && name != "time" && name != "hash")
+            .map(|(name, _)| name)
             .collect();
-        let spec_fields: Vec<String> = svm_block_field_specs()
-            .into_iter()
-            .map(|spec| spec.name)
-            .collect();
-        assert_eq!(spec_fields, res_fields);
-    }
-
-    #[test]
-    fn svm_block_ts_type_renders_optionality_and_unselected() {
-        let generated = svm_block_ts_type(
-            &svm_block_field_specs(),
-            &["height".to_string()],
-            "Swap",
-            "  ",
-        );
-        insta::assert_snapshot!(generated);
-    }
-
-    #[test]
-    fn svm_transaction_ts_type_renders_optionality_and_unselected() {
-        let generated = svm_transaction_ts_type(
-            &svm_transaction_field_specs(),
-            &[
-                "signature".to_string(),
-                "feePayer".to_string(),
-                "err".to_string(),
-            ],
-            "Swap",
-            "  ",
-        );
-        insta::assert_snapshot!(generated);
+        assert_eq!(dts_fields, res_fields);
     }
 
     #[test]
@@ -3864,6 +3588,24 @@ type GlobalCounter @crossChain {
     fn envio_types_dts_generated_for_svm() {
         let project_template = get_project_template_helper("svm-metaplex-config.yaml");
         insta::assert_snapshot!(project_template.envio_types_dts);
+        // Handler `fields` live in index.d.ts. A generated FieldNotSelected /
+        // transaction / block record is leftover YAML field_selection.
+        assert!(
+            !project_template
+                .envio_types_dts
+                .contains("FieldNotSelected"),
+            "SVM codegen must not emit FieldNotSelected"
+        );
+        assert!(
+            !project_template
+                .envio_types_dts
+                .contains("readonly transaction:"),
+            "SVM program table must not emit transaction"
+        );
+        assert!(
+            !project_template.envio_types_dts.contains("readonly block:"),
+            "SVM program table must not emit block"
+        );
     }
 
     #[test]
