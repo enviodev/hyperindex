@@ -87,10 +87,10 @@ let subscribe = (
           timeoutId := None
           // Distinguishes a provider whose message shape we don't understand
           // from a chain that simply has nothing to report.
-          fail(~reason=sawUnreadable.contents ? "unreadable" : "stale")
+          fail(~reason=sawUnreadable.contents ? "unreadable" : "stale", ~windowElapsed=true)
         }, staleTimeout))
   }
-  and fail = (~reason) => {
+  and fail = (~reason, ~windowElapsed=false) => {
     generation := generation.contents + 1
     clearPendingTimeout()
     closeConnection()
@@ -101,12 +101,17 @@ let subscribe = (
     // it connects: an endpoint accepting and dropping connections would
     // otherwise look healthy every time and never back off.
     //
-    // The staleness path satisfies this by construction, so those failures
-    // never escalate. That is what a chain whose blocks are further apart than
-    // the timeout needs, and it costs nothing on an endpoint that is silent or
+    // The staleness timer knows it waited the window out, and says so rather
+    // than leaving it to be re-derived: a timer can reach its own deadline a
+    // fraction of a millisecond before the clock agrees. So those failures never
+    // escalate, which is what a chain whose blocks are further apart than the
+    // timeout needs, and costs nothing on an endpoint that is silent or
     // unreadable either, because reaching the timeout is what already spaces
     // those retries a whole window apart.
-    if Performance.now() -. connectionStartedAt.contents >= staleTimeout->Int.toFloat {
+    if (
+      windowElapsed ||
+        Performance.now() -. connectionStartedAt.contents >= staleTimeout->Int.toFloat
+    ) {
       failureCount := 0
     }
     failureCount := failureCount.contents + 1
