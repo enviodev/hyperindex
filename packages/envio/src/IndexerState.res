@@ -547,17 +547,23 @@ let whenIdle = (state: t): promise<unit> =>
 
 let enterInFlight = (state: t) => state.inFlight = state.inFlight + 1
 
+let wakeIdleWaiters = (state: t) => {
+  let waiters = state.idleWaiters
+  state.idleWaiters = []
+  waiters->Array.forEach(resolve => resolve())
+}
+
 let exitInFlight = (state: t) => {
   state.inFlight = state.inFlight - 1
   if state.inFlight < 0 {
+    // The count is worthless from here on, so waiters are released to find that
+    // out rather than left waiting on an idle reading that can never come.
     state.hasInFlightDeficit = true
-  }
-  // Only a step finishing can leave the loop quiet, so this is the one place
-  // waiters are woken.
-  if state->isInFlightIdle {
-    let waiters = state.idleWaiters
-    state.idleWaiters = []
-    waiters->Array.forEach(resolve => resolve())
+    state->wakeIdleWaiters
+  } else if state->isInFlightIdle {
+    // Only a step finishing can leave the loop quiet, so this is the one place
+    // a genuine idle wakes them.
+    state->wakeIdleWaiters
   }
 }
 

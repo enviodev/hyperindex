@@ -211,8 +211,18 @@ let run = async (
     // the re-check catches whatever either of them started. `timedOut` stops the
     // recursion once the caller has given up, so a wedged run doesn't keep
     // driving the store for the rest of the worker.
+    // Nothing downstream can be trusted once the count has gone into deficit,
+    // and waiting the bound out would only delay saying so.
+    let throwOnDeficit = () =>
+      if state->IndexerState.hasInFlightDeficit {
+        JsError.throwWithMessage(
+          "The indexer's in-flight count went into deficit: either a fan-out counted once for work that runs many times over, or an `indexer.park` from a frame the scheduler wasn't counting.",
+        )
+      }
+
     let rec settleLoop = async (~timedOut) => {
       await state->IndexerState.whenIdle
+      throwOnDeficit()
       await drainTick()
       // Checked before the flush, not just after: the run's teardown drops the
       // schema once the caller has given up, and a write started here would
@@ -229,13 +239,10 @@ let run = async (
     }
 
     let settle = async () => {
-      if state->IndexerState.hasInFlightDeficit {
-        // Nothing downstream can be trusted once the count has gone into
-        // deficit, and waiting the bound out would only delay saying so.
-        JsError.throwWithMessage(
-          "The indexer's in-flight count went into deficit: either a fan-out counted once for work that runs many times over, or an `indexer.park` from a frame the scheduler wasn't counting.",
-        )
-      }
+      // A deficit that predates the call would leave `whenIdle` waiting for an
+      // idle reading that can never come; one that appears during the settle
+      // releases the waiter and is caught inside the loop.
+      throwOnDeficit()
       let timeoutId = ref(None)
       let timedOut = ref(false)
       // Cleared whichever way the race ends: a timer left running holds the
