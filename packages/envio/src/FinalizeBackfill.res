@@ -54,8 +54,18 @@ let run = (state: IndexerState.t) =>
 // down — `ensureQueryIndexes` only covers what a getWhere actually asks for.
 // Best-effort and not awaited by the loop: indexing is already live and correct
 // without the index, just slower.
-let repairSchemaIndexes = (state: IndexerState.t) => {
+let repairSchemaIndexes = async (state: IndexerState.t) => {
   let persistence = state->IndexerState.persistence
-  let storage = persistence->Persistence.getInitializedStorageOrThrow
-  storage.ensureSchemaIndexes(~entities=persistence.allEntities)
+  try {
+    let storage = persistence->Persistence.getInitializedStorageOrThrow
+    await storage.ensureSchemaIndexes(~entities=persistence.allEntities)
+  } catch {
+  | exn =>
+    // Logged rather than fatal, per the best-effort intent above — but caught
+    // all the same: `launch` doesn't, and an unhandled rejection would take the
+    // process down over an index the indexer runs correctly without.
+    exn
+    ->ErrorHandling.make(~msg="Failed to repair the schema's read indexes")
+    ->ErrorHandling.log
+  }
 }

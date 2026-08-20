@@ -4,8 +4,7 @@
 // that knows how they connect. State and its transitions live in IndexerState.
 
 // Fire-and-forget an async step, counted as in-flight until it settles. Every
-// launchable owns a try/catch that routes failures to errorExit, so there's no
-// rejection to swallow here.
+// launchable owns its error boundary, so there's no rejection to swallow here.
 @inline
 let launch = (state: IndexerState.t, work: unit => promise<unit>) =>
   if !(state->IndexerState.isStopped) {
