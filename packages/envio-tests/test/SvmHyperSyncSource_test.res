@@ -273,6 +273,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         blockFields: [],
         accountActivityFields: [],
         logFields: [],
+        instructionFields: [],
         accounts: [],
       },
     ])
@@ -296,6 +297,13 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           },
         ],
       ],
+      fieldSelection: Internal.makeFieldSelection(
+        ~blockFields=eventConfig.fieldSelection.blockFields,
+        ~transactionFields=eventConfig.fieldSelection.transactionFields,
+        ~instructionFields=Utils.Set.fromArray(["args", "accounts"]),
+        ~blockMaskFn=Svm.eventBlockFieldMask,
+        ~transactionMaskFn=Svm.eventTransactionFieldMask,
+      ),
     }
     let _ = makeSource(~onEventRegistrations=[makeReg(~eventConfig)])
     let inputs =
@@ -306,6 +314,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "isInner": input.isInner,
       "transactionFields": input.transactionFields->Array.toSorted(String.compare),
       "blockFields": input.blockFields->Array.toSorted(String.compare),
+      "instructionFields": input.instructionFields->Array.toSorted(String.compare),
       "accounts": input.accounts,
       "argsJson": input.argsJson,
       "definedTypesJson": input.definedTypesJson,
@@ -314,6 +323,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "isInner": Some(false),
       "transactionFields": ["signature", "transactionIndex"],
       "blockFields": ["height", "parentHash"],
+      "instructionFields": ["accounts", "args"],
       "accounts": ["metadata", "mint"],
       "argsJson": Some(`[{"name":"amount","type":"u64"}]`),
       "definedTypesJson": None,

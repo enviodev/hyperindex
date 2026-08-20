@@ -52,6 +52,11 @@ indexer.onInstruction(
   },
   async () => {},
 );
+
+indexer.onInstruction(
+  { program: "Swapper", instruction: "swap", fields: { log: ["kind"] } },
+  async () => {},
+);
 `,
 )
 
@@ -197,6 +202,39 @@ describe("SVM instruction payload assembly", () => {
       ~fieldSelection=reg.fieldSelection,
     )
     t.expect(instruction.logs).toEqual(Some([]))
+  })
+
+  it("omits unselected log keys on the payload", t => {
+    let reg = registrations()->Array.getUnsafe(1)
+    let eventConfig =
+      reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+    let instruction = SvmHyperSyncSource.toSvmInstruction(
+      {
+        onEventRegistrationIndex: 0,
+        slot: 10,
+        transactionIndex: 1,
+        instructionAddress: [0],
+        programId: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+        accounts: [],
+        data: "0x09",
+        isInner: false,
+        logs: [{kind: "data", message: "hello"}],
+      },
+      ~programName="Swapper",
+      ~instructionName="swap",
+      ~eventConfig,
+      ~fieldSelection=reg.fieldSelection,
+    )
+    let log = instruction.logs->Option.getOrThrow->Array.getUnsafe(0)
+    t.expect({
+      "kind": log.kind,
+      "hasMessage": %raw(`Object.prototype.hasOwnProperty.call(log, "message")`),
+      "hasKind": %raw(`Object.prototype.hasOwnProperty.call(log, "kind")`),
+    }).toEqual({
+      "kind": "data",
+      "hasMessage": false,
+      "hasKind": true,
+    })
   })
 })
 

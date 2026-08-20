@@ -38,16 +38,20 @@ let namedAccounts = (
 }
 
 let selectedLog = (log: SvmHyperSyncClient.EventItems.log, ~logFields: Utils.Set.t<string>): Envio.svmLog => {
-  kind: if logFields->Utils.Set.has("kind") {
-    log.kind
-  } else {
-    %raw(`undefined`)
-  },
-  message: if logFields->Utils.Set.has("message") {
-    log.message
-  } else {
-    %raw(`undefined`)
-  },
+  let out = Dict.make()
+  if logFields->Utils.Set.has("kind") {
+    switch log.kind {
+    | Some(kind) => out->Dict.set("kind", kind)
+    | None => ()
+    }
+  }
+  if logFields->Utils.Set.has("message") {
+    switch log.message {
+    | Some(message) => out->Dict.set("message", message)
+    | None => ()
+    }
+  }
+  out->(Utils.magic: dict<string> => Envio.svmLog)
 }
 
 // `block` and `transaction` are omitted; they're materialised from the stores

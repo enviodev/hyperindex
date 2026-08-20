@@ -36,6 +36,7 @@ module Registration = {
     blockFields: array<string>,
     accountActivityFields: array<string>,
     logFields: array<string>,
+    instructionFields: array<string>,
     // Borsh schema pieces; empty accounts + absent argsJson = no schema.
     accounts: array<string>,
     argsJson?: string,
@@ -70,6 +71,7 @@ module Registration = {
         blockFields: reg.fieldSelection.blockFields->Utils.Set.toArray,
         accountActivityFields: reg.fieldSelection.accountActivityFields->Utils.Set.toArray,
         logFields: reg.fieldSelection.logFields->Utils.Set.toArray,
+        instructionFields: reg.fieldSelection.instructionFields->Utils.Set.toArray,
         accounts: eventConfig.accounts,
         argsJson: ?switch eventConfig.args {
         | JSON.Null => None
@@ -207,8 +209,8 @@ module EventItems = {
   }
 
   type log = {
-    kind: string,
-    message: string,
+    kind?: string,
+    message?: string,
   }
 
   // One routed instruction; `block` and `transaction` are materialised from
