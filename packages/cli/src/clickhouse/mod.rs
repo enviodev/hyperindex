@@ -453,13 +453,15 @@ impl ClickHouseSink {
     /// Removes every handle from the staging map before any of them is sent, so
     /// an unknown handle cannot leave the batches beside it stranded there.
     fn take_staged(&self, handles: &[u32]) -> Result<Vec<Staged>> {
-        let mut staged = self.staged.lock().unwrap();
-        handles
-            .iter()
-            .map(|handle| {
-                staged
-                    .remove(handle)
-                    .with_context(|| format!("Unknown staged ClickHouse batch {handle}"))
+        let taken: Vec<Option<Staged>> = {
+            let mut staged = self.staged.lock().unwrap();
+            handles.iter().map(|handle| staged.remove(handle)).collect()
+        };
+        taken
+            .into_iter()
+            .zip(handles)
+            .map(|(staged, handle)| {
+                staged.with_context(|| format!("Unknown staged ClickHouse batch {handle}"))
             })
             .collect()
     }
@@ -738,6 +740,29 @@ mod tests {
     /// Sends one staged batch, which is what a write with no checkpoints does.
     async fn write(sink: &ClickHouseSink, handle: u32) -> napi::Result<()> {
         sink.write_batch(vec![handle], None).await
+    }
+
+    // An unknown handle fails the write, and every batch named beside it is
+    // freed rather than left staged for the life of the process.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_write_naming_an_unknown_handle_frees_the_batches_beside_it() {
+        let server = mock_server::MockClickHouse::start(0).await;
+        let sink = sink_for(&server, 4);
+        let first = stage_ids(&sink, &["a"]);
+        let last = stage_ids(&sink, &["b"]);
+        let unknown = last + 1;
+
+        let err = sink
+            .write_batch(vec![first, unknown, last], None)
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.reason.contains("Unknown staged ClickHouse batch"),
+            "expected an unknown-handle error, got: {}",
+            err.reason
+        );
+        assert_eq!(sink.staged.lock().unwrap().len(), 0);
     }
 
     // A rejected insert is replaced by its two halves, so the rows in the half
