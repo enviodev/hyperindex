@@ -14,10 +14,10 @@ type sourceState = {
   // waiters poll straight away instead of sitting on the staleness backstop.
   mutable subscriptionLive: bool,
   mutable pendingSubscriptionDownResolvers: array<unit => unit>,
-  // Successful (re)connections of the height subscription, and failures keyed
-  // by reason. Both stay empty for a stream that has never failed, which keeps
-  // the envio_source_height_stream_* series off a healthy indexer's scrape.
-  mutable heightStreamConnects: int,
+  // Connects that followed a failure, and failures keyed by reason. Both stay
+  // empty for a stream that has never failed, which keeps the
+  // envio_source_height_stream_* series off a healthy indexer's scrape.
+  mutable heightStreamReconnects: int,
   heightStreamFailures: dict<int>,
   // Catch-up polls that completed. A fallback poller retires against this
   // rather than against the reconnect, because it is the catch-up that takes
@@ -184,9 +184,7 @@ let getHeightStreamSamples = (sourceManager: t): array<heightStreamSample> => {
       samples->Array.push({
         sourceName: sourceState.source.name,
         chainId: sourceState.source.chainId,
-        // The first connect isn't a reconnect, and a stream that failed before
-        // ever connecting has none at all.
-        reconnectCount: Pervasives.max(sourceState.heightStreamConnects - 1, 0),
+        reconnectCount: sourceState.heightStreamReconnects,
         failures,
       })
     }
@@ -389,7 +387,7 @@ let make = (
       pendingHeightResolvers: [],
       subscriptionLive: false,
       pendingSubscriptionDownResolvers: [],
-      heightStreamConnects: 0,
+      heightStreamReconnects: 0,
       heightStreamFailures: Dict.make(),
       heightStreamCatchUps: 0,
       disabled: false,
@@ -551,7 +549,12 @@ let handleSubscriptionStatus = (
   | Live =>
     if !sourceState.subscriptionLive {
       sourceState.subscriptionLive = true
-      sourceState.heightStreamConnects = sourceState.heightStreamConnects + 1
+      // Only a connect that followed a failure is a reconnect. Deriving it from
+      // a connect count would miss that a stream whose very first attempt
+      // failed has reconnected, and report it as still down for good.
+      if sourceState.heightStreamFailures->Dict.keysToArray->Array.length > 0 {
+        sourceState.heightStreamReconnects = sourceState.heightStreamReconnects + 1
+      }
       // Any height from before this connection is lost, because eth_subscribe
       // only ever delivers the next block. Ask once rather than leaving the
       // chain blind until the next one is mined.

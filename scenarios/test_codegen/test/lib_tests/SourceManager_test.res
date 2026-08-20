@@ -3513,6 +3513,42 @@ describe("SourceManager height subscription", () => {
     ))
   })
 
+  Async.it("Counts a connect that followed a failed first attempt as a reconnect", async t => {
+    let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
+    let sourceManager = SourceManager.make(
+      ~isRealtime=true,
+      ~sources=[mock.source],
+      ~newBlockStallTimeoutRealtime=2_000,
+    )
+
+    let waiting =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=true,
+        ~knownHeight=100,
+        ~reducedPolling=false,
+      )
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+
+    // The stream never came up on its first attempt, so the connect that
+    // follows is a reconnect. Reported otherwise, a recovered stream reads as
+    // one failure and no reconnect, which is the shape of a stream still down.
+    mock.setHeightSubscriptionStatus(Down({reason: "connect-failed"}))
+    mock.setHeightSubscriptionStatus(Live)
+    await Utils.delay(0)
+    mock.resolveGetHeightOrThrow(101)
+    let _ = await waiting
+
+    t.expect(sourceManager->SourceManager.getHeightStreamSamples).toStrictEqual([
+      {
+        SourceManager.sourceName: "MockSource",
+        chainId: 1->ChainId.fromInt,
+        reconnectCount: 1,
+        failures: [("connect-failed", 1)],
+      },
+    ])
+  })
+
   Async.it("Stops polling a source once the wait has been decided elsewhere", async t => {
     let pollingInterval = 10
     let stallTimeout = 2_000
