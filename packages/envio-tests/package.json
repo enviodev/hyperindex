@@ -7,7 +7,8 @@
     "build": "rescript",
     "watch": "rescript watch",
     "test": "node scripts/lint-determinism.mjs && rescript && vitest run",
-    "lint": "node scripts/lint-determinism.mjs"
+    "lint": "node scripts/lint-determinism.mjs",
+    "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs"
   },
   "devDependencies": {
     "@rescript/runtime": "12.2.0",
