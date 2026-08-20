@@ -416,10 +416,25 @@ impl GraphQLEnum {
     }
 }
 
+/// A data skipping index on the entity's ClickHouse history table, emitted
+/// into the DDL as `INDEX <name> <expr> TYPE <type> GRANULARITY <granularity>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClickHouseSkippingIndex {
+    pub name: String,
+    /// Raw ClickHouse expression the index is built over.
+    pub expr: String,
+    /// Raw ClickHouse index type passed through verbatim — e.g.
+    /// `bloom_filter(0.01)`, `set(100)`, `minmax` — so no type is ruled out.
+    pub index_type: String,
+    /// `GRANULARITY` clause; omitted leaves ClickHouse's default of 1.
+    pub granularity: Option<u32>,
+}
+
 /// Per-entity tuning of the ClickHouse history table layout, written as an
 /// object argument of the `@storage` directive:
 /// `@storage(clickhouse: {partitionBy: "toYYYYMM(timestamp)", orderBy:
-/// ["timestamp"], ttl: "timestamp + INTERVAL 2 YEAR"})`.
+/// ["timestamp"], ttl: "timestamp + INTERVAL 2 YEAR", skippingIndexes: [{name:
+/// "idx_from", expr: "fromAddress", type: "bloom_filter(0.01)"}]})`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClickHouseTableOptions {
     /// Raw ClickHouse expression emitted as `PARTITION BY <expr>`.
@@ -430,6 +445,8 @@ pub struct ClickHouseTableOptions {
     pub order_by: Option<Vec<String>>,
     /// Raw ClickHouse expression emitted as `TTL <expr>`.
     pub ttl: Option<String>,
+    /// Data skipping indexes emitted into the table's column list.
+    pub skipping_indexes: Option<Vec<ClickHouseSkippingIndex>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -973,11 +990,46 @@ fn parse_clickhouse_table_options(
                 };
                 options.order_by = Some(field_names);
             }
+            "skippingIndexes" => {
+                let items = match value {
+                    Value::List(items) if !items.is_empty() => items,
+                    _ => {
+                        return Err(anyhow!(
+                            "Invalid @storage directive on `{entity_name}`. `clickhouse.skippingIndexes` \
+                             must be a non-empty list of index objects, \
+                             {CLICKHOUSE_SKIPPING_INDEX_HINT}."
+                        ));
+                    }
+                };
+                let indices = items
+                    .iter()
+                    .map(|item| match item {
+                        Value::Object(index_fields) => {
+                            parse_clickhouse_skipping_index(entity_name, index_fields)
+                        }
+                        _ => Err(anyhow!(
+                            "Invalid @storage directive on `{entity_name}`. `clickhouse.skippingIndexes` \
+                             must be a list of index objects, {CLICKHOUSE_SKIPPING_INDEX_HINT}."
+                        )),
+                    })
+                    .collect::<anyhow::Result<Vec<ClickHouseSkippingIndex>>>()?;
+                let mut seen = HashSet::new();
+                for index in &indices {
+                    if !seen.insert(&index.name) {
+                        return Err(anyhow!(
+                            "Invalid @storage directive on `{entity_name}`. `clickhouse.skippingIndexes` \
+                             lists index name `{}` more than once.",
+                            index.name
+                        ));
+                    }
+                }
+                options.skipping_indexes = Some(indices);
+            }
             other => {
                 return Err(anyhow!(
                     "Invalid @storage directive on `{entity_name}`. Unknown `clickhouse` option \
-                     `{other}`. Expected options from {{partitionBy, orderBy, ttl}}, e.g. \
-                     clickhouse: {{partitionBy: \"toYYYYMM(timestamp)\", orderBy: \
+                     `{other}`. Expected options from {{partitionBy, orderBy, ttl, skippingIndexes}}, \
+                     e.g. clickhouse: {{partitionBy: \"toYYYYMM(timestamp)\", orderBy: \
                      [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}}."
                 ));
             }
@@ -985,6 +1037,90 @@ fn parse_clickhouse_table_options(
     }
 
     Ok(options)
+}
+
+const CLICKHOUSE_SKIPPING_INDEX_HINT: &str =
+    "e.g. clickhouse: {skippingIndexes: [{name: \"idx_from\", expr: \
+                                          \"fromAddress\", type: \"bloom_filter(0.01)\", \
+                                          granularity: 4}]}";
+
+fn parse_clickhouse_skipping_index(
+    entity_name: &str,
+    fields: &std::collections::BTreeMap<String, Value<'_, String>>,
+) -> anyhow::Result<ClickHouseSkippingIndex> {
+    let string_value = |key: &str, value: &Value<'_, String>| {
+        match value {
+        Value::String(s) if !s.trim().is_empty() => Ok(s.trim().to_string()),
+        _ => Err(anyhow!(
+            "Invalid @storage directive on `{entity_name}`. `clickhouse.skippingIndexes` entry field \
+             `{key}` must be a non-empty string, {CLICKHOUSE_SKIPPING_INDEX_HINT}."
+        )),
+    }
+    };
+
+    let mut name = None;
+    let mut expr = None;
+    let mut index_type = None;
+    let mut granularity = None;
+    for (key, value) in fields {
+        match key.as_str() {
+            "name" => name = Some(string_value(key, value)?),
+            "expr" => expr = Some(string_value(key, value)?),
+            "type" => index_type = Some(string_value(key, value)?),
+            "granularity" => {
+                let parsed = match value {
+                    Value::Int(i) => i.as_i64().filter(|v| (1..=i64::from(u32::MAX)).contains(v)),
+                    _ => None,
+                };
+                match parsed {
+                    Some(v) => granularity = Some(v as u32),
+                    None => {
+                        return Err(anyhow!(
+                            "Invalid @storage directive on `{entity_name}`. `clickhouse.skippingIndexes` \
+                             entry field `granularity` must be a positive integer, \
+                             {CLICKHOUSE_SKIPPING_INDEX_HINT}."
+                        ));
+                    }
+                }
+            }
+            other => {
+                return Err(anyhow!(
+                    "Invalid @storage directive on `{entity_name}`. Unknown `clickhouse.skippingIndexes` \
+                     entry field `{other}`. Expected fields from {{name, expr, type, \
+                     granularity}}, {CLICKHOUSE_SKIPPING_INDEX_HINT}."
+                ));
+            }
+        }
+    }
+
+    let require = |value: Option<String>, key: &str| {
+        value.ok_or_else(|| {
+            anyhow!(
+                "Invalid @storage directive on `{entity_name}`. `clickhouse.skippingIndexes` entry is \
+                 missing required field `{key}`, {CLICKHOUSE_SKIPPING_INDEX_HINT}."
+            )
+        })
+    };
+    let name = require(name, "name")?;
+    // The name is backtick-quoted in the emitted DDL, so restrict it to
+    // identifier characters to keep the statement well-formed.
+    let valid_name = name
+        .chars()
+        .enumerate()
+        .all(|(i, c)| c == '_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit()));
+    if !valid_name {
+        return Err(anyhow!(
+            "Invalid @storage directive on `{entity_name}`. `clickhouse.skippingIndexes` name `{name}` \
+             must contain only alphanumeric characters and underscores, and must not start with \
+             a digit."
+        ));
+    }
+    Ok(ClickHouseSkippingIndex {
+        name,
+        expr: require(expr, "expr")?,
+        index_type: require(index_type, "type")?,
+        granularity,
+    })
 }
 
 /// ClickHouse rejects Nullable and Array columns in the sorting key
@@ -2049,8 +2185,9 @@ impl GqlScalar {
 #[cfg(test)]
 mod tests {
     use super::{
-        anyhow, ClickHouseEntityStorage, ClickHouseTableOptions, Entity, Field, FieldType,
-        GqlScalar, GraphQLEnum, IndexFieldDirection, Schema, UserDefinedFieldType,
+        anyhow, ClickHouseEntityStorage, ClickHouseSkippingIndex, ClickHouseTableOptions, Entity,
+        Field, FieldType, GqlScalar, GraphQLEnum, IndexFieldDirection, Schema,
+        UserDefinedFieldType,
     };
     use crate::config_parsing::field_types::Primitive as PGPrimitive;
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
@@ -3188,6 +3325,7 @@ type TestEntity @storage(clickhouse: {partitionBy: "toYYYYMM(timestamp)"}) {
                 partition_by: Some("toYYYYMM(timestamp)".to_string()),
                 order_by: None,
                 ttl: None,
+                skipping_indexes: None,
             }))
         );
     }
@@ -3224,7 +3362,92 @@ type Token { id: ID! }
                 partition_by: None,
                 order_by: Some(vec!["token".to_string(), "timestamp".to_string()]),
                 ttl: None,
+                skipping_indexes: None,
             }))
+        );
+    }
+
+    #[test]
+    fn storage_directive_clickhouse_skipping_indexes() {
+        let schema_str = r#"
+type TestEntity @storage(clickhouse: {skippingIndexes: [
+  {name: "idx_from", expr: "fromAddress", type: "bloom_filter(0.01)", granularity: 4},
+  {name: "idx_amount", expr: "amount", type: "minmax"}
+]}) {
+  id: ID!
+  fromAddress: String!
+  amount: BigInt!
+}
+        "#;
+        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        assert_eq!(
+            entity.clickhouse,
+            Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
+                skipping_indexes: Some(vec![
+                    ClickHouseSkippingIndex {
+                        name: "idx_from".to_string(),
+                        expr: "fromAddress".to_string(),
+                        index_type: "bloom_filter(0.01)".to_string(),
+                        granularity: Some(4),
+                    },
+                    ClickHouseSkippingIndex {
+                        name: "idx_amount".to_string(),
+                        expr: "amount".to_string(),
+                        index_type: "minmax".to_string(),
+                        granularity: None,
+                    },
+                ]),
+                ..ClickHouseTableOptions::default()
+            }))
+        );
+    }
+
+    #[test]
+    fn storage_directive_clickhouse_skipping_indexes_errors() {
+        let assert_error_contains = |schema_str: &str, expected: &str| {
+            let err = Entity::from_object(&get_first_entity_from_string(schema_str))
+                .expect_err(&format!("expected error containing '{expected}'"));
+            let message = format!("{err:#}");
+            assert!(
+                message.contains(expected),
+                "expected error containing '{expected}', got: {message}"
+            );
+        };
+
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {skippingIndexes: []}) { id: ID! }"#,
+            "`clickhouse.skippingIndexes` must be a non-empty list",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {skippingIndexes: ["idx"]}) { id: ID! }"#,
+            "`clickhouse.skippingIndexes` must be a list of index objects",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {skippingIndexes: [{name: "idx", type: "minmax"}]}) { id: ID! }"#,
+            "missing required field `expr`",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {skippingIndexes: [{name: "idx", expr: "", type: "minmax"}]}) { id: ID! }"#,
+            "`expr` must be a non-empty string",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {skippingIndexes: [{name: "idx", expr: "id", type: "minmax", size: 1}]}) { id: ID! }"#,
+            "Unknown `clickhouse.skippingIndexes` entry field `size`",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {skippingIndexes: [{name: "idx", expr: "id", type: "minmax", granularity: 0}]}) { id: ID! }"#,
+            "`granularity` must be a positive integer",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {skippingIndexes: [{name: "bad name", expr: "id", type: "minmax"}]}) { id: ID! }"#,
+            "must contain only alphanumeric characters and underscores",
+        );
+        assert_error_contains(
+            r#"type TestEntity @storage(clickhouse: {skippingIndexes: [
+  {name: "idx", expr: "id", type: "minmax"},
+  {name: "idx", expr: "id", type: "set(100)"}
+]}) { id: ID! }"#,
+            "lists index name `idx` more than once",
         );
     }
 

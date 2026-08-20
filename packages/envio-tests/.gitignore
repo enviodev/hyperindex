@@ -7,3 +7,6 @@ lib
 
 # Internal test indexer temp handler files
 test/.tmp/
+
+# Log files the file-writing LOG_STRATEGY cases emit
+logs/

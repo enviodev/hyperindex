@@ -25,20 +25,24 @@ async function bumpStats(
 }
 
 indexer.onInstruction(
-  { program: "TokenMetadata", instruction: "CreateMetadataAccountV3" },
+  {
+    program: "TokenMetadata",
+    instruction: "CreateMetadataAccountV3",
+    fields: {
+      instruction: ["args", "accounts"],
+      transaction: ["signature"],
+      block: ["time"],
+    },
+  },
   async ({ instruction, context }) => {
-    const params = instruction.params;
-    if (!params) {
-      // The IDL covers discriminator 0x21, so a miss means the on-chain layout
-      // drifted from the checked-in IDL. Surface it rather than write a
-      // half-decoded row.
+    const args = instruction.args;
+    if (!args) {
       context.log.warn("CreateMetadataAccountV3: instruction did not match the IDL");
       return;
     }
-    const { args, accounts } = params;
-    const metadataPda = accounts.metadata;
-    const mint = accounts.mint;
-    const updateAuthority = accounts.updateAuthority;
+    const metadataPda = instruction.accounts.metadata.address;
+    const mint = instruction.accounts.mint.address;
+    const updateAuthority = instruction.accounts.updateAuthority.address;
     const txSig = instruction.transaction.signature;
 
     context.log.info(
@@ -60,18 +64,24 @@ indexer.onInstruction(
 );
 
 indexer.onInstruction(
-  { program: "TokenMetadata", instruction: "UpdateMetadataAccountV2" },
+  {
+    program: "TokenMetadata",
+    instruction: "UpdateMetadataAccountV2",
+    fields: {
+      instruction: ["args", "accounts"],
+      transaction: ["signature"],
+      block: ["time"],
+    },
+  },
   async ({ instruction, context }) => {
-    const params = instruction.params;
-    if (!params) {
+    const args = instruction.args;
+    if (!args) {
       context.log.warn("UpdateMetadataAccountV2: instruction did not match the IDL");
       return;
     }
-    const { args, accounts } = params;
-    const metadataPda = accounts.metadata;
-    // The instruction can reassign the update authority; when it doesn't, the
-    // signing authority is still the current one.
-    const updateAuthority = args.newUpdateAuthority ?? accounts.updateAuthority;
+    const metadataPda = instruction.accounts.metadata.address;
+    const updateAuthority =
+      args.newUpdateAuthority ?? instruction.accounts.updateAuthority.address;
     const txSig = instruction.transaction.signature;
 
     context.log.info(

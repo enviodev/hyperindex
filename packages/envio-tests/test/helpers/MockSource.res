@@ -49,7 +49,7 @@ type mockSourceEvent = {
 // MockSource items choose their callback at response time, after ChainState has
 // already been created. Install one stable registration up front and dispatch
 // through callback metadata carried only by the test payload.
-let makeMockSourceRegistration = (~index, ~contractName): Internal.onEventRegistration => {
+let makeMockSourceRegistration = (~index, ~contractName, ~isWildcard): Internal.onEventRegistration => {
   let handler: Internal.handler = args => {
     let event = args.event->(Utils.magic: Internal.event => mockSourceEvent)
     if args.context.isPreload {
@@ -89,9 +89,9 @@ let makeMockSourceRegistration = (~index, ~contractName): Internal.onEventRegist
       topicCount: 1,
       paramsMetadata: [],
     }: Internal.evmEventConfig :> Internal.eventConfig),
-    isWildcard: false,
+    isWildcard,
     filterByAddresses: false,
-    dependsOnAddresses: true,
+    dependsOnAddresses: !isWildcard,
     addressFilterParamGroups: [],
     startBlock: None,
     handler: Some(handler),
@@ -111,7 +111,10 @@ let defineAddresses: ({..}, array<Address.t>) => unit = %raw(`(payload, addresse
 }`)
 
 type mockSourceRegistrationRef = ref<option<Internal.onEventRegistration>>
-type mockSourceState = {onEventRegistrationRef: mockSourceRegistrationRef}
+// `isWildcard` decides whether the chain's mock registration depends on
+// addresses, and so whether its partition is an address partition or a wildcard
+// one — the two take different paths through a rollback.
+type mockSourceState = {onEventRegistrationRef: mockSourceRegistrationRef, isWildcard: bool}
 
 @get external getMockSourceState: Source.t => option<mockSourceState> = "__mockSourceState"
 
@@ -146,6 +149,7 @@ let installMockSourceRegistrations = (
         registrations
       }
       let mockRegistration = makeMockSourceRegistration(
+        ~isWildcard=sourceStates->Array.some(state => state.isWildcard),
         ~index=registrations.onEventRegistrations->Array.length,
         // Any contract from the chain keeps the synthetic registration in the
         // address-dependent partition of a real contract.
@@ -197,6 +201,10 @@ type t = {
   getHeightOrThrowCalls: array<bool>,
   resolveGetHeightOrThrow: int => unit,
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
+  // Answer every height call with `height` from now on, instead of parking it
+  // for `resolveGetHeightOrThrow`. A restarted indexer learns the head on its
+  // own this way, before the test body gets a chance to resolve anything.
+  setAutoHeight: int => unit,
   getItemsOrThrowCalls: array<getItemsOrThrowCall>,
   // How many times the source was told to drop orphaned-chain state.
   reorgCallCount: unit => int,
@@ -217,7 +225,13 @@ type t = {
   unsubscribeHeightSubscription: unit => unit,
 }
 
-let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~pollingInterval=1000) => {
+let make = (
+  methods: array<method>,
+  ~chainId=1,
+  ~sourceFor=Source.Sync,
+  ~pollingInterval=1000,
+  ~isWildcard=false,
+) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
       fn
@@ -238,7 +252,8 @@ let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~polling
   let heightSubscriptionCalls = []
   let heightSubscriptionCallbacks: array<int => unit> = []
   let heightSubscriptionUnsubscribed = ref(false)
-  let state: mockSourceState = {onEventRegistrationRef: ref(None)}
+  let autoHeight = ref(None)
+  let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
 
   // With the function we keep only the pending calls,
   // and remove the resolved ones automatically.
@@ -275,6 +290,13 @@ let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~polling
       getHeightOrThrowResolveFns->Array.forEach(resolve =>
         resolve({Source.height, requestStats: []})
       )
+    },
+    setAutoHeight: height => {
+      autoHeight := Some(height)
+      getHeightOrThrowResolveFns->Array.forEach(resolve =>
+        resolve({Source.height, requestStats: []})
+      )
+      getHeightOrThrowResolveFns->Utils.Array.clearInPlace
     },
     rejectGetHeightOrThrow: exn => {
       getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
@@ -352,10 +374,14 @@ let make = (methods: array<method>, ~chainId=1, ~sourceFor=Source.Sync, ~polling
         }),
         getHeightOrThrow: implement(#getHeightOrThrow, () => {
           getHeightOrThrowCalls->Array.push(true)->ignore
-          Promise.make((resolve, reject) => {
-            getHeightOrThrowResolveFns->Array.push(resolve)->ignore
-            getHeightOrThrowRejectFns->Array.push(reject)->ignore
-          })
+          switch autoHeight.contents {
+          | Some(height) => Promise.resolve({Source.height, requestStats: []})
+          | None =>
+            Promise.make((resolve, reject) => {
+              getHeightOrThrowResolveFns->Array.push(resolve)->ignore
+              getHeightOrThrowRejectFns->Array.push(reject)->ignore
+            })
+          }
         }),
         getItemsOrThrow: implement(#getItemsOrThrow, (
           ~fromBlock,

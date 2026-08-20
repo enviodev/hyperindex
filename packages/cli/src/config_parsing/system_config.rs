@@ -1406,17 +1406,9 @@ impl SystemConfig {
                                 } = resolve_instruction(instr, &svm_abi).with_context(|| {
                                     format!("Layout for instruction '{}'", instr.name)
                                 })?;
-                                let fs = instr.field_selection.as_ref();
-                                let selected_transaction_fields =
-                                    resolve_svm_transaction_fields(fs);
-                                let selected_block_fields = resolve_svm_block_fields(fs);
-                                let include_logs = fs.and_then(|f| f.log_fields).unwrap_or(false);
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,
-                                    selected_transaction_fields,
-                                    selected_block_fields,
-                                    include_logs,
                                     account_filters: instr
                                         .account_filters
                                         .as_ref()
@@ -2413,45 +2405,6 @@ pub struct SvmAccountFilter {
     pub values: Vec<String>,
 }
 
-/// Resolve an instruction's field selection into the selected transaction-field
-/// names (camelCase). The listed `transaction_fields` are deduplicated in
-/// declared order, then `token_balance_fields` appends `tokenBalances`.
-fn resolve_svm_transaction_fields(
-    fs: Option<&human_config::svm::SvmFieldSelection>,
-) -> Vec<String> {
-    let mut selected: Vec<String> = Vec::new();
-    let Some(fs) = fs else {
-        return selected;
-    };
-    for field in fs.transaction_fields.iter().flatten() {
-        let name = field.to_string();
-        if !selected.contains(&name) {
-            selected.push(name);
-        }
-    }
-    if fs.token_balance_fields == Some(true) {
-        selected.push("tokenBalances".to_string());
-    }
-    selected
-}
-
-/// Resolve an instruction's selected block fields (camelCase), in declared
-/// order. `slot`/`time`/`hash` are always included by the runtime, so they're
-/// not returned here (they aren't even selectable — see `SvmBlockField`).
-fn resolve_svm_block_fields(fs: Option<&human_config::svm::SvmFieldSelection>) -> Vec<String> {
-    let mut selected: Vec<String> = Vec::new();
-    let Some(fs) = fs else {
-        return selected;
-    };
-    for field in fs.block_fields.iter().flatten() {
-        let name = field.to_string();
-        if !selected.contains(&name) {
-            selected.push(name);
-        }
-    }
-    selected
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
@@ -2461,13 +2414,6 @@ pub struct SvmEventKind {
     /// router precomputes a per-program ordering on this so dispatch tries
     /// longest first.
     pub discriminator_byte_len: u8,
-    /// Selected parent-transaction fields (camelCase names matching the public
-    /// `svmTransaction` shape, incl. `tokenBalances`). Empty = no transaction.
-    pub selected_transaction_fields: Vec<String>,
-    /// Selected block fields (camelCase, matching `instruction.block`), excluding
-    /// the always-included `slot`. Empty = only `slot`.
-    pub selected_block_fields: Vec<String>,
-    pub include_logs: bool,
     /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
     /// AND across positions. An empty outer list means "no account filter".
     pub account_filters: Vec<Vec<SvmAccountFilter>>,
@@ -3917,12 +3863,6 @@ type Foo {
             assert!(matches!(token_metadata.abi, Abi::Svm(_)));
             assert_eq!(token_metadata.events.len(), 2);
 
-            let to_strings = |fields: &[&str]| {
-                fields
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<String>>()
-            };
             let kinds: Vec<_> = token_metadata
                 .events
                 .iter()
@@ -3931,8 +3871,6 @@ type Foo {
                         e.name.as_str(),
                         k.discriminator.as_deref(),
                         k.discriminator_byte_len,
-                        k.selected_transaction_fields.clone(),
-                        k.include_logs,
                         k.account_filters.len(),
                     ),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
@@ -3941,22 +3879,8 @@ type Foo {
             assert_eq!(
                 kinds,
                 vec![
-                    (
-                        "CreateMetadataAccountV3",
-                        Some("0x21"),
-                        1,
-                        to_strings(&[]),
-                        false,
-                        0
-                    ),
-                    (
-                        "UpdateMetadataAccountV2",
-                        Some("0x0f"),
-                        1,
-                        to_strings(&["signature"]),
-                        false,
-                        1
-                    ),
+                    ("CreateMetadataAccountV3", Some("0x21"), 1, 0),
+                    ("UpdateMetadataAccountV2", Some("0x0f"), 1, 1),
                 ],
             );
 
