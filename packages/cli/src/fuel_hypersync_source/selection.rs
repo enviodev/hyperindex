@@ -686,7 +686,7 @@ mod tests {
             name: "Owned".to_string(),
             start_block: None,
             depends_on_addresses: true,
-        }]);
+        }]).unwrap();
         store.register_seed(vec![crate::address_store::AddressRegistration {
             address: ADDR_1.to_string(),
             contract_name: "Owned".to_string(),

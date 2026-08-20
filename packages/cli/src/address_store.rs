@@ -540,17 +540,20 @@ impl AddressStore {
     /// address for a name that isn't among them is a caller bug, not a
     /// user-facing rejection.
     #[napi(factory)]
-    pub fn new_evm(should_checksum: bool, contracts: Vec<AddressStoreContract>) -> Self {
+    pub fn new_evm(
+        should_checksum: bool,
+        contracts: Vec<AddressStoreContract>,
+    ) -> napi::Result<Self> {
         Self::with_ecosystem(Ecosystem::Evm { should_checksum }, contracts)
     }
 
     #[napi(factory)]
-    pub fn new_svm(contracts: Vec<AddressStoreContract>) -> Self {
+    pub fn new_svm(contracts: Vec<AddressStoreContract>) -> napi::Result<Self> {
         Self::with_ecosystem(Ecosystem::Svm, contracts)
     }
 
     #[napi(factory)]
-    pub fn new_fuel(contracts: Vec<AddressStoreContract>) -> Self {
+    pub fn new_fuel(contracts: Vec<AddressStoreContract>) -> napi::Result<Self> {
         Self::with_ecosystem(Ecosystem::Fuel, contracts)
     }
 
@@ -796,8 +799,10 @@ impl AddressStore {
         group_start_blocks(&store, &ids)
     }
 
-    /// Live registration counts for every contract the chain holds, in id
-    /// order — the per-contract address gauge, read in one pass.
+    /// Live registration counts for the contracts this chain has something to
+    /// say about — one it fetches by address, or one it holds addresses for.
+    /// Every store holds every contract of every chain, so reporting all of
+    /// them would give each chain a series per contract it never sees.
     #[napi]
     pub fn contract_counts(&self) -> Vec<ContractAddressCount> {
         let store = self.read();
@@ -805,6 +810,9 @@ impl AddressStore {
             .contract_names
             .iter()
             .enumerate()
+            .filter(|(idx, _)| {
+                store.contract_depends_on_addresses[*idx] || store.live_count_by_contract[*idx] > 0
+            })
             .map(|(idx, name)| ContractAddressCount {
                 contract_name: name.clone(),
                 count: i64::from(store.live_count_by_contract[idx]),
@@ -938,7 +946,10 @@ impl AddressStore {
 }
 
 impl AddressStore {
-    fn with_ecosystem(ecosystem: Ecosystem, contracts: Vec<AddressStoreContract>) -> Self {
+    fn with_ecosystem(
+        ecosystem: Ecosystem,
+        contracts: Vec<AddressStoreContract>,
+    ) -> napi::Result<Self> {
         let mut contract_names = Vec::with_capacity(contracts.len());
         let mut contract_start_blocks = Vec::with_capacity(contracts.len());
         let mut contract_idx_by_name = HashMap::with_capacity(contracts.len());
@@ -947,24 +958,30 @@ impl AddressStore {
             // Structural, not incidental: a `contract_idx` is written into
             // every persisted address row, so a list whose ids drifted from
             // its positions would attribute stored addresses to the wrong
-            // contract on the next resume.
-            assert_eq!(
-                contract.id as usize,
-                contract_names.len(),
-                "address store contracts must be ordered by their canonical id",
-            );
-            assert!(
-                !contract_idx_by_name.contains_key(&contract.name),
-                "duplicate contract \"{}\" in the address store's contract list",
-                contract.name,
-            );
+            // contract on the next resume. An error rather than a panic — the
+            // indexer has to be able to report it, not abort the process.
+            if contract.id as usize != contract_names.len() {
+                return Err(napi::Error::from_reason(format!(
+                    "Address store contracts must be ordered by their canonical id: contract \
+                     \"{}\" carries id {} at position {}.",
+                    contract.name,
+                    contract.id,
+                    contract_names.len(),
+                )));
+            }
+            if contract_idx_by_name.contains_key(&contract.name) {
+                return Err(napi::Error::from_reason(format!(
+                    "Contract \"{}\" is listed twice in the address store's contract list.",
+                    contract.name,
+                )));
+            }
             contract_idx_by_name.insert(contract.name.clone(), contract_names.len() as u32);
             contract_names.push(contract.name);
             contract_start_blocks.push(contract.start_block.unwrap_or(0).max(0));
             contract_depends_on_addresses.push(contract.depends_on_addresses);
         }
         let live_count_by_contract = vec![0u32; contract_names.len()];
-        Self {
+        Ok(Self {
             inner: Arc::new(RwLock::new(StoreInner {
                 ecosystem,
                 contract_names,
@@ -976,7 +993,7 @@ impl AddressStore {
                 live_count_by_contract,
                 unwritten: Vec::new(),
             })),
-        }
+        })
     }
 
     fn read(&self) -> RwLockReadGuard<'_, StoreInner> {
@@ -1500,7 +1517,8 @@ pub(crate) mod test_support {
                     depends_on_addresses: true,
                 })
                 .collect(),
-        );
+        )
+        .unwrap();
         let registrations = entries
             .iter()
             .flat_map(|(name, addresses)| {
@@ -1602,7 +1620,7 @@ mod tests {
     }
 
     fn store() -> AddressStore {
-        AddressStore::new_evm(false, contracts(&[("C", Some(100)), ("D", None)]))
+        AddressStore::new_evm(false, contracts(&[("C", Some(100)), ("D", None)])).unwrap()
     }
 
     fn kinds(verdicts: &[RegistrationVerdict]) -> Vec<&str> {
@@ -1724,7 +1742,7 @@ mod tests {
         // newest-first, so registering D second but at the highest block puts
         // the one the rollback kills in the middle of that chain.
         let store =
-            AddressStore::new_evm(false, contracts(&[("C", None), ("D", None), ("E", None)]));
+            AddressStore::new_evm(false, contracts(&[("C", None), ("D", None), ("E", None)])).unwrap();
         store
             .register_batch(vec![reg(A, "C", 100), reg(A, "D", 700), reg(A, "E", 200)])
             .unwrap();
@@ -1759,7 +1777,7 @@ mod tests {
     fn a_shared_address_sorts_by_contract_within_its_start_block() {
         // The sort key must stay total over live entries: two registrations of
         // one address at one start block differ only by contract.
-        let store = AddressStore::new_evm(false, contracts(&[("C", None), ("D", None)]));
+        let store = AddressStore::new_evm(false, contracts(&[("C", None), ("D", None)])).unwrap();
         store.register_seed(vec![reg(A, "D", 10), reg(A, "C", 10)]);
         let merged = store
             .make_set("C".to_string(), None)
@@ -1822,7 +1840,7 @@ mod tests {
                 contracts(&[("C", None)]).remove(0),
                 address_independent_contract(1, "D"),
             ],
-        );
+        ).unwrap();
         let verdicts = store.register_seed(vec![reg(A, "C", 10), reg(B, "D", 20)]);
         assert_eq!(
             verdicts.iter().map(|v| v.fetchable).collect::<Vec<_>>(),
@@ -1832,7 +1850,7 @@ mod tests {
 
     #[test]
     fn contract_addresses_are_listed_per_contract_in_set_order() {
-        let store = AddressStore::new_evm(false, contracts(&[("C", None), ("D", None)]));
+        let store = AddressStore::new_evm(false, contracts(&[("C", None), ("D", None)])).unwrap();
         let verdicts = store.register_seed(vec![reg(B, "C", 20), reg(A, "C", 10), reg(C, "D", 30)]);
         assert_eq!(
             (
@@ -1932,7 +1950,7 @@ mod tests {
 
     #[test]
     fn checksummed_and_lowercase_spellings_are_one_address() {
-        let store = AddressStore::new_evm(true, contracts(&[("C", None)]));
+        let store = AddressStore::new_evm(true, contracts(&[("C", None)])).unwrap();
         let verdicts = store.register_seed(vec![
             reg("0x85149247691df622eaf1a8bd0cafd40bc45154a9", "C", 1),
             reg("0x85149247691df622eaF1a8Bd0CaFd40BC45154a9", "C", 2),
@@ -2312,7 +2330,7 @@ mod tests {
 
     #[test]
     fn svm_keys_on_the_base58_text() {
-        let store = AddressStore::new_svm(contracts(&[("P", None)]));
+        let store = AddressStore::new_svm(contracts(&[("P", None)])).unwrap();
         let program = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
         let verdicts = store.register_seed(vec![reg(program, "P", 5)]);
         assert_eq!(

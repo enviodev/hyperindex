@@ -854,7 +854,7 @@ mod tests {
                 start_block: None,
                 depends_on_addresses: true,
             }],
-        );
+        ).unwrap();
         address_store.register_seed(vec![crate::address_store::AddressRegistration {
             address: EMITTER.to_string(),
             contract_name: "Owned".to_string(),
@@ -1070,7 +1070,7 @@ mod tests {
                 start_block: None,
                 depends_on_addresses: true,
             }],
-        );
+        ).unwrap();
         address_store.register_seed(vec![crate::address_store::AddressRegistration {
             address: EMITTER.to_string(),
             contract_name: "C".to_string(),

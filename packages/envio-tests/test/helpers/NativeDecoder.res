@@ -40,12 +40,17 @@ let decodeLogs = async (
       ),
     ],
     async mock => {
+      // One entry per contract, not per registration: two events on one
+      // contract are still one contract, and the store keys its ids on that.
+      let contractNames = Core.getAddon().canonicalContractNames(
+        eventRegistrations->Array.map(reg => reg.contractName),
+      )
       let addressStore = AddressStore.make(
         ~ecosystem=Ecosystem.Evm,
         ~shouldChecksum=false,
-        ~contracts=eventRegistrations->Array.mapWithIndex((reg, id): AddressStore.contract => {
+        ~contracts=contractNames->Array.mapWithIndex((name, id): AddressStore.contract => {
           id,
-          name: reg.contractName,
+          name,
           startBlock: None,
           dependsOnAddresses: true,
         }),
