@@ -128,6 +128,11 @@ let registerEntities = (state: t, ~entities: array<Internal.entityConfig>) =>
 // Seeds the config's contract addresses, mirroring what PgStorage.initialize
 // writes into `envio_addresses`.
 let seedConfigAddresses = (state: t, ~chainConfigs: array<Config.chain>, ~ecosystem) => {
+  // Initialize starts from an empty schema — the Postgres DDL drops and
+  // recreates one — so a re-initialize must not stack a second copy of the
+  // config's addresses on what a previous one left behind.
+  state.addresses = []
+  state.addressKeys->Utils.Set.clear
   state.contractNames = Config.canonicalContractNames(~chainConfigs)
   chainConfigs->Array.forEach(chainConfig =>
     chainConfig
