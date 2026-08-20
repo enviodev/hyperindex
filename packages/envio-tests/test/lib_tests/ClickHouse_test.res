@@ -205,17 +205,19 @@ ORDER BY (id)`
 ENGINE = ReplicatedMergeTree
 ORDER BY (id)`
 
-        t.expect(
-          query,
-          ~message="Replicated checkpoints table SQL should match exactly",
-        ).toBe(expectedQuery)
+        t.expect(query, ~message="Replicated checkpoints table SQL should match exactly").toBe(
+          expectedQuery,
+        )
       },
     )
 
     Async.it(
       "Should use ReplicatedMergeTree without ON CLUSTER for Replicated database engine",
       async t => {
-        let query = ClickHouse.makeCreateCheckpointsTableQuery(~database="test_db", ~replicated=true)
+        let query = ClickHouse.makeCreateCheckpointsTableQuery(
+          ~database="test_db",
+          ~replicated=true,
+        )
 
         let expectedQuery = `CREATE TABLE IF NOT EXISTS test_db.\`envio_checkpoints\` (
   \`id\` UInt64,
@@ -321,10 +323,9 @@ ORDER BY (id, envio_checkpoint_id)`
 ENGINE = ReplicatedMergeTree
 ORDER BY (id, envio_checkpoint_id)`
 
-        t.expect(
-          query,
-          ~message="Replicated entity history table SQL should match exactly",
-        ).toBe(expectedQuery)
+        t.expect(query, ~message="Replicated entity history table SQL should match exactly").toBe(
+          expectedQuery,
+        )
       },
     )
   })
@@ -487,6 +488,141 @@ ENGINE = MergeTree()
 PARTITION BY toYYYYMM(\`trade_time\`)
 ORDER BY (id, envio_checkpoint_id)
 TTL \`trade_time\` + INTERVAL 1 YEAR DELETE WHERE \`base_token_id\` != ''`)
+      },
+    )
+
+    Async.it(
+      "Should emit data skipping indexes with expressions resolved to columns",
+      async t => {
+        // https://github.com/enviodev/hyperindex/issues/1524
+        let config = InternalTestIndexer.fromUserApi(
+          ~schema=`
+type Transfer @storage(clickhouse: {
+  orderBy: ["timestamp"],
+  skippingIndexes: [
+    { name: "idx_from", expr: "fromAddress", type: "bloom_filter(0.01)", granularity: 4 },
+    { name: "idx_amount", expr: "amount", type: "minmax" }
+  ]
+}) {
+  id: ID!
+  fromAddress: String!
+  timestamp: Timestamp!
+  amount: BigInt!
+}
+`,
+          ~configYaml=`
+name: clickhouse-skipping-indexes
+storage:
+  postgres:
+    default: true
+  clickhouse:
+    column_name_format: snake_case
+chains:
+  - id: 1
+    start_block: 0
+`,
+        ).config
+        let entityConfig = config.userEntitiesByName->Dict.getUnsafe("Transfer")
+
+        let query = ClickHouse.makeCreateHistoryTableQuery(~entityConfig, ~database="test_db")
+
+        t.expect(
+          {
+            "storage": entityConfig.storage,
+            "query": query,
+          },
+          ~message="Skipping indexes should reach the entity storage and the history table SQL",
+        ).toEqual({
+          "storage": (
+            {
+              postgres: false,
+              clickhouse: true,
+              clickhouseOptions: {
+                orderBy: ["timestamp"],
+                skippingIndexes: [
+                  {
+                    name: "idx_from",
+                    expr: "fromAddress",
+                    type_: "bloom_filter(0.01)",
+                    granularity: 4,
+                  },
+                  {name: "idx_amount", expr: "amount", type_: "minmax"},
+                ],
+              },
+            }: Internal.entityStorage
+          ),
+          "query": `CREATE TABLE IF NOT EXISTS test_db.\`envio_history_Transfer\` (
+  \`id\` String,
+  \`from_address\` String,
+  \`timestamp\` DateTime64(3, 'UTC'),
+  \`amount\` String,
+  \`envio_checkpoint_id\` UInt64,
+  \`envio_change\` Enum8('SET', 'DELETE'),
+  INDEX \`idx_from\` \`from_address\` TYPE bloom_filter(0.01) GRANULARITY 4,
+  INDEX \`idx_amount\` \`amount\` TYPE minmax
+)
+ENGINE = MergeTree()
+ORDER BY (\`timestamp\`, envio_checkpoint_id)`,
+        })
+      },
+    )
+
+    Async.it(
+      "Should create the declared skipping indexes on a live ClickHouse",
+      async t => {
+        let config = InternalTestIndexer.fromUserApi(
+          ~schema=`
+type Transfer @storage(clickhouse: {
+  skippingIndexes: [
+    { name: "idx_from", expr: "fromAddress", type: "bloom_filter(0.01)", granularity: 4 },
+    { name: "idx_amount", expr: "amount", type: "minmax" }
+  ]
+}) {
+  id: ID!
+  fromAddress: String!
+  amount: BigInt!
+}
+`,
+          ~configYaml=`
+name: clickhouse-skipping-indexes-live
+storage:
+  postgres:
+    default: true
+  clickhouse: true
+chains:
+  - id: 1
+    start_block: 0
+`,
+        ).config
+        let entityConfig = config.userEntitiesByName->Dict.getUnsafe("Transfer")
+
+        let database = TestClickHouse.make()
+        let client = ClickHouse.createClient({
+          url: TestClickHouse.host(),
+          username: TestClickHouse.username(),
+          password: TestClickHouse.password(),
+        })
+        let indices = try {
+          await ClickHouse.initialize(client, ~database, ~entities=[entityConfig], ~enums=[])
+          await TestClickHouse.query(
+            `SELECT name, type_full, toUInt32(granularity) AS granularity
+FROM system.data_skipping_indices
+WHERE database = '${database}' AND table = 'envio_history_Transfer'
+ORDER BY name
+FORMAT JSONCompactEachRow`,
+          )
+        } catch {
+        | exn =>
+          await TestClickHouse.drop(~database)
+          await ClickHouse.close(client)
+          throw(exn)
+        }
+        await TestClickHouse.drop(~database)
+        await ClickHouse.close(client)
+
+        t.expect(indices).toBe(`["idx_amount", "minmax", 1]
+["idx_from", "bloom_filter(0.01)", 4]
+`)
       },
     )
   })

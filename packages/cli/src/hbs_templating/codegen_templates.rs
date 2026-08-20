@@ -3419,7 +3419,16 @@ mod test {
                         "clickhouse": {
                             "partitionBy": "toYYYYMM(timestamp)",
                             "orderBy": ["timestamp"],
-                            "ttl": "timestamp + INTERVAL 2 YEAR"
+                            "ttl": "timestamp + INTERVAL 2 YEAR",
+                            "skippingIndexes": [
+                                {
+                                    "name": "idx_from",
+                                    "expr": "fromAddress",
+                                    "type": "bloom_filter(0.01)",
+                                    "granularity": 4
+                                },
+                                {"name": "idx_amount", "expr": "amount", "type": "minmax"}
+                            ]
                         }
                     }))
                 ),
