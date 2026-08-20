@@ -118,9 +118,9 @@ type t = {
   // Nothing in the loop reads it — it exists so a test can tell quiescence from
   // a pause, without counting await hops. Every entry pairs with an exit, so a
   // count that drifts below zero means a fan-out was counted once for work that
-  // runs many times over; it stays visibly wrong rather than being clamped,
-  // because the harness reports it and a wrong count must never change how the
-  // indexer itself behaves.
+  // runs many times over. It stays visibly wrong rather than being clamped: a
+  // wrong count must never change how the indexer itself behaves, and the
+  // harness reports it.
   mutable inFlight: int,
   // Woken when inFlight falls back to zero.
   mutable idleWaiters: array<unit => unit>,
@@ -535,20 +535,20 @@ let whenIdle = (state: t): promise<unit> =>
     })
   }
 
-// Both directions go through here, so a count that dipped below zero still
-// wakes its waiters on the way back up rather than stranding them.
-let setInFlight = (state: t, count) => {
-  state.inFlight = count
-  if count === 0 {
+let enterInFlight = (state: t) => state.inFlight = state.inFlight + 1
+
+let exitInFlight = (state: t) => {
+  state.inFlight = state.inFlight - 1
+  // Only a step finishing can leave the loop quiet, so this is the one place
+  // waiters are woken. Waking on the way up from a negative count would let a
+  // busy loop read as idle, which is worse than the wait that never comes:
+  // a stranded waiter surfaces as a settle timeout naming the broken count.
+  if state.inFlight === 0 {
     let waiters = state.idleWaiters
     state.idleWaiters = []
     waiters->Array.forEach(resolve => resolve())
   }
 }
-
-let enterInFlight = (state: t) => state->setInFlight(state.inFlight + 1)
-
-let exitInFlight = (state: t) => state->setInFlight(state.inFlight - 1)
 
 // Counts `work` as loop work for as long as its promise is pending. A thunk
 // that throws before returning a promise still settles the count.

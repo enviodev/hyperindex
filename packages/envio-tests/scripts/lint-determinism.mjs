@@ -9,7 +9,9 @@
 // has no loop to settle and means the tick literally, so it opts out by name
 // with the marker below — one line that says which kind of test it is, rather
 // than a pattern that quietly stops matching when a test moves its body into a
-// helper.
+// helper. The opt-out is checked against the file it sits in: the day such a
+// file grows a test that does drive an indexer, the marker is refused rather
+// than quietly covering it.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -21,6 +23,7 @@ const testRoot = fileURLToPath(new URL("../test", import.meta.url));
 // formatter wrapped across lines is still caught.
 const banned = /Utils\s*\.\s*delay\(\s*0\s*,?\s*\)/g;
 const optOut = "determinism-lint: no indexer loop";
+const drivesAnIndexer = /\bIndexerRunner\.t\b|\bScenario\.(it|run)\b|\bindexer\.settle\b/;
 
 const resFiles = (dir) =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -30,13 +33,32 @@ const resFiles = (dir) =>
   });
 
 const violations = [];
+const staleOptOuts = [];
 for (const path of resFiles(testRoot)) {
   const source = readFileSync(path, "utf8");
-  if (source.includes(optOut)) continue;
+  if (source.includes(optOut)) {
+    if (drivesAnIndexer.test(source)) {
+      staleOptOuts.push(relative(process.cwd(), path));
+    }
+    continue;
+  }
   for (const match of source.matchAll(banned)) {
     const line = source.slice(0, match.index).split("\n").length;
     violations.push(`${relative(process.cwd(), path)}:${line}: ${match[0].replace(/\s+/g, "")}`);
   }
+}
+
+if (staleOptOuts.length > 0) {
+  console.error(
+    [
+      `These files claim "${optOut}" but build one:`,
+      "",
+      ...staleOptOuts,
+      "",
+      "Drop the marker and wait on the loop, or move the unit tests to a file of their own.",
+    ].join("\n"),
+  );
+  process.exit(1);
 }
 
 if (violations.length > 0) {

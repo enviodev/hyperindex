@@ -32,8 +32,15 @@ let selectedBackend: backend = switch %raw(`process.env.ENVIO_TEST_STORAGE`)->Nu
 
 type rec t = {
   // Resolves once the indexer has run every scheduled step to completion and
-  // can only move again when a source answers or the test acts. Nothing to
-  // count in ticks: the loop reports its own in-flight work.
+  // can only move again when the outside world answers. Nothing to count in
+  // ticks: the loop reports its own in-flight work.
+  //
+  // "The outside world answers" covers a timer before the loop asks again — a
+  // height poll between rounds, a retry's backoff — so a settled indexer isn't
+  // always one with a query waiting to be answered. An assertion that the
+  // pending set is empty needs `settleUntil` or `Scenario.waitQuery` to pin
+  // down which side of that poll it is on; a settle alone would read the gap
+  // between two polls as the answer.
   settle: unit => promise<unit>,
   // Settles, then keeps settling until the condition holds — for state that
   // only arrives once a polling interval elapses. `message` names what was
@@ -381,7 +388,17 @@ let run = async (
     {
       settle,
       settleUntil,
-      park: work => state->IndexerState.suspendInFlight(work),
+      park: work =>
+        if state->IndexerState.inFlight <= 0 {
+          // Nothing to discount means the caller isn't inside work the loop is
+          // counting. Refused rather than allowed to drive the count negative,
+          // which no later settle could recover from.
+          JsError.throwWithMessage(
+            "indexer.park was called where the loop is running nothing: it belongs inside a handler, a contract register, or a storage call the processing or finalize path makes.",
+          )
+        } else {
+          state->IndexerState.suspendInFlight(work)
+        },
       queuedWrites: () => state->IndexerState.processedBatches->Array.length,
       waitUntilReady: () =>
         settleUntil(
