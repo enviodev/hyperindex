@@ -1,14 +1,10 @@
 @module("node:fs/promises")
 external globIterator: string => Utils.asyncIterator<string> = "glob"
 
-// Register tsx for TypeScript handler support
-// Wrapped in try-catch because if tsx is already loaded via --import (e.g., in tests),
-// calling module.register again will throw an error
-try {
-  NodeJs.Module.register("tsx/esm", NodeJs.ImportMeta.url)
-} catch {
-| _ => () // tsx already loaded, ignore
-}
+@module("./TsModuleHooks.mjs")
+external registerTsHooks: ((string, string) => Core.transformTsResult) => unit = "register"
+
+registerTsHooks(Core.transformTs)
 
 // Convert a relative path to a file:// URL for dynamic import
 // Paths are resolved relative to process.cwd() (project root)

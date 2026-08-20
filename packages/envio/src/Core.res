@@ -26,8 +26,14 @@ type fromUserApiResult = {
   indexerCode: Null.t<string>,
 }
 
+type transformTsResult = {
+  code: string,
+  map: Null.t<string>,
+}
+
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
+  transformTs: (~filename: string, ~source: string) => transformTsResult,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
   fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
@@ -210,6 +216,8 @@ let getAddon = () =>
       a
     }
   }
+
+let transformTs = (filename, source) => getAddon().transformTs(~filename, ~source)
 
 let getConfigJson = (~configPath=?, ~directory=?) => {
   let addon = getAddon()
