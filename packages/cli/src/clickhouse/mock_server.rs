@@ -16,6 +16,9 @@ struct State {
     accepted: Vec<Vec<u8>>,
     /// Inserts still to be rejected before the server starts accepting.
     reject_next: usize,
+    /// The body a rejection carries, which is what tells the sink whether the
+    /// rows are worth sending again.
+    rejection: String,
     /// Total inserts seen, accepted or not.
     seen: usize,
     /// Total read queries seen.
@@ -31,12 +34,20 @@ pub struct MockClickHouse {
 
 impl MockClickHouse {
     /// Serves until dropped. `reject_next` inserts fail with a 500 before the
-    /// server starts accepting.
+    /// server starts accepting, carrying a keeper exception — an error the rows
+    /// themselves are not to blame for, so the sink retries it.
     pub async fn start(reject_next: usize) -> Self {
+        Self::rejecting_with(reject_next, "Code: 999. DB::Exception: mock rejection").await
+    }
+
+    /// Rejects with `rejection` as the body, for a test that turns on how the
+    /// sink reads the server's verdict.
+    pub async fn rejecting_with(reject_next: usize, rejection: &str) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let state = Arc::new(Mutex::new(State {
             reject_next,
+            rejection: rejection.to_string(),
             ..Default::default()
         }));
 
@@ -158,21 +169,20 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
         let is_insert = request_line.contains("INSERT");
 
         let response = if is_insert {
-            let reject = {
+            let rejection = {
                 let mut state = state.lock().unwrap();
                 state.seen += 1;
                 if state.reject_next > 0 {
                     state.reject_next -= 1;
-                    true
+                    Some(state.rejection.clone())
                 } else {
                     state.accepted.push(body.clone());
-                    false
+                    None
                 }
             };
-            if reject {
-                http_response(500, "Code: 999. DB::Exception: mock rejection")
-            } else {
-                http_response(200, "")
+            match rejection {
+                Some(rejection) => http_response(500, &rejection),
+                None => http_response(200, ""),
             }
         } else {
             state.lock().unwrap().queries += 1;

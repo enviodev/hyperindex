@@ -2,8 +2,9 @@
 //!
 //! RowBinary is row-major, so the encoder walks the columns once per row. Values
 //! arrive columnar because that is what crosses the napi boundary cheaply: one
-//! typed array or one concatenated string per column, instead of a JS object per
-//! row.
+//! typed array or one string array per column, instead of a JS object per row.
+
+use std::borrow::Cow;
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
@@ -11,147 +12,64 @@ use bytes::Bytes;
 use super::ch_type::ChType;
 use super::ch_type::ColumnKind;
 
-/// One column's values as they arrive from JS. A text column crosses as every
-/// value concatenated plus each value's UTF-16 code-unit length, which JS
-/// measures for free; resolving those to byte ranges is a scan over the whole
-/// column and belongs off the JS thread.
-#[derive(Debug)]
-pub enum StagedValues {
-    F64(Vec<f64>),
-    U64(Vec<u64>),
-    I64(Vec<i64>),
-    Text {
-        data: String,
-        utf16_lengths: Vec<u32>,
-    },
-}
-
-/// The same values with each text value resolved to its byte range.
+/// One column's values as they arrive from JS. Text crosses as one JS string per
+/// value: napi converts each to UTF-8 as it reads it, which is the same work a
+/// single concatenated string would pay for, minus the concatenation itself and
+/// the ceiling V8 puts on how long one string may be.
 #[derive(Debug)]
 pub enum ColumnValues {
     F64(Vec<f64>),
     U64(Vec<u64>),
     I64(Vec<i64>),
-    Text {
-        data: String,
-        spans: Vec<(usize, usize)>,
-    },
+    Text(Vec<String>),
 }
 
-impl StagedValues {
+impl ColumnValues {
     /// The wire kind these values arrived as, for checking against the column's
     /// ClickHouse type.
     pub fn kind(&self) -> ColumnKind {
         match self {
-            StagedValues::F64(_) => ColumnKind::F64,
-            StagedValues::U64(_) => ColumnKind::U64,
-            StagedValues::I64(_) => ColumnKind::I64,
-            StagedValues::Text { .. } => ColumnKind::Text,
+            ColumnValues::F64(_) => ColumnKind::F64,
+            ColumnValues::U64(_) => ColumnKind::U64,
+            ColumnValues::I64(_) => ColumnKind::I64,
+            ColumnValues::Text(_) => ColumnKind::Text,
         }
     }
 
-    /// Resolves the UTF-16 lengths into byte spans. The only step between the two
-    /// representations, so it is also where a text column's shape is checked.
-    pub fn resolve(self) -> Result<ColumnValues> {
-        Ok(match self {
-            StagedValues::F64(v) => ColumnValues::F64(v),
-            StagedValues::U64(v) => ColumnValues::U64(v),
-            StagedValues::I64(v) => ColumnValues::I64(v),
-            StagedValues::Text {
-                data,
-                utf16_lengths,
-            } => {
-                let spans = spans_from_utf16_lengths(&data, &utf16_lengths)?;
-                ColumnValues::Text { data, spans }
-            }
-        })
-    }
-}
-
-impl ColumnValues {
     pub fn len(&self) -> usize {
         match self {
             ColumnValues::F64(v) => v.len(),
             ColumnValues::U64(v) => v.len(),
             ColumnValues::I64(v) => v.len(),
-            ColumnValues::Text { spans, .. } => spans.len(),
+            ColumnValues::Text(v) => v.len(),
         }
     }
 
     fn text_at(&self, row: usize) -> Result<&str> {
         match self {
-            ColumnValues::Text { data, spans } => {
-                let (start, end) = spans[row];
-                Ok(&data[start..end])
-            }
+            ColumnValues::Text(values) => Ok(&values[row]),
             other => bail!("expected a text column, got {other:?}"),
         }
     }
 }
 
+/// Borrowed from the registered table's schema, which outlives the encode: a
+/// column's name and type are fixed at registration, so a batch has no reason to
+/// copy them — and an `Enum`'s variant list is the whole table's worth of
+/// strings.
 #[derive(Debug)]
-pub struct Column {
-    pub name: String,
-    pub ch_type: ChType,
+pub struct Column<'a> {
+    pub name: Cow<'a, str>,
+    pub ch_type: Cow<'a, ChType>,
     pub values: ColumnValues,
     /// `1` marks a NULL. Empty when the column has none.
     pub nulls: Vec<u8>,
 }
 
-impl Column {
+impl Column<'_> {
     fn is_null(&self, row: usize) -> bool {
         self.nulls.get(row).copied().unwrap_or(0) != 0
     }
-}
-
-/// Splits a concatenated column into per-value byte spans using each value's
-/// UTF-16 code-unit length, which is what a JS string reports as `.length`.
-///
-/// The scan is over UTF-8 bytes, so it cannot index by code unit directly:
-/// a character outside the BMP is two UTF-16 units and up to four UTF-8 bytes.
-pub fn spans_from_utf16_lengths(data: &str, lengths: &[u32]) -> Result<Vec<(usize, usize)>> {
-    let mut spans = Vec::with_capacity(lengths.len());
-    let bytes = data.as_bytes();
-    let mut offset = 0usize;
-    for (row, &len) in lengths.iter().enumerate() {
-        let start = offset;
-        let mut remaining = len as usize;
-        while remaining > 0 {
-            if offset >= bytes.len() {
-                bail!(
-                    "column text ran out at row {row}: expected {len} more UTF-16 units, \
-                     buffer is {} bytes",
-                    bytes.len()
-                );
-            }
-            let b = bytes[offset];
-            // Leading-byte pattern gives the character's UTF-8 width; only a
-            // 4-byte sequence is a surrogate pair, i.e. two UTF-16 units.
-            let (width, units) = if b < 0x80 {
-                (1, 1)
-            } else if b < 0xE0 {
-                (2, 1)
-            } else if b < 0xF0 {
-                (3, 1)
-            } else {
-                (4, 2)
-            };
-            if units > remaining {
-                bail!("column text row {row} splits a surrogate pair");
-            }
-            offset += width;
-            remaining -= units;
-        }
-        spans.push((start, offset));
-    }
-    if offset != bytes.len() {
-        bail!(
-            "column text has {} trailing bytes after {} rows",
-            bytes.len() - offset,
-            lengths.len()
-        );
-    }
-    Ok(spans)
 }
 
 fn put_varint(out: &mut Vec<u8>, mut value: u64) {
@@ -282,6 +200,19 @@ fn put_int_raw(out: &mut Vec<u8>, value: i128, bytes: usize) {
     out.extend_from_slice(&value.to_le_bytes()[..bytes]);
 }
 
+/// `10^i` for every precision a `Decimal` column can declare — 38 digits being
+/// where envio falls back to `String`. Tabulated because the bound is worked out
+/// again for every value the column carries.
+const POW10: [i128; 39] = {
+    let mut table = [1i128; 39];
+    let mut i = 1;
+    while i < table.len() {
+        table[i] = table[i - 1] * 10;
+        i += 1;
+    }
+    table
+};
+
 /// What the column accepts. RowBinary is just the raw integer, so nothing on the
 /// server side rejects an out-of-range value: it wraps into whatever the bytes
 /// happen to mean. The JSONEachRow path this replaced had ClickHouse do the
@@ -297,8 +228,8 @@ fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
         ChType::DateTime64 { .. } => (i64::MIN as i128, i64::MAX as i128),
         // A Decimal's precision, not its byte width, is what it accepts.
         ChType::Decimal { precision, .. } => {
-            let limit = 10i128
-                .checked_pow(*precision)
+            let limit = POW10
+                .get(*precision as usize)
                 .context("Decimal precision is wider than the value the encoder carries")?;
             (1 - limit, limit - 1)
         }
@@ -444,7 +375,7 @@ fn put_default(out: &mut Vec<u8>, ch_type: &ChType) -> Result<()> {
 }
 
 fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
-    let (ch_type, is_nullable) = match &column.ch_type {
+    let (ch_type, is_nullable) = match column.ch_type.as_ref() {
         ChType::Nullable(inner) => {
             if column.is_null(row) {
                 out.push(1);
@@ -463,13 +394,6 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
     }
 
     match (&column.values, ch_type) {
-        (ColumnValues::F64(v), ChType::Bool) => {
-            let value = v[row];
-            if !value.is_finite() {
-                bail!("{value} is not a value a Bool column can hold");
-            }
-            out.push(u8::from(value != 0.0))
-        }
         (ColumnValues::F64(v), ChType::Float64) => out.extend_from_slice(&v[row].to_le_bytes()),
         (ColumnValues::F64(v), other) => {
             let value = v[row];
@@ -483,6 +407,11 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
         (ColumnValues::U64(v), ChType::Float64) => {
             out.extend_from_slice(&(v[row] as f64).to_le_bytes())
         }
+        // Straight through: the column's range is the wire type's own, so the
+        // bounds check below could only ever pass. Every history row carries a
+        // UInt64 checkpoint id, which makes this the most travelled arm here.
+        (ColumnValues::U64(v), ChType::UInt64) => out.extend_from_slice(&v[row].to_le_bytes()),
+        (ColumnValues::I64(v), ChType::Int64) => out.extend_from_slice(&v[row].to_le_bytes()),
         (ColumnValues::U64(v), other) => put_int(out, v[row] as i128, other)?,
         (ColumnValues::I64(v), other) => put_int(out, v[row] as i128, other)?,
         (ColumnValues::Text { .. }, ChType::Array(_)) => {
@@ -558,49 +487,33 @@ mod tests {
     use crate::clickhouse::ch_type;
     use pretty_assertions::assert_eq;
 
-    fn text_column(name: &str, ty: &str, values: &[&str]) -> Column {
-        let data: String = values.concat();
-        let lengths: Vec<u32> = values
-            .iter()
-            .map(|v| v.chars().map(char::len_utf16).sum::<usize>() as u32)
-            .collect();
+    fn owned_column(name: &str, ty: &str, values: ColumnValues) -> Column<'static> {
         Column {
-            name: name.to_string(),
-            ch_type: ch_type::parse(ty).unwrap(),
-            values: ColumnValues::Text {
-                spans: spans_from_utf16_lengths(&data, &lengths).unwrap(),
-                data,
-            },
+            name: Cow::Owned(name.to_string()),
+            ch_type: Cow::Owned(ch_type::parse(ty).unwrap()),
+            values,
             nulls: Vec::new(),
         }
     }
 
-    fn f64_column(name: &str, ty: &str, values: &[f64]) -> Column {
-        Column {
-            name: name.to_string(),
-            ch_type: ch_type::parse(ty).unwrap(),
-            values: ColumnValues::F64(values.to_vec()),
-            nulls: Vec::new(),
-        }
+    fn text_column(name: &str, ty: &str, values: &[&str]) -> Column<'static> {
+        owned_column(
+            name,
+            ty,
+            ColumnValues::Text(values.iter().map(|v| v.to_string()).collect()),
+        )
     }
 
-    #[test]
-    fn spans_handle_multi_byte_and_surrogate_pairs() {
-        // "é" is 1 UTF-16 unit / 2 UTF-8 bytes, "😀" is 2 units / 4 bytes.
-        let data = "aé😀b".to_string();
-        let spans = spans_from_utf16_lengths(&data, &[1, 1, 2, 1]).unwrap();
-        let values: Vec<&str> = spans.iter().map(|(s, e)| &data[*s..*e]).collect();
-        assert_eq!(values, vec!["a", "é", "😀", "b"]);
+    fn f64_column(name: &str, ty: &str, values: &[f64]) -> Column<'static> {
+        owned_column(name, ty, ColumnValues::F64(values.to_vec()))
     }
 
+    // The varint length prefix counts UTF-8 bytes, which is not the length JS
+    // reports for anything outside Latin-1.
     #[test]
-    fn spans_reject_a_length_that_overruns_the_buffer() {
-        assert!(spans_from_utf16_lengths("ab", &[3]).is_err());
-    }
-
-    #[test]
-    fn spans_reject_trailing_bytes() {
-        assert!(spans_from_utf16_lengths("abc", &[1]).is_err());
+    fn encodes_multi_byte_characters_by_their_utf8_length() {
+        let encoded = encode(&[text_column("id", "String", &["é😀"])], 1).unwrap();
+        assert_eq!(encoded.body, "\u{6}é😀".as_bytes());
     }
 
     #[test]
@@ -660,12 +573,11 @@ mod tests {
 
     #[test]
     fn encodes_uint64_beyond_float_precision_exactly() {
-        let column = Column {
-            name: "checkpoint".to_string(),
-            ch_type: ch_type::parse("UInt64").unwrap(),
-            values: ColumnValues::U64(vec![u64::MAX - 1]),
-            nulls: Vec::new(),
-        };
+        let column = owned_column(
+            "checkpoint",
+            "UInt64",
+            ColumnValues::U64(vec![u64::MAX - 1]),
+        );
         let encoded = encode(&[column], 1).unwrap();
         assert_eq!(encoded.body, (u64::MAX - 1).to_le_bytes().to_vec());
     }
@@ -747,6 +659,17 @@ mod tests {
         );
     }
 
+    // The same policy as the array element above: a scalar Bool has no more room
+    // for a 7 than one inside an `Array(Bool)` does.
+    #[test]
+    fn rejects_a_scalar_number_a_bool_column_cannot_hold() {
+        let err = encode(&[f64_column("flag", "Bool", &[7.0])], 1).unwrap_err();
+        assert_eq!(
+            format!("{err:#}"),
+            "encoding column `flag` row 0: 7 is out of range for a Bool column"
+        );
+    }
+
     // Every other non-numeric text is refused, so an empty one must be too —
     // storing 0 for it would silently invent a value the handler never wrote.
     #[test]
@@ -766,7 +689,7 @@ mod tests {
         let err = encode(&[f64_column("flag", "Bool", &[f64::NAN])], 1).unwrap_err();
         assert_eq!(
             format!("{err:#}"),
-            "encoding column `flag` row 0: NaN is not a value a Bool column can hold"
+            "encoding column `flag` row 0: NaN is not an integer, which a Bool column requires"
         );
     }
 
@@ -839,9 +762,9 @@ mod tests {
         );
     }
 
-    // A null element for a non-nullable inner type used to be rendered as the
-    // text "null" — stored verbatim in an Array(String), and an unrelated parse
-    // error anywhere else.
+    // A null has no representation in a non-nullable element, so it has to be
+    // refused rather than rendered: the text "null" would store verbatim in an
+    // Array(String) and mean nothing anywhere else.
     #[test]
     fn rejects_a_null_element_for_a_non_nullable_inner_type() {
         let strings =
@@ -869,8 +792,8 @@ mod tests {
         assert_eq!(encoded.body, expected);
     }
 
-    // A JSON element of the wrong shape used to be coerced — a bool became 0.0
-    // for a Float64, an object became its own JSON text for a String.
+    // An element the column's type has no room for is refused rather than
+    // coerced: a bool is not a Float64, and an object is not a String.
     #[test]
     fn rejects_an_element_of_the_wrong_json_shape() {
         let err = encode(&[text_column("xs", "Array(Float64)", &["[true]"])], 1).unwrap_err();

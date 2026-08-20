@@ -387,8 +387,10 @@ let stageUpdatesOrThrow = (
     let table = sink->entityTable(~registry, ~entityConfig)
     let tableName = table.name
     let cacheKey = `${entityConfig.name}|${scope->Internal.chainScopeToString}`
-    let {convertSetOrThrow, convertDeleteOrThrow} = switch registry.converters
-    ->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
+    let {
+      convertSetOrThrow,
+      convertDeleteOrThrow,
+    } = switch registry.converters->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
     | Some(cached) => cached
     | None =>
       let cached = makeConverters(~entityConfig, ~scope)
@@ -406,6 +408,7 @@ let stageUpdatesOrThrow = (
 
     try {
       let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
+      let columns = builders->Array.length
       for row in 0 to rows - 1 {
         let change = changes->Array.getUnsafe(row)
         // The entity history table is the source of truth for ClickHouse, so
@@ -423,9 +426,10 @@ let stageUpdatesOrThrow = (
           convertSetOrThrow(change)
         | Delete(_) => convertDeleteOrThrow(change)
         }
-        builders->Array.forEach(builder =>
+        for column in 0 to columns - 1 {
+          let builder = builders->Array.getUnsafe(column)
           builder->ClickHouseSink.writeValue(~row, values->Dict.getUnsafe(builder.name))
-        )
+        }
       }
       Some(sink->stageBuilders(~table, ~builders, ~rows))
     } catch {
@@ -662,8 +666,11 @@ let initialize = async (
   ~database: string,
   ~entities: array<Internal.entityConfig>,
   ~enums as _: array<Table.enumConfig<Table.enum>>,
-  ~chainIdMode: ChainId.mode=Int32,
 ) => {
+  // The registry is what the tables are registered against, so taking the mode
+  // from anywhere else would let the DDL declare one chain-id type while the
+  // encoder sends another.
+  let chainIdMode = registry.chainIdMode
   try {
     let databaseEngine = Env.ClickHouse.databaseEngine()
     let databaseEngineClause = switch databaseEngine {
@@ -692,10 +699,9 @@ let initialize = async (
     switch databaseEngine {
     | Some(engineSpec) => {
         let expectedEngineName = engineSpec->databaseEngineName
-        let existing =
-          await sink->ClickHouseSink.query(
-            `SELECT engine FROM system.databases WHERE name = '${database}' FORMAT TabSeparated`,
-          )
+        let existing = await sink->ClickHouseSink.query(
+          `SELECT engine FROM system.databases WHERE name = '${database}' FORMAT TabSeparated`,
+        )
         switch existing->String.trim {
         | "" => ()
         | engine if engine !== expectedEngineName =>
@@ -742,7 +748,12 @@ let initialize = async (
       ),
     )->Utils.Promise.ignoreValue
     await sink->ClickHouseSink.exec(
-      makeCreateCheckpointsTableQuery(~database, ~replicated, ~onCluster=ddlOnCluster, ~chainIdMode),
+      makeCreateCheckpointsTableQuery(
+        ~database,
+        ~replicated,
+        ~onCluster=ddlOnCluster,
+        ~chainIdMode,
+      ),
     )
 
     // The client pools HTTP connections, so consecutive statements may reach
@@ -769,9 +780,7 @@ let initialize = async (
     // Registered here rather than on first use, so a column type this encoder
     // cannot hold stops the indexer at startup, with nothing written.
     let _ = sink->checkpointsTable(~registry)
-    entities->Array.forEach(entityConfig =>
-      ignore(sink->entityTable(~registry, ~entityConfig))
-    )
+    entities->Array.forEach(entityConfig => ignore(sink->entityTable(~registry, ~entityConfig)))
 
     Logging.trace("ClickHouse storage initialization completed successfully")
   } catch {
@@ -799,10 +808,9 @@ let resume = async (sink, ~database: string, ~checkpointId: Internal.checkpointI
 
     // Get all history tables. TabSeparated answers one name per line, which is
     // all this reads.
-    let tables =
-      await sink->ClickHouseSink.query(
-        `SHOW TABLES FROM ${database} LIKE '${EntityHistory.historyTablePrefix}%' FORMAT TabSeparated`,
-      )
+    let tables = await sink->ClickHouseSink.query(
+      `SHOW TABLES FROM ${database} LIKE '${EntityHistory.historyTablePrefix}%' FORMAT TabSeparated`,
+    )
 
     // Delete rows with checkpoint IDs higher than the target for each history table
     await Promise.all(
