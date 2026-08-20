@@ -282,6 +282,11 @@ let run = async (
             state->IndexerState.inFlight > 0
               ? Some(`${state->IndexerState.inFlight->Int.toString} scheduled step(s)`)
               : None,
+            // Reachable when the timer wins the race: the loop's own report of
+            // the deficit is discarded with it.
+            state->IndexerState.hasInFlightDeficit
+              ? Some("a count in deficit — see `indexer.park`'s contract")
+              : None,
             state->IndexerState.isProcessing ? Some("a batch being processed") : None,
             state->IndexerState.writeFiber->Option.isSome ? Some("a write") : None,
           ]->Array.filterMap(x => x)

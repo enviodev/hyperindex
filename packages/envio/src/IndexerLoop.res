@@ -45,9 +45,11 @@ let start = (state: IndexerState.t) => {
 
   // Resuming already ready means the FinalizingIndexes phase is behind us and
   // won't run again, so this is the only pass that can restore an index the
-  // database lost while the indexer was down.
-  if state->IndexerState.isRealtime {
-    launch(state, () => FinalizeBackfill.repairSchemaIndexes(state))
+  // database lost while the indexer was down. Left out of the in-flight count
+  // on purpose: it runs alongside indexing rather than gating it, and counting
+  // it would make the whole indexer read as busy for the length of a rebuild.
+  if state->IndexerState.isRealtime && !(state->IndexerState.isStopped) {
+    FinalizeBackfill.repairSchemaIndexes(state)->Promise.ignore
   }
 
   scheduleFetch()

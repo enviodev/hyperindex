@@ -583,15 +583,13 @@ let trackInFlight = (state: t, work: unit => promise<'a>): promise<'a> => {
 
 // The inverse: the caller is parked on something the indexer can't advance on
 // its own — a source response, a poll interval — so it doesn't count as work
-// until the answer lands.
+// until the answer lands. The count is given up only once `work` has run its
+// synchronous part, which is where a fan-out registers its own units: giving it
+// up first would read as idle in the window before they are counted.
 let suspendInFlight = (state: t, work: unit => promise<'a>): promise<'a> => {
+  let promise = work()
   state->exitInFlight
-  switch work() {
-  | promise => promise->Promise.finally(() => state->enterInFlight)
-  | exception exn =>
-    state->enterInFlight
-    throw(exn)
-  }
+  promise->Promise.finally(() => state->enterInFlight)
 }
 
 let epoch = (state: t) => state.epoch
