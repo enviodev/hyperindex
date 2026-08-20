@@ -165,6 +165,17 @@ describe("databaseEngineName", () => {
   })
 })
 
+// The ClickHouse checkpoints columns are declared separately from the Postgres
+// ones, so a column added to `InternalTable.Checkpoints` reaches Postgres
+// automatically and ClickHouse not at all — with both sides self-consistent,
+// nothing else would report the omission.
+describe("ClickHouse checkpoints columns", () => {
+  Async.it("cover every column the checkpoints table declares, in its order", async t => {
+    let declared = InternalTable.Checkpoints.table.fields->Array.map(Table.getUserDefinedFieldName)
+    t.expect(ClickHouse.checkpointColumns->Array.map(({name}) => name)).toEqual(declared)
+  })
+})
+
 describe("Test ClickHouse SQL generation functions", () => {
   describe("makeCreateCheckpointsTableQuery", () => {
     Async.it(

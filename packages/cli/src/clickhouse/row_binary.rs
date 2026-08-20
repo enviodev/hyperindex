@@ -200,6 +200,19 @@ fn put_int_raw(out: &mut Vec<u8>, value: i128, bytes: usize) {
     out.extend_from_slice(&value.to_le_bytes()[..bytes]);
 }
 
+/// `10^i` for every precision a `Decimal` column can declare — 38 digits being
+/// where envio falls back to `String`. Tabulated because the bound is worked out
+/// again for every value the column carries.
+const POW10: [i128; 39] = {
+    let mut table = [1i128; 39];
+    let mut i = 1;
+    while i < table.len() {
+        table[i] = table[i - 1] * 10;
+        i += 1;
+    }
+    table
+};
+
 /// What the column accepts. RowBinary is just the raw integer, so nothing on the
 /// server side rejects an out-of-range value: it wraps into whatever the bytes
 /// happen to mean. The JSONEachRow path this replaced had ClickHouse do the
@@ -215,8 +228,8 @@ fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
         ChType::DateTime64 { .. } => (i64::MIN as i128, i64::MAX as i128),
         // A Decimal's precision, not its byte width, is what it accepts.
         ChType::Decimal { precision, .. } => {
-            let limit = 10i128
-                .checked_pow(*precision)
+            let limit = POW10
+                .get(*precision as usize)
                 .context("Decimal precision is wider than the value the encoder carries")?;
             (1 - limit, limit - 1)
         }
@@ -394,6 +407,11 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
         (ColumnValues::U64(v), ChType::Float64) => {
             out.extend_from_slice(&(v[row] as f64).to_le_bytes())
         }
+        // Straight through: the column's range is the wire type's own, so the
+        // bounds check below could only ever pass. Every history row carries a
+        // UInt64 checkpoint id, which makes this the most travelled arm here.
+        (ColumnValues::U64(v), ChType::UInt64) => out.extend_from_slice(&v[row].to_le_bytes()),
+        (ColumnValues::I64(v), ChType::Int64) => out.extend_from_slice(&v[row].to_le_bytes()),
         (ColumnValues::U64(v), other) => put_int(out, v[row] as i128, other)?,
         (ColumnValues::I64(v), other) => put_int(out, v[row] as i128, other)?,
         (ColumnValues::Text { .. }, ChType::Array(_)) => {
@@ -744,9 +762,9 @@ mod tests {
         );
     }
 
-    // A null element for a non-nullable inner type used to be rendered as the
-    // text "null" — stored verbatim in an Array(String), and an unrelated parse
-    // error anywhere else.
+    // A null has no representation in a non-nullable element, so it has to be
+    // refused rather than rendered: the text "null" would store verbatim in an
+    // Array(String) and mean nothing anywhere else.
     #[test]
     fn rejects_a_null_element_for_a_non_nullable_inner_type() {
         let strings =
@@ -774,8 +792,8 @@ mod tests {
         assert_eq!(encoded.body, expected);
     }
 
-    // A JSON element of the wrong shape used to be coerced — a bool became 0.0
-    // for a Float64, an object became its own JSON text for a String.
+    // An element the column's type has no room for is refused rather than
+    // coerced: a bool is not a Float64, and an object is not a String.
     #[test]
     fn rejects_an_element_of_the_wrong_json_shape() {
         let err = encode(&[text_column("xs", "Array(Float64)", &["[true]"])], 1).unwrap_err();

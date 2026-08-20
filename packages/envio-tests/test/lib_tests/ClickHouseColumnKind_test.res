@@ -67,12 +67,16 @@ let fieldTypes =
   ->Array.map(samples)
   ->Array.flat
 
-// Every shape the DDL can wrap a base type in.
-let everyEmittedType = fieldTypes->Array.flatMap(fieldType =>
-  [(false, false), (true, false), (false, true)]->Array.map(((isNullable, isArray)) =>
-    ClickHouse.getClickHouseFieldType(~fieldType, ~isNullable, ~isArray)
+// Every shape the DDL can wrap a base type in, nullable array included: a
+// nullable list field emits `Nullable(Array(T))`, which nests the two wrappers
+// the parser handles separately.
+let everyEmittedType =
+  fieldTypes->Array.flatMap(fieldType =>
+    [(false, false), (true, false), (false, true), (true, true)]->Array.map(((
+      isNullable,
+      isArray,
+    )) => ClickHouse.getClickHouseFieldType(~fieldType, ~isNullable, ~isArray))
   )
-)
 
 // Registration parses the types it is given and never reaches the server, so
 // none of this needs a ClickHouse behind it.
@@ -94,11 +98,12 @@ let register = chTypes =>
 
 describe("ClickHouse column type contract", () => {
   it("Rust parses every type the DDL emits", t => {
-    let failed = everyEmittedType->Array.filter(chType =>
-      switch register([chType]) {
-      | _ => false
-      | exception _ => true
-      }
+    let failed = everyEmittedType->Array.filter(
+      chType =>
+        switch register([chType]) {
+        | _ => false
+        | exception _ => true
+        },
     )
     t.expect(failed).toEqual([])
   })

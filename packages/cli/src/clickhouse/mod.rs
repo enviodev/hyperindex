@@ -381,11 +381,7 @@ impl ClickHouseSink {
         entities: Vec<u32>,
         checkpoints: Option<u32>,
     ) -> napi::Result<()> {
-        let mut handles = entities;
-        handles.extend(checkpoints);
-        let mut staged = self.take_staged(&handles).map_err(to_napi)?;
-        // Taken last above, so it comes off the end.
-        let checkpoints = checkpoints.and_then(|_| staged.pop());
+        let (staged, checkpoints) = self.take_staged(&entities, checkpoints).map_err(to_napi)?;
 
         futures_util::future::try_join_all(
             staged.into_iter().map(|staged| self.insert_staged(staged)),
@@ -438,19 +434,33 @@ impl ClickHouseSink {
     }
 
     /// Removes every handle from the staging map before any of them is sent, so
-    /// an unknown handle cannot leave the batches beside it stranded there.
-    fn take_staged(&self, handles: &[u32]) -> Result<Vec<Staged>> {
-        let taken: Vec<Option<Staged>> = {
+    /// an unknown handle cannot leave the batches beside it stranded there. The
+    /// checkpoints come back separately because they are sent separately —
+    /// after the rows they cover.
+    fn take_staged(
+        &self,
+        entities: &[u32],
+        checkpoints: Option<u32>,
+    ) -> Result<(Vec<Staged>, Option<Staged>)> {
+        let (entities, checkpoints) = {
             let mut staged = self.staged.lock().unwrap();
-            handles.iter().map(|handle| staged.remove(handle)).collect()
+            let entities: Vec<(u32, Option<Staged>)> = entities
+                .iter()
+                .map(|&handle| (handle, staged.remove(&handle)))
+                .collect();
+            let checkpoints = checkpoints.map(|handle| (handle, staged.remove(&handle)));
+            (entities, checkpoints)
         };
-        taken
-            .into_iter()
-            .zip(handles)
-            .map(|(staged, handle)| {
-                staged.with_context(|| format!("Unknown staged ClickHouse batch {handle}"))
-            })
-            .collect()
+        let found = |(handle, staged): (u32, Option<Staged>)| {
+            staged.with_context(|| format!("Unknown staged ClickHouse batch {handle}"))
+        };
+        Ok((
+            entities
+                .into_iter()
+                .map(found)
+                .collect::<Result<Vec<_>>>()?,
+            checkpoints.map(found).transpose()?,
+        ))
     }
 
     /// Statements go in the body rather than the query string: DDL runs long and
