@@ -3,11 +3,10 @@
 //
 // A table is registered once, before any batch: Rust parses its column types
 // and hands back a handle. A batch then crosses the boundary as that handle
-// plus one payload per column — a typed array for numeric columns, one
-// concatenated string plus per-row lengths for text-ish ones — instead of a JS
-// object per row, and without re-sending the shape. Rust encodes RowBinary and
-// sends it from a tokio task, so neither the encode nor the HTTP round trip
-// runs on the Node main thread.
+// plus one payload per column — a typed array for numeric columns, an array of
+// strings for text-ish ones — instead of a JS object per row, and without
+// re-sending the shape. Rust encodes RowBinary and sends it from a tokio task,
+// so neither the encode nor the HTTP round trip runs on the Node main thread.
 
 type t
 
@@ -43,8 +42,7 @@ type columnValuesInput = {
   numbers?: Float64Array.t,
   unsigned64?: BigUint64Array.t,
   signed64?: BigInt64Array.t,
-  text?: string,
-  lengths?: Uint32Array.t,
+  texts?: array<string>,
   nulls?: Uint8Array.t,
 }
 
@@ -133,7 +131,6 @@ type builder = {
   unsigned: BigUint64Array.t,
   signed: BigInt64Array.t,
   texts: array<string>,
-  lengths: Uint32Array.t,
   // Allocated on the first null; a column with none sends no mask at all.
   mutable nulls: option<Uint8Array.t>,
   rows: int,
@@ -150,7 +147,6 @@ let makeBuilder = ({name, chType, kind}: column, ~rows) => {
     unsigned: BigUint64Array.fromLength(kind === U64 ? rows : empty),
     signed: BigInt64Array.fromLength(kind === I64 ? rows : empty),
     texts: kind === Text ? Array.make(~length=rows, "") : [],
-    lengths: Uint32Array.fromLength(kind === Text ? rows : empty),
     nulls: None,
     rows,
   }
@@ -165,37 +161,6 @@ let markNull = (builder, ~row) => {
     nulls
   }
   nulls->TypedArray.set(row, 1)
-}
-
-%%private(let isHighSurrogate = unit => unit >= 0xD800 && unit <= 0xDBFF)
-%%private(let isLowSurrogate = unit => unit >= 0xDC00 && unit <= 0xDFFF)
-let replacementCharacter = "\u{FFFD}"
-
-// A lone surrogate is not a character, and napi already substitutes U+FFFD for
-// one on the way to UTF-8 — which costs the value nothing, since both are a
-// single UTF-16 unit. What no value survives on its own is the concatenation:
-// a value ending in a high surrogate followed by one starting with a low
-// surrogate spells a real pair across the seam, which napi then encodes as one
-// 4-byte character where the two lengths each claim a unit, and the span scan
-// rejects the whole column. Only a first or last unit can have its other half in
-// a neighbouring value, so substituting at the two ends is the whole fix.
-let withoutBoundarySurrogates = text => {
-  let last = text->String.length - 1
-  if last < 0 {
-    text
-  } else {
-    let leading = text->String.charCodeAtUnsafe(0)->isLowSurrogate
-    let trailing = text->String.charCodeAtUnsafe(last)->isHighSurrogate
-    switch (leading, trailing) {
-    | (false, false) => text
-    | _ if last === 0 => replacementCharacter
-    | _ =>
-      (leading ? replacementCharacter : text->String.charAt(0)) ++
-      text->String.slice(~start=1, ~end=last) ++ (
-        trailing ? replacementCharacter : text->String.charAt(last)
-      )
-    }
-  }
 }
 
 // RowBinary carries the raw integer, so a value the column cannot hold is not
@@ -232,10 +197,7 @@ let writeValue = (builder, ~row, value: unknown) =>
         row,
         value->checkedBigInt(~builder, ~min=-9223372036854775808n, ~max=9223372036854775807n),
       )
-    | Text =>
-      let text = value->toText->withoutBoundarySurrogates
-      builder.texts->Array.setUnsafe(row, text)
-      builder.lengths->TypedArray.set(row, text->String.length)
+    | Text => builder.texts->Array.setUnsafe(row, value->toText)
     }
   }
 
@@ -245,12 +207,6 @@ let builderPayload = (builder): columnValuesInput => {
   | F64 => {...base, numbers: builder.floats}
   | U64 => {...base, unsigned64: builder.unsigned}
   | I64 => {...base, signed64: builder.signed}
-  | Text => {
-      ...base,
-      // One concatenated string keeps the crossing to a single napi read; Rust
-      // splits it with the UTF-16 lengths a JS string reports for free.
-      text: builder.texts->Array.joinUnsafe(""),
-      lengths: builder.lengths,
-    }
+  | Text => {...base, texts: builder.texts}
   }
 }

@@ -27,20 +27,21 @@ pub mod ch_type;
 mod mock_server;
 pub mod row_binary;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use napi::bindgen_prelude::{BigInt64Array, BigUint64Array, Float64Array, Uint32Array, Uint8Array};
+use napi::bindgen_prelude::{BigInt64Array, BigUint64Array, Float64Array, Uint8Array};
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::{Env, Status};
 use napi_derive::napi;
 
 use ch_type::{ChType, ColumnKind};
-use row_binary::{Column, EncodedRows, StagedValues};
+use row_binary::{Column, ColumnValues, EncodedRows};
 
 /// Retries an insert this many times before giving up, matching the JS client's
 /// policy: halve the batch while more than one row remains, otherwise wait.
@@ -133,12 +134,8 @@ pub struct ColumnValuesInput {
     pub unsigned64: Option<BigUint64Array>,
     /// Int64.
     pub signed64: Option<BigInt64Array>,
-    /// String, Decimal, Enum, and the JSON of an Array column: every value
-    /// concatenated, split by `lengths`.
-    pub text: Option<String>,
-    /// UTF-16 code-unit length of each value in `text` — a JS string's own
-    /// `.length`, so the caller never has to measure UTF-8.
-    pub lengths: Option<Uint32Array>,
+    /// String, Decimal, Enum, and the JSON of an Array column.
+    pub texts: Option<Vec<String>>,
     /// `1` marks a NULL. Omitted when the column has none.
     pub nulls: Option<Uint8Array>,
 }
@@ -162,7 +159,7 @@ struct TableSchema {
 /// One column's staged values, owned by Rust so they can leave the JS thread.
 /// The name and type live in the table's schema rather than being re-sent.
 struct StagedColumnValues {
-    values: StagedValues,
+    values: ColumnValues,
     nulls: Vec<u8>,
 }
 
@@ -330,34 +327,21 @@ impl ClickHouseSink {
                 numbers,
                 unsigned64,
                 signed64,
-                text,
-                lengths,
+                texts,
                 nulls,
             } = column;
             let name = &spec.name;
-            let values = match (numbers, unsigned64, signed64, text) {
-                (Some(v), None, None, None) => StagedValues::F64(v.to_vec()),
-                (None, Some(v), None, None) => StagedValues::U64(v.to_vec()),
-                (None, None, Some(v), None) => StagedValues::I64(v.to_vec()),
-                (None, None, None, Some(data)) => {
-                    let lengths = lengths.ok_or_else(|| {
-                        napi::Error::from_reason(format!(
-                            "Column `{name}` carries text without per-row lengths"
-                        ))
-                    })?;
-                    StagedValues::Text {
-                        data,
-                        utf16_lengths: lengths.to_vec(),
-                    }
-                }
+            let values = match (numbers, unsigned64, signed64, texts) {
+                (Some(v), None, None, None) => ColumnValues::F64(v.to_vec()),
+                (None, Some(v), None, None) => ColumnValues::U64(v.to_vec()),
+                (None, None, Some(v), None) => ColumnValues::I64(v.to_vec()),
+                (None, None, None, Some(v)) => ColumnValues::Text(v),
                 _ => {
                     return Err(napi::Error::from_reason(format!(
-                        "Column `{name}` must carry exactly one of numbers/unsigned64/signed64/text"
-                    )))
+                    "Column `{name}` must carry exactly one of numbers/unsigned64/signed64/texts"
+                )))
                 }
             };
-            // Checked against the registered type, so a column sent as the wrong
-            // kind is caught before its text is scanned for span boundaries.
             let staged_kind = values.kind();
             if staged_kind != spec.kind {
                 return Err(napi::Error::from_reason(format!(
@@ -429,7 +413,10 @@ impl ClickHouseSink {
     /// Runs a statement that returns nothing — the DDL and the reorg cleanup.
     #[napi]
     pub async fn exec(&self, query: String) -> napi::Result<()> {
-        self.post_statement(query).await.map(|_| ()).map_err(to_napi)
+        self.post_statement(query)
+            .await
+            .map(|_| ())
+            .map_err(to_napi)
     }
 
     /// Runs a statement and hands back the server's response body verbatim, so
@@ -488,68 +475,84 @@ impl ClickHouseSink {
     }
 
     async fn insert_staged(&self, staged: Staged) -> Result<()> {
-        let schema = staged.schema;
-        let table = &schema.table;
-        let encoded = tokio::task::block_in_place(|| {
-            let columns = schema
+        let Staged {
+            schema,
+            rows,
+            columns,
+        } = staged;
+        // On the blocking pool rather than in place: `write_batch` drives every
+        // table's insert from one task, and blocking that task would serialize
+        // the encodes and stall the round trips already in flight beside them.
+        let encode_schema = schema.clone();
+        let encoded = tokio::task::spawn_blocking(move || {
+            let columns: Vec<Column> = encode_schema
                 .columns
                 .iter()
-                .zip(staged.columns)
-                .map(|(spec, values)| {
-                    Ok(Column {
-                        name: spec.name.clone(),
-                        ch_type: spec.ch_type.clone(),
-                        values: values
-                            .values
-                            .resolve()
-                            .with_context(|| format!("Column `{}`", spec.name))?,
-                        nulls: values.nulls,
-                    })
+                .zip(columns)
+                .map(|(spec, values)| Column {
+                    name: Cow::Borrowed(&spec.name),
+                    ch_type: Cow::Borrowed(&spec.ch_type),
+                    values: values.values,
+                    nulls: values.nulls,
                 })
-                .collect::<Result<Vec<_>>>()?;
-            row_binary::encode(&columns, staged.rows)
+                .collect();
+            row_binary::encode(&columns, rows)
         })
-        .with_context(|| format!("Failed encoding rows for ClickHouse table `{table}`"))?;
+        .await
+        .context("ClickHouse encode task failed")?
+        .with_context(|| {
+            format!(
+                "Failed encoding rows for ClickHouse table `{}`",
+                schema.table
+            )
+        })?;
         if encoded.rows() == 0 {
             return Ok(());
         }
-        self.insert_with_retry(table, &schema.insert_query, &encoded)
+        self.insert_with_retry(&schema.table, &schema.insert_query, &encoded)
             .await
     }
 
-    /// Mirrors the JS client's policy: on a transient failure halve the range and
-    /// retry each half; with a single row left, wait and retry it. The delay
-    /// grows from 100ms to 1s as retries run down.
+    /// Halves a failed range and retries each half; with a single row left, waits
+    /// and retries it. The delay grows from 100ms to 1s as retries run down.
+    ///
+    /// Only a failure another attempt could answer differently is retried. A
+    /// server that read the rows and rejected them gives the same verdict however
+    /// few of them come back, so retrying one costs a batch's worth of doomed
+    /// requests and every backoff between them before the error surfaces.
     async fn insert_with_retry(
         &self,
         table: &str,
         query: &str,
         encoded: &EncodedRows,
     ) -> Result<()> {
-        let mut attempted: Vec<String> = Vec::new();
+        let mut failures = 0usize;
         // Ranges still to send, most recent first; a failed range is replaced by
         // its two halves so the retry never re-sends rows that already landed.
         let mut pending = vec![(0usize, encoded.rows(), self.tuning.attempts)];
         while let Some((start, end, retries)) = pending.pop() {
             match self.post_rows(query, encoded.slice(start, end)).await {
                 Ok(()) => continue,
-                Err(err) if retries == 0 => {
-                    // The attempts leading here are the diagnosis; returning the
-                    // last error alone would drop them.
-                    return Err(match attempted.is_empty() {
-                        true => err,
-                        false => err.context(format!("after {}", attempted.join("; "))),
+                Err(failure) if retries == 0 || !failure.retriable => {
+                    // Every attempt behind this one already left through `warn`
+                    // as it happened; what the terminal error still owes the
+                    // reader is how many there were.
+                    return Err(match failures {
+                        0 => failure.error,
+                        n => failure
+                            .error
+                            .context(format!("after {n} failed attempt(s)")),
                     });
                 }
-                Err(err) => {
+                Err(failure) => {
+                    failures += 1;
                     let rows = end - start;
-                    let warning = format!(
+                    (self.warn)(&format!(
                         "ClickHouse insert of {rows} row(s) into `{table}` failed, \
-                         {} retries left: {err:#}",
-                        retries - 1
-                    );
-                    (self.warn)(&warning);
-                    attempted.push(warning);
+                         {} retries left: {:#}",
+                        retries - 1,
+                        failure.error
+                    ));
                     tokio::time::sleep(self.tuning.delay(retries)).await;
                     if rows > 1 {
                         let mid = start + rows / 2;
@@ -564,8 +567,8 @@ impl ClickHouseSink {
         Ok(())
     }
 
-    async fn post_rows(&self, query: &str, body: Bytes) -> Result<()> {
-        let response = self
+    async fn post_rows(&self, query: &str, body: Bytes) -> std::result::Result<(), InsertFailure> {
+        let request = self
             .client
             .post(&self.url)
             .query(&[("query", query), ("database", &self.database)])
@@ -575,17 +578,76 @@ impl ClickHouseSink {
             // sent. `@clickhouse/client` authenticated this way too.
             .basic_auth(&self.username, Some(&self.password))
             .header("Content-Type", "application/octet-stream")
-            .body(body)
-            .send()
-            .await
-            .context("ClickHouse insert request failed")?;
+            .body(body);
+        let response = match request.send().await {
+            Ok(response) => response,
+            // The request never reached a verdict, so nothing about the rows has
+            // been decided and another attempt is worth making.
+            Err(err) => {
+                return Err(InsertFailure {
+                    error: anyhow::Error::new(err).context("ClickHouse insert request failed"),
+                    retriable: true,
+                })
+            }
+        };
         let status = response.status();
-        if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
-            bail!("ClickHouse returned {status}: {text}");
+        if status.is_success() {
+            return Ok(());
         }
-        Ok(())
+        let text = response.text().await.unwrap_or_default();
+        Err(InsertFailure {
+            retriable: is_retriable(status, &text),
+            error: anyhow!("ClickHouse returned {status}: {text}"),
+        })
     }
+}
+
+/// A failed insert, and whether another attempt could answer differently.
+struct InsertFailure {
+    error: anyhow::Error,
+    retriable: bool,
+}
+
+/// ClickHouse error codes worth another attempt: the server was busy, lost a
+/// peer, or could not say what happened — none of which is a verdict on the rows.
+/// Whitelisted rather than blacklisted so a code nobody has thought about ends a
+/// write with the server's own message instead of a batch's worth of doomed
+/// requests.
+const RETRIABLE_ERROR_CODES: &[u32] = &[
+    159,  // TIMEOUT_EXCEEDED
+    202,  // TOO_MANY_SIMULTANEOUS_QUERIES
+    203,  // NO_FREE_CONNECTION
+    209,  // SOCKET_TIMEOUT
+    210,  // NETWORK_ERROR
+    241,  // MEMORY_LIMIT_EXCEEDED — the one the halving is actually for
+    252,  // TOO_MANY_PARTS
+    285,  // TOO_FEW_LIVE_REPLICAS
+    319,  // UNKNOWN_STATUS_OF_INSERT
+    425,  // SYSTEM_ERROR
+    999,  // KEEPER_EXCEPTION
+    1002, // UNKNOWN_EXCEPTION
+];
+
+fn is_retriable(status: reqwest::StatusCode, body: &str) -> bool {
+    match clickhouse_error_code(body) {
+        Some(code) => RETRIABLE_ERROR_CODES.contains(&code),
+        // No ClickHouse verdict in the body, so something in front of it
+        // answered — a proxy or load balancer — and only its status says
+        // whether the rows ever got as far as being judged.
+        None => status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS,
+    }
+}
+
+/// The `N` of the `Code: N. DB::Exception: ...` a ClickHouse error body opens
+/// with.
+fn clickhouse_error_code(body: &str) -> Option<u32> {
+    let digits: String = body
+        .split_once("Code: ")?
+        .1
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse().ok()
 }
 
 /// Names every column the body carries, so the table's own column order stops
@@ -623,21 +685,12 @@ mod tests {
         }
     }
 
-    /// Text values packed the way the JS side sends them: one concatenated
-    /// string plus each value's UTF-16 length.
     fn text_values(values: &[&str]) -> ColumnValuesInput {
         ColumnValuesInput {
             numbers: None,
             unsigned64: None,
             signed64: None,
-            text: Some(values.concat()),
-            lengths: Some(
-                values
-                    .iter()
-                    .map(|v| v.chars().map(char::len_utf16).sum::<usize>() as u32)
-                    .collect::<Vec<u32>>()
-                    .into(),
-            ),
+            texts: Some(values.iter().map(|v| v.to_string()).collect()),
             nulls: None,
         }
     }
@@ -825,6 +878,33 @@ mod tests {
             ),
             (true, Vec::<String>::new()),
             "expected the server's message, got: {}",
+            err.reason
+        );
+    }
+
+    // Halving a batch is for a server that could not take the rows, not for one
+    // that read them and said no: a verdict on the rows themselves is the same
+    // verdict however few of them are sent again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rejection_the_rows_are_to_blame_for_is_not_retried() {
+        let server = mock_server::MockClickHouse::rejecting_with(
+            usize::MAX,
+            "Code: 60. DB::Exception: Table mock.t does not exist",
+        )
+        .await;
+        let sink = sink_for(&server, 8);
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("does not exist"),
+                server.inserts_seen(),
+                sink.warnings()
+            ),
+            (true, 1, Vec::<String>::new()),
+            "expected one attempt and the server's message, got: {}",
             err.reason
         );
     }

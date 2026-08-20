@@ -200,8 +200,7 @@ pub enum ColumnKind {
     U64 = 1,
     /// BigInt64Array.
     I64 = 2,
-    /// Concatenated text plus per-row UTF-16 lengths. Also carries the JSON of
-    /// an `Array` column.
+    /// One string per row. Also carries the JSON of an `Array` column.
     Text = 3,
 }
 
