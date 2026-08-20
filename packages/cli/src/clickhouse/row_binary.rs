@@ -211,17 +211,26 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
         Some((i, f)) => (i, f),
         None => (mantissa, ""),
     };
+    // Fractional digits past the point `scale` keeps are truncated anyway, and
+    // folding them in first would overflow the accumulator on a value that fits
+    // once truncated. Dropping them here is that truncation: it shortens
+    // `frac_part` by exactly what the shift below would divide away.
+    let kept_frac =
+        (i64::from(scale) + i64::from(exponent)).clamp(0, frac_part.len() as i64) as usize;
     // Folded straight into the accumulator: the digits are the whole value, so
     // joining them into a string first would allocate once per cell in the hot
     // encode loop only to parse the same bytes back out.
     let mut magnitude = 0u128;
     let mut digits = 0usize;
-    for part in [int_part, frac_part] {
-        for byte in part.bytes() {
+    for (part, kept) in [(int_part, int_part.len()), (frac_part, kept_frac)] {
+        for (index, byte) in part.bytes().enumerate() {
             if !byte.is_ascii_digit() {
                 bail!("`{text}` is not a decimal");
             }
             digits += 1;
+            if index >= kept {
+                continue;
+            }
             magnitude = magnitude
                 .checked_mul(10)
                 .and_then(|shifted| shifted.checked_add(u128::from(byte - b'0')))
@@ -234,7 +243,7 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
     // Exponent shifts the point; `scale` then fixes how many fractional digits
     // the stored integer keeps. Widened to i64 because `exponent` is an
     // unconstrained i32 and the subtraction would otherwise be able to overflow.
-    let shift = i64::from(scale) + i64::from(exponent) - frac_part.len() as i64;
+    let shift = i64::from(scale) + i64::from(exponent) - kept_frac as i64;
     // Parsed unsigned: i128::MIN's magnitude is one past i128::MAX, so parsing
     // the digits as i128 and negating afterwards would reject a legal value.
     let mut value = match negative {
@@ -989,6 +998,24 @@ mod tests {
         let padded = format!("{}42", "0".repeat(60));
         let encoded = encode(&[text_column("d", "Decimal(38, 0)", &[&padded])], 1).unwrap();
         assert_eq!(encoded.body, 42i128.to_le_bytes().to_vec());
+    }
+
+    // The digits past the column's scale are truncated, so a literal spelling
+    // more of them than the accumulator can hold is still the value it stores.
+    #[test]
+    fn a_decimal_with_more_fractional_digits_than_the_scale_keeps_its_value() {
+        let value = format!("1.{}", "9".repeat(60));
+        let encoded = encode(&[text_column("d", "Decimal(38, 2)", &[&value])], 1).unwrap();
+        assert_eq!(encoded.body, 199i128.to_le_bytes().to_vec());
+    }
+
+    #[test]
+    fn rejects_a_non_digit_among_the_truncated_digits_of_a_decimal() {
+        let err = encode(&[text_column("d", "Decimal(38, 2)", &["1.23x"])], 1).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("is not a decimal"),
+            "expected a parse error, got: {err:#}"
+        );
     }
 
     #[test]

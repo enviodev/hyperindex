@@ -107,3 +107,5 @@ res = {
 print(json.dumps(res, indent=2))
 json.dump(res, open(os.path.join(os.path.dirname(path), label + ".json"), "w"), indent=2)
 PY
+
+exit "$EXIT_CODE"

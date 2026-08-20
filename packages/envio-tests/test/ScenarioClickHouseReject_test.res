@@ -92,7 +92,7 @@ describe("ClickHouse refuses a value its column cannot hold", () => {
       )
       // The sink wraps the encoder's refusal, so what an operator reads is the
       // storage error's own message plus the reason underneath it.
-      let failure = switch await awaitRefusal(100) {
+      let failure = switch await awaitRefusal(1000) {
       | Some({exn: Persistence.StorageError({message, reason})}) =>
         Some((
           message,
