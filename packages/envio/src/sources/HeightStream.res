@@ -161,10 +161,14 @@ let subscribe = (
           goLive()
         },
       onKeepAlive: () =>
-        // Stops counting once something unreadable has arrived. A stream whose
-        // heights are all malformed would otherwise be held open indefinitely
-        // by the keep-alives between them, never failing and so never reporting
-        // anything, while its consumer sat on the staleness backstop.
+        // Stops counting once anything unreadable has arrived, on the first one
+        // rather than on some run of them: a stream whose heights are all
+        // malformed is indistinguishable from one that has sent a single
+        // garbled frame until a readable height arrives, and the keep-alives
+        // between malformed heights would otherwise hold the connection open
+        // indefinitely, never failing and so never reporting anything, while
+        // its consumer sat on the staleness backstop. Being wrong about a lone
+        // glitch costs one reconnect.
         if isCurrent() && !sawUnreadable.contents {
           armStaleTimeout()
         },
