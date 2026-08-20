@@ -111,6 +111,8 @@ let isStopped: t => bool
 // response. Zero means the indexer has run every scheduled step to completion
 // and can only move again once the outside world answers.
 let inFlight: t => int
+// Latched once the count has gone below zero, after which it means nothing.
+let hasInFlightDeficit: t => bool
 // Resolves the next time `inFlight` falls to zero. Callers re-check the count
 // afterwards: work that settled in the same tick can schedule more.
 let whenIdle: t => promise<unit>

@@ -355,17 +355,14 @@ let fetchChain = async (
               // rejects: dispatch spins a side-chain off it that would otherwise
               // become an unhandled rejection.
               try {
-                // Parked, not working: the loop can't advance until a source
-                // answers. The boundary is the whole call rather than the
-                // request inside it, so a retry's backoff is parked too — a
-                // test that settles mid-backoff sees no pending query and fails
-                // on the missing one, rather than reading the gap as quiet.
-                let response = await state->IndexerState.suspendInFlight(() =>
-                  sourceManager->SourceManager.executeQuery(
-                    ~query,
-                    ~knownHeight=chainState->ChainState.knownHeight,
-                    ~isRealtime,
-                  )
+                // Only the request itself is a wait on the outside world.
+                // Everything around it — picking a source, validating, backing
+                // off before a retry — is the loop working.
+                let response = await sourceManager->SourceManager.executeQuery(
+                  ~query,
+                  ~knownHeight=chainState->ChainState.knownHeight,
+                  ~isRealtime,
+                  ~park=work => state->IndexerState.suspendInFlight(work),
                 )
                 await onQueryResponse(
                   state,

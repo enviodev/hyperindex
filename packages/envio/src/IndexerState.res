@@ -124,6 +124,11 @@ type t = {
   mutable inFlight: int,
   // Woken when inFlight falls back to zero.
   mutable idleWaiters: array<unit => unit>,
+  // Latched the first time the count goes below zero. Once it has, zero no
+  // longer means quiet — a deficit and a running step cancel out — so idleness
+  // is never reported again and the harness says why instead of settling early
+  // on a count it can't trust.
+  mutable hasInFlightDeficit: bool,
   // Bumped when in-flight fetch work must be invalidated: on a reorg (responses
   // requested against pre-reorg state) and on the realtime transition (the
   // waitForNewBlock waiter is bound to the old, pre-realtime source). A fetch
@@ -213,6 +218,7 @@ let make = (
     isStopped: false,
     inFlight: 0,
     idleWaiters: [],
+    hasInFlightDeficit: false,
     epoch: 0,
     simulateDeadInputTracker: SimulateDeadInputTracker.makeFromConfig(config),
     preloadSeconds: 0.,
@@ -524,10 +530,14 @@ let isStopped = (state: t) => state.isStopped
 
 let inFlight = (state: t) => state.inFlight
 
+let hasInFlightDeficit = (state: t) => state.hasInFlightDeficit
+
+let isInFlightIdle = (state: t) => state.inFlight === 0 && !state.hasInFlightDeficit
+
 // Resolves the next time no loop work is running. Callers re-check the count
 // after awaiting: work resolved in the same tick can schedule more.
 let whenIdle = (state: t): promise<unit> =>
-  if state.inFlight === 0 {
+  if state->isInFlightIdle {
     Promise.resolve()
   } else {
     Promise.make((resolve, _) => {
@@ -539,11 +549,12 @@ let enterInFlight = (state: t) => state.inFlight = state.inFlight + 1
 
 let exitInFlight = (state: t) => {
   state.inFlight = state.inFlight - 1
+  if state.inFlight < 0 {
+    state.hasInFlightDeficit = true
+  }
   // Only a step finishing can leave the loop quiet, so this is the one place
-  // waiters are woken. Waking on the way up from a negative count would let a
-  // busy loop read as idle, which is worse than the wait that never comes:
-  // a stranded waiter surfaces as a settle timeout naming the broken count.
-  if state.inFlight === 0 {
+  // waiters are woken.
+  if state->isInFlightIdle {
     let waiters = state.idleWaiters
     state.idleWaiters = []
     waiters->Array.forEach(resolve => resolve())

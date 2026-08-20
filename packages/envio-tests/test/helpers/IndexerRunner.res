@@ -257,9 +257,9 @@ let run = async (
             state->IndexerState.inFlight > 0
               ? Some(`${state->IndexerState.inFlight->Int.toString} scheduled step(s)`)
               : None,
-            state->IndexerState.inFlight < 0
+            state->IndexerState.hasInFlightDeficit
               ? Some(
-                  `a broken in-flight count (${state->IndexerState.inFlight->Int.toString}) — either a fan-out counted once for work that runs many times over, or an \`indexer.park\` from a frame the scheduler wasn't counting`,
+                  `a broken in-flight count (now ${state->IndexerState.inFlight->Int.toString}) — either a fan-out counted once for work that runs many times over, or an \`indexer.park\` from a frame the scheduler wasn't counting`,
                 )
               : None,
             state->IndexerState.isProcessing ? Some("a batch being processed") : None,
