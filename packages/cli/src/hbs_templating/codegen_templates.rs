@@ -3570,6 +3570,108 @@ type Vault {
     }
 
     #[test]
+    fn indexer_code_for_hostile_config() {
+        // The names and shapes a generated ReScript module has to survive:
+        // a field named after a ReScript keyword, entity names at Postgres'
+        // 63-character identifier limit, an event name past the length an
+        // enum value can carry, an event param named after a keyword, indexed
+        // tuples nested two deep, a per-event field selection, two overloads
+        // of one event name plus an aliased third, and a contract shared by
+        // two chains.
+        let yaml = r#"
+name: hostile
+field_selection:
+  transaction_fields:
+    - transactionIndex
+    - hash
+chains:
+  - id: 1
+    rpc:
+      url: https://rpc.example.test
+      for: sync
+    start_block: 1
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        events:
+          - event: "CustomSelection()"
+            field_selection:
+              block_fields:
+                - parentHash
+              transaction_fields:
+                - to
+                - from
+                - hash
+          - event: "TestEventWithLongNameBeyondThePostgresEnumCharacterLimit(address testField)"
+          - event: "TestEventWithReservedKeyword(string module)"
+          - event: "TestEvent(uint256 id, address user, (string name, string email) contactDetails)"
+          - event: "TestEvent()"
+            name: "TestEventWithCustomName"
+          - event: "IndexedNestedStruct((uint256 id, (uint256 id, string name) testStruct) nestedStruct)"
+          - event: "IndexedStructWithArray((uint256[] numArr, string[2] strArr) structWithArray)"
+          - event: "IndexedNestedArray(uint256[2][2] array)"
+      - name: Shared
+        address: "0x0b2F78c5Bf6d9c12EE1225d5f374Aa91204580C3"
+        events:
+          - event: "EmptyEvent()"
+  - id: 137
+    start_block: 1
+    contracts:
+      - name: Shared
+        address: "0x1b2F78c5Bf6d9c12EE1225d5f374Aa91204580C3"
+"#;
+        let schema = r#"
+enum AccountType {
+  USER
+  ADMIN
+}
+
+type EntityWithRestrictedReScriptField {
+  id: ID!
+  type: String!
+}
+
+type EntityWith63LenghtName______________________________________one {
+  id: ID!
+}
+
+type EntityWith63LenghtName______________________________________two {
+  id: ID!
+}
+
+type IntIdEntity {
+  id: Int!
+  value: String!
+}
+
+type BigIntIdEntity {
+  id: BigInt!
+  numericRef: IntIdEntity!
+}
+
+type Account {
+  id: ID!
+  accountType: AccountType!
+  tokens: [Token!]! @derivedFrom(field: "owner")
+}
+
+type Token @index(fields: ["tokenId", "owner"]) {
+  id: ID!
+  tokenId: BigInt! @index
+  owner: Account!
+  bigDecimalWithConfig: BigDecimal! @config(precision: 76, scale: 5)
+}
+"#;
+        let config =
+            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("hostile config should parse");
+        insta::assert_snapshot!(super::ProjectTemplate::from_config(&config)
+            .expect("project template")
+            .indexer_code
+            .expect("rescript indexer code"));
+    }
+
+    #[test]
     fn indexer_code_widens_test_indexer_ops_for_per_chain_entities() {
         // Outside a handler there is no chain in context, so the chain-agnostic
         // test-indexer operations of a per-chain entity exchange the entity
