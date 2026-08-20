@@ -313,10 +313,10 @@ let expectQueries = async (
     ->Array.map(describeQuery)
   t.expect(
     source.getItemsOrThrowCalls->Array.map(call => call.payload),
-    ~message=`${message}\nAnswered before this point: ${switch recalled {
-      | [] => "none"
+    ~message=`${message} (answered so far: ${switch recalled {
+      | [] => "nothing"
       | recalled => recalled->Array.join(", ")
-      }}`,
+      }})`,
   ).toEqual(expected)
 }
 

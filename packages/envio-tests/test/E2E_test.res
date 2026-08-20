@@ -152,12 +152,14 @@ describe("E2E tests", () => {
         ~message="should have called getHeightOrThrow to get initial height",
       ).toEqual(1)
       sourceMock.resolveGetHeightOrThrow(400)
-      await indexer.settle()
 
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(call => call.payload),
+      await Scenario.expectQueries(
+        ~t,
+        ~indexer,
+        ~source=sourceMock,
         ~message="Should request items from start block to reorg threshold",
-      ).toEqual([{"fromBlock": 100, "toBlock": Some(200), "retry": 0, "p": "0"}])
+        [{"fromBlock": 100, "toBlock": Some(200), "retry": 0, "p": "0"}],
+      )
     },
   )
 
@@ -1240,10 +1242,13 @@ describe("E2E tests", () => {
       await indexer.settle()
 
       // Step 2: Query 1 — resolve at block 500 (range=501)
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+      await Scenario.expectQueries(
+        ~t,
+        ~indexer,
+        ~source=sourceMock,
         ~message="Step 2 should have initial query",
-      ).toEqual([{"fromBlock": 1, "toBlock": Some(19800), "retry": 0, "p": "0"}])
+        [{"fromBlock": 1, "toBlock": Some(19800), "retry": 0, "p": "0"}],
+      )
       sourceMock.resolveGetItemsOrThrow(
         [{blockNumber: 100, logIndex: 0}],
         ~latestFetchedBlockNumber=500,
@@ -1251,10 +1256,13 @@ describe("E2E tests", () => {
       await indexer.settle()
 
       // Step 3: Query 2 — resolve at block 800 (range=300)
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+      await Scenario.expectQueries(
+        ~t,
+        ~indexer,
+        ~source=sourceMock,
         ~message="Step 3 should have follow-up query",
-      ).toEqual([{"fromBlock": 501, "toBlock": Some(19800), "retry": 0, "p": "0"}])
+        [{"fromBlock": 501, "toBlock": Some(19800), "retry": 0, "p": "0"}],
+      )
       sourceMock.resolveGetItemsOrThrow(
         [{blockNumber: 600, logIndex: 0}],
         ~latestFetchedBlockNumber=800,
@@ -1347,20 +1355,24 @@ describe("E2E tests", () => {
 
       // Setup: same preamble — get to 4 chunked queries
       sourceMock.resolveGetHeightOrThrow(10_000)
-      await indexer.settle()
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+      await Scenario.expectQueries(
+        ~t,
+        ~indexer,
+        ~source=sourceMock,
         ~message="Should have initial query",
-      ).toEqual([{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}])
+        [{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      )
       sourceMock.resolveGetItemsOrThrow(
         [{blockNumber: 100, logIndex: 0}],
         ~latestFetchedBlockNumber=500,
       )
-      await indexer.settle()
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+      await Scenario.expectQueries(
+        ~t,
+        ~indexer,
+        ~source=sourceMock,
         ~message="Should have follow-up query",
-      ).toEqual([{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}])
+        [{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      )
       sourceMock.resolveGetItemsOrThrow(
         [{blockNumber: 600, logIndex: 0}],
         ~latestFetchedBlockNumber=800,

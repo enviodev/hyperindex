@@ -848,11 +848,12 @@ describe("E2E rollback tests", () => {
         {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
       ])
 
-      await indexer.settle()
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+      await Scenario.expectQueries(
+        ~t,
+        ~indexer,
+        ~source=sourceMock,
         ~message="Should rollback fetch state and re-request items",
-      ).toEqual([
+        [
         {
           "fromBlock": 101,
           "toBlock": None,
@@ -860,7 +861,8 @@ describe("E2E rollback tests", () => {
           // IDs reset on rollback, recreated partition starts at 0
           "p": "0",
         },
-      ])
+      ],
+      )
 
       sourceMock.resolveGetItemsOrThrow(
         [],
@@ -1084,12 +1086,13 @@ describe("E2E rollback tests", () => {
 
       sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
-      await indexer.settle()
 
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+      await Scenario.expectQueries(
+        ~t,
+        ~indexer,
+        ~source=sourceMock,
         ~message="Should rollback fetch state and re-request items",
-      ).toEqual([
+        [
         // Normal partition (recreated fresh, no chunking)
         {
           "fromBlock": 103,
@@ -1104,7 +1107,8 @@ describe("E2E rollback tests", () => {
           "retry": 0,
           "p": "1",
         },
-      ])
+      ],
+      )
 
       // Asserted here rather than after the re-fetch below: the rollback is
       // resolved but nothing has been written yet, and how many ticks a write
@@ -2617,12 +2621,13 @@ describe("E2E rollback tests", () => {
       // Clean up pending calls from before rollback
       sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
 
-      await indexer.settle()
 
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+      await Scenario.expectQueries(
+        ~t,
+        ~indexer,
+        ~source=sourceMock,
         ~message="Should NOT have duplicate queries - only partition 0, no partition 1",
-      ).toEqual([
+        [
         // Partition recreated fresh (no chunk history), single unchunked query
         {
           "fromBlock": 115,
@@ -2630,7 +2635,8 @@ describe("E2E rollback tests", () => {
           "retry": 0,
           "p": "0",
         },
-      ])
+      ],
+      )
     },
   )
 
