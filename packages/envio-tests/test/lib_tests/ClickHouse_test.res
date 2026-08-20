@@ -557,7 +557,7 @@ chains:
   \`timestamp\` DateTime64(3, 'UTC'),
   \`amount\` String,
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE'),
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2),
   INDEX \`idx_from\` \`from_address\` TYPE bloom_filter(0.01) GRANULARITY 4,
   INDEX \`idx_amount\` \`amount\` TYPE minmax
 )
@@ -597,13 +597,21 @@ chains:
         let entityConfig = config.userEntitiesByName->Dict.getUnsafe("Transfer")
 
         let database = TestClickHouse.make()
-        let client = ClickHouse.createClient({
-          url: TestClickHouse.host(),
-          username: TestClickHouse.username(),
-          password: TestClickHouse.password(),
-        })
+        let sink = ClickHouse.makeSink(
+          ~host=TestClickHouse.host(),
+          ~username=TestClickHouse.username(),
+          ~password=TestClickHouse.password(),
+          ~database,
+        )
+        let registry = ClickHouse.makeRegistry(~chainIdMode=Int32)
         let indices = try {
-          await ClickHouse.initialize(client, ~database, ~entities=[entityConfig], ~enums=[])
+          await ClickHouse.initialize(
+            sink,
+            ~registry,
+            ~database,
+            ~entities=[entityConfig],
+            ~enums=[],
+          )
           await TestClickHouse.query(
             `SELECT name, type_full, toUInt32(granularity) AS granularity
 FROM system.data_skipping_indices
@@ -614,11 +622,9 @@ FORMAT JSONCompactEachRow`,
         } catch {
         | exn =>
           await TestClickHouse.drop(~database)
-          await ClickHouse.close(client)
           throw(exn)
         }
         await TestClickHouse.drop(~database)
-        await ClickHouse.close(client)
 
         t.expect(indices).toBe(`["idx_amount", "minmax", 1]
 ["idx_from", "bloom_filter(0.01)", 4]
