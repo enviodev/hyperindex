@@ -535,16 +535,20 @@ let whenIdle = (state: t): promise<unit> =>
     })
   }
 
-let enterInFlight = (state: t) => state.inFlight = state.inFlight + 1
-
-let exitInFlight = (state: t) => {
-  state.inFlight = state.inFlight - 1
-  if state.inFlight === 0 {
+// Both directions go through here, so a count that dipped below zero still
+// wakes its waiters on the way back up rather than stranding them.
+let setInFlight = (state: t, count) => {
+  state.inFlight = count
+  if count === 0 {
     let waiters = state.idleWaiters
     state.idleWaiters = []
     waiters->Array.forEach(resolve => resolve())
   }
 }
+
+let enterInFlight = (state: t) => state->setInFlight(state.inFlight + 1)
+
+let exitInFlight = (state: t) => state->setInFlight(state.inFlight - 1)
 
 // Counts `work` as loop work for as long as its promise is pending. A thunk
 // that throws before returning a promise still settles the count.

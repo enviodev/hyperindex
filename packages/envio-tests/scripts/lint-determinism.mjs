@@ -17,7 +17,9 @@ import { fileURLToPath } from "node:url";
 
 const testRoot = fileURLToPath(new URL("../test", import.meta.url));
 
-const banned = /Utils\.delay\(\s*0\s*\)/;
+// Scanned over the whole file rather than line by line, so a call the
+// formatter wrapped across lines is still caught.
+const banned = /Utils\s*\.\s*delay\(\s*0\s*,?\s*\)/g;
 const optOut = "determinism-lint: no indexer loop";
 
 const resFiles = (dir) =>
@@ -31,11 +33,10 @@ const violations = [];
 for (const path of resFiles(testRoot)) {
   const source = readFileSync(path, "utf8");
   if (source.includes(optOut)) continue;
-  source.split("\n").forEach((line, index) => {
-    if (banned.test(line)) {
-      violations.push(`${relative(process.cwd(), path)}:${index + 1}: ${line.trim()}`);
-    }
-  });
+  for (const match of source.matchAll(banned)) {
+    const line = source.slice(0, match.index).split("\n").length;
+    violations.push(`${relative(process.cwd(), path)}:${line}: ${match[0].replace(/\s+/g, "")}`);
+  }
 }
 
 if (violations.length > 0) {

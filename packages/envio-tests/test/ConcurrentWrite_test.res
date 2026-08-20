@@ -157,8 +157,10 @@ describe("Concurrent batch write and processing", () => {
         () => recreateProcessed.contents,
         ~message="the recreate handler to run",
       )
-      // Let the processed batch get queued for the next write
-      await Utils.delay(1)
+      await Scenario.waitUntil(
+        () => indexer.queuedWrites() > 0,
+        ~message="the recreate batch to queue up behind the stalled write",
+      )
 
       stallWriteBatch := None
       resolveStall.contents()

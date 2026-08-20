@@ -41,12 +41,18 @@ type rec t = {
   settleUntil: (unit => bool, ~message: string) => promise<unit>,
   // Wraps a wait the test itself holds closed — a gate inside a handler, say —
   // so the loop reads as parked on the test rather than as working. Without it
-  // `settle` would wait out a block only the test can lift. Only valid from
-  // inside work the loop is running (a handler, a contract register, a mocked
-  // storage call): it discounts the frame it is called from, and a test body
-  // has no frame to discount.
+  // `settle` would wait out a block only the test can lift.
+  //
+  // It discounts the frame it is called from, so it is only valid where the
+  // scheduler is counting one: a handler, a contract register, or a storage
+  // call the processing or finalize path makes. Not from a test body, and not
+  // from the write loop's own calls (`writeBatch`, `setChainMeta`) — those run
+  // off the scheduler, and `settle` covers them through the flush instead.
   park: 'a. (unit => promise<'a>) => promise<'a>,
   waitUntilReady: unit => promise<unit>,
+  // Batches processed but not yet written. A test that stalls a write watches
+  // this to see the next batch queue up behind it.
+  queuedWrites: unit => int,
   query: 'entity. string => promise<array<'entity>>,
   queryHistory: 'entity. string => promise<array<Change.t<'entity>>>,
   queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
@@ -196,12 +202,17 @@ let run = async (
     let rec settleLoop = async (~timedOut) => {
       await state->IndexerState.whenIdle
       await drainTick()
-      await state->Writing.flush
-      if (
-        !timedOut.contents &&
-        (state->IndexerState.inFlight > 0 || state->IndexerState.writeFiber->Option.isSome)
-      ) {
-        await settleLoop(~timedOut)
+      // Checked before the flush, not just after: the run's teardown drops the
+      // schema once the caller has given up, and a write started here would
+      // land on a schema that no longer exists.
+      if !timedOut.contents {
+        await state->Writing.flush
+        if (
+          !timedOut.contents &&
+          (state->IndexerState.inFlight > 0 || state->IndexerState.writeFiber->Option.isSome)
+        ) {
+          await settleLoop(~timedOut)
+        }
       }
     }
 
@@ -371,6 +382,7 @@ let run = async (
       settle,
       settleUntil,
       park: work => state->IndexerState.suspendInFlight(work),
+      queuedWrites: () => state->IndexerState.processedBatches->Array.length,
       waitUntilReady: () =>
         settleUntil(
           () =>
