@@ -235,6 +235,21 @@ describe("HeightStream reconnect driver", () => {
     ))
   })
 
+  Async.it("Survives a throwing close on a connection superseded during connect", async t => {
+    // connect fails before it returns, so its socket is already superseded by
+    // the time the driver gets the close function back. start() runs from the
+    // retry timer, so a throw on that path is an uncaught exception.
+    let harness = makeHarness(~failOnConnect="closed", ~throwOnClose=true)
+
+    await Vi.advanceTimersByTimeAsync(250)
+    harness.unsubscribe()
+
+    t.expect((harness.drivers->Array.length, harness.statuses)).toStrictEqual((
+      2,
+      ["down:closed", "down:closed"],
+    ))
+  })
+
   Async.it("Ignores everything a connection reports after unsubscribing", async t => {
     let harness = makeHarness()
     let driver = harness->driverAt(0)

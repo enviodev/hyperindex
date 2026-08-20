@@ -65,13 +65,17 @@ let subscribe = (
   }
 
   // A transport that throws while closing must not be able to stop the retry
-  // that follows, nor escape a timer callback and take the process down.
+  // that follows, nor escape a timer callback and take the process down. Every
+  // close goes through here, including the one for a connection superseded
+  // while connect was still running.
+  let closeSafely = close =>
+    try close() catch {
+    | _ => ()
+    }
+
   let closeConnection = () => {
     switch closeConnectionRef.contents {
-    | Some(closeConnection) =>
-      try closeConnection() catch {
-      | _ => ()
-      }
+    | Some(close) => closeSafely(close)
     | None => ()
     }
     closeConnectionRef := None
@@ -184,7 +188,7 @@ let subscribe = (
       if isCurrent() {
         closeConnectionRef := Some(closeCurrentConnection)
       } else {
-        closeCurrentConnection()
+        closeSafely(closeCurrentConnection)
       }
     | None =>
       if isCurrent() {
