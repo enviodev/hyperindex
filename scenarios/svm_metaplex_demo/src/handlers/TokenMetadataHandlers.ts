@@ -25,25 +25,24 @@ async function bumpStats(
 }
 
 indexer.onInstruction(
-  { program: "TokenMetadata", instruction: "CreateMetadataAccountV3" },
+  {
+    program: "TokenMetadata",
+    instruction: "CreateMetadataAccountV3",
+    fields: {
+      instruction: ["args", "accounts"],
+      transaction: ["signature"],
+      block: ["time"],
+    },
+  },
   async ({ instruction, context }) => {
-    const params = instruction.params;
-    if (!params) {
-      // Bundled Metaplex schema should always match disc 0x21 — surface
-      // mismatches loudly so the upstream decoder regression is obvious.
-      console.warn("CreateMetadataAccountV3: no decoded payload");
+    const args = instruction.args;
+    if (!args) {
       return;
     }
-    const { args, accounts } = params;
-    const metadataPda = accounts.metadata;
-    if (metadataPda === undefined) return;
-    const mint = accounts.mint ?? "";
-    const updateAuthority = accounts.update_authority;
+    const metadataPda = instruction.accounts.metadata.address;
+    const mint = instruction.accounts.mint.address;
+    const updateAuthority = instruction.accounts.update_authority.address;
     const txSig = instruction.transaction.signature;
-
-    console.log(
-      `[Create] slot=${instruction.block.slot} name='${args.data.name}' symbol='${args.data.symbol}' mint=${mint.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
-    );
 
     context.TokenMetadataAccount.set({
       id: metadataPda,
@@ -60,22 +59,23 @@ indexer.onInstruction(
 );
 
 indexer.onInstruction(
-  { program: "TokenMetadata", instruction: "UpdateMetadataAccountV2" },
+  {
+    program: "TokenMetadata",
+    instruction: "UpdateMetadataAccountV2",
+    fields: {
+      instruction: ["args", "accounts"],
+      transaction: ["signature"],
+      block: ["time"],
+    },
+  },
   async ({ instruction, context }) => {
-    const params = instruction.params;
-    if (!params) {
-      console.warn("UpdateMetadataAccountV2: no decoded payload");
+    const args = instruction.args;
+    if (!args) {
       return;
     }
-    const { args, accounts } = params;
-    const metadataPda = accounts.metadata;
-    if (metadataPda === undefined) return;
-    const updateAuthority = args.update_authority ?? accounts.update_authority;
+    const metadataPda = instruction.accounts.metadata.address;
+    const updateAuthority = args.update_authority ?? instruction.accounts.update_authority.address;
     const txSig = instruction.transaction.signature;
-
-    console.log(
-      `[Update] slot=${instruction.block.slot} metadata=${metadataPda.slice(0, 8)}.. tx=${(txSig ?? "?").slice(0, 8)}..`,
-    );
 
     const existing = await context.TokenMetadataAccount.get(metadataPda);
     if (existing) {

@@ -292,7 +292,11 @@ expectType<TypeEqual<Enum<"GravatarSize">, "SMALL" | "MEDIUM" | "LARGE">>(true);
         ~contractName="Greeter",
         ~eventName="NewGreeting",
         %raw(`() => Promise.resolve()`),
-        ~eventOptions=Some(({fields: {block: ["hash"]}}: Internal.eventOptions<JSON.t>)),
+        ~eventOptions=Some({
+          fields: ({block: ["hash"]}: Internal.evmFieldsSelection)->(
+            Utils.magic: Internal.evmFieldsSelection => unknown
+          ),
+        }),
       )
       "the registration to fail, but it succeeded"
     } catch {
