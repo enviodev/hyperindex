@@ -170,4 +170,4 @@ let rollback: (
   ~eventsProcessedDiff: option<float>,
   ~rollbackTargetBlockNumber: int,
   ~isReorgChain: bool,
-) => unit
+) => array<AddressRows.key>

@@ -116,7 +116,6 @@ let configStorageRows = (
     address,
     contractId: rows.contractIds->Array.getUnsafe(idx),
     registrationBlock: AddressRows.configRegistrationBlock,
-    checkpointId: AddressRows.configCheckpointId,
   })
 }
 
@@ -1252,13 +1251,27 @@ let markReady = (cs: t, ~readyAt) =>
 // with no diff entry still rewinds fetch state + stores to the target -
 // otherwise the stale block hash stays in the store and re-triggers the same
 // reorg.
+// Returns the address registrations the storage has to delete along with it —
+// the store is what decides which ones died, so the two halves of a rollback
+// can't disagree.
 let rollback = (
   cs: t,
   ~newProgressBlockNumber,
   ~eventsProcessedDiff,
   ~rollbackTargetBlockNumber,
   ~isReorgChain,
-) => {
+): array<AddressRows.key> => {
+  // Prunes the store, which `FetchState.rollback` then reads as the source of
+  // truth for which addresses survive.
+  let pruneAddresses = targetBlockNumber =>
+    cs.addressStore
+    ->AddressStore.rollback(targetBlockNumber)
+    ->Array.map(({address, contractId}): AddressRows.key => {
+      chainId: cs.chainConfig.id,
+      address,
+      contractId,
+    })
+
   switch newProgressBlockNumber {
   | Some(newProgressBlockNumber) =>
     let newTotalEventsProcessed =
@@ -1278,6 +1291,7 @@ let rollback = (
       )
     | None => ()
     }
+    let rolledBackAddresses = pruneAddresses(newProgressBlockNumber)
     cs.fetchState =
       cs.fetchState->FetchState.rollback(
         ~addressStore=cs.addressStore,
@@ -1288,8 +1302,10 @@ let rollback = (
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.processingBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
+    rolledBackAddresses
   | None =>
     if isReorgChain {
+      let rolledBackAddresses = pruneAddresses(rollbackTargetBlockNumber)
       cs.fetchState =
         cs.fetchState->FetchState.rollback(
           ~addressStore=cs.addressStore,
@@ -1302,6 +1318,9 @@ let rollback = (
         rollbackTargetBlockNumber,
       )
       cs.processingBlockNumber = Pervasives.min(cs.processingBlockNumber, rollbackTargetBlockNumber)
+      rolledBackAddresses
+    } else {
+      []
     }
   }
 }

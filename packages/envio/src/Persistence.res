@@ -59,6 +59,9 @@ type updatedEffectCache = {
 type rollback = {
   targetCheckpointId: Internal.checkpointId,
   diffCheckpointId: Internal.checkpointId,
+  // The address registrations the rollback dropped, as the chains' address
+  // stores resolved them. Deleted by primary key in the same transaction.
+  rolledBackAddresses: array<AddressRows.key>,
   // Last valid block per chain affected by the rollback. Read by
   // `RollbackCommit.fire` once the diff is durably written.
   progressBlockNumberByChainId: dict<int>,
@@ -169,9 +172,8 @@ type storage = {
     ~allEntities: array<Internal.entityConfig>,
     ~updatedEffectsCache: array<updatedEffectCache>,
     ~updatedEntities: array<updatedEntity>,
-    // Addresses this batch registered, already stamped with the checkpoint a
-    // rollback would delete them by.
-    ~registeredAddresses: array<AddressRows.row>,
+    // Addresses this batch registered, with the checkpoint that covers them.
+    ~registeredAddresses: array<AddressRows.staged>,
     // Chain metadata stale since the last write, persisted in the same
     // transaction so it never races the batch write.
     ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,

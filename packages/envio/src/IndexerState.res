@@ -68,7 +68,7 @@ type t = {
   // Addresses drained from the chains' address stores, waiting for the write
   // that covers their checkpoint. Insert-only rows rather than staged entities:
   // the table they land in has no history and no updates.
-  mutable registeredAddresses: array<AddressRows.row>,
+  mutable registeredAddresses: array<AddressRows.staged>,
   // Count of processed batches; version-independent progress counter.
   mutable processedBatchesCount: int,
   // The single in-flight write loop, None when idle.
@@ -813,12 +813,11 @@ let markCommitted = (state: t, ~upToCheckpointId) => {
     state.registeredAddresses->Array.filter(row => row.checkpointId > upToCheckpointId)
 }
 
-let stageRegisteredAddresses = (state: t, rows: array<AddressRows.row>) =>
+let stageRegisteredAddresses = (state: t, rows: array<AddressRows.staged>) =>
   state.registeredAddresses = state.registeredAddresses->Array.concat(rows)
 
-// The rows this write covers, each still carrying the checkpoint it was
-// registered at. Whether that checkpoint is the one a storage stamps on the row
-// is the storage's call — see `AddressRows.finalizeCheckpoint`.
+// The rows this write covers, each with the checkpoint it was registered at.
+// That checkpoint decides the window; it never reaches the table.
 let snapshotRegisteredAddresses = (state: t, ~upToCheckpointId) =>
   state.registeredAddresses->Array.filter(row => row.checkpointId <= upToCheckpointId)
 
@@ -828,6 +827,7 @@ let beginRollbackDiff = (
   ~targetCheckpointId,
   ~diffCheckpointId,
   ~progressBlockNumberByChainId,
+  ~rolledBackAddresses,
 ) => {
   let perChainEntities = state.allEntities->EntityTables.perChain
   state.entities = EntityTables.make(state.allEntities->EntityTables.crossChain)
@@ -842,6 +842,7 @@ let beginRollbackDiff = (
     targetCheckpointId,
     diffCheckpointId,
     progressBlockNumberByChainId,
+    rolledBackAddresses,
   })
 }
 

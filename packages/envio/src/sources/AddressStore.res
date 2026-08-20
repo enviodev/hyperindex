@@ -204,10 +204,14 @@ type contractAddressCount = {contractName: string, count: int}
 // no real query boundary to gate at.
 @send external isIndexedAt: (t, Address.t, string, int) => bool = "isIndexedAt"
 
-// Drops every address registered after the target block, returning how many
-// were dropped. Ids are tombstoned rather than reused, so sets built before the
-// rollback still point at the right entries.
-@send external rollback: (t, int) => int = "rollback"
+// A registration a rollback dropped, for the storage that has to delete its
+// row. Only registrations the database may already hold are reported.
+type rolledBackAddress = {address: NodeJs.Buffer.t, contractId: int}
+
+// Drops every address registered after the target block, returning what the
+// storage has to delete with it. Ids are tombstoned rather than reused, so sets
+// built before the rollback still point at the right entries.
+@send external rollback: (t, int) => array<rolledBackAddress> = "rollback"
 
 // Every registration of an address, one per owning contract, in set order.
 @send external getAll: (t, Address.t) => array<Internal.indexingContract> = "getAll"

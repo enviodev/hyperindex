@@ -69,16 +69,15 @@ let configAddress =
 
 // One row per (chain, address, contract), with the keys encoded exactly as the
 // address store encodes them.
-let row = (~address: Address.t, ~contractName, ~registrationBlock, ~checkpointId) => {
+let row = (~address: Address.t, ~contractName, ~registrationBlock): AddressRows.row => {
   let packed = Core.getAddon().packAddresses(~ecosystem="evm", ~addresses=[address])
   {
-    AddressRows.chainId,
+    chainId,
     address: Core.getAddon()
     .splitAddresses(~ecosystem="evm", ~bytes=packed.bytes, ~lengths=packed.lengths)
     ->Array.getUnsafe(0),
     contractId: contractNames->Array.indexOf(contractName),
     registrationBlock,
-    checkpointId,
   }
 }
 
@@ -101,29 +100,38 @@ let storedRows = async (~pgSchema) => {
 
 describe("envio_addresses", () => {
   // https://github.com/enviodev/hyperindex/issues/1187
-  Async.it("rolls back one contract's registration of a shared address", async t => {
+  Async.it("deletes one contract's registration of a shared address", async t => {
     let (_storage, pgSchema) = await setup()
 
+    let sharedForNftFactory = row(
+      ~address=address(1),
+      ~contractName="NftFactory",
+      ~registrationBlock=20,
+    )
     await sql->InternalTable.EnvioAddresses.insert(
       ~pgSchema,
       ~rows=[
-        row(~address=address(1), ~contractName="Gravatar", ~registrationBlock=10, ~checkpointId=5n),
+        row(~address=address(1), ~contractName="Gravatar", ~registrationBlock=10),
         // The same address, registered later for another contract.
-        row(~address=address(1), ~contractName="NftFactory", ~registrationBlock=20, ~checkpointId=9n),
-        row(~address=address(2), ~contractName="NftFactory", ~registrationBlock=20, ~checkpointId=9n),
+        sharedForNftFactory,
+        row(~address=address(2), ~contractName="NftFactory", ~registrationBlock=20),
       ],
     )
 
-    await sql->InternalTable.EnvioAddresses.rollback(~pgSchema, ~rollbackTargetCheckpointId=6n)
+    // What a rollback past block 15 leaves the store holding.
+    await sql->InternalTable.EnvioAddresses.delete(
+      ~pgSchema,
+      ~keys=[
+        sharedForNftFactory->AddressRows.keyOf,
+        row(~address=address(2), ~contractName="NftFactory", ~registrationBlock=20)
+        ->AddressRows.keyOf,
+      ],
+    )
 
     t.expect(
       await storedRows(~pgSchema),
-      ~message="only the registrations above the target are deleted, and the config address stands",
-    ).toEqual([
-      // The config address, stamped with the checkpoint no rollback reaches.
-      (configAddress, "Gravatar", -1),
-      (address(1), "Gravatar", 10),
-    ])
+      ~message="the other contract's registration of the same address is untouched",
+    ).toEqual([(configAddress, "Gravatar", -1), (address(1), "Gravatar", 10)])
   })
 
   // A schema written before the addresses table was reshaped can't be resumed
@@ -161,12 +169,7 @@ describe("envio_addresses", () => {
   Async.it("takes one row per contract and ignores a repeat of one", async t => {
     let (_storage, pgSchema) = await setup()
 
-    let shared = row(
-      ~address=address(1),
-      ~contractName="Gravatar",
-      ~registrationBlock=10,
-      ~checkpointId=5n,
-    )
+    let shared = row(~address=address(1), ~contractName="Gravatar", ~registrationBlock=10)
     await sql->InternalTable.EnvioAddresses.insert(
       ~pgSchema,
       ~rows=[

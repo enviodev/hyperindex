@@ -83,9 +83,6 @@ module EnvioAddresses = {
       mkField("address", Bytea, ~fieldSchema=S.string, ~isPrimaryKey),
       mkField("contract_id", SmallInt, ~fieldSchema=S.int, ~isPrimaryKey),
       mkField("registration_block", Int32, ~fieldSchema=S.int),
-      // Deliberately no foreign key to envio_checkpoints: checkpoints are
-      // pruned while these rows stay, and the 0 sentinel never has one.
-      mkField("envio_checkpoint_id", UInt64, ~fieldSchema=S.bigint),
     ],
   )
 
@@ -100,8 +97,8 @@ module EnvioAddresses = {
     )
     // Idempotent: a batch write retried after a failed transaction re-inserts
     // rows the store still holds.
-    `INSERT INTO "${pgSchema}"."${table.tableName}" ("chain_id", "address", "contract_id", "registration_block", "envio_checkpoint_id")
-SELECT * FROM unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[],$4::${(Integer: Postgres.columnType :> string)}[],$5::${(BigInt: Postgres.columnType :> string)}[])
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("chain_id", "address", "contract_id", "registration_block")
+SELECT * FROM unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[],$4::${(Integer: Postgres.columnType :> string)}[])
 ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
   }
 
@@ -114,39 +111,42 @@ ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
         sql->Postgres.typed(rows->Array.map(row => row.address), Postgres.byteaArrayOid),
         rows->Array.map(row => row.contractId),
         rows->Array.map(row => row.registrationBlock),
-        rows->Array.map(row => row.checkpointId->BigInt.toString),
-      )->(
-        Utils.magic: (
-          (array<ChainId.t>, unknown, array<int>, array<int>, array<string>)
-        ) => unknown
-      ),
+      )->(Utils.magic: ((array<ChainId.t>, unknown, array<int>, array<int>)) => unknown),
     )
     ->Utils.Promise.ignoreValue
 
-  // Without an index every reorg would seq-scan a table meant to hold tens of
-  // millions of rows. Partial, because a row written outside the reorg
-  // threshold is stamped 0 and no rollback can reach it — that's every row of
-  // a backfill, and everything a `shouldRollbackOnReorg` indexer writes while
-  // it is behind the head. Under `shouldSaveFullHistory` every batch saves
-  // history, so there the index does span the table.
-  let checkpointIndexName = "envio_addresses_rollback"
+  let makeDeleteQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = Table.getPgFieldType(
+      ~fieldType=ChainId,
+      ~pgSchema,
+      ~isArray=true,
+      ~isNumericArrayAsText=false,
+      ~isNullable=false,
+      ~chainIdMode,
+    )
+    `DELETE FROM "${pgSchema}"."${table.tableName}"
+USING unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[]) AS dead(chain_id, address, contract_id)
+WHERE "${table.tableName}"."chain_id" = dead.chain_id
+  AND "${table.tableName}"."address" = dead.address
+  AND "${table.tableName}"."contract_id" = dead.contract_id;`
+  }
 
-  let makeCreateCheckpointIndexQuery = (~pgSchema) =>
-    `CREATE INDEX IF NOT EXISTS "${checkpointIndexName}" ON "${pgSchema}"."${table.tableName}" ("envio_checkpoint_id") WHERE "envio_checkpoint_id" > 0;`
-
-  // Rows are insert-only, so undoing a rollback's worth of registrations is a
-  // delete by the checkpoint that owned them. The `> 0` is what lets the
-  // partial index above serve a `> $1` the planner can't otherwise prove is
-  // above its predicate; a rollback target is never below 0 anyway.
-  let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) =>
+  // A rollback removes exactly the registrations the address store dropped, by
+  // primary key — so the table needs no index beyond the one it already has,
+  // and the two halves of a rollback can't disagree about what to remove.
+  let delete = (sql, ~pgSchema, ~keys: array<AddressRows.key>, ~chainIdMode: ChainId.mode=Int32) =>
     sql
     ->Postgres.preparedUnsafe(
-      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "envio_checkpoint_id" > $1 AND "envio_checkpoint_id" > 0;`,
-      [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+      makeDeleteQuery(~pgSchema, ~chainIdMode),
+      (
+        keys->Array.map(key => key.chainId),
+        sql->Postgres.typed(keys->Array.map(key => key.address), Postgres.byteaArrayOid),
+        keys->Array.map(key => key.contractId),
+      )->(Utils.magic: ((array<ChainId.t>, unknown, array<int>)) => unknown),
     )
     ->Utils.Promise.ignoreValue
 
-  type rawRow = AddressRows.storedRow
+  type rawRow = AddressRows.row
 
   let makeGetRowsQuery = (~pgSchema) =>
     `SELECT "chain_id" as "chainId",

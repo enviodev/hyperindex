@@ -130,11 +130,13 @@ let prepareRollbackDiff = async (
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
   ~progressBlockNumberByChainId,
+  ~rolledBackAddresses,
 ) => {
   state->IndexerState.beginRollbackDiff(
     ~targetCheckpointId=rollbackTargetCheckpointId,
     ~diffCheckpointId=rollbackDiffCheckpointId,
     ~progressBlockNumberByChainId,
+    ~rolledBackAddresses,
   )
   let persistence = state->IndexerState.persistence
   let committedCheckpointId = state->IndexerState.committedCheckpointId
@@ -219,11 +221,13 @@ let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
           ~toBlockInclusive=progressedChain.progressBlockNumber,
           ~checkpointBlockNumbers,
         )
-        ->Array.map((dc): AddressRows.row => {
-          chainId,
-          address: dc.address,
-          contractId: dc.contractId,
-          registrationBlock: dc.registrationBlock,
+        ->Array.map((dc): AddressRows.staged => {
+          row: {
+            chainId,
+            address: dc.address,
+            contractId: dc.contractId,
+            registrationBlock: dc.registrationBlock,
+          },
           checkpointId: checkpointIds->Array.getUnsafe(dc.checkpointIdx),
         }),
       )

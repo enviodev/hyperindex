@@ -17,7 +17,7 @@
 //! index, per-contract counts) is computed once on first use and shared by
 //! every query the partition makes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard};
 
 use napi::bindgen_prelude::Buffer;
@@ -477,6 +477,14 @@ pub struct AddressEntry {
     pub effective_start_block: i64,
 }
 
+/// A registration a rollback dropped, for the storage that has to delete its
+/// row. The address is the raw store key, the same bytes the row holds.
+#[napi(object)]
+pub struct RolledBackAddress {
+    pub address: Buffer,
+    pub contract_id: u32,
+}
+
 /// A drained registration paired with the checkpoint that must own its row.
 /// The address crosses as the raw store key — the same bytes the
 /// `envio_addresses` row holds — so nothing outside this module encodes one.
@@ -667,9 +675,9 @@ impl AddressStore {
     /// What sits above that block stays pending for a later batch.
     ///
     /// A drained registration with no checkpoint at its block means it came from
-    /// an event this batch never processed, which would write a row no rollback
-    /// could reach. That errors with the queue untouched, so the caller can fail
-    /// without the store having lied about what is still pending.
+    /// an event this batch never processed, so the caller has no write to
+    /// attribute it to. That errors with the queue untouched, so the caller can
+    /// fail without the store having lied about what is still pending.
     #[napi]
     pub fn drain_for_write(
         &self,
@@ -856,26 +864,38 @@ impl AddressStore {
         store.is_indexed_at(&key, contract_idx, block_number)
     }
 
-    /// Drops every address registered after `target_block`, returning how many
-    /// were dropped. Ids are tombstoned rather than reused, so a set built
-    /// before the rollback keeps pointing at the right entries; the fetch state
-    /// re-derives its partitions from filtered sets straight after.
+    /// Drops every address registered after `target_block`, returning the
+    /// registrations the database has to delete with it. Ids are tombstoned
+    /// rather than reused, so a set built before the rollback keeps pointing at
+    /// the right entries; the fetch state re-derives its partitions from
+    /// filtered sets straight after.
+    ///
+    /// Only registrations the database may already hold are reported: one still
+    /// queued for insert never reached it, and config addresses are never
+    /// dropped at all (their registration block is below every target).
     #[napi]
-    pub fn rollback(&self, target_block: i64) -> i64 {
+    pub fn rollback(&self, target_block: i64) -> Vec<RolledBackAddress> {
         let mut store = self.inner.write().unwrap();
-        let mut removed = 0;
+        let pending_insert: HashSet<u64> = store.unwritten.iter().copied().collect();
+        let mut rolled_back = Vec::new();
         for id in 0..store.entries.len() {
             let entry = &store.entries[id];
             if entry.dead || entry.registration_block <= target_block {
                 continue;
             }
-            let contract_idx = entry.contract_idx as usize;
+            let contract_idx = entry.contract_idx;
+            let key = entry.key.clone();
             store.entries[id].dead = true;
             // Only this registration leaves the key's chain: the same address
             // registered for another contract survives the rollback.
             store.unlink(id as u64);
-            store.live_count_by_contract[contract_idx] -= 1;
-            removed += 1;
+            store.live_count_by_contract[contract_idx as usize] -= 1;
+            if !pending_insert.contains(&(id as u64)) {
+                rolled_back.push(RolledBackAddress {
+                    address: key.to_vec().into(),
+                    contract_id: contract_idx,
+                });
+            }
         }
         // A pending write whose entry just died must never reach the database:
         // the refetch registers the address afresh under a new id.
@@ -884,7 +904,7 @@ impl AddressStore {
             .filter(|&id| !store.entry(id).dead)
             .collect();
         store.unwritten = live_unwritten;
-        removed
+        rolled_back
     }
 
     /// Every entry an address is registered under, in set order — one per
@@ -1717,12 +1737,11 @@ mod tests {
     #[test]
     fn rolling_back_one_owner_leaves_the_others_indexing() {
         let store = store();
-        store.register_seed(vec![reg(A, "C", 100)]);
-        store.register_batch(vec![reg(A, "D", 500)]).unwrap();
-        let removed = store.rollback(300);
+        store.register_seed(vec![reg(A, "C", 100), reg(A, "D", 500)]);
         assert_eq!(
             (
-                removed,
+                // Only D's registration of the address is handed over.
+                rolled_back(&store, 300),
                 // C registered A at 100, so it survives...
                 store.is_indexed_at(A.to_string(), "C".to_string(), 600),
                 // ...while D's registration at 500 is gone.
@@ -1732,7 +1751,14 @@ mod tests {
                 // And the surviving registration is still reachable by key.
                 store.get_all(A.to_string()).len(),
             ),
-            (1, true, false, vec![A.to_string()], vec![], 1)
+            (
+                vec![(A.to_string(), 1)],
+                true,
+                false,
+                vec![A.to_string()],
+                vec![],
+                1
+            )
         );
     }
 
@@ -1869,6 +1895,18 @@ mod tests {
         );
     }
 
+    /// The registrations a rollback hands over for deletion, rendered.
+    fn rolled_back(store: &AddressStore, target_block: i64) -> Vec<(String, u32)> {
+        let ecosystem = Ecosystem::Evm {
+            should_checksum: false,
+        };
+        store
+            .rollback(target_block)
+            .into_iter()
+            .map(|r| (address_string(ecosystem, &r.address), r.contract_id))
+            .collect()
+    }
+
     fn drained(
         store: &AddressStore,
         to_block: i64,
@@ -1929,6 +1967,19 @@ mod tests {
         assert_eq!(
             drained(&store, 300, &[100, 200]),
             vec![(A.to_string(), 100, 0), (B.to_string(), 200, 1)]
+        );
+    }
+
+    #[test]
+    fn only_registrations_the_database_may_hold_are_handed_over_for_deletion() {
+        let store = store();
+        // Already stored: the database has a row for it.
+        store.register_seed(vec![reg(A, "C", 500)]);
+        // Still queued for insert: nothing to delete.
+        store.register_batch(vec![reg(B, "C", 500)]).unwrap();
+        assert_eq!(
+            (rolled_back(&store, 300), store.size(), store.pending_count()),
+            (vec![(A.to_string(), 0)], 0, 0)
         );
     }
 
@@ -2078,16 +2129,15 @@ mod tests {
         let store = store();
         store.register_seed(vec![reg(A, "C", 100), reg(B, "C", 300), reg(C, "C", 500)]);
         let before = store.make_set("C".to_string(), None);
-        let removed = store.rollback(300);
         assert_eq!(
             (
-                removed,
+                rolled_back(&store, 300),
                 store.contract_count("C".to_string()),
                 before.filter_by_registration_block(300).addresses(),
                 store.make_set("C".to_string(), None).addresses(),
             ),
             (
-                1,
+                vec![(C.to_string(), 0)],
                 2,
                 vec![A.to_string(), B.to_string()],
                 vec![A.to_string(), B.to_string()],

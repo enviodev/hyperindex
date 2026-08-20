@@ -3,14 +3,28 @@
 // Rust address store encodes — never as a rendered string, so the bytes a row
 // holds and the bytes the store keys on can't fork.
 
-// A row on its way to storage.
+// The primary key of a stored address: what a rollback deletes by, and what the
+// in-memory storages dedupe on.
+type key = {
+  chainId: ChainId.t,
+  address: NodeJs.Buffer.t,
+  contractId: int,
+}
+
+// A stored address, as the table holds it.
 type row = {
   chainId: ChainId.t,
   address: NodeJs.Buffer.t,
   contractId: int,
   registrationBlock: int,
-  // The checkpoint a rollback deletes this row with, or 0 for a row no rollback
-  // can reach (config addresses, and batches written without history).
+}
+
+// A row on its way to storage, with the checkpoint whose event registered it.
+// That checkpoint decides which write covers the row (and which checkpoint the
+// test indexer reports it under); it is never stored, because a rollback
+// deletes by primary key rather than by checkpoint.
+type staged = {
+  row: row,
   checkpointId: Internal.checkpointId,
 }
 
@@ -26,15 +40,6 @@ type seedRows = {
   registrationBlocks: array<int>,
 }
 
-// A stored row as a reader hands it back: the write-side row without the
-// checkpoint, which only the storage that wrote it cares about.
-type storedRow = {
-  chainId: ChainId.t,
-  address: NodeJs.Buffer.t,
-  contractId: int,
-  registrationBlock: int,
-}
-
 let emptySeedRows = (): seedRows => {
   addresses: NodeJs.Buffer.empty,
   lengths: Null.null,
@@ -42,20 +47,15 @@ let emptySeedRows = (): seedRows => {
   registrationBlocks: [],
 }
 
-// A config address: registered by no event, so no rollback can reach it.
-let configCheckpointId: Internal.checkpointId = 0n
+// A config address: registered by no event, so no rollback ever reaches it —
+// every rollback target is at or above the block it claims to be registered at.
 let configRegistrationBlock = -1
 
-// The checkpoint a stored row is stamped with. A row's own checkpoint is only
-// persisted when the batch saves history, and the in-memory id sequence
-// restarts from the last persisted one — so stamping an id that never reached
-// storage would let an unrelated later rollback delete the row. A batch written
-// without history is final anyway, so its rows are stamped 0: no rollback can
-// reach them, and none needs to. The stamp outlives the checkpoint it names
-// (checkpoint pruning doesn't rewrite these rows), which costs nothing: a
-// rollback target is always at or above the pruning boundary.
-let finalizeCheckpoint = (rows: array<row>, ~shouldSaveHistory) =>
-  shouldSaveHistory ? rows : rows->Array.map(row => {...row, checkpointId: configCheckpointId})
+let keyOf = (row: row): key => {
+  chainId: row.chainId,
+  address: row.address,
+  contractId: row.contractId,
+}
 
 type mutableGroup = {
   chunks: array<NodeJs.Buffer.t>,
@@ -68,7 +68,7 @@ type mutableGroup = {
 // from, keyed by the normalized chain id string. `isFixedWidth` is false only
 // for SVM, whose base58 keys vary in width and so need their lengths carried
 // alongside.
-let group = (rows: array<storedRow>, ~isFixedWidth: bool): dict<seedRows> => {
+let group = (rows: array<row>, ~isFixedWidth: bool): dict<seedRows> => {
   let groups: dict<mutableGroup> = Dict.make()
   rows->Array.forEach(row => {
     let key = row.chainId->ChainId.normalizeOrThrow->ChainId.toString
@@ -107,8 +107,8 @@ let group = (rows: array<storedRow>, ~isFixedWidth: bool): dict<seedRows> => {
   seedRowsByChain
 }
 
-// The in-memory storages mirror the (chain, address, contract) primary key with
-// this as a lookup key. Base64 is how a Buffer becomes a set key here, nothing
-// to do with how an address is stored.
-let storageKey = (~chainId: ChainId.t, ~contractId: int, ~address: NodeJs.Buffer.t) =>
-  `${chainId->ChainId.toString}|${contractId->Int.toString}|${address->NodeJs.Buffer.toBase64}`
+// The in-memory storages index rows by their primary key with this. Base64 is
+// how a Buffer becomes a set key here, nothing to do with how an address is
+// stored.
+let storageKey = (key: key) =>
+  `${key.chainId->ChainId.toString}|${key.contractId->Int.toString}|${key.address->NodeJs.Buffer.toBase64}`

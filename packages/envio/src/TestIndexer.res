@@ -41,14 +41,7 @@ type testIndexerState = {
 // Rows are always grouped with their lengths carried, so this side never needs
 // to know how wide an ecosystem's key is.
 let addressRowsByChain = (state: testIndexerState) =>
-  state.addresses
-  ->Array.map((row): AddressRows.storedRow => {
-    chainId: row.chainId,
-    address: row.address,
-    contractId: row.contractId,
-    registrationBlock: row.registrationBlock,
-  })
-  ->AddressRows.group(~isFixedWidth=false)
+  state.addresses->AddressRows.group(~isFixedWidth=false)
 
 // Rows of a per-chain entity are keyed per (chain, id): the same id exists
 // independently on every chain.
@@ -101,7 +94,7 @@ let handleWriteBatch = (
   state: testIndexerState,
   ~config: Config.t,
   ~updatedEntities: array<Persistence.updatedEntity>,
-  ~registeredAddresses: array<AddressRows.row>,
+  ~registeredAddresses: array<AddressRows.staged>,
   ~checkpointIds: array<bigint>,
   ~checkpointChainIds: array<ChainId.t>,
   ~checkpointBlockNumbers: array<int>,
@@ -115,9 +108,9 @@ let handleWriteBatch = (
   // change log. Rendering is the Rust codec's job, so the rows keep their keys
   // right up to here.
   let addressesByCheckpoint: dict<array<{"address": Address.t, "contract": string}>> = Dict.make()
-  registeredAddresses->Array.forEach(row => {
+  registeredAddresses->Array.forEach(({row, checkpointId}) => {
     state.addresses->Array.push(row)->ignore
-    let key = row.checkpointId->BigInt.toString
+    let key = checkpointId->BigInt.toString
     let rendered = switch addressesByCheckpoint->Utils.Dict.dangerouslyGetNonOption(key) {
     | Some(rendered) => rendered
     | None =>

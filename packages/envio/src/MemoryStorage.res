@@ -138,15 +138,7 @@ let seedConfigAddresses = (state: t, ~chainConfigs: array<Config.chain>, ~ecosys
     chainConfig
     ->ChainState.configStorageRows(~ecosystem, ~contractNames=state.contractNames)
     ->Array.forEach(row => {
-      state.addressKeys
-      ->Utils.Set.add(
-        AddressRows.storageKey(
-          ~chainId=row.chainId,
-          ~contractId=row.contractId,
-          ~address=row.address,
-        ),
-      )
-      ->ignore
+      state.addressKeys->Utils.Set.add(row->AddressRows.keyOf->AddressRows.storageKey)->ignore
       state.addresses->Array.push(row)->ignore
     })
   )
@@ -154,15 +146,7 @@ let seedConfigAddresses = (state: t, ~chainConfigs: array<Config.chain>, ~ecosys
 
 // Rows are always grouped with their lengths carried, so the in-memory
 // storages never need to know how wide an ecosystem's key is.
-let addressRowsByChain = (state: t) =>
-  state.addresses
-  ->Array.map((row): AddressRows.storedRow => {
-    chainId: row.chainId,
-    address: row.address,
-    contractId: row.contractId,
-    registrationBlock: row.registrationBlock,
-  })
-  ->AddressRows.group(~isFixedWidth=false)
+let addressRowsByChain = (state: t) => state.addresses->AddressRows.group(~isFixedWidth=false)
 
 let toInitialChainStates = (state: t): array<Persistence.initialChainState> => {
   let addressesByChain = state->addressRowsByChain
@@ -299,14 +283,15 @@ let backfillHistory = (
   }
 }
 
-let applyRollback = (state: t, ~targetCheckpointId) => {
+let applyRollback = (state: t, ~targetCheckpointId, ~rolledBackAddresses) => {
   state.checkpoints = state.checkpoints->Array.filter(cp => cp.id <= targetCheckpointId)
-  state.addresses->Array.forEach(row =>
-    if row.checkpointId > targetCheckpointId {
-      state.addressKeys->Utils.Set.delete(AddressRows.storageKey(~chainId=row.chainId, ~contractId=row.contractId, ~address=row.address))->ignore
-    }
-  )
-  state.addresses = state.addresses->Array.filter(row => row.checkpointId <= targetCheckpointId)
+  // Addresses are removed by primary key, exactly like the Postgres delete.
+  let dead = rolledBackAddresses->Array.map(AddressRows.storageKey)->Utils.Set.fromArray
+  state.addresses =
+    state.addresses->Array.filter(row => {
+      let key = row->AddressRows.keyOf->AddressRows.storageKey
+      dead->Utils.Set.has(key) ? state.addressKeys->Utils.Set.delete(key)->ignore->(_ => false) : true
+    })
   state.history
   ->Dict.toArray
   ->Array.forEach(((name, rows)) =>
@@ -321,7 +306,7 @@ let writeBatch = (
   ~isInReorgThreshold,
   ~config: Config.t,
   ~updatedEntities: array<Persistence.updatedEntity>,
-  ~registeredAddresses: array<AddressRows.row>,
+  ~registeredAddresses: array<AddressRows.staged>,
   ~updatedEffectsCache: array<Persistence.updatedEffectCache>,
   ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
 ) => {
@@ -330,17 +315,17 @@ let writeBatch = (
   // Rollback first, exactly like the Postgres transaction: the batch being
   // written is the reprocessed one, so its rows must land on the reverted state.
   switch rollback {
-  | Some({targetCheckpointId}) => state->applyRollback(~targetCheckpointId)
+  | Some({targetCheckpointId, rolledBackAddresses}) =>
+    state->applyRollback(~targetCheckpointId, ~rolledBackAddresses)
   | None => ()
   }
 
   // Insert-only and idempotent on (chain, address, contract), matching the
   // `ON CONFLICT DO NOTHING` the Postgres write uses.
-  registeredAddresses
-  ->AddressRows.finalizeCheckpoint(~shouldSaveHistory)
-  ->Array.forEach(row => {
-    if !(state.addressKeys->Utils.Set.has(AddressRows.storageKey(~chainId=row.chainId, ~contractId=row.contractId, ~address=row.address))) {
-      state.addressKeys->Utils.Set.add(AddressRows.storageKey(~chainId=row.chainId, ~contractId=row.contractId, ~address=row.address))->ignore
+  registeredAddresses->Array.forEach(({row}) => {
+    let key = row->AddressRows.keyOf->AddressRows.storageKey
+    if !(state.addressKeys->Utils.Set.has(key)) {
+      state.addressKeys->Utils.Set.add(key)->ignore
       state.addresses->Array.push(row)->ignore
     }
   })

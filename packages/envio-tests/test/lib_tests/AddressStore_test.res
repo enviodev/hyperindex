@@ -27,10 +27,11 @@ describe("AddressStore", () => {
     )
 
     // Roll back to block 6: drops B's addr(2) (registered at 8), keeps A's addr(1) (at 5).
-    let removed = store->AddressStore.rollback(6)
+    let rolledBack = store->AddressStore.rollback(6)
 
     t.expect({
-      "removed": removed,
+      // What the storage has to delete: the one registration that died.
+      "rolledBackContractIds": rolledBack->Array.map(({contractId}) => contractId),
       "countA": store->AddressStore.contractCount("A"),
       "countB": store->AddressStore.contractCount("B"),
       "size": store->AddressStore.size,
@@ -40,7 +41,7 @@ describe("AddressStore", () => {
       "addressesOfA": store->AddressStore.contractAddresses("A"),
       "addressesOfMissing": store->AddressStore.contractAddresses("MISSING"),
     }).toEqual({
-      "removed": 1,
+      "rolledBackContractIds": [1],
       "countA": 2,
       "countB": 0,
       "size": 2,

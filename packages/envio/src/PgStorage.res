@@ -283,15 +283,6 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
       query.contents ++
       "\n" ++
       makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=isHasuraEnabled, ~chainIdMode)
-    // Not deferred with the schema indexes: it's partial on the checkpoint
-    // stamp, so it stays empty through a backfill and costs the write path
-    // nothing, while a reorg right after startup already needs it.
-    if table === InternalTable.EnvioAddresses.table {
-      query :=
-        query.contents ++
-        "\n" ++
-        InternalTable.EnvioAddresses.makeCreateCheckpointIndexQuery(~pgSchema)
-    }
   })
 
   // Then batch all indexes (better performance when tables exist)
@@ -972,7 +963,7 @@ let rec writeBatch = async (
   ~setQueryCache,
   ~updatedEffectsCache,
   ~updatedEntities: array<Persistence.updatedEntity>,
-  ~registeredAddresses: array<AddressRows.row>,
+  ~registeredAddresses: array<AddressRows.staged>,
   ~sinkPromise: option<promise<option<exn>>>,
   ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
   ~escapeTables=?,
@@ -1229,7 +1220,7 @@ let rec writeBatch = async (
     //valid event identifier, where all rows created after this eventIdentifier should
     //be deleted
     let rollbackTables = switch rollback {
-    | Some({targetCheckpointId: rollbackTargetCheckpointId}) =>
+    | Some({targetCheckpointId: rollbackTargetCheckpointId, rolledBackAddresses}) =>
       Some(
         sql => {
           // Postgres owns history tables only for Postgres-backed entities;
@@ -1251,14 +1242,20 @@ let rec writeBatch = async (
           )
           ->ignore
           // Addresses are insert-only, so undoing their registrations is a
-          // delete by checkpoint rather than a history replay. It runs before
-          // the batch's own inserts in the same transaction, so a re-registered
-          // address lands after its old row is gone.
-          promises
-          ->Array.push(
-            sql->InternalTable.EnvioAddresses.rollback(~pgSchema, ~rollbackTargetCheckpointId),
-          )
-          ->ignore
+          // delete rather than a history replay. It runs before the batch's own
+          // inserts in the same transaction, so a re-registered address lands
+          // after its old row is gone.
+          if rolledBackAddresses->Utils.Array.notEmpty {
+            promises
+            ->Array.push(
+              sql->InternalTable.EnvioAddresses.delete(
+                ~pgSchema,
+                ~keys=rolledBackAddresses,
+                ~chainIdMode,
+              ),
+            )
+            ->ignore
+          }
           Promise.all(promises)
         },
       )
@@ -1305,7 +1302,7 @@ let rec writeBatch = async (
             setOperations->Array.push(sql =>
               sql->InternalTable.EnvioAddresses.insert(
                 ~pgSchema,
-                ~rows=registeredAddresses->AddressRows.finalizeCheckpoint(~shouldSaveHistory),
+                ~rows=registeredAddresses->Array.map(staged => staged.row),
                 ~chainIdMode,
               )
             )
