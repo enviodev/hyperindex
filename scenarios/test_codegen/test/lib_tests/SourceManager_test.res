@@ -3087,6 +3087,37 @@ describe("SourceManager height subscription", () => {
     let _ = await waiting
   }
 
+  Async.it("Subscribes once when two waits are in flight for the same source", async t => {
+    let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
+    let sourceManager = SourceManager.make(~isRealtime=true, ~sources=[mock.source])
+
+    // What a rollback leaves behind: dispatch starts a wait for the new stateId
+    // without cancelling the one it superseded, so both run the poll that
+    // precedes subscribing and both come back to find no subscription.
+    let superseded =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=true,
+        ~knownHeight=100,
+        ~reducedPolling=false,
+      )
+    let current =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=true,
+        ~knownHeight=100,
+        ~reducedPolling=false,
+      )
+
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+    let subscriptions = mock.heightSubscriptionCalls->Array.length
+
+    mock.triggerHeightSubscription(101)
+
+    // A second subscription would overwrite the first one's close function,
+    // leaving a connection nothing can ever close.
+    t.expect((subscriptions, await superseded, await current)).toStrictEqual((1, 101, 101))
+  })
+
   Async.it("Polls immediately when the subscription reports it went down", async t => {
     let stallTimeout = 2_000
     let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
