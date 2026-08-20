@@ -473,7 +473,7 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
     // `validate_clickhouse_order_by_fields`, the schema is available here, so a
     // relation in the sorting key can be resolved to the id it actually stores.
     let bigint_stored_as_string =
-        |precision: Option<u32>| !precision.is_some_and(|p| p <= CLICKHOUSE_DECIMAL_MAX_PRECISION);
+        |precision: Option<u32>| precision.is_none_or(|p| p > CLICKHOUSE_DECIMAL_MAX_PRECISION);
     for entity in &entities {
         let uses_clickhouse = if entity.has_storage_directive() {
             entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
