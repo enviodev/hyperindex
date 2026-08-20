@@ -205,6 +205,11 @@ let run = async (
     // nothing wrong with them, so the bound is generous.
     let settleTimeoutMs = 15_000
 
+    // The budget a `settleUntil` gets for all its rounds together, settling
+    // included. Also under vitest's, so its message about the condition is what
+    // a test sees rather than a bare timeout.
+    let settleUntilTimeoutMs = 20_000.
+
     // Runs until the loop has nothing left to do on its own. `whenIdle` alone
     // isn't enough twice over: a source response that resolved this tick hasn't
     // reached its handler yet (the parked frame only rejoins the count when it
@@ -247,7 +252,7 @@ let run = async (
       }
     }
 
-    let settle = async () => {
+    let settleWithin = async (~timeoutMs) => {
       let timeoutId = ref(None)
       let timedOut = ref(false)
       // Cleared whichever way the race ends: a timer left running holds the
@@ -259,7 +264,7 @@ let run = async (
             timeoutId := Some(setTimeout(() => {
                 timedOut := true
                 resolve()
-              }, settleTimeoutMs))
+              }, timeoutMs))
           }),
         ])
         None
@@ -289,27 +294,28 @@ let run = async (
       }
     }
 
+    let settle = () => settleWithin(~timeoutMs=settleTimeoutMs)
+
     // Settles, then keeps settling until `predicate` holds, waiting on the
     // clock between rounds for conditions that only arrive once a polling
-    // interval elapses. Bounded, so a condition that never comes says what it
-    // was waiting for instead of timing out the whole suite. The budget starts
-    // after the first settle: settling is bounded on its own, and on a real
-    // database it can take seconds that have nothing to do with the condition.
+    // interval elapses. Every round draws on one budget, settling included, so
+    // a condition that never comes says what it was waiting for rather than
+    // stacking two settle bounds past the suite's own timeout.
     let rec settleUntil = async (predicate, ~message, ~deadline) => {
-      await settle()
+      let remaining = deadline -. Date.now()
+      if remaining <= 0. {
+        JsError.throwWithMessage(`Timed out waiting for ${message}`)
+      }
+      await settleWithin(
+        ~timeoutMs=Pervasives.min(settleTimeoutMs->Int.toFloat, remaining)->Float.toInt,
+      )
       if !predicate() {
-        let deadline = switch deadline {
-        | Some(deadline) => deadline
-        | None => Date.now() +. 5000.
-        }
-        if Date.now() > deadline {
-          JsError.throwWithMessage(`Timed out waiting for ${message}`)
-        }
         await Utils.delay(1)
-        await settleUntil(predicate, ~message, ~deadline=Some(deadline))
+        await settleUntil(predicate, ~message, ~deadline)
       }
     }
-    let settleUntil = (predicate, ~message) => settleUntil(predicate, ~message, ~deadline=None)
+    let settleUntil = (predicate, ~message) =>
+      settleUntil(predicate, ~message, ~deadline=Date.now() +. settleUntilTimeoutMs)
 
     // Persist before stopping, else a resumed indexer loses uncommitted state,
     // then let any in-flight batch or write settle so nothing from this run

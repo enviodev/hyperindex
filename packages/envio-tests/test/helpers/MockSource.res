@@ -16,7 +16,10 @@ module Gate = {
     // reads as parked rather than as work `settle` would sit and wait out.
     // Called from the test body, which is where the run exists — and first
     // thing, since the loop is already running by then and a gate it reaches
-    // before the hand-off is entered unparked. Every entry is parked once this
+    // before the hand-off is entered unparked. A gate that outlives one run
+    // (declared at module scope, reused across a restart or a retry) has to be
+    // handed the current run's `park` again: the binding follows whoever set it
+    // last, and the previous indexer is stopped. Every entry is parked once this
     // is set, so it suits a gate on one thing the loop does at a time; see
     // `park`'s own contract for where that holds.
     parkWith: ((unit => promise<unit>) => promise<unit>) => unit,

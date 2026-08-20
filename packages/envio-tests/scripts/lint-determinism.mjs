@@ -12,6 +12,11 @@
 // helper. The opt-out is checked against the file it sits in: the day such a
 // file grows a test that does drive an indexer, the marker is refused rather
 // than quietly covering it.
+//
+// Only the zero delay is banned. `Utils.delay(10)` in a test that means ten
+// milliseconds of real time — a polling window, a handler that has to take
+// longer than the metric it is checked against — is measuring something, not
+// guessing at the loop's shape.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
