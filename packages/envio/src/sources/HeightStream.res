@@ -85,11 +85,16 @@ let subscribe = (
     closeConnection()
 
     // A connection that lasted a full staleness window did its job, however it
-    // ended, and deserves a prompt retry. Judging it by duration rather than by
-    // whether it connected or carried traffic is what makes this work for both
-    // transports: HyperSync sends a height the moment it connects, so an
-    // endpoint accepting and dropping connections would otherwise look healthy
-    // every time and never back off.
+    // ended, and deserves a prompt retry. Duration rather than whether it
+    // connected or carried traffic, because HyperSync sends a height the moment
+    // it connects: an endpoint accepting and dropping connections would
+    // otherwise look healthy every time and never back off.
+    //
+    // The staleness path satisfies this by construction, so those failures
+    // never escalate. That is what a chain whose blocks are further apart than
+    // the timeout needs, and it costs nothing on an endpoint that is simply
+    // silent, because reaching the timeout is what already spaces those retries
+    // a whole window apart.
     if Performance.now() -. connectionStartedAt.contents >= staleTimeout->Int.toFloat {
       failureCount := 0
     }
