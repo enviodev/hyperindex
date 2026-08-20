@@ -3376,12 +3376,16 @@ describe("SourceManager height subscription", () => {
     t.expect((stillWaiting, await waiting)).toStrictEqual((true, 102))
   })
 
-  Async.it("Survives a reconnect catch-up that fails", async t => {
-    let mock = MockIndexer.Source.make([#getHeightOrThrow, #createHeightSubscription])
+  Async.it("Keeps the fallback polling when the reconnect catch-up fails", async t => {
+    let pollingInterval = 20
+    let mock = MockIndexer.Source.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval,
+    )
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[mock.source],
-      ~newBlockStallTimeoutRealtime=2_000,
+      ~newBlockStallTimeoutRealtime=5_000,
     )
     await subscribeAndGoLive(mock, sourceManager, ~knownHeight=100)
 
@@ -3396,11 +3400,22 @@ describe("SourceManager height subscription", () => {
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
-    mock.rejectGetHeightOrThrow("catch-up failed")
-    await Utils.delay(0)
+
+    let pollsAtReconnect = mock.getHeightOrThrowCalls->Array.length
+
+    // Fails the fallback poll in flight and the catch-up meant to replace it,
+    // repeatedly, so a loop that is still running keeps issuing calls. Nothing
+    // took the fallback's job over, so it has to carry on rather than leave the
+    // chain with no height source until the backstop.
+    for _round in 1 to 4 {
+      mock.rejectGetHeightOrThrow("catch-up failed")
+      await Utils.delay(pollingInterval)
+    }
+    let pollsKeptComing = mock.getHeightOrThrowCalls->Array.length > pollsAtReconnect
+
     mock.triggerHeightSubscription(102)
 
-    t.expect(await waiting).toEqual(102)
+    t.expect((pollsKeptComing, await waiting)).toStrictEqual((true, 102))
   })
 
   Async.it("Runs one poll loop when a push settles a wait without advancing it", async t => {

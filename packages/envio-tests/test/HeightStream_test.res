@@ -163,18 +163,20 @@ describe("HeightStream reconnect driver", () => {
     // the point is that the failure says why rather than looking like a chain
     // with nothing to report.
     await Vi.advanceTimersByTimeAsync(15_000)
-    let afterFirst = harness.statuses->Array.copy
-
-    // The retry starts clean, so one stray message doesn't label every later
-    // failure.
     await Vi.advanceTimersByTimeAsync(250)
-    (harness->driverAt(1)).onConnected()
+
+    // A height read off the same connection says the shape is fine after all,
+    // so one stray message must not go on naming later failures.
+    let reconnected = harness->driverAt(1)
+    reconnected.onConnected()
+    reconnected.onUnreadable()
+    reconnected.onHeight(101)
     await Vi.advanceTimersByTimeAsync(15_000)
     harness.unsubscribe()
 
-    t.expect((afterFirst, harness.statuses)).toStrictEqual((
-      ["live", "down:unreadable"],
+    t.expect((harness.statuses, harness.heights)).toStrictEqual((
       ["live", "down:unreadable", "live", "down:stale"],
+      [101],
     ))
   })
 

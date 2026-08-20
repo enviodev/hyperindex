@@ -19,6 +19,10 @@ type sourceState = {
   // the envio_source_height_stream_* series off a healthy indexer's scrape.
   mutable heightStreamConnects: int,
   heightStreamFailures: dict<int>,
+  // Catch-up polls that completed. A fallback poller retires against this
+  // rather than against the reconnect, because it is the catch-up that takes
+  // over its job, and a failed one takes over nothing.
+  mutable heightStreamCatchUps: int,
   mutable disabled: bool,
   // Timestamp (ms) when this source last failed during executeQuery.
   // Used to decide when to attempt recovery to this source.
@@ -388,6 +392,7 @@ let make = (
       pendingSubscriptionDownResolvers: [],
       heightStreamConnects: 0,
       heightStreamFailures: Dict.make(),
+      heightStreamCatchUps: 0,
       disabled: false,
       lastFailedAt: None,
       requestStats: Dict.make(),
@@ -521,6 +526,7 @@ let catchUpHeight = async (sourceState: sourceState) => {
     if res.height > sourceState.knownHeight {
       sourceState->resolveHeight(res.height)
     }
+    sourceState.heightStreamCatchUps = sourceState.heightStreamCatchUps + 1
   } catch {
   | _ => ()
   }
@@ -615,12 +621,12 @@ let getSourceNewHeight = async (
 
       let pollingFallback = pollingTrigger->Promise.then(async () => {
         let h = ref(iterationHeight)
-        // A reconnect hands the job back to the stream, and brings its own
-        // catch-up poll, so polling past one is wasted load on an endpoint that
-        // was struggling a moment ago. Counting connects rather than reading
-        // subscriptionLive keeps the backstop working: that one polls a stream
-        // which claims to be live but has gone quiet.
-        let connectsWhenTriggered = sourceState.heightStreamConnects
+        // A reconnect's catch-up poll takes this loop's job over, so polling
+        // past one is wasted load on an endpoint that was struggling a moment
+        // ago. Counting catch-ups rather than reading subscriptionLive keeps the
+        // backstop working — that one polls a stream which claims to be live but
+        // has gone quiet — and keeps this loop going when a catch-up fails.
+        let catchUpsWhenTriggered = sourceState.heightStreamCatchUps
         // Stopping once this iteration's race is over matters: otherwise a
         // source that never returns a new height leaves a poller running for
         // the rest of the process, and every later iteration adds another.
@@ -628,7 +634,7 @@ let getSourceNewHeight = async (
           h.contents <= knownHeight &&
           !settled.contents &&
           status.contents !== Done &&
-          sourceState.heightStreamConnects === connectsWhenTriggered
+          sourceState.heightStreamCatchUps === catchUpsWhenTriggered
         while shouldPoll() {
           try {
             let res = await source.getHeightOrThrow()

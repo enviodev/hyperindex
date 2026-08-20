@@ -133,8 +133,9 @@ type sourceFor = Sync | Fallback | Realtime
 // Connection state of a height subscription, reported by every transport.
 // `Down` repeats on each failed retry while the stream stays broken, and `Live`
 // fires on every (re)connect, so consumers must treat both as idempotent.
-// `reason` is pre-bucketed for use as a metric label: an HTTP status, "stale",
-// "closed", "error" or "subscribe-rejected".
+// `reason` is pre-bucketed for use as a metric label. The shipped transports
+// report an HTTP status, or "closed", "error", "connect-failed", "stale",
+// "unreadable" or "subscribe-rejected".
 type heightSubscriptionStatus = Live | Down({reason: string})
 
 type t = {

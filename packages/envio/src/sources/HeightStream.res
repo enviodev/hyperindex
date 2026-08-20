@@ -138,6 +138,9 @@ let subscribe = (
         },
       onHeight: height =>
         if isCurrent() {
+          // Reading a height proves the shape is fine again, so one stray
+          // message doesn't relabel a failure hours later.
+          sawUnreadable := false
           armStaleTimeout()
           onHeight(height)
         },
