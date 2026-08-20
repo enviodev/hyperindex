@@ -283,6 +283,15 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
       query.contents ++
       "\n" ++
       makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=isHasuraEnabled, ~chainIdMode)
+    // Not deferred with the schema indexes: it's partial on the checkpoint
+    // stamp, so it stays empty through a backfill and costs the write path
+    // nothing, while a reorg right after startup already needs it.
+    if table === InternalTable.EnvioAddresses.table {
+      query :=
+        query.contents ++
+        "\n" ++
+        InternalTable.EnvioAddresses.makeCreateCheckpointIndexQuery(~pgSchema)
+    }
   })
 
   // Then batch all indexes (better performance when tables exist)

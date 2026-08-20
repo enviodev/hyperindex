@@ -610,6 +610,9 @@ let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
     state.effectCache->clear
     state.cache->clear
     state.checkpoints = []
+    state.addresses = []
+    state.addressKeys->Utils.Set.clear
+    state.contractNames = []
     state.envioInfo = None
     state.isInitialized = false
   },

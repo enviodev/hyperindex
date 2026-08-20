@@ -123,12 +123,22 @@ ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
     )
     ->Utils.Promise.ignoreValue
 
+  // Only the rows a rollback can reach are indexed: everything final is
+  // stamped 0, which is most of a table meant to hold tens of millions of
+  // rows. Without it every reorg would seq-scan the whole thing.
+  let checkpointIndexName = "envio_addresses_rollback"
+
+  let makeCreateCheckpointIndexQuery = (~pgSchema) =>
+    `CREATE INDEX IF NOT EXISTS "${checkpointIndexName}" ON "${pgSchema}"."${table.tableName}" ("envio_checkpoint_id") WHERE "envio_checkpoint_id" > 0;`
+
   // Rows are insert-only, so undoing a rollback's worth of registrations is a
-  // delete by the checkpoint that owned them. Rows stamped 0 are final.
+  // delete by the checkpoint that owned them. The `> 0` is what lets the
+  // partial index above serve a `> $1` the planner can't otherwise prove is
+  // above its predicate; a rollback target is never below 0 anyway.
   let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) =>
     sql
     ->Postgres.preparedUnsafe(
-      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "envio_checkpoint_id" > $1;`,
+      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "envio_checkpoint_id" > $1 AND "envio_checkpoint_id" > 0;`,
       [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
     )
     ->Utils.Promise.ignoreValue
