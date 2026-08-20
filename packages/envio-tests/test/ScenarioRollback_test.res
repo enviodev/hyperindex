@@ -116,7 +116,12 @@ describe("Scenario rollback and history", () => {
       ).toEqual([{id: "total", count: 1n}])
 
       // Block 300 comes back with a different hash, so everything after the
-      // last valid block is rolled back — including the block-200 write.
+      // last valid block is rolled back — including the block-200 write. The
+      // chain is at head, so it polls on a timer: wait for a poll to answer.
+      await indexer.settleUntil(
+        () => source.pendingHeightCalls() > 0,
+        ~message="the next height poll",
+      )
       source.resolveGetHeightOrThrow(301)
       await Scenario.waitQuery(~indexer, ~source=source)
       source.resolveGetItemsOrThrow(
@@ -188,6 +193,10 @@ describe("Scenario rollback and history", () => {
         ~message="the post-threshold write is committed before the reorg",
       ).toEqual([{id: "total", count: 2n}])
 
+      await indexer.settleUntil(
+        () => source.pendingHeightCalls() > 0,
+        ~message="the next height poll",
+      )
       source.resolveGetHeightOrThrow(301)
       await Scenario.waitQuery(~indexer, ~source=source)
       source.resolveGetItemsOrThrow(
