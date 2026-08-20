@@ -163,6 +163,9 @@ describe("HeightStream reconnect driver", () => {
     let driver = harness->driverAt(0)
     driver.onConnected()
     driver.onUnreadable()
+    // Keep-alives must not clear it: on a stream whose heights are all
+    // malformed, the pings between them are the only other traffic there is.
+    driver.onKeepAlive()
 
     // An unreadable message is not traffic, so the connection still goes quiet;
     // the point is that the failure says why rather than looking like a chain

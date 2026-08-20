@@ -161,8 +161,10 @@ let subscribe = (
         },
       onHeight: height =>
         if isCurrent() {
-          // Reading a height proves the shape is fine again, so one stray
-          // message doesn't relabel a failure hours later.
+          // A height we could read proves the shape is fine again. A keep-alive
+          // deliberately doesn't: on a stream whose heights are all malformed,
+          // the pings between them would clear this and the staleness that
+          // followed would look like a chain with nothing to report.
           sawUnreadable := false
           goLive()
           onHeight(height)
