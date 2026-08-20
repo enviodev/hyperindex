@@ -149,9 +149,8 @@ type svmTransactionField =
   | @as("accountKeys") AccountKeys
   | @as("recentBlockhash") RecentBlockhash
   | @as("version") Version
-  | @as("tokenBalances") TokenBalances
   | @as("allSignatures") AllSignatures
-  | @as("allAccounts") AllAccounts
+  | @as("accountActivities") AccountActivities
 
 let allSvmTransactionFields: array<svmTransactionField> = [
   TransactionIndex,
@@ -164,14 +163,29 @@ let allSvmTransactionFields: array<svmTransactionField> = [
   AccountKeys,
   RecentBlockhash,
   Version,
-  TokenBalances,
   AllSignatures,
-  AllAccounts,
+  AccountActivities,
+]
+
+// Handler `fields.transaction` — `accountActivities` is implied by
+// `fields.accountActivity`, not listed here.
+let svmHandlerTransactionFields: array<svmTransactionField> = [
+  TransactionIndex,
+  Signature,
+  FeePayer,
+  Success,
+  Err,
+  Fee,
+  ComputeUnitsConsumed,
+  AccountKeys,
+  RecentBlockhash,
+  Version,
+  AllSignatures,
 ]
 let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
 
-// All SVM block fields. `slot`/`time`/`hash` are always included; the rest are
-// selectable via `field_selection.block_fields` (see `allSvmBlockFields`).
+// All SVM block fields. `slot` is always included (the item's key); the rest
+// are selectable via handler `fields.block`.
 type svmBlockField =
   | @as("slot") Slot
   | @as("time") Time
@@ -180,8 +194,9 @@ type svmBlockField =
   | @as("parentSlot") ParentSlot
   | @as("parentHash") ParentHash
 
-let allSvmBlockFields: array<svmBlockField> = [Height, ParentSlot, ParentHash]
-let svmBlockFieldSchema = S.enum(allSvmBlockFields)
+let allSvmBlockFields: array<svmBlockField> = [Slot, Time, Hash, Height, ParentSlot, ParentHash]
+let svmHandlerBlockFields: array<svmBlockField> = allSvmBlockFields
+let svmBlockFieldSchema = S.enum([Height, ParentSlot, ParentHash])
 
 // Static sets of field names whose source schemas must be wrapped with S.nullable.
 let evmNullableBlockFields = Utils.Set.fromArray(
@@ -429,6 +444,9 @@ type indexingContract = {
 type fieldSelection = {
   blockFields: Utils.Set.t<string>,
   transactionFields: Utils.Set.t<string>,
+  instructionFields: Utils.Set.t<string>,
+  accountActivityFields: Utils.Set.t<string>,
+  logFields: Utils.Set.t<string>,
   // The sets precompiled to the store selections `ChainState` materialises with.
   blockMask: float,
   transactionMask: float,
@@ -440,11 +458,17 @@ type fieldSelection = {
 let makeFieldSelection = (
   ~blockFields: Utils.Set.t<string>,
   ~transactionFields: Utils.Set.t<string>,
+  ~instructionFields: Utils.Set.t<string>=Utils.Set.make(),
+  ~accountActivityFields: Utils.Set.t<string>=Utils.Set.make(),
+  ~logFields: Utils.Set.t<string>=Utils.Set.make(),
   ~blockMaskFn: Utils.Set.t<string> => float,
   ~transactionMaskFn: Utils.Set.t<string> => float,
 ): fieldSelection => {
   blockFields,
   transactionFields,
+  instructionFields,
+  accountActivityFields,
+  logFields,
   blockMask: blockMaskFn(blockFields),
   transactionMask: transactionMaskFn(transactionFields),
 }
@@ -461,6 +485,9 @@ let unionFields = (a, b) => a === b ? a : a->Utils.Set.union(b)
 let unionFieldSelection = (a: fieldSelection, b: fieldSelection): fieldSelection => {
   blockFields: unionFields(a.blockFields, b.blockFields),
   transactionFields: unionFields(a.transactionFields, b.transactionFields),
+  instructionFields: unionFields(a.instructionFields, b.instructionFields),
+  accountActivityFields: unionFields(a.accountActivityFields, b.accountActivityFields),
+  logFields: unionFields(a.logFields, b.logFields),
   blockMask: FieldMask.orMask(a.blockMask, b.blockMask),
   transactionMask: FieldMask.orMask(a.transactionMask, b.transactionMask),
 }
@@ -571,7 +598,6 @@ type svmInstructionEventConfig = {
    `dN` selector at query time and the dispatch-key precomputation in the
    router. */
   discriminatorByteLen: int,
-  includeLogs: bool,
   /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
    AND across positions. Empty outer array means "no account filter". */
   accountFilters: array<svmAccountFilterGroup>,
@@ -749,12 +775,14 @@ let getItemChainId = item =>
   | Block({onBlockRegistration: {chainId}}) => chainId
   }
 
-// The `fields` option of an EVM `onEvent`/`contractRegister` registration:
-// the block and transaction fields the handler reads. Replaces the config
-// `field_selection` for this registration.
+// The `fields` option of an `onEvent`/`onInstruction` registration. EVM uses
+// `block`/`transaction`; SVM also uses `instruction`/`accountActivity`/`log`.
 type evmFieldsSelection = {
   block?: array<string>,
   transaction?: array<string>,
+  instruction?: array<string>,
+  accountActivity?: array<string>,
+  log?: array<string>,
 }
 
 type eventOptions<'where> = {

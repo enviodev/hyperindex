@@ -154,6 +154,7 @@ let buildOnEventRegistrationWith = (
       ~isWildcard,
       ~handler,
       ~contractRegister,
+      ~fieldSelection?,
       ~startBlock?,
     ) :> Internal.onEventRegistration)
   | Evm =>
@@ -299,21 +300,25 @@ let addOnEventRegistration = (
   let fieldSelection = switch eventOptions->Option.flatMap(v => v.fields) {
   | None => None
   | Some(fields) =>
-    // Only EVM resolves a registration selection of its own; Fuel and SVM take
-    // theirs from the event config, so an inline one would be silently dropped.
-    if registration.config.ecosystem.name !== Evm {
+    switch registration.config.ecosystem.name {
+    | Evm =>
+      Some(
+        EventConfigBuilder.resolveInlineFieldSelection(
+          fields,
+          ~contractName,
+          ~eventName,
+          ~enableRawEvents=registration.config.enableRawEvents,
+        ),
+      )
+    | Svm =>
+      Some(
+        EventConfigBuilder.resolveSvmInlineFieldSelection(fields, ~contractName, ~eventName),
+      )
+    | Fuel =>
       JsError.throwWithMessage(
         `The fields option of the "${eventName}" event registration on contract "${contractName}" is only supported on EVM. Select the fields in your config instead.`,
       )
     }
-    Some(
-      EventConfigBuilder.resolveInlineFieldSelection(
-        fields,
-        ~contractName,
-        ~eventName,
-        ~enableRawEvents=registration.config.enableRawEvents,
-      ),
-    )
   }
   let matched = ref(false)
   registration.config.chainMap

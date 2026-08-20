@@ -41,62 +41,31 @@ pub fn field_names<F: Copy>(
     variants.iter().map(|&f| name(f).to_string()).collect()
 }
 
-/// The materialised SVM token balance, matching the public `svmTokenBalance`
-/// shape (napi camel-cases the field names).
 #[napi(object)]
 #[derive(Clone)]
-pub struct SvmTokenBalanceOut {
-    pub account: Option<String>,
-    pub mint: Option<String>,
-    /// Owner at the end of the transaction, falling back to the owner it had
-    /// on entry when the account was closed during it. The wire splits the two
-    /// so that an in-transaction `SetAuthority` stays visible; they differ only
-    /// then, so the payload carries the one owner handlers actually ask for.
-    pub owner: Option<String>,
-    pub decimals: Option<u8>,
-    /// Raw amount in base units — `amount` is SPL's word for the integer, and
-    /// keeps token units distinct from lamports.
-    pub pre_amount: Option<BigInt>,
-    pub post_amount: Option<BigInt>,
+pub struct SvmLamportsOut {
+    pub pre: Option<BigInt>,
+    pub post: Option<BigInt>,
 }
 
-/// The token side of a materialised SVM account, `null` on an account that
-/// holds no SPL token balance. `preAmount`/`postAmount` carry the other two
-/// states: `null` before means the token account was opened during the
-/// transaction, `null` after means it was closed.
-///
-/// `use_nullable` is what makes those three states readable: without it
-/// napi-derive guards each optional field's `set` and the property is missing
-/// rather than `null`, so a `=== null` check never fires.
-#[napi(object, use_nullable = true)]
+#[napi(object)]
 #[derive(Clone)]
 pub struct SvmAccountTokenOut {
     pub mint: String,
-    /// Owner at the end of the transaction, falling back to the owner it had on
-    /// entry when the account was closed during it — see `SvmTokenBalanceOut`.
     pub owner: Option<String>,
     pub decimals: Option<u8>,
-    /// Raw amount in base units — `amount` is SPL's word for the integer, and
-    /// keeps token units distinct from lamports.
     pub pre_amount: Option<BigInt>,
     pub post_amount: Option<BigInt>,
 }
 
-/// One account of a transaction: its native lamport change and, when it is a
-/// token account, its token balance. Materialised by joining the account
-/// activity rows to the transaction's account keys. Nullable rather than
-/// optional — see `SvmAccountTokenOut`.
-#[napi(object, use_nullable = true)]
+#[napi(object)]
 #[derive(Clone)]
-pub struct SvmAccountOut {
+pub struct SvmAccountActivityOut {
     pub address: String,
-    /// Message-header flags, `null` on an account the response carried no
-    /// activity row for — most of a transaction's keys, since a row exists only
-    /// where something moved.
+    pub transaction_account_index: Option<i64>,
     pub is_signer: Option<bool>,
     pub is_writable: Option<bool>,
-    pub pre_lamports: Option<BigInt>,
-    pub post_lamports: Option<BigInt>,
+    pub lamports: Option<SvmLamportsOut>,
     pub token: Option<SvmAccountTokenOut>,
 }
 
@@ -113,8 +82,7 @@ pub enum Column {
     StrVec(Vec<Option<Vec<String>>>),
     AccessList(Vec<Option<Vec<AccessListItem>>>),
     AuthList(Vec<Option<Vec<AuthorizationItem>>>),
-    TokenBalances(Vec<Option<Vec<SvmTokenBalanceOut>>>),
-    AllAccounts(Vec<Option<Vec<SvmAccountOut>>>),
+    AccountActivities(Vec<Option<Vec<SvmAccountActivityOut>>>),
 }
 
 impl Column {
@@ -135,8 +103,7 @@ impl Column {
             Column::StrVec(v) => set_col(env, objs, key, v),
             Column::AccessList(v) => set_col(env, objs, key, v),
             Column::AuthList(v) => set_col(env, objs, key, v),
-            Column::TokenBalances(v) => set_col(env, objs, key, v),
-            Column::AllAccounts(v) => set_col(env, objs, key, v),
+            Column::AccountActivities(v) => set_col(env, objs, key, v),
         }
     }
 }

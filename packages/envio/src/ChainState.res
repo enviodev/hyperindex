@@ -851,7 +851,10 @@ let applyTransactionGroups = async (store: TransactionStore.t, g: transactionGro
       )
       g.payloadGroups->Array.forEachWithIndex((payloads, i) => {
         let tx = txs->Array.getUnsafe(i)
-        payloads->Array.forEach(payload => payload->Internal.setPayloadTransaction(tx))
+        payloads->Array.forEach(payload => {
+          payload->Internal.setPayloadTransaction(tx)
+          Svm.attachAccountActivities(payload, tx)
+        })
       })
     } else {
       g.payloadGroups->Array.forEach(payloads =>

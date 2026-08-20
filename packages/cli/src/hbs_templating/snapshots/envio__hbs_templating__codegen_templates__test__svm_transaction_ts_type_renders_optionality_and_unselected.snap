@@ -4,85 +4,45 @@ expression: generated
 ---
 {
   /**
-   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
-   * ```yaml
-   * field_selection:
-   *   transaction_fields:
-   *     - transactionIndex
-   * ```
+   * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
    */
-  readonly transactionIndex: FieldNotSelected<"Field 'transactionIndex' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  readonly transactionIndex: FieldNotSelected<"Field 'transactionIndex' is not selected for the 'Swap' instruction. Add it to fields.transaction in the registration options.">;
   /** The signature field. */
   readonly signature: string;
   /** The feePayer field. */
   readonly feePayer: string;
   /**
-   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
-   * ```yaml
-   * field_selection:
-   *   transaction_fields:
-   *     - success
-   * ```
+   * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
    */
-  readonly success: FieldNotSelected<"Field 'success' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  readonly success: FieldNotSelected<"Field 'success' is not selected for the 'Swap' instruction. Add it to fields.transaction in the registration options.">;
   /** The err field. */
   readonly err: string | undefined;
   /**
-   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
-   * ```yaml
-   * field_selection:
-   *   transaction_fields:
-   *     - fee
-   * ```
+   * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
    */
-  readonly fee: FieldNotSelected<"Field 'fee' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  readonly fee: FieldNotSelected<"Field 'fee' is not selected for the 'Swap' instruction. Add it to fields.transaction in the registration options.">;
   /**
-   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
-   * ```yaml
-   * field_selection:
-   *   transaction_fields:
-   *     - computeUnitsConsumed
-   * ```
+   * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
    */
-  readonly computeUnitsConsumed: FieldNotSelected<"Field 'computeUnitsConsumed' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  readonly computeUnitsConsumed: FieldNotSelected<"Field 'computeUnitsConsumed' is not selected for the 'Swap' instruction. Add it to fields.transaction in the registration options.">;
   /**
-   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
-   * ```yaml
-   * field_selection:
-   *   transaction_fields:
-   *     - accountKeys
-   * ```
+   * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
    */
-  readonly accountKeys: FieldNotSelected<"Field 'accountKeys' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  readonly accountKeys: FieldNotSelected<"Field 'accountKeys' is not selected for the 'Swap' instruction. Add it to fields.transaction in the registration options.">;
   /**
-   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
-   * ```yaml
-   * field_selection:
-   *   transaction_fields:
-   *     - recentBlockhash
-   * ```
+   * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
    */
-  readonly recentBlockhash: FieldNotSelected<"Field 'recentBlockhash' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  readonly recentBlockhash: FieldNotSelected<"Field 'recentBlockhash' is not selected for the 'Swap' instruction. Add it to fields.transaction in the registration options.">;
   /**
-   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
-   * ```yaml
-   * field_selection:
-   *   transaction_fields:
-   *     - version
-   * ```
+   * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
    */
-  readonly version: FieldNotSelected<"Field 'version' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
+  readonly version: FieldNotSelected<"Field 'version' is not selected for the 'Swap' instruction. Add it to fields.transaction in the registration options.">;
   /**
-   * @deprecated Not selected for this instruction. To enable, add to config.yaml:
-   * ```yaml
-   * field_selection:
-   *   transaction_fields:
-   *     - allSignatures
-   * ```
+   * @deprecated Not selected for this instruction. Add it to fields.transaction on the handler registration.
    */
-  readonly allSignatures: FieldNotSelected<"Field 'allSignatures' is not selected for the 'Swap' instruction. Add it under field_selection.transaction_fields in config.yaml.">;
-  /** The allAccounts field. */
-  readonly allAccounts: readonly SvmAccount[];
-  /** The tokenBalances field. */
-  readonly tokenBalances: readonly { readonly account?: string; readonly mint?: string; readonly owner?: string; readonly decimals?: number; readonly preAmount?: bigint; readonly postAmount?: bigint }[];
+  readonly allSignatures: FieldNotSelected<"Field 'allSignatures' is not selected for the 'Swap' instruction. Add it to fields.transaction in the registration options.">;
+  /**
+   * @deprecated Not selected for this instruction. Add it to fields.accountActivity on the handler registration.
+   */
+  readonly accountActivities: FieldNotSelected<"Field 'accountActivities' is not selected for the 'Swap' instruction. Add it to fields.accountActivity in the registration options.">;
 }

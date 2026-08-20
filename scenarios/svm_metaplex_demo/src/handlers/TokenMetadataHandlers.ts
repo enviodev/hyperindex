@@ -24,21 +24,23 @@ async function bumpStats(
   context.ProgramStats.set(next);
 }
 
+const metaplexFields = {
+  instruction: ["args", "accounts"],
+  transaction: ["signature"],
+  block: ["time"],
+} as const;
+
 indexer.onInstruction(
-  { program: "TokenMetadata", instruction: "CreateMetadataAccountV3" },
+  { program: "TokenMetadata", instruction: "CreateMetadataAccountV3", fields: metaplexFields },
   async ({ instruction, context }) => {
-    const params = instruction.params;
-    if (!params) {
-      // Bundled Metaplex schema should always match disc 0x21 — surface
-      // mismatches loudly so the upstream decoder regression is obvious.
+    const args = instruction.args;
+    if (!args) {
       console.warn("CreateMetadataAccountV3: no decoded payload");
       return;
     }
-    const { args, accounts } = params;
-    const metadataPda = accounts.metadata;
-    if (metadataPda === undefined) return;
-    const mint = accounts.mint ?? "";
-    const updateAuthority = accounts.update_authority;
+    const metadataPda = instruction.accounts.metadata.address;
+    const mint = instruction.accounts.mint.address;
+    const updateAuthority = instruction.accounts.update_authority.address;
     const txSig = instruction.transaction.signature;
 
     console.log(
@@ -60,17 +62,15 @@ indexer.onInstruction(
 );
 
 indexer.onInstruction(
-  { program: "TokenMetadata", instruction: "UpdateMetadataAccountV2" },
+  { program: "TokenMetadata", instruction: "UpdateMetadataAccountV2", fields: metaplexFields },
   async ({ instruction, context }) => {
-    const params = instruction.params;
-    if (!params) {
+    const args = instruction.args;
+    if (!args) {
       console.warn("UpdateMetadataAccountV2: no decoded payload");
       return;
     }
-    const { args, accounts } = params;
-    const metadataPda = accounts.metadata;
-    if (metadataPda === undefined) return;
-    const updateAuthority = args.update_authority ?? accounts.update_authority;
+    const metadataPda = instruction.accounts.metadata.address;
+    const updateAuthority = args.update_authority ?? instruction.accounts.update_authority.address;
     const txSig = instruction.transaction.signature;
 
     console.log(

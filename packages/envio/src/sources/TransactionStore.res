@@ -31,6 +31,34 @@ let fieldCodes = FieldMask.fieldCodes
 // Drain another store (a fetch-response page) into this one.
 @send external merge: (t, t) => unit = "merge"
 
+type svmTestTransaction = {
+  slot: int,
+  transactionIndex: int,
+}
+
+type svmTestActivity = {
+  slot: int,
+  transactionIndex: int,
+  account: string,
+  accountIndex?: int,
+  isSigner?: bool,
+  isWritable?: bool,
+  preBalance?: int,
+  postBalance?: int,
+  mint?: string,
+  owner?: string,
+  decimals?: int,
+  preAmount?: int,
+  postAmount?: int,
+}
+
+@send
+external insertSvmTestPage: (
+  t,
+  array<svmTestTransaction>,
+  array<svmTestActivity>,
+) => unit = "insertSvmTestPage"
+
 // Bulk-materialise transactions off the JS thread, one row per
 // (blockNumbers[i], transactionIndices[i]) key, decoding only the fields set in
 // that row's own masks[i]. Result is aligned with the input.

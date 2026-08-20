@@ -44,15 +44,11 @@ use types::{opt_hex, to_hex, QueryResponse};
 ///
 /// `keys` restricts what is stored to the transactions routed items reference;
 /// `None` stores the whole response (the raw `get` query, which builds no
-/// items). `keep_native_only_rows` retains the activity rows of accounts holding
-/// no token balance; only `transaction.allAccounts` reads them, so a selection that
-/// asks for token balances alone drops them rather than carrying an entry per
-/// account of every matched transaction.
+/// items).
 fn build_svm_store(
     mut transactions: Vec<simple::Transaction>,
     mut account_activity: Vec<simple::AccountActivity>,
     keys: Option<&HashSet<(u64, u32)>>,
-    keep_native_only_rows: bool,
 ) -> TransactionStore {
     if let Some(keys) = keys {
         let referenced = |slot: Option<u64>, index: Option<u32>| {
@@ -60,9 +56,6 @@ fn build_svm_store(
         };
         transactions.retain(|tx| referenced(tx.slot, tx.transaction_index));
         account_activity.retain(|row| referenced(row.slot, row.transaction_index));
-    }
-    if !keep_native_only_rows {
-        account_activity.retain(|row| row.mint.is_some());
     }
     let store = TransactionStore::new_svm();
     store.insert_svm_txs(transactions);
@@ -273,7 +266,6 @@ impl SvmHyperSyncClient {
             std::mem::take(&mut resp.transactions),
             std::mem::take(&mut resp.account_activity),
             None,
-            true,
         );
 
         let (block_headers, block_store) = take_blocks(&mut resp, None).map_err(map_err)?;
@@ -363,42 +355,20 @@ impl SvmHyperSyncClient {
                 parse_columns(&built.transaction_columns).map_err(map_err)?;
         }
         if built.needs_logs {
-            field_selection.log = parse_columns(&[
-                "slot",
-                "transaction_index",
-                "instruction_address",
-                "kind",
-                "message",
-            ])
-            .map_err(map_err)?;
+            let mut columns = vec!["slot", "transaction_index", "instruction_address"];
+            for &column in &built.log_columns {
+                if !columns.contains(&column) {
+                    columns.push(column);
+                }
+            }
+            field_selection.log = parse_columns(&columns).map_err(map_err)?;
         }
         if built.needs_account_activity {
-            // The store keys activity rows by account regardless of what the
-            // consumer selected, so `account` always rides along.
-            let mut columns = vec![
-                "slot",
-                "transaction_index",
-                "account",
-                "mint",
-                "pre_owner",
-                "post_owner",
-                "token_decimals",
-                "pre_token_balance",
-                "post_token_balance",
-            ];
-            if built.needs_accounts {
-                // Only `allAccounts` reads the native side; a token-balances
-                // selection would fetch and decode these for nothing.
-                // `account_index` is the account's position in the resolved key
-                // list, which orders the accounts an address lookup table
-                // contributed — they aren't in `account_keys`.
-                columns.extend([
-                    "pre_balance",
-                    "post_balance",
-                    "account_index",
-                    "is_signer",
-                    "is_writable",
-                ]);
+            let mut columns = vec!["slot", "transaction_index", "account"];
+            for &column in &built.account_activity_columns {
+                if !columns.contains(&column) {
+                    columns.push(column);
+                }
             }
             field_selection.account_activity = parse_columns(&columns).map_err(map_err)?;
         }
@@ -476,7 +446,6 @@ impl SvmHyperSyncClient {
             std::mem::take(&mut resp.transactions),
             std::mem::take(&mut resp.account_activity),
             Some(&referenced_transactions),
-            built.needs_accounts,
         );
         let (block_headers, block_store) =
             take_blocks(&mut resp, Some(&referenced_slots)).map_err(map_err)?;
@@ -558,7 +527,7 @@ pub struct EventItem {
     pub is_inner: bool,
     pub decoded: Option<DecodedInstructionJson>,
     /// Logs scoped to this instruction; `Some` only when the routed
-    /// registration opted in via `includeLogs`.
+    /// registration selected `fields.log`.
     pub logs: Option<Vec<LogItem>>,
 }
 
@@ -574,7 +543,7 @@ pub struct EventItemsResponse {
 
 /// Fans each committed instruction out to the registrations it routes to.
 /// Logs group per (slot, transactionIndex, instructionAddress) and attach only
-/// to items whose registration opted in via `includeLogs`; logs without an
+/// to items whose registration selected `fields.log`; logs without an
 /// instruction address attach to no instruction (rare; usually only system
 /// messages). Borsh decoding runs once per instruction against its program's
 /// schema, when one exists.
@@ -635,7 +604,7 @@ fn build_event_items(
         let decoded = schemas
             .get(&instr.executing_account)
             .and_then(|schema| borsh_decoder::decode_with_schema(schema, raw));
-        let logs = if routed.iter().any(|reg| reg.include_logs) {
+        let logs = if routed.iter().any(|reg| !reg.log_columns.is_empty()) {
             logs_by_key
                 .get(&(
                     instr.slot,
@@ -665,7 +634,11 @@ fn build_event_items(
                 d8: opt_hex(&instr.d8),
                 is_inner: instr.is_inner,
                 decoded: decoded.clone(),
-                logs: if reg.include_logs { logs.clone() } else { None },
+                logs: if !reg.log_columns.is_empty() {
+                    logs.clone()
+                } else {
+                    None
+                },
             });
         }
     }
@@ -841,10 +814,15 @@ mod tests {
             discriminator: Some(discriminator.to_string()),
             discriminator_byte_len: 1,
             is_inner: None,
-            include_logs,
             account_filters: vec![],
             transaction_fields: vec![],
             block_fields: vec![],
+            account_activity_fields: vec![],
+            log_fields: if include_logs {
+                vec!["kind".to_string(), "message".to_string()]
+            } else {
+                vec![]
+            },
             accounts: vec![],
             args_json: None,
             defined_types_json: None,
@@ -935,7 +913,7 @@ mod tests {
     #[test]
     fn logs_attach_only_to_opted_in_registrations() {
         // Two registrations fan out from the same instruction; only the
-        // includeLogs one carries the instruction-scoped log.
+        // `fields.log` one carries the instruction-scoped log.
         let (store, set) = fixture(&["TokenMetadata", "Other"]);
         let built = SelectionBuilder::from_registrations(
             &[reg_input(0, "0x21", true), {
@@ -999,10 +977,11 @@ mod tests {
                 discriminator: Some(discriminator.to_string()),
                 discriminator_byte_len: 1,
                 is_inner: None,
-                include_logs: false,
                 account_filters: vec![],
                 transaction_fields: vec![],
                 block_fields: vec![],
+                account_activity_fields: vec![],
+                log_fields: vec![],
                 accounts: vec!["metadata".to_string()],
                 args_json: Some(r#"[{"name":"amount","type":"u64"}]"#.to_string()),
                 defined_types_json: None,
@@ -1072,93 +1051,81 @@ mod tests {
             vec![tx(42, 7), tx(43, 7)],
             vec![balance(42, 7), balance(43, 7)],
             Some(&referenced),
-            false,
         );
 
         let mask = ((1u64 << (crate::transaction_store::SvmTxField::FeePayer as u32))
-            | (1u64 << (crate::transaction_store::SvmTxField::TokenBalances as u32)))
+            | (1u64 << (crate::transaction_store::SvmTxField::AccountActivities as u32)))
             as f64;
         let cols = store
             .materialize(vec![42, 43], vec![7, 7], vec![mask, mask])
             .await
             .expect("materialize");
 
-        let mints: Vec<Option<Vec<Option<String>>>> = match column(&cols, "tokenBalances") {
-            Some(crate::field_columns::Column::TokenBalances(rows)) => rows
+        let mints: Vec<Option<Vec<Option<String>>>> = match column(&cols, "accountActivities") {
+            Some(crate::field_columns::Column::AccountActivities(rows)) => rows
                 .iter()
                 .map(|r| {
-                    r.as_ref()
-                        .map(|v| v.iter().map(|tb| tb.mint.clone()).collect())
+                    r.as_ref().map(|v| {
+                        v.iter()
+                            .map(|a| a.token.as_ref().map(|t| t.mint.clone()))
+                            .collect()
+                    })
                 })
                 .collect(),
-            _ => panic!("expected a tokenBalances column"),
+            _ => panic!("expected an accountActivities column"),
         };
         assert_eq!(
             (str_column(&cols, "feePayer"), mints),
             (
                 vec![Some(fee_payer(42).to_string()), None],
-                // The unreferenced transaction keeps no balances either; a
-                // selected row with none materialises as `[]`.
                 vec![Some(vec![Some(mint(42).to_string())]), Some(vec![])],
             )
         );
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn native_only_activity_rows_are_stored_only_for_a_selection_reading_all_accounts() {
-        // A token-balances-only selection would carry an activity row per
-        // account of every matched transaction for nothing, so those rows are
-        // dropped as the page is built; `transaction.allAccounts` is what needs
-        // them.
+    async fn native_only_activity_rows_are_kept() {
         let activity = |account: u8, mint: Option<simple::Address>| simple::AccountActivity {
             slot: Some(43),
             transaction_index: Some(7),
             account: Some(simple::Address([account; 32])),
             pre_balance: Some(100),
+            post_balance: Some(90),
             mint,
             ..Default::default()
         };
-        let rows = || vec![activity(1, None), activity(2, Some(mint(43)))];
-        let tx = || {
+        let store = build_svm_store(
             vec![simple::Transaction {
                 slot: Some(43),
                 transaction_index: Some(7),
-                account_keys: Some(vec![simple::Address([1; 32]), simple::Address([2; 32])]),
                 ..Default::default()
-            }]
-        };
-
-        let mask = (1u64 << (crate::transaction_store::SvmTxField::AllAccounts as u32)) as f64;
-        let stored = |keep_native_only_rows| async move {
-            let cols = build_svm_store(tx(), rows(), None, keep_native_only_rows)
-                .materialize(vec![43], vec![7], vec![mask])
-                .await
-                .expect("materialize");
-            match column(&cols, "allAccounts") {
-                Some(crate::field_columns::Column::AllAccounts(accounts)) => accounts[0]
+            }],
+            vec![activity(1, None), activity(2, Some(mint(43)))],
+            None,
+        );
+        let mask = (1u64 << (crate::transaction_store::SvmTxField::AccountActivities as u32)) as f64;
+        let cols = store
+            .materialize(vec![43], vec![7], vec![mask])
+            .await
+            .expect("materialize");
+        match column(&cols, "accountActivities") {
+            Some(crate::field_columns::Column::AccountActivities(accounts)) => {
+                let views = accounts[0]
                     .as_ref()
                     .expect("selected row")
                     .iter()
-                    .map(|a| (a.address.clone(), a.pre_lamports.is_some()))
-                    .collect::<Vec<_>>(),
-                _ => panic!("expected an allAccounts column"),
+                    .map(|a| (a.address.clone(), a.lamports.is_some(), a.token.is_some()))
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    views,
+                    vec![
+                        (simple::Address([1; 32]).to_string(), true, false),
+                        (simple::Address([2; 32]).to_string(), true, true),
+                    ]
+                );
             }
-        };
-
-        assert_eq!(
-            (stored(false).await, stored(true).await),
-            (
-                // The dropped row leaves its account listed but with no balances.
-                vec![
-                    (simple::Address([1; 32]).to_string(), false),
-                    (simple::Address([2; 32]).to_string(), true),
-                ],
-                vec![
-                    (simple::Address([1; 32]).to_string(), true),
-                    (simple::Address([2; 32]).to_string(), true),
-                ],
-            )
-        );
+            _ => panic!("expected an accountActivities column"),
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1182,7 +1149,6 @@ mod tests {
             }],
             vec![],
             None,
-            true,
         );
         let (_, block_store) = take_blocks(&mut resp, None).expect("take blocks");
 

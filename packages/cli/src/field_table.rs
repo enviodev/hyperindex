@@ -481,15 +481,6 @@ impl StoreCol {
         }
     }
 
-    /// String-list cell, for the account-activity join's direct-by-slot reads.
-    /// Panics on a non-`StrList` column.
-    fn str_list_cell(&self, slot: usize) -> Option<&[String]> {
-        match self {
-            StoreCol::StrList(v) => v[slot].as_deref(),
-            _ => panic!("expected a str list column"),
-        }
-    }
-
     /// Raw bytes of a byte-backed cell (hash comparison). `Fixed` carries no
     /// per-slot validity, so the caller must have checked the row's mask bit.
     fn cell_bytes(&self, slot: usize) -> Option<&[u8]> {
@@ -632,18 +623,6 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         self.cols[field]
             .as_ref()
             .and_then(|c| c.cell_bytes(slot as usize))
-    }
-
-    /// `field`'s string-list cell for `key`, if the row exists and carries the
-    /// field.
-    pub(crate) fn str_list_field(&self, key: &K, field: usize) -> Option<&[String]> {
-        let &slot = self.by_key.get(key)?;
-        if self.masks[slot as usize] & (1u64 << field) == 0 {
-            return None;
-        }
-        self.cols[field]
-            .as_ref()
-            .and_then(|c| c.str_list_cell(slot as usize))
     }
 
     /// Lowest key `>= from` carrying `field` in both tables whose cells differ,

@@ -30,7 +30,6 @@ let makeEventConfig = (
     programId: metaplexProgramId->SvmTypes.Pubkey.fromStringUnsafe,
     discriminator: Some("0x21"),
     discriminatorByteLen: 1,
-    includeLogs: false,
     fieldSelection: Internal.makeFieldSelection(
       ~blockFields=Utils.Set.fromArray(
         selectedBlockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>),
@@ -217,7 +216,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           // `block` is omitted here; it's materialised from the store at batch
           // prep, which this test doesn't run.
           "block": instruction.block,
-          "params": instruction.params,
+          "args": instruction.args,
+          "accounts": instruction.accounts,
           "usesSourceRegistration": onEventRegistration === (reg :> Internal.onEventRegistration),
         })
       | _ => None
@@ -233,16 +233,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           "orderPath": [1],
           "transactionIndex": 965,
           "block": None,
-          "params": Some(
-            (
-              {
-                name: "CreateMetadataAccountV3",
-                args: %raw(`{"amount": "1"}`),
-                accounts: Dict.fromArray([("metadata", metaplexProgramId)]),
-                extraAccounts: [],
-              }: Envio.svmInstructionParams
-            ),
-          ),
+          "args": None,
+          "accounts": None,
           "usesSourceRegistration": true,
         }),
         // The slot range stays inclusive on the boundary; Rust converts to the
@@ -276,10 +268,11 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         startBlock: None,
         discriminator: "0x21",
         discriminatorByteLen: 1,
-        includeLogs: false,
         accountFilters: [],
         transactionFields: [],
         blockFields: [],
+        accountActivityFields: [],
+        logFields: [],
         accounts: [],
       },
     ])

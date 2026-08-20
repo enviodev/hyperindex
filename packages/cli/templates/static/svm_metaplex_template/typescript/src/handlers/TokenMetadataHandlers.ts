@@ -33,20 +33,19 @@ async function bumpStats(
   context.ProgramStats.set(next);
 }
 
+const metaplexFields = {
+  instruction: ["accountArguments"],
+  transaction: ["signature"],
+} as const;
+
 indexer.onInstruction(
-  { program: "TokenMetadata", instruction: "CreateMetadataAccountV3" },
+  { program: "TokenMetadata", instruction: "CreateMetadataAccountV3", fields: metaplexFields },
   async ({ instruction, context }) => {
-    const { accounts } = instruction;
-    // Token Metadata's CreateMetadataAccountV3 instruction layout (Metaplex):
-    //   0 = metadata account (PDA)
-    //   1 = mint
-    //   2 = mint authority
-    //   3 = payer
-    //   4 = update authority
-    const metadataPda = accounts[0];
+    const { accountArguments } = instruction;
+    const metadataPda = accountArguments[0];
     if (metadataPda === undefined) return;
-    const mint = accounts[1] ?? "";
-    const updateAuthority = accounts[4];
+    const mint = accountArguments[1] ?? "";
+    const updateAuthority = accountArguments[4];
     const txSig = instruction.transaction.signature;
 
     context.log.info(
@@ -67,12 +66,12 @@ indexer.onInstruction(
 );
 
 indexer.onInstruction(
-  { program: "TokenMetadata", instruction: "UpdateMetadataAccountV2" },
+  { program: "TokenMetadata", instruction: "UpdateMetadataAccountV2", fields: metaplexFields },
   async ({ instruction, context }) => {
-    const { accounts } = instruction;
-    const metadataPda = accounts[0];
+    const { accountArguments } = instruction;
+    const metadataPda = accountArguments[0];
     if (metadataPda === undefined) return;
-    const updateAuthority = accounts[1];
+    const updateAuthority = accountArguments[1];
     const txSig = instruction.transaction.signature;
 
     context.log.info(

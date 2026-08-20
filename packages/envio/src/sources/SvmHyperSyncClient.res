@@ -29,12 +29,13 @@ module Registration = {
     discriminator?: string,
     discriminatorByteLen: int,
     isInner?: bool,
-    includeLogs: bool,
     // DNF: outer array is OR of AND-groups.
     accountFilters: array<array<accountFilter>>,
     // camelCase Internal.svmTransactionField / svmBlockField names.
     transactionFields: array<string>,
     blockFields: array<string>,
+    accountActivityFields: array<string>,
+    logFields: array<string>,
     // Borsh schema pieces; empty accounts + absent argsJson = no schema.
     accounts: array<string>,
     argsJson?: string,
@@ -57,7 +58,6 @@ module Registration = {
         discriminator: ?eventConfig.discriminator,
         discriminatorByteLen: eventConfig.discriminatorByteLen,
         isInner: ?eventConfig.isInner,
-        includeLogs: eventConfig.includeLogs,
         accountFilters: eventConfig.accountFilters->Array.map(group =>
           group->Array.map(
             (filter): accountFilter => {
@@ -68,6 +68,8 @@ module Registration = {
         ),
         transactionFields: reg.fieldSelection.transactionFields->Utils.Set.toArray,
         blockFields: reg.fieldSelection.blockFields->Utils.Set.toArray,
+        accountActivityFields: reg.fieldSelection.accountActivityFields->Utils.Set.toArray,
+        logFields: reg.fieldSelection.logFields->Utils.Set.toArray,
         accounts: eventConfig.accounts,
         argsJson: ?switch eventConfig.args {
         | JSON.Null => None
@@ -225,7 +227,7 @@ module EventItems = {
     d8?: string,
     isInner: bool,
     decoded?: ResponseTypes.decodedInstruction,
-    // Present only when the routed registration opted in via `includeLogs`.
+    // Present only when the routed registration selected `fields.log`.
     logs?: array<log>,
   }
 

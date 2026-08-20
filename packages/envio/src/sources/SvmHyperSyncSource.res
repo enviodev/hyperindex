@@ -10,50 +10,104 @@ type options = {
   addressStore: AddressStore.t,
 }
 
-// Parse the Rust-decoded instruction (args/accounts arrive as JSON strings to
-// side-step napi-rs's lack of native JSON passthrough) into the public shape.
-let parseDecoded = (
-  d: SvmHyperSyncClient.ResponseTypes.decodedInstruction,
-): Envio.svmInstructionParams => {
-  let args = try JSON.parseOrThrow(d.argsJson) catch {
+let parseArgs = (d: SvmHyperSyncClient.ResponseTypes.decodedInstruction): JSON.t =>
+  try JSON.parseOrThrow(d.argsJson) catch {
   | _ => JSON.Object(Dict.make())
   }
-  let accounts = try {
-    JSON.parseOrThrow(d.accountsJson)->(Utils.magic: JSON.t => dict<string>)
-  } catch {
-  | _ => Dict.make()
-  }
-  {
-    name: d.name,
-    args,
-    accounts,
-    extraAccounts: d.extraAccounts,
-  }
+
+let namedAccounts = (
+  ~idlNames: array<string>,
+  ~accountArguments: array<string>,
+): dict<Envio.svmInstructionAccount> => {
+  let out = Dict.make()
+  idlNames->Array.forEachWithIndex((name, i) =>
+    switch accountArguments->Array.get(i) {
+    | Some(address) =>
+      out->Dict.set(
+        name,
+        {
+          Envio.address: address->SvmTypes.Pubkey.fromStringUnsafe,
+          accountName: name,
+          instructionAccountIndex: i,
+        },
+      )
+    | None => ()
+    }
+  )
+  out
 }
 
-// `block` is omitted; it's materialised from the block store at batch prep.
+let selectedLog = (log: SvmHyperSyncClient.EventItems.log, ~logFields: Utils.Set.t<string>): Envio.svmLog => {
+  kind: if logFields->Utils.Set.has("kind") {
+    log.kind
+  } else {
+    %raw(`undefined`)
+  },
+  message: if logFields->Utils.Set.has("message") {
+    log.message
+  } else {
+    %raw(`undefined`)
+  },
+}
+
+// `block` and `transaction` are omitted; they're materialised from the stores
+// at batch prep. Named-account `.activity` is attached then too.
 let toSvmInstruction = (
   item: SvmHyperSyncClient.EventItems.item,
   ~programName,
   ~instructionName,
+  ~eventConfig: Internal.svmInstructionEventConfig,
+  ~fieldSelection: Internal.fieldSelection,
 ): Envio.svmInstruction => {
-  programName,
-  instructionName,
-  programId: item.programId->SvmTypes.Pubkey.fromStringUnsafe,
-  data: item.data,
-  accounts: item.accounts->SvmTypes.Pubkey.fromStringsUnsafe,
-  instructionAddress: item.instructionAddress,
-  isInner: item.isInner,
-  d1: ?item.d1,
-  d2: ?item.d2,
-  d4: ?item.d4,
-  d8: ?item.d8,
-  params: ?(item.decoded->Option.map(parseDecoded)),
-  logs: ?(
-    item.logs->Option.map(logs =>
-      logs->Array.map((log): Envio.svmLog => {kind: log.kind, message: log.message})
-    )
-  ),
+  let hasInstruction = name => fieldSelection.instructionFields->Utils.Set.has(name)
+  let discriminator = switch eventConfig.discriminator {
+  | Some(d) => d
+  | None =>
+    switch (item.d8, item.d4, item.d2, item.d1) {
+    | (Some(d), _, _, _) => d
+    | (_, Some(d), _, _) => d
+    | (_, _, Some(d), _) => d
+    | (_, _, _, Some(d)) => d
+    | _ => item.data
+    }
+  }
+  {
+    programName,
+    instructionName,
+    programId: item.programId->SvmTypes.Pubkey.fromStringUnsafe,
+    data: item.data,
+    instructionAddress: item.instructionAddress,
+    isInner: item.isInner,
+    args: ?if hasInstruction("args") {
+      item.decoded->Option.map(parseArgs)
+    } else {
+      None
+    },
+    accounts: ?if hasInstruction("accounts") {
+      Some(namedAccounts(~idlNames=eventConfig.accounts, ~accountArguments=item.accounts))
+    } else {
+      None
+    },
+    accountArguments: ?if hasInstruction("accountArguments") {
+      Some(item.accounts->SvmTypes.Pubkey.fromStringsUnsafe)
+    } else {
+      None
+    },
+    discriminator: ?if hasInstruction("discriminator") {
+      Some(discriminator)
+    } else {
+      None
+    },
+    logs: ?if fieldSelection.logFields->Utils.Set.size > 0 {
+      Some(
+        item.logs
+        ->Option.getOr([])
+        ->Array.map(log => selectedLog(log, ~logFields=fieldSelection.logFields)),
+      )
+    } else {
+      None
+    },
+  }
 }
 
 let make = (
@@ -144,6 +198,8 @@ let make = (
         item,
         ~programName=eventConfig.contractName,
         ~instructionName=eventConfig.name,
+        ~eventConfig,
+        ~fieldSelection=onEventRegistration.fieldSelection,
       )
       Internal.Event({
         onEventRegistration,

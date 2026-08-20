@@ -235,9 +235,6 @@ let svmEventDescriptorSchema = S.schema(s =>
   {
     "discriminator": s.matches(S.option(S.string)),
     "discriminatorByteLen": s.matches(S.int),
-    "transactionFields": s.matches(S.array(Internal.svmTransactionFieldSchema)),
-    "blockFields": s.matches(S.option(S.array(Internal.svmBlockFieldSchema))),
-    "includeLogs": s.matches(S.bool),
     // An array of AND-groups OR-ed together: the CLI normalizes both the flat
     // and `any_of` YAML shapes to `Vec<Vec<SvmAccountFilterJson>>`.
     "accountFilters": s.matches(
@@ -796,9 +793,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
                 "svm": option<{
                   "discriminator": option<string>,
                   "discriminatorByteLen": int,
-                  "transactionFields": array<Internal.svmTransactionField>,
-                  "blockFields": option<array<Internal.svmBlockField>>,
-                  "includeLogs": bool,
                   "accountFilters": option<
                     array<array<{"position": int, "values": array<string>}>>,
                   >,
@@ -832,9 +826,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~programId,
             ~discriminator=svm["discriminator"],
             ~discriminatorByteLen=svm["discriminatorByteLen"],
-            ~transactionFields=svm["transactionFields"],
-            ~blockFields=?svm["blockFields"],
-            ~includeLogs=svm["includeLogs"],
             ~accountFilters,
             ~isInner=svm["isInner"],
             ~accounts=svm["accounts"]->Option.getOr([]),

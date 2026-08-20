@@ -14,12 +14,37 @@ let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 // Rust store (`SvmBlockField`) — keep this order in sync.
 let blockFields = ["slot", "time", "hash", "height", "parentSlot", "parentHash"]
 
-// `slot`/`time`/`hash` are always included; every other block field is opt-in
-// via `field_selection.block_fields`. All are materialised from the store.
+// `slot` is always included (the item's key); every other block field is
+// opt-in via handler `fields.block`. All are materialised from the store.
 //
 // One instruction's selected block fields → store selection bitmask. Computed per
 // event at config build and cached on the event config.
 let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)
+
+let attachAccountActivities = (payload: Internal.eventPayload, tx: Internal.eventTransaction) => {
+  let instruction = payload->(Utils.magic: Internal.eventPayload => dict<unknown>)
+  let transaction = tx->(Utils.magic: Internal.eventTransaction => dict<unknown>)
+  switch (instruction->Dict.get("accounts"), transaction->Dict.get("accountActivities")) {
+  | (Some(accounts), Some(activities)) if !(accounts->Array.isArray) =>
+    let byAddress = Dict.make()
+    (activities->(Utils.magic: unknown => array<Envio.svmAccountActivity>))->Array.forEach(
+      activity => byAddress->Dict.set(activity.address->SvmTypes.Pubkey.toString, activity),
+    )
+    (accounts->(Utils.magic: unknown => dict<Envio.svmInstructionAccount>))
+    ->Dict.valuesToArray
+    ->Array.forEach(account =>
+      switch byAddress->Dict.get(account.address->SvmTypes.Pubkey.toString) {
+      | Some(activity) =>
+        (account->(Utils.magic: Envio.svmInstructionAccount => dict<unknown>))->Dict.set(
+          "activity",
+          activity->(Utils.magic: Envio.svmAccountActivity => unknown),
+        )
+      | None => ()
+      }
+    )
+  | _ => ()
+  }
+}
 
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Svm,
