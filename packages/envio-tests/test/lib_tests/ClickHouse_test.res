@@ -214,7 +214,8 @@ ORDER BY (id)`
   \`events_processed\` UInt64
 )
 ENGINE = ReplicatedMergeTree
-ORDER BY (id)`
+ORDER BY (id)
+SETTINGS replicated_deduplication_window = 0`
 
         t.expect(query, ~message="Replicated checkpoints table SQL should match exactly").toBe(
           expectedQuery,
@@ -238,7 +239,8 @@ ORDER BY (id)`
   \`events_processed\` UInt64
 )
 ENGINE = ReplicatedMergeTree
-ORDER BY (id)`
+ORDER BY (id)
+SETTINGS replicated_deduplication_window = 0`
 
         t.expect(
           query,
@@ -332,7 +334,8 @@ ORDER BY (id, envio_checkpoint_id)`
   \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = ReplicatedMergeTree
-ORDER BY (id, envio_checkpoint_id)`
+ORDER BY (id, envio_checkpoint_id)
+SETTINGS replicated_deduplication_window = 0`
 
         t.expect(query, ~message="Replicated entity history table SQL should match exactly").toBe(
           expectedQuery,

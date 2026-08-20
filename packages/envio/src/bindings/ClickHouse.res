@@ -469,6 +469,17 @@ let writeStagedOrThrow = async (sink, ~entities, ~checkpoints) =>
 // The '{cluster}' macro resolves to each node's configured cluster name.
 let onClusterClause = (~onCluster: bool) => onCluster ? ` ON CLUSTER '{cluster}'` : ""
 
+// ReplicatedMergeTree drops an insert whose block hash is already in Keeper, and
+// mutations don't clear those hashes. Crash recovery trims the history tail past
+// the committed Postgres checkpoint with ALTER ... DELETE and then replays it, so
+// an identical replayed block would be discarded while still reporting success —
+// a permanent gap that nothing surfaces. Trim-then-replay is what makes recovery
+// correct here, and the duplicates dedup would have caught are already collapsed
+// by the entity view's `LIMIT 1 BY`. Plain MergeTree goes by
+// non_replicated_deduplication_window (0 by default), so it needs no clause.
+let replicatedTableSettingsClause = (~replicated: bool) =>
+  replicated ? "\nSETTINGS replicated_deduplication_window = 0" : ""
+
 // Strip both engine arguments `(...)` and a trailing `SETTINGS ...` clause to
 // get the bare engine name, e.g. `Replicated('/p','{shard}','{replica}') SETTINGS x=1`
 // and `Replicated SETTINGS x=1` both yield `Replicated`.
@@ -584,7 +595,7 @@ let makeCreateHistoryTableQuery = (
   ${fieldDefinitions->Array.joinUnsafe(",\n  ")}${skippingIndexDefinitions}
 )
 ENGINE = ${tableEngine}${partitionByClause}
-ORDER BY (${orderByColumns})${ttlClause}`
+ORDER BY (${orderByColumns})${ttlClause}${replicatedTableSettingsClause(~replicated)}`
 }
 
 // Generate CREATE TABLE query for checkpoints
@@ -607,7 +618,7 @@ let makeCreateCheckpointsTableQuery = (
 ${columns}
 )
 ENGINE = ${tableEngine}
-ORDER BY (${idField})`
+ORDER BY (${idField})${replicatedTableSettingsClause(~replicated)}`
 }
 
 // Generate CREATE VIEW query for entity current state
