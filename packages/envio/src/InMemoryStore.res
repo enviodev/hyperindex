@@ -203,19 +203,24 @@ let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
     // Most batches register nothing, so the checkpoints are only collected for a
     // chain that has something waiting.
     if chainState->ChainState.hasAddressesToWrite {
-      // A registration is drained by the same batch that processed the event
-      // making it, so this chain's last checkpoint here covers every drained
-      // row: a write run never cuts inside a batch.
-      let checkpointId = ref(state->IndexerState.committedCheckpointId)
+      // The store pairs each drained registration with a checkpoint of its own
+      // chain, so only this chain's checkpoints go in — and the index it returns
+      // points back into these two parallel arrays.
+      let checkpointIds = []
+      let checkpointBlockNumbers = []
       for idx in 0 to batch.checkpointIds->Array.length - 1 {
         if batch.checkpointChainIds->Array.getUnsafe(idx) === chainId {
-          checkpointId := batch.checkpointIds->Array.getUnsafe(idx)
+          checkpointIds->Array.push(batch.checkpointIds->Array.getUnsafe(idx))
+          checkpointBlockNumbers->Array.push(batch.checkpointBlockNumbers->Array.getUnsafe(idx))
         }
       }
 
       state->IndexerState.stageRegisteredAddresses(
         chainState
-        ->ChainState.drainAddressesForWrite(~toBlockInclusive=progressedChain.progressBlockNumber)
+        ->ChainState.drainAddressesForWrite(
+          ~toBlockInclusive=progressedChain.progressBlockNumber,
+          ~checkpointBlockNumbers,
+        )
         ->Array.map((dc): AddressRows.staged => {
           row: {
             chainId,
@@ -223,7 +228,7 @@ let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
             contractId: dc.contractId,
             registrationBlock: dc.registrationBlock,
           },
-          checkpointId: checkpointId.contents,
+          checkpointId: checkpointIds->Array.getUnsafe(dc.checkpointIdx),
         }),
       )
     }

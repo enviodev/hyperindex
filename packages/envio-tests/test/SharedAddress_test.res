@@ -132,6 +132,54 @@ describe("An address shared by two contracts", () => {
       { id: \`Token-\${shared}\`, contract: "Token", amount: 3n },
     ]);
   });
+
+  it("reports a registration on the change of the event that made it", async (t) => {
+    const indexer = createTestIndexer();
+    const dynamic = Addresses.mockAddresses[3];
+
+    const result = await indexer.process({
+      chains: {
+        1: {
+          simulate: [
+            { contract: "Factory", event: "VaultCreated", block: { number: 1 }, params: { vault: dynamic } },
+            { contract: "Token", event: "Transfer", block: { number: 2 }, params: { from: Addresses.mockAddresses[1], to: Addresses.mockAddresses[2], value: 1n } },
+            { contract: "Token", event: "Transfer", block: { number: 3 }, params: { from: Addresses.mockAddresses[1], to: Addresses.mockAddresses[2], value: 2n } },
+          ],
+        },
+      },
+    });
+
+    t.expect([
+      result.changes[0]?.addresses,
+      result.changes[1]?.addresses,
+      result.changes[2]?.addresses,
+    ]).toEqual([
+      { sets: [{ address: dynamic, contract: "Vault" }] },
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("lists each address once per contract, however often it is registered", async (t) => {
+    const indexer = createTestIndexer();
+    const dynamic = Addresses.mockAddresses[3];
+
+    await indexer.process({
+      chains: {
+        1: {
+          simulate: [
+            // Vault already holds this address from the config.
+            { contract: "Factory", event: "VaultCreated", block: { number: 1 }, params: { vault: shared } },
+            { contract: "Factory", event: "VaultCreated", block: { number: 2 }, params: { vault: dynamic } },
+            // And again, from a later block.
+            { contract: "Factory", event: "VaultCreated", block: { number: 3 }, params: { vault: dynamic } },
+          ],
+        },
+      },
+    });
+
+    t.expect(indexer.chains[1].Vault.addresses).toEqual([shared, dynamic]);
+  });
 });
 `,
 )

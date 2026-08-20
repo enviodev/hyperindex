@@ -62,17 +62,16 @@ type t = {
   mutable progressLatencyMs: option<int>,
 }
 
-// The chain's config-declared addresses in the columnar form storage and the
-// address store both take. The keys are encoded by the Rust codec, so the bytes
-// a clean run writes are exactly the bytes a resume seeds from.
-let configAddressRows = (
+// The chain's config-declared addresses as storage rows: what a clean run
+// writes into `envio_addresses`. The keys are encoded by the Rust codec, so the
+// bytes a clean run writes are exactly the bytes a resume seeds from.
+let configStorageRows = (
   chainConfig: Config.chain,
   ~ecosystem: Ecosystem.name,
   ~contractNames: array<string>,
-): AddressRows.seedRows => {
+): array<AddressRows.row> => {
   let addresses = []
   let contractIds = []
-  let registrationBlocks = []
   chainConfig.contracts->Array.forEach(contract => {
     let contractId = switch contractNames->Array.indexOf(contract.name) {
     | -1 =>
@@ -84,37 +83,15 @@ let configAddressRows = (
     contract.addresses->Array.forEach(address => {
       addresses->Array.push(address)->ignore
       contractIds->Array.push(contractId)->ignore
-      registrationBlocks
-      ->Array.push(AddressRows.configRegistrationBlock)
-      ->ignore
     })
   })
-  let packed = Core.getAddon().packAddresses(
-    ~ecosystem=(ecosystem :> string),
-    ~addresses,
-  )
-  {
-    addresses: packed.bytes,
-    lengths: packed.lengths,
-    contractIds,
-    registrationBlocks,
-  }
-}
-
-// The same addresses as storage rows: what a clean run writes into
-// `envio_addresses`, keyed exactly as the store keys them.
-let configStorageRows = (
-  chainConfig: Config.chain,
-  ~ecosystem: Ecosystem.name,
-  ~contractNames: array<string>,
-): array<AddressRows.row> => {
-  let rows = chainConfig->configAddressRows(~ecosystem, ~contractNames)
+  let packed = Core.getAddon().packAddresses(~ecosystem=(ecosystem :> string), ~addresses)
   Core.getAddon()
-  .splitAddresses(~ecosystem=(ecosystem :> string), ~bytes=rows.addresses, ~lengths=rows.lengths)
+  .splitAddresses(~ecosystem=(ecosystem :> string), ~bytes=packed.bytes, ~lengths=packed.lengths)
   ->Array.mapWithIndex((address, idx) => {
     AddressRows.chainId: chainConfig.id,
     address,
-    contractId: rows.contractIds->Array.getUnsafe(idx),
+    contractId: contractIds->Array.getUnsafe(idx),
     registrationBlock: AddressRows.configRegistrationBlock,
   })
 }
@@ -511,10 +488,12 @@ let contractAddresses = (cs: t, ~contractName) =>
   cs.addressStore->AddressStore.contractAddresses(contractName)
 
 // Hands over the dynamically registered addresses the database hasn't seen yet,
-// up to the block the caller is about to commit. Destructive: the caller must
-// persist them or take the indexer down.
-let drainAddressesForWrite = (cs: t, ~toBlockInclusive) =>
-  cs.addressStore->AddressStore.drainForWrite(toBlockInclusive)
+// up to the block the caller is about to commit, each paired with the checkpoint
+// that owns its row. Destructive: the caller must persist them or take the
+// indexer down. Throws with nothing consumed when a registration's block has no
+// checkpoint in the batch.
+let drainAddressesForWrite = (cs: t, ~toBlockInclusive, ~checkpointBlockNumbers) =>
+  cs.addressStore->AddressStore.drainForWrite(toBlockInclusive, checkpointBlockNumbers)
 let hasAddressesToWrite = (cs: t) => cs.addressStore->AddressStore.pendingCount > 0
 let bufferSize = (cs: t) => cs.fetchState->FetchState.bufferSize
 let bufferReadyCount = (cs: t) => cs.fetchState->FetchState.bufferReadyCount

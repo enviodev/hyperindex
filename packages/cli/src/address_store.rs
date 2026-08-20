@@ -130,22 +130,19 @@ pub fn pack_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result
     })
 }
 
-/// Splits packed address keys into one buffer per row — the form the write
-/// path binds to a `BYTEA[]`. The widths come from the ecosystem, so nothing
-/// outside this module needs to know how wide a key is.
-#[napi]
-pub fn split_addresses(
-    ecosystem: String,
-    bytes: Buffer,
-    lengths: Option<Vec<u32>>,
-) -> napi::Result<Vec<Buffer>> {
-    let ecosystem = ecosystem_by_name(&ecosystem, false)?;
-    let bytes: &[u8] = &bytes;
+/// Walks a packed address column, yielding one key slice per row. `lengths` is
+/// present only for SVM, whose keys vary in width; every other ecosystem strides
+/// by `key_width`.
+fn key_slices<'a>(
+    ecosystem: Ecosystem,
+    bytes: &'a [u8],
+    lengths: Option<&[u32]>,
+) -> napi::Result<Vec<&'a [u8]>> {
     let widths: Vec<usize> = match lengths {
         Some(lengths) => lengths.iter().map(|&len| len as usize).collect(),
         None => {
             let width = key_width(ecosystem).ok_or_else(|| {
-                napi::Error::from_reason("SVM addresses can only be split with their lengths.")
+                napi::Error::from_reason("SVM addresses can only be read with their lengths.")
             })?;
             if !bytes.len().is_multiple_of(width) {
                 return Err(napi::Error::from_reason(format!(
@@ -156,7 +153,7 @@ pub fn split_addresses(
             vec![width; bytes.len() / width]
         }
     };
-    let mut split = Vec::with_capacity(widths.len());
+    let mut slices = Vec::with_capacity(widths.len());
     let mut offset = 0;
     for width in widths {
         if offset + width > bytes.len() {
@@ -164,10 +161,26 @@ pub fn split_addresses(
                 "Packed addresses are shorter than their lengths claim.",
             ));
         }
-        split.push(bytes[offset..offset + width].to_vec().into());
+        slices.push(&bytes[offset..offset + width]);
         offset += width;
     }
-    Ok(split)
+    Ok(slices)
+}
+
+/// Splits packed address keys into one buffer per row — the form the write
+/// path binds to a `BYTEA[]`. The widths come from the ecosystem, so nothing
+/// outside this module needs to know how wide a key is.
+#[napi]
+pub fn split_addresses(
+    ecosystem: String,
+    bytes: Buffer,
+    lengths: Option<Vec<u32>>,
+) -> napi::Result<Vec<Buffer>> {
+    let ecosystem = ecosystem_by_name(&ecosystem, false)?;
+    Ok(key_slices(ecosystem, &bytes, lengths.as_deref())?
+        .into_iter()
+        .map(|key| key.to_vec().into())
+        .collect())
 }
 
 /// Renders packed address keys back to the canonical strings the JS side shows.
@@ -180,34 +193,10 @@ pub fn render_addresses(
     lengths: Option<Vec<u32>>,
 ) -> napi::Result<Vec<String>> {
     let ecosystem = ecosystem_by_name(&ecosystem, should_checksum)?;
-    let bytes: &[u8] = &bytes;
-    let widths: Vec<usize> = match lengths {
-        Some(lengths) => lengths.iter().map(|&len| len as usize).collect(),
-        None => {
-            let width = key_width(ecosystem).ok_or_else(|| {
-                napi::Error::from_reason("SVM addresses can only be rendered with their lengths.")
-            })?;
-            if !bytes.len().is_multiple_of(width) {
-                return Err(napi::Error::from_reason(format!(
-                    "Packed addresses of {} bytes don't divide into {width}-byte keys.",
-                    bytes.len()
-                )));
-            }
-            vec![width; bytes.len() / width]
-        }
-    };
-    let mut rendered = Vec::with_capacity(widths.len());
-    let mut offset = 0;
-    for width in widths {
-        if offset + width > bytes.len() {
-            return Err(napi::Error::from_reason(
-                "Packed addresses are shorter than their lengths claim.",
-            ));
-        }
-        rendered.push(address_string(ecosystem, &bytes[offset..offset + width]));
-        offset += width;
-    }
-    Ok(rendered)
+    Ok(key_slices(ecosystem, &bytes, lengths.as_deref())?
+        .into_iter()
+        .map(|key| address_string(ecosystem, key))
+        .collect())
 }
 
 /// The addresses of one contract inside a packed column of seeded rows, as
@@ -223,29 +212,20 @@ pub fn render_contract_addresses(
     contract_id: u32,
 ) -> napi::Result<Vec<String>> {
     let ecosystem = ecosystem_by_name(&ecosystem, should_checksum)?;
-    let bytes: &[u8] = &bytes;
-    let mut rendered = Vec::new();
-    let mut offset = 0;
-    for (idx, &id) in contract_ids.iter().enumerate() {
-        let width = match &lengths {
-            Some(lengths) => *lengths.get(idx).ok_or_else(|| {
-                napi::Error::from_reason("Packed addresses carry fewer lengths than rows.")
-            })? as usize,
-            None => key_width(ecosystem).ok_or_else(|| {
-                napi::Error::from_reason("SVM addresses can only be rendered with their lengths.")
-            })?,
-        };
-        if offset + width > bytes.len() {
-            return Err(napi::Error::from_reason(
-                "Packed addresses are shorter than their lengths claim.",
-            ));
-        }
-        if id == contract_id {
-            rendered.push(address_string(ecosystem, &bytes[offset..offset + width]));
-        }
-        offset += width;
+    let keys = key_slices(ecosystem, &bytes, lengths.as_deref())?;
+    if keys.len() != contract_ids.len() {
+        return Err(napi::Error::from_reason(format!(
+            "Packed addresses hold {} keys but {} contract ids.",
+            keys.len(),
+            contract_ids.len()
+        )));
     }
-    Ok(rendered)
+    Ok(keys
+        .into_iter()
+        .zip(contract_ids)
+        .filter(|&(_, id)| id == contract_id)
+        .map(|(key, _)| address_string(ecosystem, key))
+        .collect())
 }
 
 /// The config's contract names in canonical order — their position is the id
@@ -485,14 +465,18 @@ pub struct RolledBackAddress {
     pub contract_id: u32,
 }
 
-/// A registration handed over for persistence. The address crosses as the raw
-/// store key — the same bytes the `envio_addresses` row holds — so nothing
-/// outside this module encodes one.
+/// A drained registration paired with the checkpoint that must own its row.
+/// The address crosses as the raw store key — the same bytes the
+/// `envio_addresses` row holds — so nothing outside this module encodes one.
 #[napi(object)]
 pub struct DrainedAddress {
     pub address: Buffer,
     pub contract_id: u32,
     pub registration_block: i64,
+    /// Index into the `checkpoint_block_numbers` passed to `drain_for_write`.
+    /// The ids themselves are bigints the caller already holds, so only the
+    /// pairing crosses the boundary.
+    pub checkpoint_idx: u32,
 }
 
 /// A seeded row the store refused, rendered for the caller's warning. Only the
@@ -668,9 +652,19 @@ impl AddressStore {
 
     /// Drains the registrations awaiting persistence whose registration block is
     /// at or below `to_block_inclusive` — everything the batch being written
-    /// covers. What sits above that block stays pending for a later batch.
+    /// covers — pairing each with the checkpoint at its registration block.
+    /// What sits above that block stays pending for a later batch.
+    ///
+    /// A drained registration with no checkpoint at its block means it came from
+    /// an event this batch never processed, so the caller has no write to
+    /// attribute it to. That errors with the queue untouched, so the caller can
+    /// fail without the store having lied about what is still pending.
     #[napi]
-    pub fn drain_for_write(&self, to_block_inclusive: i64) -> Vec<DrainedAddress> {
+    pub fn drain_for_write(
+        &self,
+        to_block_inclusive: i64,
+        checkpoint_block_numbers: Vec<i64>,
+    ) -> napi::Result<Vec<DrainedAddress>> {
         let mut store = self.inner.write().unwrap();
         let mut drained = Vec::new();
         let mut pending = Vec::new();
@@ -680,14 +674,26 @@ impl AddressStore {
                 pending.push(id);
                 continue;
             }
+            let Some(checkpoint_idx) = checkpoint_block_numbers
+                .iter()
+                .position(|&block| block == entry.registration_block)
+            else {
+                return Err(napi::Error::from_reason(format!(
+                    "Registered address {} at block {} has no checkpoint in the batch that writes \
+                     it.",
+                    address_string(store.ecosystem, &entry.key),
+                    entry.registration_block
+                )));
+            };
             drained.push(DrainedAddress {
                 address: entry.key.to_vec().into(),
                 contract_id: entry.contract_idx,
                 registration_block: entry.registration_block,
+                checkpoint_idx: checkpoint_idx as u32,
             });
         }
         store.unwritten = pending;
-        drained
+        Ok(drained)
     }
 
     /// How many registrations await persistence.
@@ -1880,14 +1886,25 @@ mod tests {
             .collect()
     }
 
-    fn drained(store: &AddressStore, to_block: i64) -> Vec<(String, i64)> {
+    fn drained(
+        store: &AddressStore,
+        to_block: i64,
+        checkpoints: &[i64],
+    ) -> Vec<(String, i64, u32)> {
         let ecosystem = Ecosystem::Evm {
             should_checksum: false,
         };
         store
-            .drain_for_write(to_block)
+            .drain_for_write(to_block, checkpoints.to_vec())
+            .unwrap()
             .into_iter()
-            .map(|e| (address_string(ecosystem, &e.address), e.registration_block))
+            .map(|e| {
+                (
+                    address_string(ecosystem, &e.address),
+                    e.registration_block,
+                    e.checkpoint_idx,
+                )
+            })
             .collect()
     }
 
@@ -1902,11 +1919,33 @@ mod tests {
         assert_eq!(
             (
                 // The seeded address is already stored, so it never drains.
-                drained(&store, 300),
-                drained(&store, 300),
-                drained(&store, 400),
+                drained(&store, 300, &[100, 200]),
+                drained(&store, 300, &[100, 200]),
+                drained(&store, 400, &[400]),
             ),
-            (vec![(B.to_string(), 200)], vec![], vec![(C.to_string(), 400)])
+            (
+                vec![(B.to_string(), 200, 1)],
+                vec![],
+                vec![(C.to_string(), 400, 0)]
+            )
+        );
+    }
+
+    #[test]
+    fn draining_without_a_checkpoint_errors_and_keeps_the_queue() {
+        let store = store();
+        store
+            .register_batch(vec![reg(A, "C", 100), reg(B, "C", 200)])
+            .unwrap();
+
+        // Block 200 has no checkpoint: the batch never processed the event that
+        // registered B, so the row would be unreachable by a rollback.
+        assert!(store.drain_for_write(300, vec![100]).is_err());
+        // Nothing was consumed, so a retry with the right checkpoints still
+        // sees both — the failed drain didn't silently swallow A.
+        assert_eq!(
+            drained(&store, 300, &[100, 200]),
+            vec![(A.to_string(), 100, 0), (B.to_string(), 200, 1)]
         );
     }
 
@@ -1934,8 +1973,8 @@ mod tests {
         store.register_batch(vec![reg(B, "C", 500)]).unwrap();
 
         assert_eq!(
-            drained(&store, 1000),
-            vec![(A.to_string(), 100), (B.to_string(), 500)]
+            drained(&store, 1000, &[100, 500]),
+            vec![(A.to_string(), 100, 0), (B.to_string(), 500, 1)]
         );
     }
 

@@ -1755,16 +1755,11 @@ let make = (
           ->Int.toString} contracts, more than the 32767 a contract id can hold.`,
       )
     }
-    let addressRowsByChain =
+    let rowsByChain =
       chainConfigs->Array.map(chainConfig =>
-        chainConfig->ChainState.configAddressRows(~ecosystem, ~contractNames)
-      )
-    let configAddressRows =
-      chainConfigs
-      ->Array.map(chainConfig =>
         chainConfig->ChainState.configStorageRows(~ecosystem, ~contractNames)
       )
-      ->Array.flat
+    let configAddressRows = rowsByChain->Array.flat
 
     // The contract mapping and the config's addresses join the schema in the
     // same transaction as envio_info: a schema that comes up without them would
@@ -1809,7 +1804,7 @@ let make = (
         numEventsProcessed: 0.,
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
-        addressRows: addressRowsByChain->Array.getUnsafe(idx),
+        addressRows: rowsByChain->Array.getUnsafe(idx)->AddressRows.seedRowsOf(~isFixedWidth=false),
         sourceBlockNumber: 0,
       }),
       checkpointId: InternalTable.Checkpoints.initialCheckpointId,

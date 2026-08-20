@@ -237,21 +237,40 @@ describe("AddressStore", () => {
         {address: addr(2), contractName: "A", registrationBlock: 30},
       ])
 
-    let drain = toBlockInclusive =>
-      store->AddressStore.drainForWrite(toBlockInclusive)->Array.map(dc => dc.registrationBlock)
+    let drain = (~toBlockInclusive, ~checkpointBlockNumbers) =>
+      store
+      ->AddressStore.drainForWrite(toBlockInclusive, checkpointBlockNumbers)
+      ->Array.map(dc => (dc.contractId, dc.checkpointIdx))
 
     t.expect({
       // The config address was never pending, and addr(2) is above the bound.
-      "upToBlock20": drain(20),
-      "drainedOnce": drain(20),
-      "rest": drain(30),
+      "upToBlock20": drain(~toBlockInclusive=20, ~checkpointBlockNumbers=[5, 10]),
+      "drainedOnce": drain(~toBlockInclusive=20, ~checkpointBlockNumbers=[5, 10]),
+      "rest": drain(~toBlockInclusive=30, ~checkpointBlockNumbers=[30]),
       "nothingLeftPending": store->AddressStore.pendingEntries,
     }).toEqual({
-      "upToBlock20": [10],
+      // The checkpoint index points back at the block numbers passed in.
+      "upToBlock20": [(0, 1)],
       "drainedOnce": [],
-      "rest": [30],
+      "rest": [(0, 0)],
       "nothingLeftPending": [],
     })
+  })
+
+  it("refuses to drain a registration the batch has no checkpoint for", t => {
+    let store = TestAddresses.makeStore(~onEventRegistrations)
+    let _ =
+      store->AddressStore.registerBatch([
+        {address: addr(1), contractName: "A", registrationBlock: 10},
+      ])
+
+    t.expect(() => store->AddressStore.drainForWrite(20, [9])).toThrow()
+    t.expect(
+      // The failed drain consumed nothing, so the registration is still there
+      // to be written by a batch that does cover it.
+      store->AddressStore.pendingEntries->Array.map(ia => ia.address),
+      ~message="a failed drain leaves the queue intact",
+    ).toEqual([addr(1)])
   })
 
   // https://github.com/enviodev/hyperindex/issues/1187

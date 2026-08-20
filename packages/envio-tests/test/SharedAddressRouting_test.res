@@ -77,7 +77,9 @@ let makeSource = (~url) => {
   let chainConfig = parsed.config.chainMap->ChainMap.values->Array.getUnsafe(0)
   let _ =
     addressStore->AddressStore.seedRows(
-      chainConfig->ChainState.configAddressRows(~ecosystem=Evm, ~contractNames),
+      chainConfig
+      ->ChainState.configStorageRows(~ecosystem=Evm, ~contractNames)
+      ->AddressRows.seedRowsOf(~isFixedWidth=false),
     )
   let source = EvmHyperSyncSource.make({
     chainId: 1->ChainId.fromInt,

@@ -58,12 +58,10 @@ SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(T
   // shaped differently — so a resume has to stop at the compat check rather
   // than at a missing column.
   let exists = async (sql, ~pgSchema): bool => {
-    try {
-      let _ = await read(sql, ~pgSchema)
-      true
-    } catch {
-    | exn => isUndefinedTable(exn) ? false : throw(exn)
-    }
+    let rows: array<{"exists": bool}> = await sql->Postgres.unsafe(
+      `SELECT to_regclass('"${pgSchema}"."${table.tableName}"') IS NOT NULL AS "exists";`,
+    )
+    (rows->Array.getUnsafe(0))["exists"]
   }
 }
 

@@ -43,6 +43,12 @@ type testIndexerState = {
 let addressRowsByChain = (state: testIndexerState) =>
   state.addresses->AddressRows.group(~isFixedWidth=false)
 
+let renderRows = (rows: array<AddressRows.row>, ~config: Config.t) =>
+  rows->AddressRows.render(
+    ~ecosystem=(config.ecosystem.name :> string),
+    ~shouldChecksum=!config.lowercaseAddresses,
+  )
+
 // Rows of a per-chain entity are keyed per (chain, id): the same id exists
 // independently on every chain.
 let rowKey = (~scope: Internal.chainScope, ~entityId: EntityId.t) =>
@@ -108,28 +114,20 @@ let handleWriteBatch = (
   // change log. Rendering is the Rust codec's job, so the rows keep their keys
   // right up to here.
   let addressesByCheckpoint: dict<array<{"address": Address.t, "contract": string}>> = Dict.make()
-  registeredAddresses->Array.forEach(({row, checkpointId}) => {
+  let rendered = registeredAddresses->Array.map(({row}) => row)->renderRows(~config)
+  registeredAddresses->Array.forEachWithIndex(({row, checkpointId}, idx) => {
     state.addresses->Array.push(row)->ignore
     let key = checkpointId->BigInt.toString
-    let rendered = switch addressesByCheckpoint->Utils.Dict.dangerouslyGetNonOption(key) {
-    | Some(rendered) => rendered
+    let forCheckpoint = switch addressesByCheckpoint->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some(forCheckpoint) => forCheckpoint
     | None =>
-      let rendered = []
-      addressesByCheckpoint->Dict.set(key, rendered)
-      rendered
+      let forCheckpoint = []
+      addressesByCheckpoint->Dict.set(key, forCheckpoint)
+      forCheckpoint
     }
-    let address =
-      Core.getAddon()
-      .renderAddresses(
-        ~ecosystem=(config.ecosystem.name :> string),
-        ~shouldChecksum=!config.lowercaseAddresses,
-        ~bytes=row.address,
-        ~lengths=Null.make([row.address->NodeJs.Buffer.length]),
-      )
-      ->Array.getUnsafe(0)
-    rendered
+    forCheckpoint
     ->Array.push({
-      "address": address,
+      "address": rendered->Array.getUnsafe(idx),
       "contract": state.contractNames->Array.getUnsafe(row.contractId),
     })
     ->ignore
@@ -777,17 +775,9 @@ let createTestIndexer = (): t<'processConfig> => {
               )
             }
             let contractId = state.contractNames->Array.indexOf(contract.name)
-            let rows = state.addresses->Array.filter(row =>
-              row.chainId === chainConfig.id && row.contractId === contractId
-            )
-            Core.getAddon().renderAddresses(
-              ~ecosystem=(config.ecosystem.name :> string),
-              ~shouldChecksum=!config.lowercaseAddresses,
-              ~bytes=NodeJs.Buffer.concat(rows->Array.map(row => row.address)),
-              ~lengths=Null.make(
-                rows->Array.map(row => row.address->NodeJs.Buffer.length),
-              ),
-            )
+            state.addresses
+            ->Array.filter(row => row.chainId === chainConfig.id && row.contractId === contractId)
+            ->renderRows(~config)
           },
         },
       )

@@ -2845,7 +2845,6 @@ Always recreates optimized partitions to avoid duplicate addresses:
 // source of truth for partition cleanup: an address survives iff
 // `filterByRegistrationBlock` keeps it.
 let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber) => {
-  // Categorize partitions
   let keptPartitions = []
   let nextKeptIdRef = ref(0)
   let registeringSetsByContract: dict<AddressSet.t> = Dict.make()
