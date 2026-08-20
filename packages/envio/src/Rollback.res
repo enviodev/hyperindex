@@ -9,6 +9,7 @@ let getLastKnownValidBlock = async (
   chainState: ChainState.t,
   ~reorgBlockNumber: int,
   ~isRealtime: bool,
+  ~park=?,
 ) => {
   // Before the search, not after: it re-fetches the scanned hashes through the
   // sources, and a source answering from a cache it filled on the orphaned
@@ -27,7 +28,7 @@ let getLastKnownValidBlock = async (
   | _ => {
       let blockStore = await chainState
       ->ChainState.sourceManager
-      ->SourceManager.getBlockHashes(~blockNumbers=scannedBlockNumbers, ~isRealtime)
+      ->SourceManager.getBlockHashes(~blockNumbers=scannedBlockNumbers, ~isRealtime, ~park?)
 
       switch chainState->ChainState.getLatestValidScannedBlock(
         ~blockStore,
@@ -57,13 +58,10 @@ let rec rollback = async (
 
       state->IndexerState.enterFindingReorgDepth
 
-      // Re-fetching the scanned hashes is a source round trip, so the loop is
-      // parked here rather than working.
-      let rollbackTargetBlockNumber = await state->IndexerState.suspendInFlight(() =>
-        chainState->getLastKnownValidBlock(
-          ~reorgBlockNumber,
-          ~isRealtime=state->IndexerState.isRealtime,
-        )
+      let rollbackTargetBlockNumber = await chainState->getLastKnownValidBlock(
+        ~reorgBlockNumber,
+        ~isRealtime=state->IndexerState.isRealtime,
+        ~park=work => state->IndexerState.suspendInFlight(work),
       )
 
       state->IndexerState.foundReorgDepth(~chainId, ~rollbackTargetBlockNumber)

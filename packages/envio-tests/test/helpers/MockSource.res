@@ -1,6 +1,11 @@
 // A promise the code under test awaits, held closed until the test opens it.
 // Wrap a storage method in `gate.wait()` to stall it and observe the indexer
 // while it is blocked, instead of guessing with `Utils.delay`.
+//
+// A gate the loop enters holds it open, so a test that means to `settle` while
+// it is closed has to hand the gate the run's `park` — see `parkWith`. Left
+// unparked, the gate is invisible to the counter and `settle` waits it out
+// until its own bound, which is what its failure message says to do about it.
 module Gate = {
   type t = {
     // How many times the gate was entered, whether or not it was open.

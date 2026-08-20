@@ -35,12 +35,13 @@ type rec t = {
   // can only move again when the outside world answers. Nothing to count in
   // ticks: the loop reports its own in-flight work.
   //
-  // "The outside world answers" covers a timer before the loop asks again — a
-  // height poll between rounds, a retry's backoff — so a settled indexer isn't
-  // always one with a query waiting to be answered. An assertion that the
-  // pending set is empty needs `settleUntil` or `Scenario.waitQuery` to pin
-  // down which side of that poll it is on; a settle alone would read the gap
-  // between two polls as the answer.
+  // "The outside world answers" covers the poll a chain at its head is parked
+  // on between rounds, so a settled indexer isn't always one with a query
+  // waiting to be answered. An assertion that the pending set is empty needs
+  // `settleUntil` or `Scenario.waitQuery` to pin down which side of that poll
+  // it is on; a settle alone would read the gap between two polls as the
+  // answer. A retry's backoff is not in that category — the loop is biding its
+  // time before asking again, and settle waits it out.
   settle: unit => promise<unit>,
   // Settles, then keeps settling until the condition holds — for state that
   // only arrives once a polling interval elapses. `message` names what was
@@ -228,6 +229,13 @@ let run = async (
     }
 
     let settle = async () => {
+      if state->IndexerState.hasInFlightDeficit {
+        // Nothing downstream can be trusted once the count has gone into
+        // deficit, and waiting the bound out would only delay saying so.
+        JsError.throwWithMessage(
+          "The indexer's in-flight count went into deficit: either a fan-out counted once for work that runs many times over, or an `indexer.park` from a frame the scheduler wasn't counting.",
+        )
+      }
       let timeoutId = ref(None)
       let timedOut = ref(false)
       // Cleared whichever way the race ends: a timer left running holds the
@@ -256,11 +264,6 @@ let run = async (
           [
             state->IndexerState.inFlight > 0
               ? Some(`${state->IndexerState.inFlight->Int.toString} scheduled step(s)`)
-              : None,
-            state->IndexerState.hasInFlightDeficit
-              ? Some(
-                  `a broken in-flight count (now ${state->IndexerState.inFlight->Int.toString}) — either a fan-out counted once for work that runs many times over, or an \`indexer.park\` from a frame the scheduler wasn't counting`,
-                )
               : None,
             state->IndexerState.isProcessing ? Some("a batch being processed") : None,
             state->IndexerState.writeFiber->Option.isSome ? Some("a write") : None,

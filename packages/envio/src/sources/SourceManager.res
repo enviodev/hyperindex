@@ -1072,7 +1072,16 @@ let executeQuery = async (
   responseRef.contents->Option.getUnsafe
 }
 
-let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isRealtime: bool) => {
+let getBlockHashes = async (
+  sourceManager: t,
+  ~blockNumbers: array<int>,
+  ~isRealtime: bool,
+  // As in `executeQuery`: wraps the request, so a caller tracking what the loop
+  // is doing sees the round trip and not the retries around it.
+  ~park: (unit => promise<Source.getBlockHashesResponse>) => promise<
+    Source.getBlockHashesResponse,
+  >=work => work(),
+) => {
   let responseRef = ref(None)
   let retryRef = ref(0)
 
@@ -1100,7 +1109,7 @@ let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isReal
     )
 
     try {
-      let res = await source.getBlockHashes(~blockNumbers, ~logger)
+      let res = await park(() => source.getBlockHashes(~blockNumbers, ~logger))
       sourceState->recordRequestStats(res.requestStats)
       switch res.result {
       | Ok(data) =>
