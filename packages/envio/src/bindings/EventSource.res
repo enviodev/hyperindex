@@ -17,11 +17,6 @@ external create: (~url: string, ~options: options=?) => t = "EventSource"
 type errorEvent = {code: option<int>, message: option<string>}
 @set external onerror: (t, errorEvent => unit) => unit = "onerror"
 
-@get external readyState: t => int = "readyState"
-// The connection failed in a way the package won't retry from (non-200 status,
-// wrong content type, HTTP 204).
-let closed = 2
-
 type event = {data: string}
 @send external addEventListener: (t, string, event => unit) => unit = "addEventListener"
 @send external close: t => unit = "close"

@@ -15,7 +15,7 @@ type harness = {
   unsubscribe: unit => unit,
 }
 
-let makeHarness = (~staleTimeout=15_000, ~failOnConnect=?, ~throwOnConnect=false) => {
+let makeHarness = (~staleTimeout=15_000, ~failOnConnect=?, ~throwOnConnect=false, ~throwOnClose=false) => {
   let statuses = []
   let heights = []
   let drivers = []
@@ -33,7 +33,12 @@ let makeHarness = (~staleTimeout=15_000, ~failOnConnect=?, ~throwOnConnect=false
       | Some(reason) => driver.onFailure(~reason)
       | None => ()
       }
-      () => closes := closes.contents + 1
+      () => {
+        closes := closes.contents + 1
+        if throwOnClose {
+          JsError.throwWithMessage("Socket already gone")
+        }
+      }
     },
   )
   {statuses, heights, drivers, closes, unsubscribe}
@@ -212,6 +217,21 @@ describe("HeightStream reconnect driver", () => {
       ["live"],
       ["live", "down:stale"],
       [42],
+    ))
+  })
+
+  Async.it("Retries even when closing the failed connection throws", async t => {
+    let harness = makeHarness(~throwOnClose=true)
+    let driver = harness->driverAt(0)
+    driver.onConnected()
+    driver.onFailure(~reason="closed")
+
+    await Vi.advanceTimersByTimeAsync(250)
+    harness.unsubscribe()
+
+    t.expect((harness.drivers->Array.length, harness.statuses)).toStrictEqual((
+      2,
+      ["live", "down:closed"],
     ))
   })
 

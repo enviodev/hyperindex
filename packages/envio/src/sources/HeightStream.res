@@ -39,6 +39,8 @@ let subscribe = (
   ~staleTimeout: int,
   ~onHeight: int => unit,
   ~onStatus: Source.heightSubscriptionStatus => unit,
+  // Must not allocate anything it can then throw past: a throw leaves the driver
+  // without the close function, so only the transport can release what it took.
   ~connect: driver => unit => unit,
 ): (unit => unit) => {
   let closeConnectionRef = ref(None)
@@ -62,9 +64,14 @@ let subscribe = (
     timeoutId := None
   }
 
+  // A transport that throws while closing must not be able to stop the retry
+  // that follows, nor escape a timer callback and take the process down.
   let closeConnection = () => {
     switch closeConnectionRef.contents {
-    | Some(closeConnection) => closeConnection()
+    | Some(closeConnection) =>
+      try closeConnection() catch {
+      | _ => ()
+      }
     | None => ()
     }
     closeConnectionRef := None
