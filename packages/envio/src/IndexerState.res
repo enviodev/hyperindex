@@ -592,6 +592,10 @@ let trackInFlight = (state: t, work: unit => promise<'a>): promise<'a> => {
 // until the answer lands. The count is given up only once `work` has run its
 // synchronous part, which is where a fan-out registers its own units: giving it
 // up first would read as idle in the window before they are counted.
+//
+// Deliberately without `trackInFlight`'s guard on a synchronously throwing
+// thunk: this one exits after the call and re-enters in the reaction, so a
+// throw before either leaves the count exactly as it found it.
 let suspendInFlight = (state: t, work: unit => promise<'a>): promise<'a> => {
   let promise = work()
   state->exitInFlight
