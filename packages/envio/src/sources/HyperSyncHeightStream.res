@@ -8,7 +8,7 @@ let failure = (error: EventSource.errorEvent) =>
   | (None, Some(message)) => ("error", Some(message))
   // The stream ended without an HTTP error, which is how a load balancer
   // rotating connections shows up.
-  | (None, None) => ("closed", None)
+  | (None, None) => (HeightStream.closedReason, None)
   }
 
 let subscribe = (~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>

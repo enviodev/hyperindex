@@ -3071,6 +3071,70 @@ describe("SourceManager height subscription", () => {
     let _ = await p2
   })
 
+  Async.it("Polls a source whose subscription was closed by disabling it", async t => {
+    let mock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow, #createHeightSubscription])
+    let fallbackMock = MockSource.make([#getItemsOrThrow], ~sourceFor=Fallback)
+    let sourceManager = SourceManager.make(
+      ~isRealtime=true,
+      ~sources=[mock.source, fallbackMock.source],
+    )
+
+    let waiting =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=true,
+        ~knownHeight=100,
+        ~reducedPolling=false,
+      )
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+    mock.setHeightSubscriptionStatus(Live)
+    await Utils.delay(0)
+    // The catch-up the connect fired, answered at the height we already know so
+    // the wait stays in flight.
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+    let pollsBeforeDisable = mock.getHeightOrThrowCalls->Array.length
+
+    // An unrecoverable selection error is what benches a source for good.
+    let query =
+      sourceManager->SourceManager.executeQuery(
+        ~query={
+          partitionId: "0",
+          itemsTarget: Some(5000),
+          itemsEst: 5000,
+          fromBlock: 0,
+          toBlock: None,
+          isChunk: false,
+          selection: {dependsOnAddresses: false, onEventRegistrations: []},
+          addresses: TestAddresses.setOf([]),
+        },
+        ~isRealtime=true,
+        ~knownHeight=100,
+      )
+    switch mock.getItemsOrThrowCalls {
+    | [call] => call.reject(Source.GetItemsError(UnsupportedSelection({message: "test disable"})))
+    | _ => JsError.throwWithMessage("Expected one pending call to the primary source")
+    }
+    await Utils.delay(0)
+    switch fallbackMock.getItemsOrThrowCalls {
+    | [call] => call.resolve([])
+    | _ => JsError.throwWithMessage("Expected the fallback to take the query over")
+    }
+    let _ = await query
+    await Utils.delay(0)
+
+    // The wait was in flight when the source was benched. Left looking live it
+    // would sit on the staleness backstop against a socket that is closed and
+    // will never push again.
+    t.expect((
+      mock.heightSubscriptionCloseCalls->Array.length,
+      mock.getHeightOrThrowCalls->Array.length > pollsBeforeDisable,
+    )).toEqual((1, true))
+
+    mock.resolveGetHeightOrThrow(101)
+    t.expect(await waiting).toBe(101)
+  })
+
   // Brings a source to the point where its height subscription exists and is
   // live, which is where every fallback scenario below starts.
   let subscribeAndGoLive = async (mock: MockSource.t, sourceManager, ~knownHeight) => {

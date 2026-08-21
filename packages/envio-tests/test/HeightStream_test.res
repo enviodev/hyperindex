@@ -182,6 +182,50 @@ describe("HeightStream reconnect driver", () => {
     )
   })
 
+  Async.it("Names a clean end after a proven connection a rotation", async t => {
+    // A quarter of this is the bar a connection has to clear, and staying under
+    // it is what keeps these connections from failing as stale instead.
+    let harness = makeHarness(~staleTimeout=60_000)
+
+    // Dies before it has served the quarter of the stale window that makes a
+    // connection worth having made: a server dropping connections, not a
+    // rotation.
+    let young = harness->driverAt(0)
+    young.onConnected()
+    await Vi.advanceTimersByTimeAsync(10_000)
+    young.onFailure(~reason=HeightStream.closedReason)
+    await Vi.advanceTimersByTimeAsync(250)
+
+    // Served well past it, then the stream ended without an error, which is
+    // what a load balancer rotating connections looks like from here.
+    let rotated = harness->driverAt(1)
+    rotated.onConnected()
+    await Vi.advanceTimersByTimeAsync(30_000)
+    rotated.onFailure(~reason=HeightStream.closedReason)
+    harness.unsubscribe()
+
+    t.expect(harness.statuses).toStrictEqual([
+      "live",
+      "down:closed",
+      "live",
+      "down:rotated",
+    ])
+  })
+
+  Async.it("Leaves a failure that is not a clean end alone, however long it served", async t => {
+    let harness = makeHarness(~staleTimeout=60_000)
+
+    let driver = harness->driverAt(0)
+    driver.onConnected()
+    await Vi.advanceTimersByTimeAsync(30_000)
+    // Staleness and errors are named after what happened, so only an end with
+    // nothing wrong with it can become a rotation.
+    driver.onFailure(~reason="error")
+    harness.unsubscribe()
+
+    t.expect(harness.statuses).toStrictEqual(["live", "down:error"])
+  })
+
   Async.it("Trims a failure detail that would flood the log", async t => {
     let harness = makeHarness()
     (harness->driverAt(0)).onFailure(~reason="subscribe-rejected", ~detail=String.repeat("y", 500))

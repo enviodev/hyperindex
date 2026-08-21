@@ -72,7 +72,7 @@ let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
     })
 
     ws->WebSocket.onerror(error => driver.onFailure(~reason="error", ~detail=?error->JsExn.message))
-    ws->WebSocket.onclose(() => driver.onFailure(~reason="closed"))
+    ws->WebSocket.onclose(() => driver.onFailure(~reason=HeightStream.closedReason))
 
     () => ws->WebSocket.close
   })

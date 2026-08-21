@@ -221,6 +221,9 @@ type t = {
   resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
   // Height subscription mocking
   heightSubscriptionCalls: array<bool>,
+  // Closes performed by the consumer, as opposed to the ones this mock's own
+  // `unsubscribeHeightSubscription` simulates.
+  heightSubscriptionCloseCalls: array<bool>,
   triggerHeightSubscription: int => unit,
   setHeightSubscriptionStatus: Source.heightSubscriptionStatus => unit,
   unsubscribeHeightSubscription: unit => unit,
@@ -251,6 +254,7 @@ let make = (
   let getBlockHashesResolveFns = []
   // Height subscription state
   let heightSubscriptionCalls = []
+  let heightSubscriptionCloseCalls = []
   let heightSubscriptionCallbacks: array<int => unit> = []
   let heightSubscriptionStatusCallbacks: array<Source.heightSubscriptionStatus => unit> = []
   let heightSubscriptionUnsubscribed = ref(false)
@@ -352,6 +356,7 @@ let make = (
       getBlockHashesResolveFns->Utils.Array.clearInPlace
     },
     heightSubscriptionCalls,
+    heightSubscriptionCloseCalls,
     triggerHeightSubscription: height => {
       if !heightSubscriptionUnsubscribed.contents {
         heightSubscriptionCallbacks->Array.forEach(callback => callback(height))
@@ -542,6 +547,7 @@ let make = (
               heightSubscriptionStatusCallbacks->Array.push(onStatus)->ignore
               heightSubscriptionUnsubscribed := false
               () => {
+                heightSubscriptionCloseCalls->Array.push(true)->ignore
                 heightSubscriptionUnsubscribed := true
                 heightSubscriptionCallbacks->Utils.Array.clearInPlace
                 heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace

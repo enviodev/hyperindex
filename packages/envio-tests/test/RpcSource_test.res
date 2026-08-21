@@ -1952,3 +1952,63 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
     },
   )
 })
+
+describe("RpcSource - height subscription", () => {
+  let makeSource = (~url, ~ws=?, ~pollingInterval=10) =>
+    RpcSource.make({
+      url,
+      chainId,
+      onEventRegistrations: [],
+      sourceFor: Sync,
+      syncConfig: EvmChain.getSyncConfig({pollingInterval: pollingInterval}),
+      lowercaseAddresses: false,
+      addressStore: TestAddresses.makeStore(),
+      ?ws,
+    })
+
+  it("Creates a height subscription only when a ws url is configured", t => {
+    t.expect((
+      makeSource(~url="https://rpc.example.test").createHeightSubscription->Option.isSome,
+      makeSource(
+        ~url="https://rpc.example.test",
+        ~ws="wss://rpc.example.test/ws",
+      ).createHeightSubscription->Option.isSome,
+    )).toEqual((false, true))
+  })
+
+  Async.it("Advances by polling when no ws url is configured", async t => {
+    let height = ref(100)
+    let blockNumberCalls = ref(0)
+    let mock = await MockRpcServer.make(~getResult=method =>
+      switch method {
+      | "eth_blockNumber" =>
+        blockNumberCalls := blockNumberCalls.contents + 1
+        // Stays at the known height until the wait has polled more than once,
+        // so a pass can't come from the single poll that precedes subscribing.
+        if blockNumberCalls.contents > 2 {
+          height := 101
+        }
+        JSON.String(`0x${height.contents->Int.toString(~radix=16)}`)
+      | _ => JSON.Null
+      }
+    )
+
+    let source = makeSource(~url=mock.url)
+    let sourceManager = SourceManager.make(~isRealtime=true, ~sources=[source])
+
+    let newHeight = try await sourceManager->SourceManager.waitForNewBlock(
+      ~knownHeight=100,
+      ~isRealtime=true,
+      ~reducedPolling=false,
+    ) catch {
+    | exn =>
+      mock.close()
+      throw(exn)
+    }
+    mock.close()
+
+    // Nothing pushes heights on this source, so the wait has to have polled its
+    // way to the new one.
+    t.expect((newHeight, blockNumberCalls.contents > 2)).toEqual((101, true))
+  })
+})

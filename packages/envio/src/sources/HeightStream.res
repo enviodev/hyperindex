@@ -43,6 +43,12 @@ let maxRetryExponent = 20
 // tells them apart. A fixed floor can't do it: one low enough to clear on a
 // healthy connection is one a connection that dies seconds in clears too.
 let provenStaleFraction = 4
+// A transport reports a stream that ended without an error as `closedReason`.
+// Whether that was a rotation or a server in trouble is not something either
+// transport can tell, so the driver decides it from how long the connection
+// lasted — the same measure the backoff already trusts.
+let closedReason = "closed"
+let rotatedReason = "rotated"
 // A frame nobody could read ends up in a log line, so cap what a provider can
 // put there.
 let maxDetailLength = 200
@@ -152,6 +158,12 @@ let subscribe = (
       }
 
     let retryMillis = retryDelayFor(failureCount.contents)
+
+    // A clean end to a connection that had proven itself is a rotation: routine,
+    // and worth telling apart from the same clean end arriving early, which is a
+    // server dropping connections it should be serving.
+    let reason =
+      reason === closedReason && servedMillis >= provenMillis ? rotatedReason : reason
 
     // Scheduled before reporting, so a consumer that throws can't be what makes
     // the stream give up.
