@@ -174,6 +174,8 @@ type rawSimulateItem
 
 @get external getContract: rawSimulateItem => option<string> = "contract"
 @get external getEvent: rawSimulateItem => option<string> = "event"
+@get external getProgram: rawSimulateItem => option<string> = "program"
+@get external getInstruction: rawSimulateItem => option<string> = "instruction"
 
 let findEventConfig = (~config: Config.t, ~contractName: string, ~eventName: string) => {
   let found = ref(None)
@@ -240,18 +242,71 @@ let deriveSrcAddress = (
   }
 }
 
+type parseResult = {
+  items: array<Internal.item>,
+  transactionStore: option<TransactionStore.t>,
+  blockStore: option<BlockStore.t>,
+}
+
+type svmSimActivity = {
+  address: string,
+  transactionAccountIndex?: int,
+  isSigner?: bool,
+  isWritable?: bool,
+  lamports?: {pre?: bigint, post?: bigint},
+  token?: {
+    mint?: string,
+    owner?: string,
+    decimals?: int,
+    preAmount?: bigint,
+    postAmount?: bigint,
+  },
+}
+
+type svmSimTransaction = {
+  transactionIndex?: int,
+  signature?: string,
+  allSignatures?: array<string>,
+  feePayer?: string,
+  success?: bool,
+  err?: string,
+  fee?: bigint,
+  computeUnitsConsumed?: bigint,
+  accountKeys?: array<string>,
+  recentBlockhash?: string,
+  version?: string,
+  accountActivities?: array<svmSimActivity>,
+}
+
+let liveRegistrationsFor = (
+  ~config: Config.t,
+  ~chainId: ChainId.t,
+  ~eventConfig: Internal.eventConfig,
+) =>
+  HandlerRegister.getSimulateOnEventRegistrations(
+    ~config,
+    ~chainId,
+    ~eventConfig,
+  )->Array.filter(reg =>
+    (reg.handler->Option.isSome || reg.contractRegister->Option.isSome) &&
+      !HandlerRegister.isDroppedByWhere(~config, reg)
+  )
+
 let parse = (
   ~simulateItems: array<JSON.t>,
   ~config: Config.t,
   ~chainConfig: Config.chain,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
-): array<Internal.item> => {
+): parseResult => {
   let chainId = chainConfig.id
   let startBlock = chainConfig.startBlock
   let currentBlock = ref(startBlock)
   let currentLogIndex = ref(0)
 
   let items = []
+  let svmTxs: array<TransactionStore.svmTxInput> = []
+  let svmActivities: array<TransactionStore.svmActivityInput> = []
+  let svmBlocks: array<BlockStore.inputBlock> = []
   // Coordinate "block:logIndex" -> the index of the first item that claimed it,
   // used to reject two items resolving to the same (block, logIndex).
   let seenCoordinates = Dict.make()
@@ -259,8 +314,189 @@ let parse = (
   simulateItems->Array.forEachWithIndex((rawJson, itemIndex) => {
     let raw = rawJson->(Utils.magic: JSON.t => rawSimulateItem)
 
-    switch (raw->getContract, raw->getEvent) {
-    | (Some(contractName), Some(eventName)) =>
+    switch (config.ecosystem.name, raw->getProgram, raw->getInstruction) {
+    | (Svm, Some(programName), Some(instructionName)) =>
+      let eventConfig = switch findEventConfig(
+        ~config,
+        ~contractName=programName,
+        ~eventName=instructionName,
+      ) {
+      | Some(ec) => ec
+      | None =>
+        JsError.throwWithMessage(
+          `simulate: Instruction "${instructionName}" not found on program "${programName}". ` ++ `Check that the program and instruction names match your config.yaml.`,
+        )
+      }
+      let svmEventConfig =
+        eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+      let item = rawJson->(Utils.magic: JSON.t => Envio.svmSimulateItem)
+      let rawItem = rawJson->(Utils.magic: JSON.t => {..})
+      let blockJson: option<JSON.t> =
+        rawItem["block"]->(Utils.magic: 'a => Nullable.t<JSON.t>)->Nullable.toOption
+      let slot = switch item.slot {
+      | Some(s) => s
+      | None =>
+        switch blockJson {
+        | Some(bj) =>
+          switch (bj->(Utils.magic: JSON.t => dict<JSON.t>))->Dict.get("slot") {
+          | Some(v) =>
+            v->(Utils.magic: JSON.t => Nullable.t<int>)->Nullable.toOption->Option.getOr(
+              currentBlock.contents,
+            )
+          | None => currentBlock.contents
+          }
+        | None => currentBlock.contents
+        }
+      }
+      currentBlock := slot
+      let transaction = switch item.transaction {
+      | Some(tx) => tx->(Utils.magic: unknown => svmSimTransaction)
+      | None => {}
+      }
+      let transactionIndex = transaction.transactionIndex->Option.getOr(0)
+      let path = item.path->Option.getOr([0])
+      let programId =
+        item.programId->Option.getOr(svmEventConfig.programId->SvmTypes.Pubkey.toString)
+      let accountArguments = switch item.accountArguments {
+      | Some(args) => args
+      | None =>
+        switch item.accounts {
+        | Some(named) =>
+          svmEventConfig.accounts->Array.map(name =>
+            switch named->Dict.get(name) {
+            | Some({address}) => address
+            | None => ""
+            }
+          )
+        | None => []
+        }
+      }
+      let data = item.data->Option.getOr(svmEventConfig.discriminator->Option.getOr("0x"))
+      let decoded = item.args->Option.map(args => (
+        {
+          SvmHyperSyncClient.ResponseTypes.name: instructionName,
+          argsJson: args->JSON.stringify,
+          accountsJson: "{}",
+          extraAccounts: [],
+        }: SvmHyperSyncClient.ResponseTypes.decodedInstruction
+      ))
+      let logs = item.logs->Option.map(logs =>
+        logs->Array.map((log): SvmHyperSyncClient.EventItems.log => {
+          kind: ?log.kind,
+          message: ?log.message,
+        })
+      )
+
+      let liveRegistrations = liveRegistrationsFor(~config, ~chainId, ~eventConfig)
+      if liveRegistrations->Utils.Array.isEmpty {
+        JsError.throwWithMessage(
+          `simulate: no handler runs for instruction "${instructionName}" on program "${programName}". Register a handler with indexer.onInstruction before simulating it.`,
+        )
+      }
+
+      svmTxs
+      ->Array.push({
+        slot,
+        transactionIndex,
+        signature: ?transaction.signature,
+        allSignatures: ?transaction.allSignatures,
+        feePayer: ?transaction.feePayer,
+        success: ?transaction.success,
+        err: ?transaction.err,
+        fee: ?transaction.fee,
+        computeUnitsConsumed: ?transaction.computeUnitsConsumed,
+        accountKeys: ?transaction.accountKeys,
+        recentBlockhash: ?transaction.recentBlockhash,
+        version: ?transaction.version,
+      })
+      ->ignore
+      switch transaction.accountActivities {
+      | Some(rows) =>
+        rows->Array.forEach(activity =>
+          svmActivities
+          ->Array.push({
+            TransactionStore.slot,
+            transactionIndex,
+            account: activity.address,
+            accountIndex: ?activity.transactionAccountIndex,
+            isSigner: ?activity.isSigner,
+            isWritable: ?activity.isWritable,
+            preBalance: ?activity.lamports->Option.flatMap(l => l.pre),
+            postBalance: ?activity.lamports->Option.flatMap(l => l.post),
+            mint: ?activity.token->Option.flatMap(t => t.mint),
+            owner: ?activity.token->Option.flatMap(t => t.owner),
+            decimals: ?activity.token->Option.flatMap(t => t.decimals),
+            preAmount: ?activity.token->Option.flatMap(t => t.preAmount),
+            postAmount: ?activity.token->Option.flatMap(t => t.postAmount),
+          })
+          ->ignore
+        )
+      | None => ()
+      }
+      let blockTime = switch item.block {
+      | Some(block) => block.time
+      | None => None
+      }
+      let blockHash = switch item.block {
+      | Some(block) => block.hash
+      | None => None
+      }
+      svmBlocks
+      ->Array.push({
+        blockNumber: slot,
+        ?blockHash,
+        blockTimestamp: ?blockTime,
+      })
+      ->ignore
+
+      liveRegistrations->Array.forEach(reg => {
+        let onEventRegistrationIndex = onEventRegistrations->Array.length
+        let onEventRegistration = {...reg, index: onEventRegistrationIndex}
+        onEventRegistrations->Array.push(onEventRegistration)->ignore
+        let payload = SvmHyperSyncSource.toSvmInstruction(
+          {
+            onEventRegistrationIndex,
+            slot,
+            transactionIndex,
+            path,
+            programId,
+            accounts: accountArguments,
+            data,
+            isInner: item.isInner->Option.getOr(false),
+            ?decoded,
+            ?logs,
+          },
+          ~programName,
+          ~instructionName,
+          ~eventConfig=svmEventConfig,
+          ~fieldSelection=onEventRegistration.fieldSelection,
+        )
+        let payloadDict = payload->(Utils.magic: Envio.svmInstruction => dict<unknown>)
+        payloadDict->Dict.set("srcAddress", programId->(Utils.magic: string => unknown))
+        items
+        ->Array.push(
+          Internal.Event({
+            onEventRegistration,
+            chainId,
+            blockNumber: slot,
+            logIndex: transactionIndex,
+            orderPath: path,
+            transactionIndex,
+            payload: payload->(Utils.magic: Envio.svmInstruction => Internal.eventPayload),
+          }),
+        )
+        ->ignore
+      })
+
+    | (Svm, _, _) =>
+      JsError.throwWithMessage(`simulate: Invalid item. Each item must have "program" and "instruction" fields.`)
+
+    | (_, _, _) =>
+      let (contractName, eventName) = switch (raw->getContract, raw->getEvent) {
+      | (Some(c), Some(e)) => (c, e)
+      | _ =>
+        JsError.throwWithMessage(`simulate: Invalid item. Each item must have "contract" and "event" fields.`)
+      }
       // Event simulate item
       let eventConfig = switch findEventConfig(~config, ~contractName, ~eventName) {
       | Some(ec) => ec
@@ -399,13 +635,21 @@ let parse = (
         )
         ->ignore
       })
-
-    | _ =>
-      JsError.throwWithMessage(`simulate: Invalid item. Each item must have "contract" and "event" fields.`)
     }
   })
 
-  items
+  switch config.ecosystem.name {
+  | Svm => {
+      items,
+      transactionStore: Some(TransactionStore.fromSvmJs(svmTxs, svmActivities)),
+      blockStore: Some(BlockStore.fromJs(svmBlocks, ~ecosystem=Svm, ~shouldChecksum=false)),
+    }
+  | _ => {
+      items,
+      transactionStore: None,
+      blockStore: None,
+    }
+  }
 }
 
 // Apply simulate source config from processConfig JSON to a Config.t
@@ -444,13 +688,21 @@ let patchConfig = (
           // Parse with the process's startBlock so items default into the range
           // the source will be queried over; the source now filters by range.
           let chainConfig = {...chainConfig, startBlock, endBlock}
-          let items = parse(
+          let {items, transactionStore, blockStore} = parse(
             ~simulateItems,
             ~config,
             ~chainConfig,
             ~onEventRegistrations=chainRegistrations.onEventRegistrations,
           )
-          {...chainConfig, sourceConfig: Config.SimulateSourceConfig({items, endBlock})}
+          {
+            ...chainConfig,
+            sourceConfig: Config.SimulateSourceConfig({
+              items,
+              endBlock,
+              ?transactionStore,
+              ?blockStore,
+            }),
+          }
         | None => chainConfig
         }
       | None => chainConfig

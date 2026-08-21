@@ -3,5 +3,6 @@ name: solana-block-handler
 ecosystem: svm
 full_batch_size: 10
 chains:
-  - rpc: ${ENVIO_MAINNET_RPC_URL:-https://api.mainnet-beta.solana.com}
+  - id: solana
+    rpc: ${ENVIO_MAINNET_RPC_URL:-https://api.mainnet-beta.solana.com}
     start_block: 385453000

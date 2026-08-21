@@ -1,7 +1,8 @@
 open Source
 
-// Surfaced by HyperSyncClient.getHeight (Rust) when HyperSync rejects the API
-// token. The corrupted-token test feeds the real server error through this
+// Surfaced by the HyperSync client (Rust) when HyperSync rejects the API
+// token. The corrupted-token test feeds the real server error (from the query
+// endpoint; the edge no longer 401s malformed tokens on /height) through this
 // check so it can't silently drift away from what getHeightOrThrow guards on.
 let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
 
@@ -194,7 +195,11 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
   }
 
-  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=client.getBlockHashes)
+  // Called through the client rather than passed as a value: the client is a
+  // napi class, so a detached method reference loses the instance it belongs to.
+  let getBlockHashes = HyperSync.makeGetBlockHashes(
+    ~query=(~blockNumbers) => client.getBlockHashes(~blockNumbers),
+  )
 
   {
     name,

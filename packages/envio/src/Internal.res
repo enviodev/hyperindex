@@ -149,8 +149,8 @@ type svmTransactionField =
   | @as("accountKeys") AccountKeys
   | @as("recentBlockhash") RecentBlockhash
   | @as("version") Version
-  | @as("tokenBalances") TokenBalances
   | @as("allSignatures") AllSignatures
+  | @as("accountActivities") AccountActivities
 
 let allSvmTransactionFields: array<svmTransactionField> = [
   TransactionIndex,
@@ -163,13 +163,12 @@ let allSvmTransactionFields: array<svmTransactionField> = [
   AccountKeys,
   RecentBlockhash,
   Version,
-  TokenBalances,
   AllSignatures,
+  AccountActivities,
 ]
-let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
 
-// All SVM block fields. `slot`/`time`/`hash` are always included; the rest are
-// selectable via `field_selection.block_fields` (see `allSvmBlockFields`).
+// All SVM block fields. `slot` is always included (the item's key); the rest
+// are selectable via handler `fields.block`.
 type svmBlockField =
   | @as("slot") Slot
   | @as("time") Time
@@ -177,9 +176,6 @@ type svmBlockField =
   | @as("height") Height
   | @as("parentSlot") ParentSlot
   | @as("parentHash") ParentHash
-
-let allSvmBlockFields: array<svmBlockField> = [Height, ParentSlot, ParentHash]
-let svmBlockFieldSchema = S.enum(allSvmBlockFields)
 
 // Static sets of field names whose source schemas must be wrapped with S.nullable.
 let evmNullableBlockFields = Utils.Set.fromArray(
@@ -427,6 +423,9 @@ type indexingContract = {
 type fieldSelection = {
   blockFields: Utils.Set.t<string>,
   transactionFields: Utils.Set.t<string>,
+  instructionFields: Utils.Set.t<string>,
+  accountActivityFields: Utils.Set.t<string>,
+  logFields: Utils.Set.t<string>,
   // The sets precompiled to the store selections `ChainState` materialises with.
   blockMask: float,
   transactionMask: float,
@@ -438,11 +437,17 @@ type fieldSelection = {
 let makeFieldSelection = (
   ~blockFields: Utils.Set.t<string>,
   ~transactionFields: Utils.Set.t<string>,
+  ~instructionFields: Utils.Set.t<string>=Utils.Set.make(),
+  ~accountActivityFields: Utils.Set.t<string>=Utils.Set.make(),
+  ~logFields: Utils.Set.t<string>=Utils.Set.make(),
   ~blockMaskFn: Utils.Set.t<string> => float,
   ~transactionMaskFn: Utils.Set.t<string> => float,
 ): fieldSelection => {
   blockFields,
   transactionFields,
+  instructionFields,
+  accountActivityFields,
+  logFields,
   blockMask: blockMaskFn(blockFields),
   transactionMask: transactionMaskFn(transactionFields),
 }
@@ -459,6 +464,9 @@ let unionFields = (a, b) => a === b ? a : a->Utils.Set.union(b)
 let unionFieldSelection = (a: fieldSelection, b: fieldSelection): fieldSelection => {
   blockFields: unionFields(a.blockFields, b.blockFields),
   transactionFields: unionFields(a.transactionFields, b.transactionFields),
+  instructionFields: unionFields(a.instructionFields, b.instructionFields),
+  accountActivityFields: unionFields(a.accountActivityFields, b.accountActivityFields),
+  logFields: unionFields(a.logFields, b.logFields),
   blockMask: FieldMask.orMask(a.blockMask, b.blockMask),
   transactionMask: FieldMask.orMask(a.transactionMask, b.transactionMask),
 }
@@ -569,7 +577,6 @@ type svmInstructionEventConfig = {
    `dN` selector at query time and the dispatch-key precomputation in the
    router. */
   discriminatorByteLen: int,
-  includeLogs: bool,
   /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
    AND across positions. Empty outer array means "no account filter". */
   accountFilters: array<svmAccountFilterGroup>,
@@ -661,6 +668,7 @@ type eventItem = private {
   chainId: ChainId.t,
   blockNumber: int,
   logIndex: int,
+  orderPath?: array<int>,
   // Within-block transaction index — the key into the per-chain transaction
   // store. Unused (0) for ecosystems that carry the transaction inline (Fuel).
   transactionIndex: int,
@@ -714,17 +722,31 @@ type item =
       chainId: ChainId.t,
       blockNumber: int,
       logIndex: int,
+      // Ordering tiebreak for ecosystems whose within-block order isn't a
+      // scalar. SVM keys an instruction by `(transactionIndex, path)`: the
+      // logIndex above is the transaction, this is its position in that
+      // transaction's CPI tree. Absent on EVM and Fuel, whose log/receipt
+      // index already totally orders a block.
+      orderPath?: array<int>,
       transactionIndex: int,
       payload: eventPayload,
     })
-  | @as(1) Block({onBlockRegistration: onBlockRegistration, blockNumber: int, logIndex: int})
+  | @as(1) Block({onBlockRegistration: onBlockRegistration, blockNumber: int})
 
 external castUnsafeEventItem: item => eventItem = "%identity"
 
 @get
 external getItemBlockNumber: item => int = "blockNumber"
+// Only meaningful on an `Event`: a block item has no log index, and the buffer
+// comparator reads this only after the kinds match.
 @get
 external getItemLogIndex: item => int = "logIndex"
+@get
+external getItemOrderPath: item => Nullable.t<array<int>> = "orderPath"
+// The variant tag. Read directly so the comparator can order every event of a
+// block ahead of that block's handlers without a `switch`.
+@get
+external getItemKind: item => int = "kind"
 
 let getItemChainId = item =>
   switch item {
@@ -732,9 +754,8 @@ let getItemChainId = item =>
   | Block({onBlockRegistration: {chainId}}) => chainId
   }
 
-// The `fields` option of an EVM `onEvent`/`contractRegister` registration:
-// the block and transaction fields the handler reads. Replaces the config
-// `field_selection` for this registration.
+// EVM `fields` bag. Parsed from the JS object as `unknown` at registration;
+// this record exists so ReScript tests can construct a typed EVM selection.
 type evmFieldsSelection = {
   block?: array<string>,
   transaction?: array<string>,
@@ -743,7 +764,7 @@ type evmFieldsSelection = {
 type eventOptions<'where> = {
   wildcard?: bool,
   where?: 'where,
-  fields?: evmFieldsSelection,
+  fields?: unknown,
 }
 
 type fuelSupplyParams = {
@@ -767,12 +788,23 @@ let fuelTransferParamsSchema = S.schema(s => {
 
 type entity = private {id: string}
 
+// A data skipping index emitted into the history table DDL as
+// `INDEX <name> <expr> TYPE <type> GRANULARITY <granularity>`.
+type clickhouseSkippingIndex = {
+  name: string,
+  expr: string,
+  @as("type")
+  type_: string,
+  granularity?: int,
+}
+
 // Raw ClickHouse expressions/field names from the entity's
 // @storage(clickhouse: {...}) directive, applied to the history table DDL.
 type clickhouseTableOptions = {
   partitionBy?: string,
   orderBy?: array<string>,
   ttl?: string,
+  skippingIndexes?: array<clickhouseSkippingIndex>,
 }
 
 // Per-entity storage resolved at parse time against the global storage
@@ -793,6 +825,9 @@ type genericEntityConfig<'entity> = {
   // entity's `@crossChain`. When false the table carries a chain-id column in
   // its primary key and every row belongs to exactly one chain.
   crossChain: bool,
+  // `@internal` on the entity: stored and usable in handlers as normal, but
+  // never exposed through the GraphQL API (no Hasura tracking).
+  internal: bool,
 }
 type entityConfig = genericEntityConfig<entity>
 external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"

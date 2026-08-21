@@ -148,7 +148,7 @@ let prepareRollbackDiff = async (
   let _ = await persistence.allEntities
   ->Array.filter(entityConfig => entityConfig.storage.postgres)
   ->Array.map(async entityConfig => {
-    let (removals, restoredEntitiesResult) = await persistence.storage.getRollbackData(
+    let (removals, restoredEntities) = await persistence.storage.getRollbackData(
       ~entityConfig,
       ~rollbackTargetCheckpointId,
     )
@@ -165,11 +165,6 @@ let prepareRollbackDiff = async (
         }),
       )
     })
-
-    let restoredEntities =
-      restoredEntitiesResult
-      ->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
-      ->(Utils.magic: array<unknown> => array<Internal.entity>)
 
     restoredEntities->Array.forEach((entity: Internal.entity) => {
       let scope = entity->takeRowScope(~entityConfig)

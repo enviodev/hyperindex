@@ -147,11 +147,13 @@ type storage = {
       "new_progress_block_number": int,
     }>,
   >,
-  // Get rollback data for entity
+  // Rollback data for an entity, as decoded entities rather than storage rows:
+  // only the storage knows how it encoded them, so each one decodes its own
+  // before handing them back.
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => promise<(array<rollbackRemoval>, array<unknown>)>,
+  ) => promise<(array<rollbackRemoval>, array<Internal.entity>)>,
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,

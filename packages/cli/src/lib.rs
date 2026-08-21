@@ -19,6 +19,7 @@ mod fuel;
 mod fuel_hypersync_source;
 mod hbs_templating;
 mod hex;
+mod mock_hypersync_server;
 #[cfg_attr(test, allow(dead_code))]
 mod napi;
 mod project_paths;

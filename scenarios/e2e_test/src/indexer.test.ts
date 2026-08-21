@@ -70,6 +70,15 @@ describe("Indexer smoke test", () => {
                   },
                 ],
               },
+              "TransferInternal": {
+                "sets": [
+                  {
+                    "from": "0x0000000000000000000000000000000000000000",
+                    "id": "1-10861674-23",
+                    "value": 1000000000000000000000000000n,
+                  },
+                ],
+              },
               "TransferPgOnly": {
                 "sets": [
                   {

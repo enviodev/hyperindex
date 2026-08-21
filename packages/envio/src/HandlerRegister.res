@@ -82,6 +82,36 @@ let startRegistration = (~config: Config.t) => {
   }
 }
 
+// A registration a caller owns, rather than the single implicit one
+// `startRegistration` installs. Tests run several indexers in one process, each
+// with its own config, and handlers must register against the config they were
+// written for.
+type registration = activeRegistration
+
+let makeRegistration = (~config: Config.t): registration => {
+  config,
+  registrationsByChainId: Dict.make(),
+  finished: false,
+}
+
+// Makes `registration` the target of `indexer.onEvent` & co. for the duration
+// of `fn`, restoring whatever was active before — so one caller's handlers
+// never land in another's registration. Concurrent scopes would still clobber
+// each other: the pointer they swap is process-global.
+let useRegistration = async (registration: registration, fn) => {
+  let previous = EnvioGlobal.value.activeRegistration
+  EnvioGlobal.value.activeRegistration = Some(registration->(Utils.magic: registration => unknown))
+  let restore = () => EnvioGlobal.value.activeRegistration = previous
+  switch await fn() {
+  | result =>
+    restore()
+    result
+  | exception exn =>
+    restore()
+    throw(exn)
+  }
+}
+
 let getChainRegistrations = (r: activeRegistration, ~chainId: ChainId.t): chainRegistrations => {
   let key = chainId->ChainId.toString
   switch r.registrationsByChainId->Utils.Dict.dangerouslyGetNonOption(key) {
@@ -124,6 +154,7 @@ let buildOnEventRegistrationWith = (
       ~isWildcard,
       ~handler,
       ~contractRegister,
+      ~fieldSelection?,
       ~startBlock?,
     ) :> Internal.onEventRegistration)
   | Evm =>
@@ -269,21 +300,29 @@ let addOnEventRegistration = (
   let fieldSelection = switch eventOptions->Option.flatMap(v => v.fields) {
   | None => None
   | Some(fields) =>
-    // Only EVM resolves a registration selection of its own; Fuel and SVM take
-    // theirs from the event config, so an inline one would be silently dropped.
-    if registration.config.ecosystem.name !== Evm {
+    switch registration.config.ecosystem.name {
+    | Evm =>
+      Some(
+        EventConfigBuilder.resolveInlineFieldSelection(
+          fields,
+          ~contractName,
+          ~eventName,
+          ~enableRawEvents=registration.config.enableRawEvents,
+        ),
+      )
+    | Svm =>
+      Some(
+        EventConfigBuilder.resolveSvmInlineFieldSelection(
+          fields,
+          ~contractName,
+          ~eventName,
+        ),
+      )
+    | Fuel =>
       JsError.throwWithMessage(
         `The fields option of the "${eventName}" event registration on contract "${contractName}" is only supported on EVM. Select the fields in your config instead.`,
       )
     }
-    Some(
-      EventConfigBuilder.resolveInlineFieldSelection(
-        fields,
-        ~contractName,
-        ~eventName,
-        ~enableRawEvents=registration.config.enableRawEvents,
-      ),
-    )
   }
   let matched = ref(false)
   registration.config.chainMap
