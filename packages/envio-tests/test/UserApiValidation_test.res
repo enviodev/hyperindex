@@ -500,7 +500,8 @@ chains:
 name: unknown-svm-field
 ecosystem: svm
 chains:
-  - start_block: 1
+  - id: solana
+    start_block: 1
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -510,7 +511,7 @@ chains:
           bogus_extra: true
           instructions: []
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: unknown field \`bogus_extra\`, expected one of \`name\`, \`program_id\`, \`handler\`, \`idl\`, \`instructions\` at line 12 column 11",
+      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: unknown field \`bogus_extra\`, expected one of \`name\`, \`program_id\`, \`handler\`, \`idl\`, \`instructions\` at line 13 column 11",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
@@ -966,13 +967,14 @@ chains:
 name: svm-config
 ecosystem: svm
 chains:
-  - rpc: https://solana.example.test
+  - id: solana
+    rpc: https://solana.example.test
     start_block: 8
 `,
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.ecosystem.name).toEqual(Ecosystem.Svm)
-    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("0", 8))
+    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("7565164", 8))
   })
 
   it("validates event field selections against only the chain that uses them", t => {
@@ -1197,7 +1199,8 @@ describe("SVM config validation errors", () => {
 name: svm-validation
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1332,7 +1335,8 @@ chains:
 name: duplicate-programs
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1340,7 +1344,8 @@ chains:
         - name: Shared
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           instructions: []
-  - start_block: 0
+  - id: solana-devnet
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1360,7 +1365,8 @@ chains:
 name: missing-svm-source
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
 `,
       "Config parse error: A chain must define a data source: either an \`rpc\` endpoint or an \`experimental\` HyperSync config. Both are missing.",
     )
@@ -1909,7 +1915,8 @@ chains:
 name: missing-idl
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1931,7 +1938,8 @@ chains:
 name: duplicate-svm-schema
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1955,7 +1963,8 @@ chains:
 name: incomplete-svm-layout
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz

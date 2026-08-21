@@ -19,10 +19,10 @@ describe("indexer.onSlot (SVM)", () => {
     const testIndexer = createTestIndexer();
     expect({
       chainIds: testIndexer.chainIds,
-      firstChainId: testIndexer.chains[0]?.id,
+      firstChainId: testIndexer.chains[7565164]?.id,
     }).toEqual({
-      chainIds: [0],
-      firstChainId: 0,
+      chainIds: [7565164],
+      firstChainId: 7565164,
     });
   });
 });

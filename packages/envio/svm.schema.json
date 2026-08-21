@@ -212,6 +212,10 @@
     "Chain": {
       "type": "object",
       "properties": {
+        "id": {
+          "description": "Identifies the Svm cluster: the label \"solana\" (7565164) or \"solana-devnet\" (7565165), or an explicit number of your choosing for other clusters (up to Number.MAX_SAFE_INTEGER). Svm has no native numeric chain id, so the label ids are assigned by Envio and match the ids used for HyperSync usage attribution.",
+          "$ref": "#/$defs/ChainId"
+        },
         "skip": {
           "description": "Excludes the chain from indexing and migrations. Code generation is unaffected. For testing, prefer using a test framework instead.",
           "type": [
@@ -264,7 +268,29 @@
       },
       "additionalProperties": false,
       "required": [
+        "id",
         "start_block"
+      ]
+    },
+    "ChainId": {
+      "description": "The chain id of an Svm chain: either a known cluster label or an\nexplicit number (for private chains, rollups, or custom clusters).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ChainLabel"
+        },
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      ]
+    },
+    "ChainLabel": {
+      "type": "string",
+      "enum": [
+        "solana",
+        "solana-devnet"
       ]
     },
     "Experimental": {
