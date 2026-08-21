@@ -500,7 +500,8 @@ chains:
 name: unknown-svm-field
 ecosystem: svm
 chains:
-  - start_block: 1
+  - id: solana
+    start_block: 1
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -966,13 +967,14 @@ chains:
 name: svm-config
 ecosystem: svm
 chains:
-  - rpc: https://solana.example.test
+  - id: solana
+    rpc: https://solana.example.test
     start_block: 8
 `,
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.ecosystem.name).toEqual(Ecosystem.Svm)
-    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("0", 8))
+    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("7565164", 8))
   })
 
   it("validates event field selections against only the chain that uses them", t => {
@@ -1197,7 +1199,8 @@ describe("SVM config validation errors", () => {
 name: svm-validation
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1242,7 +1245,8 @@ chains:
 name: duplicate-programs
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1250,7 +1254,8 @@ chains:
         - name: Shared
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           idl: idls/a.json
-  - start_block: 0
+  - id: solana-devnet
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1270,7 +1275,8 @@ chains:
 name: missing-svm-source
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
 `,
       "Config parse error: A chain must define a data source: either an \`rpc\` endpoint or an \`experimental\` HyperSync config. Both are missing.",
     )
@@ -1819,7 +1825,8 @@ chains:
 name: missing-idl
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1828,7 +1835,7 @@ chains:
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           idl: idls/program.json
 `,
-      "Config parse error: Resolving Borsh schema for metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s: reading IDL at 'idls/program.json': Virtual config file \"idls/program.json\" was not provided",
+      "Config parse error: Resolving Borsh schema for program 'Program' (metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s): reading IDL at 'idls/program.json': Virtual config file \"idls/program.json\" was not provided",
     )
   })
 })

@@ -149,7 +149,8 @@ let anchorConfigYaml = `
 name: svm-anchor-idl
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -163,7 +164,8 @@ let codamaConfigYaml = `
 name: svm-codama-idl
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -326,7 +328,7 @@ expectType<
         ~configYaml=anchorConfigYaml,
       ),
     ).toBe(
-      "Config parse error: Resolving Borsh schema for 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8: Program 'Swapper': the IDL declares no instructions this runtime can decode.",
+      "Config parse error: Resolving Borsh schema for program 'Swapper' (675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8): Program 'Swapper': the IDL declares no instructions this runtime can decode.",
     )
   )
 
@@ -338,7 +340,8 @@ expectType<
 name: svm-no-idl
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -378,7 +381,7 @@ chains:
         ~configYaml=anchorConfigYaml,
       ),
     ).toBe(
-      "Config parse error: Resolving Borsh schema for 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8: Program 'Swapper': the IDL declares no instructions this runtime can decode: swap (args.amountIn: `coption` is not Borsh-compatible and cannot be decoded)",
+      "Config parse error: Resolving Borsh schema for program 'Swapper' (675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8): Program 'Swapper': the IDL declares no instructions this runtime can decode: swap (args.amountIn: `coption` is not Borsh-compatible and cannot be decoded)",
     )
   )
 
@@ -392,7 +395,7 @@ chains:
         ),
       ),
     ).toBe(
-      "Config parse error: Resolving Borsh schema for TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA: Program 'Swapper': the IDL declares address '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8' but the config sets `program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`.",
+      "Config parse error: Resolving Borsh schema for program 'Swapper' (TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA): Program 'Swapper': the IDL declares address '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8' but the config sets `program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`.",
     )
   )
 
@@ -406,7 +409,7 @@ chains:
         ~configYaml=codamaConfigYaml,
       ),
     ).toBe(
-      "Config parse error: Resolving Borsh schema for TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA: Program 'SplToken': the IDL declares no instructions this runtime can decode: transfer (it shares discriminator 0x03 with 'transferAgain'); transferAgain (it shares discriminator 0x03 with 'transfer')",
+      "Config parse error: Resolving Borsh schema for program 'SplToken' (TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA): Program 'SplToken': the IDL declares no instructions this runtime can decode: transfer (it shares discriminator 0x03 with 'transferAgain'); transferAgain (it shares discriminator 0x03 with 'transfer')",
     )
   )
 

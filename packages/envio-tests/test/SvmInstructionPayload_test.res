@@ -17,7 +17,8 @@ let configYaml = `
 name: svm-payload
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -66,7 +67,7 @@ indexer.onInstruction(
 `,
 )
 
-let chainId = "0"
+let chainId = "7565164"
 let registrations = () => {
   let byChain = parsed.registrations()
   byChain

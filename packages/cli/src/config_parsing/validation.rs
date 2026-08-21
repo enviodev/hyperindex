@@ -554,7 +554,8 @@ mod tests {
 name: x
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -574,7 +575,8 @@ chains:
 name: x
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -604,7 +606,8 @@ chains:
 name: x
 ecosystem: svm
 chains:
-  - rpc: https://api.mainnet-beta.solana.com
+  - id: solana
+    rpc: https://api.mainnet-beta.solana.com
     start_block: 0
 "#,
             );

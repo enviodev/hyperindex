@@ -24,7 +24,8 @@ let _ = InternalTestIndexer.fromUserApi(
 name: svm-e2e
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -95,7 +96,7 @@ describe("SVM instruction process e2e", () => {
     const indexer = createTestIndexer();
     await indexer.process({
       chains: {
-        0: {
+        7565164: {
           simulate: [
             {
               program: "Swapper",

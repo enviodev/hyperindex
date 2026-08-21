@@ -3232,6 +3232,28 @@ mod test {
         );
     }
 
+    // `@internal` is stamped into the entity JSON only when set — an added
+    // `"internal": false` key would trip the persisted-config diff for every
+    // existing project.
+    #[test]
+    fn internal_config_json_marks_internal_entities() {
+        let json = get_internal_config_json_helper("config-internal.yaml");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let entity_internal: Vec<(&str, Option<serde_json::Value>)> = parsed["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["name"].as_str().unwrap(), e.get("internal").cloned()))
+            .collect();
+        assert_eq!(
+            entity_internal,
+            vec![
+                ("PublicUser", None),
+                ("Secret", Some(serde_json::json!(true))),
+            ]
+        );
+    }
+
     #[test]
     fn envio_types_dts_generated_for_evm() {
         let project_template = get_project_template_helper("config1.yaml");
@@ -3616,7 +3638,8 @@ type GlobalCounter @crossChain {
 name: svm-no-rescript
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz

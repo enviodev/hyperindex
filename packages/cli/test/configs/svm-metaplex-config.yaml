@@ -2,7 +2,8 @@
 name: Solana indexer
 ecosystem: svm
 chains:
-  - start_block: 200000000
+  - id: solana
+    start_block: 200000000
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz

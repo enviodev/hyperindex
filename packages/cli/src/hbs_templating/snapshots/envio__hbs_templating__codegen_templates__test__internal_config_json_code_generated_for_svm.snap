@@ -11,8 +11,8 @@ expression: json
   },
   "svm": {
     "chains": {
-      "0": {
-        "id": 0,
+      "7565164": {
+        "id": 7565164,
         "startBlock": 200000000,
         "hypersync": "https://solana.hypersync.xyz",
         "contracts": {

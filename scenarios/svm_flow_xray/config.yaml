@@ -7,7 +7,8 @@ description: |
   (sql/views.sql).
 ecosystem: svm
 chains:
-  - # As of 2026-05-29 the public endpoint is at mainnet head (~422.33M) and
+  - id: solana
+    # As of 2026-05-29 the public endpoint is at mainnet head (~422.33M) and
     # the v0.0.4 server returns token_balances for every matched tx. Start
     # ~220k slots behind head (~24h of chain time) — empirically the widest
     # window that backfills cleanly with Orca + Meteora swap added. Widen

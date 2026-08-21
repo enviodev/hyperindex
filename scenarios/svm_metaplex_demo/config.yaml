@@ -6,7 +6,8 @@ description: |
   Solana mainnet via HyperSync.
 ecosystem: svm
 chains:
-  - start_block: 417950000
+  - id: solana
+    start_block: 417950000
     # Unset for continuous live tailing. `src/indexer.test.ts` sets it to pin a
     # finite, deterministic window over archived slots.
     end_block: ${ENVIO_METAPLEX_END_BLOCK:-}

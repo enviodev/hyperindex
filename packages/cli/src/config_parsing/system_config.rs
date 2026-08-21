@@ -842,6 +842,44 @@ pub fn validate_cross_chain_relationships(
     ))
 }
 
+/// An @internal entity has no GraphQL surface, so a relationship from an
+/// exposed entity to it cannot be served: an object reference would break
+/// Hasura relationship creation against the untracked table, and a
+/// @derivedFrom field would silently vanish from the API. Reject both at
+/// codegen. References from @internal entities are fine — nothing is exposed
+/// on their side.
+pub fn validate_internal_relationships(schema: &Schema) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut invalid: Vec<String> = vec![];
+    for entity in &entities {
+        if entity.internal {
+            continue;
+        }
+        for (field, related) in entity.get_related_entities(schema)? {
+            if related.internal {
+                invalid.push(format!(
+                    "  - `{}`.`{}` references `{}`, which is @internal.",
+                    entity.name, field.name, related.name
+                ));
+            }
+        }
+    }
+
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "Schema validation failed:\n\nEntities exposed through the GraphQL API reference \
+         @internal entities:\n{}\n\nAn @internal entity is not exposed through the GraphQL API, \
+         so the relationship cannot be served. Fixes:\n  - Mark the referencing entities \
+         @internal too, or\n  - Replace the reference with a plain id field (e.g. `secretId: \
+         String!`), or\n  - Remove @internal from the referenced entities.",
+        invalid.join("\n")
+    ))
+}
+
 /// Per-chain entities get a chain-id field appended, so no schema field may
 /// claim its name. Both spellings are reserved whatever the backends and their
 /// `column_name_format` are, so the name a user may give a field never depends
@@ -1048,6 +1086,7 @@ impl SystemConfig {
         validate_cross_chain_directives(default_cross_chain, &schema)?;
         validate_chain_id_field_names(&schema, default_cross_chain)?;
         validate_cross_chain_relationships(&schema, default_cross_chain)?;
+        validate_internal_relationships(&schema)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
         let final_project_paths = source.project_paths().clone();
@@ -1395,7 +1434,10 @@ impl SystemConfig {
                             anyhow::Ok((svm_abi, events))
                         })()
                         .with_context(|| {
-                            format!("Resolving Borsh schema for {}", program.program_id)
+                            format!(
+                                "Resolving Borsh schema for program '{}' ({})",
+                                program.name, program.program_id
+                            )
                         })?;
 
                         let contract = Contract::new(
@@ -1413,7 +1455,7 @@ impl SystemConfig {
                     }
 
                     let chain = Chain {
-                        id: 0, //network.id,
+                        id: network.id.to_u64(),
                         skip: network.skip.unwrap_or(false),
                         start_block: network.start_block,
                         end_block: network.end_block,
@@ -2827,6 +2869,43 @@ mod test {
     }
 
     #[test]
+    fn svm_chain_ids_resolve_labels_and_support_multiple_chains() {
+        use crate::config_parsing::human_config::svm::{
+            SOLANA_DEVNET_CHAIN_ID, SOLANA_MAINNET_CHAIN_ID,
+        };
+
+        let schema = "type Foo @entity { id: ID! }";
+        let program_block = |name: &str| {
+            format!(
+                r#"    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: {name}
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          idl: idls/token-metadata.json
+"#
+            )
+        };
+        // Labels resolve to the HOS-1682 ids, and two SVM chains coexist in
+        // one config: the old hardcoded 0 made the second insert collide.
+        let yaml = format!(
+            "\nname: svm-chain-id\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+             0\n{}  - id: solana-devnet\n    start_block: 0\n{}",
+            program_block("TokenMetadata"),
+            program_block("TokenMetadataDevnet"),
+        );
+        let idl = r#"{"instructions":[{"name":"UpdateMetadataAccountV2","discriminator":[15]}]}"#;
+        let files = HashMap::from([("idls/token-metadata.json".to_string(), idl.to_string())]);
+        let config =
+            SystemConfig::parse_yaml(&yaml, Some(schema), &HashMap::new(), &files, false)
+                .expect("svm config");
+        let mut ids: Vec<_> = config.chains.keys().copied().collect();
+        ids.sort();
+        assert_eq!(ids, vec![SOLANA_MAINNET_CHAIN_ID, SOLANA_DEVNET_CHAIN_ID]);
+    }
+
+    #[test]
     fn in_memory_fuel_abi_matches_filesystem_public_config() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let project_paths =
@@ -3257,6 +3336,7 @@ mod test {
                 postgres,
                 clickhouse: clickhouse.map(ClickHouseEntityStorage::Enabled),
                 cross_chain: false,
+                internal: false,
             }
         }
 
@@ -3384,6 +3464,79 @@ mod test {
                 entity("Order", None, Some(true)),
             ]);
             assert!(validate_relationship_storage(&multi(false, false), &schema).is_ok());
+        }
+    }
+
+    // --- validate_internal_relationships: no public -> @internal references ---
+
+    mod internal_relationship_validation {
+        use super::super::validate_internal_relationships;
+        use crate::config_parsing::entity_parsing::Schema;
+
+        #[test]
+        fn public_reference_to_internal_entity_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Trader {
+  id: ID!
+  secret: Secret!
+}
+type Secret @internal {
+  id: ID!
+}"#,
+            )
+            .unwrap();
+            let err = validate_internal_relationships(&schema)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("`Trader`.`secret` references `Secret`, which is @internal."),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn public_derived_from_internal_entity_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Trader {
+  id: ID!
+  orders: [Order!]! @derivedFrom(field: "trader")
+}
+type Order @internal {
+  id: ID!
+  trader: Trader!
+}"#,
+            )
+            .unwrap();
+            let err = validate_internal_relationships(&schema)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("`Trader`.`orders` references `Order`, which is @internal."),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn internal_references_are_allowed() {
+            let schema = Schema::from_string(
+                r#"
+type PublicUser {
+  id: ID!
+}
+type SecretA @internal {
+  id: ID!
+  user: PublicUser!
+  other: SecretB!
+}
+type SecretB @internal {
+  id: ID!
+  entries: [SecretA!]! @derivedFrom(field: "other")
+}"#,
+            )
+            .unwrap();
+            assert!(validate_internal_relationships(&schema).is_ok());
         }
     }
 
