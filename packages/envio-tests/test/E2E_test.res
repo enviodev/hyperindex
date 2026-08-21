@@ -77,11 +77,9 @@ let noRollbackMultichainScenario = makeScenario(
   ~chains=chainYaml(100) ++ chainYaml(1337),
 )
 
-// The `storage` label on the load metrics is whichever storage answered.
-let storageName = switch IndexerRunner.selectedBackend {
-| #memory => "memory"
-| #postgres | #clickhouse => "postgres"
-}
+// Loads are answered by Postgres on both backends — the ClickHouse leg only
+// adds a sink on the write path — so the label doesn't vary with the backend.
+let storageName = "postgres"
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
@@ -143,22 +141,23 @@ describe("E2E tests", () => {
   startBlock100Scenario->Scenario.it(
     "Currectly starts indexing from a non-zero start block",
     ~sources=[{chain: 1337, methods}],
-    async (~t, ~indexer as _, ~source) => {
+    async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       t.expect(
         sourceMock.getHeightOrThrowCalls->Array.length,
         ~message="should have called getHeightOrThrow to get initial height",
       ).toEqual(1)
       sourceMock.resolveGetHeightOrThrow(400)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(call => call.payload),
+      await Scenario.expectQueries(
+        ~t,
+        ~indexer,
+        ~source=sourceMock,
         ~message="Should request items from start block to reorg threshold",
-      ).toEqual([{"fromBlock": 100, "toBlock": Some(200), "retry": 0, "p": "0"}])
+        [{"fromBlock": 100, "toBlock": Some(200), "retry": 0, "p": "0"}],
+      )
     },
   )
 
@@ -168,7 +167,7 @@ describe("E2E tests", () => {
     ~source,
   ) => {
     let sourceMock = source(1337)
-    await Utils.delay(0)
+    await indexer.settle()
 
     t.expect(await indexer.metric("envio_reorg_threshold")).toEqual([
       {value: "0", labels: Dict.make()},
@@ -187,7 +186,7 @@ describe("E2E tests", () => {
     ])
 
     sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-    await indexer.getBatchWritePromise()
+    await indexer.settle()
 
     t.expect(
       await indexer.metric("hyperindex_synced_to_head"),
@@ -202,7 +201,7 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Enter reorg threshold for both chains
       let _ = await Promise.all2((
@@ -214,7 +213,7 @@ describe("E2E tests", () => {
       // chain id) gets the follow-up query; chain 1337 sits the round out until
       // the leader's reservation releases. Advance chain 100 to head first.
       sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // No chain is marked ready until every chain catches up
       t.expect(
@@ -231,7 +230,7 @@ describe("E2E tests", () => {
 
       // Now advance chain 1337 to head
       sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Both chains should now be ready
       t.expect(
@@ -254,10 +253,9 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       sourceMock.resolveGetItemsOrThrow([
         {
           blockNumber: 10,
@@ -308,7 +306,7 @@ describe("E2E tests", () => {
           },
         },
       ])
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>)).toEqual([
         {id: "1", value: "value-2"},
@@ -329,7 +327,7 @@ describe("E2E tests", () => {
     ~source,
   ) => {
     let sourceMock = source(1337)
-    await Utils.delay(0)
+    await indexer.settle()
 
     let testEffectWithCache = Envio.createEffect(
       {
@@ -365,8 +363,7 @@ describe("E2E tests", () => {
     ).toEqual([])
 
     sourceMock.resolveGetHeightOrThrow(300)
-    await Utils.delay(0)
-    await Utils.delay(0)
+    await indexer.settle()
     sourceMock.resolveGetItemsOrThrow(
       [
         {
@@ -386,7 +383,7 @@ describe("E2E tests", () => {
       ],
       ~latestFetchedBlockNumber=100,
     )
-    await indexer.getBatchWritePromise()
+    await indexer.settle()
 
     t.expect(
       await indexer.metric("envio_effect_call_total"),
@@ -423,7 +420,7 @@ describe("E2E tests", () => {
     ])
 
     let restarted = await indexer.restart()
-    await Utils.delay(0)
+    await restarted.settle()
 
     t.expect(
       await restarted.metric("envio_effect_call_total"),
@@ -463,8 +460,7 @@ describe("E2E tests", () => {
     )
 
     sourceMock.resolveGetHeightOrThrow(300)
-    await Utils.delay(0)
-    await Utils.delay(0)
+    await restarted.settle()
     sourceMock.resolveGetItemsOrThrow(
       [
         {
@@ -483,7 +479,7 @@ describe("E2E tests", () => {
       ],
       ~latestFetchedBlockNumber=101,
     )
-    await restarted.getBatchWritePromise()
+    await restarted.settle()
 
     t.expect(
       await Promise.all3((
@@ -566,7 +562,7 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let probeEffect = Envio.createEffect(
         {
@@ -582,8 +578,7 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let effectResult = ref(None)
       let effectError = ref(None)
@@ -603,7 +598,7 @@ describe("E2E tests", () => {
         ],
         ~latestFetchedBlockNumber=100,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         (effectError.contents, effectResult.contents),
@@ -617,7 +612,7 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let chainScopedEffect = Envio.createEffect(
         {
@@ -652,8 +647,7 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let msgOf = exn =>
         switch exn {
@@ -688,7 +682,7 @@ describe("E2E tests", () => {
         ],
         ~latestFetchedBlockNumber=100,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect((chainId.contents, crossChainAccessError.contents, nestedError.contents)).toEqual((
         Some(1337),
@@ -719,7 +713,7 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMockPrimary = source(1337)
       let sourceMockFallback = source(1337, ~index=1)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Resolve initial height request from primary source
       t.expect(
@@ -727,8 +721,7 @@ describe("E2E tests", () => {
         ~message="should have called getHeightOrThrow on primary source",
       ).toEqual(1)
       sourceMockPrimary.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Primary source should now attempt to fetch items
       switch sourceMockPrimary.getItemsOrThrowCalls {
@@ -748,8 +741,7 @@ describe("E2E tests", () => {
       | _ => JsError.throwWithMessage("should have called getItemsOrThrow on primary source")
       }
 
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // The fallback source should now be called immediately
       switch sourceMockFallback.getItemsOrThrowCalls {
@@ -762,7 +754,7 @@ describe("E2E tests", () => {
         )
       }
 
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         (
@@ -779,7 +771,7 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let queueMetricDuringExecution = ref(None)
       let activeMetricDuringExecution = ref(None)
@@ -799,8 +791,7 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       sourceMock.resolveGetItemsOrThrow(
         [
           {
@@ -842,7 +833,7 @@ describe("E2E tests", () => {
         ~latestFetchedBlockNumber=100,
       )
 
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // All effects should complete successfully - verify via calls count metric
       t.expect(
@@ -894,7 +885,7 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let executionOrder = []
       let queueMetricDuringExecution = ref(None)
@@ -917,8 +908,7 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Single batch with 4 calls that will be rate limited
       sourceMock.resolveGetItemsOrThrow(
@@ -955,7 +945,7 @@ describe("E2E tests", () => {
         ~latestFetchedBlockNumber=100,
       )
 
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // All 4 effects should complete successfully despite rate limiting
       t.expect(executionOrder->Array.length, ~message="should have executed all 4 calls").toEqual(4)
@@ -1020,7 +1010,7 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let callCount = ref(0)
       let testEffectWithCacheControl = Envio.createEffect(
@@ -1041,8 +1031,7 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       sourceMock.resolveGetItemsOrThrow(
         [
           {
@@ -1070,7 +1059,7 @@ describe("E2E tests", () => {
         ],
         ~latestFetchedBlockNumber=100,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         callCount.contents,
@@ -1089,7 +1078,7 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let throwingEffect = Envio.createEffect(
         {
@@ -1108,8 +1097,7 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       sourceMock.resolveGetItemsOrThrow(
         [
           {
@@ -1139,7 +1127,7 @@ describe("E2E tests", () => {
         ],
         ~latestFetchedBlockNumber=100,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Verify that only p2's successful result was cached
       t.expect(
@@ -1158,7 +1146,7 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let syncSource = source(1337)
       let liveSource = source(1337, ~index=1)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // During initial height fetch (knownHeight === 0),
       // only the Sync source should be queried, not the Live source.
@@ -1174,8 +1162,7 @@ describe("E2E tests", () => {
 
       // Resolve the initial height and let the indexer start syncing
       syncSource.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Sync source fetches items (enters reorg threshold at block 100)
       t.expect(
@@ -1185,25 +1172,24 @@ describe("E2E tests", () => {
 
       // Resolve first batch (0-100) and continue until we reach the head
       syncSource.resolveGetItemsOrThrow([])
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // After entering reorg threshold, continue fetching until we reach head (300)
       // The indexer will fetch in batches, we need to resolve each one
       syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       syncSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // On catch-up the chain flips to realtime (Live=Primary). The backfill
       // waiter had already parked on the Sync source, so it polls Sync once more
       // before the realtime transition bumps the epoch and a fresh Live-source
       // waiter supersedes it. Wait for the Live source to be polled.
-      let waitLiveHeightCalls = async n =>
-        while liveSource.getHeightOrThrowCalls->Array.length < n {
-          await Utils.delay(0)
-        }
-      await waitLiveHeightCalls(1)
+      await indexer.settleUntil(
+        () => liveSource.getHeightOrThrowCalls->Utils.Array.notEmpty,
+        ~message="the Live source to be polled after the realtime transition",
+      )
       t.expect(
         liveSource.getHeightOrThrowCalls->Array.length,
         ~message="Live source should participate in the first waitForNewBlock (realtime)",
@@ -1215,8 +1201,7 @@ describe("E2E tests", () => {
 
       // Resolve the first waitForNewBlock via the Live (Primary) source
       liveSource.resolveGetHeightOrThrow(301)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Resolve the items query for the new block
       t.expect(
@@ -1224,11 +1209,14 @@ describe("E2E tests", () => {
         ~message="We are in live mode, so we query items from the live source.",
       ).toEqual(0)
       liveSource.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Second waitForNewBlock: Live=Primary races again, Sync=Secondary (stays
       // at its post-transition count of 2, the superseded backfill poll).
-      await waitLiveHeightCalls(2)
+      await indexer.settleUntil(
+        () => liveSource.getHeightOrThrowCalls->Array.length >= 2,
+        ~message="the Live source to be polled a second time",
+      )
       t.expect(
         syncSource.getHeightOrThrowCalls->Array.length,
         ~message="Sync source should not be polled again (Secondary, not racing)",
@@ -1245,34 +1233,39 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Step 1: Resolve height (blockLag=200 by default, headBlock=19800)
       sourceMock.resolveGetHeightOrThrow(20_000)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Step 2: Query 1 — resolve at block 500 (range=501)
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+      await Scenario.expectQueries(
+        ~t,
+        ~indexer,
+        ~source=sourceMock,
         ~message="Step 2 should have initial query",
-      ).toEqual([{"fromBlock": 1, "toBlock": Some(19800), "retry": 0, "p": "0"}])
+        [{"fromBlock": 1, "toBlock": Some(19800), "retry": 0, "p": "0"}],
+      )
       sourceMock.resolveGetItemsOrThrow(
         [{blockNumber: 100, logIndex: 0}],
         ~latestFetchedBlockNumber=500,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Step 3: Query 2 — resolve at block 800 (range=300)
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+      await Scenario.expectQueries(
+        ~t,
+        ~indexer,
+        ~source=sourceMock,
         ~message="Step 3 should have follow-up query",
-      ).toEqual([{"fromBlock": 501, "toBlock": Some(19800), "retry": 0, "p": "0"}])
+        [{"fromBlock": 501, "toBlock": Some(19800), "retry": 0, "p": "0"}],
+      )
       sourceMock.resolveGetItemsOrThrow(
         [{blockNumber: 600, logIndex: 0}],
         ~latestFetchedBlockNumber=800,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Chunking activates: chunkRange=min(300,500)=300, chunkSize=ceil(300*1.8)=540.
       // Uniform chunks are tiled from the range start (no probes).
@@ -1299,7 +1292,7 @@ describe("E2E tests", () => {
       chunk1.resolve([{blockNumber: 900, logIndex: 0}], ~latestFetchedBlockNumber=1340)
       chunk2.resolve([{blockNumber: 1400, logIndex: 0}], ~latestFetchedBlockNumber=1880)
       chunk3.resolve([{blockNumber: 1900, logIndex: 0}], ~latestFetchedBlockNumber=2420)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       // Drain the in-flight 540-chunk backlog so the partition regenerates its
       // tail at the grown chunkRange (540). New tail chunks reach ceil(540*1.8)=972.
       sourceMock.getItemsOrThrowCalls
@@ -1311,7 +1304,7 @@ describe("E2E tests", () => {
             ~latestFetchedBlockNumber=c.payload["toBlock"]->Option.getOr(c.payload["fromBlock"]),
           ),
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Assert: full-size responses grew the chunk size beyond the initial 540.
       let maxChunkSize = sourceMock.getItemsOrThrowCalls->Array.reduce(
@@ -1335,7 +1328,7 @@ describe("E2E tests", () => {
         [{blockNumber: firstPending.payload["fromBlock"], logIndex: 0}],
         ~latestFetchedBlockNumber=firstPending.payload["fromBlock"] + 99,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // After the partial response sourceRangeCapacity=100, so chunkRange drops to
       // min(100, 540)=100 and the regenerated chunks shrink to ceil(100*1.8)=180,
@@ -1356,30 +1349,33 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Setup: same preamble — get to 4 chunked queries
       sourceMock.resolveGetHeightOrThrow(10_000)
-      await Utils.delay(0)
-      await Utils.delay(0)
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+      await Scenario.expectQueries(
+        ~t,
+        ~indexer,
+        ~source=sourceMock,
         ~message="Should have initial query",
-      ).toEqual([{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}])
+        [{"fromBlock": 1, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      )
       sourceMock.resolveGetItemsOrThrow(
         [{blockNumber: 100, logIndex: 0}],
         ~latestFetchedBlockNumber=500,
       )
-      await indexer.getBatchWritePromise()
-      t.expect(
-        sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
+      await Scenario.expectQueries(
+        ~t,
+        ~indexer,
+        ~source=sourceMock,
         ~message="Should have follow-up query",
-      ).toEqual([{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}])
+        [{"fromBlock": 501, "toBlock": Some(9800), "retry": 0, "p": "0"}],
+      )
       sourceMock.resolveGetItemsOrThrow(
         [{blockNumber: 600, logIndex: 0}],
         ~latestFetchedBlockNumber=800,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Chunking activates: chunkRange=300, chunkSize=540. Uniform chunks tiled
       // from the range start.
@@ -1411,8 +1407,7 @@ describe("E2E tests", () => {
         },
       ])
       // Wait for chunk3's response to be processed
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Item at 2000 should NOT be in DB yet — earlier chunks haven't completed,
       // so bufferBlockNumber=800 and 2000 > 800 means it's not ready.
@@ -1440,7 +1435,7 @@ describe("E2E tests", () => {
         ],
         ~latestFetchedBlockNumber=1340,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Only item-850 should be in DB — chunk2 hasn't completed,
       // so chunk3's item at 2000 is still beyond the buffer.
@@ -1460,7 +1455,7 @@ describe("E2E tests", () => {
       // Step 4: Resolve chunk2 — now the range is contiguous through chunk3,
       // bufferBlockNumber advances to 2420 and the item at 2000 becomes ready.
       (bridgingQuery->Option.getOrThrow).resolve([], ~latestFetchedBlockNumber=1880)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Both items should now be in DB
       t.expect(
@@ -1491,10 +1486,9 @@ describe("E2E tests", () => {
         ->Array.find(c => c.payload["fromBlock"] === fromBlock)
         ->Option.getOrThrow
 
-      await Utils.delay(0)
+      await indexer.settle()
       sourceMock.resolveGetHeightOrThrow(100_000)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       t.expect(
         pending(),
@@ -1535,7 +1529,7 @@ describe("E2E tests", () => {
         ],
         ~latestFetchedBlockNumber=25100,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       let dc1Partition = partitionAt(5000)
       let dc2Partition = partitionAt(25100)
@@ -1551,9 +1545,7 @@ describe("E2E tests", () => {
       // Advance DC2 a little. Its partition stays separate while DC1 is still
       // more than tooFarBlockRange behind it.
       callAt(25100).resolve([{blockNumber: 25200, logIndex: 0}], ~latestFetchedBlockNumber=25600)
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // DC1 catches up to block 12500. DC2's merge block is now within
       // tooFarBlockRange of it, so the two dynamic-contract partitions merge
@@ -1590,7 +1582,7 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Chain 1337 catches up first
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock1337)
@@ -1614,9 +1606,9 @@ describe("E2E tests", () => {
       // Only the most-behind chain (100 — the progress tie breaks by ascending
       // chain id) holds a query; 1337 queries once the leader's budget releases.
       sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await indexer.metric("hyperindex_synced_to_head"),
@@ -1631,17 +1623,16 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let sourceMock1337 = source(1337)
       let sourceMock100 = source(100)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Without reorg, chains don't use blockLag so they fetch from startBlock to knownHeight
       // Chain 1337 catches up first
       t.expect(sourceMock1337.getHeightOrThrowCalls->Array.length).toEqual(1)
       sourceMock1337.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // No chain is marked ready until every chain catches up
       t.expect(
@@ -1659,11 +1650,10 @@ describe("E2E tests", () => {
       // Chain 100 catches up
       t.expect(sourceMock100.getHeightOrThrowCalls->Array.length).toEqual(1)
       sourceMock100.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Both chains should now be ready
       t.expect(
@@ -1694,25 +1684,24 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let leaderSource = source(1337)
       let followerSource = source(100)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Phase 1: both chains catch up to head (block 100) and become realtime.
       // A handful of events on each seeds a density signal.
       leaderSource.resolveGetHeightOrThrow(100)
       followerSource.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       leaderSource.resolveGetItemsOrThrow(
         [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
         ~latestFetchedBlockNumber=100,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       followerSource.resolveGetItemsOrThrow(
         [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],
         ~latestFetchedBlockNumber=100,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await indexer.metric("hyperindex_synced_to_head"),
@@ -1727,36 +1716,34 @@ describe("E2E tests", () => {
       // follower advances only a little past its own head.
       leaderSource.resolveGetHeightOrThrow(1_000_000)
       followerSource.resolveGetHeightOrThrow(105)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Drive the leader's backfill for several ticks, keeping it far behind (so
       // it stays the budget-draining leader). Each response re-runs the
       // cross-chain dispatch, so the follower is re-evaluated every tick.
       for _ in 0 to 4 {
-        await MockSource.waitItemsQuery(leaderSource)
+        await Scenario.waitQuery(~indexer, ~source=leaderSource)
         let call = leaderSource.getItemsOrThrowCalls->Array.getUnsafe(0)
         let fromBlock = call.payload["fromBlock"]
         call.resolve(
           [{blockNumber: fromBlock + 20, logIndex: 0}, {blockNumber: fromBlock + 60, logIndex: 0}],
           ~latestFetchedBlockNumber=fromBlock + 99,
         )
-        await indexer.getBatchWritePromise()
+        await indexer.settle()
       }
 
       // The follower is below its own head (frontier 100 < head 105). The
       // indexer is realtime, so the cross-chain alignment clamp is dropped:
       // instead of being starved behind the backfilling leader, the follower
       // fetches its small range to head...
-      await MockSource.waitItemsQuery(followerSource)
+      await Scenario.waitQuery(~indexer, ~source=followerSource)
       let followerCall = followerSource.getItemsOrThrowCalls->Array.getUnsafe(0)
       t.expect(
         followerCall.payload["fromBlock"],
         ~message="follower fetches its own range to head instead of waiting behind the leader",
       ).toEqual(101)
       followerCall.resolve([], ~latestFetchedBlockNumber=105)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // ...and once at head it goes back to polling for new blocks rather
       // than going silent.

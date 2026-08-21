@@ -1,5 +1,8 @@
 open Vitest
 
+// determinism-lint: no indexer loop — the phase is driven by hand here, so a
+// tick is the unit under test rather than a guess at the loop's shape.
+
 // The phase is reached from more than one place in the processing loop, and a
 // build can take minutes. Anything arriving while one is in flight has to join
 // it: a second pass would replay creates against a schema the first one is

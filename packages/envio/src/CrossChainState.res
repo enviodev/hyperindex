@@ -294,7 +294,7 @@ let idleOrWaitAction = (cs: ChainState.t) =>
 // caught up to its fetchable head reads 100% and so never anchors while another
 // is behind, and once the whole indexer has caught up (isRealtime) the clamp is
 // dropped — chains at head only trail each other by real-time block production.
-let checkAndFetch = async (
+let checkAndFetch = (
   crossChainState: t,
   ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
 ) => {
@@ -406,14 +406,15 @@ let checkAndFetch = async (
     }
   })
 
-  let promises = []
+  // Dispatched and left to run: each chain's fetch owns its error boundary and
+  // re-enters the loop on its own, so joining them here would only tie this
+  // frame's lifetime to the slowest chain's round trip.
   for i in 0 to crossChainState.chainIds->Array.length - 1 {
     let chainId = crossChainState.chainIds->Array.getUnsafe(i)
     switch actionByChain->ChainId.Dict.dangerouslyGetNonOption(chainId) {
     | Some(NothingToQuery)
     | None => ()
-    | Some(action) => promises->Array.push(dispatchChain(~chainId=chainId, ~action))
+    | Some(action) => dispatchChain(~chainId=chainId, ~action)->Promise.ignore
     }
   }
-  let _ = await promises->Promise.all
 }

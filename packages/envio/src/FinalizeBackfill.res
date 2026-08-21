@@ -55,7 +55,24 @@ let run = (state: IndexerState.t) =>
 // Best-effort and not awaited by the loop: indexing is already live and correct
 // without the index, just slower.
 let repairSchemaIndexes = (state: IndexerState.t) => {
-  let persistence = state->IndexerState.persistence
-  let storage = persistence->Persistence.getInitializedStorageOrThrow
-  storage.ensureSchemaIndexes(~entities=persistence.allEntities)
+  let run = async () => {
+    let persistence = state->IndexerState.persistence
+    try {
+      let storage = persistence->Persistence.getInitializedStorageOrThrow
+      await storage.ensureSchemaIndexes(~entities=persistence.allEntities)
+    } catch {
+    | exn =>
+      // Logged rather than fatal, per the best-effort intent above — but caught
+      // all the same: nothing awaits this to route a failure anywhere, and an
+      // unhandled rejection would take the process down over an index the
+      // indexer runs correctly without.
+      exn
+      ->ErrorHandling.make(~msg="Failed to repair the schema's read indexes")
+      ->ErrorHandling.log
+    }
+  }
+  // Published so a shutdown can wait for the DDL it started, even though the
+  // loop itself never does.
+  let fiber = run()->Promise.finally(() => state->IndexerState.endRepairFiber)
+  state->IndexerState.beginRepairFiber(fiber)
 }

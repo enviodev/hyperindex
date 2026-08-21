@@ -8,33 +8,63 @@ type metric = {
 // client the run won't clean up.
 type pg = {sql: Postgres.sql, pgSchema: string}
 
-// Which persistence a run is exercised against. Locally the whole suite runs
-// on memory; CI runs it once per backend.
-type backend = [#memory | #postgres | #clickhouse]
+// Which persistence a run is exercised against. Postgres either way — the
+// ClickHouse leg indexes the same scenario with the sink switched on.
+type backend = [#postgres | #clickhouse]
 
 let backendName = (backend: backend) =>
   switch backend {
-  | #memory => "memory"
   | #postgres => "postgres"
   | #clickhouse => "clickhouse"
   }
 
 let selectedBackend: backend = switch %raw(`process.env.ENVIO_TEST_STORAGE`)->Nullable.toOption {
-| None | Some("") => #memory
-| Some("memory") => #memory
+| None | Some("") => #postgres
 | Some("postgres") => #postgres
 | Some("clickhouse") => #clickhouse
 | Some(other) =>
   JsError.throwWithMessage(
-    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected memory, postgres or clickhouse.`,
+    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected postgres or clickhouse.`,
   )
 }
 
 type rec t = {
-  getBatchWritePromise: unit => promise<unit>,
-  getRollbackReadyPromise: unit => promise<unit>,
-  waitUntilIdle: unit => promise<unit>,
+  // Resolves once the indexer has run every scheduled step to completion and
+  // can only move again when the outside world answers. Nothing to count in
+  // ticks: the loop reports its own in-flight work.
+  //
+  // "The outside world answers" covers the poll a chain at its head is parked
+  // on between rounds, so a settled indexer isn't always one with a query
+  // waiting to be answered. An assertion that the pending set is empty needs
+  // `settleUntil` or `Scenario.waitQuery` to pin down which side of that poll
+  // it is on; a settle alone would read the gap between two polls as the
+  // answer. A retry's backoff is not in that category — the loop is biding its
+  // time before asking again, and settle waits it out.
+  settle: unit => promise<unit>,
+  // Settles, then keeps settling until the condition holds — for state that
+  // only arrives once a polling interval elapses. `message` names what was
+  // being waited for when it never does.
+  settleUntil: (unit => bool, ~message: string) => promise<unit>,
+  // Wraps a wait the test itself holds closed — a gate inside a handler, say —
+  // so the loop reads as parked on the test rather than as working. Without it
+  // `settle` would wait out a block only the test can lift.
+  //
+  // It discounts one unit of scheduled work, so it is only valid where the
+  // scheduler is counting one, and only one park at a time: the whole
+  // processing run counts as a single unit, not each of the handlers and
+  // contract registers running concurrently inside it, so two gates held open
+  // at once discount it twice over. Not from a test body either, and not from
+  // the write loop's own calls (`writeBatch`, `setChainMeta`) — those run off
+  // the scheduler, and `settle` covers them through the flush instead.
+  //
+  // Used anywhere else it puts the count into deficit, which `settle` reports
+  // by name rather than sitting on. That report is the check: the count says
+  // nothing about whether this particular caller had a unit to discount.
+  park: 'a. (unit => promise<'a>) => promise<'a>,
   waitUntilReady: unit => promise<unit>,
+  // Batches processed but not yet written. A test that stalls a write watches
+  // this to see the next batch queue up behind it.
+  queuedWrites: unit => int,
   query: 'entity. string => promise<array<'entity>>,
   queryHistory: 'entity. string => promise<array<Change.t<'entity>>>,
   queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
@@ -44,9 +74,7 @@ type rec t = {
     ~scope: Internal.chainScope,
   ) => promise<array<{"id": string, "output": JSON.t}>>,
   metric: string => promise<array<metric>>,
-  // Present only on the postgres-backed backends. A test that reads SQL
-  // directly is a postgres-only test, and says so by reaching through this.
-  pg: option<pg>,
+  pg: pg,
   // Quiesce the run: its loops keep driving the database otherwise, and the
   // schema is dropped out from under them at the end of `run`.
   stop: unit => promise<unit>,
@@ -55,15 +83,6 @@ type rec t = {
 
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
-
-let pgOrThrow = (indexer: t) =>
-  switch indexer.pg {
-  | Some(pg) => pg
-  | None =>
-    JsError.throwWithMessage(
-      "This test reads Postgres directly, so it only runs on a postgres-backed backend. Mark #memory unsupported on the scenario.",
-    )
-  }
 
 // Runs `body` against a fresh indexer in a Postgres schema of its own, then
 // tears both down — so tests never stop an indexer by hand, and files can run
@@ -84,20 +103,16 @@ let run = async (
   body: t => promise<unit>,
 ) => {
   // Postgres resources this run owns: one schema, plus every client and
-  // indexer built inside it (`restart` adds more). Unused on `#memory`.
+  // indexer built inside it (`restart` adds more).
   let pgSchema = TestPgSchema.make()
   let clients = []
   let stops = []
-
-  // Outlives every indexer the run builds, so a restart resumes from what the
-  // previous one persisted — the same way a postgres schema does.
-  let memoryState = MemoryStorage.make()
 
   // The ClickHouse leg writes through the sink Postgres storage attaches, into
   // a database of this run's own.
   let clickHouseDatabase = switch backend {
   | #clickhouse => Some(TestClickHouse.make())
-  | #memory | #postgres => None
+  | #postgres => None
   }
 
   // The builder is only reachable here and from `restart`, so it takes just
@@ -112,26 +127,18 @@ let run = async (
     let registrationsByChainId = await resolveRegistrations()
     MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
 
-    let (persistence, pg) = switch backend {
-    | #memory =>
-      let storage = mapStorage(memoryState->MemoryStorage.toStorage(~config))
-      (
-        Persistence.make(~userEntities=config.userEntities, ~allEnums=config.allEnums, ~storage),
-        None,
-      )
-    | #postgres | #clickhouse =>
-      switch clickHouseDatabase {
-      | Some(database) => TestClickHouse.use(~database)
-      | None => ()
-      }
-      let sql = PgStorage.makeClient()
-      clients->Array.push(sql)->ignore
-      let storage = mapStorage(
-        // Tracking tables in Hasura costs ~1.9 seconds per indexer.
-        PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
-      )
-      (PgStorage.makePersistenceFromConfig(~config, ~storage), Some({sql, pgSchema}))
+    switch clickHouseDatabase {
+    | Some(database) => TestClickHouse.use(~database)
+    | None => ()
     }
+    let sql = PgStorage.makeClient()
+    clients->Array.push(sql)->ignore
+    let pg = {sql, pgSchema}
+    let storage = mapStorage(
+      // Tracking tables in Hasura costs ~1.9 seconds per indexer.
+      PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
+    )
+    let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
 
     let onError = switch onError {
     | Some(onError) => onError
@@ -162,7 +169,143 @@ let run = async (
       ~onError,
       ~onExit?,
     )
+    // Before the loop starts asking: a mock call parked before the hand-off
+    // would count as work for as long as it waits.
+    MockSource.installMockSourcePark(~config, ~park=work => state->IndexerState.suspendInFlight(work))
     state->IndexerLoop.start
+
+    // One macrotask hop, which drains every pending microtask behind it.
+    let drainTick = () => Promise.make((resolve, _) => NodeJs.setImmediate(() => resolve()))
+
+    // Well under vitest's own 30s: a settle that never comes back should say
+    // what the loop was still doing, rather than surfacing as a bare test
+    // timeout — but a flush against a real database can take seconds that have
+    // nothing wrong with them, so the bound is generous.
+    let settleTimeoutMs = 15_000
+
+    // The budget a `settleUntil` gets for all its rounds together, settling
+    // included. Also under vitest's, so its message about the condition is what
+    // a test sees rather than a bare timeout.
+    let settleUntilTimeoutMs = 20_000.
+
+    // Runs until the loop has nothing left to do on its own. `whenIdle` alone
+    // isn't enough twice over: a source response that resolved this tick hasn't
+    // reached its handler yet (the parked frame only rejoins the count when it
+    // resumes), and the write loop is driven by the store rather than by the
+    // scheduler. Draining the tick settles the first, `flush` the second, and
+    // the re-check catches whatever either of them started. `timedOut` stops the
+    // recursion once the caller has given up, so a wedged run doesn't keep
+    // driving the store for the rest of the worker.
+    // Nothing downstream can be trusted once the count has gone into deficit,
+    // and waiting the bound out would only delay saying so.
+    let throwOnDeficit = () =>
+      if state->IndexerState.hasInFlightDeficit {
+        JsError.throwWithMessage(
+          "The indexer's in-flight count went into deficit: either a fan-out counted once for work that runs many times over, or an `indexer.park` from a frame the scheduler wasn't counting.",
+        )
+      }
+
+    let rec settleLoop = async (~timedOut) => {
+      // `whenIdle` returns at once on a latched deficit rather than waiting for
+      // an idle reading that can never come, so this catches one that predates
+      // the settle as well as one that lands during it.
+      await state->IndexerState.whenIdle
+      throwOnDeficit()
+      await drainTick()
+      // Checked before the flush, not just after: the run's teardown drops the
+      // schema once the caller has given up, and a write started here would
+      // land on a schema that no longer exists.
+      if !timedOut.contents {
+        await state->Writing.flush
+        // Re-checked before deciding this round settled anything: a deficit
+        // that latched during the drain or the flush makes `inFlight > 0` read
+        // as quiet for a count that is anything but.
+        throwOnDeficit()
+        if (
+          !timedOut.contents &&
+          (state->IndexerState.inFlight > 0 || state->IndexerState.writeFiber->Option.isSome)
+        ) {
+          await settleLoop(~timedOut)
+        }
+      }
+    }
+
+    let settleWithin = async (~timeoutMs) => {
+      let timeoutId = ref(None)
+      let timedOut = ref(false)
+      // Cleared whichever way the race ends: a timer left running holds the
+      // vitest worker's event loop open for its whole span.
+      let failure = try {
+        await Promise.race([
+          settleLoop(~timedOut),
+          Promise.make((resolve, _) => {
+            timeoutId := Some(setTimeout(() => {
+                timedOut := true
+                resolve()
+              }, timeoutMs))
+          }),
+        ])
+        None
+      } catch {
+      | exn => Some(exn)
+      }
+      timeoutId.contents->Option.forEach(clearTimeout)
+      switch failure {
+      | Some(exn) => throw(exn)
+      | None => ()
+      }
+      if timedOut.contents {
+        let busy =
+          [
+            state->IndexerState.inFlight > 0
+              ? Some(`${state->IndexerState.inFlight->Int.toString} scheduled step(s)`)
+              : None,
+            // Reachable when the timer wins the race: the loop's own report of
+            // the deficit is discarded with it.
+            state->IndexerState.hasInFlightDeficit
+              ? Some("a count in deficit — see `indexer.park`'s contract")
+              : None,
+            state->IndexerState.isProcessing ? Some("a batch being processed") : None,
+            state->IndexerState.writeFiber->Option.isSome ? Some("a write") : None,
+          ]->Array.filterMap(x => x)
+        JsError.throwWithMessage(
+          `Timed out waiting for the indexer to settle, still in flight: ${switch busy {
+            | [] => "nothing — the loop settled and started again"
+            | busy => busy->Array.join(", ")
+            }}. Either the loop is genuinely still working — a retry's backoff, a rate-limit reset — or a wait the test itself holds closed needs to go through \`indexer.park\`, which the settle otherwise sits and waits out.`,
+        )
+      }
+    }
+
+    let settle = () => settleWithin(~timeoutMs=settleTimeoutMs)
+
+    // Settles, then keeps settling until `predicate` holds, waiting on the
+    // clock between rounds for conditions that only arrive once a polling
+    // interval elapses. Every round draws on one budget, settling included, so
+    // a condition that never comes says what it was waiting for rather than
+    // stacking two settle bounds past the suite's own timeout.
+    let rec settleUntil = async (predicate, ~message, ~deadline) => {
+      let remaining = deadline -. Date.now()
+      // A sliver of budget left is the condition never arriving, not a settle
+      // worth starting — and a settle given no time reports its own timeout
+      // instead of what was being waited for. Checked once more first: the
+      // condition may have arrived during the wait that used the budget up.
+      if remaining < 100. {
+        if !predicate() {
+          JsError.throwWithMessage(`Timed out waiting for ${message}`)
+        }
+      } else {
+        await settleWithin(
+          ~timeoutMs=Pervasives.min(settleTimeoutMs->Int.toFloat, remaining)->Float.toInt,
+        )
+        if !predicate() {
+          await Utils.delay(1)
+          await settleUntil(predicate, ~message, ~deadline)
+        }
+      }
+    }
+    let settleUntil = (predicate, ~message) =>
+      settleUntil(predicate, ~message, ~deadline=Date.now() +. settleUntilTimeoutMs)
 
     // Persist before stopping, else a resumed indexer loses uncommitted state,
     // then let any in-flight batch or write settle so nothing from this run
@@ -193,6 +336,12 @@ let run = async (
             while state->IndexerState.writeFiber->Option.isSome && Date.now() < writeDeadline {
               await Utils.delay(1)
             }
+            // The resume-time index repair runs off the loop, so nothing above
+            // waits for it; its DDL would otherwise land on the dropped schema.
+            switch state->IndexerState.repairFiber {
+            | Some(fiber) => await fiber
+            | None => ()
+            }
           }
         )()
         stopped := Some(promise)
@@ -200,31 +349,17 @@ let run = async (
       }
     stops->Array.push(stop)->ignore
 
-    // Both backends hand back decoded entities, so an assertion reads the same
-    // either way: postgres parses its rows with the table's field schemas, and
-    // the memory store never encoded them in the first place.
+    // Rows come back decoded, parsed with the table's own field schemas, so an
+    // assertion reads the entity rather than its storage encoding.
     let queryEntity = (entityConfig: Internal.entityConfig) =>
-      switch pg {
-      | None =>
-        Promise.resolve(
-          memoryState
-          ->MemoryStorage.currentRows(~entityConfig)
-          ->(Utils.magic: array<Internal.entity> => array<unknown>),
-        )
-      | Some({sql, pgSchema}) =>
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
-        )
-        ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
-      }
+      sql
+      ->Postgres.unsafe(
+        PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
+      )
+      ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
 
     let queryEntityHistory = (entityConfig: Internal.entityConfig) =>
-      switch pg {
-      | None =>
-        Promise.resolve(memoryState->MemoryStorage.historyChanges(~entityConfig))
-      | Some({sql, pgSchema}) =>
-        sql
+      sql
         ->Postgres.unsafe(
           PgStorage.makeLoadAllQuery(
             ~pgSchema,
@@ -266,107 +401,21 @@ let run = async (
             }
           })
         })
-      }
 
     {
-      getBatchWritePromise: () => {
-        Utils.Promise.makeAsync(async (resolve, _reject) => {
-          let before = state->IndexerState.processedBatchesCount
-          // Wait until a new batch is processed and written. A reorg batch can
-          // land before this call (e.g. while the test awaits the rollback), so
-          // also stop once the indexer has fully settled.
-          let idleChecks = ref(0)
-          let rec wait = async () => {
-            await state->Writing.flush
-            let isIdle =
-              !(state->IndexerState.isProcessing) &&
-              state->IndexerState.writeFiber->Option.isNone &&
-              state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
-
-            // Catching up hands off to the FinalizingIndexes phase, which is
-            // where readiness is decided — so a batch isn't settled until that
-            // phase is over. The idle fallback below still bounds the wait.
-            if (
-              before < state->IndexerState.processedBatchesCount &&
-                !(state->IndexerState.isFinalizingIndexes)
-            ) {
-              ()
-            } else if isIdle && idleChecks.contents >= 5 {
-              ()
-            } else {
-              idleChecks := if isIdle {
-                  idleChecks.contents + 1
-                } else {
-                  0
-                }
-              await Utils.delay(1)
-              await wait()
-            }
-          }
-          await wait()
-          // Skip extra microtasks for indexer to fire follow-up actions
-          // (e.g. the NextQuery dispatch that schedules the next
-          // getItemsOrThrow call). Without this, callers that immediately
-          // call resolveGetItemsOrThrow can race the dispatch and observe
-          // an empty calls array.
-          await Utils.delay(0)
-          await Utils.delay(0)
-          resolve()
-        })
-      },
-      waitUntilIdle: async () => {
-        await state->Writing.flush
-        // Settling takes several ticks: the loop dispatches follow-up actions
-        // (the next query, the finalize pass) from inside the tick that looks
-        // idle, so one observation isn't enough.
-        let settled = ref(0)
-        let attempts = ref(0)
-        while settled.contents < 5 && attempts.contents < 5000 {
-          attempts := attempts.contents + 1
-          settled := if (
-              !(state->IndexerState.isProcessing) &&
-              state->IndexerState.writeFiber->Option.isNone &&
-              !(state->IndexerState.isFinalizingIndexes) &&
-              state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
-            ) {
-              settled.contents + 1
-            } else {
-              0
-            }
-          await Utils.delay(0)
-        }
-        if settled.contents < 5 {
-          JsError.throwWithMessage("Timed out waiting for the indexer to go idle")
-        }
-      },
-      waitUntilReady: async () => {
-        let isReady = () =>
-          state
-          ->IndexerState.chainStates
-          ->Dict.valuesToArray
-          ->Array.every(chainState => chainState->ChainState.isReady)
-        let attempts = ref(0)
-        while !isReady() && attempts.contents < 5000 {
-          attempts := attempts.contents + 1
-          await Utils.delay(0)
-        }
-        if !isReady() {
-          JsError.throwWithMessage("Timed out waiting for the indexer to report ready")
-        }
-      },
-      getRollbackReadyPromise: () => {
-        Utils.Promise.makeAsync(async (resolve, _reject) => {
-          // Wait for the in-progress rollback to be fully applied. RollbackReady
-          // itself is transient (the reprocessing batch consumes it), so observe
-          // the rollback flag clearing instead.
-          while state->IndexerState.isResolvingReorg {
-            await Utils.delay(1)
-          }
-          // Skip an extra microtask for indexer to fire actions
-          await Utils.delay(0)
-          resolve()
-        })
-      },
+      settle,
+      settleUntil,
+      park: work => state->IndexerState.suspendInFlight(work),
+      queuedWrites: () => state->IndexerState.processedBatches->Array.length,
+      waitUntilReady: () =>
+        settleUntil(
+          () =>
+            state
+            ->IndexerState.chainStates
+            ->Dict.valuesToArray
+            ->Array.every(chainState => chainState->ChainState.isReady),
+          ~message="the indexer to report ready",
+        ),
       query: (type entity, name) =>
         queryEntity(config->entityConfigByName(name))->(
           Utils.magic: promise<array<unknown>> => promise<array<entity>>
@@ -380,32 +429,21 @@ let run = async (
           Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
         ),
       queryCheckpoints: () =>
-        switch pg {
-        | None => Promise.resolve(memoryState->MemoryStorage.checkpointRows)
-        | Some({sql, pgSchema}) =>
-          sql
-          ->Postgres.unsafe(
-            PgStorage.makeLoadAllQuery(
-              ~pgSchema,
-              ~tableName=InternalTable.Checkpoints.table.tableName,
-            ),
-          )
-          ->Promise.thenResolve(rows =>
-            rows
-            ->(Utils.magic: unknown => array<unknown>)
-            ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
-          )
-        },
+        sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=InternalTable.Checkpoints.table.tableName),
+        )
+        ->Promise.thenResolve(rows =>
+          rows
+          ->(Utils.magic: unknown => array<unknown>)
+          ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
+        ),
       queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope) => {
         let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
         let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
-        switch pg {
-        | None => Promise.resolve(memoryState->MemoryStorage.effectCacheRows(~tableName))
-        | Some({sql, pgSchema}) =>
-          sql
-          ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
-          ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
-        }
+        sql
+        ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
+        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {
         // Parse the metric's samples back out of the rendered /metrics text.

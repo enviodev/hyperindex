@@ -91,7 +91,7 @@ describe("Concurrent batch write and processing", () => {
     },
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
 
       sourceMock.resolveGetItemsOrThrow(
@@ -110,7 +110,7 @@ describe("Concurrent batch write and processing", () => {
         ~latestFetchedBlockNumber=101,
         ~resolveAt=#first,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Delete the entity and stall the batch write so it stays in flight
       let resolveStall = ref(() => ())
@@ -157,12 +157,14 @@ describe("Concurrent batch write and processing", () => {
         () => recreateProcessed.contents,
         ~message="the recreate handler to run",
       )
-      // Let the processed batch get queued for the next write
-      await Utils.delay(1)
+      await Scenario.waitUntil(
+        () => indexer.queuedWrites() > 0,
+        ~message="the recreate batch to queue up behind the stalled write",
+      )
 
       stallWriteBatch := None
       resolveStall.contents()
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         (

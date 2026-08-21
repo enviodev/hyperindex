@@ -34,11 +34,10 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetItemsOrThrow(
         [
           {
@@ -59,7 +58,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
         ],
         ~latestFetchedBlockNumber=100,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       let entities: array<entityWithBigDecimal> = await indexer.query("EntityWithBigDecimal")
 

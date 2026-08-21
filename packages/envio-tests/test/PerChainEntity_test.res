@@ -94,12 +94,6 @@ let snakeCaseScenario = Scenario.make(
 let pruneScenario = Scenario.make(
   ~schema,
   ~configYaml=makeConfigYaml(),
-  ~unsupported=[
-    {
-      Scenario.backend: #memory,
-      reason: "seeds and reads the history tables with raw SQL",
-    },
-  ],
 )
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
@@ -135,17 +129,15 @@ describe("Per-chain entities against Postgres", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source1.resolveGetItemsOrThrow([bump(1n)], ~latestFetchedBlockNumber=300)
       source137.resolveGetItemsOrThrow([bump(10n)], ~latestFetchedBlockNumber=300)
-      await indexer.getBatchWritePromise()
-      await indexer.waitUntilIdle()
+      await indexer.settle()
 
       let counters: array<counter> = await indexer.query("Counter")
       let globals: array<globalCounter> = await indexer.query("GlobalCounter")
@@ -173,7 +165,7 @@ describe("Chain-scoped rollback", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let _ = await Promise.all2((
         Scenario.enterReorgThreshold(~t, ~indexer, ~source=source137),
@@ -187,13 +179,13 @@ describe("Chain-scoped rollback", () => {
         ~latestFetchedBlockNumber=101,
         ~latestFetchedBlockHash="0x0101",
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       source1.resolveGetItemsOrThrow(
         [setEntities(~block=101, ~counter=1n)],
         ~latestFetchedBlockNumber=101,
         ~latestFetchedBlockHash="0x0101",
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Chain 1 overwrites its row at block 102, which is the change the reorg
       // takes back.
@@ -202,21 +194,20 @@ describe("Chain-scoped rollback", () => {
         ~latestFetchedBlockNumber=102,
         ~latestFetchedBlockHash="0x0102",
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Block 102 comes back with a different hash.
       source1.resolveGetItemsOrThrow(
         [setEntities(~block=103, ~counter=99n)],
         ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source1.resolveGetBlockHashes([
         {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
         {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
       ])
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
 
       // The rollback diff is written with the next batch, so drive chain 1 once
       // more (with nothing to index) to flush it.
@@ -225,8 +216,7 @@ describe("Chain-scoped rollback", () => {
         ~latestFetchedBlockNumber=102,
         ~latestFetchedBlockHash="0x0102",
       )
-      await indexer.getBatchWritePromise()
-      await indexer.waitUntilIdle()
+      await indexer.settle()
 
       let counters: array<counter> = await indexer.query("Counter")
 
@@ -249,19 +239,18 @@ describe("Chain-scoped reads and deletes", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Chain 137 claims the id first and must survive everything chain 1 does.
       source137.resolveGetItemsOrThrow(
         [setEntities(~block=5, ~counter=137n)],
         ~latestFetchedBlockNumber=300,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       let loadedByChain1 = ref(None)
       let getWhereByChain1 = ref([])
@@ -283,9 +272,7 @@ describe("Chain-scoped reads and deletes", () => {
         // has a call to answer.
         ~latestFetchedBlockNumber=100,
       )
-      await indexer.getBatchWritePromise()
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source1.resolveGetItemsOrThrow(
         [
@@ -301,8 +288,7 @@ describe("Chain-scoped reads and deletes", () => {
         ],
         ~latestFetchedBlockNumber=300,
       )
-      await indexer.getBatchWritePromise()
-      await indexer.waitUntilIdle()
+      await indexer.settle()
 
       let remaining: array<counter> = await indexer.query("Counter")
 
@@ -331,7 +317,7 @@ describe("Per-chain history and removal", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let _ = await Promise.all2((
         Scenario.enterReorgThreshold(~t, ~indexer, ~source=source137),
@@ -344,13 +330,13 @@ describe("Per-chain history and removal", () => {
         ~latestFetchedBlockNumber=101,
         ~latestFetchedBlockHash="0x0101",
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       source1.resolveGetItemsOrThrow(
         [setEntities(~block=101, ~counter=1n, ~id="shared")],
         ~latestFetchedBlockNumber=101,
         ~latestFetchedBlockHash="0x0101",
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       source1.resolveGetItemsOrThrow(
         [
@@ -369,7 +355,7 @@ describe("Per-chain history and removal", () => {
         ~latestFetchedBlockNumber=102,
         ~latestFetchedBlockHash="0x0102",
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       let afterDelete: array<counter> = await indexer.query("Counter")
 
@@ -378,20 +364,18 @@ describe("Per-chain history and removal", () => {
         [setEntities(~block=103, ~counter=99n, ~id="ignored")],
         ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source1.resolveGetBlockHashes([
         {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
         {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
       ])
-      await indexer.getRollbackReadyPromise()
+      await indexer.settle()
       source1.resolveGetItemsOrThrow(
         [],
         ~latestFetchedBlockNumber=102,
         ~latestFetchedBlockHash="0x0102",
       )
-      await indexer.getBatchWritePromise()
-      await indexer.waitUntilIdle()
+      await indexer.settle()
 
       let afterRollback: array<counter> = await indexer.query("Counter")
 
@@ -426,18 +410,17 @@ describe("Per-chain entities with renamed columns", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source137.resolveGetItemsOrThrow(
         [setEntities(~block=5, ~counter=137n)],
         ~latestFetchedBlockNumber=300,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       let loadedByChain1 = ref(None)
       source1.resolveGetItemsOrThrow(
@@ -454,8 +437,7 @@ describe("Per-chain entities with renamed columns", () => {
         ],
         ~latestFetchedBlockNumber=300,
       )
-      await indexer.getBatchWritePromise()
-      await indexer.waitUntilIdle()
+      await indexer.settle()
 
       // Rows are keyed by the API field name whatever the column is called.
       let rows: array<counter> = await indexer.query("Counter")
@@ -495,12 +477,11 @@ describe("Effect scope under the disabled default", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       let callEffect = (~block): MockSource.itemMock => {
         blockNumber: block,
@@ -513,10 +494,9 @@ describe("Effect scope under the disabled default", () => {
       }
 
       source137.resolveGetItemsOrThrow([callEffect(~block=5)], ~latestFetchedBlockNumber=300)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
       source1.resolveGetItemsOrThrow([callEffect(~block=6)], ~latestFetchedBlockNumber=300)
-      await indexer.getBatchWritePromise()
-      await indexer.waitUntilIdle()
+      await indexer.settle()
 
       let cache1 = await indexer.queryEffectCache(unscoped, ~scope=Chain(1->ChainId.fromInt))
       let cache137 = await indexer.queryEffectCache(unscoped, ~scope=Chain(137->ChainId.fromInt))
@@ -554,16 +534,15 @@ describe("Per-chain history prune", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
+      await indexer.settle()
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       await indexer.stop()
 
       let globalEntityConfig =
         pruneScenario.config->IndexerRunner.entityConfigByName("GlobalCounter")
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       let historyTable = PgStorage.getEntityHistory(~entityConfig).table.tableName
       let globalHistoryTable = PgStorage.getEntityHistory(
         ~entityConfig=globalEntityConfig,

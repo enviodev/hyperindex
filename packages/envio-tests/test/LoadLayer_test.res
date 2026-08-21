@@ -1,5 +1,8 @@
 open Vitest
 
+// determinism-lint: no indexer loop — LoadLayer batching is asserted directly,
+// and a tick is what the batching boundary is made of.
+
 // `User` restates the generated entity record: a linked field is stored as its
 // `_id` column, and an enum column is a plain string outside a generated
 // project.

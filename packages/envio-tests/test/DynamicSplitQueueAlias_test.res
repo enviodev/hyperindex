@@ -107,7 +107,7 @@ describe("Dynamic-registration partition split queue aliasing", () => {
       let resolveTo = (call: MockSource.getItemsOrThrowCall, toBlock) =>
         call.resolve(call->itemsFor(~toBlock), ~latestFetchedBlockNumber=toBlock)
 
-      await Utils.delay(0)
+      await indexer.settle()
       let find = (p, ~fromBlock) =>
         sourceMock.getItemsOrThrowCalls
         ->Array.find(c => c.payload["p"] === p && c.payload["fromBlock"] === fromBlock)
@@ -115,14 +115,8 @@ describe("Dynamic-registration partition split queue aliasing", () => {
           ~message=`Expected a pending query for partition ${p} from block ${fromBlock->Int.toString}`,
         )
 
-      let settle = async () => {
-        await Utils.delay(0)
-        await Utils.delay(0)
-        await Utils.delay(0)
-      }
-
       sourceMock.resolveGetHeightOrThrow(100_000)
-      await settle()
+      await indexer.settle()
 
       // Partition "0" holds both static config addresses (Gravatar + NftFactory)
       // merged together — the mixed partition this test splits.
@@ -155,10 +149,10 @@ describe("Dynamic-registration partition split queue aliasing", () => {
         ],
         ~latestFetchedBlockNumber=24_000,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       find("2", ~fromBlock=10).resolve([], ~latestFetchedBlockNumber=20_000)
-      await settle()
+      await indexer.settle()
 
       // The SimpleNft response delivers the first NftFactory dynamic
       // registration while partition "0" is idle (the SimpleNft probe holds the
@@ -181,7 +175,7 @@ describe("Dynamic-registration partition split queue aliasing", () => {
         ],
         ~latestFetchedBlockNumber=45_000,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         sourceMock.getItemsOrThrowCalls
@@ -209,18 +203,18 @@ describe("Dynamic-registration partition split queue aliasing", () => {
       // Clear the SimpleNft partition and the bounded backfill so only the two
       // split halves stay in play.
       resolveTo(find("2", ~fromBlock=45_001), 80_984)
-      await settle()
+      await indexer.settle()
       resolveTo(find("2", ~fromBlock=80_985), 99_800)
-      await settle()
+      await indexer.settle()
       resolveTo(find("4", ~fromBlock=20_050), 24_000)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Both split halves respond partially, putting them at different
       // frontiers: Gravatar at 40,000, NftFactory at 30,000.
       resolveTo(find("0", ~fromBlock=24_001), 40_000)
-      await settle()
+      await indexer.settle()
       resolveTo(find("3", ~fromBlock=24_001), 30_000)
-      await settle()
+      await indexer.settle()
 
       // Gravatar's next query (40,001..) resolves first — for Gravatar's address
       // only, delivering its block-50,000 event. NftFactory's next query
@@ -229,9 +223,9 @@ describe("Dynamic-registration partition split queue aliasing", () => {
       // frontier to 60,000 — blocks 40,001-60,000 are never queried with the
       // NftFactory addresses, so its block-50,000 event is lost.
       resolveTo(find("0", ~fromBlock=40_001), 60_000)
-      await settle()
+      await indexer.settle()
       resolveTo(find("3", ~fromBlock=30_001), 40_000)
-      await settle()
+      await indexer.settle()
 
       // Drain: resolve every remaining query to its full range, delivering
       // whatever world events it legitimately covers.
@@ -241,10 +235,10 @@ describe("Dynamic-registration partition split queue aliasing", () => {
         | Some(call) => resolveTo(call, call.payload["toBlock"]->Option.getOr(99_800))
         | None => ()
         }
-        await settle()
+        await indexer.settle()
         rounds := rounds.contents + 1
       }
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         processed->Array.toSorted(String.compare),

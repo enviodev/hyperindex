@@ -1,5 +1,8 @@
 open Vitest
 
+// determinism-lint: no indexer loop — SourceManager is exercised on its own,
+// and its dispatch behaviour is defined in terms of ticks.
+
 // Spread into query literals so the common fields don't have to be repeated;
 // every other field is overridden at the call site.
 let defaultQuery: FetchState.query = {
@@ -1810,7 +1813,10 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         [#getHeightOrThrow, #getItemsOrThrow],
         ~sourceFor=Fallback,
       )
-      let recoveryTimeout = 5.0
+      // Wide enough that the "before the timeout" query below can't be pushed
+      // past it by scheduling noise: the whole suite runs in parallel workers,
+      // and a few milliseconds of wall clock there is not a guarantee.
+      let recoveryTimeout = 500.0
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~recoveryTimeout,
@@ -1880,8 +1886,8 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
         ~message="Should stay on fallback before recovery timeout elapses",
       ).toBe(fallbackMock.source)
 
-      // Wait for recovery timeout to elapse
-      await Utils.delay(recoveryTimeout->Float.toInt)
+      // Wait for recovery timeout to elapse, with room for a late timer.
+      await Utils.delay(recoveryTimeout->Float.toInt + 50)
 
       {
         // Query after timeout — recovery switches to sync before querying

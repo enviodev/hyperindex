@@ -51,7 +51,7 @@ let make = (~configYaml, ~schema=?, ~env=?, ~files=?, ~handlers=?, ~unsupported=
   // file down before the skip could apply.
   let configYaml = switch IndexerRunner.selectedBackend {
   | #clickhouse if !isUnsupported => configYaml->withClickHouseStorage
-  | #clickhouse | #memory | #postgres => configYaml
+  | #clickhouse | #postgres => configYaml
   }
 
   let withIndexerTypes = handlers->Option.isSome
@@ -276,11 +276,58 @@ let it = (
         (~indexer, ~source) => body(~t, ~indexer, ~source),
       )
     switch retry {
-    | Some(retry) => Vitest.Async.itWithOptions(name, {retry, timeout: ?timeout}, runBody)
+    | Some(retry) => Vitest.Async.itWithOptions(name, {retry, ?timeout}, runBody)
     | None => Vitest.Async.it(name, runBody, ~timeout?)
     }
   }
 }
+
+let describeQuery = (payload: MockSource.queryPayload) =>
+  `p${payload["p"]} ${payload["fromBlock"]->Int.toString}-${switch payload["toBlock"] {
+    | Some(toBlock) => toBlock->Int.toString
+    | None => "head"
+    }}${payload["retry"] === 0 ? "" : ` retry${payload["retry"]->Int.toString}`}`
+
+// How many settled queries the failure message recalls. Enough to place the
+// pending set in the run's history without burying the diff.
+let settledQueriesInMessage = 5
+
+// Settles the indexer, then asserts the source's whole pending query set at
+// once. The message recalls the queries that have already come and gone, so an
+// unexpected empty set reads as "these ran instead" rather than as nothing.
+let expectQueries = async (
+  ~t: Vitest.testContext,
+  ~indexer: IndexerRunner.t,
+  ~source: MockSource.t,
+  ~message,
+  expected: array<MockSource.queryPayload>,
+) => {
+  await indexer.settle()
+  let settled = source.settledQueries
+  let recalled =
+    settled
+    ->Array.slice(
+      ~start=Pervasives.max(settled->Array.length - settledQueriesInMessage, 0),
+      ~end=settled->Array.length,
+    )
+    ->Array.map(describeQuery)
+  t.expect(
+    source.getItemsOrThrowCalls->Array.map(call => call.payload),
+    ~message=`${message} (no longer pending: ${switch recalled {
+      | [] => "nothing"
+      | recalled => recalled->Array.join(", ")
+      }})`,
+  ).toEqual(expected)
+}
+
+// Settles the indexer, then keeps settling until the source has a query waiting
+// to be answered. Queries are serialized by the cross-chain budget waterfall, so
+// a chain's query only appears once the more-behind chains release the budget.
+let waitQuery = (~indexer: IndexerRunner.t, ~source: MockSource.t) =>
+  indexer.settleUntil(
+    () => source.getItemsOrThrowCalls->Utils.Array.notEmpty,
+    ~message=`a getItemsOrThrow call on chain ${source.source.chainId->ChainId.toString}`,
+  )
 
 // Drives a chain through the reorg-threshold transition: the first query stops
 // `maxReorgDepth` short of the head, and the response commits before the
@@ -294,31 +341,38 @@ let enterReorgThreshold = async (
   ~preThresholdTo=100,
   ~fromBlock=1,
 ) => {
-  await Utils.delay(0)
+  await indexer.settle()
   t.expect(
     source.getHeightOrThrowCalls->Array.length,
     ~message="should have called getHeightOrThrow to get initial height",
   ).toEqual(1)
   source.resolveGetHeightOrThrow(head)
-  await Utils.delay(0)
-  await Utils.delay(0)
 
-  t.expect(
-    source.getItemsOrThrowCalls->Array.map(call => call.payload),
+  await expectQueries(
+    ~t,
+    ~indexer,
+    ~source,
     ~message="Should request items until reorg threshold",
-  ).toEqual([{"fromBlock": fromBlock, "toBlock": Some(preThresholdTo), "retry": 0, "p": "0"}])
+    [{"fromBlock": fromBlock, "toBlock": Some(preThresholdTo), "retry": 0, "p": "0"}],
+  )
   source.resolveGetItemsOrThrow([])
-  await indexer.getBatchWritePromise()
+  await indexer.settle()
 }
 
 // Polls until `predicate` holds. Bounded so a condition that never arrives
 // fails with what it was waiting for, rather than as a suite-level timeout.
-let waitUntil = async (predicate, ~message, ~timeoutMs=5000.) => {
+// For anything the loop itself brings about, prefer `indexer.settleUntil`: this
+// one is for state the test can only observe from outside the loop — a gate's
+// entry count, a database the repair pass writes to on its own.
+let waitUntilAsync = async (predicate, ~message, ~timeoutMs=5000.) => {
   let deadline = Date.now() +. timeoutMs
-  while !predicate() {
+  while !(await predicate()) {
     if Date.now() > deadline {
       JsError.throwWithMessage(`Timed out waiting for ${message}`)
     }
     await Utils.delay(1)
   }
 }
+
+let waitUntil = (predicate, ~message, ~timeoutMs=?) =>
+  waitUntilAsync(() => Promise.resolve(predicate()), ~message, ~timeoutMs?)

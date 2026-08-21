@@ -45,11 +45,10 @@ describe("Client-side address filtering item dedup", () => {
         (async _ => processed->Array.push((blockNumber, logIndex))->ignore)->Obj.magic
 
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       sourceMock.resolveGetHeightOrThrow(1000)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Snapshot the pre-switch queries so we can require a *newly appended*
       // post-switch re-fetch below — the initial fetch also starts at/below block
@@ -83,9 +82,7 @@ describe("Client-side address filtering item dedup", () => {
         ],
         ~latestFetchedBlockNumber=10,
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // The switch dragged the collapsed partition's frontier back below block 10,
       // so a *newly issued* query (not one of the pre-switch calls) re-queries a
@@ -105,7 +102,7 @@ describe("Client-side address filtering item dedup", () => {
         ~resolveAt=#all,
         ~latestFetchedBlockNumber=200,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         processed,

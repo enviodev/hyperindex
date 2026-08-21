@@ -35,7 +35,7 @@ describe("E2E blockLag tests", () => {
     ~reducedPollingInterval=1,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
       // Enter reorg threshold the standard way:
       // knownHeight=300, maxReorgDepth=200, so initial fetch is blocks 1-100
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
@@ -45,17 +45,7 @@ describe("E2E blockLag tests", () => {
         ~message="Should be in reorg threshold",
       ).toEqual([{value: "1", labels: Dict.make()}])
 
-      // Wait for the next query dispatch after entering reorg threshold
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
-
-      // After entering reorg threshold, a new height poll fires.
-      // Resolve it so the indexer can proceed.
-      sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // After entering reorg threshold, blockLag is updated to chainConfig.blockLag=1.
       // The indexer fetches from block 101 up to knownHeight - blockLag = 299.
@@ -74,7 +64,7 @@ describe("E2E blockLag tests", () => {
         ],
         ~latestFetchedBlockNumber=299,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // With blockLag=1, progressBlockNumber=299 >= knownHeight(300) - blockLag(1) = 299,
       // so isProgressAtHead is true and chain IS synced to head.
@@ -83,18 +73,15 @@ describe("E2E blockLag tests", () => {
         ~message="Chain with blockLag=1 should be synced to head because progress (299) >= knownHeight (300) - blockLag (1)",
       ).toEqual([{value: "1", labels: Dict.make()}])
 
-      // The chain advanced to 301. Answer height polls with 301 until the
-      // indexer issues its next fetch (eager processing reaches the poll on its
-      // own cadence, so we can't resolve at a fixed tick).
-      let attempt = ref(0)
-      while sourceMock.getItemsOrThrowCalls->Utils.Array.isEmpty {
-        if attempt.contents >= 200 {
-          JsError.throwWithMessage("Timed out waiting for the next getItemsOrThrow call")
-        }
-        sourceMock.resolveGetHeightOrThrow(301)
-        await Utils.delay(0)
-        attempt := attempt.contents + 1
-      }
+      // The chain advanced to 301, which opens the next fetch range. A chain
+      // parked at its head polls on a timer, so wait for a poll to be
+      // outstanding rather than assuming a settled indexer has one.
+      await indexer.settleUntil(
+        () => sourceMock.pendingHeightCalls() > 0,
+        ~message="the next height poll",
+      )
+      sourceMock.resolveGetHeightOrThrow(301)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock)
 
       // Should request from block 300 up to knownHeight - blockLag = 300.
       t.expect(
@@ -104,7 +91,7 @@ describe("E2E blockLag tests", () => {
 
       // Advance chain height to 301 and resolve fetch up to block 300.
       sourceMock.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300, ~knownHeight=301)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Still synced: progressBlockNumber=300 >= knownHeight(301) - blockLag(1) = 300
       t.expect(

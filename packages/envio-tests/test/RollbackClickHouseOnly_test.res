@@ -43,7 +43,6 @@ type EntityWithTimestamp @storage(clickhouse: {}) {
 }
 `,
   ~unsupported=[
-    {backend: #memory, reason: "asserts on the Postgres schema's history tables"},
     {
       backend: #postgres,
       reason: "the ClickHouse-only entity needs a ClickHouse database to write into",
@@ -97,7 +96,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
     },
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
       await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
 
       sourceMock.resolveGetItemsOrThrow(
@@ -123,7 +122,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
         ],
         ~latestFetchedBlockNumber=102,
       )
-      await indexer.getBatchWritePromise()->raiseOnIndexerError
+      await indexer.settle()->raiseOnIndexerError
 
       let missingHistoryRelationError = try {
         let _ = await indexer.queryHistory(chOnlyEntityName)
@@ -135,7 +134,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
       t.expect(
         (
           missingHistoryRelationError->String.includes(
-            `relation "${(indexer->IndexerRunner.pgOrThrow).pgSchema}.envio_history_${chOnlyEntityName}" does not exist`,
+            `relation "${(indexer.pg).pgSchema}.envio_history_${chOnlyEntityName}" does not exist`,
           ),
           await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),
         ),
@@ -148,8 +147,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
         ~latestFetchedBlockNumber=103,
         ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       t.expect(
         sourceMock.getBlockHashesCalls,
@@ -162,7 +160,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
         {blockNumber: 101, blockHash: "0x101a", blockTimestamp: 101},
       ])
 
-      await indexer.getRollbackReadyPromise()->raiseOnIndexerError
+      await indexer.settle()->raiseOnIndexerError
 
       // Commit the rollback diff with an empty reprocessing batch. The write
       // prunes post-target history rows, exercising the same per-entity filter.
@@ -171,7 +169,7 @@ describe("Rollback with a ClickHouse-only entity", () => {
         ~latestFetchedBlockNumber=102,
         ~latestFetchedBlockHash="0x102a",
       )
-      await indexer.getBatchWritePromise()->raiseOnIndexerError
+      await indexer.settle()->raiseOnIndexerError
 
       t.expect(
         await (indexer.query("SimpleEntity"): promise<array<simpleEntity>>),

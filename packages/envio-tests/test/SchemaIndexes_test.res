@@ -38,13 +38,6 @@ contracts:
       - event: "TestEvent()"
 `
 
-let unsupported = [
-  {
-    Scenario.backend: #memory,
-    reason: "asserts on the Postgres index catalog",
-  },
-]
-
 let scenario = Scenario.make(
   ~configYaml=`
 name: schema-indexes${contractsYaml}chains:${chainYaml(
@@ -52,7 +45,6 @@ name: schema-indexes${contractsYaml}chains:${chainYaml(
       "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3",
     )}`,
   ~schema,
-  ~unsupported,
 )
 
 let multichainScenario = Scenario.make(
@@ -62,7 +54,6 @@ name: schema-indexes-multichain${contractsYaml}chains:${chainYaml(
       "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3",
     )}${chainYaml(1337, "0x3B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}`,
   ~schema,
-  ~unsupported,
 )
 
 let loadCatalog = async (~sql, ~pgSchema) => {
@@ -151,8 +142,8 @@ describe("Deferred schema indexes", () => {
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
+      let {sql, pgSchema} = indexer.pg
+      await indexer.settle()
 
       t.expect(
         (
@@ -168,8 +159,7 @@ describe("Deferred schema indexes", () => {
       ))
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexer.waitUntilReady()
 
@@ -190,7 +180,7 @@ describe("Deferred schema indexes", () => {
 
       let indexesBeforeRestart = await indexNames(~sql, ~pgSchema)
       let restarted = await indexer.restart()
-      await restarted.waitUntilIdle()
+      await restarted.settle()
 
       t.expect(
         (await indexNames(~sql, ~pgSchema), await readyAtByChainId(~sql, ~pgSchema)),
@@ -212,17 +202,15 @@ describe("Deferred schema indexes", () => {
     },
     async (~t, ~indexer, ~source) => {
       let gate = gate.contents
+      gate.parkWith(indexer.park)
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
+      let {sql, pgSchema} = indexer.pg
+      await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      while gate.entered.contents === 0 {
-        await Utils.delay(0)
-      }
+      await indexer.settle()
 
       t.expect(
         (
@@ -268,17 +256,15 @@ describe("Deferred schema indexes", () => {
     },
     async (~t, ~indexer, ~source) => {
       let gate = joinGate.contents
+      gate.parkWith(indexer.park)
       let finalizeCalls = joinFinalizeCalls
       let source = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      while gate.entered.contents === 0 {
-        await Utils.delay(0)
-      }
+      await indexer.settle()
 
       t.expect(
         (finalizeCalls.contents, await indexer.metric("envio_progress_ready")),
@@ -286,15 +272,16 @@ describe("Deferred schema indexes", () => {
       ).toEqual((1, [{value: "0", labels: dict{"chainId": "1337"}}]))
 
       // A height update while the build is held: the chain fetches the new range
-      // and its response schedules processing again.
+      // and its response schedules processing again. The chain is at head, so
+      // it polls on a timer: wait for a poll to answer.
+      await indexer.settleUntil(
+        () => source.pendingHeightCalls() > 0,
+        ~message="the next height poll",
+      )
       source.resolveGetHeightOrThrow(200)
-      await MockSource.waitItemsQuery(source)
+      await Scenario.waitQuery(~indexer, ~source=source)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200)
-      let ticks = ref(0)
-      while ticks.contents < 20 {
-        ticks := ticks.contents + 1
-        await Utils.delay(0)
-      }
+      await indexer.settle()
 
       t.expect(
         (finalizeCalls.contents, await indexer.metric("envio_progress_ready")),
@@ -328,24 +315,23 @@ describe("Deferred schema indexes", () => {
       let finalizeCalls = multichainFinalizeCalls
       let chainA = source(100)
       let chainB = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
+      let {sql, pgSchema} = indexer.pg
+      await indexer.settle()
 
       chainA.resolveGetHeightOrThrow(100)
       chainB.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
-      await MockSource.waitItemsQuery(chainA)
+      await Scenario.waitQuery(~indexer, ~source=chainA)
       chainA.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         (finalizeCalls.contents, await readyAtByChainId(~sql, ~pgSchema)),
         ~message="Chain A is at its head, but chain B is still backfilling",
       ).toEqual((0, [(ChainId.fromInt(100), false), (ChainId.fromInt(1337), false)]))
 
-      await MockSource.waitItemsQuery(chainB)
+      await Scenario.waitQuery(~indexer, ~source=chainB)
       chainB.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexer.waitUntilReady()
 
@@ -382,16 +368,15 @@ describe("Deferred schema indexes", () => {
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       // The height is unresolved, so the tables exist but the backfill is stalled
       // and no schema index has been created yet.
-      await Utils.delay(0)
+      await indexer.settle()
 
       let _ = await sql->Postgres.unsafe(`CREATE INDEX "A_b_id" ON "${pgSchema}"."B"("c_id");`)
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexer.waitUntilReady()
 
@@ -424,14 +409,13 @@ describe("Automatic getWhere indexes", () => {
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       let matched = ref([])
       let optionalColumn = "optionalStringToTestLinkedEntities"
 
-      await Utils.delay(0)
+      await indexer.settle()
       source.resolveGetHeightOrThrow(1000)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetItemsOrThrow(
         [
@@ -460,14 +444,14 @@ describe("Automatic getWhere indexes", () => {
         ],
         ~latestFetchedBlockNumber=10,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await findIndexes(~sql, ~tableName="A", ~columns=[optionalColumn], ~pgSchema),
         ~message="Nothing has queried the field yet, so no index exists for it",
       ).toEqual([])
 
-      await MockSource.waitItemsQuery(source)
+      await Scenario.waitQuery(~indexer, ~source=source)
       source.resolveGetItemsOrThrow(
         [
           {
@@ -484,7 +468,7 @@ describe("Automatic getWhere indexes", () => {
         ],
         ~latestFetchedBlockNumber=20,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         (
@@ -509,7 +493,7 @@ describe("Automatic getWhere indexes", () => {
       ))
 
       // The automatic index is the indexer's own, so finalizing must leave it be.
-      await MockSource.waitItemsQuery(source)
+      await Scenario.waitQuery(~indexer, ~source=source)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=1000)
       await indexer.waitUntilReady()
 

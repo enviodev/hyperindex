@@ -73,6 +73,10 @@ type t = {
   // that reaches the FinalizingIndexes phase awaits this one instead of
   // starting a second pass over the same indexes.
   mutable finalizeFiber: option<promise<unit>>,
+  // The resume-time index repair, None when it isn't running. The loop never
+  // waits on it — it runs alongside indexing — but a shutdown does, so the DDL
+  // can't outlive the schema it is building in.
+  mutable repairFiber: option<promise<unit>>,
   // Set once a write throws, to stop the loop. The error itself goes to onError.
   mutable hasFailedWrite: bool,
   // Resolved after every commit so capacity/flush waiters can re-evaluate.
@@ -110,6 +114,25 @@ type t = {
   // Set once on any fatal error. Every loop checks it to stop iterating and
   // every launch skips when it's set, so a single failure quiesces the indexer.
   mutable isStopped: bool,
+  // Loop work that has been started and hasn't settled, ignoring the stretches
+  // spent parked on a source response. Zero means every scheduled step ran to
+  // completion and nothing new was scheduled, so the indexer can only move
+  // again once the outside world answers.
+  //
+  // Nothing in the loop reads it — it exists so a test can tell quiescence from
+  // a pause, without counting await hops. Every entry pairs with an exit, so a
+  // count that drifts below zero means a fan-out was counted once for work that
+  // runs many times over. It stays visibly wrong rather than being clamped: a
+  // wrong count must never change how the indexer itself behaves, and the
+  // harness reports it.
+  mutable inFlight: int,
+  // Woken when inFlight falls back to zero.
+  mutable idleWaiters: array<unit => unit>,
+  // Latched the first time the count goes below zero. Once it has, zero no
+  // longer means quiet — a deficit and a running step cancel out — so idleness
+  // is never reported again and the harness says why instead of settling early
+  // on a count it can't trust.
+  mutable hasInFlightDeficit: bool,
   // Bumped when in-flight fetch work must be invalidated: on a reorg (responses
   // requested against pre-reorg state) and on the realtime transition (the
   // waitForNewBlock waiter is bound to the old, pre-realtime source). A fetch
@@ -175,6 +198,7 @@ let make = (
     processedBatchesCount: 0,
     writeFiber: None,
     finalizeFiber: None,
+    repairFiber: None,
     hasFailedWrite: false,
     commitWaiters: [],
     chainMeta: Dict.make(),
@@ -197,6 +221,9 @@ let make = (
     onError,
     onExit,
     isStopped: false,
+    inFlight: 0,
+    idleWaiters: [],
+    hasInFlightDeficit: false,
     epoch: 0,
     simulateDeadInputTracker: SimulateDeadInputTracker.makeFromConfig(config),
     preloadSeconds: 0.,
@@ -478,6 +505,7 @@ let processedBatches = (state: t) => state.processedBatches
 let processedBatchesCount = (state: t) => state.processedBatchesCount
 let writeFiber = (state: t) => state.writeFiber
 let finalizeFiber = (state: t) => state.finalizeFiber
+let repairFiber = (state: t) => state.repairFiber
 let hasFailedWrite = (state: t) => state.hasFailedWrite
 let chainMetaDirty = (state: t) => state.chainMetaDirty
 let chainMetaThrottler = (state: t) => state.chainMetaThrottler
@@ -505,6 +533,75 @@ let keepProcessAlive = (state: t) => state.keepProcessAlive
 let exitAfterFirstEventBlock = (state: t) => state.exitAfterFirstEventBlock
 let onExit = (state: t) => state.onExit
 let isStopped = (state: t) => state.isStopped
+
+let inFlight = (state: t) => state.inFlight
+
+let hasInFlightDeficit = (state: t) => state.hasInFlightDeficit
+
+let isInFlightIdle = (state: t) => state.inFlight === 0 && !state.hasInFlightDeficit
+
+// Resolves the next time no loop work is running. Callers re-check the count
+// after awaiting: work resolved in the same tick can schedule more — and once
+// a deficit has latched this returns at once without the loop being idle at
+// all, because no idle reading is coming and a waiter would never return.
+let whenIdle = (state: t): promise<unit> =>
+  if state->isInFlightIdle || state.hasInFlightDeficit {
+    Promise.resolve()
+  } else {
+    Promise.make((resolve, _) => {
+      state.idleWaiters->Array.push(resolve)->ignore
+    })
+  }
+
+let enterInFlight = (state: t) => state.inFlight = state.inFlight + 1
+
+let wakeIdleWaiters = (state: t) => {
+  let waiters = state.idleWaiters
+  state.idleWaiters = []
+  waiters->Array.forEach(resolve => resolve())
+}
+
+let exitInFlight = (state: t) => {
+  state.inFlight = state.inFlight - 1
+  if state.inFlight < 0 {
+    // The count is worthless from here on, so waiters are released to find that
+    // out rather than left waiting on an idle reading that can never come.
+    state.hasInFlightDeficit = true
+    state->wakeIdleWaiters
+  } else if state->isInFlightIdle {
+    // Only a step finishing can leave the loop quiet, so this is the one place
+    // a genuine idle wakes them.
+    state->wakeIdleWaiters
+  }
+}
+
+// Counts `work` as loop work for as long as its promise is pending. A thunk
+// that throws before returning a promise still settles the count.
+let trackInFlight = (state: t, work: unit => promise<'a>): promise<'a> => {
+  state->enterInFlight
+  switch work() {
+  | promise => promise->Promise.finally(() => state->exitInFlight)
+  | exception exn =>
+    state->exitInFlight
+    throw(exn)
+  }
+}
+
+// The inverse: the caller is parked on something the indexer can't advance on
+// its own — a source response, a poll interval — so it doesn't count as work
+// until the answer lands. The count is given up only once `work` has run its
+// synchronous part, which is where a fan-out registers its own units: giving it
+// up first would read as idle in the window before they are counted.
+//
+// Deliberately without `trackInFlight`'s guard on a synchronously throwing
+// thunk: this one exits after the call and re-enters in the reaction, so a
+// throw before either leaves the count exactly as it found it.
+let suspendInFlight = (state: t, work: unit => promise<'a>): promise<'a> => {
+  let promise = work()
+  state->exitInFlight
+  promise->Promise.finally(() => state->enterInFlight)
+}
+
 let epoch = (state: t) => state.epoch
 let lastPrunedAtMillis = (state: t) => state.lastPrunedAtMillis
 let simulateDeadInputTracker = (state: t) => state.simulateDeadInputTracker
@@ -828,6 +925,8 @@ let endWriteFiber = (state: t) => state.writeFiber = None
 
 let beginFinalizeFiber = (state: t, fiber) => state.finalizeFiber = Some(fiber)
 let endFinalizeFiber = (state: t) => state.finalizeFiber = None
+let beginRepairFiber = (state: t, fiber) => state.repairFiber = Some(fiber)
+let endRepairFiber = (state: t) => state.repairFiber = None
 
 // Resolve and clear everyone waiting on a commit so they can re-evaluate.
 let wakeCommitWaiters = (state: t) => {

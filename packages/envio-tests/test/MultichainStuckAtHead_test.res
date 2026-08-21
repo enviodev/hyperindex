@@ -71,28 +71,27 @@ describe("Multichain: chain with height subscription stuck at head", () => {
     async (~t, ~indexer, ~source) => {
       let stuckChain = source(100)
       let healthyChain = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Backfill both chains to head 100 so the indexer flips to realtime —
       // the height subscription is only created in realtime mode.
       stuckChain.resolveGetHeightOrThrow(100)
       healthyChain.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
-      await MockSource.waitItemsQuery(stuckChain)
+      await Scenario.waitQuery(~indexer, ~source=stuckChain)
       stuckChain.resolveGetItemsOrThrow(
         [{blockNumber: 50, logIndex: 0}],
         ~latestFetchedBlockNumber=100,
         ~knownHeight=100,
       )
-      await MockSource.waitItemsQuery(healthyChain)
+      await Scenario.waitQuery(~indexer, ~source=healthyChain)
       healthyChain.resolveGetItemsOrThrow(
         [{blockNumber: 60, logIndex: 0}],
         ~latestFetchedBlockNumber=100,
         ~knownHeight=100,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // The realtime wait polls height once more; a same-height response is
       // what makes it open the subscription. Waits parked before the realtime
@@ -101,8 +100,8 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       let subscriptionOpened = () => stuckChain.heightSubscriptionCalls->Array.length > 0
       let deadline = Date.now() +. 5_000.
       while !subscriptionOpened() && Date.now() < deadline {
-        try stuckChain.resolveGetHeightOrThrow(100) catch {
-        | _ => ()
+        if stuckChain.pendingHeightCalls() > 0 {
+          stuckChain.resolveGetHeightOrThrow(100)
         }
         await Utils.delay(1)
       }
@@ -112,13 +111,13 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       ).toBe(true)
       // Release any pre-realtime wait still REST-polling at the same height so
       // it exits and gets discarded as stale.
-      try stuckChain.resolveGetHeightOrThrow(101) catch {
-      | _ => ()
+      if stuckChain.pendingHeightCalls() > 0 {
+        stuckChain.resolveGetHeightOrThrow(101)
       }
 
       // The stream finds block 101.
       stuckChain.triggerHeightSubscription(101)
-      await MockSource.waitItemsQuery(stuckChain)
+      await Scenario.waitQuery(~indexer, ~source=stuckChain)
       t.expect(
         stuckChain.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
         ~message="the new block from the subscription should be queried",
@@ -131,9 +130,9 @@ describe("Multichain: chain with height subscription stuck at head", () => {
         ~latestFetchedBlockNumber=101,
         ~knownHeight=102,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
-      await MockSource.waitItemsQuery(stuckChain)
+      await Scenario.waitQuery(~indexer, ~source=stuckChain)
       t.expect(
         stuckChain.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
         ~message="the newly known block 102 should be queried",
@@ -143,7 +142,7 @@ describe("Multichain: chain with height subscription stuck at head", () => {
         ~latestFetchedBlockNumber=102,
         ~knownHeight=102,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // The chain is at head again: waiting for a block above 102 while the
       // wait started from the subscription's last height 101. The stream
@@ -155,16 +154,16 @@ describe("Multichain: chain with height subscription stuck at head", () => {
       // Meanwhile the other chain keeps progressing, so the cross-chain
       // scheduler keeps ticking — ticks alone must not be needed to heal the
       // stuck chain's wait.
-      try healthyChain.resolveGetHeightOrThrow(101) catch {
-      | _ => ()
+      if healthyChain.pendingHeightCalls() > 0 {
+        healthyChain.resolveGetHeightOrThrow(101)
       }
-      await MockSource.waitItemsQuery(healthyChain)
+      await Scenario.waitQuery(~indexer, ~source=healthyChain)
       healthyChain.resolveGetItemsOrThrow(
         [{blockNumber: 101, logIndex: 0}],
         ~latestFetchedBlockNumber=101,
         ~knownHeight=101,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // The subscription is quiet, so the wait must fall back to REST height
       // polling within the realtime stall window (10..20s). On v3.3.0 the
@@ -190,7 +189,7 @@ describe("Multichain: chain with height subscription stuck at head", () => {
 
       // The fallback poll finds block 103 and the chain resumes indexing.
       stuckChain.resolveGetHeightOrThrow(103)
-      await MockSource.waitItemsQuery(stuckChain)
+      await Scenario.waitQuery(~indexer, ~source=stuckChain)
       t.expect(
         stuckChain.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
         ~message="the chain should resume fetching from the fallback-discovered height",

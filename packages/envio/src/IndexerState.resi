@@ -89,6 +89,9 @@ let processedBatches: t => array<Batch.t>
 let processedBatchesCount: t => int
 let writeFiber: t => option<promise<unit>>
 let finalizeFiber: t => option<promise<unit>>
+// The resume-time index repair, which runs alongside indexing rather than
+// gating it. Awaited on shutdown so its DDL can't outlive the schema.
+let repairFiber: t => option<promise<unit>>
 let hasFailedWrite: t => bool
 let chainMetaDirty: t => bool
 let chainMetaThrottler: t => Throttler.t
@@ -106,6 +109,21 @@ let keepProcessAlive: t => bool
 let exitAfterFirstEventBlock: t => bool
 let onExit: t => option<unit => unit>
 let isStopped: t => bool
+
+// Loop work started and not yet settled, discounting time parked on a source
+// response. Zero means the indexer has run every scheduled step to completion
+// and can only move again once the outside world answers.
+let inFlight: t => int
+// Latched once the count has gone below zero, after which it means nothing.
+let hasInFlightDeficit: t => bool
+// Resolves the next time `inFlight` falls to zero. Callers re-check the count
+// afterwards: work that settled in the same tick can schedule more — and once
+// a deficit has latched this resolves at once whatever the count says, since
+// the count means nothing from then on and no idle reading is coming.
+let whenIdle: t => promise<unit>
+let trackInFlight: (t, unit => promise<'a>) => promise<'a>
+let suspendInFlight: (t, unit => promise<'a>) => promise<'a>
+
 let epoch: t => int
 let lastPrunedAtMillis: t => dict<float>
 let simulateDeadInputTracker: t => option<SimulateDeadInputTracker.t>
@@ -149,6 +167,8 @@ let beginWriteFiber: (t, promise<unit>) => unit
 let endWriteFiber: t => unit
 let beginFinalizeFiber: (t, promise<unit>) => unit
 let endFinalizeFiber: t => unit
+let beginRepairFiber: (t, promise<unit>) => unit
+let endRepairFiber: t => unit
 let wakeCommitWaiters: t => unit
 let addCommitWaiter: (t, unit => unit) => unit
 let stageChainMeta: (t, dict<InternalTable.Chains.metaFields>) => unit

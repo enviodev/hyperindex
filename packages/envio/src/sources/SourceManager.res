@@ -384,25 +384,38 @@ let dispatch = async (
       | None => ()
       }
     }
-  | Ready(queries) => {
-      // Queries are already marked in flight by ChainState.startFetchingQueries
-      // when they were admitted; here we just execute them.
-      sourceManager.fetchingPartitionsCount =
-        sourceManager.fetchingPartitionsCount + queries->Array.length
-      sourceManager->trackNewStatus(~newStatus=Querying)
-      let _ = await queries
-      ->Array.map(q => {
-        let promise = q->executeQuery
-        let _ = promise->Promise.thenResolve(_ => {
-          sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
-          if sourceManager.fetchingPartitionsCount === 0 {
-            sourceManager->trackNewStatus(~newStatus=Idle)
-          }
-        })
-        promise
+  | Ready(queries) =>
+    // Queries are already marked in flight by ChainState.startFetchingQueries
+    // when they were admitted. Fired and left to run: `executeQuery` owns its
+    // error boundary and never rejects, and each response re-enters the loop on
+    // its own, so there is nothing here to wait for.
+    sourceManager.fetchingPartitionsCount =
+      sourceManager.fetchingPartitionsCount + queries->Array.length
+    sourceManager->trackNewStatus(~newStatus=Querying)
+    queries->Array.forEach(q => {
+      q
+      ->executeQuery
+      ->Promise.finally(() => {
+        sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
+        if sourceManager.fetchingPartitionsCount === 0 {
+          sourceManager->trackNewStatus(~newStatus=Idle)
+        }
       })
-      ->Promise.all
-    }
+      ->Promise.catch(exn => {
+        // Only reachable through the boundary's own `errorExit` — nothing else
+        // in the fiber throws — and that sets `isStopped` before the one call
+        // that can (a user `onError`). So the indexer is already stopped by the
+        // time this runs: logging is the whole remaining job, and the join this
+        // replaced ended the same way, in an `errorExit` that no-ops on a
+        // stopped state. Without a catch, though, nobody awaits the fiber, so
+        // the rejection would take the process down past every handler.
+        exn
+        ->ErrorHandling.make(~msg="Query fiber rejected past its error boundary")
+        ->ErrorHandling.log
+        Promise.resolve()
+      })
+      ->Promise.ignore
+    })
   }
 }
 

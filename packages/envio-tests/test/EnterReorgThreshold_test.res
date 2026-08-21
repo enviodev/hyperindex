@@ -74,16 +74,11 @@ chains:
 
 // Queries are serialized by the cross-chain budget waterfall, so a chain's
 // height re-poll only lands after the other chain releases the budget.
-let waitNewHeightPoll = async (sourceMock: MockSource.t, ~after) => {
-  let attempts = ref(0)
-  while sourceMock.getHeightOrThrowCalls->Array.length <= after && attempts.contents < 1000 {
-    attempts := attempts.contents + 1
-    await Utils.delay(0)
-  }
-  if sourceMock.getHeightOrThrowCalls->Array.length <= after {
-    JsError.throwWithMessage("Timed out waiting for a new getHeightOrThrow poll")
-  }
-}
+let waitNewHeightPoll = (sourceMock: MockSource.t, ~after, ~indexer: IndexerRunner.t) =>
+  indexer.settleUntil(
+    () => sourceMock.getHeightOrThrowCalls->Array.length > after,
+    ~message="a new getHeightOrThrow poll",
+  )
 
 describe("PIN: multichain indexer enters the reorg threshold", () => {
   multichain->Scenario.it(
@@ -98,16 +93,15 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
     async (~t, ~indexer, ~source) => {
       let chainA = source(100)
       let chainB = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
       let initialHeightPolls = chainA.getHeightOrThrowCalls->Array.length
       chainA.resolveGetHeightOrThrow(1000)
       chainB.resolveGetHeightOrThrow(1000)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Chain A wins the initial priority tie and fetches to its pre-threshold
       // head (block 800), seeding a density signal from its events.
-      await MockSource.waitItemsQuery(chainA)
+      await Scenario.waitQuery(~indexer, ~source=chainA)
       t.expect(
         chainA.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
         ~message="chain A first fetches from its start block",
@@ -124,7 +118,7 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
         ~latestFetchedBlockNumber=800,
         ~knownHeight=1000,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Chain A is now at its lagged head with an empty buffer — momentarily
       // ready. Chain B has not responded, so the entry check fails here.
@@ -137,14 +131,13 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
       // (800) now trails the lagged head (801). Without a tolerance this would
       // un-ready chain A and defer entry; the 100-block tolerance keeps it ready.
       // (Chain A cannot re-query 801 yet — chain B holds the shared fetch budget.)
-      await waitNewHeightPoll(chainA, ~after=initialHeightPolls)
+      await waitNewHeightPoll(chainA, ~after=initialHeightPolls, ~indexer)
       chainA.resolveGetHeightOrThrow(1001)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      await indexer.settle()
 
       // Chain B now reaches its own pre-threshold head and produces a batch,
       // triggering the whole-indexer entry check.
-      await MockSource.waitItemsQuery(chainB)
+      await Scenario.waitQuery(~indexer, ~source=chainB)
       t.expect(
         chainB.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
         ~message="chain B first fetches from its start block",
@@ -154,7 +147,7 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
         ~latestFetchedBlockNumber=800,
         ~knownHeight=1000,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       // Both chains are within the tolerance of their lagged heads, so the indexer
       // enters — even though chain A's head advanced past its frontier before
@@ -174,10 +167,10 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
     ~targetBufferSize=100,
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await Utils.delay(0)
+      await indexer.settle()
 
       source.resolveGetHeightOrThrow(1000)
-      await MockSource.waitItemsQuery(source)
+      await Scenario.waitQuery(~indexer, ~source=source)
       // max_reorg_depth holds the chain 200 blocks below head before the
       // threshold, so it queries up to block 800.
       t.expect(
@@ -192,7 +185,7 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
         ~latestFetchedBlockNumber=750,
         ~knownHeight=1000,
       )
-      await indexer.getBatchWritePromise()
+      await indexer.settle()
 
       t.expect(
         await indexer.metric("envio_reorg_threshold"),
