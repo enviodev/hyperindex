@@ -42,8 +42,9 @@ let getSourceHeightSamples: t => array<sourceHeightSample>
 type heightStreamSample = {
   sourceName: string,
   chainId: ChainId.t,
-  reconnectCount: int,
-  failures: array<(string, int)>,
+  isLive: bool,
+  connectCount: int,
+  disconnects: array<(string, int)>,
 }
 
 let getHeightStreamSamples: t => array<heightStreamSample>

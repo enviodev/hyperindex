@@ -14,11 +14,11 @@ type sourceState = {
   // waiters poll straight away instead of sitting on the staleness backstop.
   mutable subscriptionLive: bool,
   mutable pendingSubscriptionDownResolvers: array<unit => unit>,
-  // Connects that followed a failure, and failures keyed by reason. Both stay
-  // empty for a stream that has never failed, which keeps the
-  // envio_source_height_stream_* series off a healthy indexer's scrape.
-  mutable heightStreamReconnects: int,
-  heightStreamFailures: dict<int>,
+  // Every connect, and every disconnect keyed by reason. Both stay at zero for
+  // a source that never subscribes, which keeps the
+  // envio_source_height_stream_* series off its scrape entirely.
+  mutable heightStreamConnects: int,
+  heightStreamDisconnects: dict<int>,
   // Catch-up polls that completed. A fallback poller retires against this
   // rather than against the reconnect, because it is the catch-up that takes
   // over its job, and a failed one takes over nothing.
@@ -56,12 +56,13 @@ let resolveHeight = (sourceState: sourceState, height: int) => {
   resolvers->Array.forEach(resolve => resolve(height))
 }
 
-// Counted per reason so envio_source_height_stream_failures_total shows what
-// kind of trouble a flapping stream is in.
-let recordHeightStreamFailure = (sourceState: sourceState, ~reason) =>
-  sourceState.heightStreamFailures->Dict.set(
+// Counted per reason so envio_source_height_stream_disconnects_total shows what
+// ended each connection: a rotation, or the kind of trouble a flapping stream
+// is in.
+let recordHeightStreamDisconnect = (sourceState: sourceState, ~reason) =>
+  sourceState.heightStreamDisconnects->Dict.set(
     reason,
-    switch sourceState.heightStreamFailures->Utils.Dict.dangerouslyGetNonOption(reason) {
+    switch sourceState.heightStreamDisconnects->Utils.Dict.dangerouslyGetNonOption(reason) {
     | Some(count) => count + 1
     | None => 1
     },
@@ -167,13 +168,14 @@ let getSourceHeightSamples = (sourceManager: t): array<sourceHeightSample> => {
 }
 
 // Per-source height subscription health for envio_source_height_stream_*.
-// Sources whose stream has never failed are skipped entirely, so the metrics
-// appear only once there is something to see.
+// Sources that cannot subscribe at all are skipped, so the families are absent
+// for a chain that only ever polls rather than sitting at zero on it.
 type heightStreamSample = {
   sourceName: string,
   chainId: ChainId.t,
-  reconnectCount: int,
-  failures: array<(string, int)>,
+  isLive: bool,
+  connectCount: int,
+  disconnects: array<(string, int)>,
 }
 
 let getHeightStreamSamples = (sourceManager: t): array<heightStreamSample> => {
@@ -182,16 +184,17 @@ let getHeightStreamSamples = (sourceManager: t): array<heightStreamSample> => {
     // Sorted because a dict orders integer-like keys (HTTP statuses) ahead of
     // the named reasons, which would make the rendered order depend on which
     // reasons a stream happened to hit.
-    let failures =
-      sourceState.heightStreamFailures
+    let disconnects =
+      sourceState.heightStreamDisconnects
       ->Dict.toArray
       ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b))
-    if failures->Array.length > 0 {
+    if sourceState.source.createHeightSubscription->Option.isSome {
       samples->Array.push({
         sourceName: sourceState.source.name,
         chainId: sourceState.source.chainId,
-        reconnectCount: sourceState.heightStreamReconnects,
-        failures,
+        isLive: sourceState.subscriptionLive,
+        connectCount: sourceState.heightStreamConnects,
+        disconnects,
       })
     }
   })
@@ -393,8 +396,8 @@ let make = (
       pendingHeightResolvers: [],
       subscriptionLive: false,
       pendingSubscriptionDownResolvers: [],
-      heightStreamReconnects: 0,
-      heightStreamFailures: Dict.make(),
+      heightStreamConnects: 0,
+      heightStreamDisconnects: Dict.make(),
       heightStreamCatchUps: 0,
       disabled: false,
       lastFailedAt: None,
@@ -566,19 +569,14 @@ let handleSubscriptionStatus = (
   | Live =>
     if !sourceState.subscriptionLive {
       sourceState.subscriptionLive = true
-      // Only a connect that followed a failure is a reconnect. Deriving it from
-      // a connect count would miss that a stream whose very first attempt
-      // failed has reconnected, and report it as still down for good.
-      if !(sourceState.heightStreamFailures->Utils.Dict.isEmpty) {
-        sourceState.heightStreamReconnects = sourceState.heightStreamReconnects + 1
-      }
+      sourceState.heightStreamConnects = sourceState.heightStreamConnects + 1
       // Any height from before this connection is lost, because eth_subscribe
       // only ever delivers the next block. Ask once rather than leaving the
       // chain blind until the next one is mined.
       sourceState->catchUpHeight(~logger)->Promise.ignore
     }
   | Down({reason} as down) =>
-    sourceState->recordHeightStreamFailure(~reason)
+    sourceState->recordHeightStreamDisconnect(~reason)
     sourceState->markSubscriptionDown
     // The counters say a stream is flapping and how often, but only the
     // provider's own words say why, and a frame nobody could read is

@@ -3638,14 +3638,16 @@ describe("SourceManager height subscription", () => {
     t.expect((pollsAdded, await waiting)).toStrictEqual((1, 111))
   })
 
-  Async.it("Reports height stream failures and reconnects as metrics", async t => {
+  Async.it("Reports height stream connects, disconnects and liveness as metrics", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=2_000,
     )
-    let samplesBeforeAnyFailure = sourceManager->SourceManager.getHeightStreamSamples
+    // A source that can subscribe is reported from the start, so a stream that
+    // never comes up is visible as up=0 rather than as no series at all.
+    let samplesBeforeSubscribing = sourceManager->SourceManager.getHeightStreamSamples
     await subscribeAndGoLive(mock, sourceManager, ~knownHeight=100)
     let samplesWhileHealthy = sourceManager->SourceManager.getHeightStreamSamples
 
@@ -3665,24 +3667,43 @@ describe("SourceManager height subscription", () => {
     let _ = await waiting
 
     t.expect((
-      samplesBeforeAnyFailure,
+      samplesBeforeSubscribing,
       samplesWhileHealthy,
       sourceManager->SourceManager.getHeightStreamSamples,
     )).toStrictEqual((
-      [],
-      [],
       [
         {
           SourceManager.sourceName: "MockSource",
           chainId: 1->ChainId.fromInt,
-          reconnectCount: 1,
-          failures: [("401", 1), ("closed", 2)],
+          isLive: false,
+          connectCount: 0,
+          disconnects: [],
+        },
+      ],
+      [
+        {
+          SourceManager.sourceName: "MockSource",
+          chainId: 1->ChainId.fromInt,
+          isLive: true,
+          connectCount: 1,
+          disconnects: [],
+        },
+      ],
+      [
+        {
+          SourceManager.sourceName: "MockSource",
+          chainId: 1->ChainId.fromInt,
+          isLive: true,
+          // Every retry that failed while the stream was down is counted, so
+          // these are attempts rather than outages.
+          connectCount: 2,
+          disconnects: [("401", 1), ("closed", 2)],
         },
       ],
     ))
   })
 
-  Async.it("Counts a connect that followed a failed first attempt as a reconnect", async t => {
+  Async.it("Reports a stream that has never connected as down", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
@@ -3699,23 +3720,39 @@ describe("SourceManager height subscription", () => {
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
 
-    // The stream never came up on its first attempt, so the connect that
-    // follows is a reconnect. Reported otherwise, a recovered stream reads as
-    // one failure and no reconnect, which is the shape of a stream still down.
+    // A ws url pointing at a node that will never accept the subscription: the
+    // stream retries for the life of the process, and nothing it does can be
+    // told from a healthy stream by the connect count alone.
     mock.setHeightSubscriptionStatus(Down({reason: "connect-failed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: "connect-failed"}))
+    await Utils.delay(0)
+    let samplesWhileDown = sourceManager->SourceManager.getHeightStreamSamples
+
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
     mock.resolveGetHeightOrThrow(101)
     let _ = await waiting
 
-    t.expect(sourceManager->SourceManager.getHeightStreamSamples).toStrictEqual([
-      {
-        SourceManager.sourceName: "MockSource",
-        chainId: 1->ChainId.fromInt,
-        reconnectCount: 1,
-        failures: [("connect-failed", 1)],
-      },
-    ])
+    t.expect((samplesWhileDown, sourceManager->SourceManager.getHeightStreamSamples)).toStrictEqual((
+      [
+        {
+          SourceManager.sourceName: "MockSource",
+          chainId: 1->ChainId.fromInt,
+          isLive: false,
+          connectCount: 0,
+          disconnects: [("connect-failed", 2)],
+        },
+      ],
+      [
+        {
+          SourceManager.sourceName: "MockSource",
+          chainId: 1->ChainId.fromInt,
+          isLive: true,
+          connectCount: 1,
+          disconnects: [("connect-failed", 2)],
+        },
+      ],
+    ))
   })
 
   Async.it("Stops polling a source once the wait has been decided elsewhere", async t => {
