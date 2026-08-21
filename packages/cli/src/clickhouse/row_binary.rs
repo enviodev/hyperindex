@@ -484,7 +484,6 @@ pub fn encode(columns: &[Column], rows: usize) -> Result<EncodedRows> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clickhouse::ch_type;
     use pretty_assertions::assert_eq;
 
     fn owned_column(name: &str, ty: &str, values: ColumnValues) -> Column<'static> {

@@ -130,9 +130,6 @@ external writeBatch: (t, ~entities: array<int>, ~checkpoints: Null.t<int>) => pr
 // life of the process.
 @send external discard: (t, array<int>) => unit = "discard"
 
-@send external exec: (t, string) => promise<unit> = "exec"
-@send external query: (t, string) => promise<string> = "query"
-
 let make = (~url, ~username, ~password, ~database, ~chainIdMode: ChainId.mode, ~onWarning) =>
   Core.getAddon().clickHouseSink->classNew(
     {

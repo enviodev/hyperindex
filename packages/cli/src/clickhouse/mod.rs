@@ -557,21 +557,6 @@ impl ClickHouseSink {
         }
     }
 
-    /// Runs a statement that returns nothing — the DDL and the reorg cleanup.
-    #[napi]
-    pub async fn exec(&self, query: String) -> napi::Result<()> {
-        self.post_statement(query)
-            .await
-            .map(|_| ())
-            .map_err(to_napi)
-    }
-
-    /// Runs a statement and hands back the server's response body verbatim, so
-    /// the caller picks the `FORMAT` it wants to parse.
-    #[napi]
-    pub async fn query(&self, query: String) -> napi::Result<String> {
-        self.post_statement(query).await.map_err(to_napi)
-    }
 }
 
 impl ClickHouseSink {
