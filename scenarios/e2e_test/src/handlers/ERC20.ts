@@ -69,6 +69,13 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
     expectClickHouseReadOnlyError("getWhere", err);
   }
 
+  // @internal entity: written like any other, but invisible to Hasura.
+  context.TransferInternal.set({
+    id,
+    from: event.params.from,
+    value: event.params.value,
+  });
+
   // Mirror override: only ClickHouse receives this row.
   context.TransferChOnly.set({
     id,
