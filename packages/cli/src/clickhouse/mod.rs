@@ -351,9 +351,11 @@ pub(crate) fn quoted(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
 }
 
-/// Single-quotes a string literal, doubling any quote inside it.
+/// Single-quotes a string literal. ClickHouse reads C-style escapes inside one,
+/// so a backslash has to be doubled as well as a quote — left alone, `a\tb`
+/// would be stored as `a`, a tab, `b`.
 pub(crate) fn literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
 }
 
 fn to_napi(err: anyhow::Error) -> napi::Error {
@@ -684,6 +686,22 @@ impl ClickHouseSink {
             }
         }
 
+        // Rendered before anything destructive runs: deriving a column type is
+        // where a field this encoder cannot hold is refused, and the database
+        // must not already be gone when that happens.
+        let history_tables = entities
+            .iter()
+            .map(|entity| {
+                ddl::create_history_table(
+                    entity,
+                    &self.database,
+                    &self.history,
+                    topology,
+                    self.chain_id_mode,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         if has_replicated_engine {
             // TRUNCATE DATABASE is unsupported on Replicated databases, so a
             // reset has to DROP and recreate instead. ON CLUSTER removes the
@@ -711,18 +729,6 @@ impl ClickHouseSink {
         ))
         .await?;
 
-        let history_tables = entities
-            .iter()
-            .map(|entity| {
-                ddl::create_history_table(
-                    entity,
-                    &self.database,
-                    &self.history,
-                    topology,
-                    self.chain_id_mode,
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
         futures_util::future::try_join_all(
             history_tables
                 .into_iter()

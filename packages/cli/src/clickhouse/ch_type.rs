@@ -475,17 +475,18 @@ mod tests {
         assert_eq!(widths, [(1, false), (2, true)]);
     }
 
-    /// A quote in a variant name would otherwise close the literal early and
-    /// turn the rest of the list into DDL of its own.
+    /// A quote would otherwise close the literal early and turn the rest of the
+    /// list into DDL of its own; a backslash would be read as starting an
+    /// escape and change the variant's name.
     #[test]
-    fn escapes_a_quote_in_a_variant_name() {
+    fn escapes_a_quote_or_backslash_in_a_variant_name() {
         let ch_type = FieldSpec {
             enum_variants: Some(vec!["it's".to_string(), "back\\slash".to_string()]),
             ..field("Enum")
         }
         .ch_type(ChainIdMode::Int32)
         .unwrap();
-        assert_eq!(ch_type.to_string(), r"Enum8('it''s' = 1, 'back\slash' = 2)");
+        assert_eq!(ch_type.to_string(), r"Enum8('it''s' = 1, 'back\\slash' = 2)");
     }
 
     #[test]

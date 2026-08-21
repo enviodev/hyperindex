@@ -89,13 +89,6 @@ let makeColumnSpec = (
   },
 }
 
-// The checkpoints table as ClickHouse holds it, in column order. The DDL, the
-// insert's column list and the values it sends all come from this one list, so a
-// column cannot be declared in one and forgotten in another — nor, worse, end up
-// paired with a different column's values, which nothing downstream could catch:
-// every array reaches the builders as `unknown`.
-// `events_processed` is widened here rather than taken from
-// `InternalTable.Checkpoints.table`, whose Int32 is what Postgres stores.
 type checkpointColumn = {
   name: string,
   fieldType: Table.fieldType,
@@ -108,7 +101,7 @@ type checkpointColumn = {
 // missing here; only the value accessor and the one type that differs are
 // stated. `events_processed` is widened because ClickHouse counts them in a
 // UInt64 where Postgres stores an Int32.
-let checkpointColumns: array<checkpointColumn> = {
+let checkpointColumns = () => {
   let valuesOf: dict<Batch.t => array<unknown>> = Dict.fromArray([
     (
       (#id: InternalTable.Checkpoints.field :> string),
@@ -156,7 +149,7 @@ let checkpointColumns: array<checkpointColumn> = {
 }
 
 let checkpointColumnSpecs = () =>
-  checkpointColumns->Array.map(({name, fieldType, isNullable}) =>
+  checkpointColumns()->Array.map(({name, fieldType, isNullable}) =>
     makeColumnSpec(~name, ~fieldType, ~isNullable)
   )
 
@@ -319,7 +312,9 @@ let stageCheckpointsOrThrow = (sink, ~registry, ~batch: Batch.t) => {
     // with its neighbour's values — which nothing downstream could catch, since
     // every array reaches the builders as `unknown`.
     let values = Dict.make()
-    checkpointColumns->Array.forEach(({name, valuesOf}) => values->Dict.set(name, valuesOf(batch)))
+    checkpointColumns()->Array.forEach(({name, valuesOf}) =>
+      values->Dict.set(name, valuesOf(batch))
+    )
     try {
       let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
       // A checkpoint id past what UInt64 holds is refused here rather than being
