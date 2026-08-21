@@ -101,52 +101,68 @@ type checkpointColumn = {
 // missing here; only the value accessor and the one type that differs are
 // stated. `events_processed` is widened because ClickHouse counts them in a
 // UInt64 where Postgres stores an Int32.
-let checkpointColumns = () => {
-  let valuesOf: dict<Batch.t => array<unknown>> = Dict.fromArray([
-    (
-      (#id: InternalTable.Checkpoints.field :> string),
-      (batch: Batch.t) => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
-    ),
-    (
-      (#chain_id: InternalTable.Checkpoints.field :> string),
-      (batch: Batch.t) => batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
-    ),
-    (
-      (#block_number: InternalTable.Checkpoints.field :> string),
-      (batch: Batch.t) => batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
-    ),
-    (
-      (#block_hash: InternalTable.Checkpoints.field :> string),
-      (batch: Batch.t) => batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
-    ),
-    (
-      (#events_processed: InternalTable.Checkpoints.field :> string),
-      (batch: Batch.t) => batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
-    ),
-  ])
-  InternalTable.Checkpoints.table.fields->Array.filterMap(field =>
-    switch field {
-    | Table.Field(f) =>
-      let name = f.fieldName
-      Some({
-        name,
-        fieldType: switch name {
-        | "events_processed" => Table.UInt64
-        | _ => f.fieldType
-        },
-        isNullable: f.isNullable,
-        valuesOf: switch valuesOf->Dict.get(name) {
-        | Some(valuesOf) => valuesOf
-        | None =>
-          JsError.throwWithMessage(
-            `The ClickHouse checkpoints table has no values for the "${name}" column`,
-          )
-        },
-      })
-    | DerivedFrom(_) => None
+%%private(let checkpointColumnsCache: ref<option<array<checkpointColumn>>> = ref(None))
+
+// Built on first use rather than at module load: it throws when a column has no
+// value accessor, which at load time would take down an indexer that never
+// writes to ClickHouse at all.
+let checkpointColumns = () =>
+  switch checkpointColumnsCache.contents {
+  | Some(columns) => columns
+  | None =>
+    let columns = {
+      let valuesOf: dict<Batch.t => array<unknown>> = Dict.fromArray([
+        (
+          (#id: InternalTable.Checkpoints.field :> string),
+          (batch: Batch.t) => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
+        ),
+        (
+          (#chain_id: InternalTable.Checkpoints.field :> string),
+          (batch: Batch.t) =>
+            batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
+        ),
+        (
+          (#block_number: InternalTable.Checkpoints.field :> string),
+          (batch: Batch.t) =>
+            batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
+        ),
+        (
+          (#block_hash: InternalTable.Checkpoints.field :> string),
+          (batch: Batch.t) =>
+            batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
+        ),
+        (
+          (#events_processed: InternalTable.Checkpoints.field :> string),
+          (batch: Batch.t) =>
+            batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
+        ),
+      ])
+      InternalTable.Checkpoints.table.fields->Array.filterMap(field =>
+        switch field {
+        | Table.Field(f) =>
+          let name = f.fieldName
+          Some({
+            name,
+            fieldType: switch name {
+            | "events_processed" => Table.UInt64
+            | _ => f.fieldType
+            },
+            isNullable: f.isNullable,
+            valuesOf: switch valuesOf->Dict.get(name) {
+            | Some(valuesOf) => valuesOf
+            | None =>
+              JsError.throwWithMessage(
+                `The ClickHouse checkpoints table has no values for the "${name}" column`,
+              )
+            },
+          })
+        | DerivedFrom(_) => None
+        }
+      )
     }
-  )
-}
+    checkpointColumnsCache := Some(columns)
+    columns
+  }
 
 let checkpointColumnSpecs = () =>
   checkpointColumns()->Array.map(({name, fieldType, isNullable}) =>
