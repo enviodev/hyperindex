@@ -1095,109 +1095,117 @@ pub mod svm {
         pub programs: Vec<Program>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[derive(Debug, Serialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Program {
         #[schemars(
             description = "A unique project-wide name for this program (used in generated code)."
         )]
         pub name: String,
-        #[schemars(description = "Base58-encoded program id (32 bytes).")]
+        #[schemars(
+            description = "Base58-encoded program id (32 bytes). Each program id may appear \
+                           once per chain: two entries sharing one would put their instructions \
+                           in the same routing pool with nothing to tell them apart."
+        )]
         pub program_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional relative path to a file where handlers are \
                                   registered for the given program. If not provided, handlers \
                                   can be auto-loaded from the src directory.")]
         pub handler: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional path (relative to config.yaml) to an Anchor IDL JSON file. \
-                           When present, codegen parses the IDL and derives `accounts`/`args` for \
-                           every named instruction. Mutually exclusive with per-instruction \
-                           `accounts`/`args` overrides."
+            description = "Path (relative to the project root) to an Anchor or Codama IDL JSON \
+                           file. Instruction layouts and discriminators come from this file; \
+                           register `indexer.onInstruction` handlers for the instructions to \
+                           handle, and select payload with `fields`."
         )]
-        pub idl: Option<String>,
-        #[schemars(description = "A list of instructions that should be indexed on this program.")]
-        pub instructions: Vec<Instruction>,
+        pub idl: String,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct Instruction {
-        #[schemars(
-            description = "Name of the instruction in the HyperIndex generated code. Should be \
-                           unique per program."
-        )]
-        pub name: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" \
-                           optional). Must be 1, 2, 4, or 8 bytes after decoding. An 8-byte value \
-                           matches the standard Anchor discriminator."
-        )]
-        pub discriminator: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Filter on inner-vs-outer instructions. None / absent matches both."
-        )]
-        pub is_inner: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional positional account filters. Two shapes are accepted: a flat \
-                           list of `{position, values}` entries (AND across positions, OR within \
-                           `values`); or `{any_of: [[...]] }`, a list of AND-groups that are \
-                           OR-ed together. Positions must be in 0..=5; positions 6..=9 are \
-                           reserved for a future extension."
-        )]
-        pub account_filters: Option<AccountFilters>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional positional account names. The Nth entry names account slot N \
-                           on the dispatched instruction; surfaces as \
-                           `instruction.accounts.<name>` when `fields.instruction` includes \
-                           `accounts`."
-        )]
-        pub accounts: Option<Vec<String>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional Borsh argument schema. Each entry names one arg and gives its \
-                           type; the decoder walks the instruction data after the discriminator \
-                           in declared order. Mutually exclusive with the program-level `idl` \
-                           field."
-        )]
-        pub args: Option<Vec<ArgDef>>,
+    impl<'de> Deserialize<'de> for Program {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            use serde::de::Error;
+            use std::collections::BTreeMap;
+
+            #[derive(Deserialize)]
+            struct Raw {
+                name: Option<String>,
+                program_id: Option<String>,
+                handler: Option<String>,
+                idl: Option<String>,
+                instructions: Option<serde_yaml::Value>,
+                field_selection: Option<serde_yaml::Value>,
+                #[serde(flatten)]
+                extra: BTreeMap<String, serde_yaml::Value>,
+            }
+
+            let raw = Raw::deserialize(deserializer)?;
+            let label = match &raw.name {
+                Some(name) => format!("Program {name:?}"),
+                None => "SVM program".to_string(),
+            };
+            if raw.instructions.is_some() {
+                return Err(D::Error::custom(format!(
+                    "{label} has an `instructions` list, which is not valid. Configure the \
+                     program with `name`, `program_id`, and `idl`. Register \
+                     `indexer.onInstruction` handlers for the instructions to handle."
+                )));
+            }
+            if raw.field_selection.is_some() {
+                return Err(D::Error::custom(format!(
+                    "{label} has `field_selection`, which is not valid. Select payload in the \
+                     handler with `indexer.onInstruction({{ fields }})`."
+                )));
+            }
+            if let Some(field) = raw.extra.keys().next() {
+                return Err(D::Error::custom(format!(
+                    "{label} has unknown field `{field}`. Valid fields: name, program_id, \
+                     handler, idl."
+                )));
+            }
+            let name = raw
+                .name
+                .ok_or_else(|| D::Error::custom("SVM program is missing `name`."))?;
+            let program_id = raw.program_id.ok_or_else(|| {
+                D::Error::custom(format!("{label} is missing `program_id`."))
+            })?;
+            let idl = raw.idl.ok_or_else(|| {
+                D::Error::custom(format!(
+                    "{label} is missing `idl`. Point it at an Anchor or Codama JSON file."
+                ))
+            })?;
+            Ok(Program {
+                name,
+                program_id,
+                handler: raw.handler,
+                idl,
+            })
+        }
     }
 
-    /// One named argument of an instruction. Mirrors
-    /// `hypersync_client_solana::decode::NamedField`.
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    /// One named argument of an instruction. Internal-config wire type;
+    /// mirrors `hypersync_client_solana::decode::NamedField`.
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
     #[serde(deny_unknown_fields)]
     pub struct ArgDef {
-        #[schemars(description = "Field name as it appears on the decoded args object.")]
         pub name: String,
         #[serde(rename = "type")]
-        #[schemars(description = "Borsh type of this field.")]
         pub ty: ArgType,
     }
 
-    /// User-facing Borsh type grammar. Mirrors
-    /// `hypersync_client_solana::decode::FieldType`. The YAML accepts either:
-    /// - A bare string for primitives (`"u64"`, `"pubkey"`, `"bool"`, ...).
-    /// - A tagged object for composites (`{ vec: u8 }`, `{ option: pubkey }`,
-    ///   `{ array: [u8, 32] }`, `{ defined: "DataV2" }`).
-    /// - An object with `kind: struct` or `kind: enum` for nominal types
-    ///   declared inline on this field. Most users will use `defined` and
-    ///   declare the nominal types under the program's `types:` block (Anchor
-    ///   IDL shape) once that lands; for now inline `struct` / `enum` is the
-    ///   only way to express nominal shapes ad-hoc.
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    /// Borsh type grammar for `internal_config.json`. Mirrors
+    /// `hypersync_client_solana::decode::FieldType`.
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
     #[serde(untagged)]
     pub enum ArgType {
         Primitive(ArgPrimitive),
         Composite(ArgComposite),
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
     #[serde(rename_all = "lowercase")]
     pub enum ArgPrimitive {
         Bool,
@@ -1220,7 +1228,7 @@ pub mod svm {
         PublicKey,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
     #[serde(deny_unknown_fields)]
     pub enum ArgComposite {
         #[serde(rename = "option")]
@@ -1231,8 +1239,7 @@ pub mod svm {
         #[serde(rename = "array")]
         Array(Box<ArgType>, usize),
         /// Reference to a nominal type defined in the program-level
-        /// `defined_types` registry (populated from an Anchor IDL `types:`
-        /// block or the bundled-Metaplex registry).
+        /// `defined_types` registry (populated from a parsed IDL).
         #[serde(rename = "defined")]
         Defined(String),
         /// Inline-or-registry struct. Used as a nominal type definition in
@@ -1245,7 +1252,7 @@ pub mod svm {
         Enum(Vec<ArgEnumVariant>),
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
     #[serde(deny_unknown_fields)]
     pub struct ArgEnumVariant {
         pub name: String,
@@ -1254,45 +1261,6 @@ pub mod svm {
         /// 1-byte tag), but the distinction is preserved for round-tripping.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub fields: Option<Vec<ArgDef>>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct AccountFilter {
-        #[schemars(description = "Account position within the instruction (0..=5).")]
-        pub position: u8,
-        #[schemars(description = "Allowed base58 pubkeys for this account position.")]
-        pub values: Vec<String>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct AnyOfAccountFilters {
-        #[schemars(
-            description = "A non-empty list of AND-groups. Each group is itself a non-empty list \
-                           of `{position, values}` entries that must all match the same \
-                           instruction. An instruction matches `any_of` when any one group \
-                           matches."
-        )]
-        pub any_of: Vec<Vec<AccountFilter>>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(untagged)]
-    pub enum AccountFilters {
-        Flat(Vec<AccountFilter>),
-        AnyOf(AnyOfAccountFilters),
-    }
-
-    impl AccountFilters {
-        pub fn groups(&self) -> Vec<&[AccountFilter]> {
-            match self {
-                AccountFilters::Flat(entries) => vec![entries.as_slice()],
-                AccountFilters::AnyOf(any_of) => {
-                    any_of.any_of.iter().map(|g| g.as_slice()).collect()
-                }
-            }
-        }
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -1658,14 +1626,7 @@ chains:
       programs:
         - name: TokenMetadata
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: CreateMetadataAccountV3
-              discriminator: "0x21"
-            - name: UpdateMetadataAccountV2
-              discriminator: "0x0f"
-              account_filters:
-                - position: 0
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+          idl: idls/token-metadata.codama.json
 "#;
 
         #[test]
@@ -1719,37 +1680,13 @@ chains:
             );
             let programs = &experimental.programs;
             assert_eq!(programs.len(), 1);
-            let program = &programs[0];
             assert_eq!(
-                program,
+                &programs[0],
                 &Program {
                     name: "TokenMetadata".to_string(),
                     program_id: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
                     handler: None,
-                    idl: None,
-                    instructions: vec![
-                        Instruction {
-                            name: "CreateMetadataAccountV3".to_string(),
-                            discriminator: Some("0x21".to_string()),
-                            is_inner: None,
-                            account_filters: None,
-                            accounts: None,
-                            args: None,
-                        },
-                        Instruction {
-                            name: "UpdateMetadataAccountV2".to_string(),
-                            discriminator: Some("0x0f".to_string()),
-                            is_inner: None,
-                            account_filters: Some(AccountFilters::Flat(vec![AccountFilter {
-                                position: 0,
-                                values: vec![
-                                    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
-                                ],
-                            }])),
-                            accounts: None,
-                            args: None,
-                        },
-                    ],
+                    idl: "idls/token-metadata.codama.json".to_string(),
                 }
             );
         }

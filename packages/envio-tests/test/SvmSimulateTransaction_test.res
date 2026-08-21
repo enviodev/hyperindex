@@ -2,6 +2,16 @@ let feePayerAddr = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
 let blockhash = "So11111111111111111111111111111111111111112"
 let signature = "5j7s6NiJS3JAkvgkoc18WVAsiSaci2pxB2A6ueCJP4tprA2TFg9wSyTLeYouxPBJEMzJinENTkpA52YStRW5Dia7"
 
+let swapIdl = `{
+  "address": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+  "instructions": [{
+    "name": "swap",
+    "discriminator": [9],
+    "accounts": [],
+    "args": []
+  }]
+}`
+
 let _ = InternalTestIndexer.fromUserApi(
   ~schema=`
 type SimTx {
@@ -19,6 +29,7 @@ type SimTx {
   version: String!
 }
 `,
+  ~files=Dict.fromArray([("idls/swap.json", swapIdl)]),
   ~configYaml=`
 name: svm-simulate-transaction
 ecosystem: svm
@@ -31,9 +42,7 @@ chains:
       programs:
         - name: Swapper
           program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
+          idl: idls/swap.json
 `,
   ~handlers=`
 import { indexer } from "envio";

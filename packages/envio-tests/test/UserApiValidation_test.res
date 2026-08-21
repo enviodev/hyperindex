@@ -443,7 +443,7 @@ chains:
   - id: 1
     start_block: 0
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: unknown field \`bigquery\`, expected \`postgres\` or \`clickhouse\` at line 2 column 1",
+      "Config parse error: Failed to deserialize config: unknown field \`bigquery\`, expected \`postgres\` or \`clickhouse\` at line 2 column 1",
     ),
     (
       "rejects unknown storage options",
@@ -457,7 +457,7 @@ chains:
   - id: 1
     start_block: 0
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: unknown field \`defautl\`, expected \`default\` or \`column_name_format\` at line 2 column 1",
+      "Config parse error: Failed to deserialize config: unknown field \`defautl\`, expected \`default\` or \`column_name_format\` at line 2 column 1",
     ),
     (
       "rejects invalid column name formats",
@@ -470,7 +470,7 @@ chains:
   - id: 1
     start_block: 0
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: unknown variant \`kebab-case\`, expected \`original\` or \`snake_case\` at line 2 column 1",
+      "Config parse error: Failed to deserialize config: unknown variant \`kebab-case\`, expected \`original\` or \`snake_case\` at line 2 column 1",
     ),
     (
       "rejects a storage backend with the wrong value shape",
@@ -482,7 +482,7 @@ chains:
   - id: 1
     start_block: 0
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: invalid type: string \"enabled\", expected a boolean or an options object like \`{default: true}\` at line 2 column 1",
+      "Config parse error: Failed to deserialize config: invalid type: string \"enabled\", expected a boolean or an options object like \`{default: true}\` at line 2 column 1",
     ),
     (
       "rejects numeric separators instead of silently treating them as numbers",
@@ -492,7 +492,7 @@ chains:
   - id: 1
     start_block: 1_000
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].start_block: invalid type: string \"1_000\", expected u64 at line 5 column 18",
+      "Config parse error: Failed to deserialize config: chains[0].start_block: invalid type: string \"1_000\", expected u64 at line 5 column 18",
     ),
     (
       "rejects unknown SVM program fields",
@@ -509,9 +509,9 @@ chains:
         - name: Program
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           bogus_extra: true
-          instructions: []
+          idl: idls/program.json
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: unknown field \`bogus_extra\`, expected one of \`name\`, \`program_id\`, \`handler\`, \`idl\`, \`instructions\` at line 13 column 11",
+      "Config parse error: Program \"Program\" has unknown field `bogus_extra`. Valid fields: name, program_id, handler, idl.",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
@@ -661,7 +661,7 @@ chains:
       for: sync
     start_block: 0
 `,
-      "Config parse error: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file",
+      "Config parse error: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time. Choose only one, or set the RPC to `for: fallback`.",
     ),
     (
       "rejects RPC URLs with a non-HTTP protocol",
@@ -710,7 +710,7 @@ chains:
   - id: 999999
     start_block: 0
 `,
-      "Config parse error: Failed to automatically find HyperSync endpoint for the chain 999999. If the chain is supported by HyperSync, provide the endpoint manually:\n\nchains:\n  - id: 999999\n    hypersync_config:\n      url: https://999999.hypersync.xyz\n\nOr use an RPC endpoint for historical sync:\n\nchains:\n  - id: 999999\n    rpc:\n      url: https://your-rpc-endpoint\n      for: sync\n\nRead more: https://docs.envio.dev/docs/HyperIndex/config-schema-reference#hypersyncconfig",
+      "Config parse error: Failed to automatically find HyperSync endpoint for the chain 999999. If the chain is supported by HyperSync, provide the endpoint manually:\n\nchains:\n  - id: 999999\n    hypersync_config:\n      url: https://999999.hypersync.xyz\n\nOr use an RPC endpoint for historical sync:\n\nchains:\n  - id: 999999\n    rpc:\n      url: https://your-rpc-endpoint\n      for: sync",
     ),
     (
       "rejects duplicate transaction field selections",
@@ -1213,7 +1213,7 @@ chains:
       prefix ++ `
         - name: Program
           program_id: not_a_pubkey
-          instructions: []
+          idl: idls/program.json
 `,
       "Config parse error: Program \"Program\" has an invalid program_id \"not_a_pubkey\": must be a base58-encoded 32-byte Solana pubkey",
     ),
@@ -1222,107 +1222,17 @@ chains:
       prefix ++ `
         - name: Program
           program_id: 111111111111111111111111111111111
-          instructions: []
+          idl: idls/program.json
 `,
       "Config parse error: Program \"Program\" has an invalid program_id \"111111111111111111111111111111111\": must be a base58-encoded 32-byte Solana pubkey",
     ),
     (
-      "rejects duplicate instruction names",
+      "rejects a missing idl",
       prefix ++ `
         - name: Program
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - {name: Transfer, discriminator: "0x0f"}
-            - {name: Transfer, discriminator: "0x21"}
 `,
-      "Config parse error: Program \"Program\" declares the instruction \"Transfer\" more than once",
-    ),
-    (
-      "rejects two instructions whose discriminators differ only in hex casing",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - {name: Transfer, discriminator: "0x0f"}
-            - {name: Withdraw, discriminator: "0x0F"}
-`,
-      `Config parse error: Contract Program has two events the indexer can't tell apart: "Transfer" and "Withdraw". They match the same on-chain data, so the indexer can't decide which one a log belongs to. Please remove one of them.`,
-    ),
-    (
-      "rejects invalid discriminators",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - {name: Transfer, discriminator: "0x012"}
-`,
-      "Config parse error: instruction \"Transfer\" in program \"Program\": discriminator \"0x012\" must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after stripping a \`0x\` prefix), got 3 digits",
-    ),
-    (
-      "rejects account-filter positions outside the supported range",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: Transfer
-              account_filters:
-                - position: 6
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-`,
-      "Config parse error: Account filter position 6 in instruction \"Transfer\" (program \"Program\") must be in 0..=5 (positions 6..=9 are reserved for a future extension)",
-    ),
-    (
-      "rejects duplicate positions inside one account-filter group",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: Transfer
-              account_filters:
-                - position: 1
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-                - position: 1
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-`,
-      "Config parse error: Duplicate position 1 in account filter group 0 of instruction \"Transfer\" (program \"Program\"); combine the pubkeys into a single \`values\` list, or use \`any_of\` to express OR across positions",
-    ),
-    (
-      "rejects an empty any_of account filter",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: Transfer
-              account_filters:
-                any_of: []
-`,
-      "Config parse error: \`any_of\` account filter on instruction \"Transfer\" (program \"Program\") is empty; remove the \`account_filters\` field instead, or add at least one AND-group",
-    ),
-    (
-      "rejects an empty any_of group",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: Transfer
-              account_filters:
-                any_of:
-                  - []
-`,
-      "Config parse error: Account filter group 0 in instruction \"Transfer\" (program \"Program\") is empty; each \`any_of\` branch must contain at least one entry",
-    ),
-    (
-      "rejects invalid account-filter pubkeys",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: Transfer
-              account_filters:
-                - position: 1
-                  values: ["not_a_pubkey"]
-`,
-      "Config parse error: Account filter on instruction \"Transfer\" (program \"Program\") has an invalid base58 pubkey \"not_a_pubkey\"",
+      "Config parse error: Program \"Program\" is missing `idl`. Point it at an Anchor or Codama JSON file.",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
@@ -1343,7 +1253,7 @@ chains:
       programs:
         - name: Shared
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions: []
+          idl: idls/a.json
   - id: solana-devnet
     start_block: 0
     experimental:
@@ -1351,8 +1261,8 @@ chains:
         url: https://solana.hypersync.xyz
       programs:
         - name: shared
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions: []
+          program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+          idl: idls/b.json
 `,
       "Config parse error: Duplicate program names detected. All program names must be unique across all chains and are case-insensitive.",
     )
@@ -1924,58 +1834,8 @@ chains:
         - name: Program
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           idl: idls/program.json
-          instructions: []
 `,
       "Config parse error: Resolving Borsh schema for program 'Program' (metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s): reading IDL at 'idls/program.json': Virtual config file \"idls/program.json\" was not provided",
-    )
-  })
-
-  it("rejects SVM IDL plus inline instruction layouts", t => {
-    expectParseError(
-      t,
-      ~files=Dict.fromArray([("idls/program.json", "{}")]),
-      `
-name: duplicate-svm-schema
-ecosystem: svm
-chains:
-  - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          idl: idls/program.json
-          instructions:
-            - name: Transfer
-              accounts: []
-              args: []
-`,
-      "Config parse error: Resolving Borsh schema for program 'Program' (metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s): Program 'Program': \`idl\` is mutually exclusive with per-instruction \`accounts\`/\`args\` overrides. Use one or the other.",
-    )
-  })
-
-  it("requires SVM inline accounts and args together", t => {
-    expectParseError(
-      t,
-      `
-name: incomplete-svm-layout
-ecosystem: svm
-chains:
-  - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: Transfer
-              accounts: []
-`,
-      "Config parse error: Layout for instruction 'Transfer': Instruction 'Transfer': \`accounts\` and \`args\` must be provided together (or both omitted to fall back to a bundled/IDL schema).",
     )
   })
 })

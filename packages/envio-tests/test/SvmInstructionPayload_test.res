@@ -1,5 +1,18 @@
 open Vitest
 
+let swapIdl = `{
+  "address": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+  "instructions": [{
+    "name": "swap",
+    "discriminator": [9],
+    "accounts": [{ "name": "source" }, { "name": "destination" }],
+    "args": [
+      { "name": "amountIn", "type": "u64" },
+      { "name": "minAmountOut", "type": "u64" }
+    ]
+  }]
+}`
+
 let configYaml = `
 name: svm-payload
 ecosystem: svm
@@ -12,20 +25,13 @@ chains:
       programs:
         - name: Swapper
           program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
-              args:
-                - { name: amountIn, type: u64 }
-                - { name: minAmountOut, type: u64 }
-              accounts:
-                - source
-                - destination
+          idl: idls/swap.json
 `
 
 let parsed = InternalTestIndexer.fromUserApi(
   ~schema=ApiTypesFixtures.schema,
   ~registerHandlers=true,
+  ~files=Dict.fromArray([("idls/swap.json", swapIdl)]),
   ~configYaml,
   ~handlers=`
 import { indexer } from "envio";

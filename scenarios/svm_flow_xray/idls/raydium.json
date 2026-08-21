@@ -1,0 +1,33 @@
+{
+  "address": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+  "instructions": [
+    {
+      "name": "swap",
+      "discriminator": [9],
+      "accounts": [
+        { "name": "tokenProgram" },
+        { "name": "amm" },
+        { "name": "ammAuthority" },
+        { "name": "ammOpenOrders" },
+        { "name": "ammTargetOrders" },
+        { "name": "poolCoinTokenAccount" },
+        { "name": "poolPcTokenAccount" },
+        { "name": "serumProgram" },
+        { "name": "serumMarket" },
+        { "name": "serumBids" },
+        { "name": "serumAsks" },
+        { "name": "serumEventQueue" },
+        { "name": "serumCoinVaultAccount" },
+        { "name": "serumPcVaultAccount" },
+        { "name": "serumVaultSigner" },
+        { "name": "userSourceTokenAccount" },
+        { "name": "userDestTokenAccount" },
+        { "name": "userSourceOwner" }
+      ],
+      "args": [
+        { "name": "amountIn", "type": "u64" },
+        { "name": "minAmountOut", "type": "u64" }
+      ]
+    }
+  ]
+}

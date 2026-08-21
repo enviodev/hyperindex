@@ -30,9 +30,11 @@ Open the GraphQL playground at `http://localhost:8080` and query:
 
 ## What this teaches
 
-- Declaring a Solana program + its instructions in `config.yaml`
-  (`ecosystem: svm`, `experimental.programs[].instructions[]`).
-- Using `indexer.onInstruction({program, instruction}, handler)` to receive
-  positional accounts + raw instruction data.
+- Declaring a Solana program in `config.yaml` (`ecosystem: svm`,
+  `experimental.programs[]` with `name`, `program_id`, and `idl`).
+- Pointing `idl:` at `idls/token-metadata.codama.json` for layouts and
+  discriminators. Register `indexer.onInstruction` for the instructions to
+  handle, and select payload with `fields`.
+- Reading `instruction.accounts.<name>.address`.
 - Persisting per-instruction state to a typed entity (`TokenMetadataAccount`)
   and a counter (`ProgramStats`).

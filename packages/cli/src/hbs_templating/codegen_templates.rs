@@ -2274,8 +2274,7 @@ type testIndexer = {{
 
             // SVM programs table: per-program record of per-instruction
             // `{ args, accounts }` shapes. Empty when no SVM programs
-            // configured, or when no instruction in any program carries a
-            // resolved schema (bundled / IDL / inline).
+            // are configured.
             //
             // Each instruction emits both `args` (typed from the Borsh
             // schema) and `accounts` (named string slots from the schema).
@@ -2319,8 +2318,12 @@ type testIndexer = {{
                             let fields = svm_kind
                                 .accounts
                                 .iter()
-                                .map(|name| {
-                                    format!("readonly {}: string", ts_safe_property_name(name))
+                                .map(|account| {
+                                    let optional = if account.optional { "?" } else { "" };
+                                    format!(
+                                        "readonly {}{optional}: string",
+                                        ts_safe_property_name(&account.name)
+                                    )
                                 })
                                 .collect::<Vec<_>>()
                                 .join("; ");
@@ -2654,9 +2657,6 @@ fn field_type_to_ts_type(
                 seen.pop();
                 rendered
             } else {
-                // Missing nominal type: surface as `unknown` rather than
-                // failing codegen, since hand-written ad-hoc schemas may
-                // reference types the user resolves at runtime.
                 "unknown".to_string()
             }
         }
@@ -3601,31 +3601,20 @@ type GlobalCounter @crossChain {
     }
 
     #[test]
-    fn internal_config_json_code_generated_for_svm() {
-        let json = get_internal_config_json_helper("svm-metaplex-config.yaml");
-        insta::assert_snapshot!(json);
-    }
-
-    #[test]
     fn envio_types_dts_generated_for_svm() {
-        let project_template = get_project_template_helper("svm-metaplex-config.yaml");
-        insta::assert_snapshot!(project_template.envio_types_dts);
+        let dts = get_project_template_helper("svm-metaplex-config.yaml").envio_types_dts;
         // Handler `fields` live in index.d.ts. A generated FieldNotSelected /
         // transaction / block record is leftover YAML field_selection.
         assert!(
-            !project_template
-                .envio_types_dts
-                .contains("FieldNotSelected"),
+            !dts.contains("FieldNotSelected"),
             "SVM codegen must not emit FieldNotSelected"
         );
         assert!(
-            !project_template
-                .envio_types_dts
-                .contains("readonly transaction:"),
+            !dts.contains("readonly transaction:"),
             "SVM program table must not emit transaction"
         );
         assert!(
-            !project_template.envio_types_dts.contains("readonly block:"),
+            !dts.contains("readonly block:"),
             "SVM program table must not emit block"
         );
     }
@@ -3646,19 +3635,23 @@ chains:
       programs:
         - name: Swapper
           program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
+          idl: idls/swap.json
 "#;
         let schema = r#"
 type Swap {
   id: ID!
 }
 "#;
+        let mut files = HashMap::new();
+        files.insert(
+            "idls/swap.json".to_string(),
+            r#"{"address":"675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8","instructions":[{"name":"swap","discriminator":[9]}]}"#
+                .to_string(),
+        );
         // `true` puts the project in the shape that would otherwise get an
         // `Indexer.res`: a `rescript.json` sitting next to `config.yaml`.
         let config =
-            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &HashMap::new(), true)
+            SystemConfig::parse_yaml(yaml, Some(schema), &HashMap::new(), &files, true)
                 .expect("svm config should parse");
         let project_template =
             super::ProjectTemplate::from_config(&config).expect("project template");

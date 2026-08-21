@@ -27,7 +27,7 @@ describe("Metaplex Token Metadata handlers", () => {
               accounts: {
                 metadata: { address: METADATA_PDA },
                 mint: { address: MINT },
-                update_authority: { address: AUTHORITY },
+                updateAuthority: { address: AUTHORITY },
               },
               transaction: { signature: SIGNATURE },
             },
@@ -61,7 +61,7 @@ describe("Metaplex Token Metadata handlers", () => {
               accounts: {
                 metadata: { address: METADATA_PDA },
                 mint: { address: MINT },
-                update_authority: { address: AUTHORITY },
+                updateAuthority: { address: AUTHORITY },
               },
               transaction: { signature: SIGNATURE },
             },
@@ -71,7 +71,7 @@ describe("Metaplex Token Metadata handlers", () => {
               slot: START_SLOT + 1,
               accounts: {
                 metadata: { address: METADATA_PDA },
-                update_authority: { address: NEW_AUTHORITY },
+                updateAuthority: { address: NEW_AUTHORITY },
               },
               transaction: { signature: SIGNATURE },
             },

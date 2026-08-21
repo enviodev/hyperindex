@@ -4,7 +4,7 @@ use crate::constants::reserved_keywords::{
     ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
     TYPESCRIPT_RESERVED_WORDS,
 };
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use regex::Regex;
 use std::collections::HashSet;
 
@@ -230,22 +230,6 @@ pub fn is_valid_solana_pubkey(s: &str) -> bool {
         .is_ok_and(|decoded_len| decoded_len == decoded.len())
 }
 
-pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
-    let hex = s.strip_prefix("0x").unwrap_or(s);
-    if !matches!(hex.len(), 2 | 4 | 8 | 16) {
-        return Err(anyhow!(
-            "discriminator {:?} must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after \
-             stripping a `0x` prefix), got {} digits",
-            s,
-            hex.len()
-        ));
-    }
-    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(anyhow!("discriminator {:?} contains non-hex characters", s));
-    }
-    Ok(())
-}
-
 pub fn validate_deserialized_svm_config_yaml(
     svm_config: &super::human_config::svm::HumanConfig,
 ) -> anyhow::Result<()> {
@@ -264,7 +248,20 @@ pub fn validate_deserialized_svm_config_yaml(
             .as_ref()
             .map(|e| e.programs.as_slice())
             .unwrap_or(&[]);
+        // Two programs on one id put their instructions in the same routing
+        // pool with nothing to tell them apart.
+        let mut seen_program_ids: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::new();
         for program in programs {
+            if let Some(existing) = seen_program_ids.insert(&program.program_id, &program.name) {
+                return Err(anyhow!(
+                    "Programs {:?} and {:?} share program_id {:?}. Their instructions compete for \
+                     the same on-chain data — list them under one program instead.",
+                    existing,
+                    program.name,
+                    program.program_id
+                ));
+            }
             if !is_valid_solana_pubkey(&program.program_id) {
                 return Err(anyhow!(
                     "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
@@ -274,85 +271,6 @@ pub fn validate_deserialized_svm_config_yaml(
                 ));
             }
             all_program_names.push(program.name.clone());
-
-            let mut instruction_names = std::collections::HashSet::new();
-            for instr in &program.instructions {
-                if !instruction_names.insert(instr.name.clone()) {
-                    return Err(anyhow!(
-                        "Program {:?} declares the instruction {:?} more than once",
-                        program.name,
-                        instr.name
-                    ));
-                }
-                if let Some(discriminator) = &instr.discriminator {
-                    validate_svm_discriminator(discriminator).with_context(|| {
-                        format!("instruction {:?} in program {:?}", instr.name, program.name)
-                    })?;
-                }
-                if let Some(filters) = instr.account_filters.as_ref() {
-                    if let crate::config_parsing::human_config::svm::AccountFilters::AnyOf(any_of) =
-                        filters
-                    {
-                        if any_of.any_of.is_empty() {
-                            return Err(anyhow!(
-                                "`any_of` account filter on instruction {:?} (program {:?}) is \
-                                 empty; remove the `account_filters` field instead, or add at \
-                                 least one AND-group",
-                                instr.name,
-                                program.name
-                            ));
-                        }
-                    }
-                    let groups = filters.groups();
-                    for (group_idx, group) in groups.iter().enumerate() {
-                        if group.is_empty() {
-                            return Err(anyhow!(
-                                "Account filter group {} in instruction {:?} (program {:?}) is \
-                                 empty; each `any_of` branch must contain at least one entry",
-                                group_idx,
-                                instr.name,
-                                program.name
-                            ));
-                        }
-                        let mut seen_positions = std::collections::HashSet::new();
-                        for filter in group.iter() {
-                            if filter.position > 5 {
-                                return Err(anyhow!(
-                                    "Account filter position {} in instruction {:?} (program \
-                                     {:?}) must be in 0..=5 (positions 6..=9 are reserved for a \
-                                     future extension)",
-                                    filter.position,
-                                    instr.name,
-                                    program.name
-                                ));
-                            }
-                            if !seen_positions.insert(filter.position) {
-                                return Err(anyhow!(
-                                    "Duplicate position {} in account filter group {} of \
-                                     instruction {:?} (program {:?}); combine the pubkeys into a \
-                                     single `values` list, or use `any_of` to express OR across \
-                                     positions",
-                                    filter.position,
-                                    group_idx,
-                                    instr.name,
-                                    program.name
-                                ));
-                            }
-                            for value in &filter.values {
-                                if !is_valid_solana_pubkey(value) {
-                                    return Err(anyhow!(
-                                        "Account filter on instruction {:?} (program {:?}) has an \
-                                         invalid base58 pubkey {:?}",
-                                        instr.name,
-                                        program.name,
-                                        value
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -600,7 +518,6 @@ mod tests {
         use crate::config_parsing::human_config::svm::HumanConfig;
         use crate::config_parsing::validation::{
             is_valid_solana_pubkey, validate_deserialized_svm_config_yaml,
-            validate_svm_discriminator,
         };
 
         const TOKEN_METADATA: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
@@ -626,28 +543,6 @@ mod tests {
             assert!(!is_valid_solana_pubkey(&"1".repeat(33)));
         }
 
-        #[test]
-        fn discriminator_accepts_valid_lengths() {
-            for s in ["0x0f", "0x0fff", "0x0fffffff", "0x0fffffffffffffff"] {
-                assert!(
-                    validate_svm_discriminator(s).is_ok(),
-                    "expected {s:?} to be valid"
-                );
-            }
-            // Prefix is optional.
-            assert!(validate_svm_discriminator("0f").is_ok());
-        }
-
-        #[test]
-        fn discriminator_rejects_invalid_lengths_and_chars() {
-            for s in ["0x", "0x0", "0x012", "0xggggggg"] {
-                assert!(
-                    validate_svm_discriminator(s).is_err(),
-                    "expected {s:?} to be rejected"
-                );
-            }
-        }
-
         fn parse(yaml: &str) -> HumanConfig {
             serde_yaml::from_str(yaml).unwrap()
         }
@@ -667,16 +562,14 @@ chains:
       programs:
         - name: TokenMetadata
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: UpdateMetadataAccountV2
-              discriminator: "0x0f"
+          idl: idls/token-metadata.codama.json
 "#,
             );
             validate_deserialized_svm_config_yaml(&cfg).unwrap();
         }
 
         #[test]
-        fn validation_accepts_any_of_with_cross_group_duplicate_positions() {
+        fn validation_rejects_two_programs_on_one_id() {
             let cfg = parse(
                 r#"
 name: x
@@ -688,19 +581,22 @@ chains:
       hypersync_config:
         url: https://solana.hypersync.xyz
       programs:
-        - name: P
+        - name: Reads
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: I
-              account_filters:
-                any_of:
-                  - - position: 2
-                      values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-                  - - position: 2
-                      values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
+          idl: idls/a.json
+        - name: Writes
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          idl: idls/b.json
 "#,
             );
-            assert!(validate_deserialized_svm_config_yaml(&cfg).is_ok());
+            assert_eq!(
+                validate_deserialized_svm_config_yaml(&cfg)
+                    .unwrap_err()
+                    .to_string(),
+                "Programs \"Reads\" and \"Writes\" share program_id \
+                 \"metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\". Their instructions compete for \
+                 the same on-chain data — list them under one program instead."
+            );
         }
 
         #[test]

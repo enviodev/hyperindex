@@ -14,8 +14,4 @@ chains:
       programs:
         - name: TokenMetadata
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: CreateMetadataAccountV3
-              discriminator: "0x21"
-            - name: UpdateMetadataAccountV2
-              discriminator: "0x0f"
+          idl: idls/token-metadata.codama.json

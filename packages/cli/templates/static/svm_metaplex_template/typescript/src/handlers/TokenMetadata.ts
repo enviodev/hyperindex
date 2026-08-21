@@ -46,7 +46,7 @@ indexer.onInstruction(
     context.TokenMetadataAccount.set({
       id: instruction.accounts.metadata.address,
       mint: instruction.accounts.mint.address,
-      updateAuthority: instruction.accounts.update_authority.address,
+      updateAuthority: instruction.accounts.updateAuthority.address,
       lastUpdatedSlot: instruction.block.slot,
       updateCount: 0,
       createdAtSlot: instruction.block.slot,
@@ -69,7 +69,7 @@ indexer.onInstruction(
     const account = await context.TokenMetadataAccount.getOrCreate({
       id: instruction.accounts.metadata.address,
       mint: "",
-      updateAuthority: instruction.accounts.update_authority.address,
+      updateAuthority: instruction.accounts.updateAuthority.address,
       lastUpdatedSlot: instruction.block.slot,
       updateCount: 0,
       createdAtSlot: instruction.block.slot,
@@ -77,7 +77,7 @@ indexer.onInstruction(
     });
     context.TokenMetadataAccount.set({
       ...account,
-      updateAuthority: instruction.accounts.update_authority.address,
+      updateAuthority: instruction.accounts.updateAuthority.address,
       lastUpdatedSlot: instruction.block.slot,
       updateCount: account.updateCount + 1,
       lastTxSignature: instruction.transaction.signature,

@@ -10,7 +10,7 @@ use crate::{
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
     init_config::fuel::{ContractImportSelection, InitFlow, Network, SelectedContract, Template},
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use inquire::{validator::Validation, Select};
 use strum::IntoEnumIterator;
 
@@ -107,7 +107,9 @@ impl Contract for SelectedContract {
     }
 
     fn add_network(&mut self) -> Result<()> {
-        todo!("Fuel supports only one network at the moment")
+        Err(anyhow!(
+            "The Fuel init flow does not support adding another network"
+        ))
     }
 }
 

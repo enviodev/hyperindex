@@ -446,8 +446,6 @@ struct SvmAbiJson {
     /// runtime resolves these once per program at startup.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     defined_types: std::collections::BTreeMap<String, human_config::svm::ArgType>,
-    /// `"anchorIdl"`, `"bundled"`, or `"inline"`. Carried for diagnostics; the
-    /// runtime treats all three identically.
     source: &'static str,
 }
 
@@ -638,7 +636,11 @@ impl SystemConfig {
                                             })
                                             .collect(),
                                         is_inner: svm_kind.is_inner,
-                                        accounts: svm_kind.accounts.clone(),
+                                        accounts: svm_kind
+                                            .accounts
+                                            .iter()
+                                            .map(|a| a.name.clone())
+                                            .collect(),
                                         args: svm_kind
                                             .args
                                             .iter()
@@ -670,6 +672,7 @@ impl SystemConfig {
                         Abi::Svm(SvmAbi {
                             program_id,
                             instructions: _,
+                            unusable: _,
                             defined_types,
                             source,
                         }) => Some(SvmAbiJson {
@@ -679,9 +682,7 @@ impl SystemConfig {
                                 .map(|(name, ty)| (name.clone(), field_type_to_arg_type(ty)))
                                 .collect(),
                             source: match source {
-                                SvmSchemaSource::AnchorIdl { .. } => "anchorIdl",
-                                SvmSchemaSource::Bundled { .. } => "bundled",
-                                SvmSchemaSource::Inline => "inline",
+                                SvmSchemaSource::Idl { .. } => "idl",
                             },
                         }),
                         _ => None,

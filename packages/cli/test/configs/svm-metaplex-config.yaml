@@ -10,12 +10,4 @@ chains:
       programs:
         - name: TokenMetadata
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: CreateMetadataAccountV3
-              discriminator: "0x21"
-            - name: UpdateMetadataAccountV2
-              discriminator: "0x0f"
-              account_filters:
-                - position: 0
-                  values:
-                    - metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          idl: ../templates/static/svm_metaplex_template/typescript/idls/token-metadata.codama.json
