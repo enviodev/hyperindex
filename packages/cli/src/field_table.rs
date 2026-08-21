@@ -454,7 +454,7 @@ impl StoreCol {
         }
     }
 
-    /// Raw byte cell, for the token-balance table's direct-by-slot reads
+    /// Raw byte cell, for the account-activity table's direct-by-slot reads
     /// (bypassing the `AnyCol` interchange layer since there's no per-row
     /// decode step there). Panics on a non-`Var` column.
     fn var_cell(&self, slot: usize) -> Option<&[u8]> {
@@ -472,6 +472,15 @@ impl StoreCol {
         }
     }
 
+    /// Boolean cell, for the account-activity table's direct-by-slot reads.
+    /// Panics on a non-`Bool` column.
+    fn bool_cell(&self, slot: usize) -> bool {
+        match self {
+            StoreCol::Bool(v) => v[slot],
+            _ => panic!("expected a bool column"),
+        }
+    }
+
     /// Raw bytes of a byte-backed cell (hash comparison). `Fixed` carries no
     /// per-slot validity, so the caller must have checked the row's mask bit.
     fn cell_bytes(&self, slot: usize) -> Option<&[u8]> {
@@ -486,7 +495,7 @@ impl StoreCol {
 
 /// Merge-on-insert columnar table: one slot per distinct key. `by_key` backs
 /// point lookup and insert dedup; `order` backs the range scans prune,
-/// rollback, and token-balance read need. `free` holds freed slots for reuse,
+/// rollback, and account-activity read need. `free` holds freed slots for reuse,
 /// so capacity never shrinks but also never leaks.
 pub(crate) struct Table<K> {
     by_key: HashMap<K, u32>,
@@ -785,9 +794,9 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
     }
 }
 
-/// Account-keyed token-balance table only: the account is the key's third
-/// component (force-added to the SVM query's field selection whenever token
-/// balances are requested, so it's always available to key on), so it isn't
+/// Account-keyed account-activity table only: the account is the key's third
+/// component (force-added to the SVM query's field selection whenever account
+/// activity is requested, so it's always available to key on), so it isn't
 /// stored as its own column.
 impl Table<(u64, u32, Box<str>)> {
     /// All slots for `(block, tx_index)`, in account order. `""` sorts before
@@ -803,7 +812,7 @@ impl Table<(u64, u32, Box<str>)> {
             .map(|(k, &slot)| (k, slot))
     }
 
-    /// Raw string bytes for one token-balance field at `slot`, or `None` if
+    /// Raw string bytes for one account-activity field at `slot`, or `None` if
     /// the field was never populated for that row.
     pub(crate) fn var_cell(&self, field: usize, slot: u32) -> Option<&[u8]> {
         if self.masks[slot as usize] & (1u64 << field) == 0 {
@@ -821,6 +830,17 @@ impl Table<(u64, u32, Box<str>)> {
             return None;
         }
         self.cols[field].as_ref().map(|c| c.u64_cell(slot as usize))
+    }
+
+    /// One boolean field at `slot`, or `None` if it was never populated for
+    /// that row.
+    pub(crate) fn bool_cell(&self, field: usize, slot: u32) -> Option<bool> {
+        if self.masks[slot as usize] & (1u64 << field) == 0 {
+            return None;
+        }
+        self.cols[field]
+            .as_ref()
+            .map(|c| c.bool_cell(slot as usize))
     }
 }
 
@@ -1263,7 +1283,7 @@ mod tests {
     }
 
     #[test]
-    fn token_balance_table_range_read_by_slot_and_tx() {
+    fn account_activity_table_range_read_by_slot_and_tx() {
         let mut table: Table<(u64, u32, Box<str>)> = Table::new(1);
         let key = |account: &str| (5u64, 0u32, Box::<str>::from(account));
         let mut mint_a = VarCol::new();

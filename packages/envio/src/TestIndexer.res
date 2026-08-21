@@ -10,6 +10,12 @@ type fuelChainConfig = {
   simulate?: array<Envio.fuelSimulateItem>,
 }
 
+type svmChainConfig = {
+  startBlock?: int,
+  endBlock?: int,
+  simulate?: array<Envio.svmSimulateItem>,
+}
+
 // Internal type used for block range validation and state management
 type chainConfig = {
   startBlock: int,
@@ -322,9 +328,13 @@ let getSimulateEndBlock = (
     switch blockJson {
     | Some(bj) =>
       let blockDict = bj->(Utils.magic: JSON.t => dict<JSON.t>)
+      let blockNumberKey = switch config.ecosystem.name {
+      | Svm => "slot"
+      | _ => config.ecosystem.blockNumberName
+      }
       let n: option<int> =
         blockDict
-        ->Dict.get(config.ecosystem.blockNumberName)
+        ->Dict.get(blockNumberKey)
         ->Option.flatMap(v => v->(Utils.magic: JSON.t => Nullable.t<int>)->Nullable.toOption)
       switch n {
       | Some(v) if v > maxBlock.contents => maxBlock := v
