@@ -1446,8 +1446,7 @@ export type SvmOnInstructionOptions<
   /** Program name as declared under `chains[].programs[].name` in
    * `config.yaml`. */
   readonly program: P;
-  /** Instruction name as declared under
-   * `chains[].programs[].instructions[].name` in `config.yaml`. */
+  /** Instruction name as declared in the program IDL. */
   readonly instruction: I;
   readonly fields?: Fields & SvmFieldsLiteralCheck<Fields>;
 };
@@ -1679,7 +1678,7 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
             ? {
                 /**
                  * Register an instruction handler. Dispatch matches on
-                 * `(programId, discriminator)` from the YAML config.
+                 * `(programId, discriminator)` from the program IDL.
                  * Handler `fields` is the only source of payload selection.
                  */
                 readonly onInstruction: <

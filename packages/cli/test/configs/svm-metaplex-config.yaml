@@ -10,10 +10,3 @@ chains:
         - name: TokenMetadata
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           idl: ../templates/static/svm_metaplex_template/typescript/idls/token-metadata.codama.json
-          instructions:
-            - name: CreateMetadataAccountV3
-            - name: UpdateMetadataAccountV2
-              account_filters:
-                - position: 0
-                  values:
-                    - metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s

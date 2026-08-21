@@ -354,7 +354,7 @@ indexer.onInstruction({ fields: flowFields, program: "Drift", instruction: "sett
   });
 });
 
-// SplToken + System are not matched (volume); see config.yaml. Per-tx token
+// SplToken and System are not in the program list (volume). Per-tx token
 // movement still arrives via transaction.accountActivities on the DeFi events.
 indexer.onInstruction({ fields: flowFields, program: "Raydium", instruction: "swap" }, async ({ instruction, context }) => {
   const tx = instruction.transaction;

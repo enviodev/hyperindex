@@ -49,10 +49,9 @@ pub struct ProgramIdl {
     pub address: Option<String>,
     pub instructions: BTreeMap<String, IxIdl>,
     pub defined_types: BTreeMap<String, FieldType>,
-    /// Declared instructions this runtime cannot decode or dispatch. An IDL
-    /// describes a whole program; a config indexes a few names. Failing the
-    /// file would put `transfer` out of reach over a shape nobody asked to
-    /// decode.
+    /// Declared instructions this runtime cannot decode or dispatch. They are
+    /// omitted from the catalog; if none remain, the program fails with these
+    /// reasons.
     pub unusable: Unusable,
     pub unusable_types: Unusable,
     /// Known non-empty prefixes of set-aside instructions. Prefix collision
@@ -98,8 +97,7 @@ fn is_codama_root(root: &Map<String, Value>) -> bool {
         )
 }
 
-/// Shared post-parse checks. Failures demote an instruction; the config
-/// decides whether that name was asked for.
+/// Shared post-parse checks. Failures demote an instruction from the catalog.
 fn validate(idl: &mut ProgramIdl) {
     let mut demoted = Unusable::new();
     for (name, ix) in &idl.instructions {

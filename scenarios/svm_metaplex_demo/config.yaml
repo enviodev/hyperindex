@@ -16,8 +16,4 @@ chains:
       programs:
         - name: TokenMetadata
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          # Discriminator and decoded args/accounts come from the IDL.
           idl: idls/token-metadata.codama.json
-          instructions:
-            - name: CreateMetadataAccountV3
-            - name: UpdateMetadataAccountV2

@@ -442,8 +442,6 @@ struct SvmAbiJson {
     /// runtime resolves these once per program at startup.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     defined_types: std::collections::BTreeMap<String, human_config::svm::ArgType>,
-    /// `"idl"` or `"inline"`. Carried for diagnostics; the runtime treats
-    /// both identically.
     source: &'static str,
 }
 
@@ -681,7 +679,6 @@ impl SystemConfig {
                                 .collect(),
                             source: match source {
                                 SvmSchemaSource::Idl { .. } => "idl",
-                                SvmSchemaSource::Inline => "inline",
                             },
                         }),
                         _ => None,

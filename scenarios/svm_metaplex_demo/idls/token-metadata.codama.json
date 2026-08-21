@@ -13,10 +13,10 @@
       "is why this IDL is Codama and not Anchor.",
       "",
       "Hand-authored subset covering only the two instructions this project",
-      "indexes, not the program's full surface. Adding another instruction to",
-      "config.yaml means describing it here too, since an instruction absent",
-      "from the IDL is a codegen error. Layouts follow mpl-token-metadata",
-      "1.13.2 (https://github.com/metaplex-foundation/mpl-token-metadata)."
+      "indexes, not the program's full surface. Extend or trim this file to",
+      "change what is indexed; config.yaml only names the program and the",
+      "idl: path. Layouts follow mpl-token-metadata 1.13.2",
+      "(https://github.com/metaplex-foundation/mpl-token-metadata)."
     ],
     "instructions": [
       {

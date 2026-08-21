@@ -4,8 +4,22 @@ let closedAddr = "9n4nbM75f5Ui33ZbPYXn59EwSgE8CGsHtAeTH5YFeJ9E"
 let mintAddr = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 let ownerAddr = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
 
+let swapIdl = `{
+  "address": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+  "instructions": [{
+    "name": "swap",
+    "discriminator": [9],
+    "accounts": [{ "name": "source" }, { "name": "destination" }],
+    "args": [
+      { "name": "amountIn", "type": "u64" },
+      { "name": "minAmountOut", "type": "u64" }
+    ]
+  }]
+}`
+
 let _ = InternalTestIndexer.fromUserApi(
   ~schema=ApiTypesFixtures.schema,
+  ~files=Dict.fromArray([("idls/swap.json", swapIdl)]),
   ~configYaml=`
 name: svm-e2e
 ecosystem: svm
@@ -17,15 +31,7 @@ chains:
       programs:
         - name: Swapper
           program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
-              args:
-                - { name: amountIn, type: u64 }
-                - { name: minAmountOut, type: u64 }
-              accounts:
-                - source
-                - destination
+          idl: idls/swap.json
 `,
   ~handlers=`
 import { indexer } from "envio";

@@ -37,9 +37,8 @@ use std::{
 };
 
 use hypersync_client_solana::decode::{
-    EnumVariant as SvmEnumVariant, FieldType as SvmFieldType,
-    InstructionSchema as SvmInstructionSchema, NamedAccount as SvmNamedAccount,
-    NamedField as SvmNamedField,
+    FieldType as SvmFieldType, InstructionSchema as SvmInstructionSchema,
+    NamedAccount as SvmNamedAccount, NamedField as SvmNamedField,
 };
 
 type ContractNameKey = String;
@@ -1390,57 +1389,14 @@ impl SystemConfig {
                         .unwrap_or(&[]);
                     let mut chain_contracts = Vec::new();
                     for program in programs {
-                        let svm_abi =
-                            resolve_program_schema(program, source).with_context(|| {
-                                format!("Resolving Borsh schema for {}", program.program_id)
-                            })?;
-                        let events = program
-                            .instructions
-                            .iter()
-                            .map(|instr| -> Result<Event> {
-                                let ResolvedInstruction {
-                                    discriminator: normalized_discriminator,
-                                    discriminator_byte_len: byte_len,
-                                    accounts,
-                                    args,
-                                } = resolve_instruction(instr, &svm_abi).with_context(|| {
-                                    format!("Layout for instruction '{}'", instr.name)
-                                })?;
-                                let svm_kind = SvmEventKind {
-                                    discriminator: normalized_discriminator.clone(),
-                                    discriminator_byte_len: byte_len,
-                                    account_filters: instr
-                                        .account_filters
-                                        .as_ref()
-                                        .map(|filters| {
-                                            filters
-                                                .groups()
-                                                .into_iter()
-                                                .map(|group| {
-                                                    group
-                                                        .iter()
-                                                        .map(|af| SvmAccountFilter {
-                                                            position: af.position,
-                                                            values: af.values.clone(),
-                                                        })
-                                                        .collect()
-                                                })
-                                                .collect()
-                                        })
-                                        .unwrap_or_default(),
-                                    is_inner: instr.is_inner,
-                                    accounts,
-                                    args,
-                                };
-                                Ok(Event {
-                                    name: instr.name.clone(),
-                                    kind: EventKind::Svm(svm_kind),
-                                    sighash: normalized_discriminator.clone().unwrap_or_default(),
-                                    event_signature: String::new(),
-                                    field_selection: None,
-                                })
-                            })
-                            .collect::<Result<Vec<_>>>()?;
+                        let (svm_abi, events) = (|| {
+                            let svm_abi = resolve_program_schema(program, source)?;
+                            let events = events_from_idl(program, &svm_abi)?;
+                            anyhow::Ok((svm_abi, events))
+                        })()
+                        .with_context(|| {
+                            format!("Resolving Borsh schema for {}", program.program_id)
+                        })?;
 
                         let contract = Contract::new(
                             program.name.clone(),
@@ -1881,221 +1837,88 @@ fn to_instruction_schema(name: String, ix: svm_idl::IxIdl) -> SvmInstructionSche
     }
 }
 
-const METAPLEX_TOKEN_METADATA_PROGRAM_ID: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
-
 fn resolve_program_schema(
     program: &human_config::svm::Program,
     source: &dyn ConfigSource,
 ) -> Result<SvmAbi> {
-    let any_instruction_carries_schema = program
-        .instructions
-        .iter()
-        .any(|i| i.accounts.is_some() || i.args.is_some());
-
-    if let Some(idl_path) = program.idl.as_deref() {
-        if any_instruction_carries_schema {
+    let resolved = source
+        .read_project_relative_file(&program.idl)
+        .with_context(|| format!("reading IDL at '{}'", program.idl))?;
+    let idl = svm_idl::parse_idl(&resolved.raw, &program.name)?;
+    if let Some(address) = &idl.address {
+        if address != &program.program_id {
             return Err(anyhow!(
-                "Program '{}': `idl` is mutually exclusive with per-instruction `accounts`/`args` \
-                 overrides. Use one or the other.",
-                program.name
+                "Program '{}': the IDL declares address '{address}' but the config sets \
+                 `program_id: {}`.",
+                program.name,
+                program.program_id
             ));
         }
-        let resolved = source
-            .read_project_relative_file(idl_path)
-            .with_context(|| format!("reading IDL at '{idl_path}'"))?;
-        let idl = svm_idl::parse_idl(&resolved.raw, &program.name)?;
-        // A mismatch here means the IDL and the configured program id describe
-        // different programs, and every derived layout would be wrong.
-        if let Some(address) = &idl.address {
-            if address != &program.program_id {
-                return Err(anyhow!(
-                    "Program '{}': the IDL declares address '{address}' but the config sets \
-                     `program_id: {}`.",
-                    program.name,
-                    program.program_id
-                ));
-            }
-        }
-        return Ok(SvmAbi {
-            program_id: program.program_id.clone(),
-            instructions: idl
-                .instructions
-                .into_iter()
-                .map(|(name, ix)| (name.clone(), to_instruction_schema(name, ix)))
-                .collect(),
-            defined_types: idl.defined_types,
-            unusable: idl.unusable,
-            source: SvmSchemaSource::Idl {
-                path: idl_path.to_string(),
-            },
-        });
     }
-
-    if program.program_id == METAPLEX_TOKEN_METADATA_PROGRAM_ID && !any_instruction_carries_schema {
-        return Err(anyhow!(
-            "Program '{}': the Metaplex Token Metadata schema is no longer bundled. Point `idl` \
-             at a Token Metadata IDL to decode `params`.",
-            program.name
-        ));
-    }
-
     Ok(SvmAbi {
         program_id: program.program_id.clone(),
-        instructions: BTreeMap::new(),
-        defined_types: BTreeMap::new(),
-        unusable: Default::default(),
-        source: SvmSchemaSource::Inline,
+        instructions: idl
+            .instructions
+            .into_iter()
+            .map(|(name, ix)| (name.clone(), to_instruction_schema(name, ix)))
+            .collect(),
+        defined_types: idl.defined_types,
+        unusable: idl.unusable,
+        source: SvmSchemaSource::Idl {
+            path: program.idl.clone(),
+        },
     })
 }
 
-/// One configured instruction's discriminator and Borsh layout.
-struct ResolvedInstruction {
-    /// Normalized `0x`-prefixed hex. `None` matches every instruction in the
-    /// program, which is the lowest routing priority.
-    discriminator: Option<String>,
-    discriminator_byte_len: u8,
-    accounts: Vec<SvmAccountName>,
-    args: Vec<SvmNamedField>,
-}
-
-/// Resolve one configured instruction against the program's schema, from one of:
-/// 1. YAML per-instruction `accounts`/`args` overrides, with the YAML
-///    discriminator.
-/// 2. The program's IDL, matched on the instruction *name* — so the
-///    discriminator is derived rather than transcribed by hand.
-/// 3. Neither, leaving an untyped instruction matched only by its YAML
-///    discriminator.
-fn resolve_instruction(
-    instr: &human_config::svm::Instruction,
-    abi: &SvmAbi,
-) -> Result<ResolvedInstruction> {
-    // Width is already enforced by `validate_svm_discriminator`, which runs
-    // over the whole config before any schema is resolved.
-    let yaml_discriminator = instr
-        .discriminator
-        .as_deref()
-        .map(|d| {
-            crate::hex::decode_optionally_prefixed(d, "discriminator").map(|bytes| {
-                (
-                    format!("0x{}", crate::hex::encode(&bytes)),
-                    bytes.len() as u8,
-                )
-            })
-        })
-        .transpose()?;
-
-    if instr.accounts.is_some() != instr.args.is_some() {
+fn events_from_idl(program: &human_config::svm::Program, abi: &SvmAbi) -> Result<Vec<Event>> {
+    if abi.instructions.is_empty() {
+        let reasons = abi
+            .unusable
+            .iter()
+            .map(|(name, reason)| format!("{name} ({reason})"))
+            .collect::<Vec<_>>()
+            .join("; ");
         return Err(anyhow!(
-            "Instruction '{}': `accounts` and `args` must be provided together (or both omitted \
-             to fall back to the program's IDL).",
-            instr.name
+            "Program '{}': the IDL declares no instructions this runtime can decode{}",
+            program.name,
+            if reasons.is_empty() {
+                ".".to_string()
+            } else {
+                format!(": {reasons}")
+            }
         ));
     }
-    if let (Some(accounts), Some(args)) = (&instr.accounts, &instr.args) {
-        let (discriminator, discriminator_byte_len) = split_discriminator(yaml_discriminator);
-        return Ok(ResolvedInstruction {
-            discriminator,
-            discriminator_byte_len,
-            accounts: accounts
-                .iter()
-                .map(|name| SvmAccountName {
-                    name: name.clone(),
-                    optional: false,
-                })
-                .collect(),
-            args: args
-                .iter()
-                .map(yaml_arg_to_named_field)
-                .collect::<Result<Vec<_>>>()?,
-        });
-    }
-
-    if matches!(abi.source, SvmSchemaSource::Idl { .. }) {
-        let schema = abi.instructions.get(&instr.name).ok_or_else(|| {
-            match abi.unusable.get(&instr.name) {
-                // Declared, but the runtime has no way to read it. Say which,
-                // so the name is not reported as a typo.
-                Some(reason) => {
-                    anyhow!("declared by the program's IDL, but {reason}")
-                }
-                None => {
-                    let available = abi.instructions.keys().join(", ");
-                    if abi.unusable.is_empty() {
-                        anyhow!(
-                            "Instruction '{}' is not in the program's IDL. Available \
-                             instructions: {available}.",
-                            instr.name,
-                        )
-                    } else {
-                        let unusable = abi
-                            .unusable
-                            .iter()
-                            .map(|(name, reason)| format!("{name} ({reason})"))
-                            .collect::<Vec<_>>()
-                            .join("; ");
-                        anyhow!(
-                            "Instruction '{}' is not in the program's IDL. Available \
-                             instructions: {available}. Also declared but unusable: {unusable}.",
-                            instr.name,
-                        )
-                    }
-                }
+    Ok(abi
+        .instructions
+        .iter()
+        .map(|(name, schema)| {
+            let disc = format!("0x{}", crate::hex::encode(&schema.discriminator));
+            Event {
+                name: name.clone(),
+                kind: EventKind::Svm(SvmEventKind {
+                    discriminator: Some(disc.clone()),
+                    discriminator_byte_len: schema.discriminator.len() as u8,
+                    account_filters: vec![],
+                    is_inner: None,
+                    accounts: schema
+                        .accounts
+                        .iter()
+                        .map(|a| SvmAccountName {
+                            name: a.name.clone(),
+                            optional: a.optional,
+                        })
+                        .collect(),
+                    args: schema.args.clone(),
+                }),
+                sighash: disc,
+                event_signature: String::new(),
+                field_selection: None,
             }
-        })?;
-        let derived = format!("0x{}", crate::hex::encode(&schema.discriminator));
-        // The IDL is the authority; a hand-written discriminator that
-        // disagrees with it would route to a layout the program never encodes.
-        if let Some((configured, _)) = &yaml_discriminator {
-            if configured != &derived {
-                return Err(anyhow!(
-                    "Instruction '{}': the config sets `discriminator: {configured}` but the IDL \
-                     derives {derived}. Drop the `discriminator` line and let the IDL supply it.",
-                    instr.name
-                ));
-            }
-        }
-        return Ok(ResolvedInstruction {
-            discriminator: Some(derived),
-            discriminator_byte_len: schema.discriminator.len() as u8,
-            accounts: schema
-                .accounts
-                .iter()
-                .map(|a| SvmAccountName {
-                    name: a.name.clone(),
-                    optional: a.optional,
-                })
-                .collect(),
-            args: schema.args.clone(),
-        });
-    }
-
-    let (discriminator, discriminator_byte_len) = split_discriminator(yaml_discriminator);
-    Ok(ResolvedInstruction {
-        discriminator,
-        discriminator_byte_len,
-        accounts: Vec::new(),
-        args: Vec::new(),
-    })
+        })
+        .collect())
 }
 
-fn split_discriminator(parsed: Option<(String, u8)>) -> (Option<String>, u8) {
-    match parsed {
-        Some((hex, len)) => (Some(hex), len),
-        None => (None, 0),
-    }
-}
-
-fn yaml_arg_to_named_field(arg: &human_config::svm::ArgDef) -> Result<SvmNamedField> {
-    Ok(SvmNamedField {
-        name: arg.name.clone(),
-        ty: yaml_type_to_field_type(&arg.ty)
-            .with_context(|| format!("translating type for arg '{}'", arg.name))?,
-    })
-}
-
-/// Convert an upstream `FieldType` into the YAML/wire-format `ArgType`. Used
-/// when serializing `SvmEventKind.args` / `SvmAbi.defined_types` into
-/// `internal_config.json` for the runtime to consume.
+/// Convert an upstream `FieldType` into the internal_config wire `ArgType`.
 pub fn field_type_to_arg_type(ty: &SvmFieldType) -> human_config::svm::ArgType {
     use human_config::svm::{ArgComposite as C, ArgPrimitive as P, ArgType as T};
     match ty {
@@ -2148,70 +1971,6 @@ pub fn named_field_to_arg_def(nf: &SvmNamedField) -> human_config::svm::ArgDef {
     }
 }
 
-fn yaml_type_to_field_type(ty: &human_config::svm::ArgType) -> Result<SvmFieldType> {
-    use human_config::svm::{ArgComposite as C, ArgPrimitive as P, ArgType as T};
-    Ok(match ty {
-        T::Primitive(p) => match p {
-            P::Bool => SvmFieldType::Bool,
-            P::U8 => SvmFieldType::U8,
-            P::U16 => SvmFieldType::U16,
-            P::U32 => SvmFieldType::U32,
-            P::U64 => SvmFieldType::U64,
-            P::U128 => SvmFieldType::U128,
-            P::I8 => SvmFieldType::I8,
-            P::I16 => SvmFieldType::I16,
-            P::I32 => SvmFieldType::I32,
-            P::I64 => SvmFieldType::I64,
-            P::I128 => SvmFieldType::I128,
-            P::F32 => SvmFieldType::F32,
-            P::F64 => SvmFieldType::F64,
-            P::String => SvmFieldType::String,
-            P::Bytes => SvmFieldType::Bytes,
-            P::Pubkey | P::PublicKey => SvmFieldType::Pubkey,
-        },
-        T::Composite(c) => match c {
-            C::Option(inner) => SvmFieldType::Option(Box::new(yaml_type_to_field_type(inner)?)),
-            C::Vec(inner) => SvmFieldType::Vec(Box::new(yaml_type_to_field_type(inner)?)),
-            C::Array(inner, len) => SvmFieldType::Array {
-                ty: Box::new(yaml_type_to_field_type(inner)?),
-                len: *len,
-            },
-            C::Defined(name) => SvmFieldType::Defined(name.clone()),
-            C::Struct(fields) => SvmFieldType::Struct(
-                fields
-                    .iter()
-                    .map(yaml_arg_to_named_field)
-                    .collect::<Result<_>>()?,
-            ),
-            C::Enum(variants) => SvmFieldType::Enum(
-                variants
-                    .iter()
-                    .map(|v| {
-                        let fields = v
-                            .fields
-                            .as_ref()
-                            .map(|fs| {
-                                fs.iter()
-                                    .map(yaml_arg_to_named_field)
-                                    .collect::<Result<_>>()
-                            })
-                            .transpose()?;
-                        Ok(SvmEnumVariant {
-                            name: v.name.clone(),
-                            fields,
-                        })
-                    })
-                    .collect::<Result<_>>()?,
-            ),
-        },
-    })
-}
-
-// Suppress unused warnings on imports only referenced via paths above when
-// the enum-variant constructor isn't reached at compile time.
-#[allow(dead_code)]
-const _UNUSED_ENUM_VARIANT: Option<SvmEnumVariant> = None;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Abi {
     Evm(EvmAbi),
@@ -2227,25 +1986,15 @@ pub enum Abi {
 pub struct SvmAbi {
     /// Base58 program id this schema describes.
     pub program_id: String,
-    /// Per-instruction Borsh layout (accounts + args), keyed by the IDL's
-    /// instruction name — which is what `config.yaml` names. Empty for inline
-    /// (per-instruction YAML) schemas.
     pub instructions: BTreeMap<String, SvmInstructionSchema>,
-    /// Nominal-type registry referenced by `SvmFieldType::Defined`. Populated
-    /// from a parsed IDL, or empty for hand-written ad-hoc schemas.
     pub defined_types: BTreeMap<String, SvmFieldType>,
-    /// Instructions the IDL declares that this runtime cannot decode, with the
-    /// reason. Only reported if the config names one.
     pub unusable: svm_idl::Unusable,
     pub source: SvmSchemaSource,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SvmSchemaSource {
-    /// User-supplied `idl: <path>` parsed at codegen time.
     Idl { path: String },
-    /// Hand-written per-instruction `accounts`/`args` in YAML.
-    Inline,
 }
 
 impl Abi {
@@ -2346,9 +2095,8 @@ impl Contract {
             }
         }
 
-        // YAML catch-alls (no discriminator) are omitted: the router falls
-        // back to them only after no keyed registration matches. An IDL
-        // instruction missing a prefix is unroutable instead.
+        // Instructions with no discriminator never reach this check:
+        // `parse_idl` demotes them as unusable first.
         let discriminators: Vec<(Vec<u8>, String)> = events
             .iter()
             .filter_map(|event| match &event.kind {
@@ -2412,10 +2160,10 @@ pub struct SvmAccountFilter {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SvmEventKind {
-    /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
-    /// instruction in the program.
+    /// Hex-encoded discriminator (`0x`-prefixed). Always `Some` for IDL-derived
+    /// events; `None` is unroutable.
     pub discriminator: Option<String>,
-    /// Length of the decoded discriminator in bytes (0 / 1 / 2 / 4 / 8). The
+    /// Length of the decoded discriminator in bytes (1 / 2 / 4 / 8). The
     /// router precomputes a per-program ordering on this so dispatch tries
     /// longest first.
     pub discriminator_byte_len: u8,
@@ -2424,11 +2172,7 @@ pub struct SvmEventKind {
     pub account_filters: Vec<Vec<SvmAccountFilter>>,
     /// `None` matches both outer and inner (CPI-invoked) instructions.
     pub is_inner: Option<bool>,
-    /// Positional account names. Empty when the user supplied no schema and
-    /// no IDL applies; in that case `decoded.accounts` is `{}`.
     pub accounts: Vec<SvmAccountName>,
-    /// Borsh argument layout in declared order. Empty for unknown
-    /// instructions; the raw `instruction.data` is still available.
     pub args: Vec<SvmNamedField>,
 }
 
@@ -3829,6 +3573,13 @@ type Foo {
             let project_paths = ParsedProjectPaths::new(&root, "config.yaml").expect("paths");
             let config = SystemConfig::parse_from_project_files(&project_paths).expect("parse");
 
+            let usable = |stem: &str| {
+                let json = std::fs::read_to_string(format!("{root}/idls/{stem}")).expect("idl");
+                crate::config_parsing::svm_idl::parse_idl(&json, stem)
+                    .expect("parse idl")
+                    .instructions
+                    .len()
+            };
             let mut programs: Vec<(String, usize)> = config
                 .contracts
                 .values()
@@ -3838,20 +3589,19 @@ type Foo {
             assert_eq!(
                 programs,
                 vec![
-                    ("Drift".to_string(), 5),
-                    ("Jupiter".to_string(), 2),
-                    ("Kamino".to_string(), 4),
-                    ("Meteora".to_string(), 1),
-                    ("Orca".to_string(), 1),
-                    ("Raydium".to_string(), 1),
+                    ("Drift".to_string(), usable("drift.json")),
+                    ("Jupiter".to_string(), usable("jupiter.json")),
+                    ("Kamino".to_string(), usable("kamino.json")),
+                    ("Meteora".to_string(), usable("meteora.json")),
+                    ("Orca".to_string(), usable("orca.json")),
+                    ("Raydium".to_string(), usable("raydium.json")),
                 ]
             );
         }
 
         /// End-to-end: the Metaplex YAML fixture deserializes, validates, and
         /// translates into a single Contract whose two Events carry the
-        /// expected discriminator + flags. Guards Stage 3 + Stage 4 plumbing
-        /// from drifting out of sync.
+        /// expected discriminator + flags.
         #[test]
         fn translates_metaplex_yaml_into_contract_events() {
             let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
@@ -3918,7 +3668,7 @@ type Foo {
                             "UpdateMetadataAccountV2",
                             Some("0x0f"),
                             1,
-                            1,
+                            0,
                             vec![("metadata", false), ("updateAuthority", false)]
                         ),
                     ],

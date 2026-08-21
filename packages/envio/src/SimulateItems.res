@@ -309,7 +309,7 @@ let parse = (
       | Some(ec) => ec
       | None =>
         JsError.throwWithMessage(
-          `simulate: Instruction "${instructionName}" not found on program "${programName}". ` ++ `Check that the program and instruction names match your config.yaml.`,
+          `simulate: Instruction "${instructionName}" not found on program "${programName}". ` ++ `Check that the program name matches config.yaml and the instruction name matches that program's IDL.`,
         )
       }
       let svmEventConfig =

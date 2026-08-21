@@ -1,5 +1,18 @@
 open Vitest
 
+let swapIdl = `{
+  "address": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+  "instructions": [{
+    "name": "swap",
+    "discriminator": [9],
+    "accounts": [{ "name": "source" }, { "name": "destination" }],
+    "args": [
+      { "name": "amountIn", "type": "u64" },
+      { "name": "minAmountOut", "type": "u64" }
+    ]
+  }]
+}`
+
 let configYaml = `
 name: svm-api-types
 ecosystem: svm
@@ -11,19 +24,16 @@ chains:
       programs:
         - name: Swapper
           program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
-              args:
-                - { name: amountIn, type: u64 }
-                - { name: minAmountOut, type: u64 }
-              accounts:
-                - source
-                - destination
+          idl: idls/swap.json
 `
 
 let check = handlers =>
-  InternalTestIndexer.fromUserApi(~schema=ApiTypesFixtures.schema, ~handlers, ~configYaml)->ignore
+  InternalTestIndexer.fromUserApi(
+    ~schema=ApiTypesFixtures.schema,
+    ~files=Dict.fromArray([("idls/swap.json", swapIdl)]),
+    ~handlers,
+    ~configYaml,
+  )->ignore
 
 let yamlWithFieldSelection = `
 name: svm-yaml-field-selection
@@ -36,15 +46,14 @@ chains:
       programs:
         - name: Swapper
           program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
-              field_selection:
-                transaction_fields: [signature]
+          idl: idls/swap.json
+          field_selection:
+            transaction_fields: [signature]
 `
 
 InternalTestIndexer.fromUserApi(
   ~schema=ApiTypesFixtures.schema,
+  ~files=Dict.fromArray([("idls/swap.json", swapIdl)]),
   ~configYaml,
   ~handlers=`
 import { indexer } from "envio";
@@ -164,14 +173,19 @@ describe("SVM handler fields", () => {
 )->ignore
 
 describe("SVM YAML field_selection", () => {
-  it("rejects field_selection on an instruction", t => {
+  it("rejects field_selection on a program", t => {
     let actual = try {
-      InternalTestIndexer.fromUserApi(~configYaml=yamlWithFieldSelection)->ignore
+      InternalTestIndexer.fromUserApi(
+        ~files=Dict.fromArray([("idls/swap.json", swapIdl)]),
+        ~configYaml=yamlWithFieldSelection,
+      )->ignore
       "the parse to fail, but it succeeded"
     } catch {
     | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
     }
-    t.expect(actual->String.includes("field_selection")).toBe(true)
+    t.expect(actual).toBe(
+      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: unknown field `field_selection`, expected one of `name`, `program_id`, `handler`, `idl` at line 13 column 11",
+    )
   })
 })
 

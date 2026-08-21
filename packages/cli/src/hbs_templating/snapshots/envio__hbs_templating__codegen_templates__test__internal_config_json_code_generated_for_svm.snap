@@ -1,5 +1,6 @@
 ---
 source: packages/cli/src/hbs_templating/codegen_templates.rs
+assertion_line: 3588
 expression: json
 ---
 {
@@ -72,16 +73,6 @@ expression: json
             "svm": {
               "discriminator": "0x0f",
               "discriminatorByteLen": 1,
-              "accountFilters": [
-                [
-                  {
-                    "position": 0,
-                    "values": [
-                      "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
-                    ]
-                  }
-                ]
-              ],
               "accounts": [
                 "metadata",
                 "updateAuthority"

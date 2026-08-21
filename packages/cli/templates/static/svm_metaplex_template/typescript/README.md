@@ -30,13 +30,11 @@ Open the GraphQL playground at `http://localhost:8080` and query:
 
 ## What this teaches
 
-- Declaring a Solana program + its instructions in `config.yaml`
-  (`ecosystem: svm`, `experimental.programs[].instructions[]`).
-- Attaching a program IDL (`idls/token-metadata.codama.json`, wired up by the
-  `idl:` key in `config.yaml`) so instructions arrive decoded.
-- Using `indexer.onInstruction({program, instruction}, handler)` and reading
-  `instruction.params`, whose `accounts` are named and whose `args` are
-  Borsh-decoded from the IDL. Without an IDL, `params` is absent and only the
-  positional `instruction.accounts` and raw `instruction.data` arrive.
+- Declaring a Solana program in `config.yaml` (`ecosystem: svm`,
+  `experimental.programs[]` with `name`, `program_id`, and `idl`).
+- Pointing `idl:` at `idls/token-metadata.codama.json`. Every instruction the
+  runtime can decode is indexed; subset the IDL file to index fewer.
+- Using `indexer.onInstruction({program, instruction, fields}, handler)` and
+  reading `instruction.args` and `instruction.accounts.<name>.address`.
 - Persisting per-instruction state to a typed entity (`TokenMetadataAccount`)
   and a counter (`ProgramStats`).

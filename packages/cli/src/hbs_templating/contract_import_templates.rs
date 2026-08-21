@@ -613,8 +613,6 @@ impl Event {
             EventKind::Params(params) => params,
             EventKind::Fuel(_) => &empty_params,
             // `contract_import` only drives the EVM/Fuel ABI-driven import flow.
-            // Solana programs declare instructions explicitly in the YAML — no
-            // params shape exists here.
             EventKind::Svm(_) => &empty_params,
         };
 

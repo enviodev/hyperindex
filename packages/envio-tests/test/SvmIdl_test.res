@@ -157,8 +157,6 @@ chains:
         - name: Swapper
           program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
           idl: idls/swapper.json
-          instructions:
-            - name: swap
 `
 
 let codamaConfigYaml = `
@@ -173,8 +171,6 @@ chains:
         - name: SplToken
           program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
           idl: idls/spl-token.codama.json
-          instructions:
-            - name: transfer
 `
 
 let parseError = (~files, ~configYaml) =>
@@ -245,9 +241,6 @@ expectType<
 `)
   )
 
-  // The whole point of keying the IDL by name: the config names an
-  // instruction and the discriminator comes from the IDL, not from a hand-
-  // transcribed hex string.
   it("derives the discriminator from the IDL", t => {
     let {config} = InternalTestIndexer.fromUserApi(
       ~files=Dict.fromArray([("idls/swapper.json", anchorIdl)]),
@@ -265,36 +258,112 @@ expectType<
     t.expect(ids).toEqual([("Swapper", "swap", "0x0102030405060708")])
   })
 
-  it("rejects an instruction name the IDL does not declare", t =>
-    t.expect(
-      parseError(
-        ~files=Dict.fromArray([("idls/swapper.json", anchorIdl)]),
-        ~configYaml=anchorConfigYaml->String.replace("- name: swap", "- name: swapExactOut"),
-      ),
-    ).toBe(
-      "Config parse error: Layout for instruction 'swapExactOut': Instruction 'swapExactOut' is not in the program's IDL. Available instructions: swap.",
-    )
-  )
-
-  it("rejects a configured discriminator that contradicts the IDL", t =>
-    t.expect(
-      parseError(
-        ~files=Dict.fromArray([("idls/swapper.json", anchorIdl)]),
-        ~configYaml=anchorConfigYaml->String.replace(
-          "- name: swap",
-          `- name: swap\n              discriminator: "0xdeadbeefdeadbeef"`,
+  it("registers every usable IDL instruction", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files=Dict.fromArray([
+        (
+          "idls/swapper.json",
+          `{
+  "address": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+  "instructions": [
+    {"name": "swap", "discriminator": [1]},
+    {"name": "ping", "discriminator": [2]}
+  ]
+}`,
         ),
+      ]),
+      ~configYaml=anchorConfigYaml,
+    )
+    let ids =
+      config.chainMap
+      ->ChainMap.values
+      ->Array.flatMap(
+        chain =>
+          chain.contracts->Array.flatMap(
+            contract => contract.events->Array.map(event => (contract.name, event.name, event.id)),
+          ),
+      )
+    t.expect(ids).toEqual([("Swapper", "ping", "0x02"), ("Swapper", "swap", "0x01")])
+  })
+
+  it("omits an unusable sibling and keeps the rest", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files=Dict.fromArray([
+        (
+          "idls/swapper.json",
+          `{
+  "address": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+  "instructions": [
+    {"name": "swap", "discriminator": [1], "args": [{"name": "amountIn", "type": {"coption": "u64"}}]},
+    {"name": "ping", "discriminator": [2]}
+  ]
+}`,
+        ),
+      ]),
+      ~configYaml=anchorConfigYaml,
+    )
+    let ids =
+      config.chainMap
+      ->ChainMap.values
+      ->Array.flatMap(
+        chain =>
+          chain.contracts->Array.flatMap(
+            contract => contract.events->Array.map(event => (contract.name, event.name, event.id)),
+          ),
+      )
+    t.expect(ids).toEqual([("Swapper", "ping", "0x02")])
+  })
+
+  it("rejects an IDL with no instructions", t =>
+    t.expect(
+      parseError(
+        ~files=Dict.fromArray([
+          (
+            "idls/swapper.json",
+            `{"address": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8", "instructions": []}`,
+          ),
+        ]),
+        ~configYaml=anchorConfigYaml,
       ),
     ).toBe(
-      "Config parse error: Layout for instruction 'swap': Instruction 'swap': the config sets `discriminator: 0xdeadbeefdeadbeef` but the IDL derives 0x0102030405060708. Drop the `discriminator` line and let the IDL supply it.",
+      "Config parse error: Resolving Borsh schema for 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8: Program 'Swapper': the IDL declares no instructions this runtime can decode.",
     )
   )
 
-  // An IDL describes a whole program; a config indexes a few of its
-  // instructions. One the runtime cannot decode has to cost only itself, or a
-  // single such shape puts every other instruction in the file out of reach —
-  // SPL Token declares one, and 26 of its 28 instructions decode fine.
-  it("names the reason when an instruction the IDL declares cannot be decoded", t =>
+  it("rejects a missing idl", t =>
+    t.expect(
+      parseError(
+        ~files=Dict.fromArray([]),
+        ~configYaml=`
+name: svm-no-idl
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: Swapper
+          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+`,
+      ),
+    ).toBe(
+      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: missing field `idl` at line 10 column 11",
+    )
+  )
+
+  it("rejects an instructions list", t =>
+    t.expect(
+      parseError(
+        ~files=Dict.fromArray([("idls/swapper.json", anchorIdl)]),
+        ~configYaml=anchorConfigYaml ++ "          instructions:\n            - name: swap\n",
+      ),
+    ).toBe(
+      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: unknown field `instructions`, expected one of `name`, `program_id`, `handler`, `idl` at line 13 column 11",
+    )
+  )
+
+  it("names the reason when every IDL instruction is unusable", t =>
     t.expect(
       parseError(
         ~files=Dict.fromArray([
@@ -309,64 +378,8 @@ expectType<
         ~configYaml=anchorConfigYaml,
       ),
     ).toBe(
-      "Config parse error: Layout for instruction 'swap': declared by the program's IDL, but args.amountIn: `coption` is not Borsh-compatible and cannot be decoded",
+      "Config parse error: Resolving Borsh schema for 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8: Program 'Swapper': the IDL declares no instructions this runtime can decode: swap (args.amountIn: `coption` is not Borsh-compatible and cannot be decoded)",
     )
-  )
-
-  // Distinct hex strings, one dispatch key: the router probes widths
-  // longest-first, so every `Short` call whose payload continues with seven
-  // zero bytes is taken by `Long` and decoded eight bytes in.
-  it("rejects a hand-written discriminator that is a prefix of another", t =>
-    t.expect(
-      parseError(
-        ~files=Dict.fromArray([]),
-        ~configYaml=`
-name: svm-inline
-ecosystem: svm
-chains:
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: SplToken
-          program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
-          instructions:
-            - name: Short
-              discriminator: "0x0c"
-            - name: Long
-              discriminator: "0x0c00000000000000"
-`,
-      ),
-    ).toBe(
-      "Config parse error: Contract SplToken has two instructions the indexer can't tell apart: 'Long' is unroutable because its discriminator 0x0c00000000000000 extends 'Short''s 0x0c, so a 'Short' call whose data continues those bytes arrives here instead. Please remove one of them.",
-    )
-  )
-
-  // Dispatch reads a fixed-width prefix off the instruction data, so a width
-  // it never probes matches nothing. Caught at codegen rather than at indexer
-  // start, where the config line that caused it is long out of sight.
-  it("rejects a hand-written discriminator dispatch cannot probe", t =>
-    t.expect(
-      parseError(
-        ~files=Dict.fromArray([]),
-        ~configYaml=`
-name: svm-inline
-ecosystem: svm
-chains:
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: SplToken
-          program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
-          instructions:
-            - name: transfer
-              discriminator: "0xaabbcc"
-`,
-      ),
-    ).toBe(`Config parse error: instruction "transfer" in program "SplToken": discriminator "0xaabbcc" must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after stripping a \`0x\` prefix), got 6 digits`)
   )
 
   it("rejects an IDL whose address is not the configured program", t =>
@@ -393,7 +406,7 @@ chains:
         ~configYaml=codamaConfigYaml,
       ),
     ).toBe(
-      "Config parse error: Layout for instruction 'transfer': declared by the program's IDL, but it shares discriminator 0x03 with 'transferAgain'",
+      "Config parse error: Resolving Borsh schema for TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA: Program 'SplToken': the IDL declares no instructions this runtime can decode: transfer (it shares discriminator 0x03 with 'transferAgain'); transferAgain (it shares discriminator 0x03 with 'transfer')",
     )
   )
 
@@ -438,9 +451,10 @@ type _D = Transfer["args"]["discriminator"];
     InternalTestIndexer.fromUserApi(
       ~schema=ApiTypesFixtures.schema,
       ~files=Dict.fromArray([("idls/accounts.codama.json", optionalAccountsIdl)]),
-      ~configYaml=codamaConfigYaml
-      ->String.replace("idls/spl-token.codama.json", "idls/accounts.codama.json")
-      ->String.replace("- name: transfer", "- name: create"),
+      ~configYaml=codamaConfigYaml->String.replace(
+        "idls/spl-token.codama.json",
+        "idls/accounts.codama.json",
+      ),
       ~handlers=`
 import type { Global } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
@@ -458,28 +472,4 @@ expectType<
     )->ignore
   )
 
-  it("rejects Metaplex Token Metadata with no idl", t =>
-    t.expect(
-      parseError(
-        ~files=Dict.fromArray([]),
-        ~configYaml=`
-name: svm-metaplex
-ecosystem: svm
-chains:
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: TokenMetadata
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: CreateMetadataAccountV3
-              discriminator: "0x21"
-`,
-      ),
-    ).toBe(
-      "Config parse error: Resolving Borsh schema for metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s: Program 'TokenMetadata': the Metaplex Token Metadata schema is no longer bundled. Point `idl` at a Token Metadata IDL to decode `params`.",
-    )
-  )
 })

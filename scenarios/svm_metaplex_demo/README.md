@@ -9,12 +9,12 @@ Two instructions on the Metaplex Token Metadata program (`metaqbxxUerdq28cj1RbAW
 - `CreateMetadataAccountV3` (discriminator `0x21`) — new token metadata being attached to a mint.
 - `UpdateMetadataAccountV2` (discriminator `0x0f`) — metadata being edited (image, name, update authority, etc).
 
-Both come from `idls/token-metadata.codama.json`, so `config.yaml` only names
-them: the discriminators, account names and Borsh arg layouts are all derived
-from the IDL, and handlers read `instruction.params.args.data.name` and
-`instruction.params.accounts.mint` with real types rather than indexing into a
-positional array. Token Metadata is a native program tagged with a single
-leading byte, which is why the IDL is Codama and not Anchor.
+Both come from `idls/token-metadata.codama.json`: `config.yaml` names the
+program and points at the IDL, and discriminators, account names, and Borsh
+arg layouts are derived from it. Handlers read `instruction.args.data.name`
+and `instruction.accounts.mint.address`. Token Metadata is a native program
+tagged with a single leading byte, which is why the IDL is Codama and not
+Anchor.
 
 ## Quick start
 
