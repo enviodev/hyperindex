@@ -7,7 +7,8 @@ name: svm-flow-xray
 description: Test variant of Flow X-Ray with a finite slot window.
 ecosystem: svm
 chains:
-  - start_block: 420650000
+  - id: solana
+    start_block: 420650000
     end_block: 420650008
     experimental:
       hypersync_config:

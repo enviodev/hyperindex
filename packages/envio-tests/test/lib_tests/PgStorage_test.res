@@ -170,6 +170,7 @@ describe("Test PgStorage SQL generation functions", () => {
             {
               name: "Chain1",
               id: 1->ChainId.fromInt,
+              ecosystem: Ecosystem.Evm,
               startBlock: 100,
               endBlock: 200,
               maxReorgDepth: 10,
@@ -180,6 +181,7 @@ describe("Test PgStorage SQL generation functions", () => {
             {
               name: "Chain137",
               id: 137->ChainId.fromInt,
+              ecosystem: Ecosystem.Evm,
               startBlock: 0,
               maxReorgDepth: 200,
               blockLag: 0,
@@ -202,7 +204,7 @@ GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
 CREATE TYPE "test_schema".AccountType AS ENUM('ADMIN', 'USER');
 CREATE TYPE "test_schema".GravatarSize AS ENUM('SMALL', 'MEDIUM', 'LARGE');
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
@@ -223,6 +225,7 @@ CREATE INDEX "${IndexDefinition.single(
 CREATE VIEW "test_schema"."_meta" AS 
 SELECT 
   "id" AS "chainId",
+  "ecosystem" AS "ecosystem",
   "start_block" AS "startBlock", 
   "end_block" AS "endBlock",
   "progress_block" AS "progressBlock",
@@ -238,6 +241,7 @@ CREATE VIEW "test_schema"."chain_metadata" AS
 SELECT 
   "source_block" AS "block_height",
   "id" AS "chain_id",
+  "ecosystem" AS "ecosystem",
   "end_block" AS "end_block", 
   "first_event_block" AS "first_event_block_number",
   "_is_hyper_sync" AS "is_hyper_sync",
@@ -248,9 +252,9 @@ SELECT
   "start_block" AS "start_block",
   "ready_at" AS "timestamp_caught_up_to_head_or_endblock"
 FROM "test_schema"."envio_chains";
-INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false),
-       (137, 0, NULL, 200, 0, NULL, -1, -1, NULL, 0, false);`
+INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
+VALUES (1, 'evm', 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false),
+       (137, 'evm', 0, NULL, 200, 0, NULL, -1, -1, NULL, 0, false);`
 
         t.expect(mainQuery, ~message="Main query should match expected SQL exactly").toBe(
           expectedMainQuery,
@@ -276,13 +280,14 @@ VALUES (1, 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false),
 CREATE SCHEMA "test_schema";
 GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE VIEW "test_schema"."_meta" AS 
 SELECT 
   "id" AS "chainId",
+  "ecosystem" AS "ecosystem",
   "start_block" AS "startBlock", 
   "end_block" AS "endBlock",
   "progress_block" AS "progressBlock",
@@ -298,6 +303,7 @@ CREATE VIEW "test_schema"."chain_metadata" AS
 SELECT 
   "source_block" AS "block_height",
   "id" AS "chain_id",
+  "ecosystem" AS "ecosystem",
   "end_block" AS "end_block", 
   "first_event_block" AS "first_event_block_number",
   "_is_hyper_sync" AS "is_hyper_sync",
@@ -338,7 +344,7 @@ FROM "test_schema"."envio_chains";`
 CREATE SCHEMA "public";
 GRANT ALL ON SCHEMA "public" TO "postgres";
 GRANT ALL ON SCHEMA "public" TO public;
-CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
@@ -351,6 +357,7 @@ CREATE INDEX "${IndexDefinition.single(
 CREATE VIEW "public"."_meta" AS 
 SELECT 
   "id" AS "chainId",
+  "ecosystem" AS "ecosystem",
   "start_block" AS "startBlock", 
   "end_block" AS "endBlock",
   "progress_block" AS "progressBlock",
@@ -366,6 +373,7 @@ CREATE VIEW "public"."chain_metadata" AS
 SELECT 
   "source_block" AS "block_height",
   "id" AS "chain_id",
+  "ecosystem" AS "ecosystem",
   "end_block" AS "end_block", 
   "first_event_block" AS "first_event_block_number",
   "_is_hyper_sync" AS "is_hyper_sync",
@@ -781,6 +789,7 @@ WHERE cp."block_hash" IS NOT NULL
         let chainConfig: Config.chain = {
           name: "Chain1",
           id: 1->ChainId.fromInt,
+          ecosystem: Ecosystem.Evm,
           startBlock: 100,
           endBlock: 200,
           maxReorgDepth: 5,
@@ -794,8 +803,8 @@ WHERE cp."block_hash" IS NOT NULL
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false);`
+        let expectedQuery = `INSERT INTO "test_schema"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
+VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false);`
 
         t.expect(query, ~message="Should generate correct INSERT VALUES SQL for single chain").toBe(
           Some(expectedQuery),
@@ -809,6 +818,7 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false);`
         let chainConfig: Config.chain = {
           name: "Chain1",
           id: 1->ChainId.fromInt,
+          ecosystem: Ecosystem.Evm,
           startBlock: 100,
           maxReorgDepth: 5,
           blockLag: 0,
@@ -821,8 +831,8 @@ VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false);`
           ~chainConfigs=[chainConfig],
         )
 
-        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false);`
+        let expectedQuery = `INSERT INTO "public"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
+VALUES (1, 'evm', 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false);`
 
         t.expect(
           query,
@@ -837,6 +847,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false);`
         let chainConfig1: Config.chain = {
           name: "Chain1",
           id: 1->ChainId.fromInt,
+          ecosystem: Ecosystem.Evm,
           startBlock: 100,
           endBlock: 200,
           maxReorgDepth: 5,
@@ -848,6 +859,7 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false);`
         let chainConfig2: Config.chain = {
           name: "Chain42",
           id: 42->ChainId.fromInt,
+          ecosystem: Ecosystem.Evm,
           startBlock: 500,
           maxReorgDepth: 0,
           blockLag: 0,
@@ -860,9 +872,9 @@ VALUES (1, 100, NULL, 5, 0, NULL, -1, -1, NULL, 0, false);`
           ~chainConfigs=[chainConfig1, chainConfig2],
         )
 
-        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
-VALUES (1, 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false),
-       (42, 500, NULL, 0, 0, NULL, -1, -1, NULL, 0, false);`
+        let expectedQuery = `INSERT INTO "production"."envio_chains" ("id", "ecosystem", "start_block", "end_block", "max_reorg_depth", "source_block", "first_event_block", "buffer_block", "progress_block", "ready_at", "events_processed", "_is_hyper_sync")
+VALUES (1, 'evm', 100, 200, 5, 0, NULL, -1, -1, NULL, 0, false),
+       (42, 'evm', 500, NULL, 0, 0, NULL, -1, -1, NULL, 0, false);`
 
         t.expect(
           query,
