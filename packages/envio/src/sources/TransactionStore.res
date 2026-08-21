@@ -34,6 +34,16 @@ let fieldCodes = FieldMask.fieldCodes
 type svmTxInput = {
   slot: int,
   transactionIndex: int,
+  signature?: string,
+  allSignatures?: array<string>,
+  feePayer?: string,
+  success?: bool,
+  err?: string,
+  fee?: bigint,
+  computeUnitsConsumed?: bigint,
+  accountKeys?: array<string>,
+  recentBlockhash?: string,
+  version?: string,
 }
 
 type svmActivityInput = {
@@ -53,11 +63,8 @@ type svmActivityInput = {
 }
 
 @send
-external fromJsSvm: (
-  Core.transactionStoreCtor,
-  array<svmTxInput>,
-  array<svmActivityInput>,
-) => t = "fromJsSvm"
+external fromJsSvm: (Core.transactionStoreCtor, array<svmTxInput>, array<svmActivityInput>) => t =
+  "fromJsSvm"
 
 let fromSvmJs = (transactions: array<svmTxInput>, activities: array<svmActivityInput>): t =>
   Core.getAddon().transactionStore->fromJsSvm(transactions, activities)
