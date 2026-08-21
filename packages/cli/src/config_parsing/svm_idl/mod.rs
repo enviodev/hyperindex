@@ -236,7 +236,16 @@ fn unresolvable_types(idl: &ProgramIdl) -> Unusable {
             if bad.contains_key(name) {
                 continue;
             }
-            if let Err(reason) = references_resolve(ty, idl, &bad) {
+            let reason = unbounded_recursion(
+                ty,
+                idl,
+                &mut vec![name.clone()],
+                false,
+                &mut std::collections::HashSet::new(),
+            )
+            .err()
+            .or_else(|| references_resolve(ty, idl, &bad).err());
+            if let Some(reason) = reason {
                 bad.insert(name.clone(), reason);
                 changed = true;
             }
@@ -244,6 +253,61 @@ fn unresolvable_types(idl: &ProgramIdl) -> Unusable {
         if !changed {
             return bad;
         }
+    }
+}
+
+/// `Option`/`Vec` carry a tag or length, so a type may name itself behind
+/// them. A `Defined` cycle with no such terminator would recurse in
+/// `decode_field` until the stack overflows.
+fn unbounded_recursion(
+    ty: &FieldType,
+    idl: &ProgramIdl,
+    stack: &mut Vec<String>,
+    through_var_len: bool,
+    seen: &mut std::collections::HashSet<(String, bool)>,
+) -> Result<(), String> {
+    match ty {
+        FieldType::Defined(name) => {
+            if stack.iter().any(|n| n == name) {
+                if through_var_len {
+                    Ok(())
+                } else {
+                    Err(
+                        "it recursively contains itself without an option or vec to terminate \
+                         decoding"
+                            .to_string(),
+                    )
+                }
+            } else if seen.contains(&(name.clone(), through_var_len))
+                || seen.contains(&(name.clone(), false))
+            {
+                Ok(())
+            } else if let Some(inner) = idl.defined_types.get(name) {
+                stack.push(name.clone());
+                let result = unbounded_recursion(inner, idl, stack, through_var_len, seen);
+                stack.pop();
+                if result.is_ok() {
+                    seen.insert((name.clone(), through_var_len));
+                }
+                result
+            } else {
+                Ok(())
+            }
+        }
+        FieldType::Option(inner) | FieldType::Vec(inner) => {
+            unbounded_recursion(inner, idl, stack, true, seen)
+        }
+        FieldType::Array { ty: inner, .. } => {
+            unbounded_recursion(inner, idl, stack, through_var_len, seen)
+        }
+        FieldType::Struct(fields) => fields
+            .iter()
+            .try_for_each(|f| unbounded_recursion(&f.ty, idl, stack, through_var_len, seen)),
+        FieldType::Enum(variants) => variants
+            .iter()
+            .flat_map(|v| v.fields.iter().flatten())
+            .try_for_each(|f| unbounded_recursion(&f.ty, idl, stack, through_var_len, seen)),
+        _ => Ok(()),
     }
 }
 
@@ -275,11 +339,13 @@ fn references_resolve(ty: &FieldType, idl: &ProgramIdl, bad: &Unusable) -> Resul
     }
 }
 
+pub(super) type Instructions = (BTreeMap<String, IxIdl>, Unusable, BTreeMap<String, Vec<u8>>);
+
 fn collect_instructions<T>(
     entries: &[Value],
     mut discriminator_of: impl FnMut(&str, &Value) -> Result<(Vec<u8>, T)>,
     mut layout_of: impl FnMut(&Value, Vec<u8>, T) -> Result<IxIdl>,
-) -> Result<(BTreeMap<String, IxIdl>, Unusable, BTreeMap<String, Vec<u8>>)> {
+) -> Result<Instructions> {
     let mut out = BTreeMap::new();
     let mut unusable = Unusable::new();
     let mut discriminators = BTreeMap::new();

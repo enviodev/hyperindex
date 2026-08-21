@@ -12,7 +12,8 @@ use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 
 use super::{
-    collect_instructions, collect_named, required_str, IdlAccount, IxIdl, ProgramIdl, Unusable,
+    collect_instructions, collect_named, required_str, IdlAccount, Instructions, IxIdl,
+    ProgramIdl, Unusable,
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
@@ -59,8 +60,6 @@ fn parse_defined_types(
         parse_type(node, &format!("definedTypes.{name}"))
     })
 }
-
-type Instructions = (BTreeMap<String, IxIdl>, Unusable, BTreeMap<String, Vec<u8>>);
 
 fn parse_instructions(program: &Map<String, Value>) -> Result<Instructions> {
     let arr = program

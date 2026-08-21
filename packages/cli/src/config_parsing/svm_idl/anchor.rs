@@ -20,7 +20,8 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use super::{
-    collect_instructions, collect_named, required_str, IdlAccount, IxIdl, ProgramIdl, Unusable,
+    collect_instructions, collect_named, required_str, IdlAccount, Instructions, IxIdl,
+    ProgramIdl, Unusable,
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
@@ -60,8 +61,6 @@ fn parse_defined_types(
         parse_type_def(name, node)
     })
 }
-
-type Instructions = (BTreeMap<String, IxIdl>, Unusable, BTreeMap<String, Vec<u8>>);
 
 fn parse_instructions(root: &Map<String, Value>) -> Result<Instructions> {
     let arr = root

@@ -1875,8 +1875,8 @@ fn to_instruction_schema(name: String, ix: svm_idl::IxIdl) -> SvmInstructionSche
             .zip(optional)
             .map(|(a, optional)| SvmNamedAccount {
                 name: a.name,
-                writable: false,
-                signer: false,
+                writable: a.writable,
+                signer: a.signer,
                 optional,
             })
             .collect(),
@@ -3713,9 +3713,44 @@ type Foo {
 
     mod svm_translation {
         use super::SystemConfig;
+        use crate::config_parsing::svm_idl::{IdlAccount, IxIdl};
         use crate::config_parsing::system_config::{Abi, DataSource, EventKind};
+        use super::super::to_instruction_schema;
         use crate::project_paths::ParsedProjectPaths;
         use pretty_assertions::assert_eq;
+
+        #[test]
+        fn to_instruction_schema_forwards_account_flags() {
+            let schema = to_instruction_schema(
+                "create".to_string(),
+                IxIdl {
+                    discriminator: vec![1],
+                    accounts: vec![
+                        IdlAccount {
+                            name: "payer".to_string(),
+                            optional: false,
+                            writable: true,
+                            signer: true,
+                        },
+                        IdlAccount {
+                            name: "rent".to_string(),
+                            optional: true,
+                            writable: false,
+                            signer: false,
+                        },
+                    ],
+                    args: vec![],
+                },
+            );
+            assert_eq!(
+                schema
+                    .accounts
+                    .iter()
+                    .map(|a| (a.name.as_str(), a.writable, a.signer, a.optional))
+                    .collect::<Vec<_>>(),
+                vec![("payer", true, true, false), ("rent", false, false, true)]
+            );
+        }
 
         /// The flow-xray scenario is the only config in the tree pointing at
         /// real, unmodified Anchor IDLs — three of them, hundreds of

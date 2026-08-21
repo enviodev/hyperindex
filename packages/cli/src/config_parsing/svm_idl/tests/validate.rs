@@ -379,3 +379,52 @@ fn resolves_self_referential_types() {
         (vec!["walk"], Vec::new(), Vec::new())
     );
 }
+
+/// A `Defined` alias that names itself (or a struct that always contains
+/// itself) has no Borsh terminator. `decode_field` would recurse until the
+/// stack overflows.
+#[test]
+fn demotes_unbounded_recursive_types() {
+    let alias = parse_idl(
+        r#"{ "instructions": [{ "name": "go", "discriminator": [1],
+             "args": [{ "name": "loop", "type": { "defined": "Loop" } }] }],
+             "types": [{ "name": "Loop", "type": { "kind": "type", "alias": { "defined": "Loop" } } }] }"#,
+        "Program",
+    )
+    .expect("parse");
+    let nested = parse_idl(
+        r#"{ "instructions": [{ "name": "go", "discriminator": [1],
+             "args": [{ "name": "box", "type": { "defined": "Box" } }] }],
+             "types": [{ "name": "Box", "type": { "kind": "struct", "fields": [
+               { "name": "inner", "type": { "defined": "Box" } }] } }] }"#,
+        "Program",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        (
+            (
+                alias.instructions.keys().map(String::as_str).collect::<Vec<_>>(),
+                alias.unusable.keys().map(String::as_str).collect::<Vec<_>>(),
+                alias
+                    .unusable_types
+                    .get("Loop")
+                    .map(|r| r.contains("recursively"))
+                    .unwrap_or(false),
+            ),
+            (
+                nested.instructions.keys().map(String::as_str).collect::<Vec<_>>(),
+                nested.unusable.keys().map(String::as_str).collect::<Vec<_>>(),
+                nested
+                    .unusable_types
+                    .get("Box")
+                    .map(|r| r.contains("recursively"))
+                    .unwrap_or(false),
+            ),
+        ),
+        (
+            (Vec::new(), vec!["go"], true),
+            (Vec::new(), vec!["go"], true),
+        )
+    );
+}
