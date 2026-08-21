@@ -42,21 +42,17 @@ indexer.onEvent({ contract: "NftFactory", event: "SimpleNftCreated" }, async () 
 )
 
 let queryAddresses = (indexer: IndexerRunner.t) =>
-  (
-    indexer.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
-      array<InternalTable.EnvioAddresses.t>,
-    >
-  )->Promise.thenResolve(rows =>
+  indexer.queryAddresses()->Promise.thenResolve(rows =>
     rows
     ->Array.filter(r => r.registrationBlock !== -1)
-    ->Array.map(r => (r.id, r.contractName, r.registrationBlock))
+    ->Array.map(r => (r.address, r.contractName, r.registrationBlock))
   )
 
 let dcAddress = "0x1111111111111111111111111111111111111111"->Address.Evm.fromStringOrThrow
 let lateDcAddress = "0x2222222222222222222222222222222222222222"->Address.Evm.fromStringOrThrow
 
 let row = (address, contractName, registrationBlock) => (
-  `1337-${address->Address.toString}`,
+  address,
   contractName,
   registrationBlock,
 )
@@ -122,11 +118,12 @@ describe("Dynamic contract persistence", () => {
     )
   })
 
-  Async.it("writes no row for an address rejected as a conflict", async t => {
+  // https://github.com/enviodev/hyperindex/issues/1187
+  Async.it("writes one row per contract for a shared address", async t => {
     await withIndexer(
       async (sourceMock, indexer) => {
-        // One address claimed by two contracts: the first wins, the second is
-        // rejected and must not reach the database under either name.
+        // One address indexed by two contracts: each registration is its own
+        // row, so a resume restores both.
         sourceMock.resolveGetItemsOrThrow(
           [
             registeringItem(
@@ -149,8 +146,8 @@ describe("Dynamic contract persistence", () => {
 
         t.expect(
           await queryAddresses(indexer),
-          ~message="the conflicting registration is dropped, the first one stands",
-        ).toEqual([row(dcAddress, "Gravatar", 10)])
+          ~message="each contract's registration of the address gets its own row",
+        ).toEqual([row(dcAddress, "Gravatar", 10), row(dcAddress, "NftFactory", 11)])
       },
     )
   })

@@ -32,9 +32,7 @@ let enums =
 let entityA = config->IndexerRunner.entityConfigByName("A")
 let entityB = config->IndexerRunner.entityConfigByName("B")
 let entities = [entityA, entityB]
-// The storage creates exactly the tables it is handed, so the internal ones a
-// resume reads back have to be in the list too.
-let allEntities = entities->Array.concat([InternalTable.EnvioAddresses.entityConfig])
+let allEntities = entities
 
 // Delegates to the real client, records every statement, and can be told to
 // fail one kind of query — enough to reproduce a read-back that fails after its
@@ -69,6 +67,7 @@ let makeStorage = (~sql=sql, pgSchema) =>
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
     ~isHasuraEnabled=false,
+    ~ecosystem=Evm,
   )
 
 // A schema of its own per test, so the fixtures below can leave whatever
@@ -291,7 +290,7 @@ describe("Indexes built against a real schema", () => {
     }
     let storage = await setup(
       ~pgSchema,
-      ~entities=[entity, InternalTable.EnvioAddresses.entityConfig],
+      ~entities=[entity],
     )
     let definition = IndexDefinition.single(~tableName, ~column="b_id")
 
@@ -392,7 +391,7 @@ describe("Indexes built against a real schema", () => {
     let storage = await setup(
       ~pgSchema,
       ~sql=flakySql,
-      ~entities=[entity, InternalTable.EnvioAddresses.entityConfig],
+      ~entities=[entity],
     )
     let chainIds = config.chainMap->ChainMap.values->Array.map(chain => chain.id)
     let createdIndexNames = async () =>

@@ -12,6 +12,8 @@ type chainMetrics = {
   startBlock: int,
   endBlock: option<int>,
   numAddresses: int,
+  // Per-contract registration counts, in the chain's contract-id order.
+  addressesByContract: array<(string, int)>,
   isReady: bool,
   // Raw source height, unlike knownHeight which is clamped to endBlock.
   sourceBlockNumber: int,
@@ -694,10 +696,22 @@ let renderMetrics = (b: builder, metrics: t) => {
   )
   b->series(
     ~name="envio_indexing_addresses",
-    ~help="The number of addresses indexed on chain. Includes both static and dynamic addresses.",
+    ~help="The number of address registrations on chain, static and dynamic. An address shared by N contracts counts N times.",
     ~kind="gauge",
     ~entries=chains,
     ~value=m => m.numAddresses->Int.toFloat,
+  )
+  b->series(
+    ~name="envio_indexing_contract_addresses",
+    ~help="The number of address registrations per contract on chain, static and dynamic. An address shared by N contracts counts N times.",
+    ~kind="gauge",
+    ~entries=metrics.chains->Array.flatMap(m =>
+      m.addressesByContract->Array.map(((contract, count)) => (
+        `{chainId="${m.chainId->ChainId.toString}",contract="${contract->escapeLabelValue}"}`,
+        count,
+      ))
+    ),
+    ~value=count => count->Int.toFloat,
   )
 }
 

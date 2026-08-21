@@ -1,18 +1,22 @@
 // Binding to the Rust `AddressStore` napi class: the chain-wide index of every
-// address being indexed, config-declared or dynamically registered. It owns
-// registration bookkeeping (conflict detection, `effectiveStartBlock`
-// derivation, reorg rollback) and hands out `AddressSet` snapshots for the
-// fetch state's partitions. One store lives per chain on `ChainState`, shared
-// with that chain's source clients — which read it to drop items whose emitter
-// (or address-valued param) isn't registered at the item's block.
+// address being indexed, config-declared or dynamically registered. Identity is
+// (address, contract), so one address may be indexed by several contracts, each
+// with its own start block and partitions. It owns registration bookkeeping
+// (duplicate detection, `effectiveStartBlock` derivation, reorg rollback) and
+// hands out `AddressSet` snapshots for the fetch state's partitions. One store
+// lives per chain on `ChainState`, shared with that chain's source clients —
+// which read it to drop items whose emitter (or address-valued param) isn't
+// registered at the item's block.
 type t
 
 // A contract an address may be registered for. Every config contract of every
 // chain, since `context.chain.<Contract>.add` validates against that whole set
 // — a name outside it makes the store throw. `dependsOnAddresses` is whether
 // this chain fetches for the contract by address, which is what makes the store
-// able to answer `fetchable` on a verdict.
-type contract = {name: string, startBlock: option<int>, dependsOnAddresses: bool}
+// able to answer `fetchable` on a verdict. `id` is the contract's canonical id,
+// and the list must be ordered by it: that id is what every persisted address
+// row names its contract by.
+type contract = {id: int, name: string, startBlock: option<int>, dependsOnAddresses: bool}
 
 type registration = {
   address: Address.t,
@@ -26,10 +30,9 @@ type verdict =
   // contract: the address is still stored and persisted, so a config that later
   // adds events picks it up on restart, but no partition is built from it.
   | Added({effectiveStartBlock: int, fetchable: bool})
-  // Already registered for the same contract.
+  // Already registered for the same contract. Another contract holding the
+  // address is not a rejection — that's a registration of its own.
   | Duplicate({effectiveStartBlock: int, existingEffectiveStartBlock: int})
-  // Already registered for a different contract.
-  | Conflict({existingContractName: string})
   // Not a well-formed address for the ecosystem.
   | Invalid
 
@@ -37,16 +40,27 @@ type rawVerdict = {
   kind: string,
   fetchable: bool,
   effectiveStartBlock: int,
-  existingContractName: Null.t<string>,
   existingEffectiveStartBlock: Null.t<int>,
 }
 
-// A registration the store handed over for persistence, paired with the
-// checkpoint that owns its row. `checkpointIdx` indexes the block numbers
-// passed to `drainForWrite` — the ids stay on the JS side.
-type drainedAddress = {
+// A seeded row the store refused, already rendered for the warning. Only the
+// rejections come back: a resume seeds millions of rows and needs a verdict for
+// none of them. The only rejection a stored row can get is a repeat of a
+// registration the store already holds.
+type rejectedRow = {
   address: Address.t,
   contractName: string,
+  effectiveStartBlock: int,
+  existingEffectiveStartBlock: int,
+}
+
+// A registration the store handed over for persistence, paired with the
+// checkpoint whose event registered it. `checkpointIdx` indexes the block
+// numbers passed to `drainForWrite` — the ids stay on the JS side.
+type drainedAddress = {
+  // The raw store key, the same bytes the persisted row holds.
+  address: NodeJs.Buffer.t,
+  contractId: int,
   registrationBlock: int,
   checkpointIdx: int,
 }
@@ -88,26 +102,28 @@ let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool, ~contracts: array
 //
 // A contract whose events are all wildcard is fetched without consulting
 // addresses, so registering one changes nothing about what's queried — it
-// carries `dependsOnAddresses: false` just like a contract named only by
-// `configContractNames`. Either way the addresses are stored and persisted,
+// carries `dependsOnAddresses: false` just like a contract the config names but
+// registers no events for. Either way the addresses are stored and persisted,
 // never fetched.
 let contractsOf = (
   ~onEventRegistrations: array<Internal.onEventRegistration>,
-  ~configContractNames: array<string>,
+  // The canonical contract names, in id order. Every store of every chain holds
+  // the same contracts under the same ids, so a persisted `contract_id` means
+  // the same thing wherever it's read.
+  ~contractNames: array<string>,
 ): array<contract> => {
   // Only ever holds a declared start block, so a missing key is unambiguous —
   // storing `None` in a dict would be indistinguishable from "not seen yet".
   let startBlocks: dict<int> = Dict.make()
   let unrestricted = Utils.Set.make()
   let addressDependent = Utils.Set.make()
-  let names = []
-  let addName = name =>
-    if !(names->Array.includes(name)) {
-      names->Array.push(name)->ignore
-    }
   onEventRegistrations->Array.forEach(reg => {
     let name = reg.eventConfig.contractName
-    addName(name)
+    if !(contractNames->Array.includes(name)) {
+      JsError.throwWithMessage(
+        `Contract "${name}" has event registrations but is missing from the indexer's contract list.`,
+      )
+    }
     if reg.dependsOnAddresses {
       addressDependent->Utils.Set.add(name)->ignore
     }
@@ -123,8 +139,8 @@ let contractsOf = (
       )
     }
   })
-  configContractNames->Array.forEach(addName)
-  names->Array.map(name => {
+  contractNames->Array.mapWithIndex((name, id) => {
+    id,
     name,
     startBlock: unrestricted->Utils.Set.has(name)
       ? None
@@ -147,6 +163,21 @@ let contractsOf = (
 external registerBatchRaw: (t, array<registration>) => array<rawVerdict> = "registerBatch"
 @send external seedBatchRaw: (t, array<registration>) => array<rawVerdict> = "seedBatch"
 
+// `seedBatch` for rows read back from storage: columnar, so a resume of tens of
+// millions of addresses never allocates a string or an object per row. Returns
+// only the rows the store refused.
+@send
+external seedRowsRaw: (
+  t,
+  NodeJs.Buffer.t,
+  Null.t<array<int>>,
+  array<int>,
+  array<int>,
+) => array<rejectedRow> = "seedRows"
+
+let seedRows = (store: t, rows: AddressRows.seedRows) =>
+  store->seedRowsRaw(rows.addresses, rows.lengths, rows.contractIds, rows.registrationBlocks)
+
 // Drains the registrations awaiting persistence at or below the given block —
 // what the batch being written covers — pairing each with the checkpoint at its
 // registration block. Later registrations stay pending. Throws, with the queue
@@ -162,18 +193,31 @@ external drainForWrite: (t, int, array<int>) => array<drainedAddress> = "drainFo
 @send external pendingEntries: t => array<Internal.indexingContract> = "pendingEntries"
 @send external makeSetRaw: (t, string, makeSetOptions) => AddressSet.t = "makeSet"
 @send external contractCount: (t, string) => int = "contractCount"
+
+type contractAddressCount = {contractName: string, count: int}
+
+// Live registration counts for every contract, in id order.
+@send external contractCounts: t => array<contractAddressCount> = "contractCounts"
 @send external size: t => int = "size"
 
 // The chain-wide gate routing applies, exposed for the simulate source — it has
 // no real query boundary to gate at.
 @send external isIndexedAt: (t, Address.t, string, int) => bool = "isIndexedAt"
 
-// Drops every address registered after the target block, returning how many
-// were dropped. Ids are tombstoned rather than reused, so sets built before the
-// rollback still point at the right entries.
-@send external rollback: (t, int) => int = "rollback"
+// A registration a rollback dropped, for the storage that has to delete its
+// row. Only registrations the database may already hold are reported.
+type rolledBackAddress = {address: NodeJs.Buffer.t, contractId: int}
 
-@send external getRaw: (t, Address.t) => Null.t<Internal.indexingContract> = "get"
+// Drops every address registered after the target block, returning what the
+// storage has to delete with it. Ids are tombstoned rather than reused, so sets
+// built before the rollback still point at the right entries.
+@send external rollback: (t, int) => array<rolledBackAddress> = "rollback"
+
+// Every registration of an address, one per owning contract, in set order.
+@send external getAll: (t, Address.t) => array<Internal.indexingContract> = "getAll"
+
+// Contract names holding at least one dynamically registered address.
+@send external dynamicContractNames: t => array<string> = "dynamicContractNames"
 
 @send external contractAddresses: (t, string) => array<Address.t> = "contractAddresses"
 
@@ -185,16 +229,15 @@ let toVerdict = (raw: rawVerdict): verdict =>
       effectiveStartBlock: raw.effectiveStartBlock,
       existingEffectiveStartBlock: raw.existingEffectiveStartBlock->Null.getUnsafe,
     })
-  | "conflict" => Conflict({existingContractName: raw.existingContractName->Null.getUnsafe})
   | "invalid" => Invalid
   | kind => JsError.throwWithMessage(`Unexpected address registration verdict "${kind}"`)
   }
 
 // Registers dynamic registrations, resolving each address against both the
-// store and the batch's own earlier entries — so two contracts claiming one
-// address inside a single batch conflict just as they would across batches.
-// Verdicts come back in the batch's order. What it adds is pending persistence
-// until a batch write drains it.
+// store and the batch's own earlier entries — so the same address registered
+// twice for one contract inside a single batch is a duplicate just as it would
+// be across batches. Verdicts come back in the batch's order. What it adds is
+// pending persistence until a batch write drains it.
 //
 // An unknown contract name throws with none of the batch applied.
 let registerBatch = (store: t, registrations: array<registration>): array<verdict> =>
@@ -208,7 +251,3 @@ let seedBatch = (store: t, registrations: array<registration>): array<verdict> =
 
 let makeSet = (store: t, ~contractName, ~options={}: makeSetOptions) =>
   store->makeSetRaw(contractName, options)
-
-// The entry an address is registered under, whichever contract holds it —
-// addresses are unique chain-wide. `None` once rolled back.
-let get = (store: t, address) => store->getRaw(address)->Null.toOption

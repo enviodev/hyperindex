@@ -148,11 +148,11 @@ describe("EVM config YAML", () => {
     )
   })
 
-  it("rejects one address assigned to two contracts on the same chain", t => {
-    expectParseError(
-      t,
-      `
-name: duplicate-address
+  // https://github.com/enviodev/hyperindex/issues/1187
+  it("accepts one address assigned to two contracts on the same chain", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: shared-address
 contracts:
   - name: AaveToken
     events:
@@ -169,8 +169,18 @@ chains:
       - name: AaveV3
         address: "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9"
 `,
-      "Config parse error: Address 0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9 on chain 1 is configured for multiple contracts: AaveToken and AaveV3. Indexing the same address with multiple contract definitions is not supported. Please define the events on a single contract definition instead.",
     )
+    // Both contracts keep the address, spelled the way the chain's address
+    // format renders it.
+    t.expect(
+      (config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts->Array.map(contract => (
+        contract.name,
+        contract.addresses,
+      )),
+    ).toEqual([
+      ("AaveToken", ["0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"->Address.unsafeFromString]),
+      ("AaveV3", ["0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"->Address.unsafeFromString]),
+    ])
   })
 
   it("rejects an address listed twice for one contract", t => {

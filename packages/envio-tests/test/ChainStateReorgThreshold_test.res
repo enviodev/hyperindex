@@ -11,7 +11,7 @@ describe("ChainState reorg threshold", () => {
     let base = FetchState.make(
       ~onEventRegistrations=[],
       ~addressStore,
-      ~addresses=[],
+      ~addressRows=AddressRows.emptySeedRows(),
       ~onBlockRegistrations=[
         {
           Internal.index: 0,

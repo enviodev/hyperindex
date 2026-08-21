@@ -10,7 +10,7 @@ use napi_derive::napi;
 use super::fields;
 use super::mod_helpers::hex_to_bytes;
 use super::types::required;
-use crate::address_store::StoreInner;
+use crate::address_store::{Owners, StoreInner};
 
 /// One instruction call with the fields routing and item building read, lifted
 /// out of the client's all-`Option` row once per instruction: base58 is
@@ -233,7 +233,7 @@ impl Registration {
         self.program_id == instr.executing_account
             && crate::registration_start_block::has_started(self.start_block, address.slot)
             && (self.is_wildcard
-                || ((force_wildcard || address.contract_name == Some(self.contract_name.as_str()))
+                || ((force_wildcard || address.owners.contains(self.contract_idx))
                     && store.is_indexed_at(address.key, self.contract_idx, address.slot)))
             && self
                 .is_inner
@@ -485,11 +485,11 @@ pub(crate) fn route_instruction(
 }
 
 /// The emitter facts an instruction's owner gate reads: the program id's store
-/// key (its base58 bytes), the contract this partition's set says owns it, and
+/// key (its base58 bytes), the contracts this partition's set says own it, and
 /// the slot the instruction sits at.
 pub(crate) struct InstructionAddress<'a> {
     pub key: &'a [u8],
-    pub contract_name: Option<&'a str>,
+    pub owners: Owners<'a>,
     pub slot: i64,
 }
 
@@ -588,7 +588,7 @@ mod tests {
         let key = instr.executing_account.as_bytes();
         let address = InstructionAddress {
             key,
-            contract_name: set.cache().owner_of(key),
+            owners: set.cache().owners_of(key),
             slot: instr.slot as i64,
         };
         route_instruction(
@@ -851,10 +851,11 @@ mod tests {
         let mut owned = reg(0, PROG_A, Some("0x21"), false);
         owned.contract_name = "Owned".to_string();
         let store = AddressStore::new_svm(vec![crate::address_store::AddressStoreContract {
+            id: 0,
             name: "Owned".to_string(),
             start_block: None,
             depends_on_addresses: true,
-        }]);
+        }]).unwrap();
         store.register_seed(vec![crate::address_store::AddressRegistration {
             address: PROG_A.to_string(),
             contract_name: "Owned".to_string(),

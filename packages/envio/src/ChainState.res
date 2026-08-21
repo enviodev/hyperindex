@@ -62,18 +62,38 @@ type t = {
   mutable progressLatencyMs: option<int>,
 }
 
-let configAddresses = (chainConfig: Config.chain): array<Internal.indexingAddress> => {
+// The chain's config-declared addresses as storage rows: what a clean run
+// writes into `envio_addresses`. The keys are encoded by the Rust codec, so the
+// bytes a clean run writes are exactly the bytes a resume seeds from.
+let configStorageRows = (
+  chainConfig: Config.chain,
+  ~ecosystem: Ecosystem.name,
+  ~contractNames: array<string>,
+): array<AddressRows.row> => {
   let addresses = []
+  let contractIds = []
   chainConfig.contracts->Array.forEach(contract => {
+    let contractId = switch contractNames->Array.indexOf(contract.name) {
+    | -1 =>
+      JsError.throwWithMessage(
+        `Contract "${contract.name}" is missing from the indexer's contract list.`,
+      )
+    | id => id
+    }
     contract.addresses->Array.forEach(address => {
-      addresses->Array.push({
-        Internal.address,
-        contractName: contract.name,
-        registrationBlock: -1,
-      })
+      addresses->Array.push(address)->ignore
+      contractIds->Array.push(contractId)->ignore
     })
   })
-  addresses
+  let packed = Core.getAddon().packAddresses(~ecosystem=(ecosystem :> string), ~addresses)
+  Core.getAddon()
+  .splitAddresses(~ecosystem=(ecosystem :> string), ~bytes=packed.bytes, ~lengths=packed.lengths)
+  ->Array.mapWithIndex((address, idx) => {
+    AddressRows.chainId: chainConfig.id,
+    address,
+    contractId: contractIds->Array.getUnsafe(idx),
+    registrationBlock: AddressRows.configRegistrationBlock,
+  })
 }
 
 let validateOnEventRegistrations = (
@@ -142,22 +162,14 @@ let make = (
   }
 }
 
-// Every chain's contracts, not just one chain's: `context.chain.X.add` accepts
-// any config contract, whichever chain declared it, so every chain's address
-// store has to hold the whole set.
-let configContractNames = (config: Config.t) => {
-  let names = Utils.Set.make()
-  config.chainMap
-  ->ChainMap.values
-  ->Array.forEach(chain =>
-    chain.contracts->Array.forEach(contract => names->Utils.Set.add(contract.name)->ignore)
-  )
-  names->Utils.Set.toArray
-}
-
 let makeInternal = (
   ~chainConfig: Config.chain,
-  ~indexingAddresses: array<Internal.indexingAddress>,
+  ~addressRows: AddressRows.seedRows,
+  // Every chain's contracts, not just one chain's: `context.chain.X.add`
+  // accepts any config contract, whichever chain declared it, so every chain's
+  // address store has to hold the whole set — under the same ids, since a
+  // persisted row names its contract by id.
+  ~contractNames: array<string>,
   ~startBlock,
   ~endBlock,
   ~firstEventBlock=None,
@@ -199,16 +211,13 @@ let makeInternal = (
   let addressStore = AddressStore.make(
     ~ecosystem=config.ecosystem.name,
     ~shouldChecksum=!lowercaseAddresses,
-    ~contracts=AddressStore.contractsOf(
-      ~onEventRegistrations,
-      ~configContractNames=config->configContractNames,
-    ),
+    ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractNames),
   )
 
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
     ~addressStore,
-    ~addresses=indexingAddresses,
+    ~addressRows,
     ~progressBlockNumber,
     ~startBlock,
     ~endBlock,
@@ -359,7 +368,7 @@ let makeInternal = (
       ~chainReorgCheckpoints,
     ),
     ~committedProgressBlockNumber=progressBlockNumber,
-    ~perChainEntities=config.allEntities->EntityTables.perChain,
+    ~perChainEntities=config.userEntities->EntityTables.perChain,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
     ~transactionStore=TransactionStore.make(
@@ -373,33 +382,6 @@ let makeInternal = (
   )
 }
 
-let makeFromConfig = (
-  chainConfig: Config.chain,
-  ~config,
-  ~registrationsByChainId,
-  ~knownHeight,
-) => {
-  let logger = Logging.createChild(~params={"chainId": chainConfig.id})
-
-  makeInternal(
-    ~chainConfig,
-    ~config,
-    ~registrationsByChainId,
-    ~startBlock=chainConfig.startBlock,
-    ~endBlock=chainConfig.endBlock,
-    ~reorgCheckpoints=[],
-    ~maxReorgDepth=chainConfig.maxReorgDepth,
-    ~progressBlockNumber=-1,
-    ~timestampCaughtUpToHeadOrEndblock=None,
-    ~numEventsProcessed=0.,
-    ~logger,
-    ~indexingAddresses=configAddresses(chainConfig),
-    ~isInReorgThreshold=false,
-    ~isRealtime=false,
-    ~knownHeight,
-  )
-}
-
 /**
  * This function allows a chain state to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
@@ -410,6 +392,7 @@ let makeFromDbState = (
   ~isInReorgThreshold,
   ~isRealtime,
   ~config,
+  ~contractNames,
   ~registrationsByChainId,
   ~reducedPollingInterval=?,
 ) => {
@@ -423,7 +406,8 @@ let makeFromDbState = (
       : resumedChainState.startBlock - 1
 
   makeInternal(
-    ~indexingAddresses=resumedChainState.indexingAddresses,
+    ~addressRows=resumedChainState.addressRows,
+    ~contractNames,
     ~chainConfig,
     ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock,
@@ -507,7 +491,7 @@ let contractAddresses = (cs: t, ~contractName) =>
 
 // Hands over the dynamically registered addresses the database hasn't seen yet,
 // up to the block the caller is about to commit, each paired with the checkpoint
-// that owns its row. Destructive: the caller must persist them or take the
+// that registered it. Destructive: the caller must persist them or take the
 // indexer down. Throws with nothing consumed when a registration's block has no
 // checkpoint in the batch.
 let drainAddressesForWrite = (cs: t, ~toBlockInclusive, ~checkpointBlockNumbers) =>
@@ -1027,6 +1011,9 @@ let toMetrics = (cs: t): Metrics.chainMetrics => {
   startBlock: cs.fetchState.startBlock,
   endBlock: cs.fetchState.endBlock,
   numAddresses: cs.addressStore->AddressStore.size,
+  addressesByContract: cs.addressStore
+  ->AddressStore.contractCounts
+  ->Array.map(({contractName, count}) => (contractName, count)),
   isReady: cs->isReady,
   sourceBlockNumber: cs.fetchState.knownHeight,
   progressBlockNumber: cs.committedProgressBlockNumber,
@@ -1217,13 +1204,27 @@ let markReady = (cs: t, ~readyAt) =>
 // with no diff entry still rewinds fetch state + stores to the target -
 // otherwise the stale block hash stays in the store and re-triggers the same
 // reorg.
+// Returns the address registrations the storage has to delete along with it —
+// the store is what decides which ones died, so the two halves of a rollback
+// can't disagree.
 let rollback = (
   cs: t,
   ~newProgressBlockNumber,
   ~eventsProcessedDiff,
   ~rollbackTargetBlockNumber,
   ~isReorgChain,
-) => {
+): array<AddressRows.key> => {
+  // Prunes the store, which `FetchState.rollback` then reads as the source of
+  // truth for which addresses survive.
+  let pruneAddresses = targetBlockNumber =>
+    cs.addressStore
+    ->AddressStore.rollback(targetBlockNumber)
+    ->Array.map(({address, contractId}): AddressRows.key => {
+      chainId: cs.chainConfig.id,
+      address,
+      contractId,
+    })
+
   switch newProgressBlockNumber {
   | Some(newProgressBlockNumber) =>
     let newTotalEventsProcessed =
@@ -1243,6 +1244,7 @@ let rollback = (
       )
     | None => ()
     }
+    let rolledBackAddresses = pruneAddresses(newProgressBlockNumber)
     cs.fetchState =
       cs.fetchState->FetchState.rollback(
         ~addressStore=cs.addressStore,
@@ -1253,8 +1255,10 @@ let rollback = (
     cs.committedProgressBlockNumber = newProgressBlockNumber
     cs.processingBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
+    rolledBackAddresses
   | None =>
     if isReorgChain {
+      let rolledBackAddresses = pruneAddresses(rollbackTargetBlockNumber)
       cs.fetchState =
         cs.fetchState->FetchState.rollback(
           ~addressStore=cs.addressStore,
@@ -1267,6 +1271,9 @@ let rollback = (
         rollbackTargetBlockNumber,
       )
       cs.processingBlockNumber = Pervasives.min(cs.processingBlockNumber, rollbackTargetBlockNumber)
+      rolledBackAddresses
+    } else {
+      []
     }
   }
 }

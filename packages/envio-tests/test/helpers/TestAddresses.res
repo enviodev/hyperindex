@@ -2,13 +2,54 @@
 // `ChainState.makeInternal` does in production: one store per chain, built from
 // that chain's registrations, holding every address the chain indexes.
 
+// The canonical contract list a chain's store is built from — every contract
+// the config declares, in the order their ids come from.
+let contractNames = (
+  ~onEventRegistrations: array<Internal.onEventRegistration>=[],
+  // Config contracts the chain has no events for. Registering an address for a
+  // name outside the store's contracts throws, so a test exercising the
+  // no-events path declares it here.
+  ~configContractNames: array<string>=[],
+) =>
+  Core.getAddon().canonicalContractNames(
+    onEventRegistrations
+    ->Array.map(reg => reg.eventConfig.contractName)
+    ->Array.concat(configContractNames),
+  )
+
+// Plain registrations in the columnar form `FetchState.make` seeds from,
+// resolved against the same contract list `makeStore` builds its store from.
+let addressRows = (
+  ~addresses: array<Internal.indexingAddress>,
+  ~onEventRegistrations: array<Internal.onEventRegistration>=[],
+  ~configContractNames: array<string>=[],
+  ~ecosystem: Ecosystem.name=Evm,
+): AddressRows.seedRows => {
+  let contractNames = contractNames(~onEventRegistrations, ~configContractNames)
+  let packed = Core.getAddon().packAddresses(
+    ~ecosystem=(ecosystem :> string),
+    ~addresses=addresses->Array.map(a => a.address),
+  )
+  {
+    addresses: packed.bytes,
+    lengths: packed.lengths,
+    contractIds: addresses->Array.map(a =>
+      switch contractNames->Array.indexOf(a.contractName) {
+      | -1 =>
+        JsError.throwWithMessage(
+          `Test address registered for "${a.contractName}", which the store doesn't hold.`,
+        )
+      | id => id
+      }
+    ),
+    registrationBlocks: addresses->Array.map(a => a.registrationBlock),
+  }
+}
+
 let makeStore = (
   ~onEventRegistrations: array<Internal.onEventRegistration>=[],
   ~addresses: array<Internal.indexingAddress>=[],
   ~ecosystem: Ecosystem.name=Evm,
-  // Config contracts the chain has no events for. Registering an address for a
-  // name outside the store's contracts throws, so a test exercising the
-  // no-events path declares it here.
   ~configContractNames: array<string>=[],
   // Matches the common `lowercaseAddresses: false`, so entries render like the
   // checksummed mock addresses the tests use.
@@ -17,17 +58,18 @@ let makeStore = (
   let store = AddressStore.make(
     ~ecosystem,
     ~shouldChecksum,
-    ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~configContractNames),
+    ~contracts=AddressStore.contractsOf(
+      ~onEventRegistrations,
+      ~contractNames=contractNames(~onEventRegistrations, ~configContractNames),
+    ),
   )
   // Config addresses, like `FetchState.make` seeds them: already stored, so
-  // they never drain back into a write.
-  let _ = store->AddressStore.seedBatch(
-    addresses->Array.map((contract): AddressStore.registration => {
-      address: contract.address,
-      contractName: contract.contractName,
-      registrationBlock: contract.registrationBlock,
-    }),
-  )
+  // they never drain back into a write. A test that builds a fetch state over
+  // the store leaves this empty and lets `FetchState.make` do the seeding.
+  let _ =
+    store->AddressStore.seedRows(
+      addressRows(~addresses, ~onEventRegistrations, ~configContractNames, ~ecosystem),
+    )
   store
 }
 

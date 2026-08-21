@@ -27,24 +27,25 @@ describe("AddressStore", () => {
     )
 
     // Roll back to block 6: drops B's addr(2) (registered at 8), keeps A's addr(1) (at 5).
-    let removed = store->AddressStore.rollback(6)
+    let rolledBack = store->AddressStore.rollback(6)
 
     t.expect({
-      "removed": removed,
+      // What the storage has to delete: the one registration that died.
+      "rolledBackContractIds": rolledBack->Array.map(({contractId}) => contractId),
       "countA": store->AddressStore.contractCount("A"),
       "countB": store->AddressStore.contractCount("B"),
       "size": store->AddressStore.size,
-      // Lookup finds an address whichever contract holds it.
-      "ownerOfAddr1": (store->AddressStore.get(addr(1)))->Option.map(ia => ia.contractName),
-      "addr2Gone": (store->AddressStore.get(addr(2)))->Option.isNone,
+      // Lookup finds every contract holding an address.
+      "ownersOfAddr1": store->AddressStore.getAll(addr(1))->Array.map(ia => ia.contractName),
+      "addr2Gone": store->AddressStore.getAll(addr(2))->Utils.Array.isEmpty,
       "addressesOfA": store->AddressStore.contractAddresses("A"),
       "addressesOfMissing": store->AddressStore.contractAddresses("MISSING"),
     }).toEqual({
-      "removed": 1,
+      "rolledBackContractIds": [1],
       "countA": 2,
       "countB": 0,
       "size": 2,
-      "ownerOfAddr1": Some("A"),
+      "ownersOfAddr1": ["A"],
       "addr2Gone": true,
       // Set order is (effectiveStartBlock, address): addr(0) starts at 0,
       // addr(1) at its registration block.
@@ -118,52 +119,61 @@ describe("AddressStore", () => {
       // whichever order the registrations arrive in.
       "noneThenSome": AddressStore.contractsOf(
         ~onEventRegistrations=[reg(~contractName="A"), reg(~contractName="A", ~startBlock=100)],
-        ~configContractNames=[],
+        ~contractNames=["A"],
       ),
       "someThenNone": AddressStore.contractsOf(
         ~onEventRegistrations=[reg(~contractName="A", ~startBlock=100), reg(~contractName="A")],
-        ~configContractNames=[],
+        ~contractNames=["A"],
       ),
       "allRestricted": AddressStore.contractsOf(
         ~onEventRegistrations=[
           reg(~contractName="A", ~startBlock=100),
           reg(~contractName="A", ~startBlock=50),
         ],
-        ~configContractNames=[],
+        ~contractNames=["A"],
       ),
-      // Contracts stay independent, in first-registration order.
+      // Contracts stay independent, and their ids follow the canonical list
+      // rather than the order registrations arrive in.
       "perContract": AddressStore.contractsOf(
         ~onEventRegistrations=[
           reg(~contractName="B", ~startBlock=100),
           reg(~contractName="A"),
           reg(~contractName="B", ~startBlock=50),
         ],
-        ~configContractNames=[],
+        ~contractNames=["A", "B"],
       ),
       // A contract only the config names is registrable but never fetched.
       "configOnly": AddressStore.contractsOf(
         ~onEventRegistrations=[reg(~contractName="A")],
-        ~configContractNames=["A", "NoEvents"],
+        ~contractNames=["A", "NoEvents"],
       ),
       // A wildcard event is fetched without consulting addresses, so
       // registering one changes nothing about what's queried.
       "wildcardOnly": AddressStore.contractsOf(
         ~onEventRegistrations=[reg(~contractName="A", ~isWildcard=true)],
-        ~configContractNames=["A"],
+        ~contractNames=["A"],
       ),
     }).toEqual({
-      "noneThenSome": [({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract)],
-      "someThenNone": [({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract)],
-      "allRestricted": [({name: "A", startBlock: Some(50), dependsOnAddresses: true}: AddressStore.contract)],
+      "noneThenSome": [
+        ({id: 0, name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
+      ],
+      "someThenNone": [
+        ({id: 0, name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
+      ],
+      "allRestricted": [
+        ({id: 0, name: "A", startBlock: Some(50), dependsOnAddresses: true}: AddressStore.contract),
+      ],
       "perContract": [
-        ({name: "B", startBlock: Some(50), dependsOnAddresses: true}: AddressStore.contract),
-        ({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
+        ({id: 0, name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
+        ({id: 1, name: "B", startBlock: Some(50), dependsOnAddresses: true}: AddressStore.contract),
       ],
       "configOnly": [
-        ({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
-        ({name: "NoEvents", startBlock: None, dependsOnAddresses: false}: AddressStore.contract),
+        ({id: 0, name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
+        ({id: 1, name: "NoEvents", startBlock: None, dependsOnAddresses: false}: AddressStore.contract),
       ],
-      "wildcardOnly": [({name: "A", startBlock: None, dependsOnAddresses: false}: AddressStore.contract)],
+      "wildcardOnly": [
+        ({id: 0, name: "A", startBlock: None, dependsOnAddresses: false}: AddressStore.contract),
+      ],
     })
   })
 
@@ -230,7 +240,7 @@ describe("AddressStore", () => {
     let drain = (~toBlockInclusive, ~checkpointBlockNumbers) =>
       store
       ->AddressStore.drainForWrite(toBlockInclusive, checkpointBlockNumbers)
-      ->Array.map(dc => (dc.address, dc.checkpointIdx))
+      ->Array.map(dc => (dc.contractId, dc.checkpointIdx))
 
     t.expect({
       // The config address was never pending, and addr(2) is above the bound.
@@ -240,9 +250,9 @@ describe("AddressStore", () => {
       "nothingLeftPending": store->AddressStore.pendingEntries,
     }).toEqual({
       // The checkpoint index points back at the block numbers passed in.
-      "upToBlock20": [(addr(1), 1)],
+      "upToBlock20": [(0, 1)],
       "drainedOnce": [],
-      "rest": [(addr(2), 0)],
+      "rest": [(0, 0)],
       "nothingLeftPending": [],
     })
   })
@@ -254,47 +264,68 @@ describe("AddressStore", () => {
         {address: addr(1), contractName: "A", registrationBlock: 10},
       ])
 
-    t.expect(() => store->AddressStore.drainForWrite(20, [9])).toThrow()
+    let threw = try {
+      let _ = store->AddressStore.drainForWrite(20, [9])
+      false
+    } catch {
+    | _ => true
+    }
     t.expect(
       // The failed drain consumed nothing, so the registration is still there
       // to be written by a batch that does cover it.
-      store->AddressStore.pendingEntries->Array.map(ia => ia.address),
+      (threw, store->AddressStore.pendingEntries->Array.map(ia => ia.address)),
       ~message="a failed drain leaves the queue intact",
-    ).toEqual([addr(1)])
+    ).toEqual((true, [addr(1)]))
   })
 
-  it("rejects an address already held by another contract", t => {
+  // https://github.com/enviodev/hyperindex/issues/1187
+  it("registers an address already held by another contract", t => {
     let store = TestAddresses.makeStore(
       ~onEventRegistrations,
       ~addresses=[contract(~address=addr(0), ~contractName="A", ~registrationBlock=-1)],
     )
-    t.expect(
-      store->AddressStore.registerBatch(
-        [{address: addr(0), contractName: "B", registrationBlock: 7}],
-      ),
-    ).toEqual([AddressStore.Conflict({existingContractName: "A"})])
+    t.expect({
+      "verdicts": store->AddressStore.registerBatch([
+        {address: addr(0), contractName: "B", registrationBlock: 7},
+        // Same address, same contract: still a duplicate.
+        {address: addr(0), contractName: "B", registrationBlock: 9},
+      ]),
+      "ownersOfAddr0": store->AddressStore.getAll(addr(0))->Array.map(ia => ia.contractName),
+      "indexedForA": store->AddressStore.isIndexedAt(addr(0), "A", 7),
+      "indexedForB": store->AddressStore.isIndexedAt(addr(0), "B", 7),
+      // B's registration only starts where it was registered.
+      "indexedForBBefore": store->AddressStore.isIndexedAt(addr(0), "B", 6),
+      "size": store->AddressStore.size,
+    }).toEqual({
+      "verdicts": [
+        AddressStore.Added({effectiveStartBlock: 7, fetchable: true}),
+        Duplicate({effectiveStartBlock: 9, existingEffectiveStartBlock: 7}),
+      ],
+      "ownersOfAddr0": ["A", "B"],
+      "indexedForA": true,
+      "indexedForB": true,
+      "indexedForBBefore": false,
+      "size": 2,
+    })
   })
 
-  it("drops config addresses the store rejects, without failing startup", t => {
-    // Config addresses go through the same verdicts as dynamic ones, so a
-    // config listing one address under two contracts (or a malformed one) has
-    // to leave the chain indexing what it can rather than throwing.
+  // https://github.com/enviodev/hyperindex/issues/1187
+  it("indexes a config address listed under two contracts", t => {
     let addresses = [
       contract(~address=addr(0), ~contractName="A", ~registrationBlock=-1),
-      // Already held by A.
       contract(~address=addr(0), ~contractName="B", ~registrationBlock=-1),
-      contract(~address="not-an-address"->Utils.magic, ~contractName="B", ~registrationBlock=-1),
       contract(~address=addr(1), ~contractName="B", ~registrationBlock=-1),
     ]
+    let contractNames = TestAddresses.contractNames(~onEventRegistrations)
     let store = AddressStore.make(
       ~ecosystem=Evm,
       ~shouldChecksum=true,
-      ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~configContractNames=[]),
+      ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractNames),
     )
     let fetchState = FetchState.make(
       ~onEventRegistrations,
       ~addressStore=store,
-      ~addresses,
+      ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=10,
@@ -304,17 +335,17 @@ describe("AddressStore", () => {
     )
     t.expect({
       "addressesOfA": store->AddressStore.contractAddresses("A"),
-      // Only the address B actually won; the conflicting and the malformed
-      // ones are gone.
       "addressesOfB": store->AddressStore.contractAddresses("B"),
+      // One registration per (address, contract).
       "size": store->AddressStore.size,
-      // Both survivors are config addresses starting at block 0, so they share
-      // one partition — the point is that startup got that far at all.
+      // One partition per contract: a partition never mixes contracts once
+      // both of them index the same address.
       "partitions": fetchState.optimizedPartitions->FetchState.OptimizedPartitions.count,
     }).toEqual({
       "addressesOfA": [addr(0)],
-      "addressesOfB": [addr(1)],
-      "size": 2,
+      // Set order at equal start blocks is by address bytes.
+      "addressesOfB": [addr(1), addr(0)],
+      "size": 3,
       "partitions": 1,
     })
   })

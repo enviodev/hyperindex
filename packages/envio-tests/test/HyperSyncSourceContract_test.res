@@ -85,7 +85,7 @@ let makeSource = (~url, ~lowercaseAddresses=true) => {
   let addressStore = AddressStore.make(
     ~ecosystem=Ecosystem.Evm,
     ~shouldChecksum=!lowercaseAddresses,
-    ~contracts=[{name: "Token", startBlock: None, dependsOnAddresses: true}],
+    ~contracts=[{id: 0, name: "Token", startBlock: None, dependsOnAddresses: true}],
   )
   let _ = addressStore->AddressStore.seedBatch([
     {

@@ -15,13 +15,13 @@ let makeState = (~onError=errHandler => errHandler->ErrorHandling.raiseExn, ()) 
       ) :> Internal.onEventRegistration),
     ]
     let addresses = []
-    let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~addresses)
+    let addressStore = TestAddresses.makeStore(~onEventRegistrations)
     let fetchState = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
       ~onEventRegistrations,
       ~addressStore,
-      ~addresses,
+      ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
       ~startBlock=0,
       ~maxOnBlockBufferSize=5000,
       ~chainId=chainConfig.id,

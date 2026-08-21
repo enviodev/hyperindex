@@ -159,10 +159,11 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
         chain.validate_finite_endblock_networks()?;
 
         // Addresses are compared case-insensitively: checksum and lowercase
-        // spellings of the same address collide on the (chainId, address)
-        // primary key of envio_addresses at runtime.
-        let mut contract_by_address: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
+        // spellings of the same address are one address at runtime. The same
+        // address under two different contracts is allowed — each contract
+        // indexes it with its own events.
+        let mut addresses_by_contract: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
 
         for contract in chain.contracts.as_ref().unwrap_or(&vec![]) {
             if contract.config.as_ref().is_some() {
@@ -181,31 +182,16 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
                     ));
                 }
 
-                match contract_by_address
-                    .insert(contract_address.to_lowercase(), contract.name.clone())
+                if !addresses_by_contract
+                    .insert((contract_address.to_lowercase(), contract.name.clone()))
                 {
-                    Some(existing_contract) if existing_contract == contract.name => {
-                        return Err(anyhow!(
-                            "Address {} is listed multiple times for the contract {} on chain {}. \
-                             Please remove the duplicate from your config.",
-                            contract_address,
-                            contract.name,
-                            chain.id
-                        ));
-                    }
-                    Some(existing_contract) => {
-                        return Err(anyhow!(
-                            "Address {} on chain {} is configured for multiple contracts: {} and \
-                             {}. Indexing the same address with multiple contract definitions is \
-                             not supported. Please define the events on a single contract \
-                             definition instead.",
-                            contract_address,
-                            chain.id,
-                            existing_contract,
-                            contract.name
-                        ));
-                    }
-                    None => {}
+                    return Err(anyhow!(
+                        "Address {} is listed multiple times for the contract {} on chain {}. \
+                         Please remove the duplicate from your config.",
+                        contract_address,
+                        contract.name,
+                        chain.id
+                    ));
                 }
             }
         }

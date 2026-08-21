@@ -37,44 +37,23 @@ type testIndexerState = {
   // Store decoded entities (not JSON) for proper comparison operations
   entities: dict<dict<Internal.entity>>,
   entityConfigs: dict<Internal.entityConfig>,
+  // Every indexed address, insert-only — the in-memory twin of envio_addresses.
+  mutable addresses: array<AddressRows.row>,
+  // The canonical contract mapping, a name's position being its id.
+  contractNames: array<string>,
   mutable processChanges: array<unknown>,
 }
 
-// Cast Internal.entity back to EnvioAddresses.t
-external castToEnvioAddresses: Internal.entity => InternalTable.EnvioAddresses.t = "%identity"
+// Rows are always grouped with their lengths carried, so this side never needs
+// to know how wide an ecosystem's key is.
+let addressRowsByChain = (state: testIndexerState) =>
+  state.addresses->AddressRows.group(~isFixedWidth=false)
 
-let toIndexingAddress = (dc: InternalTable.EnvioAddresses.t): Internal.indexingAddress => {
-  address: dc->Config.EnvioAddresses.getAddress,
-  contractName: dc.contractName,
-  registrationBlock: dc.registrationBlock,
-}
-
-// All indexing addresses (config-seeded + dynamically registered) grouped by
-// chain id string, derived from the envio_addresses entities.
-let getIndexingAddressesByChain = (state: testIndexerState): dict<
-  array<Internal.indexingAddress>,
-> => {
-  let byChain = Dict.make()
-  switch state.entities->Dict.get(InternalTable.EnvioAddresses.name) {
-  | Some(dcDict) =>
-    dcDict
-    ->Dict.valuesToArray
-    ->Array.forEach(entity => {
-      let dc = entity->castToEnvioAddresses
-      let chainIdStr = dc.chainId->ChainId.toString
-      let contracts = switch byChain->Dict.get(chainIdStr) {
-      | Some(arr) => arr
-      | None =>
-        let arr = []
-        byChain->Dict.set(chainIdStr, arr)
-        arr
-      }
-      contracts->Array.push(dc->toIndexingAddress)->ignore
-    })
-  | None => ()
-  }
-  byChain
-}
+let renderRows = (rows: array<AddressRows.row>, ~config: Config.t) =>
+  rows->AddressRows.render(
+    ~ecosystem=(config.ecosystem.name :> string),
+    ~shouldChecksum=!config.lowercaseAddresses,
+  )
 
 // Rows of a per-chain entity are keyed per (chain, id): the same id exists
 // independently on every chain.
@@ -125,7 +104,9 @@ let handleLoad = (state: testIndexerState, ~tableName: string, ~filter: EntityFi
 
 let handleWriteBatch = (
   state: testIndexerState,
+  ~config: Config.t,
   ~updatedEntities: array<Persistence.updatedEntity>,
+  ~registeredAddresses: array<AddressRows.staged>,
   ~checkpointIds: array<bigint>,
   ~checkpointChainIds: array<ChainId.t>,
   ~checkpointBlockNumbers: array<int>,
@@ -134,6 +115,29 @@ let handleWriteBatch = (
   // Group entity changes by checkpointId
   // checkpointId -> entityName -> entityChange
   let changesByCheckpoint: dict<dict<entityChange>> = Dict.make()
+
+  // checkpointId -> the addresses that checkpoint registered, rendered for the
+  // change log. Rendering is the Rust codec's job, so the rows keep their keys
+  // right up to here.
+  let addressesByCheckpoint: dict<array<{"address": Address.t, "contract": string}>> = Dict.make()
+  let rendered = registeredAddresses->Array.map(({row}) => row)->renderRows(~config)
+  registeredAddresses->Array.forEachWithIndex(({row, checkpointId}, idx) => {
+    state.addresses->Array.push(row)->ignore
+    let key = checkpointId->BigInt.toString
+    let forCheckpoint = switch addressesByCheckpoint->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some(forCheckpoint) => forCheckpoint
+    | None =>
+      let forCheckpoint = []
+      addressesByCheckpoint->Dict.set(key, forCheckpoint)
+      forCheckpoint
+    }
+    forCheckpoint
+    ->Array.push({
+      "address": rendered->Array.getUnsafe(idx),
+      "contract": state.contractNames->Array.getUnsafe(row.contractId),
+    })
+    ->ignore
+  })
 
   updatedEntities->Array.forEach(({entityConfig, scope, changes}: Persistence.updatedEntity) => {
     let entityName = entityConfig.name
@@ -210,43 +214,33 @@ let handleWriteBatch = (
 
     // Add entity changes for this checkpoint
     let checkpointKey = checkpointId->BigInt.toString
+    switch addressesByCheckpoint->Utils.Dict.dangerouslyGetNonOption(checkpointKey) {
+    | Some(rendered) =>
+      let addressesObj: dict<unknown> = Dict.make()
+      addressesObj->Dict.set(
+        "sets",
+        rendered->(Utils.magic: array<{"address": Address.t, "contract": string}> => unknown),
+      )
+      change->Dict.set("addresses", addressesObj->(Utils.magic: dict<unknown> => unknown))
+    | None => ()
+    }
     switch changesByCheckpoint->Dict.get(checkpointKey) {
     | Some(entityChanges) =>
       entityChanges
       ->Dict.toArray
       ->Array.forEach(((entityName, {sets, deleted})) => {
-        // Transform envio_addresses to addresses with simplified structure
-        if entityName === InternalTable.EnvioAddresses.name {
-          let entityObj: dict<unknown> = Dict.make()
-          if sets->Array.length > 0 {
-            // Transform sets to simplified {address, contract} objects
-            let simplifiedSets = sets->Array.map(entity => {
-              let dc = entity->Utils.magic->castToEnvioAddresses
-              {"address": dc->Config.EnvioAddresses.getAddress, "contract": dc.contractName}
-            })
-            entityObj->Dict.set(
-              "sets",
-              simplifiedSets->(
-                Utils.magic: array<{"address": Address.t, "contract": string}> => unknown
-              ),
-            )
-          }
-          // Note: deleted is not relevant for addresses since we use address string directly
-          change->Dict.set("addresses", entityObj->(Utils.magic: dict<unknown> => unknown))
-        } else {
-          let entityObj: dict<unknown> = Dict.make()
-          if sets->Array.length > 0 {
-            entityObj->Dict.set("sets", sets->(Utils.magic: array<unknown> => unknown))
-          }
-          if deleted->Array.length > 0 {
-            entityObj->Dict.set("deleted", deleted->(Utils.magic: array<EntityId.t> => unknown))
-          }
-          // Match the capitalized entity accessor the generated change types expose.
-          change->Dict.set(
-            entityName->Utils.String.capitalize,
-            entityObj->(Utils.magic: dict<unknown> => unknown),
-          )
+        let entityObj: dict<unknown> = Dict.make()
+        if sets->Array.length > 0 {
+          entityObj->Dict.set("sets", sets->(Utils.magic: array<unknown> => unknown))
         }
+        if deleted->Array.length > 0 {
+          entityObj->Dict.set("deleted", deleted->(Utils.magic: array<EntityId.t> => unknown))
+        }
+        // Match the capitalized entity accessor the generated change types expose.
+        change->Dict.set(
+          entityName->Utils.String.capitalize,
+          entityObj->(Utils.magic: dict<unknown> => unknown),
+        )
       })
     | None => ()
     }
@@ -260,7 +254,8 @@ let handleWriteBatch = (
 let makeInitialState = (
   ~config: Config.t,
   ~processConfigChains: dict<chainConfig>,
-  ~indexingAddressesByChain: dict<array<Internal.indexingAddress>>,
+  ~addressRowsByChain: dict<AddressRows.seedRows>,
+  ~contractNames: array<string>,
 ): Persistence.initialState => {
   let chainKeys = processConfigChains->Dict.keysToArray
   let chains = chainKeys->Array.map(chainIdStr => {
@@ -271,7 +266,10 @@ let makeInitialState = (
     }
 
     let processChainConfig = processConfigChains->Dict.getUnsafe(chainIdStr)
-    let indexingAddresses = indexingAddressesByChain->Dict.get(chainIdStr)->Option.getOr([])
+    let addressRows =
+      addressRowsByChain
+      ->Utils.Dict.dangerouslyGetNonOption(chainIdStr)
+      ->Option.getOr(AddressRows.emptySeedRows())
     {
       Persistence.id: chain,
       startBlock: processChainConfig.startBlock,
@@ -282,17 +280,17 @@ let makeInitialState = (
       numEventsProcessed: 0.,
       firstEventBlockNumber: None,
       timestampCaughtUpToHeadOrEndblock: None,
-      indexingAddresses,
+      addressRows,
     }
   })
 
   {
     cleanRun: true,
+    contractNames,
     cache: Dict.make(),
     chains,
     checkpointId: InternalTable.Checkpoints.initialCheckpointId,
     reorgCheckpoints: [],
-    envioInfo: Some(Config.getPublicConfigJson()->Config.stripSensitiveData),
   }
 }
 
@@ -589,6 +587,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called; the initial state is derived from config.",
     ),
+  readEnvioInfo: async () => Some(Config.getPublicConfigJson()->Config.stripSensitiveData),
   resumeInitialState: async () =>
     JsError.throwWithMessage(
       "TestIndexer: resumeInitialState should not be called; the initial state is derived from config.",
@@ -605,15 +604,18 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     ~batch,
     ~rollback as _,
     ~isInReorgThreshold as _,
-    ~config as _,
+    ~config,
     ~allEntities as _,
     ~updatedEffectsCache as _,
     ~updatedEntities,
+    ~registeredAddresses,
     ~chainMetaData as _,
     ~onWrite as _,
   ) =>
     state->handleWriteBatch(
+      ~config,
       ~updatedEntities,
+      ~registeredAddresses,
       ~checkpointIds=batch.checkpointIds,
       ~checkpointChainIds=batch.checkpointChainIds,
       ~checkpointBlockNumbers=batch.checkpointBlockNumbers,
@@ -682,7 +684,7 @@ let getRegistrations = (~config) =>
 
 let createTestIndexer = (): t<'processConfig> => {
   let config = Config.load()
-  let allEntities = config.allEntities
+  let allEntities = config.userEntities
   let entities = Dict.make()
   let entityConfigs = Dict.make()
   allEntities->Array.forEach(entityConfig => {
@@ -690,32 +692,24 @@ let createTestIndexer = (): t<'processConfig> => {
     entityConfigs->Dict.set(entityConfig.name, entityConfig)
   })
 
-  // Populate config addresses into the entity dict, mirroring PgStorage.initialize
-  let envioAddressesDict = entities->Dict.getUnsafe(InternalTable.EnvioAddresses.name)
-  config.chainMap
-  ->ChainMap.values
-  ->Array.forEach(chainConfig => {
-    chainConfig.contracts->Array.forEach(contract => {
-      contract.addresses->Array.forEach(
-        address => {
-          let entity: InternalTable.EnvioAddresses.t = {
-            id: Config.EnvioAddresses.makeId(~chainId=chainConfig.id, ~address),
-            chainId: chainConfig.id,
-            contractName: contract.name,
-            registrationBlock: -1,
-            registrationLogIndex: -1,
-          }
-          envioAddressesDict->Dict.set(entity.id, entity->Config.EnvioAddresses.castToInternal)
-        },
-      )
-    })
-  })
+  // Populate the config's addresses, mirroring PgStorage.initialize
+  let chainConfigs = config.chainMap->ChainMap.values
+  let contractNames = Config.canonicalContractNames(~chainConfigs)
+  let ecosystem = config.ecosystem.name
+  let addresses =
+    chainConfigs
+    ->Array.map(chainConfig =>
+      chainConfig->ChainState.configStorageRows(~ecosystem, ~contractNames)
+    )
+    ->Array.flat
 
   let state = {
     processInProgress: false,
     progressBlockByChain: Dict.make(),
     entities,
     entityConfigs,
+    addresses,
+    contractNames,
     processChanges: [],
   }
 
@@ -738,19 +732,16 @@ let createTestIndexer = (): t<'processConfig> => {
   // Build entity operations for each user entity
   let entityOpsDict: dict<entityOperations> = Dict.make()
   allEntities->Array.forEach(entityConfig => {
-    // Only create ops for user entities (not internal tables like envio_addresses)
-    if entityConfig.name !== InternalTable.EnvioAddresses.name {
-      entityOpsDict->Dict.set(
-        entityConfig.name,
-        {
-          get: makeEntityGet(~state, ~entityConfig),
-          getAll: makeEntityGetAll(~state, ~entityConfig),
-          getWhere: makeEntityGetWhere(~state, ~entityConfig),
-          getOrThrow: makeEntityGetOrThrow(~state, ~entityConfig),
-          set: makeEntitySet(~state, ~entityConfig),
-        },
-      )
-    }
+    entityOpsDict->Dict.set(
+      entityConfig.name,
+      {
+        get: makeEntityGet(~state, ~entityConfig),
+        getAll: makeEntityGetAll(~state, ~entityConfig),
+        getWhere: makeEntityGetWhere(~state, ~entityConfig),
+        getOrThrow: makeEntityGetOrThrow(~state, ~entityConfig),
+        set: makeEntitySet(~state, ~entityConfig),
+      },
+    )
   })
 
   // Build chain info from config (similar to Main.getGlobalIndexer but static)
@@ -793,10 +784,10 @@ let createTestIndexer = (): t<'processConfig> => {
                 `Cannot access ${contract.name}.addresses while indexer.process() is running. ` ++ "Wait for process() to complete before reading contract addresses.",
               )
             }
-            getIndexingAddressesByChain(state)
-            ->Dict.get(chainConfig.id->ChainId.toString)
-            ->Option.getOr([])
-            ->Array.filterMap(ia => ia.contractName === contract.name ? Some(ia.address) : None)
+            let contractId = state.contractNames->Array.indexOf(contract.name)
+            state.addresses
+            ->Array.filter(row => row.chainId === chainConfig.id && row.contractId === contractId)
+            ->renderRows(~config)
           },
         },
       )
@@ -893,11 +884,11 @@ let createTestIndexer = (): t<'processConfig> => {
           // by earlier ones.
           let chains: dict<chainConfig> = Dict.make()
           chains->Dict.set(chainIdStr, processChainConfig)
-          let indexingAddressesByChain = getIndexingAddressesByChain(state)
           let initialState = makeInitialState(
             ~config,
             ~processConfigChains=chains,
-            ~indexingAddressesByChain,
+            ~addressRowsByChain=addressRowsByChain(state),
+            ~contractNames=state.contractNames,
           )
 
           // No endBlock means auto-exit mode: process one block checkpoint at a

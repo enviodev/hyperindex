@@ -5,7 +5,152 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-module EnvioAddresses = Config.EnvioAddresses
+// Postgres SQLSTATE for "undefined_table" — what a read gets when the schema was
+// initialized by an older envio that didn't have the table.
+let undefinedTableSqlState = "42P01"
+
+@get external getSqlStateCode: JsExn.t => option<string> = "code"
+
+let isUndefinedTable = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(e) => e->getSqlStateCode === Some(undefinedTableSqlState)
+  | _ => false
+  }
+
+// The canonical contract ids. Written once at initialize from the config's
+// contract names in byte order, so an id names the same contract on every
+// chain and across restarts; read back on resume, where the stored mapping is
+// what every address row means.
+module EnvioContracts = {
+  let table = mkTable(
+    "envio_contracts",
+    ~fields=[
+      mkField("id", SmallInt, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField("name", String, ~fieldSchema=S.string),
+    ],
+  )
+
+  let makeInsertQuery = (~pgSchema) =>
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("id", "name")
+SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(Text: Postgres.columnType :> string)}[]);`
+
+  // `contractNames` is the canonical list: a name's position is its id.
+  let insert = (sql, ~pgSchema, ~contractNames: array<string>) =>
+    sql
+    ->Postgres.preparedUnsafe(
+      makeInsertQuery(~pgSchema),
+      (contractNames->Array.mapWithIndex((_, idx) => idx), contractNames)->(
+        Utils.magic: ((array<int>, array<string>)) => unknown
+      ),
+    )
+    ->Utils.Promise.ignoreValue
+
+  // Ordered by id, so the result is the canonical list itself.
+  let read = async (sql, ~pgSchema): array<string> => {
+    let rows: array<{"name": string}> = await sql->Postgres.unsafe(
+      `SELECT "name" FROM "${pgSchema}"."${table.tableName}" ORDER BY "id";`,
+    )
+    rows->Array.map(row => row["name"])
+  }
+
+  // Whether the schema carries this table at all. A schema written by an envio
+  // that predates the contract mapping doesn't, and every address row in it is
+  // shaped differently — so a resume has to stop at the compat check rather
+  // than at a missing column.
+  let exists = async (sql, ~pgSchema): bool => {
+    let rows: array<{"exists": bool}> = await sql->Postgres.unsafe(
+      `SELECT to_regclass('"${pgSchema}"."${table.tableName}"') IS NOT NULL AS "exists";`,
+    )
+    (rows->Array.getUnsafe(0))["exists"]
+  }
+}
+
+// Every address the indexer indexes, one row per (chain, address, contract).
+// A dedicated table rather than an entity: rows are insert-only, so a rollback
+// is a delete by primary key and there's no history table to keep — which is
+// what makes tens of millions of addresses affordable.
+module EnvioAddresses = {
+  let name = "envio_addresses"
+
+  let table = mkTable(
+    name,
+    ~fields=[
+      mkField("chain_id", ChainId, ~fieldSchema=ChainId.schema, ~isPrimaryKey),
+      // The field schemas are unused: this table is read and written by the
+      // hand-written queries below, never through the generic row encoding.
+      mkField("address", Bytea, ~fieldSchema=S.string, ~isPrimaryKey),
+      mkField("contract_id", SmallInt, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField("registration_block", Int32, ~fieldSchema=S.int),
+    ],
+  )
+
+  let makeInsertQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = Table.getPgFieldType(
+      ~fieldType=ChainId,
+      ~pgSchema,
+      ~isArray=true,
+      ~isNumericArrayAsText=false,
+      ~isNullable=false,
+      ~chainIdMode,
+    )
+    // Idempotent: a batch write retried after a failed transaction re-inserts
+    // rows the store still holds.
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("chain_id", "address", "contract_id", "registration_block")
+SELECT * FROM unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[],$4::${(Integer: Postgres.columnType :> string)}[])
+ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
+  }
+
+  let insert = (sql, ~pgSchema, ~rows: array<AddressRows.row>, ~chainIdMode: ChainId.mode=Int32) =>
+    sql
+    ->Postgres.preparedUnsafe(
+      makeInsertQuery(~pgSchema, ~chainIdMode),
+      (
+        rows->Array.map(row => row.chainId),
+        sql->Postgres.typed(rows->Array.map(row => row.address), Postgres.byteaArrayOid),
+        rows->Array.map(row => row.contractId),
+        rows->Array.map(row => row.registrationBlock),
+      )->(Utils.magic: ((array<ChainId.t>, unknown, array<int>, array<int>)) => unknown),
+    )
+    ->Utils.Promise.ignoreValue
+
+  let makeDeleteQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = Table.getPgFieldType(
+      ~fieldType=ChainId,
+      ~pgSchema,
+      ~isArray=true,
+      ~isNumericArrayAsText=false,
+      ~isNullable=false,
+      ~chainIdMode,
+    )
+    `DELETE FROM "${pgSchema}"."${table.tableName}"
+USING unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[]) AS dead(chain_id, address, contract_id)
+WHERE "${table.tableName}"."chain_id" = dead.chain_id
+  AND "${table.tableName}"."address" = dead.address
+  AND "${table.tableName}"."contract_id" = dead.contract_id;`
+  }
+
+  // A rollback removes exactly the registrations the address store dropped, by
+  // primary key — so the table needs no index beyond the one it already has,
+  // and the two halves of a rollback can't disagree about what to remove.
+  let delete = (sql, ~pgSchema, ~keys: array<AddressRows.key>, ~chainIdMode: ChainId.mode=Int32) =>
+    sql
+    ->Postgres.preparedUnsafe(
+      makeDeleteQuery(~pgSchema, ~chainIdMode),
+      (
+        keys->Array.map(key => key.chainId),
+        sql->Postgres.typed(keys->Array.map(key => key.address), Postgres.byteaArrayOid),
+        keys->Array.map(key => key.contractId),
+      )->(Utils.magic: ((array<ChainId.t>, unknown, array<int>)) => unknown),
+    )
+    ->Utils.Promise.ignoreValue
+
+  let makeGetRowsQuery = (~pgSchema) =>
+    `SELECT "chain_id" as "chainId",
+"address" as "address",
+"contract_id" as "contractId",
+"registration_block" as "registrationBlock"
+FROM "${pgSchema}"."${table.tableName}";`
+}
 
 module Chains = {
   type progressFields = [
@@ -198,7 +343,7 @@ WHERE "${(#id: field :> string)}" = $2
     timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
     numEventsProcessed: float,
     progressBlockNumber: int,
-    indexingAddresses: array<Internal.indexingAddress>,
+    addressRows: AddressRows.seedRows,
     sourceBlockNumber: int,
   }
 
@@ -215,67 +360,31 @@ WHERE "${(#id: field :> string)}" = $2
 FROM "${pgSchema}"."${table.tableName}";`
   }
 
-  type rawIndexingAddress = {
-    chainId: ChainId.t,
-    address: Address.t,
-    contractName: string,
-    registrationBlock: int,
-  }
-
   // Addresses are read as plain rows rather than aggregated per chain with
   // json_agg: a single chain's aggregate can exceed V8's max string length
   // (postgres.js decodes the column with Buffer.toString and throws
   // ERR_STRING_TOO_LONG). Grouping happens in JS instead — see getInitialState.
-  let makeGetIndexingAddressesQuery = (~pgSchema) => {
-    // envio_addresses.id is a composite "{chainId}-{address}" string produced by
-    // Config.EnvioAddresses.makeId; extract the address by taking everything
-    // after the first '-'. Keep in sync with makeId / getAddress.
-    `SELECT "chain_id" as "chainId",
-SUBSTRING("id" FROM POSITION('-' IN "id") + 1) as "address",
-"contract_name" as "contractName",
-"registration_block" as "registrationBlock"
-FROM "${pgSchema}"."${EnvioAddresses.table.tableName}";`
-  }
-
-  let getInitialState = async (sql, ~pgSchema) => {
-    let (rawInitialStates, rawIndexingAddresses) = await Promise.all2((
+  let getInitialState = async (sql, ~pgSchema, ~isFixedWidthAddresses) => {
+    let (rawInitialStates, rawAddressRows) = await Promise.all2((
       sql
       ->Postgres.unsafe(makeGetInitialStateQuery(~pgSchema))
       ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>),
       sql
-      ->Postgres.unsafe(makeGetIndexingAddressesQuery(~pgSchema))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<rawIndexingAddress>>),
+      ->Postgres.unsafe(EnvioAddresses.makeGetRowsQuery(~pgSchema))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<AddressRows.row>>),
     ))
 
-    let indexingAddressesByChainId = Dict.make()
-    rawIndexingAddresses->Array.forEach(row => {
-      // BIGINT chain ids come back as strings; normalizing here keeps the
-      // grouping key identical to the one derived from the chains rows below.
-      let key = row.chainId->ChainId.normalizeOrThrow->ChainId.toString
-      let addresses = switch indexingAddressesByChainId->Dict.get(key) {
-      | Some(addresses) => addresses
-      | None =>
-        let addresses: array<Internal.indexingAddress> = []
-        indexingAddressesByChainId->Dict.set(key, addresses)
-        addresses
-      }
-      addresses
-      ->Array.push({
-        address: row.address,
-        contractName: row.contractName,
-        registrationBlock: row.registrationBlock,
-      })
-      ->ignore
-    })
+    let addressRowsByChainId =
+      rawAddressRows->AddressRows.group(~isFixedWidth=isFixedWidthAddresses)
 
     rawInitialStates->Array.map(rawInitialState => {
       let id = rawInitialState.id->ChainId.normalizeOrThrow
       {
         ...rawInitialState,
         id,
-        indexingAddresses: indexingAddressesByChainId
-        ->Dict.get(id->ChainId.toString)
-        ->Option.getOr([]),
+        addressRows: addressRowsByChainId
+        ->Utils.Dict.dangerouslyGetNonOption(id->ChainId.toString)
+        ->Option.getOr(AddressRows.emptySeedRows()),
       }
     })
   }
@@ -371,23 +480,13 @@ module EnvioInfo = {
     ],
   )
 
-  // Postgres SQLSTATE for "undefined_table" — what we get when the schema
-  // was initialized by an older envio that didn't have `envio_info`.
-  let undefinedTableSqlState = "42P01"
-
-  @get external getCode: JsExn.t => option<string> = "code"
-
   let read = async (sql, ~pgSchema): option<JSON.t> => {
     let rows: array<{
       "config": string,
     }> = try await sql->Postgres.unsafe(
       `SELECT "config" FROM "${pgSchema}"."${table.tableName}" LIMIT 1;`,
     ) catch {
-    | exn =>
-      switch exn->JsExn.anyToExnInternal {
-      | JsExn(e) if e->getCode === Some(undefinedTableSqlState) => []
-      | _ => throw(exn)
-      }
+    | exn => isUndefinedTable(exn) ? [] : throw(exn)
     }
     rows->Array.get(0)->Option.map(row => row["config"]->JSON.parseOrThrow)
   }

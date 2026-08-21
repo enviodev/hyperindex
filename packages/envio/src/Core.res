@@ -26,6 +26,13 @@ type fromUserApiResult = {
   indexerCode: Null.t<string>,
 }
 
+// Address keys packed back to back. `lengths` is present only for SVM, whose
+// base58 keys vary in width.
+type packedAddresses = {
+  bytes: NodeJs.Buffer.t,
+  lengths: Null.t<array<int>>,
+}
+
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
@@ -47,6 +54,30 @@ type addon = {
   addressStore: addressStoreCtor,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
+  // Address keys are encoded and rendered only in Rust — the store's key is
+  // exactly what a persisted row holds, so a JS-side codec could fork from it.
+  packAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => packedAddresses,
+  splitAddresses: (
+    ~ecosystem: string,
+    ~bytes: NodeJs.Buffer.t,
+    ~lengths: Null.t<array<int>>,
+  ) => array<NodeJs.Buffer.t>,
+  renderAddresses: (
+    ~ecosystem: string,
+    ~shouldChecksum: bool,
+    ~bytes: NodeJs.Buffer.t,
+    ~lengths: Null.t<array<int>>,
+  ) => array<Address.t>,
+  renderContractAddresses: (
+    ~ecosystem: string,
+    ~shouldChecksum: bool,
+    ~bytes: NodeJs.Buffer.t,
+    ~lengths: Null.t<array<int>>,
+    ~contractIds: array<int>,
+    ~contractId: int,
+  ) => array<Address.t>,
+  // Contract names in the canonical order their ids come from.
+  canonicalContractNames: array<string> => array<string>,
   // Ordered transaction-field names exposed for the field-code contract test
   // (the ReScript `transactionFields` arrays must match the Rust ordinals).
   evmTransactionFieldNames: unit => array<string>,

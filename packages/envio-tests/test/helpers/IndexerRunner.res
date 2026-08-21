@@ -30,6 +30,14 @@ let selectedBackend: backend = switch %raw(`process.env.ENVIO_TEST_STORAGE`)->Nu
   )
 }
 
+// One row of `envio_addresses`, with its key rendered back to a string.
+type addressRow = {
+  chainId: ChainId.t,
+  address: Address.t,
+  contractName: string,
+  registrationBlock: int,
+}
+
 type rec t = {
   getBatchWritePromise: unit => promise<unit>,
   getRollbackReadyPromise: unit => promise<unit>,
@@ -38,6 +46,9 @@ type rec t = {
   query: 'entity. string => promise<array<'entity>>,
   queryHistory: 'entity. string => promise<array<Change.t<'entity>>>,
   queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
+  // `envio_addresses` isn't an entity, so it has a read path of its own. The
+  // stored key is rendered back here, the only place a test needs a string.
+  queryAddresses: unit => promise<array<addressRow>>,
   queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
   queryEffectCache: 'input 'output. (
     Envio.effect<'input, 'output>,
@@ -375,6 +386,30 @@ let run = async (
         queryEntity(entityConfig)->(
           Utils.magic: promise<array<unknown>> => promise<array<entity>>
         ),
+      queryAddresses: async () => {
+        let rows = switch pg {
+        | None => memoryState.addresses
+        | Some({sql, pgSchema}) =>
+          (await sql->Postgres.unsafe(
+            InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema),
+          ))->(Utils.magic: unknown => array<AddressRows.row>)
+        }
+        let contractNames = Config.canonicalContractNames(
+          ~chainConfigs=config.chainMap->ChainMap.values,
+        )
+        let addresses = Core.getAddon().renderAddresses(
+          ~ecosystem=(config.ecosystem.name :> string),
+          ~shouldChecksum=!config.lowercaseAddresses,
+          ~bytes=NodeJs.Buffer.concat(rows->Array.map(row => row.address)),
+          ~lengths=Null.make(rows->Array.map(row => row.address->NodeJs.Buffer.length)),
+        )
+        rows->Array.mapWithIndex((row, idx): addressRow => {
+          chainId: row.chainId->ChainId.normalizeOrThrow,
+          address: addresses->Array.getUnsafe(idx),
+          contractName: contractNames->Array.getUnsafe(row.contractId),
+          registrationBlock: row.registrationBlock,
+        })
+      },
       queryHistory: (type entity, name) =>
         queryEntityHistory(config->entityConfigByName(name))->(
           Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
