@@ -421,12 +421,6 @@ struct SvmEventItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     discriminator: Option<String>,
     discriminator_byte_len: u8,
-    /// Selected parent-transaction fields (camelCase), incl. `tokenBalances`.
-    transaction_fields: Vec<String>,
-    /// Selected block fields (camelCase), excluding the always-included `slot`.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    block_fields: Vec<String>,
-    include_logs: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     account_filters: Vec<Vec<SvmAccountFilterJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -630,11 +624,6 @@ impl SystemConfig {
                                     let svm_item = SvmEventItem {
                                         discriminator: svm_kind.discriminator.clone(),
                                         discriminator_byte_len: svm_kind.discriminator_byte_len,
-                                        transaction_fields: svm_kind
-                                            .selected_transaction_fields
-                                            .clone(),
-                                        block_fields: svm_kind.selected_block_fields.clone(),
-                                        include_logs: svm_kind.include_logs,
                                         account_filters: svm_kind
                                             .account_filters
                                             .iter()
