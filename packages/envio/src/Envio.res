@@ -20,45 +20,48 @@ type svmOnSlotArgs<'context> = {
   context: 'context,
 }
 
-/** Borsh-decoded instruction view. Present whenever a `ProgramSchema` was
- attached to the program (bundled schema, Anchor IDL, or hand-written YAML
- `accounts`/`args`). Absent (`None`) when no schema applied or the
- discriminator didn't match any registered instruction. */
-type svmInstructionParams = {
-  /** Schema-declared instruction name (matches the codegen module suffix). */
-  name: string,
-  /** Borsh-decoded args. `JSON.Object({})` for no-arg instructions
-   (e.g. `VerifyCollection`). POC types this as raw `JSON.t`; cast at the
-   handler with `(json :> MyArgsType)` until typed codegen lands. */
-  args: JSON.t,
-  /** Named accounts in schema order. Keys are exactly the schema-declared
-   names; values are base58 pubkey strings. */
-  accounts: dict<string>,
-  /** Accounts beyond the schema's named list (Anchor `remaining_accounts`,
-   IDL drift). `[]` when counts match. */
-  extraAccounts: array<string>,
+type svmLamports = {
+  pre: bigint,
+  post: bigint,
 }
 
-type svmTokenBalance = {
-  account?: SvmTypes.Pubkey.t,
-  mint?: SvmTypes.Pubkey.t,
-  owner?: SvmTypes.Pubkey.t,
-  preAmount?: string,
-  postAmount?: string,
+type svmAccountToken = {
+  mint: SvmTypes.Pubkey.t,
+  owner: SvmTypes.Pubkey.t,
+  decimals: int,
+  preAmount?: bigint,
+  postAmount?: bigint,
+}
+
+type svmAccountActivity = {
+  address: SvmTypes.Pubkey.t,
+  transactionAccountIndex?: int,
+  isSigner?: bool,
+  isWritable?: bool,
+  lamports?: svmLamports,
+  token?: svmAccountToken,
+}
+
+type svmInstructionAccount = {
+  address: SvmTypes.Pubkey.t,
+  accountName: string,
+  instructionAccountIndex: int,
+  activity?: svmAccountActivity,
 }
 
 type svmTransaction = {
   transactionIndex?: int,
-  signatures: array<string>,
+  signature?: string,
   feePayer?: SvmTypes.Pubkey.t,
   success?: bool,
   err?: string,
   fee?: bigint,
   computeUnitsConsumed?: bigint,
-  accountKeys: array<SvmTypes.Pubkey.t>,
+  accountKeys?: array<SvmTypes.Pubkey.t>,
   recentBlockhash?: string,
   version?: string,
-  tokenBalances?: array<svmTokenBalance>,
+  allSignatures?: array<string>,
+  accountActivities?: array<svmAccountActivity>,
 }
 
 type svmLog = {
@@ -66,57 +69,29 @@ type svmLog = {
   message: string,
 }
 
-/** Block context for a matched instruction. `slot`/`hash` are always present;
- `time` can still be absent — HyperSync/Solana may not report a block time for
- every slot. Every other field is opt-in via `field_selection.block_fields`,
- materialised from the per-chain block store at batch prep. */
-type svmInstructionBlock = {
-  /** Slot this instruction's block was matched in. */
+type svmBlock = {
   slot: int,
-  /** Unix block time (seconds). */
   time?: int,
-  hash: string,
-  /** Block height (distinct from slot). Absent when not selected via
-   `field_selection.block_fields`. */
+  hash?: string,
   height?: int,
   parentSlot?: int,
   parentHash?: string,
 }
 
-/** The per-instruction payload handlers receive as their `instruction`
- argument. Carries the matched instruction's own fields plus the
- program/instruction names, parent transaction, scoped logs, and block. */
 type svmInstruction = {
-  /** Program name as declared under `programs[].name` in `config.yaml`. */
   programName: string,
-  /** Instruction name as declared under `instructions[].name` in
-   `config.yaml`. */
   instructionName: string,
-  programId: SvmTypes.Pubkey.t,
-  /** Raw instruction bytes as `0x`-prefixed hex. */
-  data: string,
-  accounts: array<SvmTypes.Pubkey.t>,
-  /** Path through the call tree: `[outerIndex]` for top-level instructions,
-   appended child indices for inner CPI calls. */
-  instructionAddress: array<int>,
-  isInner: bool,
-  /** Discriminator prefixes pre-extracted by HyperSync. Each is `Some` only
-   when the underlying instruction is at least that long. */
-  d1?: string,
-  d2?: string,
-  d4?: string,
-  d8?: string,
-  /** Borsh-decoded params view. See [[svmInstructionParams]]. */
-  params?: svmInstructionParams,
-  /** Parent transaction. Carries only the fields selected via
-   `field_selection.transaction_fields`; absent when none are selected. */
+  discriminator: string,
+  programId?: SvmTypes.Pubkey.t,
+  data?: string,
+  path?: array<int>,
+  isInner?: bool,
+  args?: JSON.t,
+  accounts?: dict<svmInstructionAccount>,
+  accountArguments?: array<SvmTypes.Pubkey.t>,
   transaction?: svmTransaction,
-  /** Program log entries scoped to this instruction. Absent when the
-   per-instruction `include_logs` flag is `false`. */
   logs?: array<svmLog>,
-  // Omitted on construction; materialised onto the payload at batch prep,
-  // before a handler ever reads it.
-  block?: svmInstructionBlock,
+  block?: svmBlock,
 }
 
 /** Arguments passed to handlers registered via `indexer.onInstruction`. */
@@ -300,6 +275,22 @@ type fuelSimulateItem = {
   logIndex?: int,
   block?: fuelBlockInput,
   transaction?: fuelTransactionInput,
+}
+
+type svmSimulateItem = {
+  program: string,
+  instruction: string,
+  slot?: int,
+  path?: array<int>,
+  programId?: string,
+  data?: string,
+  isInner?: bool,
+  args?: JSON.t,
+  accounts?: dict<{address: string}>,
+  accountArguments?: array<string>,
+  logs?: array<{kind?: string, message?: string}>,
+  block?: svmBlock,
+  transaction?: unknown,
 }
 
 // Detects contexts where a full-screen TUI is counter-productive: piped/redirected

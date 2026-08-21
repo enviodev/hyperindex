@@ -6,7 +6,8 @@ description: |
   Solana mainnet via HyperSync.
 ecosystem: svm
 chains:
-  - start_block: 417950000
+  - id: solana
+    start_block: 417950000
     # Unset for continuous live tailing. `src/indexer.test.ts` sets it to pin a
     # finite, deterministic window over archived slots.
     end_block: ${ENVIO_METAPLEX_END_BLOCK:-}
@@ -19,9 +20,5 @@ chains:
           instructions:
             - name: CreateMetadataAccountV3
               discriminator: "0x21"
-              field_selection:
-                transaction_fields: [signatures]
             - name: UpdateMetadataAccountV2
               discriminator: "0x0f"
-              field_selection:
-                transaction_fields: [signatures]

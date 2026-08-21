@@ -231,6 +231,11 @@ if (0) {
       expectType<TypeEqual<typeof event.contractName, "Greeter">>(true);
     },
   );
+  indexer.onEvent(
+    // @ts-expect-error - the inline fields selection is EVM-only
+    { contract: "Greeter", event: "NewGreeting", fields: { block: ["id"] } },
+    async () => {},
+  );
   indexer.contractRegister(
     { contract: "Greeter", event: "ClearGreeting" },
     async ({ context }) => {
@@ -274,4 +279,31 @@ const _badEnum: EnumName = "NotAnEnum";
 expectType<TypeEqual<Enum<"GravatarSize">, "SMALL" | "MEDIUM" | "LARGE">>(true);
 `)
   )
+
+  // A Fuel registration takes its selection from the event config, so an inline
+  // one would be dropped without a word. `onEvent` is shared with EVM, which is
+  // how the option reaches here at all.
+  it("rejects the EVM-only fields option", t => {
+    let config = InternalTestIndexer.fromUserApi(~files, ~configYaml).config
+    let message = try {
+      HandlerRegister.resetOnEventRegistrations()
+      HandlerRegister.startRegistration(~config)
+      HandlerRegister.setHandler(
+        ~contractName="Greeter",
+        ~eventName="NewGreeting",
+        %raw(`() => Promise.resolve()`),
+        ~eventOptions=Some({
+          fields: ({block: ["hash"]}: Internal.evmFieldsSelection)->(
+            Utils.magic: Internal.evmFieldsSelection => unknown
+          ),
+        }),
+      )
+      "the registration to fail, but it succeeded"
+    } catch {
+    | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
+    }
+    t.expect(
+      message,
+    ).toBe(`The fields option of the "NewGreeting" event registration on contract "Greeter" is only supported on EVM. Select the fields in your config instead.`)
+  })
 })

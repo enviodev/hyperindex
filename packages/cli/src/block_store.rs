@@ -269,11 +269,23 @@ fn svm_block_col(field: SvmBlockField, blocks: &[solana_simple::Block]) -> Optio
         // The slot is the table key, not a column.
         Slot => None,
         Time => i64_from(blocks, |b| b.block_time),
-        Hash => str_from(blocks, |b| Some(b.blockhash.as_str())),
+        Hash => base58_col(blocks, |b| b.blockhash),
         Height => u64_from(blocks, |b| b.block_height),
         ParentSlot => u64_from(blocks, |b| b.parent_slot),
-        ParentHash => str_from(blocks, |b| b.parent_blockhash.as_deref()),
+        ParentHash => base58_col(blocks, |b| b.parent_blockhash),
     }
+}
+
+/// Column of base58-rendered block hashes, which the client hands over as bytes.
+fn base58_col<T: std::fmt::Display>(
+    blocks: &[solana_simple::Block],
+    f: impl Fn(&solana_simple::Block) -> Option<T>,
+) -> Option<AnyCol> {
+    let rendered: Vec<Option<String>> = blocks
+        .iter()
+        .map(|b| f(b).map(|value| value.to_string()))
+        .collect();
+    str_from(&rendered, |v| v.as_deref())
 }
 
 fn decode_svm_block_field(
@@ -842,7 +854,8 @@ impl BlockStore {
             u64::try_from(to_slot_exclusive).context("SVM coverage end is negative")?;
         if from >= to_exclusive {
             anyhow::bail!(
-                "SVM coverage must advance: from_slot={from_slot}, to_slot_exclusive={to_slot_exclusive}"
+                "SVM coverage must advance: from_slot={from_slot}, \
+                 to_slot_exclusive={to_slot_exclusive}"
             );
         }
 
@@ -960,7 +973,13 @@ impl BlockStore {
         if blocks.is_empty() {
             return;
         }
-        let keys = blocks.iter().map(|b| b.slot).collect();
+        // A block row without its slot has no key to merge under; the query
+        // always selects `slot`, so this only drops a malformed response row.
+        let blocks: Vec<_> = blocks.into_iter().filter(|b| b.slot.is_some()).collect();
+        if blocks.is_empty() {
+            return;
+        }
+        let keys = blocks.iter().map(|b| b.slot.unwrap()).collect();
         let cols = SvmBlockField::VARIANTS
             .iter()
             .map(|&f| svm_block_col(f, &blocks))
@@ -1100,10 +1119,14 @@ mod tests {
         }
     }
 
+    /// A real 32-byte base58 hash; the client's `Hash` newtype rejects
+    /// anything else.
+    const BLOCK_HASH: &str = "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi";
+
     fn raw_svm_block(slot: u64) -> solana_simple::Block {
         solana_simple::Block {
-            slot,
-            blockhash: "hash".to_string(),
+            slot: Some(slot),
+            blockhash: Some(BLOCK_HASH.parse().unwrap()),
             block_time: Some(123),
             ..Default::default()
         }
@@ -1301,7 +1324,7 @@ mod tests {
             summary,
             (
                 vec![Some(9)],
-                vec![Some("hash".to_string())],
+                vec![Some(BLOCK_HASH.to_string())],
                 vec![Some(123)],
                 vec![Some(777)],
                 false
@@ -1489,10 +1512,7 @@ mod tests {
     fn merge_report_only_still_overwrites() {
         let persistent = evm_page(vec![hashed_evm_block(11, 0x11)]);
         let page = evm_page(vec![hashed_evm_block(11, 0xbb)]);
-        let mismatch = persistent
-            .merge(&page, 0, true)
-            .unwrap()
-            .expect("mismatch");
+        let mismatch = persistent.merge(&page, 0, true).unwrap().expect("mismatch");
         assert_eq!(mismatch.block_number, 11);
         // Detect-only mode converges to the received hash, so the same
         // mismatch doesn't re-report on the next page.
@@ -1539,10 +1559,7 @@ mod tests {
         // what it observed and nothing else is reset: blocks it did not cover
         // keep their hashes and converge as later pages re-observe them.
         let page = evm_page(vec![hashed_evm_block(10, 0xaa)]);
-        let mismatch = persistent
-            .merge(&page, 0, true)
-            .unwrap()
-            .expect("mismatch");
+        let mismatch = persistent.merge(&page, 0, true).unwrap().expect("mismatch");
         assert_eq!(mismatch.block_number, 10);
         assert_eq!(
             (

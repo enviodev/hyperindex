@@ -177,22 +177,6 @@ describe("Field selection enum schemas", () => {
 })
 
 describe("svmEventDescriptorSchema", () => {
-  // Regression: the schema must declare `blockFields`. rescript-schema strips
-  // undeclared keys on parse, so a missing declaration silently drops SVM
-  // block-field selection before it reaches the event config.
-  it("preserves blockFields through parse", t => {
-    let json: JSON.t = %raw(`{
-      "discriminator": "0x21",
-      "discriminatorByteLen": 1,
-      "transactionFields": [],
-      "blockFields": ["height", "parentSlot", "parentHash"],
-      "includeLogs": false
-    }`)
-    let parsed = json->S.parseOrThrow(Config.svmEventDescriptorSchema)
-    let expected: option<array<Internal.svmBlockField>> = Some([Height, ParentSlot, ParentHash])
-    t.expect(parsed["blockFields"]).toEqual(expected)
-  })
-
   // Regression: the CLI emits `accountFilters` as an array of AND-groups
   // (`Vec<Vec<SvmAccountFilterJson>>`, OR-ed together). The schema used to
   // declare a flat array, so any config using `account_filters` failed to
@@ -202,8 +186,6 @@ describe("svmEventDescriptorSchema", () => {
     let json: JSON.t = %raw(`{
       "discriminator": "0x0c",
       "discriminatorByteLen": 1,
-      "transactionFields": ["signatures"],
-      "includeLogs": false,
       "accountFilters": [
         [{"position": 1, "values": ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]}],
         [{"position": 0, "values": ["So11111111111111111111111111111111111111112"]}]

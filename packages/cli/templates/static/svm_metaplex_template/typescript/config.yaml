@@ -3,7 +3,8 @@ name: solana-metaplex-token-metadata
 description: Indexes Metaplex Token Metadata creates and updates on Solana mainnet via HyperSync.
 ecosystem: svm
 chains:
-  - # Adjust just before first run: query the current height with
+  - id: solana
+    # Adjust just before first run: query the current height with
     #   curl -s https://solana.hypersync.xyz/height
     # and set this to ~30k slots below it for a quick backfill (~30s).
     start_block: 417920000
@@ -16,9 +17,5 @@ chains:
           instructions:
             - name: CreateMetadataAccountV3
               discriminator: "0x21"
-              field_selection:
-                transaction_fields: [signatures]
             - name: UpdateMetadataAccountV2
               discriminator: "0x0f"
-              field_selection:
-                transaction_fields: [signatures]

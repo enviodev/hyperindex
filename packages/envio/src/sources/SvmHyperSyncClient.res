@@ -4,7 +4,6 @@ type cfg = {
   /** Optional bearer token for the HyperSync server. */
   apiToken?: string,
   httpReqTimeoutMillis?: int,
-  maxNumRetries?: int,
   retryBaseMs?: int,
   retryCeilingMs?: int,
 }
@@ -28,14 +27,15 @@ module Registration = {
     // Earliest slot this registration accepts; `None` is unrestricted.
     startBlock: option<int>,
     discriminator?: string,
-    discriminatorByteLen: int,
     isInner?: bool,
-    includeLogs: bool,
     // DNF: outer array is OR of AND-groups.
     accountFilters: array<array<accountFilter>>,
     // camelCase Internal.svmTransactionField / svmBlockField names.
     transactionFields: array<string>,
     blockFields: array<string>,
+    accountActivityFields: array<string>,
+    logFields: array<string>,
+    instructionFields: array<string>,
     // Borsh schema pieces; empty accounts + absent argsJson = no schema.
     accounts: array<string>,
     argsJson?: string,
@@ -56,9 +56,7 @@ module Registration = {
         isWildcard: reg.isWildcard,
         startBlock: reg.startBlock,
         discriminator: ?eventConfig.discriminator,
-        discriminatorByteLen: eventConfig.discriminatorByteLen,
         isInner: ?eventConfig.isInner,
-        includeLogs: eventConfig.includeLogs,
         accountFilters: eventConfig.accountFilters->Array.map(group =>
           group->Array.map(
             (filter): accountFilter => {
@@ -67,10 +65,11 @@ module Registration = {
             },
           )
         ),
-        transactionFields: eventConfig.selectedTransactionFields->Utils.Set.toArray,
-        blockFields: eventConfig.selectedBlockFields
-        ->(Utils.magic: Utils.Set.t<Internal.svmBlockField> => Utils.Set.t<string>)
-        ->Utils.Set.toArray,
+        transactionFields: reg.fieldSelection.transactionFields->Utils.Set.toArray,
+        blockFields: reg.fieldSelection.blockFields->Utils.Set.toArray,
+        accountActivityFields: reg.fieldSelection.accountActivityFields->Utils.Set.toArray,
+        logFields: reg.fieldSelection.logFields->Utils.Set.toArray,
+        instructionFields: reg.fieldSelection.instructionFields->Utils.Set.toArray,
         accounts: eventConfig.accounts,
         argsJson: ?switch eventConfig.args {
         | JSON.Null => None
@@ -110,18 +109,20 @@ module QueryTypes = {
 
   type fieldSelection = {block?: array<blockField>, transaction?: array<transactionField>}
 
-  /** Filter for selecting instructions. All non-empty fields are AND-ed: an
-   instruction must match at least one value in every non-empty field.
+  /** Filter for selecting instruction calls. All non-empty fields are AND-ed:
+   an instruction must match at least one value in every non-empty field.
 
    Discriminator filters (d1..d8) take hex-encoded byte prefixes ("0x" optional).
    Account filters (a0..a9) take base58 pubkey strings. */
   type instructionSelection = {
-    programId?: array<string>,
+    executingAccount?: array<string>,
     d1?: array<string>,
     d2?: array<string>,
     d4?: array<string>,
     d8?: array<string>,
     isInner?: bool,
+    /** Success of the parent transaction; absent matches both. */
+    txSuccess?: bool,
   }
 
   // The `get` query surface, used only for block-data range queries; event
@@ -129,7 +130,7 @@ module QueryTypes = {
   type query = {
     fromSlot: int,
     toSlot?: int,
-    instructions?: array<instructionSelection>,
+    instructionCalls?: array<instructionSelection>,
     includeAllBlocks?: bool,
     fields?: fieldSelection,
     maxNumBlocks?: int,
@@ -155,24 +156,29 @@ module ResponseTypes = {
     extraAccounts: array<string>,
   }
 
-  type instruction = {
+  type instructionCall = {
     slot: int,
     transactionIndex: int,
     instructionAddress: array<int>,
-    programId: string,
-    accounts: array<string>,
+    /** The invoked program's account. */
+    executingAccount: string,
+    accountArguments: array<string>,
     data: string,
     d1?: string,
     d2?: string,
     d4?: string,
     d8?: string,
     isInner: bool,
-    isCommitted: bool,
+    /** Success of the parent transaction, not of this invocation. */
+    txSuccess: bool,
+    /** Per-invocation failure reason (e.g. "custom program error: 0x1"). */
+    error?: string,
+    computeUnitsConsumed?: bigint,
   }
 
   type queryResponseData = {
     blocks: array<block>,
-    instructions: array<instruction>,
+    instructionCalls: array<instructionCall>,
   }
 
   type queryResponse = {
@@ -201,8 +207,8 @@ module EventItems = {
   }
 
   type log = {
-    kind: string,
-    message: string,
+    kind?: string,
+    message?: string,
   }
 
   // One routed instruction; `block` and `transaction` are materialised from
@@ -211,17 +217,13 @@ module EventItems = {
     onEventRegistrationIndex: int,
     slot: int,
     transactionIndex: int,
-    instructionAddress: array<int>,
+    path: array<int>,
     programId: string,
     accounts: array<string>,
     data: string,
-    d1?: string,
-    d2?: string,
-    d4?: string,
-    d8?: string,
     isInner: bool,
     decoded?: ResponseTypes.decodedInstruction,
-    // Present only when the routed registration opted in via `includeLogs`.
+    // Present only when the routed registration selected `fields.log`.
     logs?: array<log>,
   }
 
@@ -268,7 +270,6 @@ let make = (
   ~url,
   ~apiToken=?,
   ~httpReqTimeoutMillis=?,
-  ~maxNumRetries=?,
   ~retryBaseMs=?,
   ~retryCeilingMs=?,
   ~eventRegistrations=[],
@@ -280,7 +281,6 @@ let make = (
       url,
       ?apiToken,
       ?httpReqTimeoutMillis,
-      ?maxNumRetries,
       ?retryBaseMs,
       ?retryCeilingMs,
     },

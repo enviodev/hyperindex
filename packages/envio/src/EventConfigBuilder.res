@@ -236,8 +236,8 @@ let buildSimulateParamsSchema = (params: array<paramMeta>): S.t<Internal.eventPa
 
 // ============== Build topic filter getters ==============
 
-let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) => value =>
-  Core.getAddon().encodeIndexedTopic(~abiType, ~value)
+let getTopicEncoder = (abiType: string): (unknown => EvmTypes.Hex.t) =>
+  value => Core.getAddon().encodeIndexedTopic(~abiType, ~value)
 
 let buildTopicGetter = (p: paramMeta) => {
   let encoder = getTopicEncoder(p.abiType)
@@ -247,6 +247,7 @@ let buildTopicGetter = (p: paramMeta) => {
     ->Utils.Dict.dangerouslyGetNonOption(p.name)
     ->Option.mapOr([], topicFilters => {
       let raw = topicFilters->(Utils.magic: JSON.t => unknown)
+
       // A tuple filter value is itself an array, so a directly-passed tuple is
       // indistinguishable from an OR-list by shape alone. A single tuple is
       // the common case, so try it first; when the value doesn't ABI-encode as
@@ -282,13 +283,153 @@ let resolveFieldSelection = (
   | Some(fields) => Utils.Set.fromArray(fields)
   | None => globalTransactionFieldsSet
   }
-  // The base eventConfig stores these as a string set (field names match the
-  // typed variants at runtime).
-  (
-    selectedBlockFields,
-    selectedTransactionFields->(
+  Internal.makeFieldSelection(
+    ~blockFields=selectedBlockFields->(
+      Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
+    ),
+    ~transactionFields=selectedTransactionFields->(
       Utils.magic: Utils.Set.t<Internal.evmTransactionField> => Utils.Set.t<string>
     ),
+    ~blockMaskFn=Evm.eventBlockFieldMask,
+    ~transactionMaskFn=Evm.eventTransactionFieldMask,
+  )
+}
+
+// `block.number` is the item's own key, so an inline selection carries it
+// whether or not the handler listed it. Nothing else is added: dropping
+// `timestamp`/`hash` is the point of naming fields inline, and the two things
+// that read them off the payload cope — the progress-latency metric
+// (`ChainState.applyBatchProgress`) skips a batch whose last block has no
+// timestamp, and `raw_events` selects them back below.
+let internalBlockFields = ["number"]
+
+// `toRawEvent` reads `block.hash`/`block.timestamp` for the `raw_events` row's
+// own columns, which are not nullable. They stay out of the row's stored
+// `block_fields` (`Evm.cleanUpRawEventFieldsInPlace` strips number/timestamp/
+// hash from it), so the column still holds exactly what the registration
+// selected.
+let rawEventBlockFields = ["hash", "timestamp"]
+
+let evmSelectionKinds = ["block", "transaction"]
+let svmSelectionKinds = ["instruction", "transaction", "accountActivity", "block", "log"]
+
+// A handler written in plain JS gets no type error for a `blocks`/`transactions`
+// typo, and an unrecognised key would read as an empty selection — silently
+// dropping every field `config.yaml` selected. Rejected here so the option is
+// held to the same shape whether or not the project type-checks it.
+let quotedJoin = (names: array<string>) =>
+  names->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
+
+let validateFieldsShapeOrThrow = (
+  fields: unknown,
+  ~registration: string,
+  ~validKeys: array<string>,
+  ~shapeNoun: string,
+) => {
+  if typeof(fields) !== #object || fields === %raw(`null`) || Array.isArray(fields) {
+    JsError.throwWithMessage(
+      `The fields option of ${registration} must be an object of ${shapeNoun} field names.`,
+    )
+  }
+  fields
+  ->(Utils.magic: unknown => dict<unknown>)
+  ->Dict.keysToArray
+  ->Array.forEach(key =>
+    if !(validKeys->Array.includes(key)) {
+      JsError.throwWithMessage(
+        `Invalid "${key}" key in the fields option of ${registration}. Valid keys: ${quotedJoin(
+            validKeys,
+          )}.`,
+      )
+    }
+  )
+}
+
+let selectionList = (fields: unknown, key: string): option<array<string>> =>
+  switch (fields->(Utils.magic: unknown => dict<unknown>))->Dict.get(key) {
+  | None => None
+  | Some(value) => Some(value->(Utils.magic: unknown => array<string>))
+  }
+
+let validBlockFields = Utils.Set.fromArray(Evm.blockFields)
+let validTransactionFields = Utils.Set.fromArray(Evm.transactionFields)
+
+let parseFieldsOrThrow = (
+  fields: option<array<string>>,
+  ~valid: Utils.Set.t<string>,
+  ~kind: string,
+  ~registration: string,
+  ~rejectEmpty=false,
+) => {
+  let seen = Utils.Set.make()
+  let fields = switch fields {
+  | None => []
+  | Some(fields) if !Array.isArray(fields) =>
+    JsError.throwWithMessage(
+      `The fields.${kind} option of ${registration} must be an array of field names.`,
+    )
+  | Some(fields) => fields
+  }
+  fields->Array.forEach(name => {
+    if !(valid->Utils.Set.has(name)) {
+      JsError.throwWithMessage(
+        `Invalid "${name}" field in the fields.${kind} option of ${registration}. Valid ${kind} fields: ${quotedJoin(
+          valid->Utils.Set.toArray,
+        )}.`,
+      )
+    }
+    if seen->Utils.Set.has(name) {
+      JsError.throwWithMessage(
+        `Duplicate "${name}" field in the fields.${kind} option of ${registration}.`,
+      )
+    }
+    seen->Utils.Set.add(name)->ignore
+  })
+  if rejectEmpty && fields->Array.length === 0 {
+    JsError.throwWithMessage(
+      `The fields.${kind} option of ${registration} must list at least one field.`,
+    )
+  }
+  seen
+}
+
+// Resolve an inline `fields` option into a selection. Depends only on the
+// option itself (the names are for error messages), never on the chain, so one
+// `onEvent` call resolves once and shares the result across every chain.
+let resolveInlineFieldSelection = (
+  fields: unknown,
+  ~contractName: string,
+  ~eventName: string,
+  ~enableRawEvents: bool,
+): Internal.fieldSelection => {
+  let registration = `the "${eventName}" event registration on contract "${contractName}"`
+  validateFieldsShapeOrThrow(
+    fields,
+    ~registration,
+    ~validKeys=evmSelectionKinds,
+    ~shapeNoun="block and transaction",
+  )
+  let blockFields = parseFieldsOrThrow(
+    selectionList(fields, "block"),
+    ~valid=validBlockFields,
+    ~kind="block",
+    ~registration,
+  )
+  let transactionFields = parseFieldsOrThrow(
+    selectionList(fields, "transaction"),
+    ~valid=validTransactionFields,
+    ~kind="transaction",
+    ~registration,
+  )
+  blockFields->Utils.Set.addMany(internalBlockFields)
+  if enableRawEvents {
+    blockFields->Utils.Set.addMany(rawEventBlockFields)
+  }
+  Internal.makeFieldSelection(
+    ~blockFields,
+    ~transactionFields,
+    ~blockMaskFn=Evm.eventBlockFieldMask,
+    ~transactionMaskFn=Evm.eventTransactionFieldMask,
   )
 }
 
@@ -306,26 +447,17 @@ let buildEvmEventConfig = (
 ): Internal.evmEventConfig => {
   let topicCount = params->Array.reduce(1, (acc, p) => p.indexed ? acc + 1 : acc)
 
-  let (selectedBlockFields, selectedTransactionFields) = resolveFieldSelection(
-    ~blockFields,
-    ~transactionFields,
-    ~globalBlockFieldsSet,
-    ~globalTransactionFieldsSet,
-  )
-
   {
     id: sighash ++ "_" ++ topicCount->Int.toString,
     name: eventName,
     contractName,
     paramsRawEventSchema: buildParamsSchema(params),
     simulateParamsSchema: buildSimulateParamsSchema(params),
-    selectedBlockFields,
-    selectedTransactionFields,
-    transactionFieldMask: Evm.eventTransactionFieldMask(selectedTransactionFields),
-    blockFieldMask: Evm.eventBlockFieldMask(
-      selectedBlockFields->(
-        Utils.magic: Utils.Set.t<Internal.evmBlockField> => Utils.Set.t<string>
-      ),
+    fieldSelection: resolveFieldSelection(
+      ~blockFields,
+      ~transactionFields,
+      ~globalBlockFieldsSet,
+      ~globalTransactionFieldsSet,
     ),
     sighash,
     topicCount,
@@ -344,6 +476,9 @@ let buildEvmOnEventRegistration = (
   ~where: option<JSON.t>,
   ~chainId: ChainId.t,
   ~onEventBlockFilterSchema: S.t<option<unknown>>,
+  // The registration's inline selection, already resolved; absent when it named
+  // no fields and takes the event config's.
+  ~fieldSelection: option<Internal.fieldSelection>=?,
   ~startBlock: option<int>=?,
 ): Internal.evmOnEventRegistration => {
   let indexedParams = eventConfig.paramsMetadata->Array.filter(p => p.indexed)
@@ -379,14 +514,126 @@ let buildEvmOnEventRegistration = (
     addressFilterParamGroups,
     dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses),
     startBlock: resolvedStartBlock,
+    fieldSelection: switch fieldSelection {
+    | Some(fieldSelection) => fieldSelection
+    | None => eventConfig.fieldSelection
+    },
   }
 }
 
 // ============== Build SVM instruction event config ==============
 
-// Always-included block fields (slot, time, hash) are prepended at runtime so
-// they're always present regardless of config.
-let alwaysIncludedSvmBlockFields: array<Internal.svmBlockField> = [Slot, Time, Hash]
+// `block.slot` is the item's own key, so an inline selection carries it
+// whether or not the handler listed it.
+let alwaysIncludedSvmBlockFields = ["slot"]
+
+let validSvmInstructionFields = Utils.Set.fromArray([
+  "args",
+  "accounts",
+  "accountArguments",
+  "programId",
+  "data",
+  "path",
+  "isInner",
+])
+let validSvmTransactionFields = Utils.Set.fromArray([
+  "transactionIndex",
+  "signature",
+  "feePayer",
+  "success",
+  "err",
+  "fee",
+  "computeUnitsConsumed",
+  "accountKeys",
+  "recentBlockhash",
+  "version",
+  "allSignatures",
+])
+let validSvmAccountActivityFields = Utils.Set.fromArray([
+  "address",
+  "transactionAccountIndex",
+  "isSigner",
+  "isWritable",
+  "lamports",
+  "lamports.pre",
+  "lamports.post",
+  "token",
+  "token.mint",
+  "token.owner",
+  "token.decimals",
+  "token.preAmount",
+  "token.postAmount",
+])
+let validSvmBlockFields = Utils.Set.fromArray([
+  "slot",
+  "time",
+  "hash",
+  "height",
+  "parentSlot",
+  "parentHash",
+])
+let validSvmLogFields = Utils.Set.fromArray(["kind", "message"])
+
+let resolveSvmInlineFieldSelection = (
+  fields: unknown,
+  ~contractName: string,
+  ~eventName: string,
+): Internal.fieldSelection => {
+  let registration = `the "${eventName}" event registration on contract "${contractName}"`
+  validateFieldsShapeOrThrow(
+    fields,
+    ~registration,
+    ~validKeys=svmSelectionKinds,
+    ~shapeNoun="instruction, transaction, accountActivity, block and log",
+  )
+  let accountActivity = selectionList(fields, "accountActivity")
+  let log = selectionList(fields, "log")
+  let instructionFields = parseFieldsOrThrow(
+    selectionList(fields, "instruction"),
+    ~valid=validSvmInstructionFields,
+    ~kind="instruction",
+    ~registration,
+  )
+  let transactionFields = parseFieldsOrThrow(
+    selectionList(fields, "transaction"),
+    ~valid=validSvmTransactionFields,
+    ~kind="transaction",
+    ~registration,
+  )
+  let accountActivityFields = parseFieldsOrThrow(
+    accountActivity,
+    ~valid=validSvmAccountActivityFields,
+    ~kind="accountActivity",
+    ~registration,
+    ~rejectEmpty=accountActivity->Option.isSome,
+  )
+  let blockFields = parseFieldsOrThrow(
+    selectionList(fields, "block"),
+    ~valid=validSvmBlockFields,
+    ~kind="block",
+    ~registration,
+  )
+  let logFields = parseFieldsOrThrow(
+    log,
+    ~valid=validSvmLogFields,
+    ~kind="log",
+    ~registration,
+    ~rejectEmpty=log->Option.isSome,
+  )
+  blockFields->Utils.Set.addMany(alwaysIncludedSvmBlockFields)
+  if accountActivityFields->Utils.Set.size > 0 {
+    transactionFields->Utils.Set.add("accountActivities")->ignore
+  }
+  Internal.makeFieldSelection(
+    ~blockFields,
+    ~transactionFields,
+    ~instructionFields,
+    ~accountActivityFields,
+    ~logFields,
+    ~blockMaskFn=Svm.eventBlockFieldMask,
+    ~transactionMaskFn=Svm.eventTransactionFieldMask,
+  )
+}
 
 let buildSvmInstructionEventConfig = (
   ~contractName: string,
@@ -394,9 +641,6 @@ let buildSvmInstructionEventConfig = (
   ~programId: SvmTypes.Pubkey.t,
   ~discriminator: option<string>,
   ~discriminatorByteLen: int,
-  ~includeLogs: bool,
-  ~transactionFields: array<Internal.svmTransactionField>=[],
-  ~blockFields: array<Internal.svmBlockField>=[],
   ~accountFilters: array<Internal.svmAccountFilterGroup>,
   ~isInner: option<bool>,
   ~accounts: array<string>=[],
@@ -408,17 +652,11 @@ let buildSvmInstructionEventConfig = (
     ->Utils.Schema.coerceToJsonPgType
     ->(Utils.magic: S.t<JSON.t> => S.t<Internal.eventParams>)
 
-  // The base eventConfig stores these as a string set (field names match the
-  // typed variants at runtime).
-  let selectedTransactionFields =
-    Utils.Set.fromArray(transactionFields)->(
-      Utils.magic: Utils.Set.t<Internal.svmTransactionField> => Utils.Set.t<string>
-    )
-  let selectedBlockFields = Utils.Set.fromArray(
-    Array.concat(alwaysIncludedSvmBlockFields, blockFields),
-  )
-  let blockFieldMask = Svm.eventBlockFieldMask(
-    selectedBlockFields->(Utils.magic: Utils.Set.t<Internal.svmBlockField> => Utils.Set.t<string>),
+  let fieldSelection = Internal.makeFieldSelection(
+    ~blockFields=Utils.Set.fromArray(alwaysIncludedSvmBlockFields),
+    ~transactionFields=Utils.Set.make(),
+    ~blockMaskFn=Svm.eventBlockFieldMask,
+    ~transactionMaskFn=Svm.eventTransactionFieldMask,
   )
   {
     id: switch discriminator {
@@ -432,11 +670,7 @@ let buildSvmInstructionEventConfig = (
     programId,
     discriminator,
     discriminatorByteLen,
-    includeLogs,
-    selectedTransactionFields,
-    transactionFieldMask: Svm.eventTransactionFieldMask(selectedTransactionFields),
-    selectedBlockFields,
-    blockFieldMask,
+    fieldSelection,
     accountFilters,
     isInner,
     accounts,
@@ -452,6 +686,7 @@ let buildSvmOnEventRegistration = (
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
+  ~fieldSelection: option<Internal.fieldSelection>=?,
   ~startBlock: option<int>=?,
 ): Internal.svmOnEventRegistration => {
   index: -1,
@@ -462,6 +697,10 @@ let buildSvmOnEventRegistration = (
   filterByAddresses: false,
   dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
   startBlock,
+  fieldSelection: switch fieldSelection {
+  | Some(fieldSelection) => fieldSelection
+  | None => eventConfig.fieldSelection
+  },
 }
 
 // ============== Build Fuel event config ==============
@@ -513,11 +752,15 @@ let buildFuelEventConfig = (
     contractName,
     paramsRawEventSchema: paramsSchema,
     simulateParamsSchema: paramsSchema,
-    // Fuel keeps the transaction inline on the payload; the block is
-    // materialised from the store with the full always-queried trio.
-    selectedTransactionFields: Utils.Set.make(),
-    transactionFieldMask: 0.,
-    blockFieldMask: Fuel.fullBlockFieldMask,
+    // Fuel keeps the transaction inline on the payload, so nothing is selected
+    // for it; the block is materialised from the store with the full
+    // always-queried trio.
+    fieldSelection: Internal.makeFieldSelection(
+      ~blockFields=Utils.Set.fromArray(Fuel.blockFields),
+      ~transactionFields=Utils.Set.fromArray(Fuel.transactionFields),
+      ~blockMaskFn=Fuel.eventBlockFieldMask,
+      ~transactionMaskFn=Fuel.eventTransactionFieldMask,
+    ),
     kind: fuelKind,
   }
 }
@@ -539,4 +782,5 @@ let buildFuelOnEventRegistration = (
   filterByAddresses: false,
   dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
   startBlock,
+  fieldSelection: eventConfig.fieldSelection,
 }

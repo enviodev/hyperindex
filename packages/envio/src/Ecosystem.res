@@ -5,7 +5,6 @@ type t = {
   blockNumberName: string,
   blockTimestampName: string,
   blockHashName: string,
-  cleanUpRawEventFieldsInPlace: JSON.t => unit,
   /** Method name that the block handler is exposed under on the public
       `indexer` object — `"onBlock"` for chain-based ecosystems, `"onSlot"`
       for SVM. Centralised here so adding a new ecosystem only requires a

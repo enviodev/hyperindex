@@ -11,7 +11,8 @@ let expectParseError = (t, ~schema=?, ~env=?, ~files=?, yaml, message) => {
 }
 
 let parseAddressConfig = (~addressFormat="checksum", ~contractName="ERC20", address): Config.t =>
-  InternalTestIndexer.fromUserApi(~configYaml=`
+  InternalTestIndexer.fromUserApi(
+    ~configYaml=`
 name: address-config
 address_format: ${addressFormat}
 contracts:
@@ -24,7 +25,8 @@ chains:
     contracts:
       - name: ${contractName}
         address: "${address}"
-`).config
+`,
+  ).config
 
 let firstContract = (config: Config.t): Config.contract => {
   let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
@@ -33,10 +35,7 @@ let firstContract = (config: Config.t): Config.contract => {
 
 describe("InternalTestIndexer.fromUserApi validation", () => {
   it("parses user YAML with explicit env and no project schema", t => {
-    let env = Dict.fromArray([
-      ("RPC_URL", "https://rpc.example.test"),
-      ("START_BLOCK", "42"),
-    ])
+    let env = Dict.fromArray([("RPC_URL", "https://rpc.example.test"), ("START_BLOCK", "42")])
 
     let {config} = InternalTestIndexer.fromUserApi(
       ~env,
@@ -67,10 +66,7 @@ chains:
 
   it("resolves ABI paths from caller-provided virtual files", t => {
     let files = Dict.fromArray([
-      (
-        "abis/token.json",
-        `[{"type":"event","name":"Transfer","inputs":[],"anonymous":false}]`,
-      ),
+      ("abis/token.json", `[{"type":"event","name":"Transfer","inputs":[],"anonymous":false}]`),
     ])
 
     let {config} = InternalTestIndexer.fromUserApi(
@@ -98,18 +94,19 @@ chains:
 })
 
 describe("EVM config YAML", () => {
-  [("greeter", "Greeter"), ("Greeter", "Greeter")]->Array.forEach(
-    ((inputName, expectedName)) => {
-      it(`normalizes contract name ${inputName}`, t => {
+  [("greeter", "Greeter"), ("Greeter", "Greeter")]->Array.forEach(((inputName, expectedName)) => {
+    it(
+      `normalizes contract name ${inputName}`,
+      t => {
         let contract =
           parseAddressConfig(
             ~contractName=inputName,
             "0x0000000000000000000000000000000000000001",
           )->firstContract
         t.expect(contract.name).toBe(expectedName)
-      })
-    },
-  )
+      },
+    )
+  })
 
   it("preserves a full 20-byte address through the complete YAML pipeline", t => {
     let address = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
@@ -124,24 +121,31 @@ describe("EVM config YAML", () => {
     ("lowercase", "0xa2f6e6029638ccb484a2ccb6414499ad3e825cac"),
     ("lowercase", "0xA2F6E6029638CCB484A2CCB6414499AD3E825CAC"),
   ]->Array.forEach(((addressFormat, address)) => {
-    it(`normalizes ${address} with address_format: ${addressFormat}`, t => {
-      let contract = parseAddressConfig(~addressFormat, address)->firstContract
-      let parsed = contract.addresses->Array.getUnsafe(0)
-      t.expect(parsed->Address.toString).toBe(
-        switch addressFormat {
-        | "lowercase" => "0xa2f6e6029638ccb484a2ccb6414499ad3e825cac"
-        | _ => "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"
-        },
-      )
-    })
+    it(
+      `normalizes ${address} with address_format: ${addressFormat}`,
+      t => {
+        let contract = parseAddressConfig(~addressFormat, address)->firstContract
+        let parsed = contract.addresses->Array.getUnsafe(0)
+        t.expect(parsed->Address.toString).toBe(
+          switch addressFormat {
+          | "lowercase" => "0xa2f6e6029638ccb484a2ccb6414499ad3e825cac"
+          | _ => "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"
+          },
+        )
+      },
+    )
   })
 
   ["checksum", "lowercase"]->Array.forEach(addressFormat => {
-    it(`rejects invalid addresses with address_format: ${addressFormat}`, t => {
-      t->toThrowErrorEqual(() => parseAddressConfig(~addressFormat, "0xfoo")->ignore, 
-        `Config parse error: Contract "ERC20" on chain 1 has invalid address "0xfoo". Expected a 20-byte hex string starting with 0x.`,
-      )
-    })
+    it(
+      `rejects invalid addresses with address_format: ${addressFormat}`,
+      t => {
+        t->toThrowErrorEqual(
+          () => parseAddressConfig(~addressFormat, "0xfoo")->ignore,
+          `Config parse error: Contract "ERC20" on chain 1 has invalid address "0xfoo". Expected a 20-byte hex string starting with 0x.`,
+        )
+      },
+    )
   })
 
   it("rejects one address assigned to two contracts on the same chain", t => {
@@ -192,7 +196,8 @@ chains:
   })
 
   it("allows the same address on different chains", t => {
-    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
 name: multichain-address
 contracts:
   - name: AaveToken
@@ -209,7 +214,8 @@ chains:
     contracts:
       - name: AaveToken
         address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
-`)
+`,
+    )
     t.expect(config.chainMap->ChainMap.values->Array.length).toBe(2)
   })
 
@@ -317,7 +323,8 @@ chains:
 type Transfer @storage(clickhouse: {
   partitionBy: "toYYYYMM(timestamp)",
   orderBy: ["timestamp"],
-  ttl: "timestamp + INTERVAL 2 YEAR"
+  ttl: "timestamp + INTERVAL 2 YEAR",
+  skippingIndexes: [{ name: "idx_amount", expr: "amount", type: "minmax", granularity: 4 }]
 }) {
   id: ID!
   timestamp: Timestamp!
@@ -344,6 +351,7 @@ chains:
         partitionBy: "toYYYYMM(timestamp)",
         orderBy: ["timestamp"],
         ttl: "timestamp + INTERVAL 2 YEAR",
+        skippingIndexes: [{name: "idx_amount", expr: "amount", type_: "minmax", granularity: 4}],
       },
     })
   })
@@ -492,7 +500,8 @@ chains:
 name: unknown-svm-field
 ecosystem: svm
 chains:
-  - start_block: 1
+  - id: solana
+    start_block: 1
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -502,7 +511,7 @@ chains:
           bogus_extra: true
           instructions: []
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: unknown field \`bogus_extra\`, expected one of \`name\`, \`program_id\`, \`handler\`, \`idl\`, \`instructions\` at line 12 column 11",
+      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: unknown field \`bogus_extra\`, expected one of \`name\`, \`program_id\`, \`handler\`, \`idl\`, \`instructions\` at line 13 column 11",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
@@ -547,10 +556,12 @@ chains:
     )
   })
 
-  it("rejects two events with the same name but different signatures, suggesting the name alias", t => {
-    expectParseError(
-      t,
-      `
+  it(
+    "rejects two events with the same name but different signatures, suggesting the name alias",
+    t => {
+      expectParseError(
+        t,
+        `
 name: overloaded-event
 contracts:
   - name: Token
@@ -561,9 +572,10 @@ chains:
   - id: 1
     start_block: 0
 `,
-      `Config parse error: Failed parsing globally defined contract: Contract Token has two events named "Transfer". Give one of them a unique name with the "name" field so the generated code and the indexer's routing can tell them apart.`,
-    )
-  })
+        `Config parse error: Failed parsing globally defined contract: Contract Token has two events named "Transfer". Give one of them a unique name with the "name" field so the generated code and the indexer's routing can tell them apart.`,
+      )
+    },
+  )
 
   it("preserves the root cause from nested Rust error contexts", t => {
     expectParseError(
@@ -729,7 +741,7 @@ chains:
       `
 name: unavailable-rpc-transaction-field
 field_selection:
-  transaction_fields: [gas]
+  transaction_fields: [accessList]
 chains:
   - id: 999999
     rpc:
@@ -737,22 +749,7 @@ chains:
       for: sync
     start_block: 0
 `,
-      "Config parse error: The following selected transaction_fields are unavailable for indexing via RPC: gas",
-    ),
-    (
-      "rejects block fields unavailable through RPC sync",
-      `
-name: unavailable-rpc-block-field
-field_selection:
-  block_fields: [sha3Uncles]
-chains:
-  - id: 999999
-    rpc:
-      url: https://rpc.example.test
-      for: sync
-    start_block: 0
-`,
-      "Config parse error: The following selected block_fields are unavailable for indexing via RPC: sha3Uncles",
+      "Config parse error: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
     ),
     (
       "rejects event fields unavailable on a local RPC contract",
@@ -769,9 +766,9 @@ chains:
         events:
           - event: Transfer()
             field_selection:
-              transaction_fields: [gas]
+              transaction_fields: [accessList]
 `,
-      "Config parse error: Failed parsing abi types for events in contract Token on network 999999: The following selected transaction_fields are unavailable for indexing via RPC: gas",
+      "Config parse error: Failed parsing abi types for events in contract Token on network 999999: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
     ),
     (
       "rejects event fields unavailable on a global contract used by RPC",
@@ -782,7 +779,7 @@ contracts:
     events:
       - event: Transfer()
         field_selection:
-          transaction_fields: [gas]
+          transaction_fields: [accessList]
 chains:
   - id: 999999
     rpc:
@@ -792,7 +789,7 @@ chains:
     contracts:
       - name: Token
 `,
-      "Config parse error: Failed parsing abi types for events in global contract Token: The following selected transaction_fields are unavailable for indexing via RPC: gas",
+      "Config parse error: Failed parsing abi types for events in global contract Token: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
     ),
     (
       "rejects duplicate contract names case-insensitively",
@@ -898,7 +895,8 @@ describe("config YAML success cases", () => {
   it("allows distinct events on one contract and the same event across contracts", t => {
     // Distinct signatures on one contract are fine, and the same event on two
     // different contracts is allowed — routing scopes matches by contract.
-    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
 name: distinct-and-cross-contract-events
 contracts:
   - name: ERC20
@@ -916,7 +914,8 @@ chains:
         address: "0x1111111111111111111111111111111111111111"
       - name: ERC721
         address: "0x2222222222222222222222222222222222222222"
-`)
+`,
+    )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(chain.contracts->Array.length).toBe(2)
   })
@@ -925,7 +924,8 @@ chains:
     // Two events resolving to the name "Transfer" would clash, but the alias on
     // one gives them distinct names (and their signatures differ, so no dispatch
     // collision either).
-    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
 name: aliased-overload
 contracts:
   - name: Token
@@ -939,40 +939,47 @@ chains:
     contracts:
       - name: Token
         address: "0x1111111111111111111111111111111111111111"
-`)
+`,
+    )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     let contract = chain.contracts->Array.getUnsafe(0)
     t.expect(contract.events->Array.map(e => e.name)).toEqual(["TransferSimple", "Transfer"])
   })
 
   it("parses a minimal Fuel config through the public boundary", t => {
-    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
 name: fuel-config
 ecosystem: fuel
 chains:
   - id: 0
     start_block: 7
-`)
+`,
+    )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.ecosystem.name).toEqual(Ecosystem.Fuel)
     t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("0", 7))
   })
 
   it("parses a minimal SVM config through the public boundary", t => {
-    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
 name: svm-config
 ecosystem: svm
 chains:
-  - rpc: https://solana.example.test
+  - id: solana
+    rpc: https://solana.example.test
     start_block: 8
-`)
+`,
+    )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.ecosystem.name).toEqual(Ecosystem.Svm)
-    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("0", 8))
+    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("7565164", 8))
   })
 
   it("validates event field selections against only the chain that uses them", t => {
-    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
 name: mixed-sync-sources
 chains:
   - id: 1
@@ -982,7 +989,7 @@ chains:
         events:
           - event: Transfer()
             field_selection:
-              transaction_fields: [gas]
+              transaction_fields: [accessList]
   - id: 999999
     rpc:
       url: https://rpc.example.test
@@ -992,19 +999,21 @@ chains:
       - name: RpcOnly
         events:
           - event: Ping()
-`)
+`,
+    )
     t.expect(config.chainMap->ChainMap.values->Array.length).toBe(2)
   })
 
   it("allows a global contract with HyperSync-only fields when unrelated chains use RPC", t => {
-    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
 name: mixed-global-contract
 contracts:
   - name: HyperOnly
     events:
       - event: Transfer()
         field_selection:
-          transaction_fields: [gas]
+          transaction_fields: [accessList]
 chains:
   - id: 1
     start_block: 0
@@ -1015,12 +1024,14 @@ chains:
       url: https://rpc.example.test
       for: sync
     start_block: 0
-`)
+`,
+    )
     t.expect(config.chainMap->ChainMap.values->Array.length).toBe(2)
   })
 
   it("removes skipped chains from runtime config", t => {
-    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
 name: chain-options
 chains:
   - id: 1
@@ -1028,7 +1039,8 @@ chains:
     start_block: 1000
   - id: 137
     start_block: 2000
-`)
+`,
+    )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.chainMap->ChainMap.values->Array.length).toBe(1)
     t.expect(chain.id->ChainId.toString).toBe("137")
@@ -1036,14 +1048,16 @@ chains:
   })
 
   it("normalizes trailing slashes in HyperSync URLs", t => {
-    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
 name: hypersync-url
 chains:
   - id: 1
     hypersync_config:
       url: https://eth.hypersync.xyz//
     start_block: 0
-`)
+`,
+    )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     switch chain.sourceConfig {
     | Config.EvmSourceConfig({hypersync: Some(url)}) =>
@@ -1080,7 +1094,8 @@ chains:
   })
 
   it("accepts user event signatures with prefixes, tuple spacing, and trailing semicolons", t => {
-    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
 name: event-signature-formatting
 contracts:
   - name: Shop
@@ -1091,7 +1106,8 @@ chains:
     start_block: 0
     contracts:
       - name: Shop
-`)
+`,
+    )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     let contract = chain.contracts->Array.getUnsafe(0)
     let event = contract.events->Array.getUnsafe(0)
@@ -1113,7 +1129,8 @@ chains:
   })
 
   it("resolves per-contract start blocks and leaves unset ones to the chain default", t => {
-    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
 name: per-contract-start-block
 contracts:
   - name: Early
@@ -1137,7 +1154,8 @@ chains:
         start_block: 1500
       - name: Default
         address: "0x3333333333333333333333333333333333333333"
-`)
+`,
+    )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     let byName = chain.contracts->Array.toSorted((a, b) => String.compare(a.name, b.name))
     t.expect(byName->Array.map(c => (c.name, c.startBlock))).toEqual([
@@ -1148,7 +1166,8 @@ chains:
   })
 
   it("keeps a contract with no address for dynamic registration", t => {
-    let {config} = InternalTestIndexer.fromUserApi(~configYaml=`
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
 name: factory-and-dynamic
 contracts:
   - name: Factory
@@ -1164,7 +1183,8 @@ chains:
       - name: Factory
         address: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
       - name: Pool
-`)
+`,
+    )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     let byName = chain.contracts->Array.toSorted((a, b) => String.compare(a.name, b.name))
     t.expect(byName->Array.map(c => (c.name, c.addresses->Array.length))).toEqual([
@@ -1179,7 +1199,8 @@ describe("SVM config validation errors", () => {
 name: svm-validation
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1314,7 +1335,8 @@ chains:
 name: duplicate-programs
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1322,7 +1344,8 @@ chains:
         - name: Shared
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           instructions: []
-  - start_block: 0
+  - id: solana-devnet
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1342,7 +1365,8 @@ chains:
 name: missing-svm-source
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
 `,
       "Config parse error: A chain must define a data source: either an \`rpc\` endpoint or an \`experimental\` HyperSync config. Both are missing.",
     )
@@ -1581,7 +1605,7 @@ type Token @storage(clickhouse: {indexGranularity: 1024}) {
   id: ID!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Invalid @storage directive on \`Token\`. Unknown \`clickhouse\` option \`indexGranularity\`. Expected options from {partitionBy, orderBy, ttl}, e.g. clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}.",
+      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Invalid @storage directive on \`Token\`. Unknown \`clickhouse\` option \`indexGranularity\`. Expected options from {partitionBy, orderBy, ttl, skippingIndexes}, e.g. clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}.",
     ),
     (
       "rejects clickhouse orderBy referencing missing fields",
@@ -1857,7 +1881,11 @@ chains:
 `
 
   it("reports an ABI path omitted from virtual files", t => {
-    expectParseError(t, evmYaml, "Config parse error: Failed parsing abi types for events in contract Token on network 1: Failed to get ABI relative to the config: Virtual config file \"abis/Token.json\" was not provided")
+    expectParseError(
+      t,
+      evmYaml,
+      "Config parse error: Failed parsing abi types for events in contract Token on network 1: Failed to get ABI relative to the config: Virtual config file \"abis/Token.json\" was not provided",
+    )
   })
 
   it("reports malformed ABI JSON", t => {
@@ -1873,10 +1901,7 @@ chains:
     expectParseError(
       t,
       ~files=Dict.fromArray([
-        (
-          "abis/Token.json",
-          `[{"type":"event","name":"Approval","inputs":[],"anonymous":false}]`,
-        ),
+        ("abis/Token.json", `[{"type":"event","name":"Approval","inputs":[],"anonymous":false}]`),
       ]),
       evmYaml,
       "Config parse error: Failed parsing abi types for events in contract Token on network 1: Event Transfer not found in ABI file",
@@ -1890,7 +1915,8 @@ chains:
 name: missing-idl
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1912,7 +1938,8 @@ chains:
 name: duplicate-svm-schema
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1936,7 +1963,8 @@ chains:
 name: incomplete-svm-layout
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz

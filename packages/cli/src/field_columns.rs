@@ -41,16 +41,32 @@ pub fn field_names<F: Copy>(
     variants.iter().map(|&f| name(f).to_string()).collect()
 }
 
-/// The materialised SVM token balance, matching the public `svmTokenBalance`
-/// shape (napi camel-cases the field names).
 #[napi(object)]
 #[derive(Clone)]
-pub struct SvmTokenBalanceOut {
-    pub account: Option<String>,
-    pub mint: Option<String>,
+pub struct SvmLamportsOut {
+    pub pre: Option<BigInt>,
+    pub post: Option<BigInt>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct SvmAccountTokenOut {
+    pub mint: String,
     pub owner: Option<String>,
-    pub pre_amount: Option<String>,
-    pub post_amount: Option<String>,
+    pub decimals: Option<u8>,
+    pub pre_amount: Option<BigInt>,
+    pub post_amount: Option<BigInt>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct SvmAccountActivityOut {
+    pub address: String,
+    pub transaction_account_index: Option<i64>,
+    pub is_signer: Option<bool>,
+    pub is_writable: Option<bool>,
+    pub lamports: Option<SvmLamportsOut>,
+    pub token: Option<SvmAccountTokenOut>,
 }
 
 /// One materialised field across all rows: struct-of-arrays, one entry per row,
@@ -66,7 +82,7 @@ pub enum Column {
     StrVec(Vec<Option<Vec<String>>>),
     AccessList(Vec<Option<Vec<AccessListItem>>>),
     AuthList(Vec<Option<Vec<AuthorizationItem>>>),
-    TokenBalances(Vec<Option<Vec<SvmTokenBalanceOut>>>),
+    AccountActivities(Vec<Option<Vec<SvmAccountActivityOut>>>),
 }
 
 impl Column {
@@ -87,7 +103,7 @@ impl Column {
             Column::StrVec(v) => set_col(env, objs, key, v),
             Column::AccessList(v) => set_col(env, objs, key, v),
             Column::AuthList(v) => set_col(env, objs, key, v),
-            Column::TokenBalances(v) => set_col(env, objs, key, v),
+            Column::AccountActivities(v) => set_col(env, objs, key, v),
         }
     }
 }

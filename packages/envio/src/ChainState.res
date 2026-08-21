@@ -301,13 +301,15 @@ let makeInternal = (
         }),
       ]
     }
-  | Config.SimulateSourceConfig({items, endBlock}) => [
+  | Config.SimulateSourceConfig({items, endBlock, ?transactionStore, ?blockStore}) => [
       SimulateSource.make(
         ~items,
         ~endBlock,
         ~chainId,
         ~addressStore,
         ~ecosystem=config.ecosystem.name,
+        ~transactionStore,
+        ~blockStore,
       ),
     ]
   // For tests: use ready-to-use sources directly
@@ -778,7 +780,7 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
       | Some(_) => () // RPC/simulate/Fuel carry the transaction inline.
       | None =>
         let {transactionIndex} = eventItem
-        let mask = eventItem.onEventRegistration.eventConfig.transactionFieldMask
+        let mask = eventItem.onEventRegistration.fieldSelection.transactionMask
         if mask != 0. {
           anyTransactionFieldSelected := true
         }
@@ -804,7 +806,7 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
       switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
       | Some(_) => () // RPC/simulate carry the block inline.
       | None =>
-        let mask = eventItem.onEventRegistration.eventConfig.blockFieldMask
+        let mask = eventItem.onEventRegistration.fieldSelection.blockMask
         let last = blockItemGroups->Array.length - 1
         if last >= 0 && blockBlockNumbers->Array.getUnsafe(last) == blockNumber {
           blockItemGroups->Array.getUnsafe(last)->Array.push(eventItem)
@@ -852,6 +854,12 @@ let applyTransactionGroups = async (store: TransactionStore.t, g: transactionGro
       g.payloadGroups->Array.forEachWithIndex((payloads, i) => {
         let tx = txs->Array.getUnsafe(i)
         payloads->Array.forEach(payload => payload->Internal.setPayloadTransaction(tx))
+        switch (
+          tx->(Utils.magic: Internal.eventTransaction => dict<unknown>)
+        )->Dict.get("accountActivities") {
+        | Some(_) => payloads->Array.forEach(payload => Svm.attachAccountActivities(payload, tx))
+        | None => ()
+        }
       })
     } else {
       g.payloadGroups->Array.forEach(payloads =>

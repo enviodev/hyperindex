@@ -1,9 +1,3 @@
-let cleanUpRawEventFieldsInPlace: JSON.t => unit = %raw(`fields => {
-    delete fields.hash
-    delete fields.height
-    delete fields.time
-  }`)
-
 // Ordered transaction field names, the field codes shared with the Rust store
 // (`SvmTxField`). Derived from the typed field list so the two can't drift;
 // `Internal.allSvmTransactionFields` is pinned to the Rust ordinal order by a test.
@@ -20,19 +14,43 @@ let eventTransactionFieldMask = TransactionStore.makeMaskFn(transactionFields)
 // Rust store (`SvmBlockField`) — keep this order in sync.
 let blockFields = ["slot", "time", "hash", "height", "parentSlot", "parentHash"]
 
-// `slot`/`time`/`hash` are always included; every other block field is opt-in
-// via `field_selection.block_fields`. All are materialised from the store.
+// `slot` is always included (the item's key); every other block field is
+// opt-in via handler `fields.block`. All are materialised from the store.
 //
 // One instruction's selected block fields → store selection bitmask. Computed per
 // event at config build and cached on the event config.
 let eventBlockFieldMask = BlockStore.makeMaskFn(blockFields)
+
+let attachAccountActivities = (payload: Internal.eventPayload, tx: Internal.eventTransaction) => {
+  let instruction = payload->(Utils.magic: Internal.eventPayload => dict<unknown>)
+  let transaction = tx->(Utils.magic: Internal.eventTransaction => dict<unknown>)
+  switch (instruction->Dict.get("accounts"), transaction->Dict.get("accountActivities")) {
+  | (Some(accounts), Some(activities)) if !(accounts->Array.isArray) =>
+    let byAddress = Dict.make()
+    (activities->(Utils.magic: unknown => array<Envio.svmAccountActivity>))->Array.forEach(
+      activity => byAddress->Dict.set(activity.address->SvmTypes.Pubkey.toString, activity),
+    )
+    (accounts->(Utils.magic: unknown => dict<Envio.svmInstructionAccount>))
+    ->Dict.valuesToArray
+    ->Array.forEach(account =>
+      switch byAddress->Dict.get(account.address->SvmTypes.Pubkey.toString) {
+      | Some(activity) =>
+        (account->(Utils.magic: Envio.svmInstructionAccount => dict<unknown>))->Dict.set(
+          "activity",
+          activity->(Utils.magic: Envio.svmAccountActivity => unknown),
+        )
+      | None => ()
+      }
+    )
+  | _ => ()
+  }
+}
 
 let make = (~logger: Pino.t): Ecosystem.t => {
   name: Svm,
   blockNumberName: "height",
   blockTimestampName: "time",
   blockHashName: "hash",
-  cleanUpRawEventFieldsInPlace,
   onBlockMethodName: "onSlot",
   // SVM filter shape: `{slot: {_gte?, _lte?, _every?}}`.
   // Inner range chunk parsed by `blockRangeSchema` in `Main.res`.
@@ -43,16 +61,18 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   logger,
   toEvent: eventItem => eventItem.payload->(Utils.magic: Internal.eventPayload => Internal.event),
   toEventLogger: eventItem => {
-    let instruction =
-      eventItem.payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
+    let eventConfig =
+      eventItem.onEventRegistration.eventConfig->(
+        Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig
+      )
     Logging.createChildFrom(
       ~logger,
       ~params={
-        "program": eventItem.onEventRegistration.eventConfig.contractName,
-        "instruction": eventItem.onEventRegistration.eventConfig.name,
+        "program": eventConfig.contractName,
+        "instruction": eventConfig.name,
         "chainId": eventItem.chainId,
         "slot": eventItem.blockNumber,
-        "programId": instruction.programId,
+        "programId": eventConfig.programId,
       },
     )
   },
