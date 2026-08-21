@@ -3660,6 +3660,8 @@ describe("SourceManager height subscription", () => {
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=2_000,
     )
+    // Reported from the start: the source can subscribe, and a stream that has
+    // not come up yet is exactly what zero connects says.
     let samplesBeforeSubscribing = sourceManager->SourceManager.getHeightStreamSamples
     await subscribeAndGoLive(mock, sourceManager, ~knownHeight=100)
     let samplesWhileHealthy = sourceManager->SourceManager.getHeightStreamSamples
@@ -3690,7 +3692,14 @@ describe("SourceManager height subscription", () => {
       samplesWhileHealthy,
       sourceManager->SourceManager.getHeightStreamSamples,
     )).toStrictEqual((
-      [],
+      [
+        {
+          SourceManager.sourceName: "MockSource",
+          chainId: 1->ChainId.fromInt,
+          connectCount: 0,
+          disconnects: [],
+        },
+      ],
       [
         {
           SourceManager.sourceName: "MockSource",
@@ -3712,7 +3721,7 @@ describe("SourceManager height subscription", () => {
     ))
   })
 
-  Async.it("Reports nothing for a stream that has never connected", async t => {
+  Async.it("Reports a stream that has never connected as zero connects", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
@@ -3731,7 +3740,8 @@ describe("SourceManager height subscription", () => {
 
     // A ws url pointing at a node that will never accept the subscription. The
     // retries are attempts at a connection that never existed, so there is
-    // nothing to have disconnected.
+    // nothing to have disconnected, and the connect count is the only thing
+    // that says the stream is down.
     mock.setHeightSubscriptionStatus(Down({reason: "connect-failed"}))
     mock.setHeightSubscriptionStatus(Down({reason: "connect-failed"}))
     await Utils.delay(0)
@@ -3743,7 +3753,14 @@ describe("SourceManager height subscription", () => {
     let _ = await waiting
 
     t.expect((samplesWhileDown, sourceManager->SourceManager.getHeightStreamSamples)).toStrictEqual((
-      [],
+      [
+        {
+          SourceManager.sourceName: "MockSource",
+          chainId: 1->ChainId.fromInt,
+          connectCount: 0,
+          disconnects: [],
+        },
+      ],
       [
         {
           SourceManager.sourceName: "MockSource",

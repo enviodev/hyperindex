@@ -145,6 +145,50 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
     ).toBe(false)
   })
 
+  it("Renders a stream that has never connected as zero connects", t => {
+    let metrics: Metrics.t = {
+      startTime: Date.fromTime(0.),
+      metricTime: Date.fromTime(0.),
+      elapsedSeconds: 0.,
+      targetBufferSize: 0,
+      isInReorgThreshold: false,
+      rollbackEnabled: false,
+      maxBatchSize: 0,
+      preloadSeconds: 0.,
+      processingSeconds: 0.,
+      processingStalledOnFetchSeconds: 0.,
+      processingStalledOnStorageWriteSeconds: 0.,
+      rollbackSeconds: 0.,
+      rollbackCount: 0,
+      rollbackEventsCount: 0.,
+      chains: [],
+      handlers: [],
+      effects: [],
+      storageLoads: [],
+      storageWrites: [],
+      historyPrunes: [],
+      sourceRequests: [],
+      sourceHeights: [],
+      sourceHeightStreams: [
+        {
+          source: "RPC (rpc.example.com)",
+          chainId: 1->ChainId.fromInt,
+          connectCount: 0,
+          disconnectsByReason: [],
+        },
+      ],
+    }
+
+    // Nothing has disconnected, because nothing ever connected. Without the
+    // zero there is no series at all, and a ws url the node will never accept
+    // reads exactly like a chain that was never asked to stream.
+    t.expect(
+      Metrics.collect(~metrics=Some(metrics))
+      ->String.split("\n")
+      ->Array.filter(line => line->String.startsWith("envio_source_height_stream")),
+    ).toStrictEqual([`envio_source_height_stream_connects_total{source="RPC (rpc.example.com)",chainId="1"} 0`])
+  })
+
   it("Aggregates height stream samples that share a source name and chain", t => {
     let metrics: Metrics.t = {
       startTime: Date.fromTime(0.),
@@ -468,7 +512,7 @@ envio_source_request_total{source="HyperSync",chainId="1",method="heightPush"} 7
 # TYPE envio_source_request_seconds_total counter
 envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 33.75
 
-# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected, counting the first connection. Every connection either is still delivering or has been counted as a disconnect, so one more connect than disconnects means the stream is up and equal counts mean it is down, with the indexer polling the source for the height in the meantime.
+# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected, counting the first connection. Every connection either is still delivering or has been counted as a disconnect, so one more connect than disconnects means the stream is up and equal counts mean it is down, with the indexer polling the source for the height in the meantime. Zero is a stream that has never come up at all.
 # TYPE envio_source_height_stream_connects_total counter
 envio_source_height_stream_connects_total{source="HyperSync",chainId="1"} 3
 

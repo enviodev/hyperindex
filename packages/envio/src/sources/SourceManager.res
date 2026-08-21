@@ -169,8 +169,10 @@ let getSourceHeightSamples = (sourceManager: t): array<sourceHeightSample> => {
 }
 
 // Per-source height subscription health for envio_source_height_stream_*.
-// A source with nothing to report is skipped, so a chain that only ever polls
-// renders none of it rather than sitting at zero on it.
+// Every source that can subscribe is reported, including one that has never
+// connected — that is a stream nothing else would say anything about. A source
+// that cannot subscribe is skipped, so a chain that only ever polls renders
+// none of it rather than sitting at zero on it.
 type heightStreamSample = {
   sourceName: string,
   chainId: ChainId.t,
@@ -188,7 +190,7 @@ let getHeightStreamSamples = (sourceManager: t): array<heightStreamSample> => {
       sourceState.heightStreamDisconnects
       ->Dict.toArray
       ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b))
-    if sourceState.heightStreamConnects > 0 || disconnects->Array.length > 0 {
+    if sourceState.source.createHeightSubscription->Option.isSome {
       samples->Array.push({
         sourceName: sourceState.source.name,
         chainId: sourceState.source.chainId,

@@ -273,16 +273,17 @@ let renderMetrics = (b: builder, metrics: t) => {
       labels,
       byLabels->Utils.Dict.dangerouslyGetNonOption(labels)->Option.getOr(0) + count,
     )
-  // A counter that stands at zero says the same thing as no series at all, and
-  // the height stream families carry one per source, so they are dropped rather
-  // than rendered flat.
-  let nonZero = byLabels => byLabels->Dict.toArray->Array.filter(((_, count)) => count !== 0)
+  // Zero connects is the one count worth rendering flat: it is a stream that
+  // has never come up, which the disconnects say nothing about — retries at a
+  // connection that never opened are not disconnections — and which is
+  // otherwise indistinguishable from a chain that was never configured to
+  // stream at all.
   let heightStreamConnects = {
     let byLabels: dict<int> = Dict.make()
     metrics.sourceHeightStreams->Array.forEach(s =>
       byLabels->addTo(sourceLabels(~source=s.source, ~chainId=s.chainId), s.connectCount)
     )
-    byLabels->nonZero
+    byLabels->Dict.toArray
   }
   let heightStreamDisconnects = {
     let byLabels: dict<int> = Dict.make()
@@ -294,7 +295,7 @@ let renderMetrics = (b: builder, metrics: t) => {
         )
       )
     )
-    byLabels->nonZero
+    byLabels->Dict.toArray
   }
 
   b->single(
@@ -513,7 +514,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   if heightStreamConnects->Array.length > 0 {
     b->series(
       ~name="envio_source_height_stream_connects_total",
-      ~help="The number of times a source's height subscription connected, counting the first connection. Every connection either is still delivering or has been counted as a disconnect, so one more connect than disconnects means the stream is up and equal counts mean it is down, with the indexer polling the source for the height in the meantime.",
+      ~help="The number of times a source's height subscription connected, counting the first connection. Every connection either is still delivering or has been counted as a disconnect, so one more connect than disconnects means the stream is up and equal counts mean it is down, with the indexer polling the source for the height in the meantime. Zero is a stream that has never come up at all.",
       ~kind="counter",
       ~entries=heightStreamConnects,
       ~value=count => count->Int.toFloat,

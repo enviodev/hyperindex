@@ -2008,7 +2008,12 @@ describe("RpcSource - height subscription", () => {
     mock.close()
 
     // Nothing pushes heights on this source, so the wait has to have polled its
-    // way to the new one.
-    t.expect((newHeight, blockNumberCalls.contents > 2)).toEqual((101, true))
+    // way to the new one, and the height stream families have to stay off a
+    // scrape for a chain that has no stream to report on.
+    t.expect((
+      newHeight,
+      blockNumberCalls.contents > 2,
+      sourceManager->SourceManager.getHeightStreamSamples,
+    )).toEqual((101, true, []))
   })
 })
