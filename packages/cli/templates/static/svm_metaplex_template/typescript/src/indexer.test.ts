@@ -11,6 +11,23 @@ const AUTHORITY = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 const NEW_AUTHORITY = "3n1mGVcxZeEjTFxrKkbVfCkZ5DVQZbY9m2Ao8QwEMPLd";
 const SIGNATURE =
   "5j7s6NiJS3JAkvgkoc18WVAsiSaci2pxB2A6ueCJP4tprA2TFg9wSyTLeYouxPBJEMzJinENTkpA52YStRW5Dia7";
+const NAME = "Test Token";
+const SYMBOL = "TEST";
+const URI = "https://example.com/metadata.json";
+
+const createArgs = {
+  data: {
+    name: NAME,
+    symbol: SYMBOL,
+    uri: URI,
+    sellerFeeBasisPoints: 0,
+    creators: null,
+    collection: null,
+    uses: null,
+  },
+  isMutable: true,
+  collectionDetails: null,
+};
 
 describe("Metaplex Token Metadata handlers", () => {
   it("records the account a CreateMetadataAccountV3 opens", async (t) => {
@@ -29,6 +46,7 @@ describe("Metaplex Token Metadata handlers", () => {
                 mint: { address: MINT },
                 updateAuthority: { address: AUTHORITY },
               },
+              args: createArgs,
               transaction: { signature: SIGNATURE },
             },
           ],
@@ -40,6 +58,9 @@ describe("Metaplex Token Metadata handlers", () => {
       id: METADATA_PDA,
       mint: MINT,
       updateAuthority: AUTHORITY,
+      name: NAME,
+      symbol: SYMBOL,
+      uri: URI,
       lastUpdatedSlot: START_SLOT,
       updateCount: 0,
       createdAtSlot: START_SLOT,
@@ -63,6 +84,7 @@ describe("Metaplex Token Metadata handlers", () => {
                 mint: { address: MINT },
                 updateAuthority: { address: AUTHORITY },
               },
+              args: createArgs,
               transaction: { signature: SIGNATURE },
             },
             {
@@ -71,7 +93,13 @@ describe("Metaplex Token Metadata handlers", () => {
               slot: START_SLOT + 1,
               accounts: {
                 metadata: { address: METADATA_PDA },
-                updateAuthority: { address: NEW_AUTHORITY },
+                updateAuthority: { address: AUTHORITY },
+              },
+              args: {
+                data: null,
+                newUpdateAuthority: NEW_AUTHORITY,
+                primarySaleHappened: null,
+                isMutable: null,
               },
               transaction: { signature: SIGNATURE },
             },
@@ -88,6 +116,9 @@ describe("Metaplex Token Metadata handlers", () => {
         id: METADATA_PDA,
         mint: MINT,
         updateAuthority: NEW_AUTHORITY,
+        name: NAME,
+        symbol: SYMBOL,
+        uri: URI,
         lastUpdatedSlot: START_SLOT + 1,
         updateCount: 1,
         createdAtSlot: START_SLOT,
