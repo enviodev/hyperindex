@@ -18,6 +18,7 @@ use graphql_parser::schema::{
     Definition, Directive, Document, EnumType, Field as ObjField, ObjectType, Type as ObjType,
     TypeDefinition, Value,
 };
+use graphql_parser::Pos;
 use serde::{Serialize, Serializer};
 use std::{
     collections::{HashMap, HashSet},
@@ -57,6 +58,13 @@ impl Schema {
 
         Self { entities, enums }.validate()
     }
+}
+
+/// `schema.graphql:12:3` — where in the schema an error was raised, so an
+/// editor or terminal can jump straight to it. `Pos` is already 1-based. Used
+/// as anyhow context, which supplies the `: ` that follows it.
+fn at(source: &str, position: Pos) -> String {
+    format!("{source}:{}:{}", position.line, position.column)
 }
 
 /// Renders `Invalid `<directive>` on `<Entity>`: <problem>.` with a single
@@ -229,6 +237,7 @@ impl Schema {
     fn from_document(
         document: Document<String>,
         default_cross_chain: bool,
+        source: &str,
     ) -> anyhow::Result<Self> {
         let entities = document
             .definitions
@@ -241,7 +250,7 @@ impl Schema {
                 TypeDefinition::Object(obj) => Some(obj),
                 _ => None,
             })
-            .map(|obj| Entity::from_object(obj, default_cross_chain))
+            .map(|obj| Entity::from_object(obj, default_cross_chain, source))
             .collect::<anyhow::Result<Vec<Entity>>>()?;
 
         let enums = document
@@ -284,14 +293,30 @@ impl Schema {
             schema_path.to_str().unwrap_or("bad file path"),
         ))?;
 
-        Self::from_string(&schema_string, default_cross_chain)
+        // Errors name the schema by the path the project actually uses, so a
+        // `schema:` override in config.yaml points at the file the user edited.
+        let source = schema_path
+            .strip_prefix(&project_paths.project_root)
+            .unwrap_or(&schema_path)
+            .display()
+            .to_string();
+
+        Self::from_string_at(&schema_string, default_cross_chain, &source)
     }
 
     pub fn from_string(schema_string: &str, default_cross_chain: bool) -> anyhow::Result<Self> {
+        Self::from_string_at(schema_string, default_cross_chain, DEFAULT_SCHEMA_PATH)
+    }
+
+    fn from_string_at(
+        schema_string: &str,
+        default_cross_chain: bool,
+        source: &str,
+    ) -> anyhow::Result<Self> {
         let schema_doc = graphql_parser::parse_schema::<String>(schema_string)
             .context("Failed to parse schema as document")?;
 
-        Self::from_document(schema_doc, default_cross_chain)
+        Self::from_document(schema_doc, default_cross_chain, source)
     }
 }
 
@@ -689,26 +714,35 @@ impl Entity {
     /// column references as it goes. `default_cross_chain` decides whether the
     /// entity gets the chain-id column envio appends, which is why the document
     /// alone can't be turned into an `Entity`.
-    fn from_object(obj: &ObjectType<String>, default_cross_chain: bool) -> anyhow::Result<Self> {
+    fn from_object(
+        obj: &ObjectType<String>,
+        default_cross_chain: bool,
+        source: &str,
+    ) -> anyhow::Result<Self> {
         let name = &obj.name;
+        let at_entity = at(source, obj.position);
 
         let has_id = obj.fields.iter().any(|field| field.name == "id");
         if !has_id {
             return Err(anyhow!(
-                "No 'id' field found on entity {}. Please add an 'id' field to your entity.",
-                name
+                "{at_entity}: No 'id' field found on entity {name}. Please add an 'id' field to \
+                 your entity."
             ));
         }
 
         let fields = obj
             .fields
             .iter()
-            .map(Field::from_obj_field)
-            .collect::<anyhow::Result<Vec<Field>>>()
-            .context(format!("Failed parsing fields on entity {name}"))?;
+            .map(|field| {
+                Field::from_obj_field(field).context(format!(
+                    "{}: Failed parsing field {} on entity {name}",
+                    at(source, field.position),
+                    field.name
+                ))
+            })
+            .collect::<anyhow::Result<Vec<Field>>>()?;
 
-        validate_entity_shape(name, &fields)
-            .context(format!("Failed constructing entity {name}"))?;
+        validate_entity_shape(name, &fields).context(at_entity.clone())?;
 
         let cross_chain = parse_flag_directive(obj, "crossChain")?;
         let has_chain_id_column = !(default_cross_chain || cross_chain);
@@ -774,10 +808,11 @@ impl Entity {
             .iter()
             .filter(|directive| directive.name == "index")
             .map(|directive| {
-                let columns = parse_index_directive_columns(directive).context(format!(
-                    "Failed parsing multi field indexes on entity {name}"
-                ))?;
+                let at_directive = at(source, directive.position);
+                let columns = parse_index_directive_columns(directive)
+                    .context(format!("{at_directive}: Invalid `@index` on `{name}`"))?;
                 MultiFieldIndex::resolve(name, &fields, &resolve_column, columns)
+                    .context(at_directive)
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
@@ -792,11 +827,23 @@ impl Entity {
                         index.render_columns()
                     ),
                     "Remove the duplicate `@index` directive.",
-                ));
+                ))
+                .context(at_entity.clone());
             }
         }
 
-        let (postgres, clickhouse) = parse_storage_directive(obj, &fields, &resolve_column)?;
+        // Points at the `@storage` directive when there is one; without it
+        // nothing here can fail, so the entity's own position is a fine floor.
+        let at_storage = obj
+            .directives
+            .iter()
+            .find(|directive| directive.name == "storage")
+            .map_or_else(
+                || at_entity.clone(),
+                |directive| at(source, directive.position),
+            );
+        let (postgres, clickhouse) =
+            parse_storage_directive(obj, &fields, &resolve_column).context(at_storage)?;
 
         Ok(Self {
             name: name.to_string(),
@@ -2256,6 +2303,7 @@ mod tests {
     use super::{
         anyhow, ClickHouseEntityStorage, ClickHouseSkippingIndex, ClickHouseTableOptions, Entity,
         EntityColumn, Field, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType,
+        DEFAULT_SCHEMA_PATH,
     };
     use crate::config_parsing::field_types::Primitive as PGPrimitive;
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
@@ -2452,7 +2500,8 @@ type NumericEntity {
         );
         let schema_doc = graphql_parser::schema::parse_schema::<String>(&schema_string).unwrap();
 
-        let schema = Schema::from_document(schema_doc, true).expect("bad schema");
+        let schema =
+            Schema::from_document(schema_doc, true, DEFAULT_SCHEMA_PATH).expect("bad schema");
 
         let test_field = schema
             .entities
@@ -2575,7 +2624,7 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc, true).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
         let field = entity.get_field("name").unwrap();
         let pg_field = field
@@ -2609,7 +2658,7 @@ type NumericEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc, true).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
 
         // A foreign key adopts the referenced entity's id type. A String-id
@@ -2650,7 +2699,7 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc, true).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
         let field = entity.get_field("tags").unwrap();
         let pg_field = field
@@ -2680,7 +2729,7 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc, true).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
         let field = entity.get_field("status").unwrap();
         let pg_field = field
@@ -2819,7 +2868,8 @@ type post { id: ID! }
     "#;
 
         let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
-        let schema = Schema::from_document(gql_doc, true).expect("Failed to create schema");
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH)
+            .expect("Failed to create schema");
 
         // Verify that the schema contains the entity and fields as expected
         let entity = schema.entities.get("Entity").expect("Entity not found");
@@ -3034,7 +3084,7 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc, true).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
 
         let field_names: Vec<&str> = entity
@@ -3063,7 +3113,7 @@ type OtherEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc, true).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
 
         let test_entity = schema.entities.get("TestEntity").unwrap();
         let test_field_names: Vec<&str> = test_entity
@@ -3095,7 +3145,7 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc, true).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
 
         // Test existing fields
@@ -3137,7 +3187,7 @@ enum Status {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc, true).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
 
         let user = schema.entities.get("User").unwrap();
         assert_eq!(user.description.as_deref(), Some("A user of the protocol"));
@@ -3175,7 +3225,12 @@ enum Status {
         let schema_str = r#"
 type TestEntity { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str), true).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(
             (
                 entity.postgres,
@@ -3191,7 +3246,12 @@ type TestEntity { id: ID! }
         let schema_str = r#"
 type TestEntity @storage(postgres: true) { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str), true).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(
             (
                 entity.postgres,
@@ -3207,7 +3267,12 @@ type TestEntity @storage(postgres: true) { id: ID! }
         let schema_str = r#"
 type TestEntity @storage(postgres: true, clickhouse: true) { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str), true).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(
             (entity.postgres, entity.clickhouse),
             (Some(true), Some(ClickHouseEntityStorage::Enabled(true)))
@@ -3226,7 +3291,12 @@ type TestEntity @storage(clickhouse: {partitionBy: "toYYYYMM(timestamp)"}) {
   timestamp: Timestamp!
 }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str), true).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(
             entity.clickhouse,
             Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
@@ -3243,7 +3313,12 @@ type TestEntity @storage(clickhouse: {partitionBy: "toYYYYMM(timestamp)"}) {
         let schema_str = r#"
 type TestEntity @storage(clickhouse: {}) { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str), true).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         let clickhouse = entity.clickhouse.unwrap();
         // Empty options normalize to the boolean form so they don't diff a
         // config persisted as `clickhouse: true`.
@@ -3263,7 +3338,12 @@ type TestEntity @storage(clickhouse: {orderBy: ["token", "timestamp"]}) {
 }
 type Token { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str), true).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(
             entity.clickhouse,
             Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
@@ -3290,7 +3370,12 @@ type TestEntity @storage(clickhouse: {skippingIndexes: [
   amount: BigInt!
 }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str), true).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(
             entity.clickhouse,
             Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
@@ -3316,8 +3401,12 @@ type TestEntity @storage(clickhouse: {skippingIndexes: [
     #[test]
     fn storage_directive_clickhouse_skipping_indexes_errors() {
         let assert_error_contains = |schema_str: &str, expected: &str| {
-            let err = Entity::from_object(&get_first_entity_from_string(schema_str), true)
-                .expect_err(&format!("expected error containing '{expected}'"));
+            let err = Entity::from_object(
+                &get_first_entity_from_string(schema_str),
+                true,
+                DEFAULT_SCHEMA_PATH,
+            )
+            .expect_err(&format!("expected error containing '{expected}'"));
             let message = format!("{err:#}");
             assert!(
                 message.contains(expected),
@@ -3369,7 +3458,12 @@ type TestEntity @storage(clickhouse: {skippingIndexes: [
         let schema_str = r#"
 type TestEntity { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str), true).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(entity.internal, false);
     }
 
@@ -3378,15 +3472,24 @@ type TestEntity { id: ID! }
         let schema_str = r#"
 type TestEntity @internal { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str), true).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(entity.internal, true);
     }
 
     #[test]
     fn internal_directive_errors() {
         let assert_error_contains = |schema_str: &str, expected: &str| {
-            let err = Entity::from_object(&get_first_entity_from_string(schema_str), true)
-                .expect_err(&format!("expected error containing '{expected}'"));
+            let err = Entity::from_object(
+                &get_first_entity_from_string(schema_str),
+                true,
+                DEFAULT_SCHEMA_PATH,
+            )
+            .expect_err(&format!("expected error containing '{expected}'"));
             let message = format!("{err:#}");
             assert!(
                 message.contains(expected),
@@ -3407,8 +3510,12 @@ type TestEntity @internal { id: ID! }
     #[test]
     fn storage_directive_clickhouse_options_errors() {
         let assert_error_contains = |schema_str: &str, expected: &str| {
-            let err = Entity::from_object(&get_first_entity_from_string(schema_str), true)
-                .expect_err(&format!("expected error containing '{expected}'"));
+            let err = Entity::from_object(
+                &get_first_entity_from_string(schema_str),
+                true,
+                DEFAULT_SCHEMA_PATH,
+            )
+            .expect_err(&format!("expected error containing '{expected}'"));
             let message = format!("{err:#}");
             assert!(
                 message.contains(expected),
