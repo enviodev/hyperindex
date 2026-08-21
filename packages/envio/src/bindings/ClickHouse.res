@@ -363,6 +363,17 @@ let setUpdatesOrThrow = async (
 // The '{cluster}' macro resolves to each node's configured cluster name.
 let onClusterClause = (~onCluster: bool) => onCluster ? ` ON CLUSTER '{cluster}'` : ""
 
+// ReplicatedMergeTree drops an insert whose block hash is already in Keeper, and
+// mutations don't clear those hashes. Crash recovery trims the history tail past
+// the committed Postgres checkpoint with ALTER ... DELETE and then replays it, so
+// an identical replayed block would be discarded while still reporting success —
+// a permanent gap that nothing surfaces. Trim-then-replay is what makes recovery
+// correct here, and the duplicates dedup would have caught are already collapsed
+// by the entity view's `LIMIT 1 BY`. Plain MergeTree goes by
+// non_replicated_deduplication_window (0 by default), so it needs no clause.
+let replicatedTableSettingsClause = (~replicated: bool) =>
+  replicated ? "\nSETTINGS replicated_deduplication_window = 0" : ""
+
 // Strip both engine arguments `(...)` and a trailing `SETTINGS ...` clause to
 // get the bare engine name, e.g. `Replicated('/p','{shard}','{replica}') SETTINGS x=1`
 // and `Replicated SETTINGS x=1` both yield `Replicated`.
@@ -401,9 +412,9 @@ let makeCreateHistoryTableQuery = (
     }
   })
 
-  let (partitionBy, orderBy, ttl) = switch entityConfig.storage.clickhouseOptions {
-  | Some(options) => (options.partitionBy, options.orderBy, options.ttl)
-  | None => (None, None, None)
+  let (partitionBy, orderBy, ttl, skippingIndexes) = switch entityConfig.storage.clickhouseOptions {
+  | Some(options) => (options.partitionBy, options.orderBy, options.ttl, options.skippingIndexes)
+  | None => (None, None, None, None)
   }
 
   // Schema field name -> ClickHouse column name, so @storage(clickhouse: {...})
@@ -467,6 +478,22 @@ let makeCreateHistoryTableQuery = (
   | None => ""
   }
 
+  // Data skipping indexes live inside the column list, after the last column.
+  // GRANULARITY is omitted when unset, leaving ClickHouse's default of 1.
+  let skippingIndexDefinitions = switch skippingIndexes {
+  | Some(skippingIndexes) =>
+    skippingIndexes
+    ->Array.map(index => {
+      let granularityClause = switch index.granularity {
+      | Some(granularity) => ` GRANULARITY ${granularity->Int.toString}`
+      | None => ""
+      }
+      `,\n  INDEX \`${index.name}\` ${index.expr->resolveExpressionColumns} TYPE ${index.type_}${granularityClause}`
+    })
+    ->Array.joinUnsafe("")
+  | None => ""
+  }
+
   `CREATE TABLE IF NOT EXISTS ${database}.\`${EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
@@ -481,10 +508,10 @@ let makeCreateHistoryTableQuery = (
       ~fieldType=Enum({config: EntityHistory.RowAction.config->Table.fromGenericEnumConfig}),
       ~isNullable=false,
       ~isArray=false,
-    )}
+    )}${skippingIndexDefinitions}
 )
 ENGINE = ${tableEngine}${partitionByClause}
-ORDER BY (${orderByColumns})${ttlClause}`
+ORDER BY (${orderByColumns})${ttlClause}${replicatedTableSettingsClause(~replicated)}`
 }
 
 // Generate CREATE TABLE query for checkpoints
@@ -528,7 +555,7 @@ let makeCreateCheckpointsTableQuery = (
     )}
 )
 ENGINE = ${tableEngine}
-ORDER BY (${idField})`
+ORDER BY (${idField})${replicatedTableSettingsClause(~replicated)}`
 }
 
 // Generate CREATE VIEW query for entity current state

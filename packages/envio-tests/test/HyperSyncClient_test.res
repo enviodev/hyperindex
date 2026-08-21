@@ -160,24 +160,38 @@ describe("HyperSync client getEventItems (live)", () => {
   })
 })
 
-describe("HyperSync client getHeight with corrupted token", () => {
-  // A corrupted token makes the server reply 401, so getHeight throws. The error
-  // must keep matching EvmHyperSyncSource.isUnauthorizedError, otherwise
-  // getHeightOrThrow's block-forever guard silently stops working.
-  Async.it(
-    "is detected by EvmHyperSyncSource.isUnauthorizedError",
-    async t => {
-      let client = HyperSyncClient.make(
-        ~url="https://eth.hypersync.xyz",
-        ~apiToken="this-is-a-corrupted-token",
-        ~httpReqTimeoutMillis=5000,
-        ~eventRegistrations=[],
-        ~enableChecksumAddresses=false,
-        ~addressStore,
-      )
+describe("HyperSync client with corrupted token", () => {
+  let makeCorruptedTokenClient = () =>
+    HyperSyncClient.make(
+      ~url="https://eth.hypersync.xyz",
+      ~apiToken="this-is-a-corrupted-token",
+      ~httpReqTimeoutMillis=5000,
+      ~eventRegistrations=[transferEventRegistration],
+      ~enableChecksumAddresses=false,
+      ~addressStore,
+    )
 
+  Async.it(
+    "getHeight doesn't validate the token",
+    async t => {
+      // The edge deliberately stopped rejecting malformed tokens on /height and
+      // the height SSE endpoints, so a token issue can't stall an indexer that
+      // only polls the height. If that ever regresses, getHeightOrThrow blocks
+      // forever on the 401 instead of retrying.
+      let height = await makeCorruptedTokenClient().getHeight()
+
+      t.expect(height > 0).toEqual(true)
+    },
+  )
+
+  Async.it(
+    "query error is detected by EvmHyperSyncSource.isUnauthorizedError",
+    async t => {
+      // The query endpoint still replies 401. Feed that real server error
+      // through isUnauthorizedError so the check can't silently drift away from
+      // the message shape the client produces for a 401.
       let detected = try {
-        let _ = await client.getHeight()
+        let _ = await runQuery(~client=makeCorruptedTokenClient())
         false
       } catch {
       | JsExn(e) => e->JsExn.message->Option.getOr("")->EvmHyperSyncSource.isUnauthorizedError

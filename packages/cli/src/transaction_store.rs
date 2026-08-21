@@ -3,7 +3,7 @@
 //! columns — a large field (e.g. EVM `input`) never crosses the napi boundary
 //! until an event that selected it is materialised, and never duplicates
 //! across overlapping partition re-fetches since a key's cell overwrites in
-//! place. SVM token balances live in a companion table keyed by (slot,
+//! place. SVM account activity lives in a companion table keyed by (slot,
 //! transactionIndex, account) and gathered by (slot, transactionIndex) range.
 //! The store lives on the ReScript `ChainState`; fetch responses merge in,
 //! and rows are pruned/rolled back by block.
@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 use hypersync_client::simple_types;
 use hypersync_client_solana::simple_types as solana_simple;
+use napi::bindgen_prelude::BigInt;
 use napi_derive::napi;
 use strum::VariantArray;
 
@@ -21,7 +22,8 @@ use crate::evm_hypersync_source::types::{
     encode_address, map_bigint, AccessList as AccessListItem, Authorization as AuthorizationItem,
 };
 use crate::field_columns::{
-    build_columns, bytes, field_names, Column, Columns, Ecosystem, SvmTokenBalanceOut,
+    build_columns, bytes, field_names, Column, Columns, Ecosystem, SvmAccountActivityOut,
+    SvmAccountTokenOut, SvmLamportsOut,
 };
 use crate::field_table::{
     access_lists_cells, access_lists_from, auth_lists_cells, auth_lists_from, bool_cells,
@@ -129,8 +131,8 @@ pub enum SvmTxField {
     AccountKeys = 7,
     RecentBlockhash = 8,
     Version = 9,
-    TokenBalances = 10,
-    AllSignatures = 11,
+    AllSignatures = 10,
+    AccountActivities = 11,
 }
 
 impl SvmTxField {
@@ -148,8 +150,8 @@ impl SvmTxField {
             AccountKeys => "accountKeys",
             RecentBlockhash => "recentBlockhash",
             Version => "version",
-            TokenBalances => "tokenBalances",
             AllSignatures => "allSignatures",
+            AccountActivities => "accountActivities",
         }
     }
 }
@@ -266,8 +268,8 @@ fn decode_evm_columns(
 }
 
 /// Build one SVM field's column from a response's transactions. `None` for the
-/// key-derived `transactionIndex` and for `tokenBalances`, which lives in the
-/// companion duplicate-key table.
+/// key-derived `transactionIndex` and for `accountActivities`, which lives in
+/// the companion duplicate-key table.
 fn svm_tx_col(field: SvmTxField, txs: &[solana_simple::Transaction]) -> Option<AnyCol> {
     use SvmTxField::*;
     match field {
@@ -290,7 +292,7 @@ fn svm_tx_col(field: SvmTxField, txs: &[solana_simple::Transaction]) -> Option<A
         }),
         RecentBlockhash => base58_col(txs, |t| t.recent_blockhash),
         Version => var_from(txs, |t| t.version.as_ref().map(|s| s.as_bytes())),
-        TokenBalances => None,
+        AccountActivities => None,
     }
 }
 
@@ -304,12 +306,12 @@ fn base58_col<T: std::fmt::Display>(
     var_from(&rendered, |v| v.as_deref().map(str::as_bytes))
 }
 
-/// Decode one SVM field. `token_balances` comes pre-gathered from the
-/// companion table (it isn't part of the transaction scratch).
+/// Decode one SVM field. `accountActivities` come pre-gathered from
+/// the companion table (they aren't part of the transaction scratch).
 fn decode_svm_field(
     field: SvmTxField,
     scratch: &[Option<AnyCol>],
-    token_balances: &[Option<Vec<SvmTokenBalanceOut>>],
+    account_activities: &[Option<Vec<SvmAccountActivityOut>>],
     transaction_indices: &[u32],
     masks: &[u64],
 ) -> Result<Column> {
@@ -335,13 +337,13 @@ fn decode_svm_field(
         Fee | ComputeUnitsConsumed => {
             Column::Big(u64_cells(col, len, |v| Ok(Some(bigint_u64(v))))?)
         }
-        TokenBalances => Column::TokenBalances(token_balances.to_vec()),
+        AccountActivities => Column::AccountActivities(account_activities.to_vec()),
     })
 }
 
 fn decode_svm_columns(
     scratch: &[Option<AnyCol>],
-    token_balances: &[Option<Vec<SvmTokenBalanceOut>>],
+    account_activities: &[Option<Vec<SvmAccountActivityOut>>],
     transaction_indices: &[u32],
     masks: &[u64],
 ) -> Result<Columns> {
@@ -351,69 +353,143 @@ fn decode_svm_columns(
         transaction_indices.len(),
         |f| f as u32,
         |f| f.name(),
-        |f| decode_svm_field(f, scratch, token_balances, transaction_indices, masks),
+        |f| decode_svm_field(f, scratch, account_activities, transaction_indices, masks),
     )
 }
 
-/// Account-activity columns: `mint`, `owner`, `decimals`, `preAmount`,
-/// `postAmount`. `account` is the key's third component (see
-/// `insert_svm_account_activity`), not a column.
-const TOKEN_BALANCE_FIELDS: usize = 5;
+/// Account-activity column order in the companion table. `account` is the
+/// key's third component (see `insert_svm_account_activity`), not a column.
+const AA_MINT: usize = 0;
+const AA_OWNER: usize = 1;
+const AA_DECIMALS: usize = 2;
+const AA_PRE_AMOUNT: usize = 3;
+const AA_POST_AMOUNT: usize = 4;
+const AA_PRE_LAMPORTS: usize = 5;
+const AA_POST_LAMPORTS: usize = 6;
+/// Position in the transaction's resolved key list (`account_keys` ++ the
+/// lookup tables' writable then readonly addresses).
+const AA_ACCOUNT_INDEX: usize = 7;
+const AA_IS_SIGNER: usize = 8;
+const AA_IS_WRITABLE: usize = 9;
+const ACCOUNT_ACTIVITY_FIELDS: usize = 10;
 
-/// One materialised token-balance row, read directly by slot off the
-/// companion table's columns; `account` comes from the key, not a column.
-fn token_balance_row(
+/// The token side of an activity row, read directly by slot off the companion
+/// table's columns. `None` on an account that holds no token balance — the mint
+/// is what makes a row a token row.
+fn account_token(table: &Table<(u64, u32, Box<str>)>, slot: u32) -> Option<SvmAccountTokenOut> {
+    let mint = table.var_cell(AA_MINT, slot).map(utf8)?;
+    Some(SvmAccountTokenOut {
+        mint,
+        owner: table.var_cell(AA_OWNER, slot).map(utf8),
+        decimals: table.u64_cell(AA_DECIMALS, slot).map(|v| v as u8),
+        pre_amount: table.u64_cell(AA_PRE_AMOUNT, slot).map(bigint_u64),
+        post_amount: table.u64_cell(AA_POST_AMOUNT, slot).map(bigint_u64),
+    })
+}
+
+fn activity_row(
     table: &Table<(u64, u32, Box<str>)>,
     key: &(u64, u32, Box<str>),
     slot: u32,
-) -> SvmTokenBalanceOut {
-    let cell = |f: usize| table.var_cell(f, slot).map(utf8);
-    let amount = |f: usize| table.u64_cell(f, slot).map(bigint_u64);
-    SvmTokenBalanceOut {
-        account: Some(key.2.to_string()),
-        mint: cell(0),
-        owner: cell(1),
-        decimals: table.u64_cell(2, slot).map(|v| v as u8),
-        pre_amount: amount(3),
-        post_amount: amount(4),
+) -> SvmAccountActivityOut {
+    let pre = table.u64_cell(AA_PRE_LAMPORTS, slot).map(bigint_u64);
+    let post = table.u64_cell(AA_POST_LAMPORTS, slot).map(bigint_u64);
+    let lamports = match (pre, post) {
+        (None, None) => None,
+        (pre, post) => Some(SvmLamportsOut { pre, post }),
+    };
+    SvmAccountActivityOut {
+        address: key.2.to_string(),
+        transaction_account_index: table.u64_cell(AA_ACCOUNT_INDEX, slot).map(|v| v as i64),
+        is_signer: table.bool_cell(AA_IS_SIGNER, slot),
+        is_writable: table.bool_cell(AA_IS_WRITABLE, slot),
+        lamports,
+        token: account_token(table, slot),
     }
 }
 
-/// Gather each selected row's token balances: every account row keyed to
-/// (blockNumber, transactionIndex). A selected row whose transaction has no
-/// balances (or whose key is missing entirely) yields `[]`, not a missing
-/// field — an absent transaction means "no balances". Unselected rows stay
-/// missing.
-fn gather_token_balances(
+/// Gather each selected row's activity: every account_activity row for that
+/// (slot, transactionIndex), ordered by `transactionAccountIndex`. No key-list
+/// join — a row exists only where something moved.
+fn gather_account_activities(
     table: &Table<(u64, u32, Box<str>)>,
     keys: &[Option<(u64, u32)>],
     masks: &[u64],
-) -> Vec<Option<Vec<SvmTokenBalanceOut>>> {
-    let bit = 1u64 << (SvmTxField::TokenBalances as u32);
+) -> Vec<Option<Vec<SvmAccountActivityOut>>> {
+    let bit = 1u64 << (SvmTxField::AccountActivities as u32);
     keys.iter()
         .zip(masks)
         .map(|(key, &m)| {
             if m & bit == 0 {
                 return None;
             }
-            let rows = key
-                .map(|(block, index)| {
-                    table
-                        .range_slots(block, index)
-                        .map(|(k, slot)| token_balance_row(table, k, slot))
-                        .collect()
-                })
-                .unwrap_or_default();
-            Some(rows)
+            let Some(key) = key else {
+                return Some(Vec::new());
+            };
+            let mut rows: Vec<_> = table.range_slots(key.0, key.1).collect();
+            rows.sort_by(|(a_key, a_slot), (b_key, b_slot)| {
+                table
+                    .u64_cell(AA_ACCOUNT_INDEX, *a_slot)
+                    .unwrap_or(u64::MAX)
+                    .cmp(
+                        &table
+                            .u64_cell(AA_ACCOUNT_INDEX, *b_slot)
+                            .unwrap_or(u64::MAX),
+                    )
+                    .then_with(|| a_key.2.cmp(&b_key.2))
+            });
+            Some(
+                rows.into_iter()
+                    .map(|(k, slot)| activity_row(table, k, slot))
+                    .collect(),
+            )
         })
         .collect()
 }
 
-/// The transaction table plus SVM's token-balance companion (empty on other
+/// The transaction table plus SVM's account-activity companion (empty on other
 /// ecosystems), guarded together so merges and gathers stay atomic.
 struct Stores {
     txs: Table<(u64, u32)>,
     account_activity: Table<(u64, u32, Box<str>)>,
+}
+
+#[napi(object)]
+pub struct SvmTxInput {
+    pub slot: i64,
+    pub transaction_index: u32,
+}
+
+#[napi(object)]
+pub struct SvmActivityInput {
+    pub slot: i64,
+    pub transaction_index: u32,
+    pub account: String,
+    pub account_index: Option<u32>,
+    pub is_signer: Option<bool>,
+    pub is_writable: Option<bool>,
+    pub pre_balance: Option<BigInt>,
+    pub post_balance: Option<BigInt>,
+    pub mint: Option<String>,
+    pub owner: Option<String>,
+    pub decimals: Option<u8>,
+    pub pre_amount: Option<BigInt>,
+    pub post_amount: Option<BigInt>,
+}
+
+fn bigint_to_u64(value: BigInt, field: &str) -> napi::Result<u64> {
+    if value.sign_bit {
+        return Err(napi::Error::from_reason(format!(
+            "{field} must be non-negative"
+        )));
+    }
+    match value.words.as_slice() {
+        [] => Ok(0),
+        [word] => Ok(*word),
+        _ => Err(napi::Error::from_reason(format!(
+            "{field} does not fit in u64"
+        ))),
+    }
 }
 
 #[napi]
@@ -506,15 +582,15 @@ impl TransactionStore {
                 .map_err(map_err)
             }
             Ecosystem::Svm => {
-                let (scratch, token_balances) = {
+                let (scratch, account_activities) = {
                     let stores = self.inner.lock().unwrap();
                     (
                         stores.txs.gather_scratch(&keys, &masks),
-                        gather_token_balances(&stores.account_activity, &keys, &masks),
+                        gather_account_activities(&stores.account_activity, &keys, &masks),
                     )
                 };
                 tokio::task::block_in_place(|| {
-                    decode_svm_columns(&scratch, &token_balances, &transaction_indices, &masks)
+                    decode_svm_columns(&scratch, &account_activities, &transaction_indices, &masks)
                 })
                 .map_err(map_err)
             }
@@ -556,6 +632,77 @@ impl TransactionStore {
             }
         }
     }
+
+    /// Page built from JS transaction and account-activity objects, for sources
+    /// that construct SVM pages in JS (simulate) the way HyperSync does in Rust.
+    #[napi(factory)]
+    pub fn from_js_svm(
+        transactions: Vec<SvmTxInput>,
+        activities: Vec<SvmActivityInput>,
+    ) -> napi::Result<Self> {
+        let store = Self::with_ecosystem(Ecosystem::Svm);
+        let txs = transactions
+            .into_iter()
+            .map(|t| {
+                Ok(solana_simple::Transaction {
+                    slot: Some(
+                        u64::try_from(t.slot)
+                            .map_err(|_| napi::Error::from_reason("slot must be non-negative"))?,
+                    ),
+                    transaction_index: Some(t.transaction_index),
+                    ..Default::default()
+                })
+            })
+            .collect::<napi::Result<Vec<_>>>()?;
+        store.insert_svm_txs(txs);
+
+        let rows = activities
+            .into_iter()
+            .map(|a| {
+                let parse_key = |value: &str, field: &str| {
+                    value.parse::<solana_simple::Address>().map_err(|e| {
+                        napi::Error::from_reason(format!("{field} {value:?} is not a pubkey: {e}"))
+                    })
+                };
+                let to_u64 =
+                    |v: Option<BigInt>, field: &str| v.map(|n| bigint_to_u64(n, field)).transpose();
+                Ok(solana_simple::AccountActivity {
+                    slot: Some(
+                        u64::try_from(a.slot)
+                            .map_err(|_| napi::Error::from_reason("slot must be non-negative"))?,
+                    ),
+                    transaction_index: Some(a.transaction_index),
+                    account: Some(parse_key(&a.account, "account")?),
+                    account_index: a.account_index,
+                    is_signer: a.is_signer,
+                    is_writable: a.is_writable,
+                    pre_balance: to_u64(a.pre_balance, "preBalance")?,
+                    post_balance: to_u64(a.post_balance, "postBalance")?,
+                    mint: a
+                        .mint
+                        .as_deref()
+                        .map(|m| parse_key(m, "mint"))
+                        .transpose()?,
+                    pre_owner: a
+                        .owner
+                        .as_deref()
+                        .map(|o| parse_key(o, "owner"))
+                        .transpose()?,
+                    post_owner: a
+                        .owner
+                        .as_deref()
+                        .map(|o| parse_key(o, "owner"))
+                        .transpose()?,
+                    token_decimals: a.decimals,
+                    pre_token_balance: to_u64(a.pre_amount, "preAmount")?,
+                    post_token_balance: to_u64(a.post_amount, "postAmount")?,
+                    ..Default::default()
+                })
+            })
+            .collect::<napi::Result<Vec<_>>>()?;
+        store.insert_svm_account_activity(rows);
+        Ok(store)
+    }
 }
 
 impl TransactionStore {
@@ -568,7 +715,7 @@ impl TransactionStore {
         Self {
             inner: Mutex::new(Stores {
                 txs: Table::new(n_fields),
-                account_activity: Table::new(TOKEN_BALANCE_FIELDS),
+                account_activity: Table::new(ACCOUNT_ACTIVITY_FIELDS),
             }),
             ecosystem,
         }
@@ -625,20 +772,13 @@ impl TransactionStore {
     /// Merge one response's SVM account activity into the companion table,
     /// keyed by (slot, transactionIndex, account). Rows missing any key part
     /// are dropped; the SVM query forces `account` into the field selection
-    /// whenever token balances are requested, so a real response row always
-    /// carries one. Native-only rows carry no token side and are skipped —
-    /// the store exposes the token balances of a transaction. Not exposed to
-    /// JS.
+    /// whenever account activity is requested, so a real response row always
+    /// carries one. Not exposed to JS.
     pub(crate) fn insert_svm_account_activity(
         &self,
         mut rows: Vec<solana_simple::AccountActivity>,
     ) {
-        rows.retain(|r| {
-            r.slot.is_some()
-                && r.transaction_index.is_some()
-                && r.account.is_some()
-                && r.mint.is_some()
-        });
+        rows.retain(|r| r.slot.is_some() && r.transaction_index.is_some() && r.account.is_some());
         if rows.is_empty() {
             return;
         }
@@ -647,17 +787,26 @@ impl TransactionStore {
                 let values: Vec<Option<String>> = rows.iter().map(f).collect();
                 crate::field_table::var_from(&values, |v| v.as_deref().map(str::as_bytes))
             };
-        let cols = vec![
-            pubkey_col(|r| r.mint.map(|mint| mint.to_string())),
-            // The wire splits the owner so an in-transaction `SetAuthority`
-            // stays visible; the payload carries the owner the account ended
-            // with, falling back to the one it entered with when the account
-            // was closed during the transaction.
-            pubkey_col(|r| r.post_owner.or(r.pre_owner).map(|owner| owner.to_string())),
-            crate::field_table::u64_from(&rows, |r| r.token_decimals.map(u64::from)),
-            crate::field_table::u64_from(&rows, |r| r.pre_token_balance),
-            crate::field_table::u64_from(&rows, |r| r.post_token_balance),
-        ];
+        let u64_col = |f: fn(&solana_simple::AccountActivity) -> Option<u64>| {
+            crate::field_table::u64_from(&rows, f)
+        };
+        let mut cols: Vec<Option<AnyCol>> = (0..ACCOUNT_ACTIVITY_FIELDS).map(|_| None).collect();
+        cols[AA_MINT] = pubkey_col(|r| r.mint.map(|mint| mint.to_string()));
+        // The wire splits the owner so an in-transaction `SetAuthority` stays
+        // visible; the payload carries the owner the account ended with, falling
+        // back to the one it entered with when the account was closed during the
+        // transaction.
+        cols[AA_OWNER] =
+            pubkey_col(|r| r.post_owner.or(r.pre_owner).map(|owner| owner.to_string()));
+        cols[AA_DECIMALS] =
+            crate::field_table::u64_from(&rows, |r| r.token_decimals.map(u64::from));
+        cols[AA_PRE_AMOUNT] = u64_col(|r| r.pre_token_balance);
+        cols[AA_POST_AMOUNT] = u64_col(|r| r.post_token_balance);
+        cols[AA_PRE_LAMPORTS] = u64_col(|r| r.pre_balance);
+        cols[AA_POST_LAMPORTS] = u64_col(|r| r.post_balance);
+        cols[AA_ACCOUNT_INDEX] = u64_col(|r| r.account_index.map(u64::from));
+        cols[AA_IS_SIGNER] = crate::field_table::bool_from(&rows, |r| r.is_signer);
+        cols[AA_IS_WRITABLE] = crate::field_table::bool_from(&rows, |r| r.is_writable);
         let keys = rows
             .into_iter()
             .map(|r| {
@@ -721,6 +870,60 @@ mod tests {
 
     fn bit(field: EvmTxField) -> u64 {
         1u64 << (field as u32)
+    }
+
+    fn svm_mask(field: SvmTxField) -> f64 {
+        (1u64 << (field as u32)) as f64
+    }
+
+    type TokenView = (String, Option<String>, Option<u8>, Option<u64>, Option<u64>);
+    type ActivityView = (
+        String,
+        Option<i64>,
+        Option<bool>,
+        Option<bool>,
+        Option<(Option<u64>, Option<u64>)>,
+        Option<TokenView>,
+    );
+
+    fn activity_views(cols: &Columns) -> Vec<Option<Vec<ActivityView>>> {
+        let amount = |v: &Option<BigInt>| v.as_ref().map(|b| b.clone().get_u64().1);
+        match column(cols, "accountActivities") {
+            Some(Column::AccountActivities(rows)) => rows
+                .iter()
+                .map(|row| {
+                    row.as_ref().map(|activities| {
+                        activities
+                            .iter()
+                            .map(|a| {
+                                (
+                                    a.address.clone(),
+                                    a.transaction_account_index,
+                                    a.is_signer,
+                                    a.is_writable,
+                                    a.lamports
+                                        .as_ref()
+                                        .map(|l| (amount(&l.pre), amount(&l.post))),
+                                    a.token.as_ref().map(|t| {
+                                        (
+                                            t.mint.clone(),
+                                            t.owner.clone(),
+                                            t.decimals,
+                                            amount(&t.pre_amount),
+                                            amount(&t.post_amount),
+                                        )
+                                    }),
+                                )
+                            })
+                            .collect()
+                    })
+                })
+                .collect(),
+            other => panic!(
+                "expected accountActivities column, got present={}",
+                other.is_some()
+            ),
+        }
     }
 
     // `materialize` uses `block_in_place`, which needs a multi-thread runtime.
@@ -850,113 +1053,167 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn token_balances_gather_by_key_range() {
+    async fn account_activities_gather_by_key_range_and_index_order() {
         let store = TransactionStore::new_svm();
         store.insert_svm_txs(vec![raw_svm_tx(5, 0)]);
-        let balance = |slot, index, account: u8, mint: u8| solana_simple::AccountActivity {
-            slot: Some(slot),
-            transaction_index: Some(index),
+        let row = |account: u8, index: u32, mint: Option<u8>| solana_simple::AccountActivity {
+            slot: Some(5),
+            transaction_index: Some(0),
             account: Some(svm_key(account)),
-            mint: Some(svm_key(mint)),
+            account_index: Some(index),
+            mint: mint.map(svm_key),
             ..Default::default()
         };
-        // Two balances (distinct accounts) on (5,0); one on a transaction with
-        // no tx row (5,1).
         store.insert_svm_account_activity(vec![
-            balance(5, 0, 1, 0xA1),
-            balance(5, 0, 2, 0xA2),
-            balance(5, 1, 3, 0xA3),
+            row(3, 2, Some(0xA3)),
+            row(1, 0, None),
+            row(2, 1, Some(0xA2)),
         ]);
+        let mut other_tx = row(9, 0, Some(0xA9));
+        other_tx.slot = Some(5);
+        other_tx.transaction_index = Some(1);
+        store.insert_svm_account_activity(vec![other_tx]);
 
-        let mask = (1u64 << (SvmTxField::TokenBalances as u32)) as f64;
+        let mask = svm_mask(SvmTxField::AccountActivities);
         let cols = store
             .materialize(vec![5, 5, 5], vec![0, 1, 2], vec![mask, mask, mask])
             .await
             .expect("materialize");
 
-        match column(&cols, "tokenBalances") {
-            Some(Column::TokenBalances(rows)) => {
-                let mints: Vec<Option<Vec<Option<String>>>> = rows
-                    .iter()
-                    .map(|r| {
-                        r.as_ref()
-                            .map(|v| v.iter().map(|tb| tb.mint.clone()).collect())
-                    })
-                    .collect();
-                // A selected row with no balances at all still gets `[]`.
-                assert_eq!(
-                    mints,
-                    vec![
-                        Some(vec![
-                            Some(svm_key(0xA1).to_string()),
-                            Some(svm_key(0xA2).to_string())
-                        ]),
-                        Some(vec![Some(svm_key(0xA3).to_string())]),
-                        Some(vec![]),
-                    ]
-                );
-            }
-            other => panic!(
-                "expected tokenBalances column, got present={}",
-                other.is_some()
-            ),
-        }
+        let addresses = activity_views(&cols)
+            .into_iter()
+            .map(|row| {
+                row.map(|acts| {
+                    acts.into_iter()
+                        .map(|(address, index, _, _, _, _)| (address, index))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            addresses,
+            vec![
+                Some(vec![
+                    (svm_key(1).to_string(), Some(0)),
+                    (svm_key(2).to_string(), Some(1)),
+                    (svm_key(3).to_string(), Some(2)),
+                ]),
+                Some(vec![(svm_key(9).to_string(), Some(0))]),
+                Some(vec![]),
+            ]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn account_activity_materialises_the_resolved_owner_and_typed_amounts() {
+    async fn account_activity_nested_sides_and_open_close() {
         let store = TransactionStore::new_svm();
         store.insert_svm_txs(vec![raw_svm_tx(5, 0)]);
-        // The token account changed hands mid-transaction, which the split
-        // pre/post owner keeps visible.
-        store.insert_svm_account_activity(vec![solana_simple::AccountActivity {
-            slot: Some(5),
-            transaction_index: Some(0),
-            account: Some(svm_key(1)),
-            mint: Some(svm_key(0xA1)),
-            pre_owner: Some(svm_key(0xB1)),
-            post_owner: Some(svm_key(0xB2)),
-            token_decimals: Some(6),
-            pre_token_balance: Some(10),
-            post_token_balance: Some(u64::MAX),
-            ..Default::default()
-        }]);
+        store.insert_svm_account_activity(vec![
+            solana_simple::AccountActivity {
+                slot: Some(5),
+                transaction_index: Some(0),
+                account: Some(svm_key(1)),
+                account_index: Some(0),
+                is_signer: Some(true),
+                is_writable: Some(true),
+                pre_balance: Some(1_000_000),
+                post_balance: Some(900_000),
+                ..Default::default()
+            },
+            solana_simple::AccountActivity {
+                slot: Some(5),
+                transaction_index: Some(0),
+                account: Some(svm_key(2)),
+                account_index: Some(1),
+                is_signer: Some(false),
+                is_writable: Some(true),
+                mint: Some(svm_key(0xA1)),
+                post_owner: Some(svm_key(0xB1)),
+                token_decimals: Some(6),
+                post_token_balance: Some(500),
+                ..Default::default()
+            },
+            solana_simple::AccountActivity {
+                slot: Some(5),
+                transaction_index: Some(0),
+                account: Some(svm_key(3)),
+                account_index: Some(2),
+                is_signer: Some(false),
+                is_writable: Some(true),
+                mint: Some(svm_key(0xA2)),
+                pre_owner: Some(svm_key(0xB2)),
+                post_owner: Some(svm_key(0xB3)),
+                token_decimals: Some(9),
+                pre_token_balance: Some(700),
+                post_token_balance: Some(u64::MAX),
+                ..Default::default()
+            },
+        ]);
 
-        let mask = (1u64 << (SvmTxField::TokenBalances as u32)) as f64;
         let cols = store
-            .materialize(vec![5], vec![0], vec![mask])
+            .materialize(
+                vec![5],
+                vec![0],
+                vec![svm_mask(SvmTxField::AccountActivities)],
+            )
             .await
             .expect("materialize");
 
-        let balance = match column(&cols, "tokenBalances") {
-            Some(Column::TokenBalances(rows)) => rows[0].clone().expect("selected row")[0].clone(),
-            other => panic!(
-                "expected tokenBalances column, got present={}",
-                other.is_some()
-            ),
-        };
         assert_eq!(
-            (
-                balance.account,
-                balance.mint,
-                balance.owner,
-                balance.decimals,
-                balance.pre_amount.map(|v| v.get_u64().1),
-                balance.post_amount.map(|v| v.get_u64().1),
-            ),
-            (
-                Some(svm_key(1).to_string()),
-                Some(svm_key(0xA1).to_string()),
-                // The account changed hands mid-transaction; the payload
-                // carries the owner it ended with.
-                Some(svm_key(0xB2).to_string()),
-                Some(6),
-                Some(10),
-                // Raw amounts are u64 on-chain; the store must not lose the top
-                // of the range on the way to JS.
-                Some(u64::MAX),
-            )
+            activity_views(&cols),
+            vec![Some(vec![
+                (
+                    svm_key(1).to_string(),
+                    Some(0),
+                    Some(true),
+                    Some(true),
+                    Some((Some(1_000_000), Some(900_000))),
+                    None,
+                ),
+                (
+                    svm_key(2).to_string(),
+                    Some(1),
+                    Some(false),
+                    Some(true),
+                    None,
+                    Some((
+                        svm_key(0xA1).to_string(),
+                        Some(svm_key(0xB1).to_string()),
+                        Some(6),
+                        None,
+                        Some(500)
+                    )),
+                ),
+                (
+                    svm_key(3).to_string(),
+                    Some(2),
+                    Some(false),
+                    Some(true),
+                    None,
+                    Some((
+                        svm_key(0xA2).to_string(),
+                        Some(svm_key(0xB3).to_string()),
+                        Some(9),
+                        Some(700),
+                        Some(u64::MAX)
+                    )),
+                ),
+            ])]
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn account_activities_of_a_missing_transaction_is_empty() {
+        let store = TransactionStore::new_svm();
+        let cols = store
+            .materialize(
+                vec![5],
+                vec![0],
+                vec![svm_mask(SvmTxField::AccountActivities)],
+            )
+            .await
+            .expect("materialize");
+        assert_eq!(activity_views(&cols), vec![Some(vec![])]);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1097,8 +1354,8 @@ mod tests {
                 "accountKeys",
                 "recentBlockhash",
                 "version",
-                "tokenBalances",
                 "allSignatures",
+                "accountActivities",
             ]
         );
     }

@@ -310,13 +310,15 @@ let makeInternal = (
         }),
       ]
     }
-  | Config.SimulateSourceConfig({items, endBlock}) => [
+  | Config.SimulateSourceConfig({items, endBlock, ?transactionStore, ?blockStore}) => [
       SimulateSource.make(
         ~items,
         ~endBlock,
         ~chainId,
         ~addressStore,
         ~ecosystem=config.ecosystem.name,
+        ~transactionStore,
+        ~blockStore,
       ),
     ]
   // For tests: use ready-to-use sources directly
@@ -836,6 +838,12 @@ let applyTransactionGroups = async (store: TransactionStore.t, g: transactionGro
       g.payloadGroups->Array.forEachWithIndex((payloads, i) => {
         let tx = txs->Array.getUnsafe(i)
         payloads->Array.forEach(payload => payload->Internal.setPayloadTransaction(tx))
+        switch (
+          tx->(Utils.magic: Internal.eventTransaction => dict<unknown>)
+        )->Dict.get("accountActivities") {
+        | Some(_) => payloads->Array.forEach(payload => Svm.attachAccountActivities(payload, tx))
+        | None => ()
+        }
       })
     } else {
       g.payloadGroups->Array.forEach(payloads =>

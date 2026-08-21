@@ -30,7 +30,6 @@ let makeEventConfig = (
     programId: metaplexProgramId->SvmTypes.Pubkey.fromStringUnsafe,
     discriminator: Some("0x21"),
     discriminatorByteLen: 1,
-    includeLogs: false,
     fieldSelection: Internal.makeFieldSelection(
       ~blockFields=Utils.Set.fromArray(
         selectedBlockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>),
@@ -75,11 +74,10 @@ let mockResponse: SvmHyperSyncClient.EventItems.response = {
       onEventRegistrationIndex: 0,
       slot,
       transactionIndex: 965,
-      instructionAddress: [1],
+      path: [1],
       programId: metaplexProgramId,
       accounts: [],
       data: "0x21",
-      d1: "0x21",
       isInner: false,
       decoded: {
         name: "CreateMetadataAccountV3",
@@ -209,7 +207,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
         Some({
           "blockNumber": blockNumber,
-          // A slot orders by (transactionIndex, instructionAddress); the pair
+          // A slot orders by (transactionIndex, path); the pair
           // rides the item as (logIndex, orderPath).
           "logIndex": logIndex,
           "orderPath": orderPath,
@@ -217,7 +215,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           // `block` is omitted here; it's materialised from the store at batch
           // prep, which this test doesn't run.
           "block": instruction.block,
-          "params": instruction.params,
+          "args": instruction.args,
+          "accounts": instruction.accounts,
           "usesSourceRegistration": onEventRegistration === (reg :> Internal.onEventRegistration),
         })
       | _ => None
@@ -233,16 +232,8 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           "orderPath": [1],
           "transactionIndex": 965,
           "block": None,
-          "params": Some(
-            (
-              {
-                name: "CreateMetadataAccountV3",
-                args: %raw(`{"amount": "1"}`),
-                accounts: Dict.fromArray([("metadata", metaplexProgramId)]),
-                extraAccounts: [],
-              }: Envio.svmInstructionParams
-            ),
-          ),
+          "args": None,
+          "accounts": None,
           "usesSourceRegistration": true,
         }),
         // The slot range stays inclusive on the boundary; Rust converts to the
@@ -275,11 +266,12 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         isWildcard: false,
         startBlock: None,
         discriminator: "0x21",
-        discriminatorByteLen: 1,
-        includeLogs: false,
         accountFilters: [],
         transactionFields: [],
         blockFields: [],
+        accountActivityFields: [],
+        logFields: [],
+        instructionFields: [],
         accounts: [],
       },
     ])
@@ -303,6 +295,13 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
           },
         ],
       ],
+      fieldSelection: Internal.makeFieldSelection(
+        ~blockFields=eventConfig.fieldSelection.blockFields,
+        ~transactionFields=eventConfig.fieldSelection.transactionFields,
+        ~instructionFields=Utils.Set.fromArray(["args", "accounts"]),
+        ~blockMaskFn=Svm.eventBlockFieldMask,
+        ~transactionMaskFn=Svm.eventTransactionFieldMask,
+      ),
     }
     let _ = makeSource(~onEventRegistrations=[makeReg(~eventConfig)])
     let inputs =
@@ -313,6 +312,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "isInner": input.isInner,
       "transactionFields": input.transactionFields->Array.toSorted(String.compare),
       "blockFields": input.blockFields->Array.toSorted(String.compare),
+      "instructionFields": input.instructionFields->Array.toSorted(String.compare),
       "accounts": input.accounts,
       "argsJson": input.argsJson,
       "definedTypesJson": input.definedTypesJson,
@@ -321,6 +321,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "isInner": Some(false),
       "transactionFields": ["signature", "transactionIndex"],
       "blockFields": ["height", "parentHash"],
+      "instructionFields": ["accounts", "args"],
       "accounts": ["metadata", "mint"],
       "argsJson": Some(`[{"name":"amount","type":"u64"}]`),
       "definedTypesJson": None,

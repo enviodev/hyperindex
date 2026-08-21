@@ -27,14 +27,15 @@ module Registration = {
     // Earliest slot this registration accepts; `None` is unrestricted.
     startBlock: option<int>,
     discriminator?: string,
-    discriminatorByteLen: int,
     isInner?: bool,
-    includeLogs: bool,
     // DNF: outer array is OR of AND-groups.
     accountFilters: array<array<accountFilter>>,
     // camelCase Internal.svmTransactionField / svmBlockField names.
     transactionFields: array<string>,
     blockFields: array<string>,
+    accountActivityFields: array<string>,
+    logFields: array<string>,
+    instructionFields: array<string>,
     // Borsh schema pieces; empty accounts + absent argsJson = no schema.
     accounts: array<string>,
     argsJson?: string,
@@ -55,9 +56,7 @@ module Registration = {
         isWildcard: reg.isWildcard,
         startBlock: reg.startBlock,
         discriminator: ?eventConfig.discriminator,
-        discriminatorByteLen: eventConfig.discriminatorByteLen,
         isInner: ?eventConfig.isInner,
-        includeLogs: eventConfig.includeLogs,
         accountFilters: eventConfig.accountFilters->Array.map(group =>
           group->Array.map(
             (filter): accountFilter => {
@@ -68,6 +67,9 @@ module Registration = {
         ),
         transactionFields: reg.fieldSelection.transactionFields->Utils.Set.toArray,
         blockFields: reg.fieldSelection.blockFields->Utils.Set.toArray,
+        accountActivityFields: reg.fieldSelection.accountActivityFields->Utils.Set.toArray,
+        logFields: reg.fieldSelection.logFields->Utils.Set.toArray,
+        instructionFields: reg.fieldSelection.instructionFields->Utils.Set.toArray,
         accounts: eventConfig.accounts,
         argsJson: ?switch eventConfig.args {
         | JSON.Null => None
@@ -205,8 +207,8 @@ module EventItems = {
   }
 
   type log = {
-    kind: string,
-    message: string,
+    kind?: string,
+    message?: string,
   }
 
   // One routed instruction; `block` and `transaction` are materialised from
@@ -215,17 +217,13 @@ module EventItems = {
     onEventRegistrationIndex: int,
     slot: int,
     transactionIndex: int,
-    instructionAddress: array<int>,
+    path: array<int>,
     programId: string,
     accounts: array<string>,
     data: string,
-    d1?: string,
-    d2?: string,
-    d4?: string,
-    d8?: string,
     isInner: bool,
     decoded?: ResponseTypes.decodedInstruction,
-    // Present only when the routed registration opted in via `includeLogs`.
+    // Present only when the routed registration selected `fields.log`.
     logs?: array<log>,
   }
 
