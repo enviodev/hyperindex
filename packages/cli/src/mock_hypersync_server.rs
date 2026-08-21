@@ -144,7 +144,11 @@ impl Drop for MockHyperSyncServer {
     }
 }
 
-async fn serve(listener: StdTcpListener, state: Arc<Mutex<State>>, shutdown: watch::Receiver<bool>) {
+async fn serve(
+    listener: StdTcpListener,
+    state: Arc<Mutex<State>>,
+    shutdown: watch::Receiver<bool>,
+) {
     let listener = match tokio::net::TcpListener::from_std(listener) {
         Ok(listener) => listener,
         Err(e) => {
@@ -248,8 +252,13 @@ async fn handle_connection(
                     // instead of with a page: rate limiting and
                     // payload-too-large are statuses the client acts on.
                     Some(raw) => {
-                        write_response_with(&mut stream, raw.status, &raw.headers, raw.body.as_bytes())
-                            .await?
+                        write_response_with(
+                            &mut stream,
+                            raw.status,
+                            &raw.headers,
+                            raw.body.as_bytes(),
+                        )
+                        .await?
                     }
                     None => {
                         let page = serde_json::from_str(&request.body)
@@ -297,7 +306,10 @@ fn raw_reply(spec: &Value) -> Option<RawReply> {
                 .map(|(name, value)| {
                     (
                         name.clone(),
-                        value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()),
+                        value
+                            .as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| value.to_string()),
                     )
                 })
                 .collect()
@@ -426,7 +438,8 @@ fn build_page(spec: Option<&Value>, query: &Value, height: u64) -> Result<Vec<u8
 
     let mut message = capnp::message::Builder::new_default();
     {
-        let mut response = message.init_root::<hypersync_net_types_capnp::query_response::Builder>();
+        let mut response =
+            message.init_root::<hypersync_net_types_capnp::query_response::Builder>();
         response.set_archive_height(archive_height);
         response.set_next_block(next_block);
         response.set_total_execution_time(0);
@@ -579,8 +592,8 @@ fn encode_table(rows: Option<&Value>, kind_of: fn(&str) -> Result<Kind>) -> Resu
     for name in &names {
         let kind = kind_of(name).with_context(|| format!("column '{name}'"))?;
         let values = rows.iter().map(|row| row.get(name));
-        let (data_type, array) = build_column(kind, values)
-            .with_context(|| format!("column '{name}'"))?;
+        let (data_type, array) =
+            build_column(kind, values).with_context(|| format!("column '{name}'"))?;
         fields.push(Field::new(name, data_type, true));
         columns.push(array);
     }
@@ -789,7 +802,10 @@ mod tests {
                 decoded.blocks[0].timestamp.as_ref().map(Hex::encode_hex),
                 decoded.logs[0].log_index.map(u64::from),
                 decoded.logs[0].address.as_ref().map(Hex::encode_hex),
-                decoded.transactions[0].gas_used.as_ref().map(Hex::encode_hex),
+                decoded.transactions[0]
+                    .gas_used
+                    .as_ref()
+                    .map(Hex::encode_hex),
             ),
             (
                 Some(10),
