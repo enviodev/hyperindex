@@ -50,11 +50,11 @@ let parentFields = spelling =>
     "Parent",
   )
 
-let spellings = ["[Child!]!", "[Child!]", "[Child]!", "[Child]", "Child"]
+let spellings = ["[Child!]!", "[Child!]", "[Child]!", "[Child]"]
 
-// Every spelling The Graph accepts describes the same lookup, so each one has
-// to reach the runtime as the same derived field — and none of them may take a
-// column on the entity that declares it.
+// Every list nullability The Graph accepts describes the same lookup, so each
+// one has to reach the runtime as the same derived field — and none of them may
+// take a column on the entity that declares it.
 let expectedParentFields = ["id", "children -> Child.parent"]
 
 describe("@derivedFrom spellings", () => {
@@ -74,18 +74,13 @@ describe("@derivedFrom spellings", () => {
     t.expect(parentFields("[Child]")).toEqual(expectedParentFields)
   })
 
-  it("derives from a one-to-one entity", t => {
-    t.expect(parentFields("Child")).toEqual(expectedParentFields)
-  })
-
-  it("treats all five spellings in one entity as the same lookup", t => {
+  it("treats all four spellings in one entity as the same lookup", t => {
     let config = parse(
       schemaWith(
         `  strict: [Child!]! @derivedFrom(field: "parent")
   nullableList: [Child!] @derivedFrom(field: "parent")
   nullableItems: [Child]! @derivedFrom(field: "parent")
-  nullableBoth: [Child] @derivedFrom(field: "parent")
-  oneToOne: Child @derivedFrom(field: "parent")`,
+  nullableBoth: [Child] @derivedFrom(field: "parent")`,
       ),
     ).config
 
@@ -95,12 +90,11 @@ describe("@derivedFrom spellings", () => {
       "nullableList -> Child.parent",
       "nullableItems -> Child.parent",
       "nullableBoth -> Child.parent",
-      "oneToOne -> Child.parent",
     ])
   })
 
   // A derived field is read by looking the owner's id up on the other table, so
-  // the relation is only usable if that column is indexed. The five spellings
+  // the relation is only usable if that column is indexed. The four spellings
   // point at one column, and the index is emitted once.
   it("indexes the column a derived lookup reads, once per column", t => {
     let indexes = spelling =>
@@ -122,7 +116,7 @@ describe("@derivedFrom spellings", () => {
     t.expect(
       parseError(schemaWith(`  children: [String!]! @derivedFrom(field: "parent")`)),
     ).toEqual(
-      `Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Parent: Failed parsing field children: Field marked with @derivedFrom directive does not meet the required structure. Field should be an entity or a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
+      `Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Parent: Failed parsing field children: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
     )
   })
 
@@ -132,19 +126,26 @@ describe("@derivedFrom spellings", () => {
     t.expect(
       parseError(schemaWith(`  children: [[Child!]!]! @derivedFrom(field: "parent")`)),
     ).toEqual(
-      `Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Parent: Failed parsing field children: Field marked with @derivedFrom directive does not meet the required structure. Field should be an entity or a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
+      `Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Parent: Failed parsing field children: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
     )
   })
 
-  // The one-to-one spelling is the one that can name an enum without a list to
-  // give the mistake away, so it has to be caught by the same check.
-  it("rejects a one-to-one derived field naming an enum", t => {
+  // A derived field surfaces as a list everywhere it is read — through the child
+  // entity in a handler, as an array relationship in the GraphQL API — so the
+  // one-to-one spelling is refused rather than quietly answered with an array.
+  it("rejects a one-to-one derived field", t => {
+    t.expect(parseError(schemaWith(`  child: Child @derivedFrom(field: "parent")`))).toEqual(
+      `Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Parent: Failed parsing field child: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
+    )
+  })
+
+  it("rejects a derived field naming an enum", t => {
     t.expect(
       parseError(`
 enum Status { ACTIVE }
 type Parent {
   id: ID!
-  status: Status @derivedFrom(field: "parent")
+  statuses: [Status!]! @derivedFrom(field: "parent")
 }
 `),
     ).toEqual(
@@ -157,7 +158,7 @@ type Parent {
 // the other table, so a handler has nothing to write to it.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml,
-  ~schema=schemaWith(`  oneToOne: Child @derivedFrom(field: "parent")`),
+  ~schema=schemaWith(`  children: [Child!] @derivedFrom(field: "parent")`),
   ~handlers=`
 import { indexer } from "envio";
 
@@ -172,7 +173,7 @@ import { createTestIndexer, type Parent, TestHelpers } from "envio";
 
 const { Addresses } = TestHelpers;
 
-describe("one-to-one @derivedFrom", () => {
+describe("@derivedFrom on a nullable list", () => {
   it("stores no column for the derived field and links the child back", async (t) => {
     const indexer = createTestIndexer();
     const owner = Addresses.defaultAddress;

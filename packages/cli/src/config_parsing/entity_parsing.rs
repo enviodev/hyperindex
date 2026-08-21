@@ -1676,17 +1676,19 @@ impl UserDefinedFieldType {
     /// Returns the name of the entity a @derivedFrom field looks up, or None
     /// when the field isn't shaped like one.
     ///
-    /// The nullability the field is written with carries no meaning: a derived
-    /// field is computed from the other side of the relation, so `[Child!]!`,
-    /// `[Child!]`, `[Child]!`, `[Child]` and the one-to-one `Child` all name the
-    /// same lookup and are all generated as a list.
+    /// The nullability the field is written with carries no meaning: the lookup
+    /// is computed from the other side of the relation, so `[Child!]!`,
+    /// `[Child!]`, `[Child]!` and `[Child]` all name the same one-to-many
+    /// relation and are all generated as `[Child!]!`. The list itself does carry
+    /// meaning — a derived field is exposed as a list everywhere it surfaces, so
+    /// the one-to-one `Child @derivedFrom(...)` is refused rather than quietly
+    /// answered with an array.
     fn get_name_of_derived_from_entity(&self) -> Option<String> {
-        let item = match self.strip_non_null() {
-            Self::ListType(item) => item.strip_non_null(),
-            single => single,
-        };
-        match item {
-            Self::Single(GqlScalar::Custom(name)) => Some(name.clone()),
+        match self.strip_non_null() {
+            Self::ListType(item) => match item.strip_non_null() {
+                Self::Single(GqlScalar::Custom(name)) => Some(name.clone()),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -1820,8 +1822,7 @@ impl FieldType {
 
                     Err(anyhow!(
                         "Field marked with @derivedFrom directive does not meet the required \
-                         structure. Field should be an entity or a list of entities, for example: \
-                         {example_str}"
+                         structure. Field should be a list of entities, for example: {example_str}"
                     ))
                 }
                 Some(entity_name) => Ok(Self::DerivedFromField {
