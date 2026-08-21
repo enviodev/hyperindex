@@ -158,9 +158,10 @@ impl ColumnSpec {
     /// The column as the table declares it. `context` names what the column
     /// belongs to, so a field the derivation refuses says which one it was.
     pub fn typed(&self, chain_id_mode: ChainIdMode, context: &str) -> Result<(String, ChType)> {
-        let ch_type = self.field.ch_type(chain_id_mode).map_err(|error| {
-            error.context(format!("Column `{}` of {context}", self.name))
-        })?;
+        let ch_type = self
+            .field
+            .ch_type(chain_id_mode)
+            .map_err(|error| error.context(format!("Column `{}` of {context}", self.name)))?;
         Ok((self.name.clone(), ch_type))
     }
 }
@@ -689,10 +690,21 @@ mod tests {
     }
 
     #[test]
-    fn names_every_column_the_insert_sends_and_escapes_a_backtick() {
+    /// A backtick would end the identifier early and leave the rest to be read
+    /// as SQL; a backslash would be taken as starting an escape and change the
+    /// name. Neither can come out of a GraphQL schema, but the quoting is what
+    /// makes that a fact about the schema rather than about this function.
+    fn names_every_column_the_insert_sends_and_escapes_them() {
         assert_eq!(
-            insert_query("db", "envio_history_Account", ["id", "balance"].iter()),
-            "INSERT INTO `db`.`envio_history_Account` (`id`, `balance`) FORMAT RowBinary"
+            insert_query(
+                "db",
+                "envio_history_Account",
+                ["id", "bal`ance", r"back\slash"].iter()
+            ),
+            concat!(
+                "INSERT INTO `db`.`envio_history_Account` ",
+                r"(`id`, `bal``ance`, `back\\slash`) FORMAT RowBinary"
+            )
         );
     }
 

@@ -486,7 +486,10 @@ mod tests {
         }
         .ch_type(ChainIdMode::Int32)
         .unwrap();
-        assert_eq!(ch_type.to_string(), r"Enum8('it''s' = 1, 'back\\slash' = 2)");
+        assert_eq!(
+            ch_type.to_string(),
+            r"Enum8('it''s' = 1, 'back\\slash' = 2)"
+        );
     }
 
     #[test]

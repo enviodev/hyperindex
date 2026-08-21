@@ -337,7 +337,8 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
             let scaled = match number
                 .as_i64()
                 .map(i128::from)
-                .or_else(|| number.as_u64().map(i128::from)) {
+                .or_else(|| number.as_u64().map(i128::from))
+            {
                 Some(value) => POW10
                     .get(*scale as usize)
                     .and_then(|factor| value.checked_mul(*factor))

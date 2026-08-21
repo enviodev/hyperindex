@@ -343,12 +343,12 @@ impl From<HistorySchemaInput> for ddl::HistorySchema {
     }
 }
 
-/// Backtick-quotes an identifier, doubling any backtick inside it. Every
-/// identifier a statement names goes through here, so a column or table whose
-/// name needs quoting cannot end the identifier early and have the rest read as
-/// SQL.
+/// Backtick-quotes an identifier. ClickHouse reads C-style escapes inside one
+/// just as it does inside a string, so a backslash is doubled alongside the
+/// backtick — left alone, a name holding `a\tb` would be created with a tab in
+/// it.
 pub(crate) fn quoted(name: &str) -> String {
-    format!("`{}`", name.replace('`', "``"))
+    format!("`{}`", name.replace('\\', "\\\\").replace('`', "``"))
 }
 
 /// Single-quotes a string literal. ClickHouse reads C-style escapes inside one,
@@ -570,7 +570,6 @@ impl ClickHouseSink {
             staged.remove(&handle);
         }
     }
-
 }
 
 impl ClickHouseSink {
@@ -623,10 +622,7 @@ impl ClickHouseSink {
         &self,
         columns: Vec<ddl::ColumnSpec>,
     ) -> Result<Vec<(String, ChType)>> {
-        let context = format!(
-            "ClickHouse table `{}`",
-            self.history.checkpoints_table
-        );
+        let context = format!("ClickHouse table `{}`", self.history.checkpoints_table);
         columns
             .iter()
             .map(|column| column.typed(self.chain_id_mode, &context))
@@ -641,8 +637,8 @@ impl ClickHouseSink {
             database_engine,
         } = input;
         let entities: Vec<ddl::EntitySpec> = entities.into_iter().map(Into::into).collect();
-        let checkpoint_columns = self
-            .checkpoint_column_types(checkpoint_columns.into_iter().map(Into::into).collect())?;
+        let checkpoint_columns =
+            self.checkpoint_column_types(checkpoint_columns.into_iter().map(Into::into).collect())?;
 
         let engine_name = database_engine.as_deref().map(ddl::database_engine_name);
         // A Replicated database engine only replicates data when its tables use
@@ -790,11 +786,15 @@ impl ClickHouseSink {
                 )
             })?;
 
-        // TabSeparated answers one table name per line, which is all this reads.
+        // `startsWith` rather than `LIKE`: the prefix holds underscores, which
+        // LIKE reads as single-character wildcards. TabSeparated answers one
+        // table name per line, which is all this reads.
         let tables = self
             .post_statement(format!(
-                "SHOW TABLES FROM {database_ident} LIKE '{}%' FORMAT TabSeparated",
-                self.history.history_table_prefix
+                "SELECT name FROM system.tables WHERE database = {} AND \
+                 startsWith(name, {}) FORMAT TabSeparated",
+                literal(&self.database),
+                literal(&self.history.history_table_prefix)
             ))
             .await?;
         futures_util::future::try_join_all(
@@ -1105,6 +1105,35 @@ mod tests {
                 history_table_prefix: "envio_history_".to_string(),
             },
         }
+    }
+
+    /// Every one of these round-trips back to the input through ClickHouse's own
+    /// parser. A trailing backslash is the case that matters: unescaped, it
+    /// escapes the closing quote and the rest of the statement becomes SQL.
+    #[test]
+    fn a_literal_survives_whatever_it_is_given() {
+        let escaped = [
+            r"abc\",
+            r"a\'b",
+            "it's",
+            "''",
+            r"a\tb",
+            "x'; DROP TABLE y; --",
+            "plain",
+        ]
+        .map(|value| literal(value));
+        assert_eq!(
+            escaped,
+            [
+                r"'abc\\'",
+                r"'a\\''b'",
+                "'it''s'",
+                "''''''",
+                r"'a\\tb'",
+                "'x''; DROP TABLE y; --'",
+                "'plain'",
+            ]
+        );
     }
 
     /// A field type the derivation does not cover is refused when the table is
