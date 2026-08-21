@@ -193,6 +193,7 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
         "Holder",
         "NumericArrays",
         "Transfer",
+        "TransferInternal",
         "TransferPgOnly",
       ],
     });

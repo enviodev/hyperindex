@@ -57,6 +57,14 @@ type Holder @crossChain @storage(postgres: true, clickhouse: true) {
   lastValue: BigInt!
 }
 
+# @internal: stored in Postgres and written from handlers like any entity,
+# but never tracked in Hasura, so it must not appear in the GraphQL schema.
+type TransferInternal @crossChain @internal @storage(postgres: true) {
+  id: ID!
+  from: String!
+  value: BigInt!
+}
+
 # NUMERIC[] columns are created as TEXT[] when Hasura is enabled, so Hasura
 # returns the elements as strings rather than numbers that lose precision.
 # https://github.com/enviodev/hyperindex/issues/788
