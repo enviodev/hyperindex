@@ -334,7 +334,10 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
             // A JSON integer is already the digits the column stores, short of
             // the scale; rendering it back to text to re-parse would allocate
             // once per element. Only a fractional literal needs the parser.
-            let scaled = match number.as_i64().map(i128::from).or(number.as_u64().map(i128::from)) {
+            let scaled = match number
+                .as_i64()
+                .map(i128::from)
+                .or_else(|| number.as_u64().map(i128::from)) {
                 Some(value) => POW10
                     .get(*scale as usize)
                     .and_then(|factor| value.checked_mul(*factor))
