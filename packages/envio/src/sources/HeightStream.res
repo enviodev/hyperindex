@@ -35,15 +35,28 @@ let maxRetryMillis = 60_000
 // Keeps the doubling from overflowing on a stream that has been failing for
 // days. The delay reaches maxRetryMillis long before this.
 let maxRetryExponent = 20
-// Floor for how long a connection has to last to have been worth making. Both
-// transports deliver something the moment they connect — HyperSync sends the
-// head, a WebSocket confirms the subscription — so an endpoint that accepts and
-// drops has produced everything a working one would have by then, and only
-// staying open tells them apart.
-let minProvenMillis = 1_000
+// Floor for how long a connection has to serve to have been worth making, as a
+// fraction of the window we would wait before calling it dead. Both transports
+// deliver something the moment they connect — HyperSync sends the head, a
+// WebSocket confirms the subscription — so an endpoint that accepts and drops
+// produces everything a working one would have by then, and only staying up
+// tells them apart. A fixed floor can't do it: one low enough to clear on a
+// healthy connection is one a connection that dies seconds in clears too.
+let provenStaleFraction = 4
 // A frame nobody could read ends up in a log line, so cap what a provider can
 // put there.
 let maxDetailLength = 200
+
+// The wait that follows `count` consecutive failures. Zero for a first
+// connection, which nothing preceded.
+let retryDelayFor = count =>
+  count <= 0
+    ? 0
+    : Pervasives.min(
+        baseRetryMillis *
+        Math.pow(2.0, ~exp=Pervasives.min(count - 1, maxRetryExponent)->Int.toFloat)->Float.toInt,
+        maxRetryMillis,
+      )
 
 let truncateDetail = detail =>
   detail->String.length > maxDetailLength
@@ -71,14 +84,12 @@ let subscribe = (
   // The frame that stopped this connection being readable, kept for the failure
   // it will eventually be named after.
   let unreadableDetail = ref(None)
-  // How long the current connection has to last to count as worth making: the
-  // wait it cost us, floored. Measuring the connection against the wait before
-  // it is what a provider rotating connections clears and an endpoint that
-  // drops immediately can't, and it needs no clock of its own — the bar rises
-  // with the backoff, so an endpoint that always dies at the same age keeps
-  // escalating instead of settling into a reconnect loop at a fixed delay.
-  let provenMillis = ref(minProvenMillis)
-  let connectedAt = ref(Performance.now())
+  // When the current connection reported itself live, if it ever did. Time
+  // before that is not service: a handshake that takes seconds to fail, or a
+  // socket that is accepted and then hangs until the staleness timer, would
+  // otherwise be indistinguishable from a connection that worked.
+  let liveAt = ref(None)
+  let minProvenMillis = staleTimeout / provenStaleFraction
 
   let clearPendingTimeout = () => {
     switch timeoutId.contents {
@@ -122,23 +133,25 @@ let subscribe = (
     clearPendingTimeout()
     closeConnection()
 
-    // A connection that outlived the wait before it was worth making, whatever
-    // ended it, so the backoff starts over. That covers a load balancer
-    // rotating connections and a chain whose blocks are further apart than the
-    // stale timeout alike, without either having to be recognised.
-    let uptimeMillis = (Performance.now() -. connectedAt.contents)->Float.toInt
-    failureCount := if uptimeMillis >= provenMillis.contents {
+    // A connection that served for longer than the wait it cost was worth
+    // making, whatever ended it, so the backoff starts over. That covers a load
+    // balancer rotating connections and a chain whose blocks are further apart
+    // than the stale timeout alike, without either having to be recognised. The
+    // bar rises with the backoff, so an endpoint that always dies at the same
+    // age keeps escalating rather than settling into a loop at a fixed delay.
+    let servedMillis = switch liveAt.contents {
+    | Some(since) => (Performance.now() -. since)->Float.toInt
+    | None => 0
+    }
+    let provenMillis = Pervasives.max(retryDelayFor(failureCount.contents), minProvenMillis)
+    failureCount :=
+      if servedMillis >= provenMillis {
         1
       } else {
         failureCount.contents + 1
       }
 
-    let exp = Pervasives.min(failureCount.contents - 1, maxRetryExponent)->Int.toFloat
-    let retryMillis = Pervasives.min(
-      baseRetryMillis * Math.pow(2.0, ~exp)->Float.toInt,
-      maxRetryMillis,
-    )
-    provenMillis := Pervasives.max(retryMillis, minProvenMillis)
+    let retryMillis = retryDelayFor(failureCount.contents)
 
     // Scheduled before reporting, so a consumer that throws can't be what makes
     // the stream give up.
@@ -147,12 +160,12 @@ let subscribe = (
           start()
         }, retryMillis))
 
-    onStatus(Down({reason, ?detail}))
+    onStatus(Down({reason, detail: ?detail->Option.map(truncateDetail)}))
   }
   and start = () => {
     generation := generation.contents + 1
     unreadableDetail := None
-    connectedAt := Performance.now()
+    liveAt := None
     let connectionGeneration = generation.contents
     let isCurrent = () => generation.contents === connectionGeneration
 
@@ -165,11 +178,10 @@ let subscribe = (
     // onConnected does. Without that, a transport that never reports the
     // connection usable would leave its consumer polling at full rate next to a
     // stream that works.
-    let reportedLive = ref(false)
     let goLive = () => {
       armStaleTimeout()
-      if !reportedLive.contents {
-        reportedLive := true
+      if liveAt.contents->Option.isNone {
+        liveAt := Some(Performance.now())
         onStatus(Live)
       }
     }
@@ -203,7 +215,7 @@ let subscribe = (
         },
       onUnreadable: (~detail) =>
         if isCurrent() {
-          unreadableDetail := Some(detail->truncateDetail)
+          unreadableDetail := Some(detail)
         },
       onFailure: (~reason, ~detail=?) =>
         if isCurrent() {

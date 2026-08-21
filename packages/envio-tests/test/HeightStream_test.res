@@ -134,6 +134,66 @@ describe("HeightStream reconnect driver", () => {
     )
   })
 
+  Async.it("Keeps backing off when a connection never reports itself live", async t => {
+    // A gateway that accepts the socket and answers 502 two seconds later, or a
+    // handshake that takes that long to be reset, served nothing at all — only
+    // time a connection spent live can pay for the wait it cost.
+    let harness = makeHarness()
+    let schedule = [250, 500, 1_000, 2_000]
+
+    let connectsAroundRetry = []
+    for attempt in 0 to schedule->Array.length - 1 {
+      await Vi.advanceTimersByTimeAsync(2_000)
+      (harness->driverAt(attempt)).onFailure(~reason="502")
+      await Vi.advanceTimersByTimeAsync(schedule->Array.getUnsafe(attempt) - 1)
+      let beforeDue = harness.drivers->Array.length
+      await Vi.advanceTimersByTimeAsync(1)
+      connectsAroundRetry->Array.push((beforeDue, harness.drivers->Array.length))->ignore
+    }
+    harness.unsubscribe()
+
+    t.expect(connectsAroundRetry).toStrictEqual(
+      schedule->Array.mapWithIndex((_, attempt) => (attempt + 1, attempt + 2)),
+    )
+  })
+
+  Async.it("Keeps backing off when a live connection dies inside the stale window", async t => {
+    // A WebSocket that confirms the subscription and drops seconds later without
+    // a head served no better than one that never connected, however far past a
+    // second it lasted.
+    let harness = makeHarness(~staleTimeout=60_000)
+    let schedule = [250, 500, 1_000, 2_000]
+
+    let connectsAroundRetry = []
+    for attempt in 0 to schedule->Array.length - 1 {
+      let driver = harness->driverAt(attempt)
+      driver.onConnected()
+      await Vi.advanceTimersByTimeAsync(3_000)
+      driver.onFailure(~reason="closed")
+      await Vi.advanceTimersByTimeAsync(schedule->Array.getUnsafe(attempt) - 1)
+      let beforeDue = harness.drivers->Array.length
+      await Vi.advanceTimersByTimeAsync(1)
+      connectsAroundRetry->Array.push((beforeDue, harness.drivers->Array.length))->ignore
+    }
+    harness.unsubscribe()
+
+    t.expect(connectsAroundRetry).toStrictEqual(
+      schedule->Array.mapWithIndex((_, attempt) => (attempt + 1, attempt + 2)),
+    )
+  })
+
+  Async.it("Trims a failure detail that would flood the log", async t => {
+    let harness = makeHarness()
+    (harness->driverAt(0)).onFailure(~reason="subscribe-rejected", ~detail=String.repeat("y", 500))
+
+    await Vi.advanceTimersByTimeAsync(250)
+    harness.unsubscribe()
+
+    t.expect(harness.statuses).toStrictEqual([
+      `down:subscribe-rejected:${String.repeat("y", 200)}…`,
+    ])
+  })
+
   Async.it("Counts a socket that errors and then closes as one failure", async t => {
     let harness = makeHarness()
     let driver = harness->driverAt(0)

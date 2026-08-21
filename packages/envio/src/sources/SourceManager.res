@@ -569,7 +569,7 @@ let handleSubscriptionStatus = (
       // Only a connect that followed a failure is a reconnect. Deriving it from
       // a connect count would miss that a stream whose very first attempt
       // failed has reconnected, and report it as still down for good.
-      if sourceState.heightStreamFailures->Dict.keysToArray->Array.length > 0 {
+      if !(sourceState.heightStreamFailures->Utils.Dict.isEmpty) {
         sourceState.heightStreamReconnects = sourceState.heightStreamReconnects + 1
       }
       // Any height from before this connection is lost, because eth_subscribe
