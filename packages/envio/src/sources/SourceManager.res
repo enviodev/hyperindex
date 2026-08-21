@@ -384,25 +384,25 @@ let dispatch = async (
       | None => ()
       }
     }
-  | Ready(queries) => {
-      // Queries are already marked in flight by ChainState.startFetchingQueries
-      // when they were admitted; here we just execute them.
-      sourceManager.fetchingPartitionsCount =
-        sourceManager.fetchingPartitionsCount + queries->Array.length
-      sourceManager->trackNewStatus(~newStatus=Querying)
-      let _ = await queries
-      ->Array.map(q => {
-        let promise = q->executeQuery
-        let _ = promise->Promise.thenResolve(_ => {
-          sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
-          if sourceManager.fetchingPartitionsCount === 0 {
-            sourceManager->trackNewStatus(~newStatus=Idle)
-          }
-        })
-        promise
+  | Ready(queries) =>
+    // Queries are already marked in flight by ChainState.startFetchingQueries
+    // when they were admitted. Fired and left to run: `executeQuery` owns its
+    // error boundary and never rejects, and each response re-enters the loop on
+    // its own, so there is nothing here to wait for.
+    sourceManager.fetchingPartitionsCount =
+      sourceManager.fetchingPartitionsCount + queries->Array.length
+    sourceManager->trackNewStatus(~newStatus=Querying)
+    queries->Array.forEach(q => {
+      q
+      ->executeQuery
+      ->Promise.thenResolve(_ => {
+        sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
+        if sourceManager.fetchingPartitionsCount === 0 {
+          sourceManager->trackNewStatus(~newStatus=Idle)
+        }
       })
-      ->Promise.all
-    }
+      ->Promise.ignore
+    })
   }
 }
 
@@ -880,12 +880,6 @@ let executeQuery = async (
   ~query: FetchState.query,
   ~knownHeight,
   ~isRealtime,
-  // Wraps the request itself, so a caller tracking what the loop is doing can
-  // tell the round trip apart from the retry backoffs around it — those are
-  // the loop biding its time, not waiting on an answer.
-  ~park: (unit => promise<Source.blockRangeFetchResponse>) => promise<
-    Source.blockRangeFetchResponse,
-  >=work => work(),
 ) => {
   let noSourcesError = "The indexer doesn't have data-sources which can continue fetching. Please, check the error logs or reach out to the Envio team."
 
@@ -936,18 +930,16 @@ let executeQuery = async (
     )
 
     try {
-      let response = await park(() =>
-        source.getItemsOrThrow(
-          ~fromBlock=query.fromBlock,
-          ~toBlock,
-          ~addressSet=query.addresses,
-          ~partitionId=query.partitionId,
-          ~knownHeight,
-          ~selection=query.selection->FetchState.narrowSelectionToRange(~toBlock),
-          ~itemsTarget=query.itemsTarget,
-          ~retry,
-          ~logger,
-        )
+      let response = await source.getItemsOrThrow(
+        ~fromBlock=query.fromBlock,
+        ~toBlock,
+        ~addressSet=query.addresses,
+        ~partitionId=query.partitionId,
+        ~knownHeight,
+        ~selection=query.selection->FetchState.narrowSelectionToRange(~toBlock),
+        ~itemsTarget=query.itemsTarget,
+        ~retry,
+        ~logger,
       )
       sourceState->recordRequestStats(response.requestStats)
       validateResponseBlockStore(~method="getItems", ~blockStore=response.blockStore)
@@ -1072,16 +1064,7 @@ let executeQuery = async (
   responseRef.contents->Option.getUnsafe
 }
 
-let getBlockHashes = async (
-  sourceManager: t,
-  ~blockNumbers: array<int>,
-  ~isRealtime: bool,
-  // As in `executeQuery`: wraps the request, so a caller tracking what the loop
-  // is doing sees the round trip and not the retries around it.
-  ~park: (unit => promise<Source.getBlockHashesResponse>) => promise<
-    Source.getBlockHashesResponse,
-  >=work => work(),
-) => {
+let getBlockHashes = async (sourceManager: t, ~blockNumbers: array<int>, ~isRealtime: bool) => {
   let responseRef = ref(None)
   let retryRef = ref(0)
 
@@ -1109,7 +1092,7 @@ let getBlockHashes = async (
     )
 
     try {
-      let res = await park(() => source.getBlockHashes(~blockNumbers, ~logger))
+      let res = await source.getBlockHashes(~blockNumbers, ~logger)
       sourceState->recordRequestStats(res.requestStats)
       switch res.result {
       | Ok(data) =>

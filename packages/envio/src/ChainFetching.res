@@ -333,52 +333,52 @@ let fetchChain = async (
     // Owns its error boundary: launch doesn't catch, so any failure here (the
     // query, response handling, or dispatch itself) must stop the indexer.
     try {
-      // `dispatch` only waits: it parks on a new block, or joins the queries it
-      // fanned out. Each of those does its own accounting, so this frame stays
-      // suspended for the whole call rather than reading as work.
-      await state->IndexerState.suspendInFlight(() =>
-        chainState->ChainState.dispatch(
-          ~waitForNewBlock=(~knownHeight) =>
-            sourceManager->SourceManager.waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling),
-          ~onNewBlock=(~knownHeight) =>
-            finishWaitingForNewBlock(
-              state,
-              ~chainId,
-              ~knownHeight,
-              ~stateId,
-              ~scheduleFetch,
-              ~scheduleProcessing,
-            ),
-          ~executeQuery=query =>
-            state->IndexerState.trackInFlight(async () => {
-              // Caught here (not just by the outer try) so the query promise never
-              // rejects: dispatch spins a side-chain off it that would otherwise
-              // become an unhandled rejection.
-              try {
-                // Only the request itself is a wait on the outside world.
-                // Everything around it — picking a source, validating, backing
-                // off before a retry — is the loop working.
-                let response = await sourceManager->SourceManager.executeQuery(
-                  ~query,
-                  ~knownHeight=chainState->ChainState.knownHeight,
-                  ~isRealtime,
-                  ~park=work => state->IndexerState.suspendInFlight(work),
-                )
-                await onQueryResponse(
-                  state,
-                  {chainId, response, query},
-                  ~stateId,
-                  ~scheduleFetch,
-                  ~scheduleProcessing,
-                  ~scheduleRollback,
-                )
-              } catch {
-              | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
-              }
-            }),
-          ~action,
-          ~stateId,
-        )
+      await chainState->ChainState.dispatch(
+        // The one wait only the loop can see from the inside: polling sleeps,
+        // stall races and height subscriptions, with the height requests
+        // interleaved among them. Suspended wholesale — a mock can only park a
+        // call that is pending at it, and none of those waits is one. The
+        // item and block-hash requests aren't suspended here at all: the test's
+        // source parks them itself, so a real backoff between retries still
+        // reads as the loop working.
+        ~waitForNewBlock=(~knownHeight) =>
+          state->IndexerState.suspendInFlight(() =>
+            sourceManager->SourceManager.waitForNewBlock(~knownHeight, ~isRealtime, ~reducedPolling)
+          ),
+        ~onNewBlock=(~knownHeight) =>
+          finishWaitingForNewBlock(
+            state,
+            ~chainId,
+            ~knownHeight,
+            ~stateId,
+            ~scheduleFetch,
+            ~scheduleProcessing,
+          ),
+        ~executeQuery=query =>
+          state->IndexerState.trackInFlight(async () => {
+            // Caught here (not just by the outer try) so the query promise never
+            // rejects: dispatch fires it and leaves it to run, so a rejection
+            // would have nowhere to land but the process.
+            try {
+              let response = await sourceManager->SourceManager.executeQuery(
+                ~query,
+                ~knownHeight=chainState->ChainState.knownHeight,
+                ~isRealtime,
+              )
+              await onQueryResponse(
+                state,
+                {chainId, response, query},
+                ~stateId,
+                ~scheduleFetch,
+                ~scheduleProcessing,
+                ~scheduleRollback,
+              )
+            } catch {
+            | exn => IndexerState.errorExit(state, exn->ErrorHandling.make)
+            }
+          }),
+        ~action,
+        ~stateId,
       )
     } catch {
     | exn =>

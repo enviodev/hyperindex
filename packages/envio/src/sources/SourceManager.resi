@@ -69,9 +69,6 @@ let executeQuery: (
   ~query: FetchState.query,
   ~knownHeight: int,
   ~isRealtime: bool,
-  ~park: (unit => promise<Source.blockRangeFetchResponse>) => promise<
-    Source.blockRangeFetchResponse,
-  >=?,
 ) => promise<Source.blockRangeFetchResponse>
 
 let makeGetHeightRetryInterval: (
@@ -80,12 +77,7 @@ let makeGetHeightRetryInterval: (
   ~maxRetryInterval: int,
 ) => (~retry: int) => int
 
-let getBlockHashes: (
-  t,
-  ~blockNumbers: array<int>,
-  ~isRealtime: bool,
-  ~park: (unit => promise<Source.getBlockHashesResponse>) => promise<Source.getBlockHashesResponse>=?,
-) => promise<BlockStore.t>
+let getBlockHashes: (t, ~blockNumbers: array<int>, ~isRealtime: bool) => promise<BlockStore.t>
 
 // Total time the indexer spent waiting on rate limits, including any
 // currently-in-progress window measured against Date.now() at call time.

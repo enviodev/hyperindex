@@ -170,6 +170,9 @@ let run = async (
       ~onError,
       ~onExit?,
     )
+    // Before the loop starts asking: a mock call parked before the hand-off
+    // would count as work for as long as it waits.
+    MockSource.installMockSourcePark(~config, ~park=work => state->IndexerState.suspendInFlight(work))
     state->IndexerLoop.start
 
     // One macrotask hop, which drains every pending microtask behind it.

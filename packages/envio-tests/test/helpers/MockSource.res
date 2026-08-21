@@ -138,7 +138,16 @@ type mockSourceRegistrationRef = ref<option<Internal.onEventRegistration>>
 // `isWildcard` decides whether the chain's mock registration depends on
 // addresses, and so whether its partition is an address partition or a wildcard
 // one — the two take different paths through a rollback.
-type mockSourceState = {onEventRegistrationRef: mockSourceRegistrationRef, isWildcard: bool}
+type mockSourceState = {
+  onEventRegistrationRef: mockSourceRegistrationRef,
+  isWildcard: bool,
+  // The run's `suspendInFlight`, handed over by IndexerRunner once the indexer
+  // exists. A call parked at this source is, by definition, the loop waiting on
+  // the test, so the source discounts it itself — no production code has to
+  // know where the test boundary is. Identity until a run installs it, so the
+  // lib tests that drive SourceManager directly are unaffected.
+  park: ref<(unit => promise<unknown>) => promise<unknown>>,
+}
 
 @get external getMockSourceState: Source.t => option<mockSourceState> = "__mockSourceState"
 
@@ -146,6 +155,30 @@ let setMockSourceState = (source: Source.t, state: mockSourceState) => {
   source
   ->Utils.Object.definePropertyWithValue("__mockSourceState", {enumerable: false, value: state})
   ->ignore
+}
+
+// Hands every mock source in the config the run's `suspendInFlight`. Height
+// calls are the deliberate exception (see `parkPending` in `make`): they sit
+// inside the loop's own new-block wait, which ChainFetching suspends wholesale,
+// and parking them here as well would discount the same wait twice.
+let installMockSourcePark = (
+  ~config: Config.t,
+  ~park: (unit => promise<unknown>) => promise<unknown>,
+) => {
+  config.chainMap
+  ->ChainMap.values
+  ->Array.forEach(chainConfig => {
+    switch chainConfig.sourceConfig {
+    | Config.CustomSources(sources) =>
+      sources->Array.forEach(source =>
+        switch source->getMockSourceState {
+        | Some(state) => state.park := park
+        | None => ()
+        }
+      )
+    | _ => ()
+    }
+  })
 }
 
 let installMockSourceRegistrations = (
@@ -287,7 +320,18 @@ let make = (
   let heightSubscriptionCallbacks: array<int => unit> = []
   let heightSubscriptionUnsubscribed = ref(false)
   let autoHeight = ref(None)
-  let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
+  let state: mockSourceState = {
+    onEventRegistrationRef: ref(None),
+    isWildcard,
+    park: ref((work: unit => promise<unknown>) => work()),
+  }
+
+  // Registers the call synchronously (so it is visible the instant the count
+  // drops), then parks the wait on it as the loop standing on the test.
+  let parkPending = (type a, work: unit => promise<a>): promise<a> =>
+    state.park.contents(
+      work->(Utils.magic: (unit => promise<a>) => unit => promise<unknown>),
+    )->(Utils.magic: promise<unknown> => promise<a>)
 
   // A height call is outstanding until it is answered either way, so both sides
   // are dropped together — otherwise `pendingHeightCalls` counts calls that have
@@ -414,12 +458,14 @@ let make = (
         poweredByHyperSync: false,
         chainId,
         pollingInterval,
-        getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
-          getBlockHashesCalls->Array.push(blockNumbers)->ignore
-          Promise.make((resolve, _reject) => {
-            getBlockHashesResolveFns->Array.push(resolve)->ignore
+        getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) =>
+          parkPending(() => {
+            getBlockHashesCalls->Array.push(blockNumbers)->ignore
+            Promise.make((resolve, _reject) => {
+              getBlockHashesResolveFns->Array.push(resolve)->ignore
+            })
           })
-        }),
+        ),
         getHeightOrThrow: implement(#getHeightOrThrow, () => {
           getHeightOrThrowCalls->Array.push(true)->ignore
           switch autoHeight.contents {
@@ -442,10 +488,11 @@ let make = (
           ~retry,
           ~logger as _,
         ) => {
-          keepOnlyPendingCalls(
-            ~array=getItemsOrThrowCalls,
-            ~onSettled=call => settledQueries->Array.push(call.payload)->ignore,
-            ~fn=(~resolve, ~reject) => {
+          parkPending(() =>
+            keepOnlyPendingCalls(
+              ~array=getItemsOrThrowCalls,
+              ~onSettled=call => settledQueries->Array.push(call.payload)->ignore,
+              ~fn=(~resolve, ~reject) => {
               let payload = {
                 "fromBlock": fromBlock,
                 "toBlock": toBlock,
@@ -572,6 +619,7 @@ let make = (
                 reject: reject->Utils.magic,
               }
             },
+            )
           )
         }),
         onReorg: () => reorgCalls := reorgCalls.contents + 1,
