@@ -143,10 +143,9 @@ let checkpointColumns = () =>
           let name = f.fieldName
           Some({
             name,
-            fieldType: switch name {
-            | "events_processed" => Table.UInt64
-            | _ => f.fieldType
-            },
+            fieldType: name === (#events_processed: InternalTable.Checkpoints.field :> string)
+              ? Table.UInt64
+              : f.fieldType,
             isNullable: f.isNullable,
             valuesOf: switch valuesOf->Dict.get(name) {
             | Some(valuesOf) => valuesOf
