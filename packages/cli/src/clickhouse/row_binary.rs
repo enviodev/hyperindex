@@ -331,7 +331,17 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
         (ChType::Enum { .. }, Value::String(text)) => encode_text_scalar(out, ch_type, text)?,
         (ChType::Decimal { .. }, Value::String(text)) => encode_text_scalar(out, ch_type, text)?,
         (ChType::Decimal { scale, .. }, Value::Number(number)) => {
-            put_int(out, decimal_to_i128(&number.to_string(), *scale)?, ch_type)?
+            // A JSON integer is already the digits the column stores, short of
+            // the scale; rendering it back to text to re-parse would allocate
+            // once per element. Only a fractional literal needs the parser.
+            let scaled = match number.as_i64().map(i128::from).or(number.as_u64().map(i128::from)) {
+                Some(value) => POW10
+                    .get(*scale as usize)
+                    .and_then(|factor| value.checked_mul(*factor))
+                    .context("decimal overflows the column's precision")?,
+                None => decimal_to_i128(&number.to_string(), *scale)?,
+            };
+            put_int(out, scaled, ch_type)?
         }
         // The integer columns, whose elements JSON carries natively. Feeding the
         // number straight in keeps the encode loop off a render-to-text and
@@ -778,6 +788,39 @@ mod tests {
             expected.extend_from_slice(value.as_bytes());
         }
         assert_eq!(encoded.body, expected);
+    }
+
+    #[test]
+    /// A `Decimal` element can arrive as a JSON number rather than a string,
+    /// which takes a different arm of the encoder — one that scales the integer
+    /// directly instead of parsing a literal.
+    #[test]
+    fn encodes_decimal_array_elements_given_as_json_numbers() {
+        let encoded = encode(
+            &[text_column("xs", "Array(Decimal(18, 2))", &["[10,-3,1.5]"])],
+            1,
+        )
+        .unwrap();
+        let mut expected = vec![3];
+        for scaled in [1_000i64, -300, 150] {
+            expected.extend_from_slice(&scaled.to_le_bytes());
+        }
+        assert_eq!(encoded.body, expected);
+    }
+
+    /// The scaling can carry a value past what the column accepts, which has to
+    /// be an error rather than a wrapped integer: RowBinary has no room to
+    /// report one.
+    #[test]
+    fn rejects_a_decimal_array_element_the_column_cannot_hold() {
+        let encoded = encode(
+            &[text_column("xs", "Array(Decimal(9, 2))", &["[99999999]"])],
+            1,
+        );
+        assert!(
+            encoded.is_err(),
+            "expected the column's precision to refuse the value"
+        );
     }
 
     #[test]
