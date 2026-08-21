@@ -790,7 +790,6 @@ mod tests {
         assert_eq!(encoded.body, expected);
     }
 
-    #[test]
     /// A `Decimal` element can arrive as a JSON number rather than a string,
     /// which takes a different arm of the encoder — one that scales the integer
     /// directly instead of parsing a literal.
