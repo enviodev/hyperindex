@@ -96,8 +96,8 @@ type sourceHeightMetrics = {
   height: int,
 }
 
-// Health of a source's height subscription. Only sources whose stream has
-// failed at least once appear, so a healthy indexer renders none of it.
+// Only sources whose stream has failed at least once appear, so a healthy
+// indexer renders none of it.
 type sourceHeightStreamMetrics = {
   source: string,
   chainId: ChainId.t,
@@ -228,13 +228,23 @@ let renderMetrics = (b: builder, metrics: t) => {
     metrics.storageWrites->Array.map(s => (`{storage="${s.storage->escapeLabelValue}"}`, s))
   let historyPrunes =
     metrics.historyPrunes->Array.map(s => (`{entity="${s.entity->escapeLabelValue}"}`, s))
+  // Every per-source series is keyed by these, so they are built in one place:
+  // a scrape whose label sets disagree between two of them is one nothing can
+  // join on.
+  let sourceLabels = (~source, ~chainId, ~extra=[]) =>
+    "{" ++
+    [("source", source), ("chainId", chainId->ChainId.toString)]
+    ->Array.concat(extra)
+    ->Array.map(((name, value)) => `${name}="${value->escapeLabelValue}"`)
+    ->Array.join(",") ++ "}"
+
   // Two sources can share a name (e.g. primary and fallback RPC urls on the
   // same host), so aggregate by label set — duplicate samples would make
   // Prometheus reject the scrape.
   let sourceRequests = {
     let byLabels: dict<sourceRequestMetrics> = Dict.make()
     metrics.sourceRequests->Array.forEach(s => {
-      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}",method="${s.method->escapeLabelValue}"}`
+      let labels = sourceLabels(~source=s.source, ~chainId=s.chainId, ~extra=[("method", s.method)])
       switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
       | Some(existing) =>
         byLabels->Dict.set(
@@ -249,7 +259,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   let sources = {
     let byLabels: dict<int> = Dict.make()
     metrics.sourceHeights->Array.forEach(s => {
-      let labels = `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}"}`
+      let labels = sourceLabels(~source=s.source, ~chainId=s.chainId)
       switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
       | Some(existing) if existing >= s.height => ()
       | _ => byLabels->Dict.set(labels, s.height)
@@ -258,9 +268,6 @@ let renderMetrics = (b: builder, metrics: t) => {
     byLabels->Dict.toArray
   }
 
-  // Aggregated by label set for the same reason as sourceRequests above: two
-  // sources on a chain can share a name, and duplicate samples would make
-  // Prometheus reject the scrape.
   let addTo = (byLabels: dict<int>, labels, count) =>
     byLabels->Dict.set(
       labels,
@@ -269,10 +276,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   let heightStreamReconnects = {
     let byLabels: dict<int> = Dict.make()
     metrics.sourceHeightStreams->Array.forEach(s =>
-      byLabels->addTo(
-        `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}"}`,
-        s.reconnectCount,
-      )
+      byLabels->addTo(sourceLabels(~source=s.source, ~chainId=s.chainId), s.reconnectCount)
     )
     byLabels->Dict.toArray
   }
@@ -281,7 +285,7 @@ let renderMetrics = (b: builder, metrics: t) => {
     metrics.sourceHeightStreams->Array.forEach(s =>
       s.failuresByReason->Array.forEach(((reason, count)) =>
         byLabels->addTo(
-          `{source="${s.source->escapeLabelValue}",chainId="${s.chainId->ChainId.toString}",reason="${reason->escapeLabelValue}"}`,
+          sourceLabels(~source=s.source, ~chainId=s.chainId, ~extra=[("reason", reason)]),
           count,
         )
       )
@@ -510,6 +514,8 @@ let renderMetrics = (b: builder, metrics: t) => {
       ~entries=heightStreamReconnects,
       ~value=count => count->Int.toFloat,
     )
+  }
+  if heightStreamFailures->Array.length > 0 {
     b->series(
       ~name="envio_source_height_stream_failures_total",
       ~help="The number of times a source's height subscription failed, by reason. Routine reconnects and quiet chains land here alongside real trouble, so read it against the reconnect total rather than treating any value as bad: failures climbing while reconnects stay flat is a stream that is down, and the indexer is polling for the height in the meantime.",

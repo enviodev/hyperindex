@@ -25,6 +25,25 @@ let delay = milliseconds =>
     }, milliseconds)
   })
 
+// A delay that can be released early. Racing against a plain `delay` leaves the
+// losing timer pending for the rest of its window, holding everything its
+// continuation captured, which on a fast chain is one live timer per block.
+let delayWithCancel = milliseconds => {
+  let timeoutId = ref(None)
+  let promise = Promise.make((resolve, _) => {
+    timeoutId := Some(setTimeout(_ => resolve(), milliseconds))
+  })
+  let cancel = () =>
+    switch timeoutId.contents {
+    | Some(id) => {
+        clearTimeout(id)
+        timeoutId := None
+      }
+    | None => ()
+    }
+  (promise, cancel)
+}
+
 module Object = {
   // Define a type for the property descriptor
   type propertyDescriptor<'a> = {

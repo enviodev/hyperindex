@@ -66,12 +66,12 @@ let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
       | Some(NewHead(blockNumber)) => driver.onHeight(blockNumber)
       // An open socket isn't usable until the node accepts the subscription.
       | Some(SubscriptionConfirmed(_)) => driver.onConnected()
-      | Some(ErrorResponse) => driver.onFailure(~reason="subscribe-rejected")
-      | None => driver.onUnreadable()
+      | Some(ErrorResponse) => driver.onFailure(~reason="subscribe-rejected", ~detail=event.data)
+      | None => driver.onUnreadable(~detail=event.data)
       }
     })
 
-    ws->WebSocket.onerror(_ => driver.onFailure(~reason="error"))
+    ws->WebSocket.onerror(error => driver.onFailure(~reason="error", ~detail=?error->JsExn.message))
     ws->WebSocket.onclose(() => driver.onFailure(~reason="closed"))
 
     () => ws->WebSocket.close

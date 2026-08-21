@@ -135,8 +135,10 @@ type sourceFor = Sync | Fallback | Realtime
 // fires on every (re)connect, so consumers must treat both as idempotent.
 // `reason` is pre-bucketed for use as a metric label. The shipped transports
 // report an HTTP status, or "closed", "error", "connect-failed", "stale",
-// "unreadable" or "subscribe-rejected".
-type heightSubscriptionStatus = Live | Down({reason: string})
+// "unreadable" or "subscribe-rejected". `detail` is whatever the provider said
+// for this one failure — an error message, or the frame nobody could read — so
+// it belongs in a log line and never in a label.
+type heightSubscriptionStatus = Live | Down({reason: string, detail?: string})
 
 type t = {
   name: string,

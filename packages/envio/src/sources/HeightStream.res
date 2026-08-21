@@ -5,9 +5,9 @@ close function; the driver owns retries, staleness detection and status
 reporting so SSE and WebSocket streams behave identically.
 
 Nothing here logs. A height stream failing is not something an operator has to
-act on — the indexer polls for the height instead — so its health is reported
-through the envio_source_height_stream_* counters, and every failure reason has
-to stand on its own as a metric label.
+act on — the indexer polls for the height instead — so a failure travels out
+through `onStatus`, where its reason becomes a metric label and its detail the
+one log line that says what the provider actually sent.
 */
 
 type driver = {
@@ -19,9 +19,10 @@ type driver = {
   onHeight: int => unit,
   // A message the transport couldn't read. Not a failure by itself, but from
   // then on only a height we can read counts as the connection still being
-  // useful, so a stream of them goes quiet and fails as "unreadable".
-  onUnreadable: unit => unit,
-  onFailure: (~reason: string) => unit,
+  // useful, so a stream of them goes quiet and fails as "unreadable", carrying
+  // the frame that started it.
+  onUnreadable: (~detail: string) => unit,
+  onFailure: (~reason: string, ~detail: string=?) => unit,
 }
 
 // While a stream is down its consumer polls instead, so the retry delay is what
@@ -34,6 +35,33 @@ let maxRetryMillis = 60_000
 // Keeps the doubling from overflowing on a stream that has been failing for
 // days. The delay reaches maxRetryMillis long before this.
 let maxRetryExponent = 20
+// Floor for how long a connection has to serve to have been worth making, as a
+// fraction of the window we would wait before calling it dead. Both transports
+// deliver something the moment they connect — HyperSync sends the head, a
+// WebSocket confirms the subscription — so an endpoint that accepts and drops
+// produces everything a working one would have by then, and only staying up
+// tells them apart. A fixed floor can't do it: one low enough to clear on a
+// healthy connection is one a connection that dies seconds in clears too.
+let provenStaleFraction = 4
+// A frame nobody could read ends up in a log line, so cap what a provider can
+// put there.
+let maxDetailLength = 200
+
+// The wait that follows `count` consecutive failures. Zero for a first
+// connection, which nothing preceded.
+let retryDelayFor = count =>
+  count <= 0
+    ? 0
+    : Pervasives.min(
+        baseRetryMillis *
+        Math.pow(2.0, ~exp=Pervasives.min(count - 1, maxRetryExponent)->Int.toFloat)->Float.toInt,
+        maxRetryMillis,
+      )
+
+let truncateDetail = detail =>
+  detail->String.length > maxDetailLength
+    ? detail->String.slice(~start=0, ~end=maxDetailLength) ++ "…"
+    : detail
 
 let subscribe = (
   ~staleTimeout: int,
@@ -44,20 +72,24 @@ let subscribe = (
   ~connect: driver => unit => unit,
 ): (unit => unit) => {
   let closeConnectionRef = ref(None)
-  let unsubscribed = ref(false)
   let failureCount = ref(0)
   // Bumped on every failure, reconnect and unsubscribe. Callbacks from a
   // superseded connection compare against it and no-op, so a socket that
-  // reports an error and then a close only counts as one failure.
+  // reports an error and then a close only counts as one failure, and nothing a
+  // connection reports after unsubscribing is heard.
   let generation = ref(0)
   // A connection is either waiting for traffic or waiting to be retried, never
   // both, so a single slot holds whichever timer is pending.
   let timeoutId = ref(None)
-  // Traffic the current connection has carried. The first event proves nothing:
-  // HyperSync sends the head the moment it connects, so an endpoint that accepts
-  // and drops looks identical to a working one until a second arrives.
-  let trafficCount = ref(0)
-  let sawUnreadable = ref(false)
+  // The frame that stopped this connection being readable, kept for the failure
+  // it will eventually be named after.
+  let unreadableDetail = ref(None)
+  // When the current connection reported itself live, if it ever did. Time
+  // before that is not service: a handshake that takes seconds to fail, or a
+  // socket that is accepted and then hangs until the staleness timer, would
+  // otherwise be indistinguishable from a connection that worked.
+  let liveAt = ref(None)
+  let minProvenMillis = staleTimeout / provenStaleFraction
 
   let clearPendingTimeout = () => {
     switch timeoutId.contents {
@@ -90,31 +122,37 @@ let subscribe = (
           timeoutId := None
           // Distinguishes a provider whose message shape we don't understand
           // from a chain that simply has nothing to report.
-          fail(~reason=sawUnreadable.contents ? "unreadable" : "stale", ~windowElapsed=true)
+          switch unreadableDetail.contents {
+          | Some(detail) => fail(~reason="unreadable", ~detail)
+          | None => fail(~reason="stale")
+          }
         }, staleTimeout))
   }
-  and fail = (~reason, ~windowElapsed=false) => {
+  and fail = (~reason, ~detail=?) => {
     generation := generation.contents + 1
     clearPendingTimeout()
     closeConnection()
 
-    // The backoff resets when the connection delivered — which noteTraffic
-    // decides — or when the staleness timer says it waited its window out. The
-    // timer says so rather than leaving it to be re-derived from a clock it can
-    // beat to its own deadline by a fraction of a millisecond. So a chain whose
-    // blocks are further apart than the timeout never escalates, and neither
-    // does a silent or unreadable endpoint, because reaching the timeout is what
-    // already spaces those retries a whole window apart.
-    if windowElapsed {
-      failureCount := 0
+    // A connection that served for longer than the wait it cost was worth
+    // making, whatever ended it, so the backoff starts over. That covers a load
+    // balancer rotating connections and a chain whose blocks are further apart
+    // than the stale timeout alike, without either having to be recognised. The
+    // bar rises with the backoff, so an endpoint that always dies at the same
+    // age keeps escalating rather than settling into a loop at a fixed delay.
+    let servedMillis = switch liveAt.contents {
+    | Some(since) => (Performance.now() -. since)->Float.toInt
+    | None => 0
     }
-    failureCount := failureCount.contents + 1
+    let provenMillis = Pervasives.max(retryDelayFor(failureCount.contents), minProvenMillis)
+    failureCount :=
+      if servedMillis >= provenMillis {
+        1
+      } else {
+        failureCount.contents + 1
+      }
 
-    let exp = Pervasives.min(failureCount.contents - 1, maxRetryExponent)->Int.toFloat
-    let retryMillis = Pervasives.min(
-      baseRetryMillis * Math.pow(2.0, ~exp)->Float.toInt,
-      maxRetryMillis,
-    )
+    let retryMillis = retryDelayFor(failureCount.contents)
+
     // Scheduled before reporting, so a consumer that throws can't be what makes
     // the stream give up.
     timeoutId := Some(setTimeout(() => {
@@ -122,14 +160,14 @@ let subscribe = (
           start()
         }, retryMillis))
 
-    onStatus(Down({reason: reason}))
+    onStatus(Down({reason, detail: ?detail->Option.map(truncateDetail)}))
   }
   and start = () => {
     generation := generation.contents + 1
-    trafficCount := 0
-    sawUnreadable := false
+    unreadableDetail := None
+    liveAt := None
     let connectionGeneration = generation.contents
-    let isCurrent = () => !unsubscribed.contents && generation.contents === connectionGeneration
+    let isCurrent = () => generation.contents === connectionGeneration
 
     // Armed before connecting, so it covers a connect that never reports
     // anything, and so a synchronous failure inside connect replaces it with
@@ -140,22 +178,10 @@ let subscribe = (
     // onConnected does. Without that, a transport that never reports the
     // connection usable would leave its consumer polling at full rate next to a
     // stream that works.
-    // A connection that carried traffic past its connect burst was worth making,
-    // so the backoff starts over. Counting rather than timing it: any duration
-    // bar is either one a provider rotating connections can't clear, or one an
-    // endpoint that drops immediately can.
-    let noteTraffic = () => {
-      trafficCount := trafficCount.contents + 1
-      if trafficCount.contents > 1 {
-        failureCount := 0
-      }
-    }
-
-    let reportedLive = ref(false)
     let goLive = () => {
       armStaleTimeout()
-      if !reportedLive.contents {
-        reportedLive := true
+      if liveAt.contents->Option.isNone {
+        liveAt := Some(Performance.now())
         onStatus(Live)
       }
     }
@@ -174,8 +200,7 @@ let subscribe = (
         // indefinitely, never failing and so never reporting anything, while
         // its consumer sat on the staleness backstop. Being wrong about a lone
         // glitch costs one reconnect.
-        if isCurrent() && !sawUnreadable.contents {
-          noteTraffic()
+        if isCurrent() && unreadableDetail.contents->Option.isNone {
           armStaleTimeout()
         },
       onHeight: height =>
@@ -184,18 +209,17 @@ let subscribe = (
           // deliberately doesn't: on a stream whose heights are all malformed,
           // the pings between them would clear this and the staleness that
           // followed would look like a chain with nothing to report.
-          sawUnreadable := false
-          noteTraffic()
+          unreadableDetail := None
           goLive()
           onHeight(height)
         },
-      onUnreadable: () =>
+      onUnreadable: (~detail) =>
         if isCurrent() {
-          sawUnreadable := true
+          unreadableDetail := Some(detail)
         },
-      onFailure: (~reason) =>
+      onFailure: (~reason, ~detail=?) =>
         if isCurrent() {
-          fail(~reason)
+          fail(~reason, ~detail?)
         },
     }
 
@@ -222,7 +246,6 @@ let subscribe = (
   start()
 
   () => {
-    unsubscribed := true
     generation := generation.contents + 1
     clearPendingTimeout()
     closeConnection()
