@@ -1,12 +1,10 @@
 //! ClickHouse column types, derived from the schema field the column stores.
 //!
-//! The derivation lives here rather than on the JS side because both the
-//! `CREATE TABLE` text and the RowBinary layout come out of it: rendering the
-//! type is `Display`, encoding it is `row_binary`, and neither can describe a
-//! column the other doesn't. A type text parsed back from the DDL would put a
-//! second copy of this mapping on the encoding side, free to drift from the one
-//! the table was created with — and a drift RowBinary cannot detect, since the
-//! wire carries raw bytes with no column types to check them against.
+//! Both the `CREATE TABLE` text and the RowBinary layout come out of this one
+//! mapping: rendering the type is `Display`, encoding it is `row_binary`. That
+//! matters because RowBinary carries raw bytes with no column types on the
+//! wire, so a column created as one type and written as another produces no
+//! error anywhere — only wrong data.
 
 use std::fmt;
 
@@ -238,8 +236,7 @@ impl fmt::Display for ChType {
     }
 }
 
-/// How the JS side hands a column's values across the napi boundary. Picked from
-/// the ClickHouse type so both sides agree without a second type derivation.
+/// How the JS side hands a column's values across the napi boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnKind {
     /// Float64Array, one element per row.

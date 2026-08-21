@@ -272,8 +272,7 @@ fn encode_text_scalar(out: &mut Vec<u8>, ch_type: &ChType, text: &str) -> Result
 }
 
 /// A JSON number as the integer its column stores. A fractional value is
-/// rejected rather than truncated: the column has no fractional part to put it
-/// in, and ClickHouse itself rejected it on the JSONEachRow path this replaced.
+/// rejected rather than truncated: the column has no fractional part for it.
 fn json_integer(number: &serde_json::Number, ch_type: &ChType) -> Result<i128> {
     if let Some(value) = number.as_i64() {
         return Ok(i128::from(value));
@@ -304,8 +303,7 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
             }
         }
         // Outside a Nullable column RowBinary has nowhere to put a null, and
-        // writing the type's default would store a value the handler never set —
-        // the JSONEachRow path this replaced had the server reject it instead.
+        // writing the type's default would store a value the handler never set.
         (_, Value::Null) => bail!("null is not a value a {ch_type:?} element can hold"),
         (ChType::Array(inner), _) => {
             let items = value

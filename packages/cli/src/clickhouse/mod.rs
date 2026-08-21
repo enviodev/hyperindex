@@ -14,11 +14,8 @@
 //! `stage` copies the batch into owned Rust memory on the JS thread and
 //! `write_batch` does the encoding and the HTTP round trips on the tokio pool.
 //!
-//! The runtime hands over the schema, not the ClickHouse types: `CREATE TABLE`
-//! and the RowBinary layout are both derived here, from one mapping, so a
-//! column cannot be created as one type and written as another. Asking the
-//! server to describe its columns back would only add a round trip and a third
-//! answer to keep in step.
+//! The runtime hands over the schema rather than ClickHouse types; `ch_type`
+//! turns it into both the DDL and the encoder's layout.
 
 pub mod ch_type;
 pub mod ddl;
@@ -114,8 +111,7 @@ impl Tuning {
 
 /// A column of a table the caller is registering: the name it goes by, the
 /// schema field name a user-written table expression references it by, and the
-/// field it stores. The ClickHouse type is derived from the field rather than
-/// sent, so the DDL and the encoder cannot disagree about it.
+/// field it stores.
 #[napi(object)]
 pub struct ColumnSpecInput {
     pub name: String,
@@ -228,17 +224,14 @@ pub struct InitializeInput {
 }
 
 /// What a caller needs back to feed a registered table: the handle every batch
-/// quotes, and the wire kind each column must be sent as — derived from the
-/// type parsed here, so the JS side never maps envio's own field types to a
-/// kind a second time.
+/// quotes, and the wire kind each column must be sent as.
 #[napi(object)]
 #[derive(Debug)]
 pub struct RegisteredTable {
     pub handle: u32,
     /// Every column the table declares, in the order a batch must send them.
-    /// Handed back rather than assumed: a history table carries the checkpoint
-    /// id and change columns this side appends, and a caller rebuilding that
-    /// list would be a second place for it to be wrong.
+    /// A history table carries the checkpoint id and change columns this side
+    /// appends, so the list runs past the entity's own.
     pub names: Vec<String>,
     pub kinds: Vec<u8>,
 }
@@ -318,8 +311,7 @@ pub struct ClickHouseSinkOptions {
     pub database: String,
     /// `"Int32"` or `"Int64"`, which every chain-scoped column follows.
     pub chain_id_mode: String,
-    /// The column and table names the runtime's history format fixes. They
-    /// cross once, here, rather than being defined a second time in Rust.
+    /// The column and table names the runtime's history format fixes.
     pub history: HistorySchemaInput,
 }
 
@@ -430,10 +422,8 @@ impl ClickHouseSink {
         })
     }
 
-    /// Registers an entity's history table: derives every column's type from the
-    /// field it stores — the same derivation `CREATE TABLE` was rendered from —
-    /// and keeps them under a handle. Every batch quotes that handle instead of
-    /// re-sending the shape.
+    /// Registers an entity's history table and keeps its columns under a
+    /// handle, which every batch quotes instead of re-sending the shape.
     ///
     /// Separate from `initialize` because an indexer resuming an existing
     /// storage never runs it, so the write path registers on demand instead of
@@ -670,9 +660,8 @@ impl ClickHouseSink {
             // ON CLUSTER on top of it.
             ddl_on_cluster: replicated && !has_replicated_engine,
         };
-        // Quoted for the statements written inline here. The `ddl` helpers take
-        // the raw name and quote it themselves, so the two must not be mixed up
-        // — hence the distinct name rather than a shadow.
+        // The `ddl` helpers quote the database name themselves, so they take
+        // `self.database` and only the statements written inline take this.
         let database_ident = quoted(&self.database);
 
         if let (Some(engine_spec), Some(expected)) = (&database_engine, engine_name) {

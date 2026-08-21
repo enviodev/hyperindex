@@ -1,9 +1,7 @@
 //! The statements that create and trim envio's ClickHouse tables.
 //!
-//! Rendering lives beside the type derivation so a column is declared with the
-//! type the encoder writes it as — the two come out of the same [`ChType`].
-//! Everything here is a pure string: the orchestration that runs these against a
-//! server is in the parent module, which keeps the ordering rules the DDL
+//! Everything here is a pure string. The orchestration that runs these against
+//! a server is in the parent module, which keeps the ordering rules the DDL
 //! depends on next to the requests that could reorder them.
 
 use std::collections::HashMap;
@@ -57,8 +55,7 @@ pub struct EntitySpec {
     pub skipping_indexes: Vec<SkippingIndexSpec>,
 }
 
-/// Names the runtime's history format fixes. They cross from the runtime once
-/// rather than being restated here, so there is one definition of each.
+/// Names the runtime's history format fixes.
 #[derive(Debug, Clone)]
 pub struct HistorySchema {
     pub id_column: String,
@@ -170,8 +167,7 @@ impl ColumnSpec {
 
 impl EntitySpec {
     /// Every column the history table declares, in DDL order, paired with the
-    /// type it is created as. The insert path registers the same list, so a
-    /// column cannot be created with one type and encoded against another.
+    /// type it is created as. The insert path registers this same list.
     pub fn history_columns(
         &self,
         history: &HistorySchema,

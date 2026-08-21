@@ -1,12 +1,6 @@
 // Binding to the Rust `ClickHouseSink` napi class, plus the columnar builders
 // that feed it.
 //
-// Rust owns everything ClickHouse-shaped: it derives each column's type from
-// the schema field the column stores, renders the DDL from that same
-// derivation, and encodes RowBinary against it. What crosses from here is the
-// schema — field types, names, table options — never a ClickHouse type, so
-// there is nothing for the two sides to disagree about.
-//
 // A table is registered once, before any batch, and Rust hands back a handle. A
 // batch then crosses as that handle plus one payload per column — a typed array
 // for numeric columns, an array of strings for text-ish ones — instead of a JS
@@ -14,8 +8,7 @@
 
 type t
 
-// The column and table names envio's history format fixes. They cross once, at
-// construction, so Rust reads them rather than defining a second copy.
+// The column and table names envio's history format fixes.
 type historySchema = {
   idColumn: string,
   checkpointIdColumn: string,
@@ -86,9 +79,8 @@ type initializeInput = {
 // kind each column must be sent as.
 type registeredTable = {
   handle: int,
-  // Every column the table declares, in the order a batch must send them —
-  // Rust's list, not one rebuilt here: a history table carries two columns
-  // beyond the entity's own.
+  // Every column the table declares, in the order a batch must send them. A
+  // history table carries two columns beyond the entity's own.
   names: array<string>,
   kinds: array<int>,
 }
@@ -154,10 +146,7 @@ let make = (~url, ~username, ~password, ~database, ~chainIdMode: ChainId.mode, ~
     onWarning,
   )
 
-// How a column's values travel. Derived by Rust from the column's ClickHouse
-// type rather than mapped from `Table.fieldType` a second time: a JS copy of
-// that mapping could only ever be found wrong at runtime, as a rejected insert
-// against a live table.
+// How a column's values travel, resolved by Rust from the column's type.
 type kind =
   | @as(0) F64
   | @as(1) U64
@@ -268,9 +257,8 @@ let markNull = (builder, ~row) => {
   }
 )
 
-// Writes one value into the column. `undefined`/`null` marks the row's null bit;
-// the slot keeps its zero value, which is what a column omitted from a
-// JSONEachRow row used to resolve to.
+// Writes one value into the column. `undefined`/`null` marks the row's null
+// bit; the slot keeps its zero value, which is what the column stores for it.
 let writeValue = (builder, ~row, value: unknown) =>
   if value === %raw(`undefined`) || value === %raw(`null`) {
     builder->markNull(~row)

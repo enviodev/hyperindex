@@ -1,14 +1,8 @@
-// What the ClickHouse sink is handed and what comes back out of it.
-//
-// The schema crosses to Rust as schema — field types, column names, table
-// options — and Rust derives the ClickHouse types, renders the DDL and encodes
-// the rows from that one derivation. Nothing here decides what a column's
-// ClickHouse type is, so there is no second mapping to keep in step.
-//
-// What stays on this side is what only JS can do: reading entity values out of
-// the isolate into the columnar builders a batch is staged from.
+// What the ClickHouse sink is handed and what comes back out of it. The schema
+// crosses to Rust as schema; what stays here is what only JS can do — reading
+// entity values out of the isolate into the columnar builders a batch is
+// staged from.
 
-// Creates an entity schema from table definition, using clickHouseDate for Date fields.
 // Serialized keys are the db column names, while the entity values are keyed
 // by API field names (they only differ when column renaming is configured).
 let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
@@ -50,8 +44,7 @@ let makeSink = (~host, ~username, ~password, ~database, ~chainIdMode) =>
     logger->Logging.childWarn({"msg": msg})
   )
 
-// The schema field a column stores, in the shape the sink reads it. The
-// ClickHouse type is Rust's to derive; this only says which field it is.
+// The schema field a column stores, in the shape the sink reads it.
 let makeColumnSpec = (
   ~name,
   ~fieldName=name,
