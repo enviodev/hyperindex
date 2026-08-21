@@ -222,7 +222,7 @@ pub struct CompositeIndexFieldTemplate {
 impl CompositeIndexFieldTemplate {
     fn from_index_field(index_field: &IndexField) -> Self {
         Self {
-            field_name: index_field.name.clone(),
+            field_name: index_field.column.field_name().to_string(),
             direction: match index_field.direction {
                 IndexFieldDirection::Asc => "Asc".to_string(),
                 IndexFieldDirection::Desc => "Desc".to_string(),

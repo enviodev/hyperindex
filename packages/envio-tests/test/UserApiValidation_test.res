@@ -1409,7 +1409,8 @@ type Token @index(fields: ["missing"]) {
   id: ID!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed constructing entity Token: Invalid multi field indexes on Entity Token: Index error: Field 'missing' does not exist in entity, please remove it from the \`@index\` directive.",
+      `Config parse error: Invalid \`@index\` on \`Token\`: \`missing\` is not a column of the entity.
+  The entity declares no columns besides \`id\`.`,
     ),
     (
       "rejects unknown storage directive arguments",
@@ -1476,7 +1477,8 @@ type Token @index(fields: ["value"]) @index(fields: ["value"]) {
   value: String!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed constructing entity Token: Index error: Duplicate index found on fields [\"value\"] in entity 'Token'",
+      `Config parse error: Invalid \`@index\` on \`Token\`: the index over \`value\` is declared twice.
+  Remove the duplicate \`@index\` directive.`,
     ),
     (
       "rejects indexing a field both directly and from the entity",
@@ -1486,7 +1488,8 @@ type Token @index(fields: ["value"]) {
   value: String! @index
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed constructing entity Token: Invalid multi field indexes on Entity Token: The field 'value' is marked as an index. Please either remove the @index directive on the field, or the @index(fields: [\"value\"]) directive on the entity",
+      `Config parse error: Invalid \`@index\` on \`Token\`: \`value\` is already marked \`@index\` on the field.
+  Keep one of them — the \`@index\` on the field, or \`@index(fields: ["value"])\` on the entity.`,
     ),
     (
       "rejects indexing a derived field from the entity",
@@ -1500,7 +1503,8 @@ type Token {
   owner: User!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed constructing entity User: Invalid multi field indexes on Entity User: Index error: Field 'tokens' is a @derivedFrom field and cannot be indexed, please remove it from the \`@index\` directive.",
+      `Config parse error: Invalid \`@index\` on \`User\`: \`tokens\` is a @derivedFrom field, which has no column.
+  Use a stored field instead.`,
     ),
     (
       "rejects invalid index directions",
@@ -1606,34 +1610,6 @@ type Token @storage(clickhouse: {indexGranularity: 1024}) {
 }
 `,
       "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Invalid @storage directive on \`Token\`. Unknown \`clickhouse\` option \`indexGranularity\`. Expected options from {partitionBy, orderBy, ttl, skippingIndexes}, e.g. clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}.",
-    ),
-    (
-      "rejects clickhouse orderBy referencing missing fields",
-      `
-type Token @storage(clickhouse: {orderBy: ["missing"]}) {
-  id: ID!
-}
-`,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed constructing entity Token: Invalid @storage directive on \`Token\`. \`clickhouse.orderBy\` references field \`missing\` which doesn't exist on the entity. Use the field names as written in the schema.",
-    ),
-    (
-      "rejects clickhouse orderBy listing id",
-      `
-type Token @storage(clickhouse: {orderBy: ["id"]}) {
-  id: ID!
-}
-`,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed constructing entity Token: Invalid @storage directive on \`Token\`. \`clickhouse.orderBy\` must not list \`id\`: it's already the default sorting key. List only the additional fields to sort by.",
-    ),
-    (
-      "rejects clickhouse orderBy on BigInt fields",
-      `
-type Token @storage(clickhouse: {orderBy: ["amount"]}) {
-  id: ID!
-  amount: BigInt!
-}
-`,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed constructing entity Token: Invalid @storage directive on \`Token\`. \`clickhouse.orderBy\` field \`amount\` is a BigInt/BigDecimal, which ClickHouse can store as a String (lexicographic, not numeric ordering). Sorting by it isn't supported yet.",
     ),
     (
       "rejects empty storage directives",

@@ -177,7 +177,12 @@ impl From<&entity_parsing::ClickHouseEntityStorage> for EntityClickHouseStorageJ
             entity_parsing::ClickHouseEntityStorage::Options(options) => {
                 Self::Options(EntityClickHouseOptionsJson {
                     partition_by: options.partition_by.clone(),
-                    order_by: options.order_by.clone(),
+                    order_by: options.order_by.as_ref().map(|columns| {
+                        columns
+                            .iter()
+                            .map(|column| column.field_name().to_string())
+                            .collect()
+                    }),
                     ttl: options.ttl.clone(),
                     skipping_indexes: options.skipping_indexes.as_ref().map(|indices| {
                         indices
@@ -837,7 +842,7 @@ impl SystemConfig {
                         fields
                             .iter()
                             .map(|f| CompositeIndexJson {
-                                field_name: f.name.clone(),
+                                field_name: f.column.field_name().to_string(),
                                 direction: match f.direction {
                                     IndexFieldDirection::Asc => "Asc".to_string(),
                                     IndexFieldDirection::Desc => "Desc".to_string(),
