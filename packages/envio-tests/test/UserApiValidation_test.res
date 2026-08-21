@@ -1389,7 +1389,7 @@ type Token {
   value: BigInt!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: No 'id' field found on entity Token. Please add an 'id' field to your entity.",
+      "Config parse error: No 'id' field found on entity Token. Please add an 'id' field to your entity.",
     ),
     (
       "rejects duplicate fields",
@@ -1400,7 +1400,7 @@ type Token {
   value: String!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed constructing entity Token: Found fields with duplicate names on Entity Token: 'value'",
+      "Config parse error: Failed constructing entity Token: Found fields with duplicate names on Entity Token: 'value'",
     ),
     (
       "rejects an index that references a missing field",
@@ -1419,7 +1419,7 @@ type Token @storage(redis: true) {
   id: ID!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Invalid @storage directive on \`Token\`. Unknown argument \`redis\`. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
+      "Config parse error: Invalid @storage directive on \`Token\`. Unknown argument \`redis\`. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
     ),
     (
       "rejects entities routed to a disabled backend",
@@ -1438,7 +1438,7 @@ type Token {
   owner: String @derivedFrom(field: "tokens") @index
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Token: A field cannot be both @derivedFrom and @index: owner",
+      "Config parse error: Failed parsing fields on entity Token: A field cannot be both @derivedFrom and @index: owner",
     ),
     (
       "rejects id fields with an index directive",
@@ -1447,7 +1447,7 @@ type Token {
   id: ID! @index
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Token: The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove the @index or @derivedFrom directive from field id",
+      "Config parse error: Failed parsing fields on entity Token: The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove the @index or @derivedFrom directive from field id",
     ),
     (
       "rejects duplicate derivedFrom directives",
@@ -1457,7 +1457,7 @@ type Token {
   owner: String @derivedFrom(field: "one") @derivedFrom(field: "two")
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Token: Cannot use more than one of the same directive on field owner",
+      "Config parse error: Failed parsing fields on entity Token: Cannot use more than one of the same directive on field owner",
     ),
     (
       "rejects duplicate field index directives",
@@ -1467,7 +1467,7 @@ type Token {
   value: String @index @index
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Token: Cannot use more than one of the same directive on field value",
+      "Config parse error: Failed parsing fields on entity Token: Cannot use more than one of the same directive on field value",
     ),
     (
       "rejects duplicate entity index definitions",
@@ -1514,7 +1514,7 @@ type Token @index(fields: [["value", "SIDEWAYS"]]) {
   value: String!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing multi field indexes on entity Token: Failed to get fields in index: Index direction must be \"ASC\" or \"DESC\", got \"SIDEWAYS\"",
+      "Config parse error: Failed parsing multi field indexes on entity Token: Failed to get fields in index: Index direction must be \"ASC\" or \"DESC\", got \"SIDEWAYS\"",
     ),
     (
       "rejects malformed directional index entries",
@@ -1524,7 +1524,7 @@ type Token @index(fields: [["value", "DESC", "extra"]]) {
   value: String!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing multi field indexes on entity Token: Failed to get fields in index: Index field with direction must be a list of exactly 2 elements: [\"fieldName\", \"ASC\" or \"DESC\"]. Got 3 elements.",
+      "Config parse error: Failed parsing multi field indexes on entity Token: Failed to get fields in index: Index field with direction must be a list of exactly 2 elements: [\"fieldName\", \"ASC\" or \"DESC\"]. Got 3 elements.",
     ),
     (
       "rejects config directives on unsupported scalar types",
@@ -1534,7 +1534,7 @@ type Token {
   value: String @config(precision: 76)
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Token: The config directive is only applicable to BigInt and BigDecimal scalar types. Field 'value'",
+      "Config parse error: Failed parsing fields on entity Token: The config directive is only applicable to BigInt and BigDecimal scalar types. Field 'value'",
     ),
     (
       "rejects unknown BigInt config arguments",
@@ -1544,7 +1544,7 @@ type Token {
   value: BigInt @config(scale: 2)
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Token: The config directive on a BigInt should only have a 'precision' parameter. Unknown parameter 'scale'. Field 'value'",
+      "Config parse error: Failed parsing fields on entity Token: The config directive on a BigInt should only have a 'precision' parameter. Unknown parameter 'scale'. Field 'value'",
     ),
     (
       "rejects unknown BigDecimal config arguments",
@@ -1554,7 +1554,7 @@ type Token {
   value: BigDecimal @config(precision: 20, scale: 2, rounding: 1)
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Token: The config directive on a BigDecimal should only have 'precision' and 'scale' parameters. Unknown parameter(s) 'rounding'. Field 'value'",
+      "Config parse error: Failed parsing fields on entity Token: The config directive on a BigDecimal should only have 'precision' and 'scale' parameters. Unknown parameter(s) 'rounding'. Field 'value'",
     ),
     (
       "requires both BigDecimal config arguments",
@@ -1564,7 +1564,7 @@ type Token {
   value: BigDecimal @config(precision: 20)
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Token: The config directive on a BigDecimal must have both 'precision' and 'scale' parameters. Field 'value'",
+      "Config parse error: Failed parsing fields on entity Token: The config directive on a BigDecimal must have both 'precision' and 'scale' parameters. Field 'value'",
     ),
     (
       "rejects non-boolean storage arguments",
@@ -1573,7 +1573,7 @@ type Token @storage(postgres: "yes") {
   id: ID!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Invalid @storage directive on \`Token\`. Argument \`postgres\` must be a boolean. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
+      "Config parse error: Invalid @storage directive on \`Token\`. Argument \`postgres\` must be a boolean. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
     ),
     (
       "rejects duplicate storage directives",
@@ -1582,7 +1582,7 @@ type Token @storage(postgres: true) @storage(clickhouse: true) {
   id: ID!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Invalid @storage directive on \`Token\`. Only one @storage directive is allowed per entity. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
+      "Config parse error: Invalid @storage directive on \`Token\`. Only one @storage directive is allowed per entity. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
     ),
     (
       "rejects duplicate storage arguments",
@@ -1591,7 +1591,7 @@ type Token @storage(postgres: true, postgres: false) {
   id: ID!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Invalid @storage directive on \`Token\`. Argument \`postgres\` is specified more than once. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
+      "Config parse error: Invalid @storage directive on \`Token\`. Argument \`postgres\` is specified more than once. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
     ),
     (
       "rejects storage directives that disable every backend",
@@ -1600,7 +1600,7 @@ type Token @storage(postgres: false, clickhouse: false) {
   id: ID!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: @storage on \`Token\` enables no storage. At least one of {postgres, clickhouse} must be true.",
+      "Config parse error: @storage on \`Token\` enables no storage. At least one of {postgres, clickhouse} must be true.",
     ),
     (
       "rejects unknown clickhouse table options",
@@ -1609,7 +1609,7 @@ type Token @storage(clickhouse: {indexGranularity: 1024}) {
   id: ID!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Invalid @storage directive on \`Token\`. Unknown \`clickhouse\` option \`indexGranularity\`. Expected options from {partitionBy, orderBy, ttl, skippingIndexes}, e.g. clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}.",
+      "Config parse error: Invalid @storage directive on \`Token\`. Unknown \`clickhouse\` option \`indexGranularity\`. Expected options from {partitionBy, orderBy, ttl, skippingIndexes}, e.g. clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}.",
     ),
     (
       "rejects empty storage directives",
@@ -1618,7 +1618,7 @@ type Token @storage {
   id: ID!
 }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: @storage on \`Token\` enables no storage. At least one of {postgres, clickhouse} must be true.",
+      "Config parse error: @storage on \`Token\` enables no storage. At least one of {postgres, clickhouse} must be true.",
     ),
     (
       // Entities are exposed on the handler context under their capitalized
@@ -1628,7 +1628,7 @@ type Token @storage {
 type user { id: ID! }
 type User { id: ID! }
 `,
-      "Config parse error: Failed converting schema doc to schema struct: Schema contains entities whose names collide when capitalized. Each entity is exposed on the handler context under its capitalized name, so these must be unique: User (from User, user)",
+      "Config parse error: Schema contains entities whose names collide when capitalized. Each entity is exposed on the handler context under its capitalized name, so these must be unique: User (from User, user)",
     ),
   ]->Array.forEach(((name, schema, message)) => {
     it(name, t => expectParseError(t, ~schema, baseYaml, message))

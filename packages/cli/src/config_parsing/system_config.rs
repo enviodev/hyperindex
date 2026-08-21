@@ -1,8 +1,8 @@
 use super::{
     chain_helpers::get_max_reorg_depth_from_id,
     entity_parsing::{
-        ClickHouseEntityStorage, Entity, EntityColumn, GqlScalar, GraphQLEnum, ParsedSchema,
-        Schema, RESERVED_CHAIN_ID_FIELD_NAMES,
+        ClickHouseEntityStorage, Entity, EntityColumn, GqlScalar, GraphQLEnum, Schema,
+        RESERVED_CHAIN_ID_FIELD_NAMES,
     },
     env_interpolation::interpolate_config_variables,
     human_config::{
@@ -120,7 +120,14 @@ trait ConfigSource {
     fn project_paths(&self) -> &ParsedProjectPaths;
     fn is_rescript(&self) -> bool;
     fn env_var(&mut self, name: &str) -> Option<String>;
-    fn load_schema(&self, configured_path: &Option<String>) -> Result<ParsedSchema>;
+    /// `default_cross_chain` reaches the parser because directive column
+    /// references resolve as the schema is built, and whether an entity has an
+    /// appended chain-id column to resolve against depends on it.
+    fn load_schema(
+        &self,
+        configured_path: &Option<String>,
+        default_cross_chain: bool,
+    ) -> Result<Schema>;
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
     fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
 }
@@ -155,8 +162,12 @@ impl ConfigSource for FilesystemConfigSource<'_> {
         self.env.var(name)
     }
 
-    fn load_schema(&self, configured_path: &Option<String>) -> Result<ParsedSchema> {
-        ParsedSchema::parse_from_file(self.project_paths, configured_path)
+    fn load_schema(
+        &self,
+        configured_path: &Option<String>,
+        default_cross_chain: bool,
+    ) -> Result<Schema> {
+        Schema::parse_from_file(self.project_paths, configured_path, default_cross_chain)
             .context("Parsing schema file for config")
     }
 
@@ -240,10 +251,14 @@ impl ConfigSource for MemoryConfigSource<'_> {
         self.env.get(name).cloned()
     }
 
-    fn load_schema(&self, _configured_path: &Option<String>) -> Result<ParsedSchema> {
+    fn load_schema(
+        &self,
+        _configured_path: &Option<String>,
+        default_cross_chain: bool,
+    ) -> Result<Schema> {
         match self.schema.map(str::trim) {
-            None | Some("") => Ok(ParsedSchema::empty()),
-            Some(schema) => ParsedSchema::from_string(schema),
+            None | Some("") => Ok(Schema::empty()),
+            Some(schema) => Schema::from_string(schema, default_cross_chain),
         }
     }
 
@@ -430,8 +445,8 @@ const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
 
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
-pub fn validate_entity_storage<C>(storage: &Storage, schema: &Schema<C>) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity<C>> = schema.entities.values().collect();
+pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
     // Entities without @storage fall back to the backends marked `default`
@@ -499,7 +514,7 @@ pub fn validate_entity_storage<C>(storage: &Storage, schema: &Schema<C>) -> anyh
 /// Whether an entity ends up in Postgres, mirroring how `EntityJson.storage` is
 /// emitted: a `@storage` directive is taken literally, otherwise the entity
 /// follows the backends marked `default` in config.yaml.
-fn is_stored_in_postgres<C>(entity: &Entity<C>, storage: &Storage) -> bool {
+fn is_stored_in_postgres(entity: &Entity, storage: &Storage) -> bool {
     if entity.has_storage_directive() {
         entity.postgres == Some(true)
     } else {
@@ -512,11 +527,8 @@ fn is_stored_in_postgres<C>(entity: &Entity<C>, storage: &Storage) -> bool {
 /// that entity isn't in Postgres there is no table to join or index, so catch
 /// it here rather than letting table creation (or the end-of-backfill index
 /// pass) fail on an entity it can't resolve.
-pub fn validate_relationship_storage<C>(
-    storage: &Storage,
-    schema: &Schema<C>,
-) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity<C>> = schema.entities.values().collect();
+pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
     let mut invalid: Vec<String> = Vec::new();
@@ -697,7 +709,7 @@ pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static 
 /// Whether an entity's rows are shared across chains. With the default
 /// cross-chain mode every entity is; otherwise only those carrying
 /// `@crossChain`.
-pub fn entity_is_cross_chain<C>(entity: &Entity<C>, default_cross_chain: bool) -> bool {
+pub fn entity_is_cross_chain(entity: &Entity, default_cross_chain: bool) -> bool {
     default_cross_chain || entity.cross_chain
 }
 
@@ -797,9 +809,9 @@ pub fn validate_clickhouse_sorting_key_scalars(
 /// `@crossChain` only means something when entities are per-chain by default.
 /// Left silently accepted it would read as "this entity is special" while
 /// changing nothing, so reject it instead of ignoring it.
-pub fn validate_cross_chain_directives<C>(
+pub fn validate_cross_chain_directives(
     default_cross_chain: bool,
-    schema: &Schema<C>,
+    schema: &Schema,
 ) -> anyhow::Result<()> {
     if !default_cross_chain {
         return Ok(());
@@ -828,11 +840,11 @@ pub fn validate_cross_chain_directives<C>(
 /// reference within its own chain, and a cross-chain id is global. A
 /// `@derivedFrom` is the mirror of a reference on the other entity, so checking
 /// the references alone covers both.
-pub fn validate_cross_chain_relationships<C>(
-    schema: &Schema<C>,
+pub fn validate_cross_chain_relationships(
+    schema: &Schema,
     default_cross_chain: bool,
 ) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity<C>> = schema.entities.values().collect();
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
     let mut invalid: Vec<String> = vec![];
@@ -872,8 +884,8 @@ pub fn validate_cross_chain_relationships<C>(
 /// @derivedFrom field would silently vanish from the API. Reject both at
 /// codegen. References from @internal entities are fine — nothing is exposed
 /// on their side.
-pub fn validate_internal_relationships<C>(schema: &Schema<C>) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity<C>> = schema.entities.values().collect();
+pub fn validate_internal_relationships(schema: &Schema) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
     let mut invalid: Vec<String> = vec![];
@@ -909,11 +921,11 @@ pub fn validate_internal_relationships<C>(schema: &Schema<C>) -> anyhow::Result<
 /// `column_name_format` are, so the name a user may give a field never depends
 /// on where the entity happens to be stored. Cross-chain entities get nothing
 /// appended and keep both names free.
-pub fn validate_chain_id_field_names<C>(
-    schema: &Schema<C>,
+pub fn validate_chain_id_field_names(
+    schema: &Schema,
     default_cross_chain: bool,
 ) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity<C>> = schema.entities.values().collect();
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
     for entity in &entities {
@@ -940,15 +952,15 @@ pub fn validate_chain_id_field_names<C>(
 // ClickHouse has no `Nullable(Array(T))` type, so a nullable array column on a
 // ClickHouse-backed entity is rejected when its history table is created.
 // Catch it during validation with an actionable message instead.
-pub fn validate_clickhouse_nullable_arrays<C>(
+pub fn validate_clickhouse_nullable_arrays(
     storage: &Storage,
-    schema: &Schema<C>,
+    schema: &Schema,
 ) -> anyhow::Result<()> {
     let Some(clickhouse) = storage.clickhouse else {
         return Ok(());
     };
 
-    let mut entities: Vec<&Entity<C>> = schema.entities.values().collect();
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
     let mut offending: Vec<String> = vec![];
@@ -1086,7 +1098,7 @@ impl SystemConfig {
 
     pub fn from_human_config(
         human_config: HumanConfig,
-        schema: ParsedSchema,
+        schema: Schema,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
         let source = FilesystemConfigSource::new(project_paths);
@@ -1095,7 +1107,7 @@ impl SystemConfig {
 
     fn from_human_config_with_source(
         human_config: HumanConfig,
-        schema: ParsedSchema,
+        schema: Schema,
         source: &dyn ConfigSource,
     ) -> Result<Self> {
         let mut chains: ChainMap = HashMap::new();
@@ -1112,10 +1124,6 @@ impl SystemConfig {
         validate_internal_relationships(&schema)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
-        // Directive column references resolve here, where per-chain-ness is
-        // known. Everything downstream reads a resolved `Schema`, so no later
-        // stage re-checks that a directive names a real column.
-        let schema = schema.resolve(default_cross_chain)?;
         validate_db_column_names(&storage, &schema)?;
         validate_clickhouse_sorting_key_scalars(&storage, &schema)?;
 
@@ -1663,7 +1671,9 @@ impl SystemConfig {
             }
         };
 
-        let schema = source.load_schema(&human_config.get_base_config().schema)?;
+        let base_config = human_config.get_base_config();
+        let default_cross_chain = !base_config.disable_default_cross_chain.unwrap_or(false);
+        let schema = source.load_schema(&base_config.schema, default_cross_chain)?;
         Self::from_human_config_with_source(human_config, schema, source)
     }
 }
@@ -3639,6 +3649,7 @@ type Trader {
 type Secret @internal {
   id: ID!
 }"#,
+                true,
             )
             .unwrap();
             let err = validate_internal_relationships(&schema)
@@ -3662,6 +3673,7 @@ type Order @internal {
   id: ID!
   trader: Trader!
 }"#,
+                true,
             )
             .unwrap();
             let err = validate_internal_relationships(&schema)
@@ -3689,6 +3701,7 @@ type SecretB @internal {
   id: ID!
   entries: [SecretA!]! @derivedFrom(field: "other")
 }"#,
+                true,
             )
             .unwrap();
             assert!(validate_internal_relationships(&schema).is_ok());
@@ -3699,18 +3712,11 @@ type SecretB @internal {
 
     mod db_column_name_validation {
         use super::super::{validate_db_column_names, Storage};
-        use crate::config_parsing::{
-            entity_parsing::{ParsedSchema, Schema},
-            human_config::ColumnNameFormat,
-        };
+        use crate::config_parsing::{entity_parsing::Schema, human_config::ColumnNameFormat};
 
-        // The check reads each field's resolved index state, so it runs on a
-        // resolved schema. Cross-chain: these fixtures declare no chain column.
-        fn resolved_schema(schema: &str) -> Schema {
-            ParsedSchema::from_string(schema)
-                .unwrap()
-                .resolve(true)
-                .unwrap()
+        // Cross-chain: these fixtures declare no chain column.
+        fn parse_schema(schema: &str) -> Schema {
+            Schema::from_string(schema, true).unwrap()
         }
 
         fn storage(column_name_format: ColumnNameFormat) -> Storage {
@@ -3725,7 +3731,7 @@ type SecretB @internal {
 
         #[test]
         fn snake_case_unique_columns_ok() {
-            let schema = resolved_schema(
+            let schema = parse_schema(
                 r#"
 type Token {
   id: ID!
@@ -3744,7 +3750,7 @@ type Token {
         #[test]
         fn length_limit_not_applied_to_clickhouse_columns() {
             let long_field = "a".repeat(30) + "B" + &"b".repeat(29) + "Cc";
-            let schema = resolved_schema(&format!(
+            let schema = parse_schema(&format!(
                 r#"
 type Token {{
   id: ID!
@@ -3773,7 +3779,7 @@ type Token {{
         // reference column is `token_id` but the scalar stays `tokenId`.
         #[test]
         fn graphql_naming_skips_the_check() {
-            let schema = resolved_schema(
+            let schema = parse_schema(
                 r#"
 type Token {
   id: ID!
@@ -3820,6 +3826,7 @@ type Foo @storage(postgres: true, clickhouse: true) {
   id: ID!
   tags: [String!]!
 }"#,
+                true,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, false), &schema).is_ok());
@@ -3835,6 +3842,7 @@ type Foo @storage(postgres: true) {
   id: ID!
   tags: [String!]
 }"#,
+                true,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_ok());
@@ -3851,6 +3859,7 @@ type Foo {
   id: ID!
   tags: [String!]
 }"#,
+                true,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_err());
@@ -3865,6 +3874,7 @@ type Foo {
   id: ID!
   tags: [String!]
 }"#,
+                true,
             )
             .unwrap();
             let storage = Storage {
