@@ -8,7 +8,8 @@ let _ = InternalTestIndexer.fromUserApi(
 name: svm-onslot
 ecosystem: svm
 chains:
-  - rpc: https://api.mainnet-beta.solana.com
+  - id: solana
+    rpc: https://api.mainnet-beta.solana.com
     start_block: 0
 `,
   ~schema=`
@@ -25,7 +26,7 @@ import { indexer } from "envio";
 indexer.onSlot(
   {
     name: "SlotSampler",
-    where: ({ chain }) => (chain.id === 0 ? { slot: { _every: 5 } } : false),
+    where: ({ chain }) => (chain.id === 7565164 ? { slot: { _every: 5 } } : false),
   },
   async ({ slot, context }) => {
     context.SlotPing.set({ id: slot.toString(), slot });
@@ -45,11 +46,11 @@ describe("onSlot-only indexer", () => {
     const indexer = createTestIndexer();
 
     // Initial run up to slot 9.
-    await indexer.process({ chains: { 0: { startBlock: 0, endBlock: 9 } } });
+    await indexer.process({ chains: { 7565164: { startBlock: 0, endBlock: 9 } } });
 
     // Resume from slot 10 up to 19. Before the fix this run got stuck and
     // produced no new SlotPing entities.
-    await indexer.process({ chains: { 0: { startBlock: 10, endBlock: 19 } } });
+    await indexer.process({ chains: { 7565164: { startBlock: 10, endBlock: 19 } } });
 
     const slots = (await indexer.SlotPing.getAll()).map((ping) => ping.slot);
     t.expect([...slots].sort((a, b) => a - b)).toEqual([0, 5, 10, 15]);

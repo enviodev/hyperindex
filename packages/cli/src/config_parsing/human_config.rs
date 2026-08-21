@@ -1017,7 +1017,9 @@ pub mod svm {
     #[serde(untagged)]
     pub enum ChainId {
         Label(ChainLabel),
-        Id(u64),
+        // The ceiling matches ChainIdMode::resolve: chain ids live in JS
+        // numbers downstream, so anything above MAX_SAFE_INTEGER is rejected.
+        Id(#[schemars(range(max = 9_007_199_254_740_991u64))] u64),
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema)]
@@ -1043,9 +1045,9 @@ pub mod svm {
         #[schemars(
             description = "Identifies the Svm cluster: the label \"solana\" (7565164) or \
                            \"solana-devnet\" (7565165), or an explicit number of your choosing \
-                           for other clusters. Svm has no native numeric chain id, so the label \
-                           ids are assigned by Envio and match the ids used for HyperSync usage \
-                           attribution."
+                           for other clusters (up to Number.MAX_SAFE_INTEGER). Svm has no native \
+                           numeric chain id, so the label ids are assigned by Envio and match \
+                           the ids used for HyperSync usage attribution."
         )]
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
