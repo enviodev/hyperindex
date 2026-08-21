@@ -402,9 +402,13 @@ let dispatch = async (
         }
       })
       ->Promise.catch(exn => {
-        // The backstop for the boundary itself failing (an onError callback
-        // that throws, say): with nobody awaiting the fiber, the rejection
-        // would otherwise take the process down past every handler.
+        // Only reachable through the boundary's own `errorExit` — nothing else
+        // in the fiber throws — and that sets `isStopped` before the one call
+        // that can (a user `onError`). So the indexer is already stopped by the
+        // time this runs: logging is the whole remaining job, and the join this
+        // replaced ended the same way, in an `errorExit` that no-ops on a
+        // stopped state. Without a catch, though, nobody awaits the fiber, so
+        // the rejection would take the process down past every handler.
         exn
         ->ErrorHandling.make(~msg="Query fiber rejected past its error boundary")
         ->ErrorHandling.log
