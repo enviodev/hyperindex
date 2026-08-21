@@ -4,7 +4,8 @@ let configYaml = `
 name: svm-api-types
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -29,7 +30,8 @@ let yamlWithFieldSelection = `
 name: svm-yaml-field-selection
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -181,8 +183,8 @@ describe("SVM API types", () => {
 import type { SvmChainId, SvmChainName } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
-expectType<TypeEqual<SvmChainId, 0>>(true);
-expectType<TypeEqual<SvmChainName, "0">>(true);
+expectType<TypeEqual<SvmChainId, 7565164>>(true);
+expectType<TypeEqual<SvmChainName, "7565164">>(true);
 `)
   )
 
@@ -205,7 +207,7 @@ expectType<TypeEqual<SvmOnSlotContext["chain"]["id"], SvmChainId>>(true);
 
 const _slotOpts: SvmOnSlotOptions = {
   name: "s",
-  where: ({ chain }) => (chain.id === 0 ? true : false),
+  where: ({ chain }) => (chain.id === 7565164 ? true : false),
 };
 expectType<SvmOnSlotOptions>(_slotOpts);
 expectType<TypeEqual<SvmOnSlotContext["isPreload"], boolean>>(true);
@@ -474,7 +476,7 @@ import { expectType, type TypeEqual } from "ts-expect";
 
 if (0) {
   indexer.onSlot(
-    { name: "everySlot", where: ({ chain }) => (chain.id === 0 ? true : false) },
+    { name: "everySlot", where: ({ chain }) => (chain.id === 7565164 ? true : false) },
     async ({ slot }) => {
       expectType<TypeEqual<typeof slot, number>>(true);
     },

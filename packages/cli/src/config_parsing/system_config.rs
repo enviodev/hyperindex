@@ -1504,7 +1504,7 @@ impl SystemConfig {
                     }
 
                     let chain = Chain {
-                        id: 0, //network.id,
+                        id: network.id.to_u64(),
                         skip: network.skip.unwrap_or(false),
                         start_block: network.start_block,
                         end_block: network.end_block,
@@ -2992,6 +2992,43 @@ mod test {
             filesystem.to_public_config_json(false).unwrap(),
             memory.to_public_config_json(false).unwrap(),
         );
+    }
+
+    #[test]
+    fn svm_chain_ids_resolve_labels_and_support_multiple_chains() {
+        use crate::config_parsing::human_config::svm::{
+            SOLANA_DEVNET_CHAIN_ID, SOLANA_MAINNET_CHAIN_ID,
+        };
+
+        let schema = "type Foo @entity { id: ID! }";
+        let program_block = |name: &str| {
+            format!(
+                r#"    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: {name}
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: UpdateMetadataAccountV2
+              discriminator: "0x0f"
+"#
+            )
+        };
+        // Labels resolve to the HOS-1682 ids, and two SVM chains coexist in
+        // one config: the old hardcoded 0 made the second insert collide.
+        let yaml = format!(
+            "\nname: svm-chain-id\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+             0\n{}  - id: solana-devnet\n    start_block: 0\n{}",
+            program_block("TokenMetadata"),
+            program_block("TokenMetadataDevnet"),
+        );
+        let config =
+            SystemConfig::parse_yaml(&yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("svm config");
+        let mut ids: Vec<_> = config.chains.keys().copied().collect();
+        ids.sort();
+        assert_eq!(ids, vec![SOLANA_MAINNET_CHAIN_ID, SOLANA_DEVNET_CHAIN_ID]);
     }
 
     #[test]
