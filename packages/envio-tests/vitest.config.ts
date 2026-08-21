@@ -1,9 +1,4 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
-
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const devAddon = path.join(repoRoot, "target", "debug", "envio.node");
 
 export default defineConfig({
   test: {
@@ -20,9 +15,6 @@ export default defineConfig({
     hookTimeout: 30_000,
     setupFiles: ["test/setup.ts"],
     globalSetup: ["test/helpers/globalSetup.ts", "test/helpers/GlobalSetup.res.mjs"],
-    env: {
-      ENVIO_DEV_ADDON: devAddon,
-    },
     passWithNoTests: true,
     server: {
       deps: {
