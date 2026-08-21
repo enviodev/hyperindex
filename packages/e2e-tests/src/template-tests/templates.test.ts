@@ -49,8 +49,15 @@ const TEMPLATES: TemplateConfig[] = [
     initArgs: ["fuel", "template", "-t", "greeter", "-l", "typescript"],
     hasTests: true,
   },
-  // SVM Templates (no test file in template)
+  // SVM Templates
   {
+    name: "svm-metaplex",
+    initArgs: ["svm", "template", "-t", "metaplex-token-metadata", "-l", "typescript"],
+    hasTests: true,
+  },
+  {
+    // No test file in the template: `onSlot` needs a live Solana RPC, which
+    // `simulate` cannot stand in for.
     name: "svm-block-handler",
     initArgs: ["svm", "template", "-t", "feature-block-handler", "-l", "typescript"],
   },
