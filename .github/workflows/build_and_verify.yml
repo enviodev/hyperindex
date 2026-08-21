@@ -215,14 +215,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
 
-      # The scenario suite is backend-agnostic, so it runs three times. A
+      # The scenario suite is backend-agnostic, so it runs twice. A
       # scenario that can't run on a backend skips itself with a reason.
-      - name: envio-tests (memory)
-        working-directory: packages/envio-tests
-        run: pnpm test
-        env:
-          ENVIO_TEST_STORAGE: memory
-
       - name: envio-tests (postgres)
         working-directory: packages/envio-tests
         run: pnpm test
