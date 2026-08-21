@@ -286,9 +286,7 @@ let createSelectPermission = async (
 // column joins alongside the id — without it the relationship would resolve to
 // another chain's row with the same id.
 let makeColumnMapping = (~relationalKey, ~isDerivedFrom, ~chainIdColumn) => {
-  let pairs = [
-    isDerivedFrom ? `"id": "${relationalKey}"` : `"${relationalKey}": "id"`,
-  ]
+  let pairs = [isDerivedFrom ? `"id": "${relationalKey}"` : `"${relationalKey}": "id"`]
   switch chainIdColumn {
   | Some(column) => pairs->Array.push(`"${column}": "${column}"`)->ignore
   | None => ()
@@ -309,7 +307,6 @@ let createEntityRelationship = async (
   ~chainIdColumn: option<string>,
   ~comment: option<string>=?,
 ) => {
-
   let tableJson = {
     "schema": pgSchema,
     "name": tableName,
@@ -347,15 +344,7 @@ let createEntityRelationship = async (
   )
 }
 
-let trackDatabase = async (
-  ~endpoint,
-  ~auth,
-  ~pgSchema,
-  ~userEntities: array<Internal.entityConfig>,
-  ~aggregateEntities,
-  ~responseLimit,
-  ~schema,
-) => {
+let makeTableConfigs = (~userEntities: array<Internal.entityConfig>) => {
   let exposedInternalTableConfigs = [
     {
       tableName: InternalTable.RawEvents.table.tableName,
@@ -373,12 +362,27 @@ let trackDatabase = async (
       columnConfigs: dict{},
     },
   ]
-  let userTableConfigs = userEntities->Array.map(entity => {
-    tableName: entity.table.tableName,
-    description: entity.table.description,
-    columnConfigs: entity.table->makeColumnConfigs,
-  })
-  let tableConfigs = [exposedInternalTableConfigs, userTableConfigs]->Array.flat
+  let userTableConfigs =
+    userEntities
+    ->Array.filter(entity => !entity.internal)
+    ->Array.map(entity => {
+      tableName: entity.table.tableName,
+      description: entity.table.description,
+      columnConfigs: entity.table->makeColumnConfigs,
+    })
+  [exposedInternalTableConfigs, userTableConfigs]->Array.flat
+}
+
+let trackDatabase = async (
+  ~endpoint,
+  ~auth,
+  ~pgSchema,
+  ~userEntities: array<Internal.entityConfig>,
+  ~aggregateEntities,
+  ~responseLimit,
+  ~schema,
+) => {
+  let tableConfigs = makeTableConfigs(~userEntities)
   let tableNames = tableConfigs->Array.map(c => c.tableName)
 
   Logging.info("Tracking tables in Hasura")
@@ -414,10 +418,14 @@ let trackDatabase = async (
     ->Option.flatMap(e => e.table->Table.getChainIdField)
     ->Option.map(Table.getPgDbFieldName)
 
-  for i in 0 to userEntities->Array.length - 1 {
-    let entityConfig = userEntities->Array.getUnsafe(i)
+  // Relationships to an @internal entity can't exist here: codegen rejects a
+  // reference from an exposed entity to an @internal one.
+  let exposedEntities = userEntities->Array.filter(e => !e.internal)
+  for i in 0 to exposedEntities->Array.length - 1 {
+    let entityConfig = exposedEntities->Array.getUnsafe(i)
     let {tableName} = entityConfig.table
-    let ownChainIdColumn = entityConfig.table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
+    let ownChainIdColumn =
+      entityConfig.table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
     let sharedChainIdColumn = mappedEntity =>
       switch (ownChainIdColumn, chainIdColumnOf(mappedEntity)) {
       | (Some(column), Some(_)) => Some(column)

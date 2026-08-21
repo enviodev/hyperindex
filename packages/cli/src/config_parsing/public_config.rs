@@ -114,6 +114,10 @@ struct EntityJson {
     // JSON byte-identical for projects predating per-backend `default`.
     #[serde(skip_serializing_if = "Option::is_none")]
     storage: Option<EntityStorageJson>,
+    // `@internal`: stored but never exposed through the GraphQL API. Omitted
+    // while false so projects predating the directive keep the same JSON.
+    #[serde(skip_serializing_if = "is_false")]
+    internal: bool,
     properties: Vec<PropertyJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     derived_fields: Vec<DerivedFieldJson>,
@@ -879,6 +883,7 @@ impl SystemConfig {
                     ))
                     .filter(|cross_chain| *cross_chain != cfg.default_cross_chain),
                     storage,
+                    internal: entity.internal,
                     properties,
                     derived_fields,
                     composite_indexes,

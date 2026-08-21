@@ -543,24 +543,26 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
   // --- Per-entity @storage routing ---
   //
   // The e2e_test schema declares:
-  //   Transfer        @storage(postgres: true, clickhouse: true)
-  //   TransferPgOnly  @storage(postgres: true)
-  //   TransferChOnly  @storage(clickhouse: true)
+  //   Transfer         @storage(postgres: true, clickhouse: true)
+  //   TransferPgOnly   @storage(postgres: true)
+  //   TransferChOnly   @storage(clickhouse: true)
+  //   TransferInternal @internal @storage(postgres: true)
   //
   // Each backend should host exactly the entities that opted into it, with
-  // at least one row each. Hasura sits on top of Postgres so it must
-  // expose Transfer and TransferPgOnly only.
+  // at least one row each. Hasura sits on top of Postgres, minus @internal
+  // entities, so it must expose Transfer and TransferPgOnly only.
 
   it("Postgres has tables for postgres-enabled entities only", async () => {
     const tables = await runPgSql(`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public'
-        AND table_name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly')
+        AND table_name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly', 'TransferInternal')
       ORDER BY table_name
     `);
     expect(tables.map((r) => r[0])).toMatchInlineSnapshot(`
       [
         "Transfer",
+        "TransferInternal",
         "TransferPgOnly",
       ]
     `);
@@ -575,6 +577,11 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
 
     const pgOnlyRows = await runPgSql(`SELECT count(*)::text FROM "TransferPgOnly"`);
     expect(Number(pgOnlyRows[0]?.[0])).toBe(transferCount);
+
+    // @internal entities keep their Postgres table and handler writes; only
+    // the GraphQL exposure is removed (asserted in the introspection test).
+    const internalRows = await runPgSql(`SELECT count(*)::text FROM "TransferInternal"`);
+    expect(Number(internalRows[0]?.[0])).toBe(transferCount);
   });
 
   it("Postgres raw_events holds one row per indexed event with decoded data", async () => {
@@ -675,7 +682,12 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
       }
     }`);
 
-    const userEntityNames = ["Transfer", "TransferPgOnly", "TransferChOnly"];
+    const userEntityNames = [
+      "Transfer",
+      "TransferPgOnly",
+      "TransferChOnly",
+      "TransferInternal",
+    ];
     const isEntityQuery = (name: string) =>
       userEntityNames.some((p) => name === p || name.startsWith(`${p}_`));
 
