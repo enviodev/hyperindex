@@ -825,6 +825,9 @@ type genericEntityConfig<'entity> = {
   // entity's `@crossChain`. When false the table carries a chain-id column in
   // its primary key and every row belongs to exactly one chain.
   crossChain: bool,
+  // `@internal` on the entity: stored and usable in handlers as normal, but
+  // never exposed through the GraphQL API (no Hasura tracking).
+  internal: bool,
 }
 type entityConfig = genericEntityConfig<entity>
 external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"
