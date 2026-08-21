@@ -3,15 +3,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Left to itself, every one of the ~60 worker forks runs `cargo build --lib`
-// (Core.res's `loadDevAddon`) and may copy a ~600MB addon into place. Cargo
-// serialises those on its own file locks, so a fork can sit inside a
-// synchronous build for tens of seconds — and a fork blocked in `execSync`
-// cannot answer vitest's teardown request, so vitest kills it. The file it was
-// running drops out of the totals with no failure to show for it. Building
-// here, once, before any fork exists, also settles which addon they all load:
-// the per-fork path decides freshness by mtime and can hand a worker a binary
-// older than the sources it is meant to be testing.
+// Build the addon once before worker forks exist. Each fork otherwise runs
+// `cargo build --lib` and can sit on cargo's lock through vitest's teardown.
 function buildDevAddon(): void {
   const repoRoot = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -44,7 +37,6 @@ function buildDevAddon(): void {
   ) {
     fs.copyFileSync(srcPath, nodePath);
   }
-  process.env.ENVIO_DEV_ADDON = nodePath;
 }
 
 // `fromUserApi` keeps its generated modules for the whole run so vitest

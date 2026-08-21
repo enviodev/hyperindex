@@ -16,19 +16,9 @@ use super::{
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
-    // A `.codama` file wraps the root node; a serialized `RootNode` is the
-    // root node itself.
-    let root = match root.get("rootNode").and_then(Value::as_object) {
-        Some(nested) => nested,
-        None => root,
-    };
-    let program = root
-        .get("program")
-        .and_then(Value::as_object)
-        .ok_or_else(|| anyhow!("Codama root node has no 'program'"))?;
-
+    let program = codama_program(root)?;
     let (defined_types, unusable_types) = parse_defined_types(program)?;
-    let (instructions, unusable, unusable_discriminators) = parse_instructions(program)?;
+    let (instructions, unusable, declared_discriminators) = parse_instructions(program)?;
 
     Ok(ProgramIdl {
         address: program
@@ -39,8 +29,21 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
         defined_types,
         unusable,
         unusable_types,
-        unusable_discriminators,
+        declared_discriminators,
     })
+}
+
+fn codama_program(root: &Map<String, Value>) -> Result<&Map<String, Value>> {
+    if root.get("kind").and_then(Value::as_str) == Some("programNode") {
+        return Ok(root);
+    }
+    let root = match root.get("rootNode").and_then(Value::as_object) {
+        Some(nested) => nested,
+        None => root,
+    };
+    root.get("program")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow!("Codama root node has no 'program'"))
 }
 
 fn parse_defined_types(

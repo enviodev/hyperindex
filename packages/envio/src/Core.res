@@ -84,8 +84,7 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   var path = Nodepath;
   var fs = Nodefs;
 
-  // A caller that has already built the addon points at it, so this process
-  // does not take cargo's lock again. Test runs set it once for every worker.
+  // Vitest test.env points workers at the addon globalSetup already built.
   var preBuilt = process.env.ENVIO_DEV_ADDON;
   if (preBuilt && fs.existsSync(preBuilt)) return req(preBuilt);
 

@@ -21,9 +21,8 @@ chains:
         - name: Jupiter
           program_id: JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4
           idl: idls/jupiter.json
-          # Legacy Anchor IDLs carry no inline discriminator; HyperIndex needs the
-          # 8-byte sha256("global:<snake_case>")[..8] both to dispatch and to look
-          # up the IDL arg/account schema. Computed per instruction below.
+          # Discriminator and layout come from the IDL. Names must match it;
+          # a hand-written discriminator is optional and must agree if present.
           instructions:
             - name: route
               discriminator: "0xe517cb977ae3ad2a"

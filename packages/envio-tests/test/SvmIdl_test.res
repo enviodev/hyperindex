@@ -64,6 +64,57 @@ let codamaIdl = `{
   }
 }`
 
+let programNodeIdl = `{
+  "kind": "programNode",
+  "name": "splToken",
+  "publicKey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "instructions": [{
+    "kind": "instructionNode",
+    "name": "transfer",
+    "accounts": [
+      { "kind": "instructionAccountNode", "name": "source", "isWritable": true },
+      { "kind": "instructionAccountNode", "name": "destination", "isWritable": true }
+    ],
+    "arguments": [
+      {
+        "kind": "instructionArgumentNode",
+        "name": "discriminator",
+        "type": { "kind": "numberTypeNode", "format": "u8" },
+        "defaultValue": { "kind": "numberValueNode", "number": 3 },
+        "defaultValueStrategy": "omitted"
+      },
+      { "kind": "instructionArgumentNode", "name": "amount", "type": { "kind": "numberTypeNode", "format": "u64" } }
+    ],
+    "discriminators": [{ "kind": "fieldDiscriminatorNode", "name": "discriminator", "offset": 0 }]
+  }]
+}`
+
+let optionalAccountsIdl = `{
+  "kind": "rootNode",
+  "program": {
+    "kind": "programNode",
+    "name": "accounts",
+    "publicKey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "instructions": [{
+      "kind": "instructionNode",
+      "name": "create",
+      "accounts": [
+        { "kind": "instructionAccountNode", "name": "metadata" },
+        { "kind": "instructionAccountNode", "name": "mint", "isOptional": true },
+        { "kind": "instructionAccountNode", "name": "payer" },
+        { "kind": "instructionAccountNode", "name": "rent", "isOptional": true }
+      ],
+      "arguments": [{
+        "kind": "instructionArgumentNode",
+        "name": "discriminator",
+        "type": { "kind": "numberTypeNode", "format": "u8" },
+        "defaultValue": { "kind": "numberValueNode", "number": 1 }
+      }],
+      "discriminators": [{ "kind": "fieldDiscriminatorNode", "name": "discriminator", "offset": 0 }]
+    }]
+  }
+}`
+
 let clashingCodamaIdl = `{
   "kind": "rootNode",
   "program": {
@@ -153,55 +204,44 @@ let checkCodama = handlers =>
 describe("SVM instruction types derived from an IDL", () => {
   it("types args and accounts from an Anchor IDL", _ =>
     checkAnchor(`
-import { indexer } from "envio";
+import type { Global } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
-indexer.onInstruction(
-  { program: "Swapper", instruction: "swap" },
-  async ({ instruction }) => {
-    const params = instruction.params;
-    if (!params) return;
-    expectType<
-      TypeEqual<
-        typeof params.args,
-        {
-          readonly amountIn: string;
-          readonly slippageBps: number;
-          readonly route: { readonly hops: string[]; readonly percent: number };
-          readonly memo: string | null;
-        }
-      >
-    >(true);
-    expectType<
-      TypeEqual<
-        typeof params.accounts,
-        { readonly source: string; readonly destination: string; readonly authority: string }
-      >
-    >(true);
-  },
-);
+type Programs = Global extends { config: { svm: { programs: infer P } } } ? P : never;
+type Swap = Programs["Swapper"]["swap"];
+
+expectType<
+  TypeEqual<
+    Swap["args"],
+    {
+      readonly amountIn: string;
+      readonly slippageBps: number;
+      readonly route: { readonly hops: string[]; readonly percent: number };
+      readonly memo: string | null;
+    }
+  >
+>(true);
+expectType<
+  TypeEqual<
+    Swap["accounts"],
+    { readonly source: string; readonly destination: string; readonly authority: string }
+  >
+>(true);
 `)
   )
 
   it("types args and accounts from a Codama IDL", _ =>
     checkCodama(`
-import { indexer } from "envio";
+import type { Global } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
-indexer.onInstruction(
-  { program: "SplToken", instruction: "transfer" },
-  async ({ instruction }) => {
-    const params = instruction.params;
-    if (!params) return;
-    expectType<TypeEqual<typeof params.args, { readonly amount: string }>>(true);
-    expectType<
-      TypeEqual<
-        typeof params.accounts,
-        { readonly source: string; readonly destination: string }
-      >
-    >(true);
-  },
-);
+type Programs = Global extends { config: { svm: { programs: infer P } } } ? P : never;
+type Transfer = Programs["SplToken"]["transfer"];
+
+expectType<TypeEqual<Transfer["args"], { readonly amount: string }>>(true);
+expectType<
+  TypeEqual<Transfer["accounts"], { readonly source: string; readonly destination: string }>
+>(true);
 `)
   )
 
@@ -362,21 +402,84 @@ chains:
   it("omits the Codama discriminator field from args", t => {
     let actual = try {
       checkCodama(`
-import { indexer } from "envio";
+import type { Global } from "envio";
 
-indexer.onInstruction(
-  { program: "SplToken", instruction: "transfer" },
-  async ({ instruction }) => {
-    instruction.params?.args.discriminator;
-  },
-);
+type Programs = Global extends { config: { svm: { programs: infer P } } } ? P : never;
+type Transfer = Programs["SplToken"]["transfer"];
+type _D = Transfer["args"]["discriminator"];
 `)
       "the type check to fail, but it succeeded"
     } catch {
     | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
     }
     t.expect(actual).toBe(
-      "Type errors:\n__mock_indexer_handlers.ts(7,30): error TS2339: Property 'discriminator' does not exist on type '{ readonly amount: string; }'.",
+      "Type errors:\n__mock_indexer_handlers.ts(6,28): error TS2339: Property 'discriminator' does not exist on type '{ readonly amount: string; }'.",
     )
   })
+
+  it("parses a Codama programNode without a root wrapper", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files=Dict.fromArray([("idls/spl-token.codama.json", programNodeIdl)]),
+      ~configYaml=codamaConfigYaml,
+    )
+    let ids =
+      config.chainMap
+      ->ChainMap.values
+      ->Array.flatMap(
+        chain =>
+          chain.contracts->Array.flatMap(
+            contract => contract.events->Array.map(event => (contract.name, event.name, event.id)),
+          ),
+      )
+    t.expect(ids).toEqual([("SplToken", "transfer", "0x03")])
+  })
+
+  it("types only a trailing optional account as optional", _ =>
+    InternalTestIndexer.fromUserApi(
+      ~schema=ApiTypesFixtures.schema,
+      ~files=Dict.fromArray([("idls/accounts.codama.json", optionalAccountsIdl)]),
+      ~configYaml=codamaConfigYaml
+      ->String.replace("idls/spl-token.codama.json", "idls/accounts.codama.json")
+      ->String.replace("- name: transfer", "- name: create"),
+      ~handlers=`
+import type { Global } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+type Programs = Global extends { config: { svm: { programs: infer P } } } ? P : never;
+type Create = Programs["SplToken"]["create"];
+
+expectType<
+  TypeEqual<
+    Create["accounts"],
+    { readonly metadata: string; readonly mint: string; readonly payer: string; readonly rent?: string }
+  >
+>(true);
+`,
+    )->ignore
+  )
+
+  it("rejects Metaplex Token Metadata with no idl", t =>
+    t.expect(
+      parseError(
+        ~files=Dict.fromArray([]),
+        ~configYaml=`
+name: svm-metaplex
+ecosystem: svm
+chains:
+  - start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: TokenMetadata
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: CreateMetadataAccountV3
+              discriminator: "0x21"
+`,
+      ),
+    ).toBe(
+      "Config parse error: Resolving Borsh schema for metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s: Program 'TokenMetadata': the Metaplex Token Metadata schema is no longer bundled. Point `idl` at a Token Metadata IDL to decode `params`.",
+    )
+  )
 })

@@ -35,7 +35,7 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
         .map(str::to_string);
 
     let (defined_types, unusable_types) = parse_defined_types(root)?;
-    let (instructions, unusable, unusable_discriminators) = parse_instructions(root)?;
+    let (instructions, unusable, declared_discriminators) = parse_instructions(root)?;
 
     Ok(ProgramIdl {
         address,
@@ -43,7 +43,7 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
         defined_types,
         unusable,
         unusable_types,
-        unusable_discriminators,
+        declared_discriminators,
     })
 }
 

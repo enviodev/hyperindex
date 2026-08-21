@@ -1238,7 +1238,7 @@ chains:
       "rejects two instructions whose discriminators differ only in hex casing",
       prefix ++ `
         - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
           instructions:
             - {name: Transfer, discriminator: "0x0f"}
             - {name: Withdraw, discriminator: "0x0F"}

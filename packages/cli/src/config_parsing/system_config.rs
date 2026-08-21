@@ -1862,17 +1862,19 @@ impl EvmAbi {
 }
 
 fn to_instruction_schema(name: String, ix: svm_idl::IxIdl) -> SvmInstructionSchema {
+    let optional = svm_idl::trailing_optional_mask(&ix.accounts);
     SvmInstructionSchema {
         name,
         discriminator: ix.discriminator,
         accounts: ix
             .accounts
             .into_iter()
-            .map(|a| SvmNamedAccount {
+            .zip(optional)
+            .map(|(a, optional)| SvmNamedAccount {
                 name: a.name,
-                writable: a.writable,
-                signer: a.signer,
-                optional: a.optional,
+                writable: false,
+                signer: false,
+                optional,
             })
             .collect(),
         args: ix.args,
@@ -1929,16 +1931,12 @@ fn resolve_program_schema(
         });
     }
 
-    // Advisory rather than fatal: indexing this program untyped stays valid,
-    // and `instruction.accounts`/`instruction.data` are unaffected either way.
     if program.program_id == METAPLEX_TOKEN_METADATA_PROGRAM_ID && !any_instruction_carries_schema {
-        eprintln!(
-            "Warning: program '{}' has no `idl`, and the Metaplex Token Metadata schema that \
-             used to be bundled with the CLI was removed. `instruction.params` will be absent; \
-             `instruction.accounts` and `instruction.data` still arrive. Point `idl` at a Token \
-             Metadata IDL to decode `params` again.",
+        return Err(anyhow!(
+            "Program '{}': the Metaplex Token Metadata schema is no longer bundled. Point `idl` \
+             at a Token Metadata IDL to decode `params`.",
             program.name
-        );
+        ));
     }
 
     Ok(SvmAbi {
@@ -2020,11 +2018,28 @@ fn resolve_instruction(
                 Some(reason) => {
                     anyhow!("declared by the program's IDL, but {reason}")
                 }
-                None => anyhow!(
-                    "Instruction '{}' is not in the program's IDL. Available instructions: {}.",
-                    instr.name,
-                    abi.instructions.keys().join(", ")
-                ),
+                None => {
+                    let available = abi.instructions.keys().join(", ");
+                    if abi.unusable.is_empty() {
+                        anyhow!(
+                            "Instruction '{}' is not in the program's IDL. Available \
+                             instructions: {available}.",
+                            instr.name,
+                        )
+                    } else {
+                        let unusable = abi
+                            .unusable
+                            .iter()
+                            .map(|(name, reason)| format!("{name} ({reason})"))
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        anyhow!(
+                            "Instruction '{}' is not in the program's IDL. Available \
+                             instructions: {available}. Also declared but unusable: {unusable}.",
+                            instr.name,
+                        )
+                    }
+                }
             }
         })?;
         let derived = format!("0x{}", crate::hex::encode(&schema.discriminator));
@@ -2331,19 +2346,9 @@ impl Contract {
             }
         }
 
-        // Distinctness is not enough for SVM: the router probes widths
-        // longest-first and compares a prefix of the data, so `0x0c` and
-        // `0x0c00000000000000` are one key, not two. Every call to the short
-        // one whose payload continues with those seven bytes is taken by the
-        // long one and decoded at the wrong offset. The equality check above
-        // is the degenerate case of this one, and keeps its own message.
-        //
-        // An instruction with no `discriminator` at all is left out rather
-        // than treated as the prefix of everything, unlike the same shape in
-        // an IDL. Here it is a deliberate catch-all with a defined place in
-        // the order — the router falls back to it only once no keyed
-        // registration matched — whereas an IDL instruction missing a prefix
-        // is one nobody chose and nothing bounds.
+        // YAML catch-alls (no discriminator) are omitted: the router falls
+        // back to them only after no keyed registration matches. An IDL
+        // instruction missing a prefix is unroutable instead.
         let discriminators: Vec<(Vec<u8>, String)> = events
             .iter()
             .filter_map(|event| match &event.kind {
@@ -3872,16 +3877,64 @@ type Foo {
                         k.discriminator.as_deref(),
                         k.discriminator_byte_len,
                         k.account_filters.len(),
+                        k.accounts
+                            .iter()
+                            .map(|a| (a.name.as_str(), a.optional))
+                            .collect::<Vec<_>>(),
                     ),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
                 })
                 .collect();
+            let json: serde_json::Value = serde_json::from_str(
+                &config.to_public_config_json(false).expect("json"),
+            )
+            .expect("parse json");
+            let json_accounts = json["svm"]["programs"]["TokenMetadata"]["events"]
+                .as_array()
+                .expect("events")
+                .iter()
+                .map(|e| e["svm"]["accounts"].clone())
+                .collect::<Vec<_>>();
             assert_eq!(
-                kinds,
-                vec![
-                    ("CreateMetadataAccountV3", Some("0x21"), 1, 0),
-                    ("UpdateMetadataAccountV2", Some("0x0f"), 1, 1),
-                ],
+                (kinds, json_accounts),
+                (
+                    vec![
+                        (
+                            "CreateMetadataAccountV3",
+                            Some("0x21"),
+                            1,
+                            0,
+                            vec![
+                                ("metadata", false),
+                                ("mint", false),
+                                ("mintAuthority", false),
+                                ("payer", false),
+                                ("updateAuthority", false),
+                                ("systemProgram", false),
+                                ("rent", true),
+                            ]
+                        ),
+                        (
+                            "UpdateMetadataAccountV2",
+                            Some("0x0f"),
+                            1,
+                            1,
+                            vec![("metadata", false), ("updateAuthority", false)]
+                        ),
+                    ],
+                    vec![
+                        serde_json::json!([
+                            "metadata",
+                            "mint",
+                            "mintAuthority",
+                            "payer",
+                            "updateAuthority",
+                            "systemProgram",
+                            "rent"
+                        ]),
+                        serde_json::json!(["metadata", "updateAuthority"]),
+                    ]
+                )
             );
 
             // Chain data carries the program_id on the contract-side address,
