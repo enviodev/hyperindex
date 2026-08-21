@@ -307,7 +307,7 @@ let expectQueries = async (
   let recalled =
     settled
     ->Array.slice(
-      ~start=max(settled->Array.length - settledQueriesInMessage, 0),
+      ~start=Pervasives.max(settled->Array.length - settledQueriesInMessage, 0),
       ~end=settled->Array.length,
     )
     ->Array.map(describeQuery)

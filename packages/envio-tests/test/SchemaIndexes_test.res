@@ -272,7 +272,12 @@ describe("Deferred schema indexes", () => {
       ).toEqual((1, [{value: "0", labels: dict{"chainId": "1337"}}]))
 
       // A height update while the build is held: the chain fetches the new range
-      // and its response schedules processing again.
+      // and its response schedules processing again. The chain is at head, so
+      // it polls on a timer: wait for a poll to answer.
+      await indexer.settleUntil(
+        () => source.pendingHeightCalls() > 0,
+        ~message="the next height poll",
+      )
       source.resolveGetHeightOrThrow(200)
       await Scenario.waitQuery(~indexer, ~source=source)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200)
