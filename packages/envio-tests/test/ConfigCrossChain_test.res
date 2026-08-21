@@ -438,25 +438,49 @@ describe("Per-chain ClickHouse view", () => {
 // a DELETE row carries no entity to stamp — the chain id is baked into the
 // schema instead. A cache keyed only by entity would serve chain 1's schema to
 // chain 137.
-type capturedInsert = {table: string, values: array<JSON.t>}
-
 describe("Per-chain ClickHouse writes", () => {
-  let insertAndCapture = async (~changes, ~entityConfig, ~scope, ~cache) => {
+  // Registers the table for real — that needs no server, and it is what
+  // resolves each column's wire kind — then mocks the sink at the `stage`
+  // boundary to read back the chain-id column, a Float64Array in the default
+  // Int32 chain-id mode.
+  let columnSpecs = entityConfig =>
+    ClickHouse.entityColumnSpecs(~entityConfig, ~chainIdMode=Int32)
+
+  let stagedChainIds = (~changes, ~entityConfig: Internal.entityConfig, ~scope, ~registry) => {
     let captured = []
-    let client =
+    let chainIdIndex =
+      columnSpecs(entityConfig)->Array.findIndex(({name}) => name === "chainId")
+    let sink =
       {
-        "insert": params => {
-          captured
-          ->Array.push({
-            table: params["table"],
-            values: params["values"]->(Utils.magic: unknown => array<JSON.t>),
-          }: capturedInsert)
-          ->ignore
-          Promise.resolve()
+        "stage": (_table, rows, columns: array<ClickHouseSink.columnValuesInput>) => {
+          switch columns->Array.get(chainIdIndex) {
+          | Some({numbers: ?Some(numbers)}) =>
+            for row in 0 to rows - 1 {
+              captured->Array.push(numbers->TypedArray.get(row))->ignore
+            }
+          | _ =>
+            for _ in 0 to rows - 1 {
+              captured->Array.push(None)->ignore
+            }
+          }
+          1
         },
-      }->(Utils.magic: {..} => ClickHouse.client)
-    await ClickHouse.setUpdatesOrThrow(client, ~cache, ~changes, ~entityConfig, ~scope, ~database="db")
+      }->(Utils.magic: {..} => ClickHouseSink.t)
+    let _ = ClickHouse.stageUpdatesOrThrow(sink, ~registry, ~changes, ~entityConfig, ~scope)
     captured
+  }
+
+  // Registration only parses the column types, so it never reaches this host.
+  let registryFor = (entityConfig: Internal.entityConfig) => {
+    let registry = ClickHouse.makeRegistry(~chainIdMode=Int32)
+    let sink = ClickHouse.makeSink(
+      ~host="http://127.0.0.1:1",
+      ~username="default",
+      ~password="",
+      ~database="unused",
+    )
+    let _ = sink->ClickHouse.entityTable(~registry, ~entityConfig)
+    registry
   }
 
   let set = (~id, ~count): Change.t<Internal.entity> =>
@@ -469,48 +493,34 @@ describe("Per-chain ClickHouse writes", () => {
   let delete = (~id): Change.t<Internal.entity> =>
     Delete({entityId: id->EntityId.unsafeOfString, checkpointId: 2n})
 
-  Async.it("Stamps set rows and tags delete rows with the flush group's chain", async t => {
-    let cache = Dict.make()
-    let chain1 = await insertAndCapture(
+  it("Stamps set rows and tags delete rows with the flush group's chain", t => {
+    let registry = registryFor(counter)
+    let chain1 = stagedChainIds(
       ~changes=[set(~id="a", ~count=1n), delete(~id="b")],
       ~entityConfig=counter,
       ~scope=Chain(1->ChainId.fromInt),
-      ~cache,
+      ~registry,
     )
     // Same cache, different scope: a per-entity cache would reuse chain 1's
     // schema and tag the delete row with chain 1.
-    let chain137 = await insertAndCapture(
+    let chain137 = stagedChainIds(
       ~changes=[set(~id="a", ~count=2n), delete(~id="b")],
       ~entityConfig=counter,
       ~scope=Chain(137->ChainId.fromInt),
-      ~cache,
+      ~registry,
     )
 
-    let chainIds = captured =>
-      captured
-      ->Array.flatMap(c => c.values)
-      ->Array.map(v =>
-        v->(Utils.magic: JSON.t => {"chainId": option<int>})->(o => o["chainId"])
-      )
-
-    t.expect((chain1->chainIds, chain137->chainIds)).toEqual((
-      [Some(1), Some(1)],
-      [Some(137), Some(137)],
-    ))
+    t.expect((chain1, chain137)).toEqual(([Some(1.), Some(1.)], [Some(137.), Some(137.)]))
   })
 
-  Async.it("Leaves a cross-chain entity's rows without a chain id", async t => {
-    let captured = await insertAndCapture(
+  it("Leaves a cross-chain entity's rows without a chain id", t => {
+    let captured = stagedChainIds(
       ~changes=[set(~id="a", ~count=1n), delete(~id="b")],
       ~entityConfig=globalCounter,
       ~scope=CrossChain,
-      ~cache=Dict.make(),
+      ~registry=registryFor(globalCounter),
     )
-    t.expect(
-      captured
-      ->Array.flatMap(c => c.values)
-      ->Array.map(v => v->(Utils.magic: JSON.t => {"chainId": option<int>})->(o => o["chainId"])),
-    ).toEqual([None, None])
+    t.expect(captured).toEqual([None, None])
   })
 })
 

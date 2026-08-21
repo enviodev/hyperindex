@@ -10,6 +10,7 @@ type svmHyperSyncClientCtor
 type fuelHyperSyncClientCtor
 type transactionStoreCtor
 type blockStoreCtor
+type clickHouseSinkCtor
 type addressStoreCtor
 // Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
 type mockHyperSyncServerCtor
@@ -45,6 +46,8 @@ type addon = {
   blockStore: blockStoreCtor,
   @as("AddressStore")
   addressStore: addressStoreCtor,
+  @as("ClickHouseSink")
+  clickHouseSink: clickHouseSinkCtor,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
   // Ordered transaction-field names exposed for the field-code contract test

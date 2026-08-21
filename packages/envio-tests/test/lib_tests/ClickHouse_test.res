@@ -165,6 +165,17 @@ describe("databaseEngineName", () => {
   })
 })
 
+// The ClickHouse checkpoints columns are declared separately from the Postgres
+// ones, so a column added to `InternalTable.Checkpoints` reaches Postgres
+// automatically and ClickHouse not at all — with both sides self-consistent,
+// nothing else would report the omission.
+describe("ClickHouse checkpoints columns", () => {
+  Async.it("cover every column the checkpoints table declares, in its order", async t => {
+    let declared = InternalTable.Checkpoints.table.fields->Array.map(Table.getUserDefinedFieldName)
+    t.expect(ClickHouse.checkpointColumns->Array.map(({name}) => name)).toEqual(declared)
+  })
+})
+
 describe("Test ClickHouse SQL generation functions", () => {
   describe("makeCreateCheckpointsTableQuery", () => {
     Async.it(
@@ -269,10 +280,10 @@ SETTINGS replicated_deduplication_window = 0`
   \`timestamp\` DateTime64(3, 'UTC'),
   \`optTimestamp\` Nullable(DateTime64(3, 'UTC')),
   \`json\` String,
-  \`enumField\` Enum8('ADMIN', 'USER'),
-  \`optEnumField\` Nullable(Enum8('ADMIN', 'USER')),
+  \`enumField\` Enum8('ADMIN' = 1, 'USER' = 2),
+  \`optEnumField\` Nullable(Enum8('ADMIN' = 1, 'USER' = 2)),
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
 ORDER BY (id, envio_checkpoint_id)`
@@ -317,10 +328,10 @@ ORDER BY (id, envio_checkpoint_id)`
   \`timestamp\` DateTime64(3, 'UTC'),
   \`optTimestamp\` Nullable(DateTime64(3, 'UTC')),
   \`json\` String,
-  \`enumField\` Enum8('ADMIN', 'USER'),
-  \`optEnumField\` Nullable(Enum8('ADMIN', 'USER')),
+  \`enumField\` Enum8('ADMIN' = 1, 'USER' = 2),
+  \`optEnumField\` Nullable(Enum8('ADMIN' = 1, 'USER' = 2)),
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = ReplicatedMergeTree
 ORDER BY (id, envio_checkpoint_id)
@@ -387,7 +398,7 @@ chains:
   \`timestamp\` DateTime64(3, 'UTC'),
   \`amount\` String,
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(\`timestamp\`)
@@ -436,7 +447,7 @@ chains:
   \`base_token_id\` String,
   \`trade_time\` DateTime64(3, 'UTC'),
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
 ORDER BY (\`base_token_id\`, \`trade_time\`, envio_checkpoint_id)`)
@@ -485,7 +496,7 @@ chains:
   \`base_token_id\` String,
   \`trade_time\` DateTime64(3, 'UTC'),
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(\`trade_time\`)
@@ -560,7 +571,7 @@ chains:
   \`timestamp\` DateTime64(3, 'UTC'),
   \`amount\` String,
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE'),
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2),
   INDEX \`idx_from\` \`from_address\` TYPE bloom_filter(0.01) GRANULARITY 4,
   INDEX \`idx_amount\` \`amount\` TYPE minmax
 )
@@ -600,13 +611,21 @@ chains:
         let entityConfig = config.userEntitiesByName->Dict.getUnsafe("Transfer")
 
         let database = TestClickHouse.make()
-        let client = ClickHouse.createClient({
-          url: TestClickHouse.host(),
-          username: TestClickHouse.username(),
-          password: TestClickHouse.password(),
-        })
+        let sink = ClickHouse.makeSink(
+          ~host=TestClickHouse.host(),
+          ~username=TestClickHouse.username(),
+          ~password=TestClickHouse.password(),
+          ~database,
+        )
+        let registry = ClickHouse.makeRegistry(~chainIdMode=Int32)
         let indices = try {
-          await ClickHouse.initialize(client, ~database, ~entities=[entityConfig], ~enums=[])
+          await ClickHouse.initialize(
+            sink,
+            ~registry,
+            ~database,
+            ~entities=[entityConfig],
+            ~enums=[],
+          )
           await TestClickHouse.query(
             `SELECT name, type_full, toUInt32(granularity) AS granularity
 FROM system.data_skipping_indices
@@ -617,11 +636,9 @@ FORMAT JSONCompactEachRow`,
         } catch {
         | exn =>
           await TestClickHouse.drop(~database)
-          await ClickHouse.close(client)
           throw(exn)
         }
         await TestClickHouse.drop(~database)
-        await ClickHouse.close(client)
 
         t.expect(indices).toBe(`["idx_amount", "minmax", 1]
 ["idx_from", "bloom_filter(0.01)", 4]

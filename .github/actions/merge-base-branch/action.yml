@@ -1,0 +1,34 @@
+name: Merge the base branch
+description: >
+  Merges the pull request's base branch into the checked-out head, so every job
+  builds what will exist after the merge rather than the branch in isolation.
+  A change that only breaks in combination with the base — a renamed binding, a
+  moved directory, a signature both sides edited — is invisible otherwise: both
+  branches are green on their own and nothing ever compiles the two together.
+  A push build is already the merged state, so this is a no-op there.
+
+  Requires the checkout to have full history (fetch-depth: 0); a shallow one has
+  no merge base to merge from.
+
+runs:
+  using: composite
+  steps:
+    - name: Merge base branch
+      shell: bash
+      env:
+        BASE_REF: ${{ github.event.pull_request.base.ref }}
+      run: |
+        set -euo pipefail
+        if [ -z "${BASE_REF}" ]; then
+          echo "Not a pull request; the checkout is already the merged state."
+          exit 0
+        fi
+        git config user.email "ci@envio.dev"
+        git config user.name "Envio CI"
+        git fetch --no-tags origin "${BASE_REF}"
+        if ! git merge --no-edit FETCH_HEAD; then
+          git merge --abort || true
+          echo "::error::This branch conflicts with ${BASE_REF}. Merge ${BASE_REF} locally and resolve the conflicts — CI cannot verify the result until it does."
+          exit 1
+        fi
+        echo "Merged origin/${BASE_REF} ($(git rev-parse --short FETCH_HEAD)) into the pull request head."

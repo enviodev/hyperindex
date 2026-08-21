@@ -2,6 +2,7 @@ mod address_store;
 mod block_hash_pagination;
 mod block_store;
 mod cli_args;
+mod clickhouse;
 mod client_filtered_contracts;
 pub use cli_args::clap_definitions;
 pub use cli_args::init_config;
