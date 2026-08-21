@@ -12,10 +12,9 @@
       "with a single leading byte rather than an Anchor discriminator — which",
       "is why this IDL is Codama and not Anchor.",
       "",
-      "Hand-authored subset covering only the two instructions this project",
-      "indexes, not the program's full surface. Extend or trim this file to",
-      "change what is indexed; config.yaml only names the program and the",
-      "idl: path. Layouts follow mpl-token-metadata 1.13.2",
+      "Hand-authored to the two instructions this template handles.",
+      "Register indexer.onInstruction for those instructions and select",
+      "payload with fields. Layouts follow mpl-token-metadata 1.13.2",
       "(https://github.com/metaplex-foundation/mpl-token-metadata)."
     ],
     "instructions": [

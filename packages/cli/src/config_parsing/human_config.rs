@@ -1057,7 +1057,7 @@ pub mod svm {
         pub programs: Vec<Program>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[derive(Debug, Serialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Program {
         #[schemars(
@@ -1077,10 +1077,75 @@ pub mod svm {
         pub handler: Option<String>,
         #[schemars(
             description = "Path (relative to the project root) to an Anchor or Codama IDL JSON \
-                           file. Every instruction the runtime can decode is indexed; subset the \
-                           file to index fewer."
+                           file. Instruction layouts and discriminators come from this file; \
+                           register `indexer.onInstruction` handlers for the instructions to \
+                           handle, and select payload with `fields`."
         )]
         pub idl: String,
+    }
+
+    impl<'de> Deserialize<'de> for Program {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            use serde::de::Error;
+            use std::collections::BTreeMap;
+
+            #[derive(Deserialize)]
+            struct Raw {
+                name: Option<String>,
+                program_id: Option<String>,
+                handler: Option<String>,
+                idl: Option<String>,
+                instructions: Option<serde_yaml::Value>,
+                field_selection: Option<serde_yaml::Value>,
+                #[serde(flatten)]
+                extra: BTreeMap<String, serde_yaml::Value>,
+            }
+
+            let raw = Raw::deserialize(deserializer)?;
+            let label = match &raw.name {
+                Some(name) => format!("Program {name:?}"),
+                None => "SVM program".to_string(),
+            };
+            if raw.instructions.is_some() {
+                return Err(D::Error::custom(format!(
+                    "{label} has an `instructions` list, which is not valid. Configure the \
+                     program with `name`, `program_id`, and `idl`. Register \
+                     `indexer.onInstruction` handlers for the instructions to handle."
+                )));
+            }
+            if raw.field_selection.is_some() {
+                return Err(D::Error::custom(format!(
+                    "{label} has `field_selection`, which is not valid. Select payload in the \
+                     handler with `indexer.onInstruction({{ fields }})`."
+                )));
+            }
+            if let Some(field) = raw.extra.keys().next() {
+                return Err(D::Error::custom(format!(
+                    "{label} has unknown field `{field}`. Valid fields: name, program_id, \
+                     handler, idl."
+                )));
+            }
+            let name = raw
+                .name
+                .ok_or_else(|| D::Error::custom("SVM program is missing `name`."))?;
+            let program_id = raw.program_id.ok_or_else(|| {
+                D::Error::custom(format!("{label} is missing `program_id`."))
+            })?;
+            let idl = raw.idl.ok_or_else(|| {
+                D::Error::custom(format!(
+                    "{label} is missing `idl`. Point it at an Anchor or Codama JSON file."
+                ))
+            })?;
+            Ok(Program {
+                name,
+                program_id,
+                handler: raw.handler,
+                idl,
+            })
+        }
     }
 
     /// One named argument of an instruction. Internal-config wire type;

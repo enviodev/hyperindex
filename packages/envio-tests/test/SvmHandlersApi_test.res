@@ -184,7 +184,7 @@ describe("SVM YAML field_selection", () => {
     | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
     }
     t.expect(actual).toBe(
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: unknown field `field_selection`, expected one of `name`, `program_id`, `handler`, `idl` at line 13 column 11",
+      "Config parse error: Program \"Swapper\" has `field_selection`, which is not valid. Select payload in the handler with `indexer.onInstruction({ fields })`.",
     )
   })
 })

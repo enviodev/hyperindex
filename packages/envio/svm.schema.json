@@ -320,7 +320,7 @@
           ]
         },
         "idl": {
-          "description": "Path (relative to the project root) to an Anchor or Codama IDL JSON file. Every instruction the runtime can decode is indexed; subset the file to index fewer.",
+          "description": "Path (relative to the project root) to an Anchor or Codama IDL JSON file. Instruction layouts and discriminators come from this file; register `indexer.onInstruction` handlers for the instructions to handle, and select payload with `fields`.",
           "type": "string"
         }
       },

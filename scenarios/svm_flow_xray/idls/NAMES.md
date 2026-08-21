@@ -1,8 +1,8 @@
 # IDL provenance
 
-Jupiter, Drift, and Kamino ship unmodified legacy Anchor IDLs. The indexer
-registers every instruction those files can decode. Subset by trimming the
-JSON; `config.yaml` only names the program and the `idl:` path.
+Jupiter, Drift, and Kamino ship unmodified legacy Anchor IDLs. `config.yaml`
+names the program and the `idl:` path. Register `indexer.onInstruction`
+handlers for the instructions to handle, and select payload with `fields`.
 
 All three are **legacy Anchor (pre-0.30)**: top-level `name` / `version` /
 `instructions` / `accounts` / `types` / `events` / `errors`. No top-level

@@ -17,7 +17,7 @@ use super::{
 use crate::utils::dotenv::{self, EnvMap};
 use crate::{
     config_parsing::human_config::evm::RpcTransactionField,
-    constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
+    constants::project_paths::DEFAULT_SCHEMA_PATH,
     evm::abi::AbiOrNestedAbi,
     fuel::abi::{FuelAbi, BURN_EVENT_NAME, CALL_EVENT_NAME, MINT_EVENT_NAME, TRANSFER_EVENT_NAME},
     project_paths::{path_utils, ParsedProjectPaths},
@@ -1518,33 +1518,41 @@ impl SystemConfig {
 
         let human_config = match ecosystem {
             Ecosystem::Evm => {
-                let evm_config: EvmConfig =
-                    serde_yaml::from_str(&human_config_string).context(format!(
-                        "Failed to deserialize config. Visit the docs for more information {}",
-                        links::DOC_CONFIGURATION_FILE
-                    ))?;
+                let evm_config: EvmConfig = serde_yaml::from_str(&human_config_string)
+                    .context("Failed to deserialize config")?;
                 HumanConfig::Evm(evm_config)
             }
             Ecosystem::Fuel => {
-                let fuel_config: FuelConfig =
-                    serde_yaml::from_str(&human_config_string).context(format!(
-                        "Failed to deserialize config. Visit the docs for more information {}",
-                        links::DOC_CONFIGURATION_FILE
-                    ))?;
+                let fuel_config: FuelConfig = serde_yaml::from_str(&human_config_string)
+                    .context("Failed to deserialize config")?;
                 HumanConfig::Fuel(fuel_config)
             }
             Ecosystem::Svm => {
                 let svm_config: human_config::svm::HumanConfig =
-                    serde_yaml::from_str(&human_config_string).context(format!(
-                        "Failed to deserialize config. Visit the docs for more information {}",
-                        links::DOC_CONFIGURATION_FILE
-                    ))?;
+                    serde_yaml::from_str(&human_config_string).map_err(svm_program_yaml_error)?;
                 HumanConfig::Svm(svm_config)
             }
         };
 
         let schema = source.load_schema(&human_config.get_base_config().schema)?;
         Self::from_human_config_with_source(human_config, schema, source)
+    }
+}
+
+/// serde_yaml prefixes `Program` errors with a YAML path and `at line N column
+/// M`. The custom text already names the program.
+fn svm_program_yaml_error(e: serde_yaml::Error) -> anyhow::Error {
+    let msg = e.to_string();
+    let without_loc = msg
+        .rsplit_once(" at line")
+        .map(|(head, _)| head)
+        .unwrap_or(&msg);
+    if let Some(idx) = without_loc.find("Program \"") {
+        anyhow!("{}", &without_loc[idx..])
+    } else if let Some(idx) = without_loc.find("SVM program") {
+        anyhow!("{}", &without_loc[idx..])
+    } else {
+        anyhow!("Failed to deserialize config: {e}")
     }
 }
 
@@ -1675,9 +1683,8 @@ impl DataSource {
                 if network.hypersync_config.is_some() {
                     Err(anyhow!(
                         "Cannot define both hypersync_config and rpc as a data-source for \
-                         historical sync at the same time, please choose only one option or set \
-                         RPC to be a fallback. Read more in our docs {}",
-                        links::DOC_CONFIGURATION_FILE
+                         historical sync at the same time. Choose only one, or set the RPC to \
+                         `for: fallback`."
                     ))?
                 };
 
@@ -1691,10 +1698,8 @@ impl DataSource {
                      url: https://{chain_id}.hypersync.xyz\n\n\
                      Or use an RPC endpoint for historical sync:\n\n\
                      chains:\n  - id: {chain_id}\n    rpc:\n      \
-                     url: https://your-rpc-endpoint\n      for: sync\n\n\
-                     Read more: {docs_url}",
+                     url: https://your-rpc-endpoint\n      for: sync",
                     chain_id = network.id,
-                    docs_url = links::DOC_CONFIGURATION_SCHEMA_HYPERSYNC_CONFIG
                 ))?;
 
                 let parsed_url = parse_url(&url).ok_or(anyhow!(

@@ -32,9 +32,9 @@ Open the GraphQL playground at `http://localhost:8080` and query:
 
 - Declaring a Solana program in `config.yaml` (`ecosystem: svm`,
   `experimental.programs[]` with `name`, `program_id`, and `idl`).
-- Pointing `idl:` at `idls/token-metadata.codama.json`. Every instruction the
-  runtime can decode is indexed; subset the IDL file to index fewer.
-- Using `indexer.onInstruction({program, instruction, fields}, handler)` and
-  reading `instruction.args` and `instruction.accounts.<name>.address`.
+- Pointing `idl:` at `idls/token-metadata.codama.json` for layouts and
+  discriminators. Register `indexer.onInstruction` for the instructions to
+  handle, and select payload with `fields`.
+- Reading `instruction.args` and `instruction.accounts.<name>.address`.
 - Persisting per-instruction state to a typed entity (`TokenMetadataAccount`)
   and a counter (`ProgramStats`).

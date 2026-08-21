@@ -348,7 +348,7 @@ chains:
 `,
       ),
     ).toBe(
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: missing field `idl` at line 10 column 11",
+      "Config parse error: Program \"Swapper\" is missing `idl`. Point it at an Anchor or Codama JSON file.",
     )
   )
 
@@ -359,7 +359,7 @@ chains:
         ~configYaml=anchorConfigYaml ++ "          instructions:\n            - name: swap\n",
       ),
     ).toBe(
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: unknown field `instructions`, expected one of `name`, `program_id`, `handler`, `idl` at line 13 column 11",
+      "Config parse error: Program \"Swapper\" has an `instructions` list, which is not valid. Configure the program with `name`, `program_id`, and `idl`. Register `indexer.onInstruction` handlers for the instructions to handle.",
     )
   )
 

@@ -443,7 +443,7 @@ chains:
   - id: 1
     start_block: 0
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: unknown field \`bigquery\`, expected \`postgres\` or \`clickhouse\` at line 2 column 1",
+      "Config parse error: Failed to deserialize config: unknown field \`bigquery\`, expected \`postgres\` or \`clickhouse\` at line 2 column 1",
     ),
     (
       "rejects unknown storage options",
@@ -457,7 +457,7 @@ chains:
   - id: 1
     start_block: 0
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: unknown field \`defautl\`, expected \`default\` or \`column_name_format\` at line 2 column 1",
+      "Config parse error: Failed to deserialize config: unknown field \`defautl\`, expected \`default\` or \`column_name_format\` at line 2 column 1",
     ),
     (
       "rejects invalid column name formats",
@@ -470,7 +470,7 @@ chains:
   - id: 1
     start_block: 0
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: unknown variant \`kebab-case\`, expected \`original\` or \`snake_case\` at line 2 column 1",
+      "Config parse error: Failed to deserialize config: unknown variant \`kebab-case\`, expected \`original\` or \`snake_case\` at line 2 column 1",
     ),
     (
       "rejects a storage backend with the wrong value shape",
@@ -482,7 +482,7 @@ chains:
   - id: 1
     start_block: 0
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: invalid type: string \"enabled\", expected a boolean or an options object like \`{default: true}\` at line 2 column 1",
+      "Config parse error: Failed to deserialize config: invalid type: string \"enabled\", expected a boolean or an options object like \`{default: true}\` at line 2 column 1",
     ),
     (
       "rejects numeric separators instead of silently treating them as numbers",
@@ -492,7 +492,7 @@ chains:
   - id: 1
     start_block: 1_000
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].start_block: invalid type: string \"1_000\", expected u64 at line 5 column 18",
+      "Config parse error: Failed to deserialize config: chains[0].start_block: invalid type: string \"1_000\", expected u64 at line 5 column 18",
     ),
     (
       "rejects unknown SVM program fields",
@@ -510,7 +510,7 @@ chains:
           bogus_extra: true
           idl: idls/program.json
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: unknown field \`bogus_extra\`, expected one of \`name\`, \`program_id\`, \`handler\`, \`idl\` at line 12 column 11",
+      "Config parse error: Program \"Program\" has unknown field `bogus_extra`. Valid fields: name, program_id, handler, idl.",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
@@ -660,7 +660,7 @@ chains:
       for: sync
     start_block: 0
 `,
-      "Config parse error: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time, please choose only one option or set RPC to be a fallback. Read more in our docs https://docs.envio.dev/docs/configuration-file",
+      "Config parse error: Cannot define both hypersync_config and rpc as a data-source for historical sync at the same time. Choose only one, or set the RPC to `for: fallback`.",
     ),
     (
       "rejects RPC URLs with a non-HTTP protocol",
@@ -709,7 +709,7 @@ chains:
   - id: 999999
     start_block: 0
 `,
-      "Config parse error: Failed to automatically find HyperSync endpoint for the chain 999999. If the chain is supported by HyperSync, provide the endpoint manually:\n\nchains:\n  - id: 999999\n    hypersync_config:\n      url: https://999999.hypersync.xyz\n\nOr use an RPC endpoint for historical sync:\n\nchains:\n  - id: 999999\n    rpc:\n      url: https://your-rpc-endpoint\n      for: sync\n\nRead more: https://docs.envio.dev/docs/HyperIndex/config-schema-reference#hypersyncconfig",
+      "Config parse error: Failed to automatically find HyperSync endpoint for the chain 999999. If the chain is supported by HyperSync, provide the endpoint manually:\n\nchains:\n  - id: 999999\n    hypersync_config:\n      url: https://999999.hypersync.xyz\n\nOr use an RPC endpoint for historical sync:\n\nchains:\n  - id: 999999\n    rpc:\n      url: https://your-rpc-endpoint\n      for: sync",
     ),
     (
       "rejects duplicate transaction field selections",
@@ -1229,7 +1229,7 @@ chains:
         - name: Program
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
 `,
-      "Config parse error: Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: missing field `idl` at line 11 column 11",
+      "Config parse error: Program \"Program\" is missing `idl`. Point it at an Anchor or Codama JSON file.",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
