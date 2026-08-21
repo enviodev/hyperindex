@@ -58,7 +58,8 @@ let resolveHeight = (sourceState: sourceState, height: int) => {
 
 // Counted per reason so envio_source_height_stream_disconnects_total shows what
 // ended each connection: a rotation, or the kind of trouble a flapping stream
-// is in.
+// is in. Only a connection that was delivering can be lost, so every caller has
+// to check that first.
 let recordHeightStreamDisconnect = (sourceState: sourceState, ~reason) =>
   sourceState.heightStreamDisconnects->Dict.set(
     reason,
@@ -168,12 +169,11 @@ let getSourceHeightSamples = (sourceManager: t): array<sourceHeightSample> => {
 }
 
 // Per-source height subscription health for envio_source_height_stream_*.
-// Sources that cannot subscribe at all are skipped, so the families are absent
-// for a chain that only ever polls rather than sitting at zero on it.
+// A source with nothing to report is skipped, so a chain that only ever polls
+// renders none of it rather than sitting at zero on it.
 type heightStreamSample = {
   sourceName: string,
   chainId: ChainId.t,
-  isLive: bool,
   connectCount: int,
   disconnects: array<(string, int)>,
 }
@@ -188,11 +188,10 @@ let getHeightStreamSamples = (sourceManager: t): array<heightStreamSample> => {
       sourceState.heightStreamDisconnects
       ->Dict.toArray
       ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b))
-    if sourceState.source.createHeightSubscription->Option.isSome {
+    if sourceState.heightStreamConnects > 0 || disconnects->Array.length > 0 {
       samples->Array.push({
         sourceName: sourceState.source.name,
         chainId: sourceState.source.chainId,
-        isLive: sourceState.subscriptionLive,
         connectCount: sourceState.heightStreamConnects,
         disconnects,
       })
@@ -505,6 +504,12 @@ let disableSource = (sourceManager: t, sourceState: sourceState) => {
       // a second teardown would call the same close function again, and
       // `ensureSubscribed` reads this to decide whether one is still live.
       sourceState.unsubscribe = None
+      // Closing a live connection is a disconnect like any other, and leaving it
+      // uncounted would leave the source reporting one more connect than
+      // disconnects — a stream still delivering — for the rest of the process.
+      if sourceState.subscriptionLive {
+        sourceState->recordHeightStreamDisconnect(~reason="unsubscribed")
+      }
       // The subscription is gone, so the source must not keep looking live to a
       // wait still in flight for it. That wait polls the benched source until
       // another one answers, at the same interval the no-subscription path
@@ -576,7 +581,13 @@ let handleSubscriptionStatus = (
       sourceState->catchUpHeight(~logger)->Promise.ignore
     }
   | Down({reason} as down) =>
-    sourceState->recordHeightStreamDisconnect(~reason)
+    // A stream that is down stays down through every failed retry, and each of
+    // those reports `Down` again. Counting them would make the total measure how
+    // long an outage lasted instead of how many there were, and would leave a
+    // stream that has never connected disconnecting without ever connecting.
+    if sourceState.subscriptionLive {
+      sourceState->recordHeightStreamDisconnect(~reason)
+    }
     sourceState->markSubscriptionDown
     // The counters say a stream is flapping and how often, but only the
     // provider's own words say why, and a frame nobody could read is

@@ -175,14 +175,12 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
         {
           source: "RPC (rpc.example.com)",
           chainId: 1->ChainId.fromInt,
-          isLive: false,
           connectCount: 2,
           disconnectsByReason: [("rotated", 3)],
         },
         {
           source: "RPC (rpc.example.com)",
           chainId: 1->ChainId.fromInt,
-          isLive: true,
           connectCount: 1,
           disconnectsByReason: [("rotated", 4), ("stale", 5)],
         },
@@ -194,7 +192,6 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       ->String.split("\n")
       ->Array.filter(line => line->String.startsWith("envio_source_height_stream")),
     ).toStrictEqual([
-      `envio_source_height_stream_up{source="RPC (rpc.example.com)",chainId="1"} 1`,
       `envio_source_height_stream_connects_total{source="RPC (rpc.example.com)",chainId="1"} 3`,
       `envio_source_height_stream_disconnects_total{source="RPC (rpc.example.com)",chainId="1",reason="rotated"} 7`,
       `envio_source_height_stream_disconnects_total{source="RPC (rpc.example.com)",chainId="1",reason="stale"} 5`,
@@ -336,7 +333,6 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
         {
           source: "HyperSync",
           chainId: 1->ChainId.fromInt,
-          isLive: false,
           connectCount: 3,
           disconnectsByReason: [("rotated", 4), ("401", 1)],
         },
@@ -472,15 +468,11 @@ envio_source_request_total{source="HyperSync",chainId="1",method="heightPush"} 7
 # TYPE envio_source_request_seconds_total counter
 envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 33.75
 
-# HELP envio_source_height_stream_up Whether a source's height subscription is currently delivering. While it is 0 the indexer polls the source for the height instead, so the chain keeps up at the polling interval rather than at the speed of a push.
-# TYPE envio_source_height_stream_up gauge
-envio_source_height_stream_up{source="HyperSync",chainId="1"} 0
-
-# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected, counting the first connection. Read against the disconnects total it says how a stream has been behaving; for whether it is delivering right now, read envio_source_height_stream_up.
+# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected, counting the first connection. Every connection either is still delivering or has been counted as a disconnect, so one more connect than disconnects means the stream is up and equal counts mean it is down, with the indexer polling the source for the height in the meantime.
 # TYPE envio_source_height_stream_connects_total counter
 envio_source_height_stream_connects_total{source="HyperSync",chainId="1"} 3
 
-# HELP envio_source_height_stream_disconnects_total The number of times a source's height subscription failed, by reason, counting every retry that failed while it was down. A rotated disconnect is a connection that served its time before ending cleanly, which is routine; every other reason is a connection that ended early or never opened, and the rate is what says whether a stream is flapping.
+# HELP envio_source_height_stream_disconnects_total The number of times a source's height subscription lost a connection that was delivering, by reason. Retries that fail while a stream is already down are not counted, so this is the number of outages rather than their length. A rotated disconnect is a connection that served its time before ending cleanly, which is routine; every other reason is a connection that ended early, and the rate is what says whether a stream is flapping.
 # TYPE envio_source_height_stream_disconnects_total counter
 envio_source_height_stream_disconnects_total{source="HyperSync",chainId="1",reason="rotated"} 4
 envio_source_height_stream_disconnects_total{source="HyperSync",chainId="1",reason="401"} 1

@@ -3129,7 +3129,22 @@ describe("SourceManager height subscription", () => {
     t.expect((
       mock.heightSubscriptionCloseCalls->Array.length,
       mock.getHeightOrThrowCalls->Array.length > pollsBeforeDisable,
-    )).toEqual((1, true))
+      sourceManager->SourceManager.getHeightStreamSamples,
+    )).toEqual((
+      1,
+      true,
+      // The connection was delivering until it was closed, so it has to be
+      // counted as lost like any other — otherwise the source reads as one
+      // still pushing heights for the rest of the process.
+      [
+        {
+          SourceManager.sourceName: "MockSource",
+          chainId: 1->ChainId.fromInt,
+          connectCount: 1,
+          disconnects: [("unsubscribed", 1)],
+        },
+      ],
+    ))
 
     mock.resolveGetHeightOrThrow(101)
     t.expect(await waiting).toBe(101)
@@ -3638,15 +3653,13 @@ describe("SourceManager height subscription", () => {
     t.expect((pollsAdded, await waiting)).toStrictEqual((1, 111))
   })
 
-  Async.it("Reports height stream connects, disconnects and liveness as metrics", async t => {
+  Async.it("Reports height stream connects and disconnects as metrics", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=2_000,
     )
-    // A source that can subscribe is reported from the start, so a stream that
-    // never comes up is visible as up=0 rather than as no series at all.
     let samplesBeforeSubscribing = sourceManager->SourceManager.getHeightStreamSamples
     await subscribeAndGoLive(mock, sourceManager, ~knownHeight=100)
     let samplesWhileHealthy = sourceManager->SourceManager.getHeightStreamSamples
@@ -3658,9 +3671,15 @@ describe("SourceManager height subscription", () => {
         ~reducedPolling=false,
       )
     await Utils.delay(0)
+    // One outage per connection lost, whatever the stream does while it is down:
+    // the 401 and the second `closed` are retries that failed, not connections
+    // that dropped.
     mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
     mock.setHeightSubscriptionStatus(Down({reason: "401"}))
     mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Live)
+    await Utils.delay(0)
+    mock.setHeightSubscriptionStatus(Down({reason: "rotated"}))
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
     mock.resolveGetHeightOrThrow(102)
@@ -3671,20 +3690,11 @@ describe("SourceManager height subscription", () => {
       samplesWhileHealthy,
       sourceManager->SourceManager.getHeightStreamSamples,
     )).toStrictEqual((
+      [],
       [
         {
           SourceManager.sourceName: "MockSource",
           chainId: 1->ChainId.fromInt,
-          isLive: false,
-          connectCount: 0,
-          disconnects: [],
-        },
-      ],
-      [
-        {
-          SourceManager.sourceName: "MockSource",
-          chainId: 1->ChainId.fromInt,
-          isLive: true,
           connectCount: 1,
           disconnects: [],
         },
@@ -3693,17 +3703,16 @@ describe("SourceManager height subscription", () => {
         {
           SourceManager.sourceName: "MockSource",
           chainId: 1->ChainId.fromInt,
-          isLive: true,
-          // Every retry that failed while the stream was down is counted, so
-          // these are attempts rather than outages.
-          connectCount: 2,
-          disconnects: [("401", 1), ("closed", 2)],
+          // Three connects against two disconnects: the stream is up, which is
+          // what the pair says without a gauge to say it.
+          connectCount: 3,
+          disconnects: [("closed", 1), ("rotated", 1)],
         },
       ],
     ))
   })
 
-  Async.it("Reports a stream that has never connected as down", async t => {
+  Async.it("Reports nothing for a stream that has never connected", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
@@ -3720,9 +3729,9 @@ describe("SourceManager height subscription", () => {
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
 
-    // A ws url pointing at a node that will never accept the subscription: the
-    // stream retries for the life of the process, and nothing it does can be
-    // told from a healthy stream by the connect count alone.
+    // A ws url pointing at a node that will never accept the subscription. The
+    // retries are attempts at a connection that never existed, so there is
+    // nothing to have disconnected.
     mock.setHeightSubscriptionStatus(Down({reason: "connect-failed"}))
     mock.setHeightSubscriptionStatus(Down({reason: "connect-failed"}))
     await Utils.delay(0)
@@ -3734,22 +3743,13 @@ describe("SourceManager height subscription", () => {
     let _ = await waiting
 
     t.expect((samplesWhileDown, sourceManager->SourceManager.getHeightStreamSamples)).toStrictEqual((
+      [],
       [
         {
           SourceManager.sourceName: "MockSource",
           chainId: 1->ChainId.fromInt,
-          isLive: false,
-          connectCount: 0,
-          disconnects: [("connect-failed", 2)],
-        },
-      ],
-      [
-        {
-          SourceManager.sourceName: "MockSource",
-          chainId: 1->ChainId.fromInt,
-          isLive: true,
           connectCount: 1,
-          disconnects: [("connect-failed", 2)],
+          disconnects: [],
         },
       ],
     ))

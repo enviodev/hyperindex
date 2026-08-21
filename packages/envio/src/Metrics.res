@@ -101,7 +101,6 @@ type sourceHeightMetrics = {
 type sourceHeightStreamMetrics = {
   source: string,
   chainId: ChainId.t,
-  isLive: bool,
   connectCount: int,
   disconnectsByReason: array<(string, int)>,
 }
@@ -278,21 +277,6 @@ let renderMetrics = (b: builder, metrics: t) => {
   // the height stream families carry one per source, so they are dropped rather
   // than rendered flat.
   let nonZero = byLabels => byLabels->Dict.toArray->Array.filter(((_, count)) => count !== 0)
-  // The one series that has to render at zero: a stream that is down is exactly
-  // what it exists to say. Sources that cannot subscribe never reach here.
-  let heightStreamUp = {
-    let byLabels: dict<bool> = Dict.make()
-    metrics.sourceHeightStreams->Array.forEach(s => {
-      let labels = sourceLabels(~source=s.source, ~chainId=s.chainId)
-      // Two sources can share a label set, and one of them delivering heights
-      // is enough for the chain to be hearing them.
-      switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
-      | Some(true) => ()
-      | _ => byLabels->Dict.set(labels, s.isLive)
-      }
-    })
-    byLabels->Dict.toArray
-  }
   let heightStreamConnects = {
     let byLabels: dict<int> = Dict.make()
     metrics.sourceHeightStreams->Array.forEach(s =>
@@ -526,19 +510,10 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~entries=sourceRequests,
     ~value=s => s.seconds !== 0. ? Some(s.seconds) : None,
   )
-  if heightStreamUp->Array.length > 0 {
-    b->series(
-      ~name="envio_source_height_stream_up",
-      ~help="Whether a source's height subscription is currently delivering. While it is 0 the indexer polls the source for the height instead, so the chain keeps up at the polling interval rather than at the speed of a push.",
-      ~kind="gauge",
-      ~entries=heightStreamUp,
-      ~value=isLive => isLive ? 1. : 0.,
-    )
-  }
   if heightStreamConnects->Array.length > 0 {
     b->series(
       ~name="envio_source_height_stream_connects_total",
-      ~help="The number of times a source's height subscription connected, counting the first connection. Read against the disconnects total it says how a stream has been behaving; for whether it is delivering right now, read envio_source_height_stream_up.",
+      ~help="The number of times a source's height subscription connected, counting the first connection. Every connection either is still delivering or has been counted as a disconnect, so one more connect than disconnects means the stream is up and equal counts mean it is down, with the indexer polling the source for the height in the meantime.",
       ~kind="counter",
       ~entries=heightStreamConnects,
       ~value=count => count->Int.toFloat,
@@ -547,7 +522,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   if heightStreamDisconnects->Array.length > 0 {
     b->series(
       ~name="envio_source_height_stream_disconnects_total",
-      ~help="The number of times a source's height subscription failed, by reason, counting every retry that failed while it was down. A rotated disconnect is a connection that served its time before ending cleanly, which is routine; every other reason is a connection that ended early or never opened, and the rate is what says whether a stream is flapping.",
+      ~help="The number of times a source's height subscription lost a connection that was delivering, by reason. Retries that fail while a stream is already down are not counted, so this is the number of outages rather than their length. A rotated disconnect is a connection that served its time before ending cleanly, which is routine; every other reason is a connection that ended early, and the rate is what says whether a stream is flapping.",
       ~kind="counter",
       ~entries=heightStreamDisconnects,
       ~value=count => count->Int.toFloat,
