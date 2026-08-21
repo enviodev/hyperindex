@@ -395,11 +395,20 @@ let dispatch = async (
     queries->Array.forEach(q => {
       q
       ->executeQuery
-      ->Promise.thenResolve(_ => {
+      ->Promise.finally(() => {
         sourceManager.fetchingPartitionsCount = sourceManager.fetchingPartitionsCount - 1
         if sourceManager.fetchingPartitionsCount === 0 {
           sourceManager->trackNewStatus(~newStatus=Idle)
         }
+      })
+      ->Promise.catch(exn => {
+        // The backstop for the boundary itself failing (an onError callback
+        // that throws, say): with nobody awaiting the fiber, the rejection
+        // would otherwise take the process down past every handler.
+        exn
+        ->ErrorHandling.make(~msg="Query fiber rejected past its error boundary")
+        ->ErrorHandling.log
+        Promise.resolve()
       })
       ->Promise.ignore
     })
