@@ -1,5 +1,24 @@
 open Vitest
 
+@module("node:fs") external readFileSync: (string, string) => string = "readFileSync"
+
+let read = path => readFileSync(path, "utf8")
+
+let programEventCounts = (config: Config.t) =>
+  config.chainMap
+  ->ChainMap.values
+  ->Array.flatMap(chain =>
+    chain.contracts->Array.map(contract => (contract.name, contract.events->Array.length))
+  )
+  ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b))
+
+let eventNames = (config: Config.t) =>
+  config.chainMap
+  ->ChainMap.values
+  ->Array.flatMap(chain =>
+    chain.contracts->Array.flatMap(contract => contract.events->Array.map(event => event.name))
+  )
+
 // An Anchor 0.30+ IDL: inline discriminators, `{"defined": {"name": T}}` type
 // refs, `writable`/`signer` account flags.
 let anchorIdl = `{
@@ -475,4 +494,83 @@ expectType<
     )->ignore
   )
 
+})
+
+describe("real unmodified IDLs through the user API", () => {
+  it("indexes every usable SPL Token instruction and drops the two Borsh cannot decode", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files=Dict.fromArray([("idls/spl-token.codama.json", read("../cli/test/idls/spl-token.codama.json"))]),
+      ~configYaml=`
+name: svm-spl-token
+ecosystem: svm
+chains:
+  - id: solana
+    start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: SplToken
+          program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+          idl: idls/spl-token.codama.json
+`,
+    )
+    let names = config->eventNames
+    t.expect({
+      "count": names->Array.length,
+      "batch": names->Array.includes("batch"),
+      "uiAmountToAmount": names->Array.includes("uiAmountToAmount"),
+    }).toEqual({
+      "count": 26,
+      "batch": false,
+      "uiAmountToAmount": false,
+    })
+  })
+
+  it("names the reason when Memo's only instruction is not Borsh-decodable", t =>
+    t.expect(
+      parseError(
+        ~files=Dict.fromArray([("idls/memo.codama.json", read("../cli/test/idls/memo.codama.json"))]),
+        ~configYaml=`
+name: svm-memo
+ecosystem: svm
+chains:
+  - id: solana
+    start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: Memo
+          program_id: MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr
+          idl: idls/memo.codama.json
+`,
+      ),
+    ).toBe(
+      "Config parse error: Resolving Borsh schema for program 'Memo' (MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr): Program 'Memo': the IDL declares no instructions this runtime can decode: addMemo (args.memo: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix)",
+    )
+  )
+
+  it("parses the flow-xray config as event counts, not a catalog dump", t => {
+    let root = "../../scenarios/svm_flow_xray"
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=read(root ++ "/config.yaml"),
+      ~files=Dict.fromArray([
+        ("idls/jupiter.json", read(root ++ "/idls/jupiter.json")),
+        ("idls/kamino.json", read(root ++ "/idls/kamino.json")),
+        ("idls/drift.json", read(root ++ "/idls/drift.json")),
+        ("idls/raydium.json", read(root ++ "/idls/raydium.json")),
+        ("idls/orca.json", read(root ++ "/idls/orca.json")),
+        ("idls/meteora.json", read(root ++ "/idls/meteora.json")),
+      ]),
+    )
+    t.expect(config->programEventCounts).toEqual([
+      ("Drift", 249),
+      ("Jupiter", 44),
+      ("Kamino", 51),
+      ("Meteora", 1),
+      ("Orca", 1),
+      ("Raydium", 1),
+    ])
+  })
 })

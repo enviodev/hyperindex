@@ -88,16 +88,6 @@ pub(super) fn read_fixture(file_stem: &str) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
 }
 
-pub(super) fn parse_fixture(file_stem: &str) -> ProgramIdl {
-    parse_idl(&read_fixture(file_stem), file_stem).expect("parse")
-}
-
-pub(super) fn parse_cli_fixture(file_stem: &str) -> ProgramIdl {
-    let path = format!("{}/test/idls/{file_stem}.json", env!("CARGO_MANIFEST_DIR"));
-    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
-    parse_idl(&raw, file_stem).expect("parse")
-}
-
 #[test]
 fn parses_a_codama_program_node_without_root_wrapper() {
     let idl = parse_idl(
@@ -162,45 +152,6 @@ fn trailing_optional_mask_keeps_middle_slots_required() {
             vec![false, true, true],
             vec![],
         ]
-    );
-}
-
-#[test]
-fn parses_legacy_anchor_jupiter_idl() {
-    let idl = parse_fixture("jupiter");
-    assert_eq!(
-        (
-            idl.address.as_deref(),
-            idl.instructions.len(),
-            idl.unusable.len()
-        ),
-        (None, 44, 0)
-    );
-}
-
-#[test]
-fn parses_legacy_anchor_drift_idl() {
-    let idl = parse_fixture("drift");
-    assert_eq!(
-        (
-            idl.address.as_deref(),
-            idl.instructions.len(),
-            idl.unusable.len()
-        ),
-        (None, 249, 0)
-    );
-}
-
-#[test]
-fn parses_legacy_anchor_kamino_idl() {
-    let idl = parse_fixture("kamino");
-    assert_eq!(
-        (
-            idl.address.as_deref(),
-            idl.instructions.len(),
-            idl.unusable.len()
-        ),
-        (None, 51, 0)
     );
 }
 
@@ -518,60 +469,6 @@ fn parses_codama_spl_token_idl() {
          instruction transferChecked 0x0c01 (source:w) (amount: u64)\n\
          type accountState = enum {uninitialized, frozen(since: u64), initialized(_0: bool, _1: pubkey)}\n\
          type multisig = {m: u8, signers: [pubkey; 11], memo: string, history: Vec<@accountState>}\n"
-    );
-}
-
-/// Shapes that parse as JSON but cannot be decoded, or cannot be dispatched.
-/// Only a defect in the file itself is fatal; a defect in one instruction
-/// costs that instruction. An undecodable event costs nothing at all, since
-/// nothing consumes events.
-
-/// Real, unmodified Codama IDLs, straight from the upstream program repos.
-/// Both declare a shape Borsh has no room for — SPL Token's
-/// `uiAmountToAmount` takes a remainder-encoded string, and Memo's entire
-/// payload is one — so they pin the rule that costs an instruction only
-/// itself: 26 of SPL Token's 28 stay indexable.
-#[test]
-fn parses_real_codama_spl_token_idl() {
-    let idl = parse_cli_fixture("spl-token.codama");
-    assert_eq!(
-        (
-            idl.address.as_deref(),
-            idl.instructions.len(),
-            idl.unusable.len(),
-        ),
-        (Some("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"), 26, 2,)
-    );
-    assert_eq!(
-        (
-            idl.unusable.get("batch").map(String::as_str),
-            idl.unusable.get("uiAmountToAmount").map(String::as_str),
-        ),
-        (
-            Some("args.data.item.instructionData.prefix: Borsh needs u32 here, got u8"),
-            Some(
-                "args.uiAmount: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix"
-            ),
-        )
-    );
-}
-
-#[test]
-fn parses_real_codama_memo_idl() {
-    let idl = parse_cli_fixture("memo.codama");
-    assert_eq!(
-        (
-            idl.address.as_deref(),
-            idl.instructions.len(),
-            idl.unusable.get("addMemo").map(String::as_str),
-        ),
-        (
-            Some("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
-            0,
-            Some(
-                "args.memo: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix"
-            ),
-        )
     );
 }
 

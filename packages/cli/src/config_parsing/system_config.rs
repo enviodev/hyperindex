@@ -3752,46 +3752,6 @@ type Foo {
             );
         }
 
-        /// The flow-xray scenario is the only config in the tree pointing at
-        /// real, unmodified Anchor IDLs — three of them, hundreds of
-        /// instructions between them. Parsing it whole is what catches a
-        /// change that resolves against hand-written fixtures and not against
-        /// a program as shipped.
-        #[test]
-        fn parses_the_flow_xray_scenario_config() {
-            let root = format!(
-                "{}/../../scenarios/svm_flow_xray",
-                env!("CARGO_MANIFEST_DIR")
-            );
-            let project_paths = ParsedProjectPaths::new(&root, "config.yaml").expect("paths");
-            let config = SystemConfig::parse_from_project_files(&project_paths).expect("parse");
-
-            let usable = |stem: &str| {
-                let json = std::fs::read_to_string(format!("{root}/idls/{stem}")).expect("idl");
-                crate::config_parsing::svm_idl::parse_idl(&json, stem)
-                    .expect("parse idl")
-                    .instructions
-                    .len()
-            };
-            let mut programs: Vec<(String, usize)> = config
-                .contracts
-                .values()
-                .map(|c| (c.name.clone(), c.events.len()))
-                .collect();
-            programs.sort();
-            assert_eq!(
-                programs,
-                vec![
-                    ("Drift".to_string(), usable("drift.json")),
-                    ("Jupiter".to_string(), usable("jupiter.json")),
-                    ("Kamino".to_string(), usable("kamino.json")),
-                    ("Meteora".to_string(), usable("meteora.json")),
-                    ("Orca".to_string(), usable("orca.json")),
-                    ("Raydium".to_string(), usable("raydium.json")),
-                ]
-            );
-        }
-
         /// End-to-end: the Metaplex YAML fixture deserializes, validates, and
         /// translates into a single Contract whose two Events carry the
         /// expected discriminator + flags.

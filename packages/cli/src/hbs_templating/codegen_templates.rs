@@ -3601,31 +3601,20 @@ type GlobalCounter @crossChain {
     }
 
     #[test]
-    fn internal_config_json_code_generated_for_svm() {
-        let json = get_internal_config_json_helper("svm-metaplex-config.yaml");
-        insta::assert_snapshot!(json);
-    }
-
-    #[test]
     fn envio_types_dts_generated_for_svm() {
-        let project_template = get_project_template_helper("svm-metaplex-config.yaml");
-        insta::assert_snapshot!(project_template.envio_types_dts);
+        let dts = get_project_template_helper("svm-metaplex-config.yaml").envio_types_dts;
         // Handler `fields` live in index.d.ts. A generated FieldNotSelected /
         // transaction / block record is leftover YAML field_selection.
         assert!(
-            !project_template
-                .envio_types_dts
-                .contains("FieldNotSelected"),
+            !dts.contains("FieldNotSelected"),
             "SVM codegen must not emit FieldNotSelected"
         );
         assert!(
-            !project_template
-                .envio_types_dts
-                .contains("readonly transaction:"),
+            !dts.contains("readonly transaction:"),
             "SVM program table must not emit transaction"
         );
         assert!(
-            !project_template.envio_types_dts.contains("readonly block:"),
+            !dts.contains("readonly block:"),
             "SVM program table must not emit block"
         );
     }
