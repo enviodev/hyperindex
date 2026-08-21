@@ -28,10 +28,21 @@ let delay = milliseconds =>
 // A delay that can be released early. Racing against a plain `delay` leaves the
 // losing timer pending for the rest of its window, holding everything its
 // continuation captured, which on a fast chain is one live timer per block.
+// Cancelling never resolves the promise: a losing arm of a race that is already
+// settled has nothing to say, and the caller drops it along with the race.
 let delayWithCancel = milliseconds => {
+  // Dropped as soon as the timer is spent, so a caller that holds `cancel` past
+  // the delay — a wait that stalls for minutes holds it until it ends — isn't
+  // keeping a fired timer and the callback it carries alive with it.
   let timeoutId = ref(None)
   let promise = Promise.make((resolve, _) => {
-    timeoutId := Some(setTimeout(_ => resolve(), milliseconds))
+    timeoutId :=
+      Some(
+        setTimeout(_ => {
+          timeoutId := None
+          resolve()
+        }, milliseconds),
+      )
   })
   let cancel = () =>
     switch timeoutId.contents {

@@ -512,11 +512,11 @@ envio_source_request_total{source="HyperSync",chainId="1",method="heightPush"} 7
 # TYPE envio_source_request_seconds_total counter
 envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 33.75
 
-# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected, counting the first connection. Every connection either is still delivering or has been counted as a disconnect, so one more connect than disconnects means the stream is up and equal counts mean it is down, with the indexer polling the source for the height in the meantime. Zero is a stream that has never come up at all.
+# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected. One more connect than disconnects means the stream is up, equal counts mean it is down and the indexer is polling instead, and zero means it has never come up.
 # TYPE envio_source_height_stream_connects_total counter
 envio_source_height_stream_connects_total{source="HyperSync",chainId="1"} 3
 
-# HELP envio_source_height_stream_disconnects_total The number of times a source's height subscription lost a connection that was delivering, by reason. Retries that fail while a stream is already down are not counted, so this is the number of outages rather than their length. A rotated disconnect is a connection that served its time before ending cleanly, which is routine; every other reason is a connection that ended early, and the rate is what says whether a stream is flapping.
+# HELP envio_source_height_stream_disconnects_total The number of times a source's height subscription lost a connection, by reason. Failed retries are not counted, so this is outages rather than their length. A rotated disconnect is routine; every other reason ended a connection early.
 # TYPE envio_source_height_stream_disconnects_total counter
 envio_source_height_stream_disconnects_total{source="HyperSync",chainId="1",reason="rotated"} 4
 envio_source_height_stream_disconnects_total{source="HyperSync",chainId="1",reason="401"} 1

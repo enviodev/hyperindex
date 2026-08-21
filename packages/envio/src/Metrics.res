@@ -514,7 +514,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   if heightStreamConnects->Array.length > 0 {
     b->series(
       ~name="envio_source_height_stream_connects_total",
-      ~help="The number of times a source's height subscription connected, counting the first connection. Every connection either is still delivering or has been counted as a disconnect, so one more connect than disconnects means the stream is up and equal counts mean it is down, with the indexer polling the source for the height in the meantime. Zero is a stream that has never come up at all.",
+      ~help="The number of times a source's height subscription connected. One more connect than disconnects means the stream is up, equal counts mean it is down and the indexer is polling instead, and zero means it has never come up.",
       ~kind="counter",
       ~entries=heightStreamConnects,
       ~value=count => count->Int.toFloat,
@@ -523,7 +523,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   if heightStreamDisconnects->Array.length > 0 {
     b->series(
       ~name="envio_source_height_stream_disconnects_total",
-      ~help="The number of times a source's height subscription lost a connection that was delivering, by reason. Retries that fail while a stream is already down are not counted, so this is the number of outages rather than their length. A rotated disconnect is a connection that served its time before ending cleanly, which is routine; every other reason is a connection that ended early, and the rate is what says whether a stream is flapping.",
+      ~help="The number of times a source's height subscription lost a connection, by reason. Failed retries are not counted, so this is outages rather than their length. A rotated disconnect is routine; every other reason ended a connection early.",
       ~kind="counter",
       ~entries=heightStreamDisconnects,
       ~value=count => count->Int.toFloat,

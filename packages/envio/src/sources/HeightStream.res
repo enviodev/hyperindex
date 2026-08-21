@@ -66,7 +66,7 @@ let retryDelayFor = count =>
 
 let truncateDetail = detail =>
   detail->String.length > maxDetailLength
-    ? detail->String.slice(~start=0, ~end=maxDetailLength) ++ "…"
+    ? detail->String.slice(~start=0, ~end=maxDetailLength) ++ "..."
     : detail
 
 let subscribe = (

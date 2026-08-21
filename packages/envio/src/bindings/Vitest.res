@@ -185,4 +185,7 @@ module Vi = {
   // microtasks each one queues before moving on.
   @module("vitest") @scope("vi")
   external advanceTimersByTimeAsync: int => promise<unit> = "advanceTimersByTimeAsync"
+
+  @module("vitest") @scope("vi")
+  external getTimerCount: unit => int = "getTimerCount"
 }

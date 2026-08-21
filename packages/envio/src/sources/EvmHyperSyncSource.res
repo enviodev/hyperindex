@@ -228,6 +228,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     },
     getItemsOrThrow,
     createHeightSubscription: (~onHeight, ~onStatus) =>
-      HyperSyncHeightStream.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight, ~onStatus),
+      HyperSyncSSE.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight, ~onStatus),
   }
 }

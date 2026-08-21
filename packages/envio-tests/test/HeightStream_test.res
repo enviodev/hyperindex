@@ -234,7 +234,7 @@ describe("HeightStream reconnect driver", () => {
     harness.unsubscribe()
 
     t.expect(harness.statuses).toStrictEqual([
-      `down:subscribe-rejected:${String.repeat("y", 200)}…`,
+      `down:subscribe-rejected:${String.repeat("y", 200)}...`,
     ])
   })
 
@@ -319,7 +319,7 @@ describe("HeightStream reconnect driver", () => {
 
     t.expect(harness.statuses).toStrictEqual([
       "live",
-      `down:unreadable:${String.repeat("x", 200)}…`,
+      `down:unreadable:${String.repeat("x", 200)}...`,
     ])
   })
 
@@ -525,7 +525,7 @@ let listenWs = onConnection => {
   )
 }
 
-describe("HyperSyncHeightStream", () => {
+describe("HyperSyncSSE", () => {
   Async.it("Reports the HTTP status as the failure reason", async t => {
     let (server, url) = await listenHttp((_request, response) => {
       response->NodeHttp.writeHead(401, Dict.fromArray([("Content-Type", "text/plain")]))
@@ -535,7 +535,7 @@ describe("HyperSyncHeightStream", () => {
     // The status alone can't tell an operator which of a provider's many 401s
     // this was, so the transport has to carry its message out too.
     let detailed = []
-    let unsubscribe = HyperSyncHeightStream.subscribe(
+    let unsubscribe = HyperSyncSSE.subscribe(
       ~hyperSyncUrl=url,
       ~apiToken="bad-token",
       ~onHeight=_ => (),
@@ -568,7 +568,7 @@ describe("HyperSyncHeightStream", () => {
     })
     let statuses = []
     let heights = []
-    let unsubscribe = HyperSyncHeightStream.subscribe(
+    let unsubscribe = HyperSyncSSE.subscribe(
       ~hyperSyncUrl=url,
       ~apiToken="test-token",
       ~onHeight=height => heights->Array.push(height)->ignore,
@@ -583,7 +583,7 @@ describe("HyperSyncHeightStream", () => {
   })
 })
 
-describe("RpcWebSocketHeightStream", () => {
+describe("EvmRpcWs", () => {
   Async.it("Goes live on subscription confirmation and delivers new heads", async t => {
     let (server, url) = await listenWs(socket =>
       socket->WsServer.onMessage(data => {
@@ -597,7 +597,7 @@ describe("RpcWebSocketHeightStream", () => {
     )
     let statuses = []
     let heights = []
-    let unsubscribe = RpcWebSocketHeightStream.subscribe(
+    let unsubscribe = EvmRpcWs.subscribe(
       ~wsUrl=url,
       ~onHeight=height => heights->Array.push(height)->ignore,
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
@@ -617,7 +617,7 @@ describe("RpcWebSocketHeightStream", () => {
       socket->WsServer.onMessage(_data => socket->WsServer.send("not json at all"))
     )
     let statuses = []
-    let unsubscribe = RpcWebSocketHeightStream.subscribe(
+    let unsubscribe = EvmRpcWs.subscribe(
       ~wsUrl=url,
       ~onHeight=_ => (),
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
@@ -639,7 +639,7 @@ describe("RpcWebSocketHeightStream", () => {
       )
     )
     let statuses = []
-    let unsubscribe = RpcWebSocketHeightStream.subscribe(
+    let unsubscribe = EvmRpcWs.subscribe(
       ~wsUrl=url,
       ~onHeight=_ => (),
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
