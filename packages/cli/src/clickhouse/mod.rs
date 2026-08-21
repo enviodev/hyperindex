@@ -1121,7 +1121,7 @@ mod tests {
             "x'; DROP TABLE y; --",
             "plain",
         ]
-        .map(|value| literal(value));
+        .map(literal);
         assert_eq!(
             escaped,
             [
