@@ -320,26 +320,32 @@ let getSimulateEndBlock = (
   ~startBlock: int,
 ): int => {
   let maxBlock = ref(startBlock)
+  let blockNumberKey = switch config.ecosystem.name {
+  | Svm => "slot"
+  | _ => config.ecosystem.blockNumberName
+  }
+  let bump = (n: option<int>) =>
+    switch n {
+    | Some(v) if v > maxBlock.contents => maxBlock := v
+    | _ => ()
+    }
+  let getInt = (d: dict<JSON.t>, key) =>
+    d
+    ->Dict.get(key)
+    ->Option.flatMap(v => v->(Utils.magic: JSON.t => Nullable.t<int>)->Nullable.toOption)
   simulateItems->Array.forEach(rawJson => {
+    let itemDict = rawJson->(Utils.magic: JSON.t => dict<JSON.t>)
+    // SVM items carry the slot at the top level (`block.slot` is the override).
+    switch config.ecosystem.name {
+    | Svm => itemDict->getInt("slot")->bump
+    | _ => ()
+    }
     let blockJson: option<JSON.t> =
       (rawJson->(Utils.magic: JSON.t => {..}))["block"]
       ->(Utils.magic: 'a => Nullable.t<JSON.t>)
       ->Nullable.toOption
     switch blockJson {
-    | Some(bj) =>
-      let blockDict = bj->(Utils.magic: JSON.t => dict<JSON.t>)
-      let blockNumberKey = switch config.ecosystem.name {
-      | Svm => "slot"
-      | _ => config.ecosystem.blockNumberName
-      }
-      let n: option<int> =
-        blockDict
-        ->Dict.get(blockNumberKey)
-        ->Option.flatMap(v => v->(Utils.magic: JSON.t => Nullable.t<int>)->Nullable.toOption)
-      switch n {
-      | Some(v) if v > maxBlock.contents => maxBlock := v
-      | _ => ()
-      }
+    | Some(bj) => bj->(Utils.magic: JSON.t => dict<JSON.t>)->getInt(blockNumberKey)->bump
     | None => ()
     }
   })
