@@ -16,7 +16,7 @@ describe("The Metaplex init template", () => {
       ~files=Dict.fromArray([
         ("idls/token-metadata.codama.json", read("idls/token-metadata.codama.json")),
       ]),
-      ~handlers=read("src/handlers/TokenMetadataHandlers.ts"),
+      ~handlers=read("src/handlers/TokenMetadata.ts"),
     )->ignore
   )
 })

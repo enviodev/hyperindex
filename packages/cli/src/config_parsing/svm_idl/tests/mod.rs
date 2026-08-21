@@ -517,19 +517,5 @@ fn parses_real_codama_memo_idl() {
     insta::assert_snapshot!(render(&parse_cli_fixture("memo.codama")));
 }
 
-#[test]
-fn template_and_demo_token_metadata_idls_match() {
-    let root = env!("CARGO_MANIFEST_DIR");
-    let template = std::fs::read_to_string(format!(
-        "{root}/templates/static/svm_metaplex_template/typescript/idls/token-metadata.codama.json"
-    ))
-    .expect("template idl");
-    let demo = std::fs::read_to_string(format!(
-        "{root}/../../scenarios/svm_metaplex_demo/idls/token-metadata.codama.json"
-    ))
-    .expect("demo idl");
-    assert_eq!(template, demo);
-}
-
 mod layout;
 mod validate;

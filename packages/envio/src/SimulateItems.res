@@ -263,6 +263,21 @@ type svmSimActivity = {
   },
 }
 
+type svmSimTransaction = {
+  transactionIndex?: int,
+  signature?: string,
+  allSignatures?: array<string>,
+  feePayer?: string,
+  success?: bool,
+  err?: string,
+  fee?: bigint,
+  computeUnitsConsumed?: bigint,
+  accountKeys?: array<string>,
+  recentBlockhash?: string,
+  version?: string,
+  accountActivities?: array<svmSimActivity>,
+}
+
 let liveRegistrationsFor = (
   ~config: Config.t,
   ~chainId: ChainId.t,
@@ -334,13 +349,11 @@ let parse = (
         }
       }
       currentBlock := slot
-      let transactionIndex = switch item.transaction {
-      | Some(tx) =>
-        (tx->(Utils.magic: unknown => {"transactionIndex": Nullable.t<int>}))["transactionIndex"]
-        ->Nullable.toOption
-        ->Option.getOr(0)
-      | None => 0
+      let transaction = switch item.transaction {
+      | Some(tx) => tx->(Utils.magic: unknown => svmSimTransaction)
+      | None => {}
       }
+      let transactionIndex = transaction.transactionIndex->Option.getOr(0)
       let path = item.path->Option.getOr([0])
       let programId =
         item.programId->Option.getOr(svmEventConfig.programId->SvmTypes.Pubkey.toString)
@@ -381,38 +394,43 @@ let parse = (
         )
       }
 
-      svmTxs->Array.push({slot, transactionIndex})->ignore
-      switch item.transaction {
-      | Some(tx) =>
-        switch (
-          (
-            tx->(
-              Utils.magic: unknown => {"accountActivities": Nullable.t<array<svmSimActivity>>}
-            )
-          )["accountActivities"]->Nullable.toOption
-        ) {
-        | Some(rows) =>
-          rows->Array.forEach(activity =>
-            svmActivities
-            ->Array.push({
-              TransactionStore.slot,
-              transactionIndex,
-              account: activity.address,
-              accountIndex: ?activity.transactionAccountIndex,
-              isSigner: ?activity.isSigner,
-              isWritable: ?activity.isWritable,
-              preBalance: ?activity.lamports->Option.flatMap(l => l.pre),
-              postBalance: ?activity.lamports->Option.flatMap(l => l.post),
-              mint: ?activity.token->Option.flatMap(t => t.mint),
-              owner: ?activity.token->Option.flatMap(t => t.owner),
-              decimals: ?activity.token->Option.flatMap(t => t.decimals),
-              preAmount: ?activity.token->Option.flatMap(t => t.preAmount),
-              postAmount: ?activity.token->Option.flatMap(t => t.postAmount),
-            })
-            ->ignore
-          )
-        | None => ()
-        }
+      svmTxs
+      ->Array.push({
+        slot,
+        transactionIndex,
+        signature: ?transaction.signature,
+        allSignatures: ?transaction.allSignatures,
+        feePayer: ?transaction.feePayer,
+        success: ?transaction.success,
+        err: ?transaction.err,
+        fee: ?transaction.fee,
+        computeUnitsConsumed: ?transaction.computeUnitsConsumed,
+        accountKeys: ?transaction.accountKeys,
+        recentBlockhash: ?transaction.recentBlockhash,
+        version: ?transaction.version,
+      })
+      ->ignore
+      switch transaction.accountActivities {
+      | Some(rows) =>
+        rows->Array.forEach(activity =>
+          svmActivities
+          ->Array.push({
+            TransactionStore.slot,
+            transactionIndex,
+            account: activity.address,
+            accountIndex: ?activity.transactionAccountIndex,
+            isSigner: ?activity.isSigner,
+            isWritable: ?activity.isWritable,
+            preBalance: ?activity.lamports->Option.flatMap(l => l.pre),
+            postBalance: ?activity.lamports->Option.flatMap(l => l.post),
+            mint: ?activity.token->Option.flatMap(t => t.mint),
+            owner: ?activity.token->Option.flatMap(t => t.owner),
+            decimals: ?activity.token->Option.flatMap(t => t.decimals),
+            preAmount: ?activity.token->Option.flatMap(t => t.preAmount),
+            postAmount: ?activity.token->Option.flatMap(t => t.postAmount),
+          })
+          ->ignore
+        )
       | None => ()
       }
       let blockTime = switch item.block {
@@ -426,7 +444,7 @@ let parse = (
       svmBlocks
       ->Array.push({
         blockNumber: slot,
-        blockHash: ?blockHash,
+        ?blockHash,
         blockTimestamp: ?blockTime,
       })
       ->ignore
@@ -445,8 +463,8 @@ let parse = (
             accounts: accountArguments,
             data,
             isInner: item.isInner->Option.getOr(false),
-            decoded: ?decoded,
-            logs: ?logs,
+            ?decoded,
+            ?logs,
           },
           ~programName,
           ~instructionName,
@@ -454,10 +472,7 @@ let parse = (
           ~fieldSelection=onEventRegistration.fieldSelection,
         )
         let payloadDict = payload->(Utils.magic: Envio.svmInstruction => dict<unknown>)
-        payloadDict->Dict.set(
-          "srcAddress",
-          programId->(Utils.magic: string => unknown),
-        )
+        payloadDict->Dict.set("srcAddress", programId->(Utils.magic: string => unknown))
         items
         ->Array.push(
           Internal.Event({
@@ -474,17 +489,13 @@ let parse = (
       })
 
     | (Svm, _, _) =>
-      JsError.throwWithMessage(
-        `simulate: Invalid item. Each item must have "program" and "instruction" fields.`,
-      )
+      JsError.throwWithMessage(`simulate: Invalid item. Each item must have "program" and "instruction" fields.`)
 
     | (_, _, _) =>
       let (contractName, eventName) = switch (raw->getContract, raw->getEvent) {
       | (Some(c), Some(e)) => (c, e)
       | _ =>
-        JsError.throwWithMessage(
-          `simulate: Invalid item. Each item must have "contract" and "event" fields.`,
-        )
+        JsError.throwWithMessage(`simulate: Invalid item. Each item must have "contract" and "event" fields.`)
       }
       // Event simulate item
       let eventConfig = switch findEventConfig(~config, ~contractName, ~eventName) {

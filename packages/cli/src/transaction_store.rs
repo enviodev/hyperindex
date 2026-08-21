@@ -458,6 +458,16 @@ struct Stores {
 pub struct SvmTxInput {
     pub slot: i64,
     pub transaction_index: u32,
+    pub signature: Option<String>,
+    pub all_signatures: Option<Vec<String>>,
+    pub fee_payer: Option<String>,
+    pub success: Option<bool>,
+    pub err: Option<String>,
+    pub fee: Option<BigInt>,
+    pub compute_units_consumed: Option<BigInt>,
+    pub account_keys: Option<Vec<String>>,
+    pub recent_blockhash: Option<String>,
+    pub version: Option<String>,
 }
 
 #[napi(object)]
@@ -475,6 +485,40 @@ pub struct SvmActivityInput {
     pub decimals: Option<u8>,
     pub pre_amount: Option<BigInt>,
     pub post_amount: Option<BigInt>,
+}
+
+fn parse_one_base58<T: std::str::FromStr>(value: &str, field: &str) -> napi::Result<T>
+where
+    T::Err: std::fmt::Display,
+{
+    value.parse::<T>().map_err(|e| {
+        napi::Error::from_reason(format!("{field} {value:?} is not valid base58: {e}"))
+    })
+}
+
+/// Base58 field from a JS simulate input. `None` stays `None` so an unset field
+/// reads back as "not selected" rather than as a zeroed key.
+fn parse_base58<T: std::str::FromStr>(value: Option<&str>, field: &str) -> napi::Result<Option<T>>
+where
+    T::Err: std::fmt::Display,
+{
+    value.map(|v| parse_one_base58(v, field)).transpose()
+}
+
+fn parse_base58_list<T: std::str::FromStr>(
+    values: Option<&[String]>,
+    field: &str,
+) -> napi::Result<Option<Vec<T>>>
+where
+    T::Err: std::fmt::Display,
+{
+    values
+        .map(|vs| {
+            vs.iter()
+                .map(|v| parse_one_base58(v, field))
+                .collect::<napi::Result<Vec<T>>>()
+        })
+        .transpose()
 }
 
 fn bigint_to_u64(value: BigInt, field: &str) -> napi::Result<u64> {
@@ -650,6 +694,22 @@ impl TransactionStore {
                             .map_err(|_| napi::Error::from_reason("slot must be non-negative"))?,
                     ),
                     transaction_index: Some(t.transaction_index),
+                    transaction_id: parse_base58(t.signature.as_deref(), "signature")?,
+                    signatures: parse_base58_list(t.all_signatures.as_deref(), "allSignatures")?,
+                    fee_payer: parse_base58(t.fee_payer.as_deref(), "feePayer")?,
+                    success: t.success,
+                    err: t.err,
+                    fee: t.fee.map(|v| bigint_to_u64(v, "fee")).transpose()?,
+                    compute_units_consumed: t
+                        .compute_units_consumed
+                        .map(|v| bigint_to_u64(v, "computeUnitsConsumed"))
+                        .transpose()?,
+                    account_keys: parse_base58_list(t.account_keys.as_deref(), "accountKeys")?,
+                    recent_blockhash: parse_base58(
+                        t.recent_blockhash.as_deref(),
+                        "recentBlockhash",
+                    )?,
+                    version: t.version,
                     ..Default::default()
                 })
             })
