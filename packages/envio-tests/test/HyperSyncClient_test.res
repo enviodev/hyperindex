@@ -157,33 +157,38 @@ describe("HyperSync client getEventItems (live)", () => {
   })
 })
 
-describe("HyperSync client query with corrupted token", () => {
-  // The edge deliberately stopped replying 401 to malformed tokens on /height
-  // and the height SSE endpoints (so token issues can't block CI), but the
-  // query endpoint still replies 401. Feed that real server error through
-  // EvmHyperSyncSource.isUnauthorizedError so the check can't silently drift
-  // away from the message shape the client produces for a 401, which would
-  // break getHeightOrThrow's block-forever guard.
-  Async.itWithOptions(
-    "is detected by EvmHyperSyncSource.isUnauthorizedError",
-    {timeout: 30_000},
-    async t => {
-      let client = HyperSyncClient.make(
-        ~url="https://eth.hypersync.xyz",
-        ~apiToken="this-is-a-corrupted-token",
-        ~httpReqTimeoutMillis=5000,
-        // The client retries every failed query with backoff before
-        // surfacing the error; shrink the backoff so the 401 surfaces fast.
-        ~retryBaseMs=1,
-        ~retryBackoffMs=1,
-        ~retryCeilingMs=2,
-        ~eventRegistrations=[transferEventRegistration],
-        ~enableChecksumAddresses=false,
-        ~addressStore,
-      )
+describe("HyperSync client with corrupted token", () => {
+  let makeCorruptedTokenClient = () =>
+    HyperSyncClient.make(
+      ~url="https://eth.hypersync.xyz",
+      ~apiToken="this-is-a-corrupted-token",
+      ~httpReqTimeoutMillis=5000,
+      ~eventRegistrations=[transferEventRegistration],
+      ~enableChecksumAddresses=false,
+      ~addressStore,
+    )
 
+  Async.it(
+    "getHeight doesn't validate the token",
+    async t => {
+      // The edge deliberately stopped rejecting malformed tokens on /height and
+      // the height SSE endpoints, so a token issue can't stall an indexer that
+      // only polls the height. If that ever regresses, getHeightOrThrow blocks
+      // forever on the 401 instead of retrying.
+      let height = await makeCorruptedTokenClient().getHeight()
+
+      t.expect(height > 0).toEqual(true)
+    },
+  )
+
+  Async.it(
+    "query error is detected by EvmHyperSyncSource.isUnauthorizedError",
+    async t => {
+      // The query endpoint still replies 401. Feed that real server error
+      // through isUnauthorizedError so the check can't silently drift away from
+      // the message shape the client produces for a 401.
       let detected = try {
-        let _ = await runQuery(~client)
+        let _ = await runQuery(~client=makeCorruptedTokenClient())
         false
       } catch {
       | JsExn(e) => e->JsExn.message->Option.getOr("")->EvmHyperSyncSource.isUnauthorizedError
