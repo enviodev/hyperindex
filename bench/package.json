@@ -1,9 +1,0 @@
-{
-  "name": "erc20-write-bench",
-  "version": "0.1.0",
-  "type": "module",
-  "private": true,
-  "dependencies": {
-    "envio": "file:../packages/envio"
-  }
-}

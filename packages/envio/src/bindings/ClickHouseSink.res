@@ -1,20 +1,38 @@
 // Binding to the Rust `ClickHouseSink` napi class, plus the columnar builders
 // that feed it.
 //
-// A table is registered once, before any batch: Rust parses its column types
-// and hands back a handle. A batch then crosses the boundary as that handle
-// plus one payload per column — a typed array for numeric columns, an array of
-// strings for text-ish ones — instead of a JS object per row, and without
-// re-sending the shape. Rust encodes RowBinary and sends it from a tokio task,
-// so neither the encode nor the HTTP round trip runs on the Node main thread.
+// Rust owns everything ClickHouse-shaped: it derives each column's type from
+// the schema field the column stores, renders the DDL from that same
+// derivation, and encodes RowBinary against it. What crosses from here is the
+// schema — field types, names, table options — never a ClickHouse type, so
+// there is nothing for the two sides to disagree about.
+//
+// A table is registered once, before any batch, and Rust hands back a handle. A
+// batch then crosses as that handle plus one payload per column — a typed array
+// for numeric columns, an array of strings for text-ish ones — instead of a JS
+// object per row, and without re-sending the shape.
 
 type t
+
+// The column and table names envio's history format fixes. They cross once, at
+// construction, so Rust reads them rather than defining a second copy.
+type historySchema = {
+  idColumn: string,
+  checkpointIdColumn: string,
+  changeColumn: string,
+  changeVariants: array<string>,
+  setVariant: string,
+  checkpointsTable: string,
+  historyTablePrefix: string,
+}
 
 type options = {
   url: string,
   username: string,
   password: string,
   database: string,
+  chainIdMode: string,
+  history: historySchema,
 }
 
 // The warning callback is how a degradation reaches the indexer's logger while
@@ -22,17 +40,56 @@ type options = {
 // back at the end would only be read once the episode is over.
 @send external classNew: (Core.clickHouseSinkCtor, options, string => unit) => t = "new"
 
-// A column as the Rust `ColumnSpec` object expects it.
+// A column as the Rust `ColumnSpecInput` object expects it: the schema field it
+// stores, not the ClickHouse type it lands in.
 type columnSpec = {
   name: string,
-  @as("chType")
-  chType: string,
+  // Omitted when it matches `name`. Set when a column rename is configured, so
+  // `@storage(clickhouse: {...})` expressions can still name the schema field.
+  fieldName?: string,
+  fieldType: string,
+  isNullable?: bool,
+  isArray?: bool,
+  precision?: int,
+  scale?: int,
+  enumVariants?: array<string>,
+}
+
+type skippingIndexSpec = {
+  name: string,
+  expr: string,
+  indexType: string,
+  granularity?: int,
+}
+
+// One entity as Rust needs it: the table its history goes to, the columns it
+// declares, and the layout options its `@storage` directive asked for.
+type entitySpec = {
+  name: string,
+  historyTable: string,
+  columns: array<columnSpec>,
+  chainIdColumn?: string,
+  partitionBy?: string,
+  orderBy?: array<string>,
+  ttl?: string,
+  skippingIndexes?: array<skippingIndexSpec>,
+}
+
+type initializeInput = {
+  entities: array<entitySpec>,
+  checkpointColumns: array<columnSpec>,
+  replicated: bool,
+  databaseEngine?: string,
 }
 
 // What registration hands back: the handle every batch quotes, and the wire
 // kind each column must be sent as.
 type registeredTable = {
   handle: int,
+  // Every column the table declares, in the order a batch must send them —
+  // Rust's list, not one rebuilt here: a history table carries two columns
+  // beyond the entity's own.
+  names: array<string>,
   kinds: array<int>,
 }
 
@@ -47,8 +104,17 @@ type columnValuesInput = {
 }
 
 @send
-external registerTable: (t, ~table: string, ~columns: array<columnSpec>) => registeredTable =
-  "registerTable"
+external registerEntityTable: (t, entitySpec) => registeredTable = "registerEntityTable"
+
+@send
+external registerCheckpointsTable: (t, array<columnSpec>) => registeredTable =
+  "registerCheckpointsTable"
+
+// Creates the database, the history tables and the views over them.
+@send external initialize: (t, initializeInput) => promise<unit> = "initialize"
+
+// Drops everything written past the checkpoint Postgres committed.
+@send external resume: (t, string) => promise<unit> = "resume"
 
 @send
 external stage: (t, ~table: int, ~rows: int, ~columns: array<columnValuesInput>) => int = "stage"
@@ -67,8 +133,29 @@ external writeBatch: (t, ~entities: array<int>, ~checkpoints: Null.t<int>) => pr
 @send external exec: (t, string) => promise<unit> = "exec"
 @send external query: (t, string) => promise<string> = "query"
 
-let make = (~url, ~username, ~password, ~database, ~onWarning) =>
-  Core.getAddon().clickHouseSink->classNew({url, username, password, database}, onWarning)
+let make = (~url, ~username, ~password, ~database, ~chainIdMode: ChainId.mode, ~onWarning) =>
+  Core.getAddon().clickHouseSink->classNew(
+    {
+      url,
+      username,
+      password,
+      database,
+      chainIdMode: switch chainIdMode {
+      | Int32 => "Int32"
+      | Int64 => "Int64"
+      },
+      history: {
+        idColumn: Table.idFieldName,
+        checkpointIdColumn: EntityHistory.checkpointIdFieldName,
+        changeColumn: EntityHistory.changeFieldName,
+        changeVariants: EntityHistory.RowAction.variants->Array.map(variant => (variant :> string)),
+        setVariant: (EntityHistory.RowAction.SET :> string),
+        checkpointsTable: InternalTable.Checkpoints.table.tableName,
+        historyTablePrefix: EntityHistory.historyTablePrefix,
+      },
+    },
+    onWarning,
+  )
 
 // How a column's values travel. Derived by Rust from the column's ClickHouse
 // type rather than mapped from `Table.fieldType` a second time: a JS copy of
@@ -84,38 +171,48 @@ external kindOfOrdinal: int => kind = "%identity"
 
 // A registered table: the handle its batches quote, and its columns with the
 // wire kind Rust resolved for each.
-type column = {name: string, chType: string, kind: kind}
+type column = {name: string, kind: kind}
 type table = {handle: int, name: string, columns: array<column>}
 
-// Registering parses every column type once and rejects one this encoder cannot
-// hold, so a table envio cannot write is refused at startup rather than by the
-// first batch that reaches the column.
-let registerTableOrThrow = (sink, ~table, ~columns: array<columnSpec>) => {
-  let {handle, kinds} = sink->registerTable(~table, ~columns)
-  {
-    handle,
-    name: table,
-    columns: columns->Array.mapWithIndex(({name, chType}, index) => {
-      name,
-      chType,
-      kind: kinds->Array.getUnsafe(index)->kindOfOrdinal,
-    }),
-  }
+let makeTable = (~name, {handle, names, kinds}: registeredTable) => {
+  handle,
+  name,
+  columns: names->Array.mapWithIndex((name, index) => {
+    name,
+    kind: kinds->Array.getUnsafe(index)->kindOfOrdinal,
+  }),
 }
 
 %%private(let isString: unknown => bool = %raw(`(v) => typeof v === "string"`))
+%%private(let isBigInt: unknown => bool = %raw(`(v) => typeof v === "bigint"`))
 external asString: unknown => string = "%identity"
 @val external toNumber: unknown => float = "Number"
 @val external toBigInt: unknown => bigint = "BigInt"
+@val external stringOf: unknown => string = "String"
 
 // A JSON-ready value straight out of the entity's ClickHouse schema. Anything
 // that isn't already a string — a `Json` field's object, an array column's
 // elements — becomes its JSON text, which is what the target column stores.
+// A native bigint is rendered directly: `JSON.stringify` throws on one, which
+// would fail the whole batch before it reached `stage`.
 let toText = (value: unknown) =>
   if value->isString {
     value->asString
+  } else if value->isBigInt {
+    value->stringOf
   } else {
-    value->(Utils.magic: unknown => JSON.t)->JSON.stringify
+    value
+    ->(Utils.magic: unknown => JSON.t)
+    ->JSON.stringify(
+      ~replacer=Replacer(
+        (_, value) => {
+          let value = value->(Utils.magic: JSON.t => unknown)
+          value->isBigInt
+            ? value->stringOf->(Utils.magic: string => JSON.t)
+            : value->(Utils.magic: unknown => JSON.t)
+        },
+      ),
+    )
   }
 
 // One column's storage for one batch, sized to the batch's row count so the
@@ -123,9 +220,6 @@ let toText = (value: unknown) =>
 // `stage` copies it into Rust memory, and nothing reads it afterwards.
 type builder = {
   name: string,
-  // Kept for the range messages below; the registered table is what tells Rust
-  // how to encode, so this never crosses the boundary.
-  chType: string,
   kind: kind,
   floats: Float64Array.t,
   unsigned: BigUint64Array.t,
@@ -137,11 +231,10 @@ type builder = {
 }
 
 // Only the storage the column's kind uses is allocated; the rest stay empty.
-let makeBuilder = ({name, chType, kind}: column, ~rows) => {
+let makeBuilder = ({name, kind}: column, ~rows) => {
   let empty = 0
   {
     name,
-    chType,
     kind,
     floats: Float64Array.fromLength(kind === F64 ? rows : empty),
     unsigned: BigUint64Array.fromLength(kind === U64 ? rows : empty),
@@ -171,7 +264,7 @@ let markNull = (builder, ~row) => {
     let value = value->toBigInt
     if value < min || value > max {
       JsError.throwWithMessage(
-        `${value->BigInt.toString} is out of range for a ${builder.chType} column`,
+        `${value->BigInt.toString} is out of range for the \`${builder.name}\` column`,
       )
     }
     value

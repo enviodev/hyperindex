@@ -22,16 +22,16 @@ let makeClickHouse = (
   // Everything the sink sends ClickHouse goes through here: the DDL and the
   // reorg cleanup as statements, the batches as RowBinary encoded off the Node
   // main thread.
-  let sink = ClickHouse.makeSink(~host, ~username, ~password, ~database)
-  let registry = ClickHouse.makeRegistry(~chainIdMode)
+  let sink = ClickHouse.makeSink(~host, ~username, ~password, ~database, ~chainIdMode)
+  let registry = ClickHouse.makeRegistry()
 
   {
     name: "clickhouse",
     initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
-      ClickHouse.initialize(sink, ~registry, ~database, ~entities, ~enums)
+      ClickHouse.initialize(sink, ~registry, ~entities, ~enums)
     },
     resume: (~checkpointId) => {
-      ClickHouse.resume(sink, ~database, ~checkpointId)
+      ClickHouse.resume(sink, ~checkpointId)
     },
     writeBatch: async (~batch, ~updatedEntities) => {
       // Staging reads JS values, so it holds the isolate and runs here. The

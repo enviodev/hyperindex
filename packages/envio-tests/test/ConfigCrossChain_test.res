@@ -423,14 +423,12 @@ describe("Per-chain entities under snake_case columns", () => {
 
 describe("Per-chain ClickHouse view", () => {
   it("Dedups the current state per (id, chain id)", t => {
+    // The chain id column is what makes the view dedup on (id, chain id)
+    // instead of id alone; a global entity carries none.
     t.expect((
-      ClickHouse.makeCreateViewQuery(~entityConfig=counter, ~database="db")->String.includes(
-        "LIMIT 1 BY `id`, `chainId`",
-      ),
-      ClickHouse.makeCreateViewQuery(~entityConfig=globalCounter, ~database="db")->String.includes(
-        "LIMIT 1 BY `id`\n",
-      ),
-    )).toEqual((true, true))
+      ClickHouse.entitySpec(~entityConfig=counter).chainIdColumn,
+      ClickHouse.entitySpec(~entityConfig=globalCounter).chainIdColumn,
+    )).toEqual((Some("chainId"), None))
   })
 })
 
@@ -443,8 +441,7 @@ describe("Per-chain ClickHouse writes", () => {
   // resolves each column's wire kind — then mocks the sink at the `stage`
   // boundary to read back the chain-id column, a Float64Array in the default
   // Int32 chain-id mode.
-  let columnSpecs = entityConfig =>
-    ClickHouse.entityColumnSpecs(~entityConfig, ~chainIdMode=Int32)
+  let columnSpecs = entityConfig => ClickHouse.entitySpec(~entityConfig).columns
 
   let stagedChainIds = (~changes, ~entityConfig: Internal.entityConfig, ~scope, ~registry) => {
     let captured = []
@@ -472,12 +469,13 @@ describe("Per-chain ClickHouse writes", () => {
 
   // Registration only parses the column types, so it never reaches this host.
   let registryFor = (entityConfig: Internal.entityConfig) => {
-    let registry = ClickHouse.makeRegistry(~chainIdMode=Int32)
+    let registry = ClickHouse.makeRegistry()
     let sink = ClickHouse.makeSink(
       ~host="http://127.0.0.1:1",
       ~username="default",
       ~password="",
       ~database="unused",
+    ~chainIdMode=Int32,
     )
     let _ = sink->ClickHouse.entityTable(~registry, ~entityConfig)
     registry

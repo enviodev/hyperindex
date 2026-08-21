@@ -1,8 +1,0 @@
-node_modules/
-.envio/
-results/
-prof/*.cpuprofile
-types.d.ts
-envio-env.d.ts
-config.*.generated.yaml
-.env

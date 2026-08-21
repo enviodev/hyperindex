@@ -8,10 +8,6 @@
     {
       "dir": "test",
       "subdirs": true
-    },
-    {
-      "dir": "bench",
-      "subdirs": true
     }
   ],
   "suffix": ".res.mjs",
