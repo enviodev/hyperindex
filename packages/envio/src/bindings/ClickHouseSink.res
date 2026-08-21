@@ -192,24 +192,22 @@ external asString: unknown => string = "%identity"
 // elements — becomes its JSON text, which is what the target column stores.
 // A native bigint is rendered directly: `JSON.stringify` throws on one, which
 // would fail the whole batch before it reached `stage`.
+%%private(
+  let bigintReplacer = (_, value: JSON.t) => {
+    let value = value->(Utils.magic: JSON.t => unknown)
+    value->isBigInt
+      ? value->stringOf->(Utils.magic: string => JSON.t)
+      : value->(Utils.magic: unknown => JSON.t)
+  }
+)
+
 let toText = (value: unknown) =>
   if value->isString {
     value->asString
   } else if value->isBigInt {
     value->stringOf
   } else {
-    value
-    ->(Utils.magic: unknown => JSON.t)
-    ->JSON.stringify(
-      ~replacer=Replacer(
-        (_, value) => {
-          let value = value->(Utils.magic: JSON.t => unknown)
-          value->isBigInt
-            ? value->stringOf->(Utils.magic: string => JSON.t)
-            : value->(Utils.magic: unknown => JSON.t)
-        },
-      ),
-    )
+    value->(Utils.magic: unknown => JSON.t)->JSON.stringify(~replacer=Replacer(bigintReplacer))
   }
 
 // One column's storage for one batch, sized to the batch's row count so the
@@ -227,19 +225,21 @@ type builder = {
   rows: int,
 }
 
-// Only the storage the column's kind uses is allocated; the rest stay empty.
+%%private(let noFloats = Float64Array.fromLength(0))
+%%private(let noUnsigned = BigUint64Array.fromLength(0))
+%%private(let noSigned = BigInt64Array.fromLength(0))
+
+// Only the storage the column's kind uses is allocated; the rest share one
+// empty array, since nothing ever reads or writes them.
 let makeBuilder = ({name, kind}: column, ~rows) => {
-  let empty = 0
-  {
-    name,
-    kind,
-    floats: Float64Array.fromLength(kind === F64 ? rows : empty),
-    unsigned: BigUint64Array.fromLength(kind === U64 ? rows : empty),
-    signed: BigInt64Array.fromLength(kind === I64 ? rows : empty),
-    texts: kind === Text ? Array.make(~length=rows, "") : [],
-    nulls: None,
-    rows,
-  }
+  name,
+  kind,
+  floats: kind === F64 ? Float64Array.fromLength(rows) : noFloats,
+  unsigned: kind === U64 ? BigUint64Array.fromLength(rows) : noUnsigned,
+  signed: kind === I64 ? BigInt64Array.fromLength(rows) : noSigned,
+  texts: kind === Text ? Array.make(~length=rows, "") : [],
+  nulls: None,
+  rows,
 }
 
 let markNull = (builder, ~row) => {

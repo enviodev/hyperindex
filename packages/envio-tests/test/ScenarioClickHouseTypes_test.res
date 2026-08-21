@@ -97,8 +97,8 @@ type handlerContext = {@as("EveryType") everyType: everyTypeOps}
 
 let timestamp = Date.fromTime(1234567890123.0)
 
-// Not ASCII on purpose: the sink hands Rust one concatenated string per column
-// plus each value's UTF-16 length, and Rust re-splits it over UTF-8 bytes. "é"
+// Not ASCII on purpose: RowBinary prefixes a string with its length in UTF-8
+// bytes, which is not the length JS reports for anything outside Latin-1. "é"
 // is one UTF-16 unit over two bytes, "😀" is two units over four.
 let entity = {
   id: "every-1",

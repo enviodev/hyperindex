@@ -14,6 +14,7 @@ use anyhow::{bail, Result};
 use regex::{Captures, Regex};
 
 use super::ch_type::{ChType, ChainIdMode, FieldSpec};
+use super::{literal, quoted};
 
 /// A column of an entity's history table: the name it goes by in ClickHouse,
 /// the schema field name that `@storage(clickhouse: {...})` expressions
@@ -91,7 +92,7 @@ impl Topology {
         }
     }
 
-    fn on_cluster(&self) -> &'static str {
+    pub fn on_cluster(&self) -> &'static str {
         on_cluster_clause(self.ddl_on_cluster)
     }
 
@@ -141,19 +142,6 @@ pub fn database_engine_name(engine_spec: &str) -> &str {
         .trim()
 }
 
-/// Backtick-quotes an identifier, doubling any backtick inside it. Every
-/// identifier these statements name goes through here, so a column or table
-/// whose name needs quoting cannot end the identifier early and have the rest
-/// read as SQL.
-pub(crate) fn quoted(name: &str) -> String {
-    format!("`{}`", name.replace('`', "``"))
-}
-
-/// Single-quotes a string literal, doubling any quote inside it.
-pub(crate) fn literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
 impl HistorySchema {
     /// The two columns every history table carries beyond the entity's own.
     fn trailing_columns(&self) -> Vec<(String, ChType)> {
@@ -169,6 +157,17 @@ impl HistorySchema {
     }
 }
 
+impl ColumnSpec {
+    /// The column as the table declares it. `context` names what the column
+    /// belongs to, so a field the derivation refuses says which one it was.
+    pub fn typed(&self, chain_id_mode: ChainIdMode, context: &str) -> Result<(String, ChType)> {
+        let ch_type = self.field.ch_type(chain_id_mode).map_err(|error| {
+            error.context(format!("Column `{}` of {context}", self.name))
+        })?;
+        Ok((self.name.clone(), ch_type))
+    }
+}
+
 impl EntitySpec {
     /// Every column the history table declares, in DDL order, paired with the
     /// type it is created as. The insert path registers the same list, so a
@@ -178,16 +177,12 @@ impl EntitySpec {
         history: &HistorySchema,
         chain_id_mode: ChainIdMode,
     ) -> Result<Vec<(String, ChType)>> {
-        let mut columns = Vec::with_capacity(self.columns.len() + 2);
-        for column in &self.columns {
-            let ch_type = column.field.ch_type(chain_id_mode).map_err(|error| {
-                error.context(format!(
-                    "Column `{}` of entity `{}`",
-                    column.name, self.name
-                ))
-            })?;
-            columns.push((column.name.clone(), ch_type));
-        }
+        let context = format!("entity `{}`", self.name);
+        let mut columns = self
+            .columns
+            .iter()
+            .map(|column| column.typed(chain_id_mode, &context))
+            .collect::<Result<Vec<_>>>()?;
         columns.extend(history.trailing_columns());
         Ok(columns)
     }
@@ -318,23 +313,16 @@ pub fn create_history_table(
 /// `CREATE TABLE` for the checkpoints table, whose columns the runtime supplies
 /// the same way an entity's are supplied.
 pub fn create_checkpoints_table(
-    columns: &[ColumnSpec],
+    columns: &[(String, ChType)],
     database: &str,
     history: &HistorySchema,
     topology: Topology,
-    chain_id_mode: ChainIdMode,
-) -> Result<String> {
-    let mut definitions = Vec::with_capacity(columns.len());
-    for column in columns {
-        let ch_type = column.field.ch_type(chain_id_mode).map_err(|error| {
-            error.context(format!(
-                "Column `{}` of the ClickHouse checkpoints table",
-                column.name
-            ))
-        })?;
-        definitions.push(format!("  {} {ch_type}", quoted(&column.name)));
-    }
-    Ok(format!(
+) -> String {
+    let definitions: Vec<String> = columns
+        .iter()
+        .map(|(name, ch_type)| format!("  {} {ch_type}", quoted(name)))
+        .collect();
+    format!(
         "CREATE TABLE IF NOT EXISTS {}.{}{} (\n{}\n)\nENGINE = {}\nORDER BY ({}){}",
         quoted(database),
         quoted(&history.checkpoints_table),
@@ -343,7 +331,7 @@ pub fn create_checkpoints_table(
         topology.engine(),
         quoted(&history.id_column),
         topology.settings(),
-    ))
+    )
 }
 
 /// `CREATE VIEW` reading each entity's current state out of its history table:
@@ -353,7 +341,7 @@ pub fn create_view(
     entity: &EntitySpec,
     database: &str,
     history: &HistorySchema,
-    on_cluster: bool,
+    topology: Topology,
 ) -> String {
     // A per-chain entity's rows are only comparable within a chain, so the
     // current-state dedup keys on (id, chain id).
@@ -372,7 +360,7 @@ pub fn create_view(
     format!(
         "CREATE VIEW IF NOT EXISTS {db}.{}{} AS\nSELECT {entity_fields}\nFROM (\n  SELECT {entity_fields}, {}\n  FROM {db}.{}\n  WHERE {} <= (SELECT max({}) FROM {db}.{})\n  ORDER BY {} DESC\n  LIMIT 1 BY {}\n)\nWHERE {} = {}",
         quoted(&entity.name),
-        on_cluster_clause(on_cluster),
+        topology.on_cluster(),
         quoted(&history.change_column),
         quoted(&entity.history_table),
         quoted(&history.checkpoint_id_column),
@@ -488,6 +476,18 @@ mod tests {
     use super::*;
     use crate::clickhouse::ch_type::test_support::field;
     use pretty_assertions::assert_eq;
+
+    /// Column specs as the sink types them before rendering.
+    fn typed(columns: &[ColumnSpec]) -> Vec<(String, ChType)> {
+        columns
+            .iter()
+            .map(|column| {
+                column
+                    .typed(ChainIdMode::Int32, "the checkpoints table")
+                    .unwrap()
+            })
+            .collect()
+    }
 
     fn render(entity: &EntitySpec, topology: Topology) -> String {
         create_history_table(
@@ -635,14 +635,7 @@ mod tests {
             },
         ];
         assert_eq!(
-            create_checkpoints_table(
-                &columns,
-                "test_db",
-                &history_schema(),
-                plain(),
-                ChainIdMode::Int32
-            )
-            .unwrap(),
+            create_checkpoints_table(&typed(&columns), "test_db", &history_schema(), plain()),
             "CREATE TABLE IF NOT EXISTS `test_db`.`envio_checkpoints` (\n  \
              `id` UInt64,\n  \
              `chain_id` Int32,\n  \
@@ -661,7 +654,7 @@ mod tests {
             vec![column("id", "String"), column("balance", "Int32")],
         );
         assert_eq!(
-            create_view(&entity, "test_db", &history_schema(), false),
+            create_view(&entity, "test_db", &history_schema(), plain()),
             "CREATE VIEW IF NOT EXISTS `test_db`.`Account` AS\n\
              SELECT `id`, `balance`\n\
              FROM (\n  \
@@ -684,7 +677,7 @@ mod tests {
             vec![column("id", "String"), column("chain_id", "ChainId")],
         );
         entity.chain_id_column = Some("chain_id".to_string());
-        assert!(create_view(&entity, "test_db", &history_schema(), false)
+        assert!(create_view(&entity, "test_db", &history_schema(), plain())
             .contains("LIMIT 1 BY `id`, `chain_id`"));
     }
 

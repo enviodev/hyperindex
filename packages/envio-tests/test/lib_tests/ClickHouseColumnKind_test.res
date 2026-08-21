@@ -60,11 +60,11 @@ let fieldTypes =
   ->Array.map(samples)
   ->Array.flat
 
-// Every shape a column can be declared in, nullable array included: a nullable
-// list field is wrapped twice, which the derivation nests separately.
+// Every shape a column can be declared in. A nullable list is left out:
+// ClickHouse has no `Nullable(Array(...))`, which the next test pins.
 let everyColumn =
   fieldTypes->Array.flatMap(fieldType =>
-    [(false, false), (true, false), (false, true), (true, true)]->Array.map(((
+    [(false, false), (true, false), (false, true)]->Array.map(((
       isNullable,
       isArray,
     )) => ClickHouse.makeColumnSpec(~name="c", ~fieldType, ~isNullable, ~isArray))
@@ -88,14 +88,29 @@ let register = (columns: array<ClickHouseSink.columnSpec>) =>
 
 describe("ClickHouse column type contract", () => {
   it("Rust derives a column type for every field type envio can declare", t => {
-    let failed = everyColumn->Array.filter(
+    let failed = everyColumn->Array.filterMap(
       column =>
         switch register([column]) {
-        | _ => false
-        | exception _ => true
+        | _ => None
+        | exception _ => Some(column.fieldType)
         },
     )
     t.expect(failed).toEqual([])
+  })
+
+  // A nullable list is a schema every other backend takes, so the refusal has
+  // to name the field and the fix rather than surface ClickHouse's own wording
+  // from a failed CREATE TABLE.
+  it("refuses a nullable list, which ClickHouse has no type for", t => {
+    let message = try {
+      let _ = register([
+        ClickHouse.makeColumnSpec(~name="c", ~fieldType=String, ~isNullable=true, ~isArray=true),
+      ])
+      "registered without complaint"
+    } catch {
+    | exn => (exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"]
+    }
+    t.expect(message->String.includes("a nullable list has no ClickHouse type")).toBe(true)
   })
 
   // Pins all four ordinals: each names the typed array the builder allocates,

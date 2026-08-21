@@ -27,8 +27,8 @@ let makeClickHouse = (
 
   {
     name: "clickhouse",
-    initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
-      ClickHouse.initialize(sink, ~registry, ~entities, ~enums)
+    initialize: (~chainConfigs as _=[], ~entities=[], ~enums as _=[]) => {
+      ClickHouse.initialize(sink, ~registry, ~entities)
     },
     resume: (~checkpointId) => {
       ClickHouse.resume(sink, ~checkpointId)

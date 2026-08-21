@@ -51,6 +51,11 @@ const MAX_RETRIES: u32 = 8;
 /// — a black-holed socket through a load balancer sends neither RST nor FIN —
 /// leaves the request hanging forever, and with it the whole write batch.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// What a schema or maintenance statement gets instead. `DROP DATABASE ... SYNC`
+/// and the reorg trim's `ALTER ... DELETE ... mutations_sync` both run for as
+/// long as the data takes, so holding them to the insert deadline would fail a
+/// restart on a large history table — the one case the trim exists for.
+const STATEMENT_TIMEOUT: Duration = Duration::from_secs(600);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Probes an idle pooled socket so a connection dropped by a NAT or proxy is
 /// discovered before a batch is handed to it.
@@ -70,6 +75,9 @@ const MAX_RETRY_DELAY: Duration = Duration::from_millis(1_000);
 #[derive(Debug, Clone, Copy)]
 struct Tuning {
     attempts: u32,
+    /// Deadline for a schema or maintenance statement, which is not the insert
+    /// deadline: these run as long as the data takes.
+    statement_timeout: Duration,
     /// Ceiling on the retry backoff. Tests pass `ZERO` to skip the waits, which
     /// are the policy's concern rather than the encoder's.
     max_retry_delay: Duration,
@@ -82,6 +90,7 @@ impl Default for Tuning {
             attempts: MAX_RETRIES,
             max_retry_delay: MAX_RETRY_DELAY,
             request_timeout: REQUEST_TIMEOUT,
+            statement_timeout: STATEMENT_TIMEOUT,
         }
     }
 }
@@ -342,6 +351,19 @@ impl From<HistorySchemaInput> for ddl::HistorySchema {
     }
 }
 
+/// Backtick-quotes an identifier, doubling any backtick inside it. Every
+/// identifier a statement names goes through here, so a column or table whose
+/// name needs quoting cannot end the identifier early and have the rest read as
+/// SQL.
+pub(crate) fn quoted(name: &str) -> String {
+    format!("`{}`", name.replace('`', "``"))
+}
+
+/// Single-quotes a string literal, doubling any quote inside it.
+pub(crate) fn literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
 fn to_napi(err: anyhow::Error) -> napi::Error {
     napi::Error::from_reason(format!("{err:#}"))
 }
@@ -432,14 +454,14 @@ impl ClickHouseSink {
         &self,
         columns: Vec<ColumnSpecInput>,
     ) -> napi::Result<RegisteredTable> {
-        let table = self.history.checkpoints_table.clone();
-        let columns = self.column_types(columns, &table).map_err(to_napi)?;
-        self.register(table, columns)
+        let columns = self
+            .checkpoint_column_types(columns.into_iter().map(Into::into).collect())
+            .map_err(to_napi)?;
+        self.register(self.history.checkpoints_table.clone(), columns)
     }
 
     /// Creates the database, every entity's history table, and the current-state
-    /// views over them — then registers the tables, so a column this encoder
-    /// cannot hold stops the indexer at startup with nothing written.
+    /// views over them.
     #[napi]
     pub async fn initialize(&self, input: InitializeInput) -> napi::Result<()> {
         self.initialize_inner(input).await.map_err(to_napi)
@@ -603,20 +625,19 @@ impl ClickHouseSink {
         })
     }
 
-    fn column_types(
+    /// The checkpoints table's columns as the DDL declares them and the encoder
+    /// writes them — one derivation feeding both.
+    fn checkpoint_column_types(
         &self,
-        columns: Vec<ColumnSpecInput>,
-        table: &str,
+        columns: Vec<ddl::ColumnSpec>,
     ) -> Result<Vec<(String, ChType)>> {
+        let context = format!(
+            "ClickHouse table `{}`",
+            self.history.checkpoints_table
+        );
         columns
-            .into_iter()
-            .map(|column| {
-                let column: ddl::ColumnSpec = column.into();
-                let ch_type = column.field.ch_type(self.chain_id_mode).with_context(|| {
-                    format!("Column `{}` of ClickHouse table `{table}`", column.name)
-                })?;
-                Ok((column.name, ch_type))
-            })
+            .iter()
+            .map(|column| column.typed(self.chain_id_mode, &context))
             .collect()
     }
 
@@ -628,8 +649,8 @@ impl ClickHouseSink {
             database_engine,
         } = input;
         let entities: Vec<ddl::EntitySpec> = entities.into_iter().map(Into::into).collect();
-        let checkpoint_columns: Vec<ddl::ColumnSpec> =
-            checkpoint_columns.into_iter().map(Into::into).collect();
+        let checkpoint_columns = self
+            .checkpoint_column_types(checkpoint_columns.into_iter().map(Into::into).collect())?;
 
         let engine_name = database_engine.as_deref().map(ddl::database_engine_name);
         // A Replicated database engine only replicates data when its tables use
@@ -652,14 +673,14 @@ impl ClickHouseSink {
         // Quoted for the statements written inline here. The `ddl` helpers take
         // the raw name and quote it themselves, so the two must not be mixed up
         // — hence the distinct name rather than a shadow.
-        let database_ident = ddl::quoted(&self.database);
+        let database_ident = quoted(&self.database);
 
         if let (Some(engine_spec), Some(expected)) = (&database_engine, engine_name) {
             let existing = self
                 .post_statement(format!(
                     "SELECT engine FROM system.databases WHERE name = {} \
                      FORMAT TabSeparated",
-                    ddl::literal(&self.database)
+                    literal(&self.database)
                 ))
                 .await?;
             match existing.trim() {
@@ -725,8 +746,7 @@ impl ClickHouseSink {
             &self.database,
             &self.history,
             topology,
-            self.chain_id_mode,
-        )?)
+        ))
         .await?;
 
         // The client pools HTTP connections, so consecutive statements may reach
@@ -748,7 +768,7 @@ impl ClickHouseSink {
                 entity,
                 &self.database,
                 &self.history,
-                topology.ddl_on_cluster,
+                topology,
             ))
         }))
         .await?;
@@ -762,7 +782,7 @@ impl ClickHouseSink {
         if checkpoint_id.is_empty() || !checkpoint_id.bytes().all(|b| b.is_ascii_digit()) {
             bail!("`{checkpoint_id}` is not a checkpoint id");
         }
-        let database_ident = ddl::quoted(&self.database);
+        let database_ident = quoted(&self.database);
         self.post_statement(format!("USE {database_ident}"))
             .await
             .with_context(|| {
@@ -853,6 +873,7 @@ impl ClickHouseSink {
         let response = self
             .client
             .post(&self.url)
+            .timeout(self.tuning.statement_timeout)
             .basic_auth(&self.username, Some(&self.password))
             .body(query)
             .send()
@@ -1298,6 +1319,7 @@ mod tests {
                 attempts: 1,
                 max_retry_delay: Duration::ZERO,
                 request_timeout: Duration::from_millis(150),
+                statement_timeout: Duration::from_millis(150),
             },
         );
         let handle = stage_ids(&sink, &["a"]);

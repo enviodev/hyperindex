@@ -122,11 +122,13 @@ pub struct FieldSpec {
 }
 
 /// The Decimal a bounded numeric field fits in, or `String` when no Decimal is
-/// wide enough. A scale past the precision has no Decimal either: ClickHouse
-/// requires `S <= P`.
+/// wide enough. Deciding on [`decimal_bytes`] rather than on the precision
+/// bound is what makes every `Decimal` this returns one the encoder has a width
+/// for. A scale past the precision has no Decimal either: ClickHouse requires
+/// `S <= P`.
 fn decimal_or_string(precision: Option<u32>, scale: u32) -> ChType {
     match precision {
-        Some(precision) if precision <= MAX_DECIMAL_PRECISION && scale <= precision => {
+        Some(precision) if decimal_bytes(precision).is_ok() && scale <= precision => {
             ChType::Decimal { precision, scale }
         }
         _ => ChType::String,
@@ -175,11 +177,20 @@ impl FieldSpec {
             }
             other => bail!("unsupported field type `{other}`"),
         };
-        let base = if self.is_array {
-            ChType::Array(Box::new(base))
-        } else {
-            base
-        };
+        if self.is_array {
+            // ClickHouse refuses `Nullable(Array(T))` outright, so a nullable
+            // list has nowhere to go: the alternatives both lose the
+            // distinction the schema drew — an absent list would come back as
+            // an empty one, or every element would become nullable.
+            if self.is_nullable {
+                bail!(
+                    "a nullable list has no ClickHouse type: `Nullable(Array(...))` is not a \
+                     type ClickHouse accepts. Make the field a non-null list (`[T!]!`) to \
+                     store it here"
+                );
+            }
+            return Ok(ChType::Array(Box::new(base)));
+        }
         Ok(if self.is_nullable {
             ChType::Nullable(Box::new(base))
         } else {
@@ -216,13 +227,8 @@ impl fmt::Display for ChType {
                     }
                     // Numbered explicitly: RowBinary carries the number, so
                     // leaving it to ClickHouse's own numbering would make the
-                    // encoder depend on a server rule instead of on this text.
-                    write!(
-                        f,
-                        "'{}' = {}",
-                        variant.replace('\\', "\\\\").replace('\'', "\\'"),
-                        index + 1
-                    )?;
+                    // encoder depend on a server rule rather than on this text.
+                    write!(f, "{} = {}", super::literal(variant), index + 1)?;
                 }
                 f.write_str(")")
             }
@@ -346,18 +352,38 @@ mod tests {
         assert_eq!(modes, ["Int32", "UInt64"]);
     }
 
+    /// `Nullable(Array(...))` is a type ClickHouse rejects, so the derivation
+    /// has to say so by name rather than let `CREATE TABLE` fail with the
+    /// server's own wording and no field to point at.
     #[test]
-    fn wraps_arrays_inside_nullable() {
-        let spec = FieldSpec {
+    fn rejects_a_nullable_list() {
+        let error = FieldSpec {
             is_array: true,
             is_nullable: true,
             ..field("String")
+        }
+        .ch_type(ChainIdMode::Int32)
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "a nullable list has no ClickHouse type: `Nullable(Array(...))` is not a type \
+             ClickHouse accepts. Make the field a non-null list (`[T!]!`) to store it here"
+        );
+    }
+
+    #[test]
+    fn wraps_a_non_null_list_in_array() {
+        let spec = FieldSpec {
+            is_array: true,
+            ..field("String")
         };
-        assert_eq!(rendered(&spec), "Nullable(Array(String))");
+        assert_eq!(rendered(&spec), "Array(String)");
     }
 
     /// A bounded numeric is a real Decimal column; past what an `i128` carries
-    /// there is no Decimal to put it in, so the value is stored as text.
+    /// there is no Decimal to put it in, so the value is stored as text. A
+    /// precision of zero has no width either, so it takes the same fallback
+    /// rather than declaring a `Decimal(0,0)` the encoder could not write.
     #[test]
     fn numeric_precision_decides_decimal_or_string() {
         let rendered_types = [
@@ -367,6 +393,10 @@ mod tests {
             },
             FieldSpec {
                 precision: Some(39),
+                ..field("BigInt")
+            },
+            FieldSpec {
+                precision: Some(0),
                 ..field("BigInt")
             },
             field("BigInt"),
@@ -393,6 +423,7 @@ mod tests {
             rendered_types,
             [
                 "Decimal(38,0)",
+                "String",
                 "String",
                 "String",
                 "Decimal(10,8)",
@@ -457,10 +488,7 @@ mod tests {
         }
         .ch_type(ChainIdMode::Int32)
         .unwrap();
-        assert_eq!(
-            ch_type.to_string(),
-            r"Enum8('it\'s' = 1, 'back\\slash' = 2)"
-        );
+        assert_eq!(ch_type.to_string(), r"Enum8('it''s' = 1, 'back\slash' = 2)");
     }
 
     #[test]

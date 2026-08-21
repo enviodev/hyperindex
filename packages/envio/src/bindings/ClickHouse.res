@@ -30,24 +30,6 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
               }
             }
           | ChainId => ChainId.schema->S.toUnknown
-          // ClickHouse returns UInt64 values as strings, need to parse to float
-          | UInt52 => {
-              let uint52Schema =
-                S.float
-                ->S.preprocess(
-                  _ => {
-                    parser: unknown => unknown->(Utils.magic: unknown => string)->Float.parseFloat,
-                  },
-                )
-                ->S.toUnknown
-              if f.isNullable {
-                S.null(uint52Schema)->S.toUnknown
-              } else if f.isArray {
-                S.array(uint52Schema)->S.toUnknown
-              } else {
-                uint52Schema
-              }
-            }
           | _ => f.fieldSchema
           }
           dict->Dict.set(f->Table.getApiFieldName, s.field(fieldName, fieldSchema))
@@ -128,39 +110,57 @@ type checkpointColumn = {
   valuesOf: Batch.t => array<unknown>,
 }
 
-let checkpointColumns: array<checkpointColumn> = [
-  {
-    name: (#id: InternalTable.Checkpoints.field :> string),
-    fieldType: UInt64,
-    isNullable: false,
-    valuesOf: batch => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
-  },
-  {
-    name: (#chain_id: InternalTable.Checkpoints.field :> string),
-    fieldType: ChainId,
-    isNullable: false,
-    valuesOf: batch => batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
-  },
-  {
-    name: (#block_number: InternalTable.Checkpoints.field :> string),
-    fieldType: Int32,
-    isNullable: false,
-    valuesOf: batch => batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
-  },
-  {
-    name: (#block_hash: InternalTable.Checkpoints.field :> string),
-    fieldType: String,
-    isNullable: true,
-    valuesOf: batch =>
-      batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
-  },
-  {
-    name: (#events_processed: InternalTable.Checkpoints.field :> string),
-    fieldType: UInt64,
-    isNullable: false,
-    valuesOf: batch => batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
-  },
-]
+// The checkpoints table as ClickHouse holds it. The field types and order come
+// from the internal table itself, so a column added there cannot be silently
+// missing here; only the value accessor and the one type that differs are
+// stated. `events_processed` is widened because ClickHouse counts them in a
+// UInt64 where Postgres stores an Int32.
+let checkpointColumns: array<checkpointColumn> = {
+  let valuesOf: dict<Batch.t => array<unknown>> = Dict.fromArray([
+    (
+      (#id: InternalTable.Checkpoints.field :> string),
+      (batch: Batch.t) => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
+    ),
+    (
+      (#chain_id: InternalTable.Checkpoints.field :> string),
+      (batch: Batch.t) => batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
+    ),
+    (
+      (#block_number: InternalTable.Checkpoints.field :> string),
+      (batch: Batch.t) => batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
+    ),
+    (
+      (#block_hash: InternalTable.Checkpoints.field :> string),
+      (batch: Batch.t) => batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
+    ),
+    (
+      (#events_processed: InternalTable.Checkpoints.field :> string),
+      (batch: Batch.t) => batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
+    ),
+  ])
+  InternalTable.Checkpoints.table.fields->Array.filterMap(field =>
+    switch field {
+    | Table.Field(f) =>
+      let name = f.fieldName
+      Some({
+        name,
+        fieldType: switch name {
+        | "events_processed" => Table.UInt64
+        | _ => f.fieldType
+        },
+        isNullable: f.isNullable,
+        valuesOf: switch valuesOf->Dict.get(name) {
+        | Some(valuesOf) => valuesOf
+        | None =>
+          JsError.throwWithMessage(
+            `The ClickHouse checkpoints table has no values for the "${name}" column`,
+          )
+        },
+      })
+    | DerivedFrom(_) => None
+    }
+  )
+}
 
 let checkpointColumnSpecs = () =>
   checkpointColumns->Array.map(({name, fieldType, isNullable}) =>
@@ -321,13 +321,24 @@ let stageCheckpointsOrThrow = (sink, ~registry, ~batch: Batch.t) => {
     Null.null
   } else {
     let table = sink->checkpointsTable(~registry)
-    let values = checkpointColumns->Array.map(({valuesOf}) => valuesOf(batch))
+    // Keyed by name rather than by position: the registered list is the sink's,
+    // and a column it adds of its own would otherwise pair every column after it
+    // with its neighbour's values — which nothing downstream could catch, since
+    // every array reaches the builders as `unknown`.
+    let values = Dict.make()
+    checkpointColumns->Array.forEach(({name, valuesOf}) => values->Dict.set(name, valuesOf(batch)))
     try {
       let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
       // A checkpoint id past what UInt64 holds is refused here rather than being
       // reduced to a different id by the typed array it would land in.
-      builders->Array.forEachWithIndex((builder, column) => {
-        let columnValues = values->Array.getUnsafe(column)
+      builders->Array.forEach(builder => {
+        let columnValues = switch values->Dict.get(builder.name) {
+        | Some(columnValues) => columnValues
+        | None =>
+          JsError.throwWithMessage(
+            `The ClickHouse checkpoints table has no values for the "${builder.name}" column`,
+          )
+        }
         for row in 0 to rows - 1 {
           builder->ClickHouseSink.writeValue(~row, columnValues->Array.getUnsafe(row))
         }
@@ -433,12 +444,7 @@ let writeStagedOrThrow = async (sink, ~entities, ~checkpoints) =>
 
 // Creates the database, the history tables and the views. Rust renders every
 // statement from the specs below and runs them in the order the views depend on.
-let initialize = async (
-  sink,
-  ~registry,
-  ~entities: array<Internal.entityConfig>,
-  ~enums as _: array<Table.enumConfig<Table.enum>>,
-) => {
+let initialize = async (sink, ~registry, ~entities: array<Internal.entityConfig>) => {
   try {
     await sink->ClickHouseSink.initialize({
       entities: entities->Array.map(entityConfig => entitySpec(~entityConfig)),
