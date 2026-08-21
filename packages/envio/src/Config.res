@@ -45,6 +45,7 @@ type sourceConfig =
 type chain = {
   name: string,
   id: ChainId.t,
+  ecosystem: Ecosystem.name,
   startBlock: int,
   endBlock?: int,
   maxReorgDepth: int,
@@ -951,6 +952,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
       {
         name: chainName,
         id: chainId,
+        ecosystem: ecosystemName,
         startBlock: publicChainConfig["startBlock"],
         endBlock: ?publicChainConfig["endBlock"],
         maxReorgDepth: switch ecosystemName {

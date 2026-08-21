@@ -25,7 +25,7 @@ declare module "envio" {
   interface Global {
     config: {
       svm: { chains: {
-  "0": { id: 0 };
+  "7565164": { id: 7565164 };
       }; programs: {
         "TokenMetadata": {
           "CreateMetadataAccountV3": { readonly args: { readonly data: { readonly name: string; readonly symbol: string; readonly uri: string; readonly seller_fee_basis_points: number; readonly creators: (({ readonly address: string; readonly verified: boolean; readonly share: number })[]) | null; readonly collection: ({ readonly verified: boolean; readonly key: string }) | null; readonly uses: ({ readonly use_method: { readonly Burn: {} } | { readonly Multiple: {} } | { readonly Single: {} }; readonly remaining: string; readonly total: string }) | null }; readonly is_mutable: boolean; readonly collection_details: ({ readonly V1: { readonly size: string } }) | null }; readonly accounts: { readonly metadata: string; readonly mint: string; readonly mint_authority: string; readonly payer: string; readonly update_authority: string; readonly system_program: string; readonly rent: string } };
