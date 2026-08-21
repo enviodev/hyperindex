@@ -666,7 +666,8 @@ impl ClickHouseSink {
         // `self.database` and only the statements written inline take this.
         let database_ident = quoted(&self.database);
 
-        if let (Some(engine_spec), Some(expected)) = (&database_engine, engine_name) {
+        if let Some(engine_spec) = &database_engine {
+            let expected = ddl::database_engine_name(engine_spec);
             let existing = self
                 .post_statement(format!(
                     "SELECT engine FROM system.databases WHERE name = {} \
