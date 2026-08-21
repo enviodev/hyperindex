@@ -14,7 +14,7 @@ external create: (~url: string, ~options: options=?) => t = "EventSource"
 
 @set external onopen: (t, unit => unit) => unit = "onopen"
 
-type errorEvent = {status: option<int>, message: option<string>}
+type errorEvent = {code: option<int>, message: option<string>}
 @set external onerror: (t, errorEvent => unit) => unit = "onerror"
 
 type event = {data: string}

@@ -7,15 +7,6 @@ type t
 
 @new external create: string => t = "WebSocket"
 
-@unboxed
-type readyState =
-  | @as(0) Connecting
-  | @as(1) Open
-  | @as(2) Closing
-  | @as(3) Closed
-
-@get external readyState: t => readyState = "readyState"
-
 @set external onopen: (t, unit => unit) => unit = "onopen"
 @set external onerror: (t, JsExn.t => unit) => unit = "onerror"
 @set external onclose: (t, unit => unit) => unit = "onclose"

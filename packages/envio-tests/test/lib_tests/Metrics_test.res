@@ -103,6 +103,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       historyPrunes: [],
       sourceRequests: [],
       sourceHeights: [],
+      sourceHeightStreams: [],
     }
 
     t.expect(
@@ -110,6 +111,135 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
         `envio_effect_call_total{effect="a\\",b=c",scope="d\\"e"} 2`,
       ),
     ).toBe(true)
+  })
+
+  it("Omits the height stream families entirely when no source subscribes", t => {
+    let metrics: Metrics.t = {
+      startTime: Date.fromTime(0.),
+      metricTime: Date.fromTime(0.),
+      elapsedSeconds: 0.,
+      targetBufferSize: 0,
+      isInReorgThreshold: false,
+      rollbackEnabled: false,
+      maxBatchSize: 0,
+      preloadSeconds: 0.,
+      processingSeconds: 0.,
+      processingStalledOnFetchSeconds: 0.,
+      processingStalledOnStorageWriteSeconds: 0.,
+      rollbackSeconds: 0.,
+      rollbackCount: 0,
+      rollbackEventsCount: 0.,
+      chains: [],
+      handlers: [],
+      effects: [],
+      storageLoads: [],
+      storageWrites: [],
+      historyPrunes: [],
+      sourceRequests: [],
+      sourceHeights: [],
+      sourceHeightStreams: [],
+    }
+
+    t.expect(
+      Metrics.collect(~metrics=Some(metrics))->String.includes("envio_source_height_stream"),
+    ).toBe(false)
+  })
+
+  it("Renders a stream that has never connected as zero connects", t => {
+    let metrics: Metrics.t = {
+      startTime: Date.fromTime(0.),
+      metricTime: Date.fromTime(0.),
+      elapsedSeconds: 0.,
+      targetBufferSize: 0,
+      isInReorgThreshold: false,
+      rollbackEnabled: false,
+      maxBatchSize: 0,
+      preloadSeconds: 0.,
+      processingSeconds: 0.,
+      processingStalledOnFetchSeconds: 0.,
+      processingStalledOnStorageWriteSeconds: 0.,
+      rollbackSeconds: 0.,
+      rollbackCount: 0,
+      rollbackEventsCount: 0.,
+      chains: [],
+      handlers: [],
+      effects: [],
+      storageLoads: [],
+      storageWrites: [],
+      historyPrunes: [],
+      sourceRequests: [],
+      sourceHeights: [],
+      sourceHeightStreams: [
+        {
+          source: "RPC (rpc.example.com)",
+          chainId: 1->ChainId.fromInt,
+          connectCount: 0,
+          disconnectsByReason: [],
+        },
+      ],
+    }
+
+    // Nothing has disconnected, because nothing ever connected. Without the
+    // zero there is no series at all, and a ws url the node will never accept
+    // reads exactly like a chain that was never asked to stream.
+    t.expect(
+      Metrics.collect(~metrics=Some(metrics))
+      ->String.split("\n")
+      ->Array.filter(line => line->String.startsWith("envio_source_height_stream")),
+    ).toStrictEqual([`envio_source_height_stream_connects_total{source="RPC (rpc.example.com)",chainId="1"} 0`])
+  })
+
+  it("Aggregates height stream samples that share a source name and chain", t => {
+    let metrics: Metrics.t = {
+      startTime: Date.fromTime(0.),
+      metricTime: Date.fromTime(0.),
+      elapsedSeconds: 0.,
+      targetBufferSize: 0,
+      isInReorgThreshold: false,
+      rollbackEnabled: false,
+      maxBatchSize: 0,
+      preloadSeconds: 0.,
+      processingSeconds: 0.,
+      processingStalledOnFetchSeconds: 0.,
+      processingStalledOnStorageWriteSeconds: 0.,
+      rollbackSeconds: 0.,
+      rollbackCount: 0,
+      rollbackEventsCount: 0.,
+      chains: [],
+      handlers: [],
+      effects: [],
+      storageLoads: [],
+      storageWrites: [],
+      historyPrunes: [],
+      sourceRequests: [],
+      sourceHeights: [],
+      // Two RPC urls on the same host share a source name, and duplicate
+      // samples would make Prometheus reject the whole scrape.
+      sourceHeightStreams: [
+        {
+          source: "RPC (rpc.example.com)",
+          chainId: 1->ChainId.fromInt,
+          connectCount: 2,
+          disconnectsByReason: [("rotated", 3)],
+        },
+        {
+          source: "RPC (rpc.example.com)",
+          chainId: 1->ChainId.fromInt,
+          connectCount: 1,
+          disconnectsByReason: [("rotated", 4), ("stale", 5)],
+        },
+      ],
+    }
+
+    t.expect(
+      Metrics.collect(~metrics=Some(metrics))
+      ->String.split("\n")
+      ->Array.filter(line => line->String.startsWith("envio_source_height_stream")),
+    ).toStrictEqual([
+      `envio_source_height_stream_connects_total{source="RPC (rpc.example.com)",chainId="1"} 3`,
+      `envio_source_height_stream_disconnects_total{source="RPC (rpc.example.com)",chainId="1",reason="rotated"} 7`,
+      `envio_source_height_stream_disconnects_total{source="RPC (rpc.example.com)",chainId="1",reason="stale"} 5`,
+    ])
   })
 
   it("Renders every metric family from a fully populated snapshot", t => {
@@ -243,6 +373,14 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           height: 305,
         },
       ],
+      sourceHeightStreams: [
+        {
+          source: "HyperSync",
+          chainId: 1->ChainId.fromInt,
+          connectCount: 3,
+          disconnectsByReason: [("rotated", 4), ("401", 1)],
+        },
+      ],
     }
 
     t.expect(Metrics.collect(~metrics=Some(metrics))).toBe(`# HELP envio_info Information about the indexer
@@ -373,6 +511,15 @@ envio_source_request_total{source="HyperSync",chainId="1",method="heightPush"} 7
 # HELP envio_source_request_seconds_total Cumulative time spent on data source requests.
 # TYPE envio_source_request_seconds_total counter
 envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 33.75
+
+# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected. One more connect than disconnects means the stream is up, equal counts mean it is down and the indexer is polling instead, and zero means it has never come up.
+# TYPE envio_source_height_stream_connects_total counter
+envio_source_height_stream_connects_total{source="HyperSync",chainId="1"} 3
+
+# HELP envio_source_height_stream_disconnects_total The number of times a source's height subscription lost a connection, by reason. Failed retries are not counted, so this is outages rather than their length. A rotated disconnect is routine; every other reason ended a connection early.
+# TYPE envio_source_height_stream_disconnects_total counter
+envio_source_height_stream_disconnects_total{source="HyperSync",chainId="1",reason="rotated"} 4
+envio_source_height_stream_disconnects_total{source="HyperSync",chainId="1",reason="401"} 1
 
 # HELP envio_source_known_height The latest known block number reported by the source. This value may lag behind the actual chain height, as it is updated only when queried.
 # TYPE envio_source_known_height gauge
