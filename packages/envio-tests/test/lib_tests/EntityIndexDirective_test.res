@@ -1,0 +1,178 @@
+open Vitest
+
+// `@index(fields:)` reaches storage as a composite index over resolved column
+// names, so these assert the indexes the tables end up with rather than the
+// shape the directive parsed into.
+
+let parse = schema =>
+  InternalTestIndexer.fromUserApi(
+    ~schema,
+    ~configYaml=`
+name: entity-index-directive
+chains:
+  - id: 1
+    start_block: 0
+`,
+  ).config
+
+let table = (schema, name) => {
+  let config: Config.t = parse(schema)
+  (config.userEntitiesByName->Dict.getUnsafe(name)).table
+}
+
+let parseError = schema =>
+  try {
+    parse(schema)->ignore
+    "the parse to fail, but it succeeded"
+  } catch {
+  | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
+  }
+
+let schemaWith = index =>
+  `
+type TestEntity ${index} {
+  id: ID!
+  tokenId: Int!
+  collection: String!
+}
+`
+
+describe("@index(fields:) column order and direction", () => {
+  it("Keeps each index in the order the entity declares it", t => {
+    t.expect(
+      table(
+        `
+type TestEntity @index(fields: ["a", "b"]) @index(fields: ["b", "a"]) {
+  id: ID!
+  a: String!
+  b: String!
+}
+`,
+        "TestEntity",
+      )->Table.getCompositeIndexes,
+      ~message="two indexes over the same columns in opposite order",
+    ).toEqual([
+      [
+        ({fieldName: "a", direction: Table.Asc}: Table.compositeIndexField),
+        {fieldName: "b", direction: Table.Asc},
+      ],
+      [{fieldName: "b", direction: Table.Asc}, {fieldName: "a", direction: Table.Asc}],
+    ])
+  })
+
+  it("Carries an explicit direction per column", t => {
+    t.expect(
+      table(
+        schemaWith(`@index(fields: [["tokenId", "DESC"], ["collection", "ASC"]])`),
+        "TestEntity",
+      )->Table.getCompositeIndexes,
+      ~message="both columns take the direction they were given",
+    ).toEqual([
+      [
+        ({fieldName: "tokenId", direction: Table.Desc}: Table.compositeIndexField),
+        {fieldName: "collection", direction: Table.Asc},
+      ],
+    ])
+  })
+
+  it("Defaults a bare column name to ascending", t => {
+    t.expect(
+      table(
+        schemaWith(`@index(fields: ["tokenId", ["collection", "DESC"]])`),
+        "TestEntity",
+      )->Table.getCompositeIndexes,
+      ~message="the bare name is ascending, the paired one keeps its direction",
+    ).toEqual([
+      [
+        ({fieldName: "tokenId", direction: Table.Asc}: Table.compositeIndexField),
+        {fieldName: "collection", direction: Table.Desc},
+      ],
+    ])
+  })
+
+  it("Reads a direction whatever its case", t => {
+    t.expect(
+      table(
+        schemaWith(`@index(fields: [["tokenId", "desc"], ["collection", "asc"]])`),
+        "TestEntity",
+      )->Table.getCompositeIndexes,
+      ~message="lowercase directions parse like uppercase ones",
+    ).toEqual([
+      [
+        ({fieldName: "tokenId", direction: Table.Desc}: Table.compositeIndexField),
+        {fieldName: "collection", direction: Table.Asc},
+      ],
+    ])
+  })
+
+  it("Indexes a lone column singly rather than as a composite", t => {
+    let table = table(schemaWith(`@index(fields: [["tokenId", "DESC"]])`), "TestEntity")
+
+    t.expect(
+      (table->Table.getCompositeIndexes, table->Table.getSingleIndexes),
+      ~message="one column is a single index, not a composite one",
+    ).toEqual(([], ["tokenId"]))
+  })
+})
+
+describe("@index(fields:) rejections", () => {
+  it("Names the columns available when the entity has no such field", t => {
+    t.expect(
+      parseError(schemaWith(`@index(fields: ["missing", "tokenId"])`)),
+    ).toBe(`schema.graphql:1:17: Invalid \`@index\` on \`TestEntity\`: \`missing\` is not a column of the entity.
+  Available columns: \`tokenId\`, \`collection\`.`)
+  })
+
+  it("Rejects a @derivedFrom field, which has no column", t => {
+    t.expect(
+      parseError(`
+type User @index(fields: ["tokens", "name"]) {
+  id: ID!
+  name: String!
+  tokens: [Token!]! @derivedFrom(field: "owner")
+}
+
+type Token {
+  id: ID!
+  owner: User!
+}
+`),
+    ).toBe(`schema.graphql:1:11: Invalid \`@index\` on \`User\`: \`tokens\` is a @derivedFrom field, which has no column.
+  Use a stored field instead.`)
+  })
+
+  it("Rejects id, which the primary key already indexes", t => {
+    t.expect(
+      parseError(schemaWith(`@index(fields: ["id"])`)),
+    ).toBe(`schema.graphql:1:17: Invalid \`@index\` on \`TestEntity\`: \`id\` is the primary key, so it is already indexed.
+  Remove the \`@index\` directive on it.`)
+  })
+
+  it("Rejects a column listed twice in one index", t => {
+    t.expect(
+      parseError(schemaWith(`@index(fields: ["tokenId", "tokenId"])`)),
+    ).toBe(`schema.graphql:1:17: Invalid \`@index\` on \`TestEntity\`: \`tokenId\` is listed twice.
+  List each column once — repeating it adds nothing to the index.`)
+  })
+
+  it("Rejects the same index declared twice", t => {
+    t.expect(
+      parseError(
+        schemaWith(`@index(fields: ["tokenId", "collection"]) @index(fields: ["tokenId", "collection"])`),
+      ),
+    ).toBe(`schema.graphql:1:1: Invalid \`@index\` on \`TestEntity\`: the index over \`tokenId\`, \`collection\` is declared twice.
+  Remove the duplicate \`@index\` directive.`)
+  })
+
+  it("Rejects a column indexed both on the field and on the entity", t => {
+    t.expect(
+      parseError(`
+type TestEntity @index(fields: ["tokenId"]) {
+  id: ID!
+  tokenId: Int! @index
+}
+`),
+    ).toBe(`schema.graphql:1:17: Invalid \`@index\` on \`TestEntity\`: \`tokenId\` is already marked \`@index\` on the field.
+  Keep one of them — the \`@index\` on the field, or \`@index(fields: ["tokenId"])\` on the entity.`)
+  })
+})

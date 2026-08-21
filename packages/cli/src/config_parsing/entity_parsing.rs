@@ -18,6 +18,7 @@ use graphql_parser::schema::{
     Definition, Directive, Document, EnumType, Field as ObjField, ObjectType, Type as ObjType,
     TypeDefinition, Value,
 };
+use graphql_parser::Pos;
 use serde::{Serialize, Serializer};
 use std::{
     collections::{HashMap, HashSet},
@@ -57,8 +58,187 @@ impl Schema {
 
         Self { entities, enums }.validate()
     }
+}
 
-    fn from_document(document: Document<String>) -> anyhow::Result<Self> {
+/// `schema.graphql:12:3` — where in the schema an error was raised, so an
+/// editor or terminal can jump straight to it. `Pos` is already 1-based. Used
+/// as anyhow context, which supplies the `: ` that follows it.
+fn at(source: &str, position: Pos) -> String {
+    format!("{source}:{}:{}", position.line, position.column)
+}
+
+/// Renders `Invalid `<directive>` on `<Entity>`: <problem>.` with a single
+/// indented line saying what to do about it. One shape for every directive
+/// reference error, so the fix is always in the same place.
+fn directive_error(
+    entity: &str,
+    directive: &str,
+    problem: &str,
+    suggestion: &str,
+) -> anyhow::Error {
+    anyhow!("Invalid `{directive}` on `{entity}`: {problem}.\n  {suggestion}")
+}
+
+/// Resolves the columns a `clickhouse.orderBy` lists into the sorting key they
+/// become, rejecting anything ClickHouse can't sort by.
+fn resolve_order_by(
+    entity: &str,
+    fields: &[Field],
+    resolve_column: &dyn Fn(&str, &str) -> anyhow::Result<EntityColumn>,
+    columns: Vec<String>,
+) -> anyhow::Result<Vec<EntityColumn>> {
+    const DIRECTIVE: &str = "clickhouse.orderBy";
+
+    let mut seen = HashSet::new();
+    columns
+        .into_iter()
+        .map(|column| {
+            if !seen.insert(column.clone()) {
+                return Err(directive_error(
+                    entity,
+                    DIRECTIVE,
+                    &format!("`{column}` is listed twice"),
+                    "List each column once — repeating it adds nothing to the sorting key.",
+                ));
+            }
+            if column == "id" {
+                return Err(directive_error(
+                    entity,
+                    DIRECTIVE,
+                    "`id` is already the sorting key when no `orderBy` is given",
+                    "List only the columns to sort by instead of `id`.",
+                ));
+            }
+            let resolved = resolve_column(DIRECTIVE, &column)?;
+            check_clickhouse_sortable(entity, fields, &resolved)?;
+            Ok(resolved)
+        })
+        .collect()
+}
+
+/// ClickHouse rejects Nullable and Array columns in the sorting key
+/// (`allow_nullable_key` is off by default, arrays are never allowed). The
+/// appended chain id is a plain non-null integer, so only a declared field can
+/// trip either.
+fn check_clickhouse_sortable(
+    entity: &str,
+    fields: &[Field],
+    column: &EntityColumn,
+) -> anyhow::Result<()> {
+    const DIRECTIVE: &str = "clickhouse.orderBy";
+
+    let EntityColumn::Declared(name) = column else {
+        return Ok(());
+    };
+    let field = fields
+        .iter()
+        .find(|f| &f.name == name)
+        .expect("a resolved Declared column names a field of the entity");
+
+    if field.field_type.is_optional() {
+        return Err(directive_error(
+            entity,
+            DIRECTIVE,
+            &format!("`{name}` is nullable, and ClickHouse won't sort by a nullable column"),
+            "Make the field non-nullable to sort by it.",
+        ));
+    }
+    if field.field_type.to_user_defined_field_type().is_array() {
+        return Err(directive_error(
+            entity,
+            DIRECTIVE,
+            &format!("`{name}` is an array, and ClickHouse won't sort by an array column"),
+            "Sort by a scalar field instead.",
+        ));
+    }
+    Ok(())
+}
+
+impl MultiFieldIndex {
+    fn resolve(
+        entity: &str,
+        fields: &[Field],
+        resolve_column: &dyn Fn(&str, &str) -> anyhow::Result<EntityColumn>,
+        columns: Vec<(String, IndexFieldDirection)>,
+    ) -> anyhow::Result<Self> {
+        const DIRECTIVE: &str = "@index";
+
+        let mut seen = HashSet::new();
+        let columns = columns
+            .into_iter()
+            .map(|(written_as, direction)| {
+                if !seen.insert(written_as.clone()) {
+                    return Err(directive_error(
+                        entity,
+                        DIRECTIVE,
+                        &format!("`{written_as}` is listed twice"),
+                        "List each column once — repeating it adds nothing to the index.",
+                    ));
+                }
+                Ok(IndexField {
+                    column: resolve_column(DIRECTIVE, &written_as)?,
+                    direction,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let resolved = Self(columns);
+
+        // A lone column is a plain single index, and two of them are never
+        // worth building.
+        match resolved.as_single() {
+            Some(EntityColumn::Declared(name)) if name == "id" => Err(directive_error(
+                entity,
+                DIRECTIVE,
+                "`id` is the primary key, so it is already indexed",
+                "Remove the `@index` directive on it.",
+            )),
+            Some(EntityColumn::Declared(name))
+                if fields
+                    .iter()
+                    .any(|f| &f.name == name && f.field_type.has_indexed_directive()) =>
+            {
+                Err(directive_error(
+                    entity,
+                    DIRECTIVE,
+                    &format!("`{name}` is already marked `@index` on the field"),
+                    &format!(
+                        "Keep one of them — the `@index` on the field, or `@index(fields: \
+                         [\"{name}\"])` on the entity."
+                    ),
+                ))
+            }
+            Some(EntityColumn::ChainId) => Err(directive_error(
+                entity,
+                DIRECTIVE,
+                &format!(
+                    "`{CHAIN_ID_FIELD_NAME}` is already part of the primary key, and on its own \
+                     it has one value per chain — too few to index by"
+                ),
+                &format!(
+                    "List it with another field, e.g. `@index(fields: [\"{CHAIN_ID_FIELD_NAME}\", \
+                     \"timestamp\"])`."
+                ),
+            )),
+            _ => Ok(resolved),
+        }
+    }
+
+    fn render_columns(&self) -> String {
+        self.0
+            .iter()
+            .map(|f| format!("`{}`", f.column.field_name()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+impl Schema {
+    fn from_document(
+        document: Document<String>,
+        default_cross_chain: bool,
+        source: &str,
+    ) -> anyhow::Result<Self> {
         let entities = document
             .definitions
             .iter()
@@ -70,9 +250,8 @@ impl Schema {
                 TypeDefinition::Object(obj) => Some(obj),
                 _ => None,
             })
-            .map(|obj| Entity::from_object(obj))
-            .collect::<anyhow::Result<Vec<Entity>>>()
-            .context("Failed constructing entities in schema from document")?;
+            .map(|obj| Entity::from_object(obj, default_cross_chain, source))
+            .collect::<anyhow::Result<Vec<Entity>>>()?;
 
         let enums = document
             .definitions
@@ -95,6 +274,7 @@ impl Schema {
     pub fn parse_from_file(
         project_paths: &ParsedProjectPaths,
         maybe_custom_path: &Option<String>,
+        default_cross_chain: bool,
     ) -> anyhow::Result<Self> {
         let relative_schema_path_from_config = match maybe_custom_path {
             Some(custom_path) => custom_path.clone(),
@@ -113,16 +293,34 @@ impl Schema {
             schema_path.to_str().unwrap_or("bad file path"),
         ))?;
 
-        Self::from_string(&schema_string)
+        // Errors name the schema by the path the project actually uses, so a
+        // `schema:` override in config.yaml points at the file the user edited.
+        let source = schema_path
+            .strip_prefix(&project_paths.project_root)
+            .unwrap_or(&schema_path)
+            .display()
+            .to_string();
+
+        Self::from_string_at(&schema_string, default_cross_chain, &source)
     }
 
-    pub fn from_string(schema_string: &str) -> anyhow::Result<Self> {
+    pub fn from_string(schema_string: &str, default_cross_chain: bool) -> anyhow::Result<Self> {
+        Self::from_string_at(schema_string, default_cross_chain, DEFAULT_SCHEMA_PATH)
+    }
+
+    fn from_string_at(
+        schema_string: &str,
+        default_cross_chain: bool,
+        source: &str,
+    ) -> anyhow::Result<Self> {
         let schema_doc = graphql_parser::parse_schema::<String>(schema_string)
             .context("Failed to parse schema as document")?;
 
-        Self::from_document(schema_doc).context("Failed converting schema doc to schema struct")
+        Self::from_document(schema_doc, default_cross_chain, source)
     }
+}
 
+impl Schema {
     fn validate(self) -> anyhow::Result<Self> {
         self.check_enum_type_defs()?
             .check_schema_for_reserved_words()?
@@ -439,10 +637,10 @@ pub struct ClickHouseSkippingIndex {
 pub struct ClickHouseTableOptions {
     /// Raw ClickHouse expression emitted as `PARTITION BY <expr>`.
     pub partition_by: Option<String>,
-    /// Entity field names that lead the history table's sorting key, replacing
-    /// the default `id` prefix. `envio_checkpoint_id` stays appended, so the key
-    /// becomes `ORDER BY (<order_by...>, envio_checkpoint_id)`.
-    pub order_by: Option<Vec<String>>,
+    /// Columns that lead the history table's sorting key, replacing the default
+    /// `id` prefix. `envio_checkpoint_id` stays appended, so the key becomes
+    /// `ORDER BY (<order_by...>, envio_checkpoint_id)`.
+    pub order_by: Option<Vec<EntityColumn>>,
     /// Raw ClickHouse expression emitted as `TTL <expr>`.
     pub ttl: Option<String>,
     /// Data skipping indexes emitted into the table's column list.
@@ -464,6 +662,37 @@ impl ClickHouseEntityStorage {
     }
 }
 
+/// The name envio gives the chain-id column it appends to a per-chain entity.
+/// Storage may spell the column differently (`column_name_format: snake_case`),
+/// but a directive always names it the way the schema would.
+pub const CHAIN_ID_FIELD_NAME: &str = "chainId";
+
+/// Every spelling `chain_id_column_name` can produce, plus the `chainId` name
+/// the appended field keeps on the API surface.
+pub const RESERVED_CHAIN_ID_FIELD_NAMES: [&str; 2] = ["chainId", "chain_id"];
+
+/// A column an entity directive (`@index`, `@storage(clickhouse: {orderBy})`)
+/// may name: a field the schema declares, or the chain id envio appends to a
+/// per-chain entity. Only [`Entity::from_object`] builds one, so a resolved
+/// [`Entity`] cannot carry a directive naming a column its table lacks.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum EntityColumn {
+    Declared(String),
+    ChainId,
+}
+
+impl EntityColumn {
+    /// The name the runtime resolves the column by. Both `Table.getFieldByName`
+    /// and ClickHouse's `columnByFieldName` key on schema field names, and the
+    /// appended chain id keeps `chainId` there whatever storage spells it.
+    pub fn field_name(&self) -> &str {
+        match self {
+            Self::Declared(name) => name,
+            Self::ChainId => CHAIN_ID_FIELD_NAME,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entity {
     pub name: String,
@@ -481,235 +710,219 @@ pub struct Entity {
 }
 
 impl Entity {
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        name: &str,
-        fields: Vec<Field>,
-        multi_field_indexes: Vec<MultiFieldIndex>,
-        description: Option<String>,
-        postgres: Option<bool>,
-        clickhouse: Option<ClickHouseEntityStorage>,
-        cross_chain: bool,
-        internal: bool,
+    /// Builds the entity from its GraphQL definition, resolving directive
+    /// column references as it goes. `default_cross_chain` decides whether the
+    /// entity gets the chain-id column envio appends, which is why the document
+    /// alone can't be turned into an `Entity`.
+    fn from_object(
+        obj: &ObjectType<String>,
+        default_cross_chain: bool,
+        source: &str,
     ) -> anyhow::Result<Self> {
-        // Check for duplicate field names
-        let mut field_names_set = HashSet::new();
-        for field in &fields {
-            if !field_names_set.insert(&field.name) {
-                return Err(anyhow!(
-                    "Found fields with duplicate names on Entity {name}: '{}'",
-                    field.name
-                ));
-            }
-        }
-
-        // The `id` column and every foreign key that references it must share a
-        // type, and the storage/codegen layers only implement a fixed set of id
-        // scalars. Reject anything outside that set up front so the mismatch
-        // never reaches codegen.
-        if let Some(id_field) = fields.iter().find(|f| f.name == "id") {
-            match &id_field.field_type {
-                FieldType::DerivedFromField { .. } => {
-                    return Err(anyhow!(
-                        "The 'id' field on entity {name} cannot be a @derivedFrom field."
-                    ));
-                }
-                FieldType::RegularField { field_type, .. } => {
-                    if field_type.is_optional() {
-                        return Err(anyhow!(
-                            "The 'id' field on entity {name} must be non-nullable, e.g. 'id: ID!'."
-                        ));
-                    }
-                    if field_type.is_array() {
-                        return Err(anyhow!("The 'id' field on entity {name} cannot be a list."));
-                    }
-                    match field_type.get_underlying_scalar() {
-                        GqlScalar::ID
-                        | GqlScalar::String
-                        | GqlScalar::Int
-                        | GqlScalar::BigInt(_) => {}
-                        other => {
-                            return Err(anyhow!(
-                                "The 'id' field on entity {name} has unsupported type '{other}'. \
-                                 An entity id must be one of: ID, String, Int, BigInt."
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        let multi_field_indexes = multi_field_indexes
-            .into_iter()
-            .map(|multi_field_index| {
-                multi_field_index
-                    .validate_no_duplicates(&fields)?
-                    .validate_field_name_exists_or_is_allowed(
-                        &fields,
-                        &["db_write_timestamp".to_string()],
-                    )?
-                    .validate_no_index_on_derived_field(&fields)?
-                    .validate_no_index_on_id_field()
-            })
-            .collect::<anyhow::Result<Vec<_>>>()
-            .context(format!("Invalid multi field indexes on Entity {name}"))?;
-
-        //Check for duplicate fields inside multi field index
-        let mut multi_field_indexes_set = HashSet::new();
-        for multi_field_index in &multi_field_indexes {
-            let is_new_insert = multi_field_indexes_set.insert(multi_field_index);
-            if !is_new_insert {
-                return Err(anyhow!(
-                    "Index error: Duplicate index found on fields {:?} in entity '{}'",
-                    multi_field_index.get_field_names(),
-                    name
-                ));
-            }
-        }
-
-        if name.len() > 63 {
-            return Err(anyhow!(
-                "Entity name '{}' is too long. It must be less than 64 characters.",
-                name
-            ));
-        }
-
-        if let Some(ClickHouseEntityStorage::Options(options)) = &clickhouse {
-            if let Some(order_by) = &options.order_by {
-                validate_clickhouse_order_by_fields(name, order_by, &fields)?;
-            }
-        }
-
-        Ok(Self {
-            name: name.to_string(),
-            fields,
-            multi_field_indexes,
-            description,
-            postgres,
-            clickhouse,
-            cross_chain,
-            internal,
-        })
-    }
-
-    fn from_object(obj: &ObjectType<String>) -> anyhow::Result<Self> {
         let name = &obj.name;
+        let at_entity = at(source, obj.position);
 
         let has_id = obj.fields.iter().any(|field| field.name == "id");
         if !has_id {
             return Err(anyhow!(
-                "No 'id' field found on entity {}. Please add an 'id' field to your entity.",
-                name
+                "{at_entity}: No 'id' field found on entity {name}. Please add an 'id' field to \
+                 your entity."
             ));
         }
+
+        let fields = obj
+            .fields
+            .iter()
+            .map(|field| {
+                Field::from_obj_field(field).context(format!(
+                    "{}: Failed parsing field {} on entity {name}",
+                    at(source, field.position),
+                    field.name
+                ))
+            })
+            .collect::<anyhow::Result<Vec<Field>>>()?;
+
+        validate_entity_shape(name, &fields).context(at_entity.clone())?;
+
+        let cross_chain = parse_flag_directive(obj, "crossChain")?;
+        let has_chain_id_column = !(default_cross_chain || cross_chain);
+
+        let resolve_column = |directive: &str, column: &str| -> anyhow::Result<EntityColumn> {
+            if let Some(field) = fields.iter().find(|f| f.name == column) {
+                if field.field_type.is_derived_from() {
+                    return Err(directive_error(
+                        name,
+                        directive,
+                        &format!("`{column}` is a @derivedFrom field, which has no column"),
+                        "Use a stored field instead.",
+                    ));
+                }
+                return Ok(EntityColumn::Declared(column.to_string()));
+            }
+            if has_chain_id_column && column == CHAIN_ID_FIELD_NAME {
+                return Ok(EntityColumn::ChainId);
+            }
+
+            let problem = format!("`{column}` is not a column of the entity");
+            let suggestion = if RESERVED_CHAIN_ID_FIELD_NAMES.contains(&column) {
+                if has_chain_id_column {
+                    format!(
+                        "Spell the chain column as `{CHAIN_ID_FIELD_NAME}`, the way it's named in \
+                         the schema, whatever `column_name_format` the storage uses."
+                    )
+                } else if cross_chain {
+                    format!(
+                        "envio only appends a chain column to per-chain entities, and `{name}` is \
+                         `@crossChain`. Drop `@crossChain`, or declare a `{CHAIN_ID_FIELD_NAME}` \
+                         field yourself."
+                    )
+                } else {
+                    format!(
+                        "envio only appends a chain column to per-chain entities, and entities \
+                         are cross-chain unless config.yaml sets `disable_default_cross_chain: \
+                         true`. Set it, or declare a `{CHAIN_ID_FIELD_NAME}` field yourself."
+                    )
+                }
+            } else {
+                // Derived fields are left out: they have no column, so pointing
+                // at one would only trade this error for another.
+                let mut available: Vec<String> = fields
+                    .iter()
+                    .filter(|f| f.name != "id" && !f.field_type.is_derived_from())
+                    .map(|f| format!("`{}`", f.name))
+                    .collect();
+                if has_chain_id_column {
+                    available.push(format!("`{CHAIN_ID_FIELD_NAME}`"));
+                }
+                if available.is_empty() {
+                    "The entity declares no columns besides `id`.".to_string()
+                } else {
+                    format!("Available columns: {}.", available.join(", "))
+                }
+            };
+            Err(directive_error(name, directive, &problem, &suggestion))
+        };
 
         let multi_field_indexes = obj
             .directives
             .iter()
             .filter(|directive| directive.name == "index")
-            .map(
-                |directive| match directive.arguments.iter().find(|(key, _)| key == "fields") {
-                    Some((_, Value::List(fields))) => {
-                        let index_fields = fields
-                            .iter()
-                            .map(|v| {
-                                match v {
-                                    // Simple string: "fieldName" (default ASC)
-                                    Value::String(field_name) => {
-                                        Ok(IndexField::from_name(field_name.clone()))
-                                    }
-                                    // List with direction: ["fieldName", "DESC"]
-                                    Value::List(parts) => {
-                                        if parts.len() != 2 {
-                                            return Err(anyhow!(
-                                                "Index field with direction must be a list of \
-                                                 exactly 2 elements: [\"fieldName\", \"ASC\" or \
-                                                 \"DESC\"]. Got {} elements.",
-                                                parts.len()
-                                            ));
-                                        }
-                                        let field_name = match &parts[0] {
-                                            Value::String(name) => name.clone(),
-                                            _ => {
-                                                return Err(anyhow!(
-                                                    "First element of index field must be a \
-                                                     string field name"
-                                                ))
-                                            }
-                                        };
-                                        let direction = match &parts[1] {
-                                            Value::String(dir) => match dir.to_uppercase().as_str()
-                                            {
-                                                "ASC" => IndexFieldDirection::Asc,
-                                                "DESC" => IndexFieldDirection::Desc,
-                                                _ => {
-                                                    return Err(anyhow!(
-                                                        "Index direction must be \"ASC\" or \
-                                                         \"DESC\", got \"{}\"",
-                                                        dir
-                                                    ))
-                                                }
-                                            },
-                                            _ => {
-                                                return Err(anyhow!(
-                                                    "Second element of index field must be a \
-                                                     string direction (\"ASC\" or \"DESC\")"
-                                                ))
-                                            }
-                                        };
-                                        Ok(IndexField::new(field_name, direction))
-                                    }
-                                    _ => Err(anyhow!(
-                                        "Listed index field should be a string or a list of \
-                                         [\"fieldName\", \"ASC\" or \"DESC\"]"
-                                    )),
-                                }
-                            })
-                            .collect::<anyhow::Result<Vec<IndexField>>>()
-                            .context("Failed to get fields in index")?;
+            .map(|directive| {
+                let at_directive = at(source, directive.position);
+                let columns = parse_index_directive_columns(directive)
+                    .context(format!("{at_directive}: Invalid `@index` on `{name}`"))?;
+                MultiFieldIndex::resolve(name, &fields, &resolve_column, columns)
+                    .context(at_directive)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
-                        Ok(MultiFieldIndex::new(index_fields))
-                    }
-                    _ => Err(anyhow!(
-                        "Invalid @index directive. Please ensure index has a key of fields with a \
-                         list of strings matching field names in your entity. Eg. @index(fields: \
-                         [\"fieldA\", \"fieldB\"]) or @index(fields: [[\"fieldA\", \"DESC\"], \
-                         [\"fieldB\", \"ASC\"]])"
-                    )),
-                },
-            )
-            .collect::<anyhow::Result<Vec<_>>>()
-            .context(format!(
-                "Failed parsing multi field indexes on entity {name}"
-            ))?;
+        let mut seen = HashSet::new();
+        for index in &multi_field_indexes {
+            if !seen.insert(index) {
+                return Err(directive_error(
+                    name,
+                    "@index",
+                    &format!(
+                        "the index over {} is declared twice",
+                        index.render_columns()
+                    ),
+                    "Remove the duplicate `@index` directive.",
+                ))
+                .context(at_entity.clone());
+            }
+        }
 
-        // Map each field in the ObjectType to a Field, passing the indexed status
-        let fields = obj
-            .fields
+        // Points at the `@storage` directive when there is one; without it
+        // nothing here can fail, so the entity's own position is a fine floor.
+        let at_storage = obj
+            .directives
             .iter()
-            .map(
-                Field::from_obj_field, // Pass the indexed status to the field constructor
-            )
-            .collect::<anyhow::Result<Vec<Field>>>()
-            .context(format!("Failed parsing fields on entity {name}"))?;
+            .find(|directive| directive.name == "storage")
+            .map_or_else(
+                || at_entity.clone(),
+                |directive| at(source, directive.position),
+            );
+        let (postgres, clickhouse) =
+            parse_storage_directive(obj, &fields, &resolve_column).context(at_storage)?;
 
-        let (postgres, clickhouse) = parse_storage_directive(obj)?;
-        let cross_chain = parse_flag_directive(obj, "crossChain")?;
-        let internal = parse_flag_directive(obj, "internal")?;
-
-        Self::new(
-            name,
+        Ok(Self {
+            name: name.to_string(),
             fields,
             multi_field_indexes,
-            obj.description.clone(),
+            description: obj.description.clone(),
             postgres,
             clickhouse,
             cross_chain,
-            internal,
-        )
-        .context(format!("Failed constructing entity {name}"))
+            internal: parse_flag_directive(obj, "internal")?,
+        })
     }
+}
 
+/// The column names an `@index(fields: [...])` directive lists, each with the
+/// direction it asked for. Names are still as written — resolving them needs
+/// the entity's fields.
+fn parse_index_directive_columns(
+    directive: &Directive<'_, String>,
+) -> anyhow::Result<Vec<(String, IndexFieldDirection)>> {
+    match directive.arguments.iter().find(|(key, _)| key == "fields") {
+        Some((_, Value::List(fields))) => fields
+            .iter()
+            .map(|v| match v {
+                // Simple string: "fieldName" (default ASC)
+                Value::String(field_name) => Ok((field_name.clone(), IndexFieldDirection::Asc)),
+                // List with direction: ["fieldName", "DESC"]
+                Value::List(parts) => {
+                    if parts.len() != 2 {
+                        return Err(anyhow!(
+                            "Index field with direction must be a list of exactly 2 elements: \
+                             [\"fieldName\", \"ASC\" or \"DESC\"]. Got {} elements.",
+                            parts.len()
+                        ));
+                    }
+                    let field_name = match &parts[0] {
+                        Value::String(name) => name.clone(),
+                        _ => {
+                            return Err(anyhow!(
+                                "First element of index field must be a string field name"
+                            ))
+                        }
+                    };
+                    let direction = match &parts[1] {
+                        Value::String(dir) => match dir.to_uppercase().as_str() {
+                            "ASC" => IndexFieldDirection::Asc,
+                            "DESC" => IndexFieldDirection::Desc,
+                            _ => {
+                                return Err(anyhow!(
+                                    "Index direction must be \"ASC\" or \"DESC\", got \"{}\"",
+                                    dir
+                                ))
+                            }
+                        },
+                        _ => {
+                            return Err(anyhow!(
+                                "Second element of index field must be a string direction (\"ASC\" \
+                                 or \"DESC\")"
+                            ))
+                        }
+                    };
+                    Ok((field_name, direction))
+                }
+                _ => Err(anyhow!(
+                    "Listed index field should be a string or a list of [\"fieldName\", \"ASC\" or \
+                     \"DESC\"]"
+                )),
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .context("Failed to get fields in index"),
+        _ => Err(anyhow!(
+            "Invalid @index directive. Please ensure index has a key of fields with a list of \
+             strings matching field names in your entity. Eg. @index(fields: [\"fieldA\", \
+             \"fieldB\"]) or @index(fields: [[\"fieldA\", \"DESC\"], [\"fieldB\", \"ASC\"]])"
+        )),
+    }
+}
+
+impl Entity {
     pub fn has_storage_directive(&self) -> bool {
         self.postgres.is_some() || self.clickhouse.is_some()
     }
@@ -726,8 +939,8 @@ impl Entity {
 
     /// The scalar type of this entity's `id` field. Foreign keys that reference
     /// this entity adopt this scalar, so the id and its `_id` columns stay the
-    /// same type. `Entity::new` validates the id is a supported non-derived
-    /// scalar, so this never resolves to a relation or derived field.
+    /// same type. Parsing validates the id is a supported non-derived scalar,
+    /// so this never resolves to a relation or derived field.
     pub fn get_id_scalar(&self) -> anyhow::Result<GqlScalar> {
         let id_field = self
             .get_field("id")
@@ -819,6 +1032,61 @@ impl Entity {
     }
 }
 
+/// Checks the entity holds together as written, before any config is in play:
+/// unique field names, a usable `id`, a name Postgres can hold.
+fn validate_entity_shape(name: &str, fields: &[Field]) -> anyhow::Result<()> {
+    let mut field_names_set = HashSet::new();
+    for field in fields {
+        if !field_names_set.insert(&field.name) {
+            return Err(anyhow!(
+                "Found fields with duplicate names on Entity {name}: '{}'",
+                field.name
+            ));
+        }
+    }
+
+    // The `id` column and every foreign key that references it must share a
+    // type, and the storage/codegen layers only implement a fixed set of id
+    // scalars. Reject anything outside that set up front so the mismatch never
+    // reaches codegen.
+    if let Some(id_field) = fields.iter().find(|f| f.name == "id") {
+        match &id_field.field_type {
+            FieldType::DerivedFromField { .. } => {
+                return Err(anyhow!(
+                    "The 'id' field on entity {name} cannot be a @derivedFrom field."
+                ));
+            }
+            FieldType::RegularField { field_type, .. } => {
+                if field_type.is_optional() {
+                    return Err(anyhow!(
+                        "The 'id' field on entity {name} must be non-nullable, e.g. 'id: ID!'."
+                    ));
+                }
+                if field_type.is_array() {
+                    return Err(anyhow!("The 'id' field on entity {name} cannot be a list."));
+                }
+                match field_type.get_underlying_scalar() {
+                    GqlScalar::ID | GqlScalar::String | GqlScalar::Int | GqlScalar::BigInt(_) => {}
+                    other => {
+                        return Err(anyhow!(
+                            "The 'id' field on entity {name} has unsupported type '{other}'. An \
+                             entity id must be one of: ID, String, Int, BigInt."
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    if name.len() > 63 {
+        return Err(anyhow!(
+            "Entity name '{name}' is too long. It must be less than 64 characters."
+        ));
+    }
+
+    Ok(())
+}
+
 const STORAGE_DIRECTIVE_HINT: &str =
     "Expected args from {postgres, clickhouse}: `postgres` takes a boolean, `clickhouse` takes a \
      boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or \
@@ -867,6 +1135,8 @@ fn parse_flag_directive(obj: &ObjectType<String>, directive_name: &str) -> anyho
 /// missing-in-multi-storage-mode) happen later in `system_config.rs`.
 fn parse_storage_directive(
     obj: &ObjectType<String>,
+    fields: &[Field],
+    resolve_column: &dyn Fn(&str, &str) -> anyhow::Result<EntityColumn>,
 ) -> anyhow::Result<(Option<bool>, Option<ClickHouseEntityStorage>)> {
     let storage_directives: Vec<&Directive<'_, String>> = obj
         .directives
@@ -923,8 +1193,9 @@ fn parse_storage_directive(
             ("clickhouse", Value::Boolean(b)) => {
                 clickhouse = Some(ClickHouseEntityStorage::Enabled(*b))
             }
-            ("clickhouse", Value::Object(fields)) => {
-                let options = parse_clickhouse_table_options(&obj.name, fields)?;
+            ("clickhouse", Value::Object(arg_fields)) => {
+                let options =
+                    parse_clickhouse_table_options(&obj.name, arg_fields, fields, resolve_column)?;
                 // An options object with nothing set only enables the backend,
                 // so normalize it to the boolean form: it serializes identically
                 // to `clickhouse: true` and won't diff a stored config.
@@ -962,7 +1233,9 @@ fn parse_storage_directive(
 
 fn parse_clickhouse_table_options(
     entity_name: &str,
-    fields: &std::collections::BTreeMap<String, Value<'_, String>>,
+    arg_fields: &std::collections::BTreeMap<String, Value<'_, String>>,
+    fields: &[Field],
+    resolve_column: &dyn Fn(&str, &str) -> anyhow::Result<EntityColumn>,
 ) -> anyhow::Result<ClickHouseTableOptions> {
     let expression = |key: &str, value: &Value<'_, String>| match value {
         Value::String(expr) if !expr.trim().is_empty() => Ok(expr.trim().to_string()),
@@ -974,7 +1247,7 @@ fn parse_clickhouse_table_options(
     };
 
     let mut options = ClickHouseTableOptions::default();
-    for (key, value) in fields {
+    for (key, value) in arg_fields {
         match key.as_str() {
             "partitionBy" => options.partition_by = Some(expression(key, value)?),
             "ttl" => options.ttl = Some(expression(key, value)?),
@@ -999,7 +1272,12 @@ fn parse_clickhouse_table_options(
                         ));
                     }
                 };
-                options.order_by = Some(field_names);
+                options.order_by = Some(resolve_order_by(
+                    entity_name,
+                    fields,
+                    resolve_column,
+                    field_names,
+                )?);
             }
             "skippingIndexes" => {
                 let items = match value {
@@ -1132,75 +1410,6 @@ fn parse_clickhouse_skipping_index(
         index_type: require(index_type, "type")?,
         granularity,
     })
-}
-
-/// ClickHouse rejects Nullable and Array columns in the sorting key
-/// (`allow_nullable_key` is off by default, arrays are never allowed), and
-/// derived fields have no column at all — catch those at codegen instead of
-/// failing at table creation.
-fn validate_clickhouse_order_by_fields(
-    entity_name: &str,
-    order_by: &[String],
-    fields: &[Field],
-) -> anyhow::Result<()> {
-    let mut seen = HashSet::new();
-    for field_name in order_by {
-        if !seen.insert(field_name) {
-            return Err(anyhow!(
-                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` lists field \
-                 `{field_name}` more than once."
-            ));
-        }
-        if field_name == "id" {
-            return Err(anyhow!(
-                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` must not \
-                 list `id`: it's already the default sorting key. List only the additional fields \
-                 to sort by."
-            ));
-        }
-        let field = fields
-            .iter()
-            .find(|f| &f.name == field_name)
-            .ok_or_else(|| {
-                anyhow!(
-                    "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` \
-                     references field `{field_name}` which doesn't exist on the entity. Use the \
-                     field names as written in the schema."
-                )
-            })?;
-        if field.field_type.is_derived_from() {
-            return Err(anyhow!(
-                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` field \
-                 `{field_name}` is a @derivedFrom field, which has no column in the ClickHouse \
-                 table."
-            ));
-        }
-        if field.field_type.is_optional() {
-            return Err(anyhow!(
-                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` field \
-                 `{field_name}` is nullable, and ClickHouse doesn't allow nullable columns in the \
-                 sorting key. Make the field non-nullable to sort by it."
-            ));
-        }
-        if field.field_type.to_user_defined_field_type().is_array() {
-            return Err(anyhow!(
-                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` field \
-                 `{field_name}` is an array, and ClickHouse doesn't allow array columns in the \
-                 sorting key."
-            ));
-        }
-        if matches!(
-            field.field_type.get_underlying_scalar(),
-            GqlScalar::BigInt(_) | GqlScalar::BigDecimal(_)
-        ) {
-            return Err(anyhow!(
-                "Invalid @storage directive on `{entity_name}`. `clickhouse.orderBy` field \
-                 `{field_name}` is a BigInt/BigDecimal, which ClickHouse can store as a String \
-                 (lexicographic, not numeric ordering). Sorting by it isn't supported yet."
-            ));
-        }
-    }
-    Ok(())
 }
 
 ///  used to get the positive integers in the directives from the GraphQL schema.
@@ -1465,8 +1674,8 @@ impl Field {
         let has_single_field_index_directive = entity
             .multi_field_indexes
             .iter()
-            .filter_map(MultiFieldIndex::get_single_field_index)
-            .any(|single_field_index| single_field_index == self.name);
+            .filter_map(MultiFieldIndex::as_single)
+            .any(|column| column == &EntityColumn::Declared(self.name.clone()));
 
         has_indexed_directive || has_single_field_index_directive
     }
@@ -1547,128 +1756,24 @@ impl fmt::Display for IndexFieldDirection {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IndexField {
-    pub name: String,
+    pub column: EntityColumn,
     pub direction: IndexFieldDirection,
-}
-
-impl IndexField {
-    fn new(name: String, direction: IndexFieldDirection) -> Self {
-        Self { name, direction }
-    }
-
-    fn from_name(name: String) -> Self {
-        Self {
-            name,
-            direction: IndexFieldDirection::Asc,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MultiFieldIndex(Vec<IndexField>);
 
 impl MultiFieldIndex {
-    fn new(index_fields: Vec<IndexField>) -> Self {
-        Self(index_fields)
-    }
-
-    pub fn get_field_names(&self) -> Vec<&String> {
-        self.0.iter().map(|f| &f.name).collect()
-    }
-
     pub fn get_index_fields(&self) -> &[IndexField] {
         &self.0
     }
 
-    fn get_single_field_index(&self) -> Option<String> {
-        if self.0.len() == 1 {
-            self.0.first().map(|f| f.name.clone())
-        } else {
-            None
+    /// The single column this index is over, if it only has one.
+    fn as_single(&self) -> Option<&EntityColumn> {
+        match self.0.as_slice() {
+            [only] => Some(&only.column),
+            _ => None,
         }
-    }
-
-    pub fn get_multi_field_index(&self) -> Option<&Self> {
-        if self.0.len() > 1 {
-            Some(self)
-        } else {
-            None
-        }
-    }
-
-    fn validate_field_name_exists_or_is_allowed(
-        self,
-        fields: &[Field],
-        allowed_names: &[String],
-    ) -> anyhow::Result<Self> {
-        for index_field in &self.0 {
-            let field_exists = fields.iter().any(|f| f.name == index_field.name);
-            if !field_exists && !allowed_names.contains(&index_field.name) {
-                return Err(anyhow!(
-                    "Index error: Field '{}' does not exist in entity, please remove it from the \
-                     `@index` directive.",
-                    index_field.name,
-                ));
-            }
-        }
-        Ok(self)
-    }
-
-    fn validate_no_duplicates(self, fields: &[Field]) -> anyhow::Result<Self> {
-        let mut field_names_set = HashSet::new();
-        for index_field in &self.0 {
-            //Check for duplicate fields inside multi field index
-            let is_new_insert = field_names_set.insert(&index_field.name);
-            if !is_new_insert {
-                return Err(anyhow!(
-                    "Field {} is listed multiple times in index",
-                    index_field.name
-                ));
-            }
-        }
-
-        //Check for @index directives on the defined field
-        if let Some(single_field_index) = self.get_single_field_index() {
-            if let Some(field) = fields.iter().find(|f| f.name == single_field_index) {
-                if field.field_type.has_indexed_directive() {
-                    return Err(anyhow!(
-                        "The field '{}' is marked as an index. Please either remove the @index \
-                         directive on the field, or the @index(fields: [\"{}\"]) directive on the \
-                         entity",
-                        field.name,
-                        field.name
-                    ));
-                }
-            }
-        }
-        Ok(self)
-    }
-
-    fn validate_no_index_on_derived_field(self, fields: &[Field]) -> anyhow::Result<Self> {
-        for index_field in &self.0 {
-            if let Some(field) = fields.iter().find(|f| f.name == index_field.name) {
-                if field.field_type.is_derived_from() {
-                    return Err(anyhow!(
-                        "Index error: Field '{}' is a @derivedFrom field and cannot be indexed, \
-                         please remove it from the `@index` directive.",
-                        index_field.name
-                    ));
-                }
-            }
-        }
-        Ok(self)
-    }
-
-    fn validate_no_index_on_id_field(self) -> anyhow::Result<Self> {
-        if let Some(single_field_index) = self.get_single_field_index() {
-            if single_field_index == "id" {
-                return Err(anyhow!(
-                    "Index error: Field 'id' is indexed by default in all entities, please remove \
-                     the `@index` directive on it.",
-                ));
-            }
-        }
-        Ok(self)
     }
 }
 
@@ -2197,8 +2302,8 @@ impl GqlScalar {
 mod tests {
     use super::{
         anyhow, ClickHouseEntityStorage, ClickHouseSkippingIndex, ClickHouseTableOptions, Entity,
-        Field, FieldType, GqlScalar, GraphQLEnum, IndexFieldDirection, Schema,
-        UserDefinedFieldType,
+        EntityColumn, Field, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType,
+        DEFAULT_SCHEMA_PATH,
     };
     use crate::config_parsing::field_types::Primitive as PGPrimitive;
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
@@ -2307,7 +2412,7 @@ type NumericEntity {
   id: Int!
 }
         "#;
-        let schema = Schema::from_string(schema_str).unwrap();
+        let schema = Schema::from_string(schema_str, true).unwrap();
         let referencer = schema.entities.get("Referencer").unwrap();
 
         // Foreign keys render as the concrete id scalar, never the `id` alias:
@@ -2395,7 +2500,8 @@ type NumericEntity {
         );
         let schema_doc = graphql_parser::schema::parse_schema::<String>(&schema_string).unwrap();
 
-        let schema = Schema::from_document(schema_doc).expect("bad schema");
+        let schema =
+            Schema::from_document(schema_doc, true, DEFAULT_SCHEMA_PATH).expect("bad schema");
 
         let test_field = schema
             .entities
@@ -2518,7 +2624,7 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
         let field = entity.get_field("name").unwrap();
         let pg_field = field
@@ -2552,7 +2658,7 @@ type NumericEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
 
         // A foreign key adopts the referenced entity's id type. A String-id
@@ -2593,7 +2699,7 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
         let field = entity.get_field("tags").unwrap();
         let pg_field = field
@@ -2623,7 +2729,7 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
         let field = entity.get_field("status").unwrap();
         let pg_field = field
@@ -2645,7 +2751,7 @@ type TestEntity {
 type user { id: ID! }
 type User { id: ID! }
         "#;
-        let err = Schema::from_string(schema_str)
+        let err = Schema::from_string(schema_str, true)
             .expect_err("expected a capitalized entity-name collision error");
         let message = format!("{err:#}");
         assert!(
@@ -2669,7 +2775,7 @@ type Child {
   parentId: Int!
 }
         "#;
-        let err = Schema::from_string(schema_str)
+        let err = Schema::from_string(schema_str, true)
             .expect_err("expected a derivedFrom id-type mismatch error");
         let message = format!("{err:#}");
         assert!(
@@ -2712,7 +2818,7 @@ type StringChild {
   parentId: ID!
 }
         "#;
-        let schema = Schema::from_string(schema_str).unwrap();
+        let schema = Schema::from_string(schema_str, true).unwrap();
         assert_eq!(schema.entities.len(), 6);
     }
 
@@ -2730,7 +2836,7 @@ type NumericChild {
   parent: NumericParent!
 }
         "#;
-        let schema = Schema::from_string(schema_str).unwrap();
+        let schema = Schema::from_string(schema_str, true).unwrap();
         assert_eq!(schema.entities.len(), 2);
     }
 
@@ -2740,7 +2846,7 @@ type NumericChild {
 type user { id: ID! }
 type post { id: ID! }
         "#;
-        let schema = Schema::from_string(schema_str).unwrap();
+        let schema = Schema::from_string(schema_str, true).unwrap();
         assert_eq!(schema.entities.len(), 2);
     }
 
@@ -2762,7 +2868,8 @@ type post { id: ID! }
     "#;
 
         let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
-        let schema = Schema::from_document(gql_doc).expect("Failed to create schema");
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH)
+            .expect("Failed to create schema");
 
         // Verify that the schema contains the entity and fields as expected
         let entity = schema.entities.get("Entity").expect("Entity not found");
@@ -2967,34 +3074,6 @@ type post { id: ID! }
     }
 
     #[test]
-    fn multifield_index_should_retain_original_order() {
-        let schema_str = r#"
-        type Entity 
-        @index(fields: ["a", "b"])
-        @index(fields: ["b", "a"])
-        {
-            id: ID!
-            a: String!
-            b: String!
-        }
-        "#;
-
-        let gql_doc = setup_document(schema_str).expect("Failed to parse schema string");
-        let schema = Schema::from_document(gql_doc).expect("Failed to parse schema from doc");
-        let entity = schema.entities.get("Entity").expect("Entity not found");
-
-        assert_eq!(entity.multi_field_indexes.len(), 2);
-        assert_eq!(
-            entity.multi_field_indexes[0].get_field_names(),
-            vec![&"a".to_string(), &"b".to_string()]
-        );
-        assert_eq!(
-            entity.multi_field_indexes[1].get_field_names(),
-            vec![&"b".to_string(), &"a".to_string()]
-        );
-    }
-
-    #[test]
     fn test_fields_preserve_schema_order() {
         let schema_str = r#"
 type TestEntity {
@@ -3005,7 +3084,7 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
 
         let field_names: Vec<&str> = entity
@@ -3034,7 +3113,7 @@ type OtherEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
 
         let test_entity = schema.entities.get("TestEntity").unwrap();
         let test_field_names: Vec<&str> = test_entity
@@ -3066,7 +3145,7 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
 
         // Test existing fields
@@ -3080,138 +3159,6 @@ type TestEntity {
         // Verify field content
         let name_field = entity.get_field("name").unwrap();
         assert_eq!(name_field.name, "name");
-    }
-
-    #[test]
-    fn test_index_with_sort_direction_desc() {
-        let schema_str = r#"
-type TestEntity
-  @index(fields: [["tokenId", "DESC"], ["collection", "ASC"]]) {
-  id: ID!
-  tokenId: BigInt!
-  collection: String!
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let parsed_entity = Entity::from_object(&first_entity_schema).unwrap();
-
-        assert_eq!(parsed_entity.multi_field_indexes.len(), 1);
-        let index = &parsed_entity.multi_field_indexes[0];
-        let fields = index.get_index_fields();
-        assert_eq!(fields.len(), 2);
-        assert_eq!(fields[0].name, "tokenId");
-        assert_eq!(fields[0].direction, IndexFieldDirection::Desc);
-        assert_eq!(fields[1].name, "collection");
-        assert_eq!(fields[1].direction, IndexFieldDirection::Asc);
-    }
-
-    #[test]
-    fn test_index_with_mixed_string_and_direction() {
-        let schema_str = r#"
-type TestEntity
-  @index(fields: ["tokenId", ["collection", "DESC"]]) {
-  id: ID!
-  tokenId: BigInt!
-  collection: String!
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let parsed_entity = Entity::from_object(&first_entity_schema).unwrap();
-
-        assert_eq!(parsed_entity.multi_field_indexes.len(), 1);
-        let index = &parsed_entity.multi_field_indexes[0];
-        let fields = index.get_index_fields();
-        assert_eq!(fields.len(), 2);
-        assert_eq!(fields[0].name, "tokenId");
-        assert_eq!(fields[0].direction, IndexFieldDirection::Asc);
-        assert_eq!(fields[1].name, "collection");
-        assert_eq!(fields[1].direction, IndexFieldDirection::Desc);
-    }
-
-    #[test]
-    fn test_index_plain_strings_default_to_asc() {
-        let schema_str = r#"
-type TestEntity
-  @index(fields: ["tokenId", "collection"]) {
-  id: ID!
-  tokenId: BigInt!
-  collection: String!
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let parsed_entity = Entity::from_object(&first_entity_schema).unwrap();
-
-        assert_eq!(parsed_entity.multi_field_indexes.len(), 1);
-        let index = &parsed_entity.multi_field_indexes[0];
-        let fields = index.get_index_fields();
-        assert_eq!(fields.len(), 2);
-        assert_eq!(fields[0].direction, IndexFieldDirection::Asc);
-        assert_eq!(fields[1].direction, IndexFieldDirection::Asc);
-    }
-
-    #[test]
-    fn test_get_composite_indexes_with_direction() {
-        let schema_str = r#"
-type TestEntity
-  @index(fields: [["tokenId", "DESC"], "collection"]) {
-  id: ID!
-  tokenId: BigInt!
-  collection: String!
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let parsed_entity = Entity::from_object(&first_entity_schema).unwrap();
-
-        let composite_indexes = parsed_entity.get_composite_indexes();
-        assert_eq!(composite_indexes.len(), 1);
-        assert_eq!(composite_indexes[0].len(), 2);
-        assert_eq!(composite_indexes[0][0].name, "tokenId");
-        assert_eq!(composite_indexes[0][0].direction, IndexFieldDirection::Desc);
-        assert_eq!(composite_indexes[0][1].name, "collection");
-        assert_eq!(composite_indexes[0][1].direction, IndexFieldDirection::Asc);
-    }
-
-    #[test]
-    fn test_index_case_insensitive_direction() {
-        let schema_str = r#"
-type TestEntity
-  @index(fields: [["tokenId", "desc"], ["collection", "asc"]]) {
-  id: ID!
-  tokenId: BigInt!
-  collection: String!
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let parsed_entity = Entity::from_object(&first_entity_schema).unwrap();
-
-        let index = &parsed_entity.multi_field_indexes[0];
-        let fields = index.get_index_fields();
-        assert_eq!(fields[0].direction, IndexFieldDirection::Desc);
-        assert_eq!(fields[1].direction, IndexFieldDirection::Asc);
-    }
-
-    #[test]
-    fn test_single_field_index_with_direction() {
-        let schema_str = r#"
-type TestEntity
-  @index(fields: [["tokenId", "DESC"]]) {
-  id: ID!
-  tokenId: BigInt!
-}
-        "#;
-        let first_entity_schema = get_first_entity_from_string(schema_str);
-        let parsed_entity = Entity::from_object(&first_entity_schema).unwrap();
-
-        assert_eq!(parsed_entity.multi_field_indexes.len(), 1);
-        let index = &parsed_entity.multi_field_indexes[0];
-        let fields = index.get_index_fields();
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].name, "tokenId");
-        assert_eq!(fields[0].direction, IndexFieldDirection::Desc);
-
-        // Single-field index should not appear in composite indexes
-        let composite = parsed_entity.get_composite_indexes();
-        assert_eq!(composite.len(), 0);
     }
 
     #[test]
@@ -3240,7 +3187,7 @@ enum Status {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema = Schema::from_document(gql_doc).unwrap();
+        let schema = Schema::from_document(gql_doc, true, DEFAULT_SCHEMA_PATH).unwrap();
 
         let user = schema.entities.get("User").unwrap();
         assert_eq!(user.description.as_deref(), Some("A user of the protocol"));
@@ -3278,7 +3225,12 @@ enum Status {
         let schema_str = r#"
 type TestEntity { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(
             (
                 entity.postgres,
@@ -3294,7 +3246,12 @@ type TestEntity { id: ID! }
         let schema_str = r#"
 type TestEntity @storage(postgres: true) { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(
             (
                 entity.postgres,
@@ -3310,7 +3267,12 @@ type TestEntity @storage(postgres: true) { id: ID! }
         let schema_str = r#"
 type TestEntity @storage(postgres: true, clickhouse: true) { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(
             (entity.postgres, entity.clickhouse),
             (Some(true), Some(ClickHouseEntityStorage::Enabled(true)))
@@ -3329,7 +3291,12 @@ type TestEntity @storage(clickhouse: {partitionBy: "toYYYYMM(timestamp)"}) {
   timestamp: Timestamp!
 }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(
             entity.clickhouse,
             Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
@@ -3346,7 +3313,12 @@ type TestEntity @storage(clickhouse: {partitionBy: "toYYYYMM(timestamp)"}) {
         let schema_str = r#"
 type TestEntity @storage(clickhouse: {}) { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         let clickhouse = entity.clickhouse.unwrap();
         // Empty options normalize to the boolean form so they don't diff a
         // config persisted as `clickhouse: true`.
@@ -3366,12 +3338,20 @@ type TestEntity @storage(clickhouse: {orderBy: ["token", "timestamp"]}) {
 }
 type Token { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(
             entity.clickhouse,
             Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
                 partition_by: None,
-                order_by: Some(vec!["token".to_string(), "timestamp".to_string()]),
+                order_by: Some(vec![
+                    EntityColumn::Declared("token".to_string()),
+                    EntityColumn::Declared("timestamp".to_string()),
+                ]),
                 ttl: None,
                 skipping_indexes: None,
             }))
@@ -3390,7 +3370,12 @@ type TestEntity @storage(clickhouse: {skippingIndexes: [
   amount: BigInt!
 }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(
             entity.clickhouse,
             Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
@@ -3416,8 +3401,12 @@ type TestEntity @storage(clickhouse: {skippingIndexes: [
     #[test]
     fn storage_directive_clickhouse_skipping_indexes_errors() {
         let assert_error_contains = |schema_str: &str, expected: &str| {
-            let err = Entity::from_object(&get_first_entity_from_string(schema_str))
-                .expect_err(&format!("expected error containing '{expected}'"));
+            let err = Entity::from_object(
+                &get_first_entity_from_string(schema_str),
+                true,
+                DEFAULT_SCHEMA_PATH,
+            )
+            .expect_err(&format!("expected error containing '{expected}'"));
             let message = format!("{err:#}");
             assert!(
                 message.contains(expected),
@@ -3469,7 +3458,12 @@ type TestEntity @storage(clickhouse: {skippingIndexes: [
         let schema_str = r#"
 type TestEntity { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(entity.internal, false);
     }
 
@@ -3478,15 +3472,24 @@ type TestEntity { id: ID! }
         let schema_str = r#"
 type TestEntity @internal { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = Entity::from_object(
+            &get_first_entity_from_string(schema_str),
+            true,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         assert_eq!(entity.internal, true);
     }
 
     #[test]
     fn internal_directive_errors() {
         let assert_error_contains = |schema_str: &str, expected: &str| {
-            let err = Entity::from_object(&get_first_entity_from_string(schema_str))
-                .expect_err(&format!("expected error containing '{expected}'"));
+            let err = Entity::from_object(
+                &get_first_entity_from_string(schema_str),
+                true,
+                DEFAULT_SCHEMA_PATH,
+            )
+            .expect_err(&format!("expected error containing '{expected}'"));
             let message = format!("{err:#}");
             assert!(
                 message.contains(expected),
@@ -3507,8 +3510,12 @@ type TestEntity @internal { id: ID! }
     #[test]
     fn storage_directive_clickhouse_options_errors() {
         let assert_error_contains = |schema_str: &str, expected: &str| {
-            let err = Entity::from_object(&get_first_entity_from_string(schema_str))
-                .expect_err(&format!("expected error containing '{expected}'"));
+            let err = Entity::from_object(
+                &get_first_entity_from_string(schema_str),
+                true,
+                DEFAULT_SCHEMA_PATH,
+            )
+            .expect_err(&format!("expected error containing '{expected}'"));
             let message = format!("{err:#}");
             assert!(
                 message.contains(expected),
@@ -3543,88 +3550,6 @@ type TestEntity @internal { id: ID! }
         assert_error_contains(
             r#"type TestEntity @storage(postgres: {default: true}) { id: ID! }"#,
             "`postgres` must be a boolean",
-        );
-    }
-
-    #[test]
-    fn storage_directive_clickhouse_order_by_field_validation() {
-        let assert_error_contains = |schema_str: &str, expected: &str| {
-            let err = Entity::from_object(&get_first_entity_from_string(schema_str))
-                .expect_err(&format!("expected error containing '{expected}'"));
-            let message = format!("{err:#}");
-            assert!(
-                message.contains(expected),
-                "expected error containing '{expected}', got: {message}"
-            );
-        };
-
-        assert_error_contains(
-            r#"
-type TestEntity @storage(clickhouse: {orderBy: ["missing"]}) { id: ID! }
-            "#,
-            "references field `missing` which doesn't exist",
-        );
-        assert_error_contains(
-            r#"
-type TestEntity @storage(clickhouse: {orderBy: ["timestamp", "timestamp"]}) {
-  id: ID!
-  timestamp: Timestamp!
-}
-            "#,
-            "lists field `timestamp` more than once",
-        );
-        assert_error_contains(
-            r#"
-type TestEntity @storage(clickhouse: {orderBy: ["timestamp"]}) {
-  id: ID!
-  timestamp: Timestamp
-}
-            "#,
-            "field `timestamp` is nullable",
-        );
-        assert_error_contains(
-            r#"
-type TestEntity @storage(clickhouse: {orderBy: ["tags"]}) {
-  id: ID!
-  tags: [String!]!
-}
-            "#,
-            "field `tags` is an array",
-        );
-        assert_error_contains(
-            r#"
-type TestEntity @storage(clickhouse: {orderBy: ["tokens"]}) {
-  id: ID!
-  tokens: [Token!]! @derivedFrom(field: "owner")
-}
-type Token {
-  id: ID!
-  owner: TestEntity!
-}
-            "#,
-            "field `tokens` is a @derivedFrom field",
-        );
-        assert_error_contains(
-            r#"type TestEntity @storage(clickhouse: {orderBy: ["id"]}) { id: ID! }"#,
-            "`clickhouse.orderBy` must not list `id`",
-        );
-        assert_error_contains(
-            r#"
-type TestEntity @storage(clickhouse: {orderBy: ["amount"]}) {
-  id: ID!
-  amount: BigInt!
-}
-            "#,
-            "field `amount` is a BigInt/BigDecimal",
-        );
-        assert_error_contains(
-            r#"
-type TestEntity @storage(clickhouse: {orderBy: ["price"]}) {
-  id: ID!
-  price: BigDecimal!
-}
-            "#,
-            "field `price` is a BigInt/BigDecimal",
         );
     }
 }
