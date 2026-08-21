@@ -854,7 +854,8 @@ impl BlockStore {
             u64::try_from(to_slot_exclusive).context("SVM coverage end is negative")?;
         if from >= to_exclusive {
             anyhow::bail!(
-                "SVM coverage must advance: from_slot={from_slot}, to_slot_exclusive={to_slot_exclusive}"
+                "SVM coverage must advance: from_slot={from_slot}, \
+                 to_slot_exclusive={to_slot_exclusive}"
             );
         }
 

@@ -74,7 +74,6 @@ type rec t = {
     ~scope: Internal.chainScope,
   ) => promise<array<{"id": string, "output": JSON.t}>>,
   metric: string => promise<array<metric>>,
-  // The run's schema and client, for a test that reads SQL directly.
   pg: pg,
   // Quiesce the run: its loops keep driving the database otherwise, and the
   // schema is dropped out from under them at the end of `run`.

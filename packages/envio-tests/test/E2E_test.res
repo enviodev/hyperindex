@@ -77,7 +77,8 @@ let noRollbackMultichainScenario = makeScenario(
   ~chains=chainYaml(100) ++ chainYaml(1337),
 )
 
-// The `storage` label on the load metrics is whichever storage answered.
+// Loads are answered by Postgres on both backends — the ClickHouse leg only
+// adds a sink on the write path — so the label doesn't vary with the backend.
 let storageName = "postgres"
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]

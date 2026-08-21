@@ -66,14 +66,13 @@ describe("Sparse-density target overflow", () => {
       // A new block arrives. The chain is one block behind the head and must
       // query it — on the broken version the wrapped target block leaves every
       // partition out of range and the chain only ever waits.
-      let attempts = ref(0)
-      while sourceMock.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 2000 {
-        attempts := attempts.contents + 1
-        if sourceMock.pendingHeightCalls() > 0 {
-          sourceMock.resolveGetHeightOrThrow(30_001)
-        }
-        await Utils.delay(1)
-      }
+      await indexer.settleUntil(
+        () => sourceMock.pendingHeightCalls() > 0,
+        ~message="the next height poll",
+      )
+      sourceMock.resolveGetHeightOrThrow(30_001)
+      await Scenario.waitQuery(~indexer, ~source=sourceMock)
+
       t.expect(
         sourceMock.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
         ~message="the chain should query the new head block despite its low event density",

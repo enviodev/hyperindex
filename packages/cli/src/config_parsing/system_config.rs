@@ -843,6 +843,44 @@ pub fn validate_cross_chain_relationships(
     ))
 }
 
+/// An @internal entity has no GraphQL surface, so a relationship from an
+/// exposed entity to it cannot be served: an object reference would break
+/// Hasura relationship creation against the untracked table, and a
+/// @derivedFrom field would silently vanish from the API. Reject both at
+/// codegen. References from @internal entities are fine — nothing is exposed
+/// on their side.
+pub fn validate_internal_relationships(schema: &Schema) -> anyhow::Result<()> {
+    let mut entities: Vec<&Entity> = schema.entities.values().collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut invalid: Vec<String> = vec![];
+    for entity in &entities {
+        if entity.internal {
+            continue;
+        }
+        for (field, related) in entity.get_related_entities(schema)? {
+            if related.internal {
+                invalid.push(format!(
+                    "  - `{}`.`{}` references `{}`, which is @internal.",
+                    entity.name, field.name, related.name
+                ));
+            }
+        }
+    }
+
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "Schema validation failed:\n\nEntities exposed through the GraphQL API reference \
+         @internal entities:\n{}\n\nAn @internal entity is not exposed through the GraphQL API, \
+         so the relationship cannot be served. Fixes:\n  - Mark the referencing entities \
+         @internal too, or\n  - Replace the reference with a plain id field (e.g. `secretId: \
+         String!`), or\n  - Remove @internal from the referenced entities.",
+        invalid.join("\n")
+    ))
+}
+
 /// Per-chain entities get a chain-id field appended, so no schema field may
 /// claim its name. Both spellings are reserved whatever the backends and their
 /// `column_name_format` are, so the name a user may give a field never depends
@@ -1049,6 +1087,7 @@ impl SystemConfig {
         validate_cross_chain_directives(default_cross_chain, &schema)?;
         validate_chain_id_field_names(&schema, default_cross_chain)?;
         validate_cross_chain_relationships(&schema, default_cross_chain)?;
+        validate_internal_relationships(&schema)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
         let final_project_paths = source.project_paths().clone();
@@ -1414,17 +1453,9 @@ impl SystemConfig {
                                     .with_context(|| {
                                         format!("Layout for instruction '{}'", instr.name)
                                     })?;
-                                let fs = instr.field_selection.as_ref();
-                                let selected_transaction_fields =
-                                    resolve_svm_transaction_fields(fs);
-                                let selected_block_fields = resolve_svm_block_fields(fs);
-                                let include_logs = fs.and_then(|f| f.log_fields).unwrap_or(false);
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,
-                                    selected_transaction_fields,
-                                    selected_block_fields,
-                                    include_logs,
                                     account_filters: instr
                                         .account_filters
                                         .as_ref()
@@ -1473,7 +1504,7 @@ impl SystemConfig {
                     }
 
                     let chain = Chain {
-                        id: 0, //network.id,
+                        id: network.id.to_u64(),
                         skip: network.skip.unwrap_or(false),
                         start_block: network.start_block,
                         end_block: network.end_block,
@@ -2305,45 +2336,6 @@ pub struct SvmAccountFilter {
     pub values: Vec<String>,
 }
 
-/// Resolve an instruction's field selection into the selected transaction-field
-/// names (camelCase). The listed `transaction_fields` are deduplicated in
-/// declared order, then `token_balance_fields` appends `tokenBalances`.
-fn resolve_svm_transaction_fields(
-    fs: Option<&human_config::svm::SvmFieldSelection>,
-) -> Vec<String> {
-    let mut selected: Vec<String> = Vec::new();
-    let Some(fs) = fs else {
-        return selected;
-    };
-    for field in fs.transaction_fields.iter().flatten() {
-        let name = field.to_string();
-        if !selected.contains(&name) {
-            selected.push(name);
-        }
-    }
-    if fs.token_balance_fields == Some(true) {
-        selected.push("tokenBalances".to_string());
-    }
-    selected
-}
-
-/// Resolve an instruction's selected block fields (camelCase), in declared
-/// order. `slot`/`time`/`hash` are always included by the runtime, so they're
-/// not returned here (they aren't even selectable — see `SvmBlockField`).
-fn resolve_svm_block_fields(fs: Option<&human_config::svm::SvmFieldSelection>) -> Vec<String> {
-    let mut selected: Vec<String> = Vec::new();
-    let Some(fs) = fs else {
-        return selected;
-    };
-    for field in fs.block_fields.iter().flatten() {
-        let name = field.to_string();
-        if !selected.contains(&name) {
-            selected.push(name);
-        }
-    }
-    selected
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
@@ -2353,13 +2345,6 @@ pub struct SvmEventKind {
     /// router precomputes a per-program ordering on this so dispatch tries
     /// longest first.
     pub discriminator_byte_len: u8,
-    /// Selected parent-transaction fields (camelCase names matching the public
-    /// `svmTransaction` shape, incl. `tokenBalances`). Empty = no transaction.
-    pub selected_transaction_fields: Vec<String>,
-    /// Selected block fields (camelCase, matching `instruction.block`), excluding
-    /// the always-included `slot`. Empty = only `slot`.
-    pub selected_block_fields: Vec<String>,
-    pub include_logs: bool,
     /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
     /// AND across positions. An empty outer list means "no account filter".
     pub account_filters: Vec<Vec<SvmAccountFilter>>,
@@ -3010,6 +2995,43 @@ mod test {
     }
 
     #[test]
+    fn svm_chain_ids_resolve_labels_and_support_multiple_chains() {
+        use crate::config_parsing::human_config::svm::{
+            SOLANA_DEVNET_CHAIN_ID, SOLANA_MAINNET_CHAIN_ID,
+        };
+
+        let schema = "type Foo @entity { id: ID! }";
+        let program_block = |name: &str| {
+            format!(
+                r#"    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: {name}
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: UpdateMetadataAccountV2
+              discriminator: "0x0f"
+"#
+            )
+        };
+        // Labels resolve to the HOS-1682 ids, and two SVM chains coexist in
+        // one config: the old hardcoded 0 made the second insert collide.
+        let yaml = format!(
+            "\nname: svm-chain-id\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+             0\n{}  - id: solana-devnet\n    start_block: 0\n{}",
+            program_block("TokenMetadata"),
+            program_block("TokenMetadataDevnet"),
+        );
+        let config =
+            SystemConfig::parse_yaml(&yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("svm config");
+        let mut ids: Vec<_> = config.chains.keys().copied().collect();
+        ids.sort();
+        assert_eq!(ids, vec![SOLANA_MAINNET_CHAIN_ID, SOLANA_DEVNET_CHAIN_ID]);
+    }
+
+    #[test]
     fn in_memory_fuel_abi_matches_filesystem_public_config() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let project_paths =
@@ -3440,6 +3462,7 @@ mod test {
                 postgres,
                 clickhouse: clickhouse.map(ClickHouseEntityStorage::Enabled),
                 cross_chain: false,
+                internal: false,
             }
         }
 
@@ -3567,6 +3590,79 @@ mod test {
                 entity("Order", None, Some(true)),
             ]);
             assert!(validate_relationship_storage(&multi(false, false), &schema).is_ok());
+        }
+    }
+
+    // --- validate_internal_relationships: no public -> @internal references ---
+
+    mod internal_relationship_validation {
+        use super::super::validate_internal_relationships;
+        use crate::config_parsing::entity_parsing::Schema;
+
+        #[test]
+        fn public_reference_to_internal_entity_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Trader {
+  id: ID!
+  secret: Secret!
+}
+type Secret @internal {
+  id: ID!
+}"#,
+            )
+            .unwrap();
+            let err = validate_internal_relationships(&schema)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("`Trader`.`secret` references `Secret`, which is @internal."),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn public_derived_from_internal_entity_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Trader {
+  id: ID!
+  orders: [Order!]! @derivedFrom(field: "trader")
+}
+type Order @internal {
+  id: ID!
+  trader: Trader!
+}"#,
+            )
+            .unwrap();
+            let err = validate_internal_relationships(&schema)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("`Trader`.`orders` references `Order`, which is @internal."),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn internal_references_are_allowed() {
+            let schema = Schema::from_string(
+                r#"
+type PublicUser {
+  id: ID!
+}
+type SecretA @internal {
+  id: ID!
+  user: PublicUser!
+  other: SecretB!
+}
+type SecretB @internal {
+  id: ID!
+  entries: [SecretA!]! @derivedFrom(field: "other")
+}"#,
+            )
+            .unwrap();
+            assert!(validate_internal_relationships(&schema).is_ok());
         }
     }
 
@@ -3767,12 +3863,6 @@ type Foo {
             assert!(matches!(token_metadata.abi, Abi::Svm(_)));
             assert_eq!(token_metadata.events.len(), 2);
 
-            let to_strings = |fields: &[&str]| {
-                fields
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<String>>()
-            };
             let kinds: Vec<_> = token_metadata
                 .events
                 .iter()
@@ -3781,8 +3871,6 @@ type Foo {
                         e.name.as_str(),
                         k.discriminator.as_deref(),
                         k.discriminator_byte_len,
-                        k.selected_transaction_fields.clone(),
-                        k.include_logs,
                         k.account_filters.len(),
                     ),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
@@ -3791,22 +3879,8 @@ type Foo {
             assert_eq!(
                 kinds,
                 vec![
-                    (
-                        "CreateMetadataAccountV3",
-                        Some("0x21"),
-                        1,
-                        to_strings(&[]),
-                        false,
-                        0
-                    ),
-                    (
-                        "UpdateMetadataAccountV2",
-                        Some("0x0f"),
-                        1,
-                        to_strings(&["signature"]),
-                        false,
-                        1
-                    ),
+                    ("CreateMetadataAccountV3", Some("0x21"), 1, 0),
+                    ("UpdateMetadataAccountV2", Some("0x0f"), 1, 1),
                 ],
             );
 
