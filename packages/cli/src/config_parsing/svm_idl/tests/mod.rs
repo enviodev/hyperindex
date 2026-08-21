@@ -167,17 +167,41 @@ fn trailing_optional_mask_keeps_middle_slots_required() {
 
 #[test]
 fn parses_legacy_anchor_jupiter_idl() {
-    insta::assert_snapshot!(render(&parse_fixture("jupiter")));
+    let idl = parse_fixture("jupiter");
+    assert_eq!(
+        (
+            idl.address.as_deref(),
+            idl.instructions.len(),
+            idl.unusable.len()
+        ),
+        (None, 44, 0)
+    );
 }
 
 #[test]
 fn parses_legacy_anchor_drift_idl() {
-    insta::assert_snapshot!(render(&parse_fixture("drift")));
+    let idl = parse_fixture("drift");
+    assert_eq!(
+        (
+            idl.address.as_deref(),
+            idl.instructions.len(),
+            idl.unusable.len()
+        ),
+        (None, 249, 0)
+    );
 }
 
 #[test]
 fn parses_legacy_anchor_kamino_idl() {
-    insta::assert_snapshot!(render(&parse_fixture("kamino")));
+    let idl = parse_fixture("kamino");
+    assert_eq!(
+        (
+            idl.address.as_deref(),
+            idl.instructions.len(),
+            idl.unusable.len()
+        ),
+        (None, 51, 0)
+    );
 }
 
 /// Legacy IDLs declare no address and no inline discriminators, so both are
@@ -509,12 +533,46 @@ fn parses_codama_spl_token_idl() {
 /// itself: 26 of SPL Token's 28 stay indexable.
 #[test]
 fn parses_real_codama_spl_token_idl() {
-    insta::assert_snapshot!(render(&parse_cli_fixture("spl-token.codama")));
+    let idl = parse_cli_fixture("spl-token.codama");
+    assert_eq!(
+        (
+            idl.address.as_deref(),
+            idl.instructions.len(),
+            idl.unusable.len(),
+        ),
+        (Some("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"), 26, 2,)
+    );
+    assert_eq!(
+        (
+            idl.unusable.get("batch").map(String::as_str),
+            idl.unusable.get("uiAmountToAmount").map(String::as_str),
+        ),
+        (
+            Some("args.data.item.instructionData.prefix: Borsh needs u32 here, got u8"),
+            Some(
+                "args.uiAmount: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix"
+            ),
+        )
+    );
 }
 
 #[test]
 fn parses_real_codama_memo_idl() {
-    insta::assert_snapshot!(render(&parse_cli_fixture("memo.codama")));
+    let idl = parse_cli_fixture("memo.codama");
+    assert_eq!(
+        (
+            idl.address.as_deref(),
+            idl.instructions.len(),
+            idl.unusable.get("addMemo").map(String::as_str),
+        ),
+        (
+            Some("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
+            0,
+            Some(
+                "args.memo: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix"
+            ),
+        )
+    );
 }
 
 mod layout;

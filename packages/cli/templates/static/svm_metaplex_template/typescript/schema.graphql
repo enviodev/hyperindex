@@ -2,9 +2,6 @@ type TokenMetadataAccount {
   id: ID!
   mint: String!
   updateAuthority: String
-  name: String
-  symbol: String
-  uri: String
   lastUpdatedSlot: Int!
   updateCount: Int!
   createdAtSlot: Int!

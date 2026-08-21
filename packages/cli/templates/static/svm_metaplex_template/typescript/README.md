@@ -22,7 +22,7 @@ Open the GraphQL playground at `http://localhost:8080` and query:
 ```graphql
 {
   TokenMetadataAccount(limit: 5, order_by: {lastUpdatedSlot: desc}) {
-    id mint name symbol uri updateAuthority updateCount lastUpdatedSlot
+    id mint updateAuthority updateCount lastUpdatedSlot
   }
   ProgramStats { id totalInstructions createCount updateCount }
 }
@@ -35,6 +35,6 @@ Open the GraphQL playground at `http://localhost:8080` and query:
 - Pointing `idl:` at `idls/token-metadata.codama.json` for layouts and
   discriminators. Register `indexer.onInstruction` for the instructions to
   handle, and select payload with `fields`.
-- Reading `instruction.args` and `instruction.accounts.<name>.address`.
+- Reading `instruction.accounts.<name>.address`.
 - Persisting per-instruction state to a typed entity (`TokenMetadataAccount`)
   and a counter (`ProgramStats`).

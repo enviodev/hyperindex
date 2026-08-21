@@ -107,7 +107,9 @@ impl Contract for SelectedContract {
     }
 
     fn add_network(&mut self) -> Result<()> {
-        Err(anyhow!("Fuel indexers support a single network"))
+        Err(anyhow!(
+            "The Fuel init flow does not support adding another network"
+        ))
     }
 }
 
