@@ -136,6 +136,12 @@ type Token @storage(clickhouse: {orderBy: ["amount"]}) {
     )
   })
 
+  it("Rejects a BigDecimal whose scale overflows its precision", t => {
+    t.expect(parseError(schema("BigDecimal", " @config(precision: 10, scale: 20)"))).toBe(
+      "Config parse error: Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigDecimal that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N)` with N <= 38 to the BigDecimal it stores so it sorts as a numeric Decimal.",
+    )
+  })
+
   it("Sorts by a BigInt that fits a Decimal", t => {
     let config = parse(schema("BigInt", " @config(precision: 38)"))
 

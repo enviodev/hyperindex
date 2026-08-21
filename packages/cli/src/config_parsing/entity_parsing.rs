@@ -2378,7 +2378,8 @@ impl GqlScalar {
 mod tests {
     use super::{
         anyhow, ClickHouseEntityStorage, ClickHouseSkippingIndex, ClickHouseTableOptions, Entity,
-        Field, FieldType, GqlScalar, GraphQLEnum, ParsedSchema, Schema, UserDefinedFieldType,
+        Field, FieldType, GqlScalar, GraphQLEnum, ParsedEntity, ParsedSchema, Schema,
+        UserDefinedFieldType,
     };
     use crate::config_parsing::field_types::Primitive as PGPrimitive;
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
@@ -2487,7 +2488,7 @@ type NumericEntity {
   id: Int!
 }
         "#;
-        let schema = Schema::from_string(schema_str).unwrap();
+        let schema = ParsedSchema::from_string(schema_str).unwrap();
         let referencer = schema.entities.get("Referencer").unwrap();
 
         // Foreign keys render as the concrete id scalar, never the `id` alias:
@@ -2575,7 +2576,7 @@ type NumericEntity {
         );
         let schema_doc = graphql_parser::schema::parse_schema::<String>(&schema_string).unwrap();
 
-        let schema = Schema::from_document(schema_doc).expect("bad schema");
+        let schema = ParsedSchema::from_document(schema_doc).expect("bad schema");
 
         let test_field = schema
             .entities
@@ -2837,7 +2838,7 @@ type TestEntity {
 type user { id: ID! }
 type User { id: ID! }
         "#;
-        let err = Schema::from_string(schema_str)
+        let err = ParsedSchema::from_string(schema_str)
             .expect_err("expected a capitalized entity-name collision error");
         let message = format!("{err:#}");
         assert!(
@@ -2861,7 +2862,7 @@ type Child {
   parentId: Int!
 }
         "#;
-        let err = Schema::from_string(schema_str)
+        let err = ParsedSchema::from_string(schema_str)
             .expect_err("expected a derivedFrom id-type mismatch error");
         let message = format!("{err:#}");
         assert!(
@@ -2904,7 +2905,7 @@ type StringChild {
   parentId: ID!
 }
         "#;
-        let schema = Schema::from_string(schema_str).unwrap();
+        let schema = ParsedSchema::from_string(schema_str).unwrap();
         assert_eq!(schema.entities.len(), 6);
     }
 
@@ -2922,7 +2923,7 @@ type NumericChild {
   parent: NumericParent!
 }
         "#;
-        let schema = Schema::from_string(schema_str).unwrap();
+        let schema = ParsedSchema::from_string(schema_str).unwrap();
         assert_eq!(schema.entities.len(), 2);
     }
 
@@ -2932,7 +2933,7 @@ type NumericChild {
 type user { id: ID! }
 type post { id: ID! }
         "#;
-        let schema = Schema::from_string(schema_str).unwrap();
+        let schema = ParsedSchema::from_string(schema_str).unwrap();
         assert_eq!(schema.entities.len(), 2);
     }
 
@@ -2954,7 +2955,7 @@ type post { id: ID! }
     "#;
 
         let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
-        let schema = Schema::from_document(gql_doc).expect("Failed to create schema");
+        let schema = ParsedSchema::from_document(gql_doc).expect("Failed to create schema");
 
         // Verify that the schema contains the entity and fields as expected
         let entity = schema.entities.get("Entity").expect("Entity not found");
@@ -3322,7 +3323,7 @@ enum Status {
         let schema_str = r#"
 type TestEntity { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = ParsedEntity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
         assert_eq!(
             (
                 entity.postgres,
@@ -3338,7 +3339,7 @@ type TestEntity { id: ID! }
         let schema_str = r#"
 type TestEntity @storage(postgres: true) { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = ParsedEntity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
         assert_eq!(
             (
                 entity.postgres,
@@ -3354,7 +3355,7 @@ type TestEntity @storage(postgres: true) { id: ID! }
         let schema_str = r#"
 type TestEntity @storage(postgres: true, clickhouse: true) { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = ParsedEntity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
         assert_eq!(
             (entity.postgres, entity.clickhouse),
             (Some(true), Some(ClickHouseEntityStorage::Enabled(true)))
@@ -3373,7 +3374,7 @@ type TestEntity @storage(clickhouse: {partitionBy: "toYYYYMM(timestamp)"}) {
   timestamp: Timestamp!
 }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = ParsedEntity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
         assert_eq!(
             entity.clickhouse,
             Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
@@ -3390,7 +3391,7 @@ type TestEntity @storage(clickhouse: {partitionBy: "toYYYYMM(timestamp)"}) {
         let schema_str = r#"
 type TestEntity @storage(clickhouse: {}) { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = ParsedEntity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
         let clickhouse = entity.clickhouse.unwrap();
         // Empty options normalize to the boolean form so they don't diff a
         // config persisted as `clickhouse: true`.
@@ -3410,7 +3411,7 @@ type TestEntity @storage(clickhouse: {orderBy: ["token", "timestamp"]}) {
 }
 type Token { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = ParsedEntity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
         assert_eq!(
             entity.clickhouse,
             Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
@@ -3434,7 +3435,7 @@ type TestEntity @storage(clickhouse: {skippingIndexes: [
   amount: BigInt!
 }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = ParsedEntity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
         assert_eq!(
             entity.clickhouse,
             Some(ClickHouseEntityStorage::Options(ClickHouseTableOptions {
@@ -3460,7 +3461,7 @@ type TestEntity @storage(clickhouse: {skippingIndexes: [
     #[test]
     fn storage_directive_clickhouse_skipping_indexes_errors() {
         let assert_error_contains = |schema_str: &str, expected: &str| {
-            let err = Entity::from_object(&get_first_entity_from_string(schema_str))
+            let err = ParsedEntity::from_object(&get_first_entity_from_string(schema_str))
                 .expect_err(&format!("expected error containing '{expected}'"));
             let message = format!("{err:#}");
             assert!(
@@ -3513,7 +3514,7 @@ type TestEntity @storage(clickhouse: {skippingIndexes: [
         let schema_str = r#"
 type TestEntity { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = ParsedEntity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
         assert_eq!(entity.internal, false);
     }
 
@@ -3522,14 +3523,14 @@ type TestEntity { id: ID! }
         let schema_str = r#"
 type TestEntity @internal { id: ID! }
         "#;
-        let entity = Entity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
+        let entity = ParsedEntity::from_object(&get_first_entity_from_string(schema_str)).unwrap();
         assert_eq!(entity.internal, true);
     }
 
     #[test]
     fn internal_directive_errors() {
         let assert_error_contains = |schema_str: &str, expected: &str| {
-            let err = Entity::from_object(&get_first_entity_from_string(schema_str))
+            let err = ParsedEntity::from_object(&get_first_entity_from_string(schema_str))
                 .expect_err(&format!("expected error containing '{expected}'"));
             let message = format!("{err:#}");
             assert!(
@@ -3551,7 +3552,7 @@ type TestEntity @internal { id: ID! }
     #[test]
     fn storage_directive_clickhouse_options_errors() {
         let assert_error_contains = |schema_str: &str, expected: &str| {
-            let err = Entity::from_object(&get_first_entity_from_string(schema_str))
+            let err = ParsedEntity::from_object(&get_first_entity_from_string(schema_str))
                 .expect_err(&format!("expected error containing '{expected}'"));
             let message = format!("{err:#}");
             assert!(

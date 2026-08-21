@@ -1,7 +1,8 @@
 use super::{
     chain_helpers::get_max_reorg_depth_from_id,
     entity_parsing::{
-        ClickHouseEntityStorage, Entity, EntityColumn, GqlScalar, GraphQLEnum, ParsedSchema, Schema,
+        ClickHouseEntityStorage, Entity, EntityColumn, GqlScalar, GraphQLEnum, ParsedSchema,
+        Schema, RESERVED_CHAIN_ID_FIELD_NAMES,
     },
     env_interpolation::interpolate_config_variables,
     human_config::{
@@ -692,10 +693,6 @@ pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static 
         human_config::ColumnNameFormat::SnakeCase => "chain_id",
     }
 }
-
-/// Every spelling `chain_id_column_name` can produce, plus the `chainId` name
-/// the appended field keeps on the API surface.
-pub const RESERVED_CHAIN_ID_FIELD_NAMES: [&str; 2] = ["chainId", "chain_id"];
 
 /// Whether an entity's rows are shared across chains. With the default
 /// cross-chain mode every entity is; otherwise only those carrying
