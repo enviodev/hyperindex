@@ -20,9 +20,6 @@ chains:
   }
 
 describe("Schema error locations", () => {
-  // Counted by hand against the schema below: `Second` starts line 7, and its
-  // `@index` sits at column 15 — `type Second @index(...)`, with `@` the 13th
-  // character. Both are 1-based.
   it("Points at the line and column of the offending directive", t => {
     t.expect(
       parseError(`type First {
@@ -65,5 +62,57 @@ type Second {
     ).toBe(
       "schema.graphql:2:3: Failed parsing field id on entity First: The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove the @index or @derivedFrom directive from field id",
     )
+  })
+
+  it("Counts the leading blank lines the caller wrote", t => {
+    t.expect(
+      parseError(`
+
+type First @index(fields: ["missing"]) {
+  id: ID!
+  value: String!
+}
+`),
+    ).toBe(`schema.graphql:3:12: Invalid \`@index\` on \`First\`: \`missing\` is not a column of the entity.
+  Available columns: \`value\`.`)
+  })
+
+  it("Counts a comment line once when the schema uses CRLF", t => {
+    t.expect(
+      parseError(
+        `# a comment
+type First @index(fields: ["missing"]) {
+  id: ID!
+  value: String!
+}
+`->String.replaceAll("\n", "\r\n"),
+      ),
+    ).toBe(`schema.graphql:2:12: Invalid \`@index\` on \`First\`: \`missing\` is not a column of the entity.
+  Available columns: \`value\`.`)
+  })
+
+  it("Points at the repeated directive for a flag declared twice", t => {
+    t.expect(
+      parseError(`type First @crossChain @crossChain {
+  id: ID!
+}
+`),
+    ).toBe(
+      "schema.graphql:1:24: Invalid @crossChain directive on `First`. Only one @crossChain directive is allowed per entity.",
+    )
+  })
+
+  it("Points at the duplicate index rather than the entity holding it", t => {
+    t.expect(
+      parseError(`type First
+  @index(fields: ["a", "b"])
+  @index(fields: ["a", "b"]) {
+  id: ID!
+  a: String!
+  b: String!
+}
+`),
+    ).toBe(`schema.graphql:3:3: Invalid \`@index\` on \`First\`: the index over \`a\`, \`b\` is declared twice.
+  Remove the duplicate \`@index\` directive.`)
   })
 })

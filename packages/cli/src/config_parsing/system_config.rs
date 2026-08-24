@@ -1,8 +1,8 @@
 use super::{
     chain_helpers::get_max_reorg_depth_from_id,
     entity_parsing::{
-        ClickHouseEntityStorage, Entity, EntityColumn, GqlScalar, GraphQLEnum, Schema,
-        RESERVED_CHAIN_ID_FIELD_NAMES,
+        self, ClickHouseEntityStorage, Entity, EntityColumn, GqlScalar, GraphQLEnum, Schema,
+        MAX_PG_IDENTIFIER_LENGTH, RESERVED_CHAIN_ID_FIELD_NAMES,
     },
     env_interpolation::interpolate_config_variables,
     human_config::{
@@ -256,9 +256,14 @@ impl ConfigSource for MemoryConfigSource<'_> {
         _configured_path: &Option<String>,
         default_cross_chain: bool,
     ) -> Result<Schema> {
-        match self.schema.map(str::trim) {
-            None | Some("") => Ok(Schema::empty()),
-            Some(schema) => Schema::from_string(schema, default_cross_chain),
+        // Parsed as given: schema errors carry the line and column they were
+        // raised at, and trimming first would report them against text the
+        // caller never wrote.
+        match self.schema {
+            Some(schema) if !schema.trim().is_empty() => {
+                Schema::from_string(schema, default_cross_chain)
+            }
+            _ => Ok(Schema::empty()),
         }
     }
 
@@ -566,11 +571,6 @@ pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyh
     ))
 }
 
-// Postgres truncates longer identifiers silently, which can collide two
-// distinct columns and breaks the Hasura custom_name mapping (it is keyed
-// by the untruncated name).
-const MAX_PG_IDENTIFIER_LENGTH: usize = 63;
-
 /// Resolved column names can break table creation in ways schema.graphql
 /// validation can't see: distinct fields may collide on the same column
 /// (`tokenId` and an entity reference `token` both become `token_id`), shadow
@@ -706,11 +706,21 @@ pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static 
     }
 }
 
-/// Whether an entity's rows are shared across chains. With the default
-/// cross-chain mode every entity is; otherwise only those carrying
-/// `@crossChain`.
 pub fn entity_is_cross_chain(entity: &Entity, default_cross_chain: bool) -> bool {
-    default_cross_chain || entity.cross_chain
+    entity_parsing::is_cross_chain(entity.cross_chain, default_cross_chain)
+}
+
+/// What to add to a field so ClickHouse stores it as a numeric Decimal. A
+/// BigDecimal needs both parameters — `@config(precision:)` alone is rejected
+/// by the field parser, so naming only it would send the user in a circle.
+fn precision_fix(stored: &GqlScalar) -> String {
+    match stored {
+        GqlScalar::BigDecimal(_) => format!(
+            "Add `@config(precision: N, scale: M)` with M <= N <= \
+             {CLICKHOUSE_DECIMAL_MAX_PRECISION}"
+        ),
+        _ => format!("Add `@config(precision: N)` with N <= {CLICKHOUSE_DECIMAL_MAX_PRECISION}"),
+    }
 }
 
 /// ClickHouse stores a BigInt or BigDecimal whose precision is unset (or
@@ -739,16 +749,8 @@ pub fn validate_clickhouse_sorting_key_scalars(
         _ => false,
     };
 
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-
-    for entity in &entities {
-        let uses_clickhouse = if entity.has_storage_directive() {
-            entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
-        } else {
-            clickhouse_default
-        };
-        if !uses_clickhouse {
+    for entity in schema.entities_by_name() {
+        if !entity.uses_clickhouse(clickhouse_default) {
             continue;
         }
 
@@ -765,9 +767,13 @@ pub fn validate_clickhouse_sorting_key_scalars(
                     let EntityColumn::Declared(field_name) = column else {
                         continue;
                     };
-                    let field = entity
-                        .get_field(field_name)
-                        .expect("resolved orderBy names a declared field");
+                    let field = entity.get_field(field_name).ok_or_else(|| {
+                        anyhow!(
+                            "Invalid storage for `{}`. `clickhouse.orderBy` sorts by \
+                             `{field_name}`, which is not a field of the entity.",
+                            entity.name
+                        )
+                    })?;
                     let stored =
                         schema.resolve_stored_scalar(&field.field_type.get_underlying_scalar())?;
                     if stored_as_string(&stored) {
@@ -775,15 +781,14 @@ pub fn validate_clickhouse_sorting_key_scalars(
                             "Invalid storage for `{}`. `clickhouse.orderBy` sorts by \
                              `{field_name}`, which stores a {stored} that ClickHouse keeps as a \
                              String (sorted lexicographically, not numerically) unless a \
-                             precision is set. Add `@config(precision: N)` with N <= \
-                             {CLICKHOUSE_DECIMAL_MAX_PRECISION} to the {stored} it stores so it \
-                             sorts as a numeric Decimal.",
-                            entity.name
+                             precision is set. {} to the {stored} it stores so it sorts as a \
+                             numeric Decimal.",
+                            entity.name,
+                            precision_fix(&stored)
                         ));
                     }
                 }
             }
-            // No custom orderBy, so `id` is the sorting key.
             None => {
                 if let Ok(id_scalar @ GqlScalar::BigInt(_)) = entity.get_id_scalar() {
                     if stored_as_string(&id_scalar) {
@@ -960,22 +965,9 @@ pub fn validate_clickhouse_nullable_arrays(
         return Ok(());
     };
 
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-
     let mut offending: Vec<String> = vec![];
-    for entity in &entities {
-        // A storage directive's omitted backend resolves to false at runtime
-        // (Config.res `Option.getOr(false)`), so a directive routes to
-        // ClickHouse only when it enables the backend (boolean `true` or the
-        // table options object form). Without a directive the entity follows
-        // the backend's `default`.
-        let uses_clickhouse = if entity.has_storage_directive() {
-            entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
-        } else {
-            clickhouse.entity_default
-        };
-        if !uses_clickhouse {
+    for entity in schema.entities_by_name() {
+        if !entity.uses_clickhouse(clickhouse.entity_default) {
             continue;
         }
         for field in entity.get_fields() {
@@ -1114,7 +1106,7 @@ impl SystemConfig {
         let mut contracts: ContractMap = HashMap::new();
 
         let base_config = human_config.get_base_config();
-        let default_cross_chain = !base_config.disable_default_cross_chain.unwrap_or(false);
+        let default_cross_chain = base_config.default_cross_chain();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
         validate_entity_storage(&storage, &schema)?;
         validate_relationship_storage(&storage, &schema)?;
@@ -1672,7 +1664,7 @@ impl SystemConfig {
         };
 
         let base_config = human_config.get_base_config();
-        let default_cross_chain = !base_config.disable_default_cross_chain.unwrap_or(false);
+        let default_cross_chain = base_config.default_cross_chain();
         let schema = source.load_schema(&base_config.schema, default_cross_chain)?;
         Self::from_human_config_with_source(human_config, schema, source)
     }

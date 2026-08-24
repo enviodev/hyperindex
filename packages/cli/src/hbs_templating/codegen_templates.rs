@@ -7,7 +7,7 @@ use std::{
 use crate::{
     config_parsing::{
         chain_helpers::Network,
-        entity_parsing::{Entity, Field, GraphQLEnum, IndexField, IndexFieldDirection},
+        entity_parsing::{Entity, Field, GraphQLEnum, IndexField},
         event_parsing::abi_to_rescript_type,
         field_types,
         human_config::HumanConfig,
@@ -223,10 +223,7 @@ impl CompositeIndexFieldTemplate {
     fn from_index_field(index_field: &IndexField) -> Self {
         Self {
             field_name: index_field.column.field_name().to_string(),
-            direction: match index_field.direction {
-                IndexFieldDirection::Asc => "Asc".to_string(),
-                IndexFieldDirection::Desc => "Desc".to_string(),
-            },
+            direction: index_field.direction.as_pascal_str().to_string(),
         }
     }
 }

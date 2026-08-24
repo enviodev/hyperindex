@@ -1,8 +1,7 @@
 open Vitest
 
-// `@index(fields:)` reaches storage as a composite index over resolved column
-// names, so these assert the indexes the tables end up with rather than the
-// shape the directive parsed into.
+// Asserted against the indexes the tables end up with: a directive that parses
+// into the right shape can still resolve to a column the table lacks.
 
 let parse = schema =>
   InternalTestIndexer.fromUserApi(
@@ -119,7 +118,7 @@ describe("@index(fields:) rejections", () => {
   it("Names the columns available when the entity has no such field", t => {
     t.expect(
       parseError(schemaWith(`@index(fields: ["missing", "tokenId"])`)),
-    ).toBe(`schema.graphql:1:17: Invalid \`@index\` on \`TestEntity\`: \`missing\` is not a column of the entity.
+    ).toBe(`schema.graphql:2:17: Invalid \`@index\` on \`TestEntity\`: \`missing\` is not a column of the entity.
   Available columns: \`tokenId\`, \`collection\`.`)
   })
 
@@ -137,21 +136,21 @@ type Token {
   owner: User!
 }
 `),
-    ).toBe(`schema.graphql:1:11: Invalid \`@index\` on \`User\`: \`tokens\` is a @derivedFrom field, which has no column.
+    ).toBe(`schema.graphql:2:11: Invalid \`@index\` on \`User\`: \`tokens\` is a @derivedFrom field, which has no column.
   Use a stored field instead.`)
   })
 
   it("Rejects id, which the primary key already indexes", t => {
     t.expect(
       parseError(schemaWith(`@index(fields: ["id"])`)),
-    ).toBe(`schema.graphql:1:17: Invalid \`@index\` on \`TestEntity\`: \`id\` is the primary key, so it is already indexed.
+    ).toBe(`schema.graphql:2:17: Invalid \`@index\` on \`TestEntity\`: \`id\` is the primary key, so it is already indexed.
   Remove the \`@index\` directive on it.`)
   })
 
   it("Rejects a column listed twice in one index", t => {
     t.expect(
       parseError(schemaWith(`@index(fields: ["tokenId", "tokenId"])`)),
-    ).toBe(`schema.graphql:1:17: Invalid \`@index\` on \`TestEntity\`: \`tokenId\` is listed twice.
+    ).toBe(`schema.graphql:2:17: Invalid \`@index\` on \`TestEntity\`: \`tokenId\` is listed twice.
   List each column once — repeating it adds nothing to the index.`)
   })
 
@@ -160,8 +159,15 @@ type Token {
       parseError(
         schemaWith(`@index(fields: ["tokenId", "collection"]) @index(fields: ["tokenId", "collection"])`),
       ),
-    ).toBe(`schema.graphql:1:1: Invalid \`@index\` on \`TestEntity\`: the index over \`tokenId\`, \`collection\` is declared twice.
+    ).toBe(`schema.graphql:2:59: Invalid \`@index\` on \`TestEntity\`: the index over \`tokenId\`, \`collection\` is declared twice.
   Remove the duplicate \`@index\` directive.`)
+  })
+
+  it("Rejects an index over no columns", t => {
+    t.expect(
+      parseError(schemaWith(`@index(fields: [])`)),
+    ).toBe(`schema.graphql:2:17: Invalid \`@index\` on \`TestEntity\`: no columns are listed.
+  List the columns to index, e.g. \`@index(fields: ["tokenId", "owner"])\`.`)
   })
 
   it("Rejects a column indexed both on the field and on the entity", t => {
@@ -172,7 +178,7 @@ type TestEntity @index(fields: ["tokenId"]) {
   tokenId: Int! @index
 }
 `),
-    ).toBe(`schema.graphql:1:17: Invalid \`@index\` on \`TestEntity\`: \`tokenId\` is already marked \`@index\` on the field.
+    ).toBe(`schema.graphql:2:17: Invalid \`@index\` on \`TestEntity\`: \`tokenId\` is already marked \`@index\` on the field.
   Keep one of them — the \`@index\` on the field, or \`@index(fields: ["tokenId"])\` on the entity.`)
   })
 })

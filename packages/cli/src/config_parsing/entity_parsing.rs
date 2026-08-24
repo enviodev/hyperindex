@@ -21,6 +21,7 @@ use graphql_parser::schema::{
 use graphql_parser::Pos;
 use serde::{Serialize, Serializer};
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     fmt::{self},
     path::PathBuf,
@@ -46,6 +47,14 @@ impl Schema {
         }
     }
 
+    /// Entities in name order, so a validation error doesn't depend on which
+    /// one the hash map happened to yield first.
+    pub fn entities_by_name(&self) -> Vec<&Entity> {
+        let mut entities: Vec<&Entity> = self.entities.values().collect();
+        entities.sort_by(|a, b| a.name.cmp(&b.name));
+        entities
+    }
+
     pub fn new(entities: Vec<Entity>, enums: Vec<GraphQLEnum>) -> anyhow::Result<Self> {
         let entities = unique_hashmap::from_vec_no_duplicates(
             entities.into_iter().map(|e| (e.name.clone(), e)).collect(),
@@ -61,10 +70,10 @@ impl Schema {
 }
 
 /// `schema.graphql:12:3` — where in the schema an error was raised, so an
-/// editor or terminal can jump straight to it. `Pos` is already 1-based. Used
-/// as anyhow context, which supplies the `: ` that follows it.
+/// editor or terminal can jump straight to it. `Pos` is 1-based and renders as
+/// `line:column`. Used as anyhow context, which supplies the `: ` that follows.
 fn at(source: &str, position: Pos) -> String {
-    format!("{source}:{}:{}", position.line, position.column)
+    format!("{source}:{position}")
 }
 
 /// Renders `Invalid `<directive>` on `<Entity>`: <problem>.` with a single
@@ -79,39 +88,148 @@ fn directive_error(
     anyhow!("Invalid `{directive}` on `{entity}`: {problem}.\n  {suggestion}")
 }
 
+/// A column an entity directive named, together with the field it resolved to.
+/// The chain id envio appends has no `Field` behind it.
+struct ResolvedColumn<'a> {
+    column: EntityColumn,
+    field: Option<&'a Field>,
+}
+
+/// Resolves the column names an entity directive lists against the columns the
+/// entity's table actually has: the fields it declares, plus the chain id envio
+/// appends to a per-chain entity.
+struct ColumnResolver<'a> {
+    entity: &'a str,
+    fields: &'a [Field],
+    has_chain_id_column: bool,
+    cross_chain: bool,
+}
+
+impl<'a> ColumnResolver<'a> {
+    fn resolve(&self, directive: &str, column: &str) -> anyhow::Result<ResolvedColumn<'a>> {
+        if let Some(field) = self.fields.iter().find(|f| f.name == column) {
+            if field.field_type.is_derived_from() {
+                return Err(directive_error(
+                    self.entity,
+                    directive,
+                    &format!("`{column}` is a @derivedFrom field, which has no column"),
+                    "Use a stored field instead.",
+                ));
+            }
+            return Ok(ResolvedColumn {
+                column: EntityColumn::Declared(column.to_string()),
+                field: Some(field),
+            });
+        }
+        if self.has_chain_id_column && column == CHAIN_ID_FIELD_NAME {
+            return Ok(ResolvedColumn {
+                column: EntityColumn::ChainId,
+                field: None,
+            });
+        }
+        Err(directive_error(
+            self.entity,
+            directive,
+            &format!("`{column}` is not a column of the entity"),
+            &self.unknown_column_suggestion(column),
+        ))
+    }
+
+    /// Resolves a directive's column list, rejecting a column listed twice.
+    /// `builds` names what the list is building, for the error.
+    fn resolve_distinct<T>(
+        &self,
+        directive: &str,
+        builds: &str,
+        columns: impl IntoIterator<Item = (String, T)>,
+    ) -> anyhow::Result<Vec<(ResolvedColumn<'a>, T)>> {
+        let mut seen = HashSet::new();
+        columns
+            .into_iter()
+            .map(|(written_as, payload)| {
+                if !seen.insert(written_as.clone()) {
+                    return Err(directive_error(
+                        self.entity,
+                        directive,
+                        &format!("`{written_as}` is listed twice"),
+                        &format!(
+                            "List each column once — repeating it adds nothing to the {builds}."
+                        ),
+                    ));
+                }
+                Ok((self.resolve(directive, &written_as)?, payload))
+            })
+            .collect()
+    }
+
+    fn unknown_column_suggestion(&self, column: &str) -> String {
+        if RESERVED_CHAIN_ID_FIELD_NAMES.contains(&column) {
+            return if self.has_chain_id_column {
+                format!(
+                    "Spell the chain column as `{CHAIN_ID_FIELD_NAME}`, the way it's named in the \
+                     schema, whatever `column_name_format` the storage uses."
+                )
+            } else if self.cross_chain {
+                format!(
+                    "envio only appends a chain column to per-chain entities, and `{}` is \
+                     `@crossChain`. Drop `@crossChain`, or declare a `{CHAIN_ID_FIELD_NAME}` field \
+                     yourself.",
+                    self.entity
+                )
+            } else {
+                format!(
+                    "envio only appends a chain column to per-chain entities, and entities are \
+                     cross-chain unless config.yaml sets `disable_default_cross_chain: true`. Set \
+                     it, or declare a `{CHAIN_ID_FIELD_NAME}` field yourself."
+                )
+            };
+        }
+
+        // Derived fields are left out: they have no column, so pointing at one
+        // would only trade this error for another.
+        let mut available: Vec<String> = self
+            .fields
+            .iter()
+            .filter(|f| f.name != "id" && !f.field_type.is_derived_from())
+            .map(|f| format!("`{}`", f.name))
+            .collect();
+        if self.has_chain_id_column {
+            available.push(format!("`{CHAIN_ID_FIELD_NAME}`"));
+        }
+        if available.is_empty() {
+            "The entity declares no columns besides `id`.".to_string()
+        } else {
+            format!("Available columns: {}.", available.join(", "))
+        }
+    }
+}
+
 /// Resolves the columns a `clickhouse.orderBy` lists into the sorting key they
 /// become, rejecting anything ClickHouse can't sort by.
 fn resolve_order_by(
-    entity: &str,
-    fields: &[Field],
-    resolve_column: &dyn Fn(&str, &str) -> anyhow::Result<EntityColumn>,
+    resolver: &ColumnResolver,
     columns: Vec<String>,
 ) -> anyhow::Result<Vec<EntityColumn>> {
     const DIRECTIVE: &str = "clickhouse.orderBy";
 
-    let mut seen = HashSet::new();
-    columns
+    resolver
+        .resolve_distinct(
+            DIRECTIVE,
+            "sorting key",
+            columns.into_iter().map(|c| (c, ())),
+        )?
         .into_iter()
-        .map(|column| {
-            if !seen.insert(column.clone()) {
+        .map(|(resolved, ())| {
+            if resolved.column.field_name() == "id" {
                 return Err(directive_error(
-                    entity,
-                    DIRECTIVE,
-                    &format!("`{column}` is listed twice"),
-                    "List each column once — repeating it adds nothing to the sorting key.",
-                ));
-            }
-            if column == "id" {
-                return Err(directive_error(
-                    entity,
+                    resolver.entity,
                     DIRECTIVE,
                     "`id` is already the sorting key when no `orderBy` is given",
                     "List only the columns to sort by instead of `id`.",
                 ));
             }
-            let resolved = resolve_column(DIRECTIVE, &column)?;
-            check_clickhouse_sortable(entity, fields, &resolved)?;
-            Ok(resolved)
+            check_clickhouse_sortable(resolver.entity, &resolved)?;
+            Ok(resolved.column)
         })
         .collect()
 }
@@ -120,20 +238,13 @@ fn resolve_order_by(
 /// (`allow_nullable_key` is off by default, arrays are never allowed). The
 /// appended chain id is a plain non-null integer, so only a declared field can
 /// trip either.
-fn check_clickhouse_sortable(
-    entity: &str,
-    fields: &[Field],
-    column: &EntityColumn,
-) -> anyhow::Result<()> {
+fn check_clickhouse_sortable(entity: &str, resolved: &ResolvedColumn) -> anyhow::Result<()> {
     const DIRECTIVE: &str = "clickhouse.orderBy";
 
-    let EntityColumn::Declared(name) = column else {
+    let Some(field) = resolved.field else {
         return Ok(());
     };
-    let field = fields
-        .iter()
-        .find(|f| &f.name == name)
-        .expect("a resolved Declared column names a field of the entity");
+    let name = &field.name;
 
     if field.field_type.is_optional() {
         return Err(directive_error(
@@ -143,7 +254,7 @@ fn check_clickhouse_sortable(
             "Make the field non-nullable to sort by it.",
         ));
     }
-    if field.field_type.to_user_defined_field_type().is_array() {
+    if field.field_type.is_array() {
         return Err(directive_error(
             entity,
             DIRECTIVE,
@@ -156,33 +267,31 @@ fn check_clickhouse_sortable(
 
 impl MultiFieldIndex {
     fn resolve(
-        entity: &str,
-        fields: &[Field],
-        resolve_column: &dyn Fn(&str, &str) -> anyhow::Result<EntityColumn>,
+        resolver: &ColumnResolver,
         columns: Vec<(String, IndexFieldDirection)>,
     ) -> anyhow::Result<Self> {
         const DIRECTIVE: &str = "@index";
 
-        let mut seen = HashSet::new();
-        let columns = columns
-            .into_iter()
-            .map(|(written_as, direction)| {
-                if !seen.insert(written_as.clone()) {
-                    return Err(directive_error(
-                        entity,
-                        DIRECTIVE,
-                        &format!("`{written_as}` is listed twice"),
-                        "List each column once — repeating it adds nothing to the index.",
-                    ));
-                }
-                Ok(IndexField {
-                    column: resolve_column(DIRECTIVE, &written_as)?,
+        let entity = resolver.entity;
+        if columns.is_empty() {
+            return Err(directive_error(
+                entity,
+                DIRECTIVE,
+                "no columns are listed",
+                "List the columns to index, e.g. `@index(fields: [\"tokenId\", \"owner\"])`.",
+            ));
+        }
+
+        let resolved = Self(
+            resolver
+                .resolve_distinct(DIRECTIVE, "index", columns)?
+                .into_iter()
+                .map(|(resolved, direction)| IndexField {
+                    column: resolved.column,
                     direction,
                 })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        let resolved = Self(columns);
+                .collect(),
+        );
 
         // A lone column is a plain single index, and two of them are never
         // worth building.
@@ -194,7 +303,8 @@ impl MultiFieldIndex {
                 "Remove the `@index` directive on it.",
             )),
             Some(EntityColumn::Declared(name))
-                if fields
+                if resolver
+                    .fields
                     .iter()
                     .any(|f| &f.name == name && f.field_type.has_indexed_directive()) =>
             {
@@ -283,7 +393,7 @@ impl Schema {
 
         let schema_path = path_utils::get_config_path_relative_to_root(
             project_paths,
-            PathBuf::from(relative_schema_path_from_config),
+            PathBuf::from(&relative_schema_path_from_config),
         )
         .context("Failed creating a relative path to schema")?;
 
@@ -295,11 +405,12 @@ impl Schema {
 
         // Errors name the schema by the path the project actually uses, so a
         // `schema:` override in config.yaml points at the file the user edited.
+        // A schema outside the project root keeps the path as configured rather
+        // than falling back to an absolute one, which would differ per machine.
         let source = schema_path
             .strip_prefix(&project_paths.project_root)
-            .unwrap_or(&schema_path)
-            .display()
-            .to_string();
+            .map(|relative| relative.display().to_string())
+            .unwrap_or(relative_schema_path_from_config);
 
         Self::from_string_at(&schema_string, default_cross_chain, &source)
     }
@@ -313,7 +424,15 @@ impl Schema {
         default_cross_chain: bool,
         source: &str,
     ) -> anyhow::Result<Self> {
-        let schema_doc = graphql_parser::parse_schema::<String>(schema_string)
+        // graphql_parser counts a comment line's `\r` and its `\n` as two line
+        // breaks, so a CRLF schema with comments reports positions past where
+        // the error is.
+        let schema_string = if schema_string.contains('\r') {
+            Cow::Owned(schema_string.replace("\r\n", "\n"))
+        } else {
+            Cow::Borrowed(schema_string)
+        };
+        let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
             .context("Failed to parse schema as document")?;
 
         Self::from_document(schema_doc, default_cross_chain, source)
@@ -662,6 +781,19 @@ impl ClickHouseEntityStorage {
     }
 }
 
+/// Whether an entity's rows are shared across chains. Every entity is unless
+/// config.yaml sets `disable_default_cross_chain: true`, which leaves only the
+/// ones carrying `@crossChain`. The rest are per-chain, and those are the ones
+/// envio appends the chain-id column to.
+pub fn is_cross_chain(cross_chain_directive: bool, default_cross_chain: bool) -> bool {
+    default_cross_chain || cross_chain_directive
+}
+
+/// Postgres silently truncates longer identifiers, which can collide two
+/// distinct columns and breaks the Hasura `custom_name` mapping, keyed by the
+/// untruncated name.
+pub const MAX_PG_IDENTIFIER_LENGTH: usize = 63;
+
 /// The name envio gives the chain-id column it appends to a per-chain entity.
 /// Storage may spell the column differently (`column_name_format: snake_case`),
 /// but a directive always names it the way the schema would.
@@ -734,91 +866,35 @@ impl Entity {
             .fields
             .iter()
             .map(|field| {
-                Field::from_obj_field(field).context(format!(
-                    "{}: Failed parsing field {} on entity {name}",
-                    at(source, field.position),
-                    field.name
-                ))
+                Field::from_obj_field(field).with_context(|| {
+                    format!(
+                        "{}: Failed parsing field {} on entity {name}",
+                        at(source, field.position),
+                        field.name
+                    )
+                })
             })
             .collect::<anyhow::Result<Vec<Field>>>()?;
 
-        validate_entity_shape(name, &fields).context(at_entity.clone())?;
+        validate_entity_shape(name, &fields).with_context(|| at_entity.clone())?;
 
-        let cross_chain = parse_flag_directive(obj, "crossChain")?;
-        let has_chain_id_column = !(default_cross_chain || cross_chain);
-
-        let resolve_column = |directive: &str, column: &str| -> anyhow::Result<EntityColumn> {
-            if let Some(field) = fields.iter().find(|f| f.name == column) {
-                if field.field_type.is_derived_from() {
-                    return Err(directive_error(
-                        name,
-                        directive,
-                        &format!("`{column}` is a @derivedFrom field, which has no column"),
-                        "Use a stored field instead.",
-                    ));
-                }
-                return Ok(EntityColumn::Declared(column.to_string()));
-            }
-            if has_chain_id_column && column == CHAIN_ID_FIELD_NAME {
-                return Ok(EntityColumn::ChainId);
-            }
-
-            let problem = format!("`{column}` is not a column of the entity");
-            let suggestion = if RESERVED_CHAIN_ID_FIELD_NAMES.contains(&column) {
-                if has_chain_id_column {
-                    format!(
-                        "Spell the chain column as `{CHAIN_ID_FIELD_NAME}`, the way it's named in \
-                         the schema, whatever `column_name_format` the storage uses."
-                    )
-                } else if cross_chain {
-                    format!(
-                        "envio only appends a chain column to per-chain entities, and `{name}` is \
-                         `@crossChain`. Drop `@crossChain`, or declare a `{CHAIN_ID_FIELD_NAME}` \
-                         field yourself."
-                    )
-                } else {
-                    format!(
-                        "envio only appends a chain column to per-chain entities, and entities \
-                         are cross-chain unless config.yaml sets `disable_default_cross_chain: \
-                         true`. Set it, or declare a `{CHAIN_ID_FIELD_NAME}` field yourself."
-                    )
-                }
-            } else {
-                // Derived fields are left out: they have no column, so pointing
-                // at one would only trade this error for another.
-                let mut available: Vec<String> = fields
-                    .iter()
-                    .filter(|f| f.name != "id" && !f.field_type.is_derived_from())
-                    .map(|f| format!("`{}`", f.name))
-                    .collect();
-                if has_chain_id_column {
-                    available.push(format!("`{CHAIN_ID_FIELD_NAME}`"));
-                }
-                if available.is_empty() {
-                    "The entity declares no columns besides `id`.".to_string()
-                } else {
-                    format!("Available columns: {}.", available.join(", "))
-                }
-            };
-            Err(directive_error(name, directive, &problem, &suggestion))
+        let cross_chain = parse_flag_directive(obj, "crossChain", source)?;
+        let internal = parse_flag_directive(obj, "internal", source)?;
+        let resolver = ColumnResolver {
+            entity: name,
+            fields: &fields,
+            has_chain_id_column: !is_cross_chain(cross_chain, default_cross_chain),
+            cross_chain,
         };
 
-        let multi_field_indexes = obj
-            .directives
-            .iter()
-            .filter(|directive| directive.name == "index")
-            .map(|directive| {
-                let at_directive = at(source, directive.position);
-                let columns = parse_index_directive_columns(directive)
-                    .context(format!("{at_directive}: Invalid `@index` on `{name}`"))?;
-                MultiFieldIndex::resolve(name, &fields, &resolve_column, columns)
-                    .context(at_directive)
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        let mut seen = HashSet::new();
-        for index in &multi_field_indexes {
-            if !seen.insert(index) {
+        let mut multi_field_indexes: Vec<MultiFieldIndex> = Vec::new();
+        for directive in obj.directives.iter().filter(|d| d.name == "index") {
+            let at_directive = at(source, directive.position);
+            let columns = parse_index_directive_columns(directive)
+                .with_context(|| format!("{at_directive}: Invalid `@index` on `{name}`"))?;
+            let index = MultiFieldIndex::resolve(&resolver, columns)
+                .with_context(|| at_directive.clone())?;
+            if multi_field_indexes.contains(&index) {
                 return Err(directive_error(
                     name,
                     "@index",
@@ -828,8 +904,9 @@ impl Entity {
                     ),
                     "Remove the duplicate `@index` directive.",
                 ))
-                .context(at_entity.clone());
+                .context(at_directive);
             }
+            multi_field_indexes.push(index);
         }
 
         // Points at the `@storage` directive when there is one; without it
@@ -842,8 +919,7 @@ impl Entity {
                 || at_entity.clone(),
                 |directive| at(source, directive.position),
             );
-        let (postgres, clickhouse) =
-            parse_storage_directive(obj, &fields, &resolve_column).context(at_storage)?;
+        let (postgres, clickhouse) = parse_storage_directive(obj, &resolver).context(at_storage)?;
 
         Ok(Self {
             name: name.to_string(),
@@ -853,7 +929,7 @@ impl Entity {
             postgres,
             clickhouse,
             cross_chain,
-            internal: parse_flag_directive(obj, "internal")?,
+            internal,
         })
     }
 }
@@ -868,9 +944,7 @@ fn parse_index_directive_columns(
         Some((_, Value::List(fields))) => fields
             .iter()
             .map(|v| match v {
-                // Simple string: "fieldName" (default ASC)
                 Value::String(field_name) => Ok((field_name.clone(), IndexFieldDirection::Asc)),
-                // List with direction: ["fieldName", "DESC"]
                 Value::List(parts) => {
                     if parts.len() != 2 {
                         return Err(anyhow!(
@@ -925,6 +999,19 @@ fn parse_index_directive_columns(
 impl Entity {
     pub fn has_storage_directive(&self) -> bool {
         self.postgres.is_some() || self.clickhouse.is_some()
+    }
+
+    /// Whether this entity's rows are written to ClickHouse. A storage
+    /// directive's omitted backend resolves to false at runtime (Config.res
+    /// `Option.getOr(false)`), so a directive routes to ClickHouse only when it
+    /// enables the backend — a boolean `true` or the table options object.
+    /// Without a directive the entity follows the backend's `default`.
+    pub fn uses_clickhouse(&self, clickhouse_default: bool) -> bool {
+        if self.has_storage_directive() {
+            self.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
+        } else {
+            clickhouse_default
+        }
     }
 
     /// Returns the fields of this [`Entity`] in schema-defined order.
@@ -1078,9 +1165,10 @@ fn validate_entity_shape(name: &str, fields: &[Field]) -> anyhow::Result<()> {
         }
     }
 
-    if name.len() > 63 {
+    if name.len() > MAX_PG_IDENTIFIER_LENGTH {
         return Err(anyhow!(
-            "Entity name '{name}' is too long. It must be less than 64 characters."
+            "Entity name '{name}' is too long. It must be less than {} characters.",
+            MAX_PG_IDENTIFIER_LENGTH + 1
         ));
     }
 
@@ -1098,32 +1186,37 @@ const STORAGE_DIRECTIVE_HINT: &str =
 /// checked elsewhere — `@crossChain` legality depends on the config's
 /// `disable_default_cross_chain`, and `@internal` relationship rules live in
 /// `system_config.rs`.
-fn parse_flag_directive(obj: &ObjectType<String>, directive_name: &str) -> anyhow::Result<bool> {
+fn parse_flag_directive(
+    obj: &ObjectType<String>,
+    directive_name: &str,
+    source: &str,
+) -> anyhow::Result<bool> {
     let directives: Vec<&Directive<'_, String>> = obj
         .directives
         .iter()
         .filter(|directive| directive.name == directive_name)
         .collect();
 
-    match directives.len() {
-        0 => Ok(false),
-        1 => {
-            let directive = directives[0];
+    match directives.as_slice() {
+        [] => Ok(false),
+        [directive] => {
             if let Some((arg_name, _)) = directive.arguments.first() {
                 return Err(anyhow!(
                     "Invalid @{directive_name} directive on `{}`. It takes no arguments, but got \
                      `{}`.",
                     obj.name,
                     arg_name
-                ));
+                ))
+                .context(at(source, directive.position));
             }
             Ok(true)
         }
-        _ => Err(anyhow!(
+        [_, duplicate, ..] => Err(anyhow!(
             "Invalid @{directive_name} directive on `{}`. Only one @{directive_name} directive is \
              allowed per entity.",
             obj.name
-        )),
+        ))
+        .context(at(source, duplicate.position)),
     }
 }
 
@@ -1135,8 +1228,7 @@ fn parse_flag_directive(obj: &ObjectType<String>, directive_name: &str) -> anyho
 /// missing-in-multi-storage-mode) happen later in `system_config.rs`.
 fn parse_storage_directive(
     obj: &ObjectType<String>,
-    fields: &[Field],
-    resolve_column: &dyn Fn(&str, &str) -> anyhow::Result<EntityColumn>,
+    resolver: &ColumnResolver,
 ) -> anyhow::Result<(Option<bool>, Option<ClickHouseEntityStorage>)> {
     let storage_directives: Vec<&Directive<'_, String>> = obj
         .directives
@@ -1194,8 +1286,7 @@ fn parse_storage_directive(
                 clickhouse = Some(ClickHouseEntityStorage::Enabled(*b))
             }
             ("clickhouse", Value::Object(arg_fields)) => {
-                let options =
-                    parse_clickhouse_table_options(&obj.name, arg_fields, fields, resolve_column)?;
+                let options = parse_clickhouse_table_options(arg_fields, resolver)?;
                 // An options object with nothing set only enables the backend,
                 // so normalize it to the boolean form: it serializes identically
                 // to `clickhouse: true` and won't diff a stored config.
@@ -1232,11 +1323,10 @@ fn parse_storage_directive(
 }
 
 fn parse_clickhouse_table_options(
-    entity_name: &str,
     arg_fields: &std::collections::BTreeMap<String, Value<'_, String>>,
-    fields: &[Field],
-    resolve_column: &dyn Fn(&str, &str) -> anyhow::Result<EntityColumn>,
+    resolver: &ColumnResolver,
 ) -> anyhow::Result<ClickHouseTableOptions> {
+    let entity_name = resolver.entity;
     let expression = |key: &str, value: &Value<'_, String>| match value {
         Value::String(expr) if !expr.trim().is_empty() => Ok(expr.trim().to_string()),
         _ => Err(anyhow!(
@@ -1272,12 +1362,7 @@ fn parse_clickhouse_table_options(
                         ));
                     }
                 };
-                options.order_by = Some(resolve_order_by(
-                    entity_name,
-                    fields,
-                    resolve_column,
-                    field_names,
-                )?);
+                options.order_by = Some(resolve_order_by(resolver, field_names)?);
             }
             "skippingIndexes" => {
                 let items = match value {
@@ -1607,8 +1692,7 @@ impl Field {
             pg_type_modifications,
         };
 
-        let field_type = FieldType::from_obj_field_type(&field.field_type, params)
-            .context(format!("Failed parsing field {}", field.name))?;
+        let field_type = FieldType::from_obj_field_type(&field.field_type, params)?;
 
         Ok(Field {
             name: field.name.clone(),
@@ -1675,7 +1759,7 @@ impl Field {
             .multi_field_indexes
             .iter()
             .filter_map(MultiFieldIndex::as_single)
-            .any(|column| column == &EntityColumn::Declared(self.name.clone()));
+            .any(|column| matches!(column, EntityColumn::Declared(name) if name == &self.name));
 
         has_indexed_directive || has_single_field_index_directive
     }
@@ -1743,6 +1827,17 @@ impl Field {
 pub enum IndexFieldDirection {
     Asc,
     Desc,
+}
+
+impl IndexFieldDirection {
+    /// The spelling the generated ReScript and the stored config share, as
+    /// opposed to `Display`, which renders the lowercase SQL keyword.
+    pub fn as_pascal_str(&self) -> &'static str {
+        match self {
+            Self::Asc => "Asc",
+            Self::Desc => "Desc",
+        }
+    }
 }
 
 impl fmt::Display for IndexFieldDirection {

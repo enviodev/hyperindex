@@ -101,6 +101,15 @@ pub struct BaseConfig {
     pub disable_default_cross_chain: Option<bool>,
 }
 
+impl BaseConfig {
+    /// Entities and effect caches are shared across chains unless the config
+    /// opts out. Decides which entities get an appended chain-id column, so the
+    /// schema parser and the validators have to agree on it.
+    pub fn default_cross_chain(&self) -> bool {
+        !self.disable_default_cross_chain.unwrap_or(false)
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct StorageConfig {
