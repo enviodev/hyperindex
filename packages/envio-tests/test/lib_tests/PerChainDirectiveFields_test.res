@@ -187,7 +187,7 @@ type Transfer @storage(clickhouse: {orderBy: ["blockNumber"]}) {
 `,
       ),
     ).toBe(`schema.graphql:2:15: Invalid \`clickhouse.orderBy\` on \`Transfer\`: \`blockNumber\` is not a column of the entity.
-  Available columns: \`timestamp\`, \`chainId\`.`)
+  Available columns: \`id\`, \`timestamp\`, \`chainId\`.`)
   })
 })
 
@@ -256,6 +256,6 @@ type Transfer @index(fields: ["db_write_timestamp", "timestamp"]) {
 `,
       ),
     ).toBe(`schema.graphql:2:15: Invalid \`@index\` on \`Transfer\`: \`db_write_timestamp\` is not a column of the entity.
-  Available columns: \`timestamp\`, \`chainId\`.`)
+  Available columns: \`id\`, \`timestamp\`, \`chainId\`.`)
   })
 })

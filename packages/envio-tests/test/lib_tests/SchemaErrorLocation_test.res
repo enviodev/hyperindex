@@ -34,7 +34,7 @@ type Second @index(fields: ["missing"]) {
 }
 `),
     ).toBe(`schema.graphql:7:13: Invalid \`@index\` on \`Second\`: \`missing\` is not a column of the entity.
-  Available columns: \`value\`.`)
+  Available columns: \`id\`, \`value\`.`)
   })
 
   it("Points at the entity for an error about the entity itself", t => {
@@ -74,7 +74,7 @@ type First @index(fields: ["missing"]) {
 }
 `),
     ).toBe(`schema.graphql:3:12: Invalid \`@index\` on \`First\`: \`missing\` is not a column of the entity.
-  Available columns: \`value\`.`)
+  Available columns: \`id\`, \`value\`.`)
   })
 
   it("Counts a comment line once when the schema uses CRLF", t => {
@@ -88,7 +88,7 @@ type First @index(fields: ["missing"]) {
 `->String.replaceAll("\n", "\r\n"),
       ),
     ).toBe(`schema.graphql:2:12: Invalid \`@index\` on \`First\`: \`missing\` is not a column of the entity.
-  Available columns: \`value\`.`)
+  Available columns: \`id\`, \`value\`.`)
   })
 
   it("Points at the repeated directive for a flag declared twice", t => {

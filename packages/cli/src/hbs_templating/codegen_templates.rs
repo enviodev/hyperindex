@@ -334,7 +334,7 @@ impl EntityRecordTypeTemplate {
             derived_fields,
             composite_indexes,
             params,
-            cross_chain: system_config::entity_is_cross_chain(entity, config.default_cross_chain),
+            cross_chain: system_config::entity_is_cross_chain(entity, config.default_chain_scope),
         })
     }
 }

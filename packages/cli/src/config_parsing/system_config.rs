@@ -1,8 +1,8 @@
 use super::{
     chain_helpers::get_max_reorg_depth_from_id,
     entity_parsing::{
-        self, ClickHouseEntityStorage, Entity, EntityColumn, GqlScalar, GraphQLEnum, Schema,
-        MAX_PG_IDENTIFIER_LENGTH, RESERVED_CHAIN_ID_FIELD_NAMES,
+        ClickHouseEntityStorage, DefaultChainScope, Entity, EntityColumn, GqlScalar, GraphQLEnum,
+        Schema, MAX_PG_IDENTIFIER_LENGTH, RESERVED_CHAIN_ID_FIELD_NAMES,
     },
     env_interpolation::interpolate_config_variables,
     human_config::{
@@ -120,13 +120,13 @@ trait ConfigSource {
     fn project_paths(&self) -> &ParsedProjectPaths;
     fn is_rescript(&self) -> bool;
     fn env_var(&mut self, name: &str) -> Option<String>;
-    /// `default_cross_chain` reaches the parser because directive column
-    /// references resolve as the schema is built, and whether an entity has an
-    /// appended chain-id column to resolve against depends on it.
+    /// `default_scope` reaches the parser because directive column references
+    /// resolve as the schema is built, and whether an entity has an appended
+    /// chain-id column to resolve against depends on it.
     fn load_schema(
         &self,
         configured_path: &Option<String>,
-        default_cross_chain: bool,
+        default_scope: DefaultChainScope,
     ) -> Result<Schema>;
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
     fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
@@ -165,9 +165,9 @@ impl ConfigSource for FilesystemConfigSource<'_> {
     fn load_schema(
         &self,
         configured_path: &Option<String>,
-        default_cross_chain: bool,
+        default_scope: DefaultChainScope,
     ) -> Result<Schema> {
-        Schema::parse_from_file(self.project_paths, configured_path, default_cross_chain)
+        Schema::parse_from_file(self.project_paths, configured_path, default_scope)
             .context("Parsing schema file for config")
     }
 
@@ -254,15 +254,13 @@ impl ConfigSource for MemoryConfigSource<'_> {
     fn load_schema(
         &self,
         _configured_path: &Option<String>,
-        default_cross_chain: bool,
+        default_scope: DefaultChainScope,
     ) -> Result<Schema> {
         // Parsed as given: schema errors carry the line and column they were
         // raised at, and trimming first would report them against text the
         // caller never wrote.
         match self.schema {
-            Some(schema) if !schema.trim().is_empty() => {
-                Schema::from_string(schema, default_cross_chain)
-            }
+            Some(schema) if !schema.trim().is_empty() => Schema::from_string(schema, default_scope),
             _ => Ok(Schema::empty()),
         }
     }
@@ -369,9 +367,9 @@ pub struct SystemConfig {
     pub contracts: ContractMap,
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
-    // False when `disable_default_cross_chain: true` — entities and effect
-    // caches are then per-chain unless they opt back in.
-    pub default_cross_chain: bool,
+    // `PerChain` when `disable_default_cross_chain: true` — entities and
+    // effect caches are then per-chain unless they opt back in.
+    pub default_chain_scope: DefaultChainScope,
     pub schema: Schema,
     pub field_selection: FieldSelection,
     pub enable_raw_events: bool,
@@ -706,8 +704,8 @@ pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static 
     }
 }
 
-pub fn entity_is_cross_chain(entity: &Entity, default_cross_chain: bool) -> bool {
-    entity_parsing::is_cross_chain(entity.cross_chain, default_cross_chain)
+pub fn entity_is_cross_chain(entity: &Entity, default_scope: DefaultChainScope) -> bool {
+    default_scope.is_cross_chain(entity.cross_chain)
 }
 
 /// What to add to a field so ClickHouse stores it as a numeric Decimal. A
@@ -815,10 +813,10 @@ pub fn validate_clickhouse_sorting_key_scalars(
 /// Left silently accepted it would read as "this entity is special" while
 /// changing nothing, so reject it instead of ignoring it.
 pub fn validate_cross_chain_directives(
-    default_cross_chain: bool,
+    default_scope: DefaultChainScope,
     schema: &Schema,
 ) -> anyhow::Result<()> {
-    if !default_cross_chain {
+    if default_scope == DefaultChainScope::PerChain {
         return Ok(());
     }
     let mut annotated: Vec<&str> = schema
@@ -847,19 +845,19 @@ pub fn validate_cross_chain_directives(
 /// the references alone covers both.
 pub fn validate_cross_chain_relationships(
     schema: &Schema,
-    default_cross_chain: bool,
+    default_scope: DefaultChainScope,
 ) -> anyhow::Result<()> {
     let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
     let mut invalid: Vec<String> = vec![];
     for entity in &entities {
-        if !entity_is_cross_chain(entity, default_cross_chain) {
+        if !entity_is_cross_chain(entity, default_scope) {
             continue;
         }
         for (field, related) in entity.get_related_entities(schema)? {
             if field.get_derived_from_field().is_some()
-                || entity_is_cross_chain(related, default_cross_chain)
+                || entity_is_cross_chain(related, default_scope)
             {
                 continue;
             }
@@ -928,13 +926,13 @@ pub fn validate_internal_relationships(schema: &Schema) -> anyhow::Result<()> {
 /// appended and keep both names free.
 pub fn validate_chain_id_field_names(
     schema: &Schema,
-    default_cross_chain: bool,
+    default_scope: DefaultChainScope,
 ) -> anyhow::Result<()> {
     let mut entities: Vec<&Entity> = schema.entities.values().collect();
     entities.sort_by(|a, b| a.name.cmp(&b.name));
 
     for entity in &entities {
-        if entity_is_cross_chain(entity, default_cross_chain) {
+        if entity_is_cross_chain(entity, default_scope) {
             continue;
         }
         for gql_field in entity.get_fields() {
@@ -1106,13 +1104,13 @@ impl SystemConfig {
         let mut contracts: ContractMap = HashMap::new();
 
         let base_config = human_config.get_base_config();
-        let default_cross_chain = base_config.default_cross_chain();
+        let default_scope = base_config.default_chain_scope();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
         validate_entity_storage(&storage, &schema)?;
         validate_relationship_storage(&storage, &schema)?;
-        validate_cross_chain_directives(default_cross_chain, &schema)?;
-        validate_chain_id_field_names(&schema, default_cross_chain)?;
-        validate_cross_chain_relationships(&schema, default_cross_chain)?;
+        validate_cross_chain_directives(default_scope, &schema)?;
+        validate_chain_id_field_names(&schema, default_scope)?;
+        validate_cross_chain_relationships(&schema, default_scope)?;
         validate_internal_relationships(&schema)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
 
@@ -1279,7 +1277,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
                     save_full_history: evm_config.save_full_history.unwrap_or(false),
-                    default_cross_chain,
+                    default_chain_scope: default_scope,
                     schema,
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
@@ -1429,7 +1427,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: false,
                     save_full_history: false,
-                    default_cross_chain,
+                    default_chain_scope: default_scope,
                     schema,
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
@@ -1567,7 +1565,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: uses_hypersync,
                     save_full_history: false,
-                    default_cross_chain,
+                    default_chain_scope: default_scope,
                     schema,
                     field_selection: FieldSelection::svm(),
                     enable_raw_events: false,
@@ -1664,8 +1662,8 @@ impl SystemConfig {
         };
 
         let base_config = human_config.get_base_config();
-        let default_cross_chain = base_config.default_cross_chain();
-        let schema = source.load_schema(&base_config.schema, default_cross_chain)?;
+        let default_scope = base_config.default_chain_scope();
+        let schema = source.load_schema(&base_config.schema, default_scope)?;
         Self::from_human_config_with_source(human_config, schema, source)
     }
 }
@@ -3628,7 +3626,7 @@ mod test {
 
     mod internal_relationship_validation {
         use super::super::validate_internal_relationships;
-        use crate::config_parsing::entity_parsing::Schema;
+        use crate::config_parsing::entity_parsing::{DefaultChainScope, Schema};
 
         #[test]
         fn public_reference_to_internal_entity_rejected() {
@@ -3641,7 +3639,7 @@ type Trader {
 type Secret @internal {
   id: ID!
 }"#,
-                true,
+                DefaultChainScope::CrossChain,
             )
             .unwrap();
             let err = validate_internal_relationships(&schema)
@@ -3665,7 +3663,7 @@ type Order @internal {
   id: ID!
   trader: Trader!
 }"#,
-                true,
+                DefaultChainScope::CrossChain,
             )
             .unwrap();
             let err = validate_internal_relationships(&schema)
@@ -3693,7 +3691,7 @@ type SecretB @internal {
   id: ID!
   entries: [SecretA!]! @derivedFrom(field: "other")
 }"#,
-                true,
+                DefaultChainScope::CrossChain,
             )
             .unwrap();
             assert!(validate_internal_relationships(&schema).is_ok());
@@ -3704,11 +3702,14 @@ type SecretB @internal {
 
     mod db_column_name_validation {
         use super::super::{validate_db_column_names, Storage};
-        use crate::config_parsing::{entity_parsing::Schema, human_config::ColumnNameFormat};
+        use crate::config_parsing::{
+            entity_parsing::{DefaultChainScope, Schema},
+            human_config::ColumnNameFormat,
+        };
 
         // Cross-chain: these fixtures declare no chain column.
         fn parse_schema(schema: &str) -> Schema {
-            Schema::from_string(schema, true).unwrap()
+            Schema::from_string(schema, DefaultChainScope::CrossChain).unwrap()
         }
 
         fn storage(column_name_format: ColumnNameFormat) -> Storage {
@@ -3794,7 +3795,10 @@ type Transfer {
 
     mod clickhouse_nullable_array_validation {
         use super::super::{validate_clickhouse_nullable_arrays, Storage, StorageBackend};
-        use crate::config_parsing::{entity_parsing::Schema, human_config::ColumnNameFormat};
+        use crate::config_parsing::{
+            entity_parsing::{DefaultChainScope, Schema},
+            human_config::ColumnNameFormat,
+        };
 
         fn backend(entity_default: bool) -> Option<StorageBackend> {
             Some(StorageBackend {
@@ -3818,7 +3822,7 @@ type Foo @storage(postgres: true, clickhouse: true) {
   id: ID!
   tags: [String!]!
 }"#,
-                true,
+                DefaultChainScope::CrossChain,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, false), &schema).is_ok());
@@ -3834,7 +3838,7 @@ type Foo @storage(postgres: true) {
   id: ID!
   tags: [String!]
 }"#,
-                true,
+                DefaultChainScope::CrossChain,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_ok());
@@ -3851,7 +3855,7 @@ type Foo {
   id: ID!
   tags: [String!]
 }"#,
-                true,
+                DefaultChainScope::CrossChain,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_err());
@@ -3866,7 +3870,7 @@ type Foo {
   id: ID!
   tags: [String!]
 }"#,
-                true,
+                DefaultChainScope::CrossChain,
             )
             .unwrap();
             let storage = Storage {

@@ -38,18 +38,42 @@ type Token @storage(clickhouse: {orderBy: ["missing"]}) {
 }
 `),
     ).toBe(`schema.graphql:2:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`missing\` is not a column of the entity.
-  Available columns: \`timestamp\`.`)
+  Available columns: \`id\`, \`timestamp\`.`)
   })
 
-  it("Rejects id, which is the sorting key when no orderBy is given", t => {
+  it("Rejects a lone id, which is the sorting key when no orderBy is given", t => {
     t.expect(
       parseError(`
 type Token @storage(clickhouse: {orderBy: ["id"]}) {
   id: ID!
 }
 `),
-    ).toBe(`schema.graphql:2:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`id\` is already the sorting key when no \`orderBy\` is given.
-  List only the columns to sort by instead of \`id\`.`)
+    ).toBe(`schema.graphql:2:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`id\` on its own is already the sorting key when no \`orderBy\` is given.
+  Drop the \`orderBy\`, or list the columns to sort by before \`id\`.`)
+  })
+
+  it("Sorts by id alongside another column", t => {
+    let config = parse(`
+type Token @storage(clickhouse: {orderBy: ["id", "timestamp"]}) {
+  id: ID!
+  timestamp: Timestamp!
+}
+`)
+
+    t.expect(
+      ClickHouse.makeCreateHistoryTableQuery(
+        ~entityConfig=config.userEntitiesByName->Dict.getUnsafe("Token"),
+        ~database="db",
+      ),
+      ~message="id leads a sorting key that narrows further",
+    ).toBe(`CREATE TABLE IF NOT EXISTS db.\`envio_history_Token\` (
+  \`id\` String,
+  \`timestamp\` DateTime64(3, 'UTC'),
+  \`envio_checkpoint_id\` UInt64,
+  \`envio_change\` Enum8('SET', 'DELETE')
+)
+ENGINE = MergeTree()
+ORDER BY (\`id\`, \`timestamp\`, envio_checkpoint_id)`)
   })
 
   it("Rejects a column listed twice", t => {

@@ -119,7 +119,7 @@ describe("@index(fields:) rejections", () => {
     t.expect(
       parseError(schemaWith(`@index(fields: ["missing", "tokenId"])`)),
     ).toBe(`schema.graphql:2:17: Invalid \`@index\` on \`TestEntity\`: \`missing\` is not a column of the entity.
-  Available columns: \`tokenId\`, \`collection\`.`)
+  Available columns: \`id\`, \`tokenId\`, \`collection\`.`)
   })
 
   it("Rejects a @derivedFrom field, which has no column", t => {
@@ -140,7 +140,22 @@ type Token {
   Use a stored field instead.`)
   })
 
-  it("Rejects id, which the primary key already indexes", t => {
+  it("Indexes id alongside another column", t => {
+    t.expect(
+      table(
+        schemaWith(`@index(fields: ["id", "tokenId"])`),
+        "TestEntity",
+      )->Table.getCompositeIndexes,
+      ~message="only a lone id is redundant — leading a composite is not",
+    ).toEqual([
+      [
+        ({fieldName: "id", direction: Table.Asc}: Table.compositeIndexField),
+        {fieldName: "tokenId", direction: Table.Asc},
+      ],
+    ])
+  })
+
+  it("Rejects a lone id, which the primary key already indexes", t => {
     t.expect(
       parseError(schemaWith(`@index(fields: ["id"])`)),
     ).toBe(`schema.graphql:2:17: Invalid \`@index\` on \`TestEntity\`: \`id\` is the primary key, so it is already indexed.

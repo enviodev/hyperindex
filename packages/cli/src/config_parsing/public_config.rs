@@ -880,9 +880,11 @@ impl SystemConfig {
                     name: entity.name.clone(),
                     cross_chain: Some(system_config::entity_is_cross_chain(
                         entity,
-                        cfg.default_cross_chain,
+                        cfg.default_chain_scope,
                     ))
-                    .filter(|cross_chain| *cross_chain != cfg.default_cross_chain),
+                    .filter(|cross_chain| {
+                        *cross_chain != cfg.default_chain_scope.is_cross_chain_by_default()
+                    }),
                     storage,
                     internal: entity.internal,
                     properties,
@@ -904,7 +906,7 @@ impl SystemConfig {
             save_full_history: cfg.save_full_history,
             raw_events: cfg.enable_raw_events,
             chain_id_mode: cfg.chain_id_mode,
-            default_cross_chain: cfg.default_cross_chain,
+            default_cross_chain: cfg.default_chain_scope.is_cross_chain_by_default(),
             storage: (&cfg.storage).into(),
             evm,
             fuel,
