@@ -60,12 +60,21 @@ let driverAt = (harness, index): HeightStream.driver => harness.drivers->Array.g
 
 // The retry wait is jittered across [delay/2, delay), so a test can only pin the
 // window: nothing has reconnected before the earliest instant it could fire, and
-// something has by the last one. Advancing in two steps asserts both ends.
+// something has by the last one.
 let advanceThroughRetryWindow = async (harness, ~delay) => {
   let earliest = delay / 2
   await Vi.advanceTimersByTimeAsync(earliest - 1)
   let beforeEarliest = harness.drivers->Array.length
-  await Vi.advanceTimersByTimeAsync(delay - earliest)
+  // Walk the rest of the window rather than jumping it, and stop as soon as the
+  // reconnect lands. The connection it makes is live from that instant, so
+  // jumping the remainder would run it through its own staleness timeout and
+  // measure that instead of the backoff.
+  let remaining = ref(delay - earliest)
+  while remaining.contents > 0 && harness.drivers->Array.length === beforeEarliest {
+    let step = Pervasives.min(remaining.contents, 500)
+    await Vi.advanceTimersByTimeAsync(step)
+    remaining := remaining.contents - step
+  }
   (beforeEarliest, harness.drivers->Array.length)
 }
 

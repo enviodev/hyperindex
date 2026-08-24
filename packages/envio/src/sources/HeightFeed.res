@@ -41,6 +41,10 @@ type t = {
   // wait out a sleep that started for someone else.
   mutable wakePoll: option<unit => unit>,
   mutable pollRetry: int,
+  // Bumped whenever the connection in place changes hands. A request made for
+  // one connection can land after another has replaced it, and what it says
+  // about the connection that asked is no longer about the one in place.
+  mutable connectionGeneration: int,
   mutable connects: int,
   disconnects: dict<int>,
   // A stopped feed never subscribes again: `stop` is the capability verdict that
@@ -61,6 +65,7 @@ let make = (~source: Source.t, ~recordRequestStats, ~getHeightRetryInterval): t 
   polling: false,
   wakePoll: None,
   pollRetry: 0,
+  connectionGeneration: 0,
   connects: 0,
   disconnects: Dict.make(),
   stopped: false,
@@ -217,15 +222,20 @@ let recordDisconnect = (feed: t, ~reason) =>
 // connection existed: eth_subscribe only ever delivers the *next* block. The one
 // request this module makes with nobody waiting — a chain that reconnects while
 // idle would otherwise sit on a stale head until the next block is mined.
-let catchUp = async (feed: t) =>
+let catchUp = async (feed: t, ~generation) =>
   try {
     let res = await feed.source.getHeightOrThrow()
     feed.recordRequestStats(res.requestStats)
+    // A height is a height whoever fetched it, so this counts either way.
     feed->recordHeight(res.height)
 
-    // The connection has delivered something, so polling alongside it can stop.
-    feed.streamUnproven = false
-    feed->wakeIfIdle
+    // Only the connection that asked is proven by the answer. A catch-up that
+    // lands after its connection was replaced would otherwise retire the polling
+    // covering a replacement that has delivered nothing.
+    if generation === feed.connectionGeneration {
+      feed.streamUnproven = false
+      feed->wakeIfIdle
+    }
   } catch {
   | exn =>
     // Deliberately leaves the stream unproven: nothing else is fetching the
@@ -255,6 +265,7 @@ let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
   | Live =>
     if !feed.streamLive {
       feed.streamLive = true
+      feed.connectionGeneration = feed.connectionGeneration + 1
       feed.connects = feed.connects + 1
 
       // Live is a claim, not a delivery: polling keeps covering the source until
@@ -263,7 +274,7 @@ let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
       // Whoever was waiting is already being polled for — the loop cannot have
       // stopped while a waiter sat behind a stream that was not live — so the
       // catch-up is all this moment adds.
-      feed->catchUp->Promise.ignore
+      feed->catchUp(~generation=feed.connectionGeneration)->Promise.ignore
     }
   | Down({reason} as down) =>
     // A stream that is down stays down through every failed retry, and each of
@@ -275,6 +286,7 @@ let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
     }
     feed.streamLive = false
     feed.streamUnproven = false
+    feed.connectionGeneration = feed.connectionGeneration + 1
     feed->startPolling
     // The counters say a stream is flapping and how often, but only the
     // provider's own words say why, and a frame nobody could read is
@@ -318,6 +330,7 @@ let stop = (feed: t) => {
     }
     feed.streamLive = false
     feed.streamUnproven = false
+    feed.connectionGeneration = feed.connectionGeneration + 1
     // Whoever is still waiting has nothing pushing for them now. Being benched
     // is a capability verdict, not an outage: the source can still answer a
     // height poll, and until another one answers the wait it is what there is.

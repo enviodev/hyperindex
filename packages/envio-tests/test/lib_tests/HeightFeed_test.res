@@ -332,6 +332,34 @@ describe("HeightFeed stream state", () => {
     t.expect((pollsWhileLive, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((2, 3))
   })
 
+  Async.it("Keeps polling when a replaced connection's catch-up lands late", async t => {
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let (feed, _stats) = makeFeed(mock)
+    feed->HeightFeed.enableStream
+
+    mock.setHeightSubscriptionStatus(Live)
+    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    // The connection now in place, with a catch-up of its own outstanding.
+    mock.setHeightSubscriptionStatus(Live)
+    let (_heights, _unsubscribe) = feed->watch(~knownHeight=100, ~interval=() => 5)
+    let pollsBefore = mock.getHeightOrThrowCalls->Array.length
+
+    // The dropped connection's catch-up, answering after its replacement took
+    // over. It says nothing about whether the connection in place delivers, so
+    // it must not retire the polling covering that one.
+    mock.resolveGetHeightOrThrowAt(~index=0, 100)
+    mock.resolveGetHeightOrThrowAt(~index=2, 100)
+    await Utils.delay(20)
+
+    t.expect((pollsBefore, mock.getHeightOrThrowCalls->Array.length > pollsBefore)).toStrictEqual((
+      3,
+      true,
+    ))
+  })
+
   Async.it("Counts an outage once, however many retries fail inside it", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],

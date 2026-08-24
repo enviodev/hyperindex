@@ -3662,6 +3662,57 @@ describe("SourceManager height subscription", () => {
     t.expect((pollsAdded, await waiting)).toStrictEqual((1, 111))
   })
 
+  Async.it("Polls a recruited fallback whose own stream has gone quiet", async t => {
+    let stallTimeout = 20
+    let sync = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
+    let fallback = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~sourceFor=Fallback,
+      ~pollingInterval=10_000,
+    )
+    let sourceManager = SourceManager.make(
+      ~isRealtime=true,
+      ~sources=[sync.source, fallback.source],
+      ~newBlockStallTimeoutRealtime=stallTimeout,
+    )
+
+    // A first wait stalls, recruits the fallback, and its stream connects and
+    // proves itself — which is what leaves it holding a live stream next time.
+    let first =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=true,
+        ~knownHeight=100,
+        ~reducedPolling=false,
+      )
+    await Utils.delay(stallTimeout + 10)
+    fallback.setHeightSubscriptionStatus(Live)
+    await Utils.delay(0)
+    fallback.resolveGetHeightOrThrow(100)
+    await Utils.delay(10)
+    fallback.triggerHeightSubscription(101)
+    t.expect(await first).toEqual(101)
+    let pollsAfterFirst = fallback.getHeightOrThrowCalls->Array.length
+
+    // The next wait stalls too, and recruits it again. Its stream still claims
+    // to be live, and a whole window has passed with nothing heard from it —
+    // exactly the claim a primary's stall stops taking at face value.
+    let second =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=true,
+        ~knownHeight=101,
+        ~reducedPolling=false,
+      )
+    await Utils.delay(stallTimeout + 10)
+    let pollsAfterStall = fallback.getHeightOrThrowCalls->Array.length
+    fallback.resolveGetHeightOrThrow(102)
+
+    t.expect((pollsAfterFirst, pollsAfterStall > pollsAfterFirst, await second)).toStrictEqual((
+      2,
+      true,
+      102,
+    ))
+  })
+
   Async.it("Reports height stream connects and disconnects as metrics", async t => {
     let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
     let sourceManager = SourceManager.make(

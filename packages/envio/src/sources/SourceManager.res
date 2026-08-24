@@ -819,12 +819,20 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
         // A whole stall window of silence from a stream that says it is
         // connected: stop taking its word for it and poll alongside it. This is
         // the one failure a stream's own staleness detector cannot see, because
-        // a transport that keeps pinging looks alive to it.
+        // a transport that keeps pinging looks alive to it. The warning above
+        // stands rather than waiting to see whether the polling recovers: a
+        // stream that has to be covered this way was silently costing a stall
+        // window per block, which is worth saying out loud.
         mainSources->Array.forEach(sourceState => sourceState.feed->HeightFeed.poke)
 
         fallbackSources->Array.forEach(sourceState =>
           if !settled.contents {
             sourceState->watch
+            // A fallback brought in by an earlier stall may still be holding a
+            // stream of its own, and it is being recruited precisely because
+            // nothing has been heard. Take its word for it no more than the
+            // primaries'.
+            sourceState.feed->HeightFeed.poke
           }
         )
       }, stallTimeout)
