@@ -555,6 +555,62 @@ describe("HeightFeed poll failures", () => {
     t.expect((pollsBefore, pollsAfter > pollsBefore)).toStrictEqual((1, true))
   })
 
+  Async.it("Lets a catch-up that answers reset the poll ramp", async t => {
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let retries = []
+    let (feed, _stats) = makeFeed(
+      mock,
+      ~getHeightRetryInterval=(~retry) => {
+        retries->Array.push(retry)->ignore
+        1
+      },
+    )
+    feed->HeightFeed.enableStream
+    let (_heights, _subscription) = feed->watch(~knownHeight=100, ~interval=() => 1)
+
+    mock.rejectGetHeightOrThrow(JsError.make("no"))
+    await Utils.delay(10)
+    mock.rejectGetHeightOrThrow(JsError.make("no again"))
+    await Utils.delay(10)
+    let retriesBeforeConnect = retries->Array.copy
+
+    // The stream connects and its catch-up answers. That is the endpoint
+    // answering, which is all the ramp beside it measures — it makes no
+    // difference which of the two asked.
+    mock.setHeightSubscriptionStatus(Live)
+    await Utils.delay(0)
+    let catchUpIndex = mock.getHeightOrThrowCalls->Array.length - 1
+    mock.resolveGetHeightOrThrowAt(~index=catchUpIndex, 100)
+    await Utils.delay(10)
+    mock.rejectGetHeightOrThrow(JsError.make("and again"))
+    await Utils.delay(10)
+
+    t.expect((retriesBeforeConnect, retries)).toStrictEqual(([0, 1], [0, 1, 0]))
+  })
+
+  Async.it("Bounds a catch-up that never answers, though nothing waits on it", async t => {
+    Vi.useFakeTimers()
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let (feed, _stats) = makeFeed(mock)
+    feed->HeightFeed.enableStream
+
+    // Nobody is waiting, so no loop is watching this request on anyone's behalf.
+    // Unbounded it would be a request per connect that is never released.
+    mock.setHeightSubscriptionStatus(Live)
+    let timersWhileOutstanding = Vi.getTimerCount()
+    await Vi.advanceTimersByTimeAsync(HeightFeed.pollTimeoutMillis + 100)
+    let timersAfterDeadline = Vi.getTimerCount()
+    Vi.useRealTimers()
+
+    t.expect((timersWhileOutstanding, timersAfterDeadline)).toStrictEqual((1, 0))
+  })
+
   Async.it("Keeps polling for the waiter rather than giving up on a failure", async t => {
     let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
     let (feed, _stats) = makeFeed(mock, ~getHeightRetryInterval=(~retry as _) => 1)
