@@ -41,11 +41,11 @@ pub(crate) struct InstructionSchemaInput {
 /// query response instead of crossing the napi boundary one instruction at a
 /// time.
 ///
-/// POC policy: any decode failure (unknown discriminator, account-count
-/// mismatch, trailing bytes, unresolved type) yields `None` so the indexer
-/// keeps running. Real on-chain calls drift from schemas in small ways
-/// (Metaplex `rent` slot was optional in some versions, etc.); a single bad
-/// row should not kill the worker.
+/// Any decode failure (unknown discriminator, account-count mismatch, trailing
+/// bytes, unresolved type) yields `None` rather than an error: real on-chain
+/// calls drift from schemas in small ways (Metaplex `rent` slot was optional in
+/// some versions, etc.), and a single bad row should not kill the worker. The
+/// caller drops such an instruction instead of running handlers on empty args.
 pub(crate) fn decode_with_schema(
     schema: &UpstreamSchema,
     instruction: &UpstreamInstructionCall,
