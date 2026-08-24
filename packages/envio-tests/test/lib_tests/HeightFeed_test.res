@@ -538,6 +538,23 @@ describe("HeightFeed poll failures", () => {
     t.expect((retriesBeforeSuccess, retries, heights)).toStrictEqual(([0, 1], [0, 1, 0], []))
   })
 
+  Async.it("Gives up on a poll that never answers rather than waiting on it forever", async t => {
+    Vi.useFakeTimers()
+    let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
+    let (feed, _stats) = makeFeed(mock, ~getHeightRetryInterval=(~retry as _) => 1)
+    let (_heights, _subscription) = feed->watch(~knownHeight=100, ~interval=() => 1)
+    // Answered by nothing, ever: a source with no timeout of its own, or a
+    // socket that died without saying so. One loop covers this feed, so a call
+    // it can never stop waiting on is one the source never gets polled again.
+    let pollsBefore = mock.getHeightOrThrowCalls->Array.length
+
+    await Vi.advanceTimersByTimeAsync(HeightFeed.pollTimeoutMillis + 100)
+    let pollsAfter = mock.getHeightOrThrowCalls->Array.length
+    Vi.useRealTimers()
+
+    t.expect((pollsBefore, pollsAfter > pollsBefore)).toStrictEqual((1, true))
+  })
+
   Async.it("Keeps polling for the waiter rather than giving up on a failure", async t => {
     let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
     let (feed, _stats) = makeFeed(mock, ~getHeightRetryInterval=(~retry as _) => 1)

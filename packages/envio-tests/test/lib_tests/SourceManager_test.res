@@ -3699,6 +3699,12 @@ describe("SourceManager height subscription", () => {
       )
     await Vi.advanceTimersByTimeAsync(stallTimeout)
     let secondHeight = await second
+
+    // Let the poll sync still had out come back, so its loop retires and takes
+    // that poll's deadline with it. What is left pending after that is only what
+    // the wait itself armed.
+    sync.resolveGetHeightOrThrow(100)
+    await Vi.advanceTimersByTimeAsync(0)
     let timersLeftBehind = Vi.getTimerCount()
     Vi.useRealTimers()
 

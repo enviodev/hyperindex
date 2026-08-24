@@ -188,15 +188,50 @@ let currentInterval = (feed: t) =>
   | None => feed.source.pollingInterval
   }
 
+// A source that has not answered in this long is not going to. One loop covers
+// the feed, and it waits on one request at a time, so an unbounded call — a
+// source with no timeout of its own, or a socket that died without saying so —
+// would stop the height moving for the rest of the process rather than for one
+// poll. Far longer than any healthy getHeight, so a merely slow endpoint answers
+// first and nothing here fires in normal running.
+let pollTimeoutMillis = 60_000
+
+let nextRetryInterval = (feed: t) => {
+  let retryInterval = feed.getHeightRetryInterval(~retry=feed.pollRetry)
+  feed.pollRetry = feed.pollRetry + 1
+  retryInterval
+}
+
 // One poll, with the escalating backoff a failing endpoint earns: it is usually
 // the same endpoint whose stream just dropped, so asking again at the polling
 // interval would lean on something already in trouble.
 let pollOnce = async (feed: t) => {
   let generation = feed.connectionGeneration
+  let timeoutId = ref(None)
+  let clearPollTimeout = () =>
+    switch timeoutId.contents {
+    | Some(id) => clearTimeout(id)
+    | None => ()
+    }
   try {
-    let res = await feed.source.getHeightOrThrow()
-    feed.recordRequestStats(res.requestStats)
-    feed.pollRetry = 0
+    let answered = await Promise.race([
+      feed.source.getHeightOrThrow()->Promise.thenResolve(res => Some(res)),
+      Promise.make((resolve, _reject) => {
+        timeoutId := Some(setTimeout(() => resolve(None), pollTimeoutMillis))
+      }),
+    ])
+    clearPollTimeout()
+    switch answered {
+    | None =>
+      let retryInterval = feed->nextRetryInterval
+      feed.logger->Logging.childTrace({
+        "msg": `Height retrieval from ${feed.source.name} source did not answer within ${(pollTimeoutMillis /
+            1000)->Int.toString}s. Retrying in ${retryInterval->Int.toString}ms.`,
+      })
+      retryInterval
+    | Some(res) =>
+      feed.recordRequestStats(res.requestStats)
+      feed.pollRetry = 0
     // Fetching the head is the whole job a connect's catch-up exists to do, so
     // a poll that answers closes that gap too — as long as it was asked for the
     // connection still in place. Without this a stream whose delivery is slower
@@ -205,16 +240,17 @@ let pollOnce = async (feed: t) => {
     if generation === feed.connectionGeneration {
       feed.connectionUnproven = false
     }
-    feed->recordHeight(res.height)
-    feed->currentInterval
+      feed->recordHeight(res.height)
+      feed->currentInterval
+    }
   } catch {
   | exn =>
-    let retryInterval = feed.getHeightRetryInterval(~retry=feed.pollRetry)
+    clearPollTimeout()
+    let retryInterval = feed->nextRetryInterval
     feed.logger->Logging.childTrace({
       "msg": `Height retrieval from ${feed.source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
       "err": exn->Utils.prettifyExn,
     })
-    feed.pollRetry = feed.pollRetry + 1
     retryInterval
   }
 }
@@ -378,9 +414,6 @@ let stop = (feed: t) => {
   }
 }
 
-// Fires once, at the first height above `knownHeight`, from a push, a poll or a
-// height another part of the indexer observed. Returns an unsubscribe that is
-// idempotent, including from inside `onHeight`.
 // Fires once, at the first height above `knownHeight`, from a push, a poll or a
 // height another part of the indexer observed. What comes back acts on this
 // waiter alone, and does nothing once it is gone.
