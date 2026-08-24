@@ -76,6 +76,18 @@ ENGINE = MergeTree()
 ORDER BY (\`id\`, \`timestamp\`, envio_checkpoint_id)`)
   })
 
+  it("Rejects an empty list, which would sort by nothing at all", t => {
+    t.expect(
+      parseError(`
+type Token @storage(clickhouse: {orderBy: []}) {
+  id: ID!
+  timestamp: Timestamp!
+}
+`),
+      ~message="an orderBy that resolves to no columns is a silent no-op otherwise",
+    ).toBe(`schema.graphql:2:12: Invalid @storage directive on \`Token\`. \`clickhouse.orderBy\` must be a non-empty list of entity field names, e.g. clickhouse: {orderBy: ["timestamp"]}.`)
+  })
+
   it("Rejects a column listed twice", t => {
     t.expect(
       parseError(`
