@@ -1,8 +1,8 @@
 use super::{
     chain_helpers::get_max_reorg_depth_from_id,
     entity_parsing::{
-        ClickHouseEntityStorage, DefaultChainScope, Entity, EntityColumn, GqlScalar, GraphQLEnum,
-        Schema, MAX_PG_IDENTIFIER_LENGTH, RESERVED_CHAIN_ID_FIELD_NAMES,
+        schema_source_label, ClickHouseEntityStorage, DefaultChainScope, Entity, EntityColumn,
+        GqlScalar, GraphQLEnum, Schema, MAX_PG_IDENTIFIER_LENGTH, RESERVED_CHAIN_ID_FIELD_NAMES,
     },
     env_interpolation::interpolate_config_variables,
     human_config::{
@@ -253,14 +253,16 @@ impl ConfigSource for MemoryConfigSource<'_> {
 
     fn load_schema(
         &self,
-        _configured_path: &Option<String>,
+        configured_path: &Option<String>,
         default_scope: DefaultChainScope,
     ) -> Result<Schema> {
         // Parsed as given: schema errors carry the line and column they were
         // raised at, and trimming first would report them against text the
         // caller never wrote.
         match self.schema {
-            Some(schema) if !schema.trim().is_empty() => Schema::from_string(schema, default_scope),
+            Some(schema) if !schema.trim().is_empty() => {
+                Schema::from_string_at(schema, default_scope, &schema_source_label(configured_path))
+            }
             _ => Ok(Schema::empty()),
         }
     }
@@ -449,8 +451,7 @@ const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
 pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
+    let entities = schema.entities_by_name();
 
     // Entities without @storage fall back to the backends marked `default`
     // in config.yaml. When no backend is a default, such entities would end
@@ -531,11 +532,8 @@ fn is_stored_in_postgres(entity: &Entity, storage: &Storage) -> bool {
 /// it here rather than letting table creation (or the end-of-backfill index
 /// pass) fail on an entity it can't resolve.
 pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-
     let mut invalid: Vec<String> = Vec::new();
-    for entity in entities {
+    for entity in schema.entities_by_name() {
         if !is_stored_in_postgres(entity, storage) {
             continue;
         }
@@ -583,9 +581,6 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
         }
     }
 
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-
     // The identifier length limit is Postgres-specific (ClickHouse has no
     // comparable limit), so only names that become Postgres columns are
     // checked against it.
@@ -595,6 +590,7 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     let mut reserved: Vec<String> = vec![];
     let mut too_long: Vec<String> = vec![];
     let mut collisions: Vec<String> = vec![];
+    let entities = schema.entities_by_name();
     for format in &formats {
         for entity in &entities {
             let mut field_names_by_column: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -695,19 +691,6 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     Ok(())
 }
 
-/// The chain-id column appended to per-chain entity tables, spelled for the
-/// backend's configured `column_name_format`.
-pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static str {
-    match format {
-        human_config::ColumnNameFormat::Original => "chainId",
-        human_config::ColumnNameFormat::SnakeCase => "chain_id",
-    }
-}
-
-pub fn entity_is_cross_chain(entity: &Entity, default_scope: DefaultChainScope) -> bool {
-    default_scope.is_cross_chain(entity.cross_chain)
-}
-
 /// What to add to a field so ClickHouse stores it as a numeric Decimal. A
 /// BigDecimal needs both parameters — `@config(precision:)` alone is rejected
 /// by the field parser, so naming only it would send the user in a circle.
@@ -765,13 +748,11 @@ pub fn validate_clickhouse_sorting_key_scalars(
                     let EntityColumn::Declared(field_name) = column else {
                         continue;
                     };
-                    let field = entity.get_field(field_name).ok_or_else(|| {
-                        anyhow!(
-                            "Invalid storage for `{}`. `clickhouse.orderBy` sorts by \
-                             `{field_name}`, which is not a field of the entity.",
-                            entity.name
-                        )
-                    })?;
+                    // A resolved entity cannot name a column its table lacks —
+                    // the parser rejects that with the schema position in hand.
+                    let Some(field) = entity.get_field(field_name) else {
+                        continue;
+                    };
                     let stored =
                         schema.resolve_stored_scalar(&field.field_type.get_underlying_scalar())?;
                     if stored_as_string(&stored) {
@@ -847,18 +828,13 @@ pub fn validate_cross_chain_relationships(
     schema: &Schema,
     default_scope: DefaultChainScope,
 ) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-
     let mut invalid: Vec<String> = vec![];
-    for entity in &entities {
-        if !entity_is_cross_chain(entity, default_scope) {
+    for entity in schema.entities_by_name() {
+        if !entity.is_cross_chain(default_scope) {
             continue;
         }
         for (field, related) in entity.get_related_entities(schema)? {
-            if field.get_derived_from_field().is_some()
-                || entity_is_cross_chain(related, default_scope)
-            {
+            if field.get_derived_from_field().is_some() || related.is_cross_chain(default_scope) {
                 continue;
             }
             invalid.push(format!(
@@ -888,11 +864,8 @@ pub fn validate_cross_chain_relationships(
 /// codegen. References from @internal entities are fine — nothing is exposed
 /// on their side.
 pub fn validate_internal_relationships(schema: &Schema) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-
     let mut invalid: Vec<String> = vec![];
-    for entity in &entities {
+    for entity in schema.entities_by_name() {
         if entity.internal {
             continue;
         }
@@ -928,11 +901,8 @@ pub fn validate_chain_id_field_names(
     schema: &Schema,
     default_scope: DefaultChainScope,
 ) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-
-    for entity in &entities {
-        if entity_is_cross_chain(entity, default_scope) {
+    for entity in schema.entities_by_name() {
+        if entity.is_cross_chain(default_scope) {
             continue;
         }
         for gql_field in entity.get_fields() {

@@ -229,3 +229,14 @@ let fromUserApi = (
 
   {config, registrations}
 }
+
+// The message a config the parser should reject failed with. Returns a
+// description of what was expected instead of throwing, so the assertion reads
+// as one comparison.
+let parseError = (~schema=?, ~env=?, ~files=?, ~configYaml) =>
+  try {
+    fromUserApi(~schema?, ~env?, ~files?, ~configYaml)->ignore
+    "the parse to fail, but it succeeded"
+  } catch {
+  | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
+  }

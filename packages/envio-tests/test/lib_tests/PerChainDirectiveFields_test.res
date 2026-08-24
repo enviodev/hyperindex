@@ -31,12 +31,7 @@ let parse = (~perChain, ~columnNameFormat="original", schema) =>
   ).config
 
 let parseError = (~perChain, ~columnNameFormat="original", schema) =>
-  try {
-    parse(~perChain, ~columnNameFormat, schema)->ignore
-    "the parse to fail, but it succeeded"
-  } catch {
-  | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
-  }
+  InternalTestIndexer.parseError(~schema, ~configYaml=configYaml(~perChain, ~columnNameFormat))
 
 let entityConfig = (config: Config.t, name) => config.userEntitiesByName->Dict.getUnsafe(name)
 
@@ -143,6 +138,21 @@ type Transfer @storage(clickhouse: {orderBy: ["chainId"]}) {
       ),
     ).toBe(`schema.graphql:2:15: Invalid \`clickhouse.orderBy\` on \`Transfer\`: \`chainId\` is not a column of the entity.
   envio only appends a chain column to per-chain entities, and entities are cross-chain unless config.yaml sets \`disable_default_cross_chain: true\`. Set it, or declare a \`chainId\` field yourself.`)
+  })
+
+  it("Doesn't suggest dropping @crossChain when that alone changes nothing", t => {
+    t.expect(
+      parseError(
+        ~perChain=false,
+        `
+type Transfer @crossChain @storage(clickhouse: {orderBy: ["chainId"]}) {
+  id: ID!
+  timestamp: Timestamp!
+}
+`,
+      ),
+    ).toBe(`schema.graphql:2:27: Invalid \`clickhouse.orderBy\` on \`Transfer\`: \`chainId\` is not a column of the entity.
+  envio only appends a chain column to per-chain entities, and entities are cross-chain unless config.yaml sets \`disable_default_cross_chain: true\`. Set it and drop \`@crossChain\`, or declare a \`chainId\` field yourself.`)
   })
 
   it("Treats a declared chainId on a cross-chain entity as an ordinary column", t => {

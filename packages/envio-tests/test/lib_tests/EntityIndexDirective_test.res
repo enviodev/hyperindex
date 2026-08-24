@@ -3,29 +3,21 @@ open Vitest
 // Asserted against the indexes the tables end up with: a directive that parses
 // into the right shape can still resolve to a column the table lacks.
 
-let parse = schema =>
-  InternalTestIndexer.fromUserApi(
-    ~schema,
-    ~configYaml=`
+let configYaml = `
 name: entity-index-directive
 chains:
   - id: 1
     start_block: 0
-`,
-  ).config
+`
+
+let parse = schema => InternalTestIndexer.fromUserApi(~schema, ~configYaml).config
 
 let table = (schema, name) => {
   let config: Config.t = parse(schema)
   (config.userEntitiesByName->Dict.getUnsafe(name)).table
 }
 
-let parseError = schema =>
-  try {
-    parse(schema)->ignore
-    "the parse to fail, but it succeeded"
-  } catch {
-  | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
-  }
+let parseError = schema => InternalTestIndexer.parseError(~schema, ~configYaml)
 
 let schemaWith = index =>
   `
