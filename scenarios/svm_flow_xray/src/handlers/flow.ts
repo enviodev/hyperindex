@@ -6,8 +6,8 @@ const addrPath = (a: readonly number[]): string => a.join(".");
 const parentOf = (a: readonly number[]): string | undefined =>
   a.length <= 1 ? undefined : a.slice(0, -1).join(".");
 
-// Decoded args are best-effort (borsh decode can fail on IDL drift), so every
-// numeric read is treated as possibly-absent: BigInt(undefined) would throw and
+// An instruction the IDL can't decode never reaches a handler, but an arg the
+// IDL declares optional still can be absent: BigInt(undefined) would throw and
 // kill the handler for an entire protocol.
 const bi = (x: unknown): bigint | undefined =>
   x === undefined || x === null ? undefined : BigInt(x as string | number | bigint);

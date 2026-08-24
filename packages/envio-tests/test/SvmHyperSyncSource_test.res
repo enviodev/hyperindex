@@ -79,12 +79,7 @@ let mockResponse: SvmHyperSyncClient.EventItems.response = {
       accounts: [],
       data: "0x21",
       isInner: false,
-      decoded: Null.make({
-        SvmHyperSyncClient.ResponseTypes.name: "CreateMetadataAccountV3",
-        argsJson: `{"amount":"1"}`,
-        accountsJson: `{"metadata":"${metaplexProgramId}"}`,
-        extraAccounts: [],
-      }),
+      argsJson: `{"amount":"1"}`,
       logs: Null.null,
     },
   ],

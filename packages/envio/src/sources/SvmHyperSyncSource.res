@@ -10,11 +10,6 @@ type options = {
   addressStore: AddressStore.t,
 }
 
-let parseArgs = (d: SvmHyperSyncClient.ResponseTypes.decodedInstruction): JSON.t =>
-  try JSON.parseOrThrow(d.argsJson) catch {
-  | _ => JSON.Object(Dict.make())
-  }
-
 let namedAccounts = (
   ~idlNames: array<string>,
   ~accountArguments: array<string>,
@@ -89,7 +84,7 @@ let toSvmInstruction = (
     out->setField("isInner", item.isInner)
   }
   if hasSelection("args") {
-    out->setField("args", item.decoded->Null.toOption->Option.map(parseArgs))
+    out->setField("args", item.argsJson->JSON.parseOrThrow)
   }
   if hasSelection("accounts") {
     out->setField(

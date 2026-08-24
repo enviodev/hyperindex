@@ -372,14 +372,7 @@ let parse = (
         }
       }
       let data = item.data->Option.getOr(svmEventConfig.discriminator->Option.getOr("0x"))
-      let decoded = item.args->Option.map(args => (
-        {
-          SvmHyperSyncClient.ResponseTypes.name: instructionName,
-          argsJson: args->JSON.stringify,
-          accountsJson: "{}",
-          extraAccounts: [],
-        }: SvmHyperSyncClient.ResponseTypes.decodedInstruction
-      ))
+      let argsJson = item.args->Option.mapOr("{}", args => args->JSON.stringify)
       let logs = item.logs->Option.map(logs =>
         logs->Array.map((log): SvmHyperSyncClient.EventItems.log => {
           kind: log.kind->Null.fromOption,
@@ -463,7 +456,7 @@ let parse = (
             accounts: accountArguments,
             data,
             isInner: item.isInner->Option.getOr(false),
-            decoded: decoded->Null.fromOption,
+            argsJson,
             logs: logs->Null.fromOption,
           },
           ~programName,

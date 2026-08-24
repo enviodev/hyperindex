@@ -147,15 +147,6 @@ module ResponseTypes = {
     blockTime: Null.t<int>,
   }
 
-  /// Borsh-decoded view attached by the Rust client. `argsJson`/`accountsJson`
-  /// are stringified to side-step napi-rs's lack of native JSON passthrough.
-  type decodedInstruction = {
-    name: string,
-    argsJson: string,
-    accountsJson: string,
-    extraAccounts: array<string>,
-  }
-
   type instructionCall = {
     slot: int,
     transactionIndex: int,
@@ -224,7 +215,10 @@ module EventItems = {
     accounts: array<string>,
     data: string,
     isInner: bool,
-    decoded: Null.t<ResponseTypes.decodedInstruction>,
+    // Borsh-decoded args as a JSON object literal, `{}` when the routed
+    // registration reads no args. An instruction the schema rejects is dropped
+    // in Rust, so a selected `args` is always decoded.
+    argsJson: string,
     // Non-null only when the routed registration selected `fields.log`.
     logs: Null.t<array<log>>,
   }
