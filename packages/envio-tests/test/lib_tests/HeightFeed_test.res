@@ -13,11 +13,11 @@ let makeFeed = (mock: MockSource.t, ~getHeightRetryInterval=(~retry as _) => 1_0
 
 let watch = (feed, ~knownHeight, ~interval=() => 10) => {
   let heights = []
-  let unsubscribe =
+  let subscription =
     feed->HeightFeed.onHeightAbove(~knownHeight, ~interval, ~onHeight=height =>
       heights->Array.push(height)->ignore
     )
-  (heights, unsubscribe)
+  (heights, subscription)
 }
 
 describe("HeightFeed answers a waiter", () => {
@@ -107,7 +107,7 @@ describe("HeightFeed polls only for someone", () => {
   Async.it("Stops polling when the last waiter leaves", async t => {
     let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=5)
     let (feed, _stats) = makeFeed(mock)
-    let (_heights, unsubscribe) = feed->watch(~knownHeight=100, ~interval=() => 5)
+    let (_heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 5)
 
     // A height that doesn't clear the floor, so the loop sleeps and comes back.
     mock.resolveGetHeightOrThrow(100)
@@ -115,7 +115,7 @@ describe("HeightFeed polls only for someone", () => {
     let pollsWhileWaiting = mock.getHeightOrThrowCalls->Array.length
     mock.resolveGetHeightOrThrow(100)
 
-    unsubscribe()
+    subscription.unsubscribe()
     await Utils.delay(30)
 
     t.expect((
@@ -146,13 +146,13 @@ describe("HeightFeed polls only for someone", () => {
   Async.it("Reuses a poll already in flight rather than stacking another", async t => {
     let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
     let (feed, _stats) = makeFeed(mock)
-    let (first, unsubscribeFirst) = feed->watch(~knownHeight=100)
+    let (first, firstSubscription) = feed->watch(~knownHeight=100)
     let pollsAfterFirst = mock.getHeightOrThrowCalls->Array.length
-    unsubscribeFirst()
+    firstSubscription.unsubscribe()
 
     // A second wait arrives while the request the first one triggered is still
     // out. Asking the same source twice would not make it answer sooner.
-    let (second, _unsubscribeSecond) = feed->watch(~knownHeight=100)
+    let (second, _secondSubscription) = feed->watch(~knownHeight=100)
     let pollsAfterSecond = mock.getHeightOrThrowCalls->Array.length
     mock.resolveGetHeightOrThrow(101)
     await Utils.delay(0)
@@ -165,10 +165,10 @@ describe("HeightFeed unsubscribe", () => {
   Async.it("Is idempotent, and silences the waiter", async t => {
     let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
     let (feed, _stats) = makeFeed(mock)
-    let (heights, unsubscribe) = feed->watch(~knownHeight=100)
+    let (heights, subscription) = feed->watch(~knownHeight=100)
 
-    unsubscribe()
-    unsubscribe()
+    subscription.unsubscribe()
+    subscription.unsubscribe()
     feed->HeightFeed.recordHeight(101)
     await Utils.delay(0)
 
@@ -180,17 +180,17 @@ describe("HeightFeed unsubscribe", () => {
     let (feed, _stats) = makeFeed(mock)
     let heights = []
     let unsubscribeRef = ref(() => ())
-    unsubscribeRef :=
-      feed->HeightFeed.onHeightAbove(
-        ~knownHeight=100,
-        ~interval=() => 10,
-        // The wait above does exactly this: the first height it hears cancels
-        // every waiter it registered, including the one delivering it.
-        ~onHeight=height => {
-          heights->Array.push(height)->ignore
-          unsubscribeRef.contents()
-        },
-      )
+    let subscription = feed->HeightFeed.onHeightAbove(
+      ~knownHeight=100,
+      ~interval=() => 10,
+      // The wait above does exactly this: the first height it hears cancels every
+      // waiter it registered, including the one delivering it.
+      ~onHeight=height => {
+        heights->Array.push(height)->ignore
+        unsubscribeRef.contents()
+      },
+    )
+    unsubscribeRef := subscription.unsubscribe
 
     feed->HeightFeed.recordHeight(101)
     feed->HeightFeed.recordHeight(102)
@@ -231,7 +231,7 @@ describe("HeightFeed stream state", () => {
     )
     let (feed, _stats) = makeFeed(mock)
     feed->HeightFeed.enableStream
-    let (heights, _unsubscribe) = feed->watch(~knownHeight=100)
+    let (heights, subscription) = feed->watch(~knownHeight=100)
 
     mock.setHeightSubscriptionStatus(Live)
     mock.resolveGetHeightOrThrow(100)
@@ -241,7 +241,7 @@ describe("HeightFeed stream state", () => {
     await Utils.delay(20)
     let pollsAfterWaiting = mock.getHeightOrThrowCalls->Array.length
 
-    feed->HeightFeed.poke
+    subscription.poke()
     let pollsAfterPoke = mock.getHeightOrThrowCalls->Array.length
 
     // A push that advances is the stream proving it carries heights again.
@@ -266,12 +266,12 @@ describe("HeightFeed stream state", () => {
     )
     let (feed, _stats) = makeFeed(mock)
     feed->HeightFeed.enableStream
-    let (_heights, unsubscribe) = feed->watch(~knownHeight=100)
+    let (_heights, subscription) = feed->watch(~knownHeight=100)
     mock.setHeightSubscriptionStatus(Live)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
 
-    feed->HeightFeed.poke
+    subscription.poke()
     let pollsAfterPoke = mock.getHeightOrThrowCalls->Array.length
 
     // The poll beat the stream to the head, so what the stream pushes next is a
@@ -281,7 +281,7 @@ describe("HeightFeed stream state", () => {
     await Utils.delay(0)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
-    unsubscribe()
+    subscription.unsubscribe()
     await Utils.delay(0)
 
     // Nothing for the next wait to inherit: the stream is live and delivering.
@@ -298,7 +298,7 @@ describe("HeightFeed stream state", () => {
     )
     let (feed, _stats) = makeFeed(mock, ~getHeightRetryInterval=(~retry as _) => 1)
     feed->HeightFeed.enableStream
-    let (_heights, unsubscribe) = feed->watch(~knownHeight=100)
+    let (_heights, subscription) = feed->watch(~knownHeight=100)
 
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
@@ -312,7 +312,7 @@ describe("HeightFeed stream state", () => {
     await Utils.delay(10)
     let pollsOnceClosed = mock.getHeightOrThrowCalls->Array.length
 
-    unsubscribe()
+    subscription.unsubscribe()
     await Utils.delay(0)
     let (_later, _unsubscribeLater) = feed->watch(~knownHeight=100)
     await Utils.delay(20)
@@ -329,12 +329,12 @@ describe("HeightFeed stream state", () => {
     )
     let (feed, _stats) = makeFeed(mock)
     feed->HeightFeed.enableStream
-    let (_heights, _unsubscribe) = feed->watch(~knownHeight=100)
+    let (_heights, subscription) = feed->watch(~knownHeight=100)
     mock.setHeightSubscriptionStatus(Live)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
 
-    feed->HeightFeed.poke
+    subscription.poke()
     let pollsWhilePoked = mock.getHeightOrThrowCalls->Array.length
 
     // Answered by a height learned elsewhere — a query response, or a sibling
@@ -352,25 +352,27 @@ describe("HeightFeed stream state", () => {
     t.expect((pollsWhilePoked, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((3, 3))
   })
 
-  Async.it("Ignores a poke when nobody is waiting", async t => {
+  Async.it("Ignores a poke for a waiter that has already gone", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
       ~pollingInterval=10_000,
     )
     let (feed, _stats) = makeFeed(mock)
     feed->HeightFeed.enableStream
+    let (_heights, subscription) = feed->watch(~knownHeight=100)
     mock.setHeightSubscriptionStatus(Live)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
+    subscription.unsubscribe()
     let pollsBefore = mock.getHeightOrThrowCalls->Array.length
 
-    // There is nobody to poll for, and setting the flag anyway would leave it
-    // sitting there for the next wait to act on a stream that is delivering.
-    feed->HeightFeed.poke
-    let (_heights, _unsubscribe) = feed->watch(~knownHeight=100)
+    // Its wait is over, so there is nobody to poll for. Acting on it anyway
+    // would leave the complaint for a later waiter to act on.
+    subscription.poke()
+    let (_later, _laterSubscription) = feed->watch(~knownHeight=100)
     await Utils.delay(10)
 
-    t.expect((pollsBefore, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((1, 1))
+    t.expect((pollsBefore, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((2, 2))
   })
 
   Async.it("Ignores a push that does not clear the height it already knows", async t => {

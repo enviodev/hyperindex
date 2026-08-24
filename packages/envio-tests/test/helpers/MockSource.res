@@ -200,9 +200,11 @@ type t = {
   // for better logging during debugging
   getHeightOrThrowCalls: array<bool>,
   resolveGetHeightOrThrow: int => unit,
-  // Answers one outstanding height request instead of every one at once. A feed
-  // can have two in flight — a connect's catch-up and the poll loop — and which
-  // of them answers is the point of some tests.
+  // Answers a single height request instead of every one at once: a feed can
+  // have two in flight — a connect's catch-up and the poll loop — and which of
+  // them answers is the point of some tests. The index counts every call the
+  // source has taken, in the order it took them, and answering one that has
+  // already settled does nothing.
   resolveGetHeightOrThrowAt: (~index: int, int) => unit,
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
   // Answer every height call with `height` from now on, instead of parking it
@@ -306,7 +308,7 @@ let make = (
       | Some(resolve) => resolve({Source.height, requestStats: []})
       | None =>
         JsError.throwWithMessage(
-          `No getHeightOrThrow call at index ${index->Int.toString}`,
+          `The source has taken no getHeightOrThrow call at index ${index->Int.toString}`,
         )
       },
     setAutoHeight: height => {

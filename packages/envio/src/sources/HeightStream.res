@@ -89,6 +89,10 @@ let subscribe = (
   // A connection is either waiting for traffic or waiting to be retried, never
   // both, so a single slot holds whichever timer is pending.
   let timeoutId = ref(None)
+  // What the connection now in place actually cost to wait for. The schedule it
+  // came from is jittered, so the nominal delay is up to twice it, and judging a
+  // connection against that would call one that outlived its real wait unproven.
+  let lastRetryMillis = ref(0)
   // The frame that stopped this connection being readable, kept for the failure
   // it will eventually be named after.
   let unreadableDetail = ref(None)
@@ -151,7 +155,7 @@ let subscribe = (
     | Some(since) => (Performance.now() -. since)->Float.toInt
     | None => 0
     }
-    let provenMillis = Pervasives.max(retryDelayFor(failureCount.contents), minProvenMillis)
+    let provenMillis = Pervasives.max(lastRetryMillis.contents, minProvenMillis)
     failureCount :=
       if servedMillis >= provenMillis {
         1
@@ -160,6 +164,7 @@ let subscribe = (
       }
 
     let retryMillis = retryDelayFor(failureCount.contents)->Utils.jitter
+    lastRetryMillis := retryMillis
 
     // A clean end to a connection that had proven itself is a rotation: routine,
     // and worth telling apart from the same clean end arriving early, which is a

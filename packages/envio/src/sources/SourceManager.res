@@ -747,19 +747,17 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
         resolve(height)
       }
 
-    // Every source this wait has a waiter on, primaries and any fallback
-    // recruited later, so the stall poke reaches all of them.
+    // Every waiter this wait holds, on primaries and on any fallback recruited
+    // later, so the stall poke reaches all of them.
     let watched = []
 
     let watch = (sourceState: sourceState) => {
-      watched->Array.push(sourceState)->ignore
       if isRealtime {
         // Lazy and explicit: a source that can push heights subscribes when a
         // realtime wait starts wanting them, and not before.
         sourceState.feed->HeightFeed.enableStream
       }
-      cleanups
-      ->Array.push(
+      let subscription =
         sourceState.feed->HeightFeed.onHeightAbove(
           ~knownHeight,
           // Read per poll rather than captured, so a wait that goes on to stall
@@ -773,9 +771,9 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
               sourceState.source.pollingInterval
             },
           ~onHeight=height => settle(sourceState.source, height),
-        ),
-      )
-      ->ignore
+        )
+      watched->Array.push(subscription)->ignore
+      cleanups->Array.push(subscription.unsubscribe)->ignore
     }
 
     mainSources->Array.forEach(sourceState =>
@@ -854,7 +852,7 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
                 // over — least of all arming another timer, which the cleanup
                 // that just ran can no longer reach.
                 if !settled.contents {
-                  watched->Array.forEach(sourceState => sourceState.feed->HeightFeed.poke)
+                  watched->Array.forEach(subscription => subscription.poke())
 
                   // Spread the repeats: every indexer on one provider stalls in
                   // the same instant, and a fixed period would keep them polling

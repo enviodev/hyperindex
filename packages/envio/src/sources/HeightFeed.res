@@ -20,6 +20,18 @@ type waiter = {
   // waiter's interval wins: only a wait superseded by a rollback overlaps with
   // another, and both want the same cadence anyway.
   interval: unit => int,
+  // The wait this waiter belongs to sat out a whole window hearing nothing from
+  // a stream that says it is connected. It belongs to the waiter rather than the
+  // feed because two waits can overlap on one source after a rollback, and one
+  // of them giving up on the stream is not the other one doing so.
+  mutable poked: bool,
+}
+
+// What a waiter's own wait can do to it afterwards. Both are inert once the
+// waiter is gone, which is what makes them safe to hold past the answer.
+type subscription = {
+  unsubscribe: unit => unit,
+  poke: unit => unit,
 }
 
 type t = {
@@ -36,11 +48,6 @@ type t = {
   // catch-up lands or a height arrives, the head it connected on is unaccounted
   // for.
   mutable connectionUnproven: bool,
-  // The wait above sat out a whole window hearing nothing from a stream that
-  // says it is connected. Any push at all answers that — even one of a height
-  // already known, which is the stream delivering — where the gap above needs a
-  // height that actually advances.
-  mutable pollDespiteStream: bool,
   mutable polling: bool,
   // Ends the poll loop's sleep early, so a waiter arriving mid-interval doesn't
   // wait out a sleep that started for someone else.
@@ -70,7 +77,6 @@ let make = (~source: Source.t, ~recordRequestStats, ~getHeightRetryInterval): t 
   unsubscribe: None,
   streamLive: false,
   connectionUnproven: false,
-  pollDespiteStream: false,
   polling: false,
   wakePoll: None,
   pollRetry: 0,
@@ -112,7 +118,9 @@ let sample = (feed: t): sample => {
 // the stream delivers.
 let shouldPoll = (feed: t) =>
   feed.waiters->Array.length > 0 &&
-    (!feed.streamLive || feed.connectionUnproven || feed.pollDespiteStream)
+    (!feed.streamLive ||
+    feed.connectionUnproven ||
+    feed.waiters->Array.some(waiter => waiter.poked))
 
 let wake = (feed: t) =>
   switch feed.wakePoll {
@@ -129,17 +137,7 @@ let wakeIfIdle = (feed: t) =>
     feed->wake
   }
 
-// Wherever the waiter list shrinks. A poke belongs to the wait that made it:
-// "nothing heard from this stream for a whole window" is that wait's complaint,
-// and with nobody left waiting there is no one to carry it into the next one —
-// which would otherwise poll a live stream at full cadence until it happened to
-// push.
-let releaseWaiter = (feed: t) => {
-  if feed.waiters->Array.length === 0 {
-    feed.pollDespiteStream = false
-  }
-  feed->wakeIfIdle
-}
+
 
 // Collect before firing: a callback is free to cancel waiters — the wait above
 // cancels all of its own the moment one answers — and iterating the live array
@@ -159,7 +157,7 @@ let fireWaiters = (feed: t, height) => {
     )
     // Answering the last waiter is one of the ways the loop stops being needed,
     // and the callbacks just run may have cancelled others.
-    feed->releaseWaiter
+    feed->wakeIfIdle
   }
 }
 
@@ -285,7 +283,7 @@ let handlePushedHeight = (feed: t, height) =>
     // A height that advances accounts for the gap a connect leaves as well as
     // showing the stream is delivering.
     feed.connectionUnproven = false
-    feed.pollDespiteStream = false
+    feed.waiters->Array.forEach(waiter => waiter.poked = false)
     feed->recordHeight(height)
     feed->wakeIfIdle
   } else {
@@ -293,7 +291,7 @@ let handlePushedHeight = (feed: t, height) =>
     // Not a height worth having — the head a stream re-emits on reconnect is
     // what its catch-up is already fetching — but it is the stream delivering,
     // which is all the silence behind a poke ever claimed otherwise.
-    feed.pollDespiteStream = false
+    feed.waiters->Array.forEach(waiter => waiter.poked = false)
     feed->wakeIfIdle
   }
 
@@ -323,7 +321,9 @@ let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
     }
     feed.streamLive = false
     feed.connectionUnproven = false
-    feed.pollDespiteStream = false
+    // The connection they gave up on is gone; the one that replaces it starts
+    // with a catch-up of its own to prove it.
+    feed.waiters->Array.forEach(waiter => waiter.poked = false)
     feed.connectionGeneration = feed.connectionGeneration + 1
     feed->startPolling
     // The counters say a stream is flapping and how often, but only the
@@ -368,7 +368,7 @@ let stop = (feed: t) => {
     }
     feed.streamLive = false
     feed.connectionUnproven = false
-    feed.pollDespiteStream = false
+    feed.waiters->Array.forEach(waiter => waiter.poked = false)
     feed.connectionGeneration = feed.connectionGeneration + 1
     // Whoever is still waiting has nothing pushing for them now. Being benched
     // is a capability verdict, not an outage: the source can still answer a
@@ -381,14 +381,17 @@ let stop = (feed: t) => {
 // Fires once, at the first height above `knownHeight`, from a push, a poll or a
 // height another part of the indexer observed. Returns an unsubscribe that is
 // idempotent, including from inside `onHeight`.
-let onHeightAbove = (feed: t, ~knownHeight, ~interval, ~onHeight) =>
+// Fires once, at the first height above `knownHeight`, from a push, a poll or a
+// height another part of the indexer observed. What comes back acts on this
+// waiter alone, and does nothing once it is gone.
+let onHeightAbove = (feed: t, ~knownHeight, ~interval, ~onHeight): subscription =>
   if feed.knownHeight > knownHeight {
     // Already past it: a wait that starts after a query moved the head has
     // nothing to wait for.
     onHeight(feed.knownHeight)
-    () => ()
+    {unsubscribe: () => (), poke: () => ()}
   } else {
-    let waiter = {knownHeight, onHeight, interval}
+    let waiter = {knownHeight, onHeight, interval, poked: false}
     feed.waiters->Array.push(waiter)->ignore
     if feed.polling {
       // A loop is already running. If it is sleeping off an interval started for
@@ -397,23 +400,23 @@ let onHeightAbove = (feed: t, ~knownHeight, ~interval, ~onHeight) =>
     } else {
       feed->startPolling
     }
-    () => {
-      // Removing by reference is what makes this idempotent, including from
-      // inside onHeight where the waiter has already been taken out.
-      feed.waiters = feed.waiters->Array.filter(w => w !== waiter)
-      // The loop's reason to run may have just left with it.
-      feed->releaseWaiter
+    {
+      unsubscribe: () => {
+        // Removing by reference is what makes this idempotent, including from
+        // inside onHeight where the waiter has already been taken out.
+        feed.waiters = feed.waiters->Array.filter(w => w !== waiter)
+        // The loop's reason to run may have just left with it.
+        feed->wakeIfIdle
+      },
+      // Its wait sat through a whole stall window without hearing from a stream
+      // that claims to be connected. Poll alongside it until the stream shows
+      // otherwise: a transport that keeps pinging while its heights stop is the
+      // one failure its own staleness detector cannot see. A waiter already
+      // answered is no longer in the list, so this does nothing for it.
+      poke: () =>
+        if feed.streamLive && !waiter.poked {
+          waiter.poked = true
+          feed->startPolling
+        },
     }
-  }
-
-// The wait above sat through its whole stall window without hearing from a
-// stream that claims to be connected. Poll alongside it until it proves
-// otherwise: a transport that keeps pinging but has stopped sending heights is
-// the one failure its own staleness detector cannot see.
-let poke = (feed: t) =>
-  // Nobody waiting means nobody to poll for, and setting the flag anyway would
-  // leave it sitting there to make the next wait poll a stream that is fine.
-  if feed.waiters->Array.length > 0 && feed.streamLive && !feed.pollDespiteStream {
-    feed.pollDespiteStream = true
-    feed->startPolling
   }
