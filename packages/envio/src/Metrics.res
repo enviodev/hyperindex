@@ -230,13 +230,16 @@ let renderMetrics = (b: builder, metrics: t) => {
     metrics.historyPrunes->Array.map(s => (`{entity="${s.entity->escapeLabelValue}"}`, s))
   // Every per-source series is keyed by these, so they are built in one place:
   // a scrape whose label sets disagree between two of them is one nothing can
-  // join on.
-  let sourceLabels = (~source, ~chainId, ~extra=[]) =>
-    "{" ++
-    [("source", source), ("chainId", chainId->ChainId.toString)]
-    ->Array.concat(extra)
-    ->Array.map(((name, value)) => `${name}="${value->escapeLabelValue}"`)
-    ->Array.join(",") ++ "}"
+  // join on. No series here carries more than one label beyond the pair, and
+  // building the string directly costs a fraction of assembling it from an
+  // array — this runs once per sample of every per-source family.
+  let sourceLabels = (~source, ~chainId, ~extra: option<(string, string)>=?) => {
+    let pair = `{source="${source->escapeLabelValue}",chainId="${chainId->ChainId.toString}"`
+    switch extra {
+    | Some((name, value)) => `${pair},${name}="${value->escapeLabelValue}"}`
+    | None => pair ++ "}"
+    }
+  }
 
   // Two sources can share a name (e.g. primary and fallback RPC urls on the
   // same host), so aggregate by label set — duplicate samples would make
@@ -244,7 +247,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   let sourceRequests = {
     let byLabels: dict<sourceRequestMetrics> = Dict.make()
     metrics.sourceRequests->Array.forEach(s => {
-      let labels = sourceLabels(~source=s.source, ~chainId=s.chainId, ~extra=[("method", s.method)])
+      let labels = sourceLabels(~source=s.source, ~chainId=s.chainId, ~extra=("method", s.method))
       switch byLabels->Utils.Dict.dangerouslyGetNonOption(labels) {
       | Some(existing) =>
         byLabels->Dict.set(
@@ -290,7 +293,7 @@ let renderMetrics = (b: builder, metrics: t) => {
     metrics.sourceHeightStreams->Array.forEach(s =>
       s.disconnectsByReason->Array.forEach(((reason, count)) =>
         byLabels->addTo(
-          sourceLabels(~source=s.source, ~chainId=s.chainId, ~extra=[("reason", reason)]),
+          sourceLabels(~source=s.source, ~chainId=s.chainId, ~extra=("reason", reason)),
           count,
         )
       )

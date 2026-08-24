@@ -1064,8 +1064,8 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
         if status.contents === Done {
           // Nothing to fall back to: a source already answered, and every
           // getSourceNewHeight started from here would return without asking it
-          // anything. Forever-pending is what the race wants from a losing arm.
-          Promise.make((_resolve, _reject) => ())
+          // anything.
+          Utils.neverSettles()
         } else {
           // Build fallback: non-disabled sources not in mainSources with a valid role, even with recent lastFailedAt
           let fallbackSources = []
@@ -1091,31 +1091,31 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
               `No new blocks detected within ${(stallTimeout / 1000)
                   ->Int.toString}s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync`,
             )
+            // The main sources are still racing on their own arms; this one has
+            // nothing left to offer them.
+            Utils.neverSettles()
           | _ =>
             logger->Logging.childWarn(
               `No new blocks detected within ${(stallTimeout / 1000)
                   ->Int.toString}s. Continuing polling with secondary RPC sources from the configuration.`,
             )
+            Promise.race(
+              fallbackSources->Array.map(async sourceState => {
+                (
+                  sourceState.source,
+                  await sourceManager->getSourceNewHeight(
+                    ~sourceState,
+                    ~knownHeight,
+                    ~stallTimeout,
+                    ~isRealtime,
+                    ~status,
+                    ~logger,
+                    ~reducedPolling,
+                  ),
+                )
+              }),
+            )
           }
-
-          // Promise.race will be forever pending if fallbackSources is empty
-          // which is good for this use case
-          Promise.race(
-            fallbackSources->Array.map(async sourceState => {
-              (
-                sourceState.source,
-                await sourceManager->getSourceNewHeight(
-                  ~sourceState,
-                  ~knownHeight,
-                  ~stallTimeout,
-                  ~isRealtime,
-                  ~status,
-                  ~logger,
-                  ~reducedPolling,
-                ),
-              )
-            }),
-          )
         }
       ),
     ]),

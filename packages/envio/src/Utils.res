@@ -25,6 +25,12 @@ let delay = milliseconds =>
     }, milliseconds)
   })
 
+// The losing arm of a race that has nothing to contribute. Fresh per call rather
+// than one shared value: sharing is only safe while every caller drops the
+// promise its `then` produced, which V8 needs to collect the reaction, and that
+// is not a property a future caller should have to know about.
+let neverSettles = () => Promise.make((_resolve, _reject) => ())
+
 // A delay that can be released early. Racing against a plain `delay` leaves the
 // losing timer pending for the rest of its window, holding everything its
 // continuation captured, which on a fast chain is one live timer per block.
