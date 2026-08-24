@@ -1582,7 +1582,7 @@ type Token @storage(postgres: true) @storage(clickhouse: true) {
   id: ID!
 }
 `,
-      "schema.graphql:2:12: Invalid @storage directive on \`Token\`. Only one @storage directive is allowed per entity. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
+      "schema.graphql:2:37: Invalid @storage directive on \`Token\`. Only one @storage directive is allowed per entity. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
     ),
     (
       "rejects duplicate storage arguments",

@@ -3,21 +3,22 @@ open Vitest
 // Schema errors carry `<file>:<line>:<column>` so an editor can jump to the
 // offending directive rather than the reader hunting for it.
 
-let parseError = schema =>
-  try {
-    InternalTestIndexer.fromUserApi(
-      ~schema,
-      ~configYaml=`
+let configYaml = (~schemaPath=?) =>
+  `
 name: schema-error-location
+${switch schemaPath {
+    | Some(path) => `schema: ${path}`
+    | None => ""
+    }}
 chains:
   - id: 1
     start_block: 0
-`,
-    )->ignore
-    "the parse to fail, but it succeeded"
-  } catch {
-  | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
-  }
+`
+
+let parseError = (~schemaPath=?, schema) =>
+  InternalTestIndexer.parseError(~schema, ~configYaml=configYaml(~schemaPath?))
+
+let storageDirectiveHint = `Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: "toYYYYMM(timestamp)", orderBy: ["timestamp"], ttl: "timestamp + INTERVAL 2 YEAR"}).`
 
 describe("Schema error locations", () => {
   it("Points at the line and column of the offending directive", t => {
@@ -91,6 +92,20 @@ type First @index(fields: ["missing"]) {
   Available columns: \`id\`, \`value\`.`)
   })
 
+  it("Names the schema the way config.yaml configured it", t => {
+    t.expect(
+      parseError(
+        ~schemaPath="./db/custom.graphql",
+        `type First @index(fields: ["missing"]) {
+  id: ID!
+  value: String!
+}
+`,
+      ),
+    ).toBe(`db/custom.graphql:1:12: Invalid \`@index\` on \`First\`: \`missing\` is not a column of the entity.
+  Available columns: \`id\`, \`value\`.`)
+  })
+
   it("Points at the repeated directive for a flag declared twice", t => {
     t.expect(
       parseError(`type First @crossChain @crossChain {
@@ -99,6 +114,17 @@ type First @index(fields: ["missing"]) {
 `),
     ).toBe(
       "schema.graphql:1:24: Invalid @crossChain directive on `First`. Only one @crossChain directive is allowed per entity.",
+    )
+  })
+
+  it("Points at the repeated directive for a storage directive declared twice", t => {
+    t.expect(
+      parseError(`type First @storage(postgres: true) @storage(clickhouse: true) {
+  id: ID!
+}
+`),
+    ).toBe(
+      `schema.graphql:1:37: Invalid @storage directive on \`First\`. Only one @storage directive is allowed per entity. ${storageDirectiveHint}`,
     )
   })
 

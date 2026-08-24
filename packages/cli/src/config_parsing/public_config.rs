@@ -878,13 +878,11 @@ impl SystemConfig {
 
                 Ok(EntityJson {
                     name: entity.name.clone(),
-                    cross_chain: Some(system_config::entity_is_cross_chain(
-                        entity,
-                        cfg.default_chain_scope,
-                    ))
-                    .filter(|cross_chain| {
-                        *cross_chain != cfg.default_chain_scope.is_cross_chain_by_default()
-                    }),
+                    cross_chain: Some(entity.is_cross_chain(cfg.default_chain_scope)).filter(
+                        |cross_chain| {
+                            *cross_chain != cfg.default_chain_scope.is_cross_chain_by_default()
+                        },
+                    ),
                     storage,
                     internal: entity.internal,
                     properties,

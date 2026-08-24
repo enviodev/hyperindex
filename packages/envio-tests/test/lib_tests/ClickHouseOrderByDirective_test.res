@@ -4,10 +4,7 @@ open Vitest
 // column, so those are rejected against the schema rather than left to fail at
 // CREATE TABLE.
 
-let parse = schema =>
-  InternalTestIndexer.fromUserApi(
-    ~schema,
-    ~configYaml=`
+let configYaml = `
 name: clickhouse-order-by-directive
 storage:
   postgres:
@@ -17,16 +14,11 @@ storage:
 chains:
   - id: 1
     start_block: 0
-`,
-  ).config
+`
 
-let parseError = schema =>
-  try {
-    parse(schema)->ignore
-    "the parse to fail, but it succeeded"
-  } catch {
-  | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
-  }
+let parse = schema => InternalTestIndexer.fromUserApi(~schema, ~configYaml).config
+
+let parseError = schema => InternalTestIndexer.parseError(~schema, ~configYaml)
 
 describe("clickhouse.orderBy column references", () => {
   it("Names the columns available when the entity has no such field", t => {

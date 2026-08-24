@@ -110,14 +110,11 @@ impl Schema {
         maybe_custom_path: &Option<String>,
         default_scope: DefaultChainScope,
     ) -> anyhow::Result<Self> {
-        let relative_schema_path_from_config = match maybe_custom_path {
-            Some(custom_path) => custom_path.clone(),
-            None => DEFAULT_SCHEMA_PATH.to_string(),
-        };
+        let configured_path = schema_source_label(maybe_custom_path);
 
         let schema_path = path_utils::get_config_path_relative_to_root(
             project_paths,
-            PathBuf::from(&relative_schema_path_from_config),
+            PathBuf::from(&configured_path),
         )
         .context("Failed creating a relative path to schema")?;
 
@@ -131,10 +128,10 @@ impl Schema {
         // `schema:` override in config.yaml points at the file the user edited.
         // A schema outside the project root keeps the path as configured rather
         // than falling back to an absolute one, which would differ per machine.
-        let source = schema_path
-            .strip_prefix(&project_paths.project_root)
+        let source = project_paths
+            .relative_to_root(&schema_path)
             .map(|relative| relative.display().to_string())
-            .unwrap_or(relative_schema_path_from_config);
+            .unwrap_or(configured_path);
 
         Self::from_string_at(&schema_string, default_scope, &source)
     }
@@ -146,7 +143,7 @@ impl Schema {
         Self::from_string_at(schema_string, default_scope, DEFAULT_SCHEMA_PATH)
     }
 
-    fn from_string_at(
+    pub fn from_string_at(
         schema_string: &str,
         default_scope: DefaultChainScope,
         source: &str,
@@ -389,9 +386,28 @@ fn at(source: &str, position: Pos) -> String {
     format!("{source}:{position}")
 }
 
-/// Renders `Invalid `<directive>` on `<Entity>`: <problem>.` with a single
-/// indented line saying what to do about it. One shape for every directive
-/// reference error, so the fix is always in the same place.
+/// How errors name the schema when the file itself isn't resolved against a
+/// project on disk: the `schema:` path config.yaml set, normalized so
+/// `./db/schema.graphql` reads the way the project would write it.
+pub fn schema_source_label(configured_path: &Option<String>) -> String {
+    match configured_path {
+        Some(path) => path_utils::normalize_path(PathBuf::from(path))
+            .display()
+            .to_string(),
+        None => DEFAULT_SCHEMA_PATH.to_string(),
+    }
+}
+
+fn backtick_list<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
+    names
+        .into_iter()
+        .map(|name| format!("`{name}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// One shape for every directive reference error, so the fix is always in the
+/// same place: a single indented line after the problem.
 fn directive_error(
     entity: &str,
     directive: &str,
@@ -414,11 +430,17 @@ struct ResolvedColumn<'a> {
 struct ColumnResolver<'a> {
     entity: &'a str,
     fields: &'a [Field],
-    has_chain_id_column: bool,
+    default_scope: DefaultChainScope,
     cross_chain: bool,
 }
 
 impl<'a> ColumnResolver<'a> {
+    /// Only a per-chain entity gets the chain id appended, so only there can a
+    /// directive name it.
+    fn has_chain_id_column(&self) -> bool {
+        !self.default_scope.is_cross_chain(self.cross_chain)
+    }
+
     fn resolve(&self, directive: &str, column: &str) -> anyhow::Result<ResolvedColumn<'a>> {
         if let Some(field) = self.fields.iter().find(|f| f.name == column) {
             if field.field_type.is_derived_from() {
@@ -434,7 +456,7 @@ impl<'a> ColumnResolver<'a> {
                 field: Some(field),
             });
         }
-        if self.has_chain_id_column && column == CHAIN_ID_FIELD_NAME {
+        if self.has_chain_id_column() && column == CHAIN_ID_FIELD_NAME {
             return Ok(ResolvedColumn {
                 column: EntityColumn::ChainId,
                 field: None,
@@ -449,18 +471,20 @@ impl<'a> ColumnResolver<'a> {
     }
 
     /// Resolves a directive's column list, rejecting a column listed twice.
-    /// `builds` names what the list is building, for the error.
-    fn resolve_distinct<T>(
+    /// `builds` names what the list is building, for the error. Order is kept,
+    /// so a caller with per-column data can pair it back on by position.
+    fn resolve_distinct(
         &self,
         directive: &str,
         builds: &str,
-        columns: impl IntoIterator<Item = (String, T)>,
-    ) -> anyhow::Result<Vec<(ResolvedColumn<'a>, T)>> {
-        let mut seen = HashSet::new();
+        columns: impl IntoIterator<Item = String>,
+    ) -> anyhow::Result<Vec<ResolvedColumn<'a>>> {
+        let columns: Vec<String> = columns.into_iter().collect();
+        let mut seen: HashSet<&str> = HashSet::new();
         columns
-            .into_iter()
-            .map(|(written_as, payload)| {
-                if !seen.insert(written_as.clone()) {
+            .iter()
+            .map(|written_as| {
+                if !seen.insert(written_as.as_str()) {
                     return Err(directive_error(
                         self.entity,
                         directive,
@@ -470,31 +494,38 @@ impl<'a> ColumnResolver<'a> {
                         ),
                     ));
                 }
-                Ok((self.resolve(directive, &written_as)?, payload))
+                self.resolve(directive, written_as)
             })
             .collect()
     }
 
     fn unknown_column_suggestion(&self, column: &str) -> String {
         if RESERVED_CHAIN_ID_FIELD_NAMES.contains(&column) {
-            return if self.has_chain_id_column {
-                format!(
+            // What makes the entity cross-chain decides the fix: dropping
+            // `@crossChain` only yields a chain column when entities are
+            // per-chain without it.
+            return match (self.cross_chain, self.default_scope) {
+                (_, _) if self.has_chain_id_column() => format!(
                     "Spell the chain column as `{CHAIN_ID_FIELD_NAME}`, the way it's named in the \
                      schema, whatever `column_name_format` the storage uses."
-                )
-            } else if self.cross_chain {
-                format!(
+                ),
+                (true, DefaultChainScope::PerChain) => format!(
                     "envio only appends a chain column to per-chain entities, and `{}` is \
                      `@crossChain`. Drop `@crossChain`, or declare a `{CHAIN_ID_FIELD_NAME}` field \
                      yourself.",
                     self.entity
-                )
-            } else {
-                format!(
+                ),
+                (true, DefaultChainScope::CrossChain) => format!(
+                    "envio only appends a chain column to per-chain entities, and entities are \
+                     cross-chain unless config.yaml sets `disable_default_cross_chain: true`. Set \
+                     it and drop `@crossChain`, or declare a `{CHAIN_ID_FIELD_NAME}` field \
+                     yourself."
+                ),
+                (false, _) => format!(
                     "envio only appends a chain column to per-chain entities, and entities are \
                      cross-chain unless config.yaml sets `disable_default_cross_chain: true`. Set \
                      it, or declare a `{CHAIN_ID_FIELD_NAME}` field yourself."
-                )
+                ),
             };
         }
 
@@ -507,39 +538,31 @@ impl<'a> ColumnResolver<'a> {
                 .iter()
                 .filter(|f| !f.field_type.is_derived_from())
         };
-        if !self.has_chain_id_column && !stored().any(|f| f.name != "id") {
+        if !self.has_chain_id_column() && !stored().any(|f| f.name != ID_FIELD_NAME) {
             return "The entity declares no columns besides `id`.".to_string();
         }
 
-        let mut available: Vec<String> = stored().map(|f| format!("`{}`", f.name)).collect();
-        if self.has_chain_id_column {
-            available.push(format!("`{CHAIN_ID_FIELD_NAME}`"));
+        let mut available: Vec<&str> = stored().map(|f| f.name.as_str()).collect();
+        if self.has_chain_id_column() {
+            available.push(CHAIN_ID_FIELD_NAME);
         }
-        format!("Available columns: {}.", available.join(", "))
+        format!("Available columns: {}.", backtick_list(available))
     }
 }
 
-/// Resolves the columns a `clickhouse.orderBy` lists into the sorting key they
-/// become, rejecting anything ClickHouse can't sort by.
 fn resolve_order_by(
     resolver: &ColumnResolver,
     columns: Vec<String>,
 ) -> anyhow::Result<Vec<EntityColumn>> {
-    const DIRECTIVE: &str = "clickhouse.orderBy";
-
-    let resolved = resolver.resolve_distinct(
-        DIRECTIVE,
-        "sorting key",
-        columns.into_iter().map(|c| (c, ())),
-    )?;
+    let resolved = resolver.resolve_distinct(ORDER_BY_DIRECTIVE, "sorting key", columns)?;
 
     // `id` narrows a sorting key that leads with something coarser, so it is
     // only redundant on its own — that is the key ClickHouse already gets.
-    if let [(only, ())] = resolved.as_slice() {
-        if only.column.field_name() == "id" {
+    if let [only] = resolved.as_slice() {
+        if only.column.field_name() == ID_FIELD_NAME {
             return Err(directive_error(
                 resolver.entity,
-                DIRECTIVE,
+                ORDER_BY_DIRECTIVE,
                 "`id` on its own is already the sorting key when no `orderBy` is given",
                 "Drop the `orderBy`, or list the columns to sort by before `id`.",
             ));
@@ -548,7 +571,7 @@ fn resolve_order_by(
 
     resolved
         .into_iter()
-        .map(|(resolved, ())| {
+        .map(|resolved| {
             check_clickhouse_sortable(resolver.entity, &resolved)?;
             Ok(resolved.column)
         })
@@ -560,8 +583,6 @@ fn resolve_order_by(
 /// appended chain id is a plain non-null integer, so only a declared field can
 /// trip either.
 fn check_clickhouse_sortable(entity: &str, resolved: &ResolvedColumn) -> anyhow::Result<()> {
-    const DIRECTIVE: &str = "clickhouse.orderBy";
-
     let Some(field) = resolved.field else {
         return Ok(());
     };
@@ -570,7 +591,7 @@ fn check_clickhouse_sortable(entity: &str, resolved: &ResolvedColumn) -> anyhow:
     if field.field_type.is_optional() {
         return Err(directive_error(
             entity,
-            DIRECTIVE,
+            ORDER_BY_DIRECTIVE,
             &format!("`{name}` is nullable, and ClickHouse won't sort by a nullable column"),
             "Make the field non-nullable to sort by it.",
         ));
@@ -578,7 +599,7 @@ fn check_clickhouse_sortable(entity: &str, resolved: &ResolvedColumn) -> anyhow:
     if field.field_type.is_array() {
         return Err(directive_error(
             entity,
-            DIRECTIVE,
+            ORDER_BY_DIRECTIVE,
             &format!("`{name}` is an array, and ClickHouse won't sort by an array column"),
             "Sort by a scalar field instead.",
         ));
@@ -586,81 +607,84 @@ fn check_clickhouse_sortable(entity: &str, resolved: &ResolvedColumn) -> anyhow:
     Ok(())
 }
 
+/// An `@index` over one column is a plain single index, and the entity may
+/// already have that one covered.
+fn check_worth_indexing(entity: &str, only: &ResolvedColumn) -> anyhow::Result<()> {
+    match &only.column {
+        EntityColumn::Declared(name) if name == ID_FIELD_NAME => Err(directive_error(
+            entity,
+            INDEX_DIRECTIVE,
+            "`id` is the primary key, so it is already indexed",
+            "Remove the `@index` directive on it.",
+        )),
+        EntityColumn::Declared(name)
+            if only
+                .field
+                .is_some_and(|field| field.field_type.has_indexed_directive()) =>
+        {
+            Err(directive_error(
+                entity,
+                INDEX_DIRECTIVE,
+                &format!("`{name}` is already marked `@index` on the field"),
+                &format!(
+                    "Keep one of them — the `@index` on the field, or `@index(fields: \
+                     [\"{name}\"])` on the entity."
+                ),
+            ))
+        }
+        EntityColumn::ChainId => Err(directive_error(
+            entity,
+            INDEX_DIRECTIVE,
+            &format!(
+                "`{CHAIN_ID_FIELD_NAME}` is already part of the primary key, and on its own it \
+                 has one value per chain — too few to index by"
+            ),
+            &format!(
+                "List it with another field, e.g. `@index(fields: [\"{CHAIN_ID_FIELD_NAME}\", \
+                 \"timestamp\"])`."
+            ),
+        )),
+        EntityColumn::Declared(_) => Ok(()),
+    }
+}
+
 impl MultiFieldIndex {
     fn resolve(
         resolver: &ColumnResolver,
         columns: Vec<(String, IndexFieldDirection)>,
     ) -> anyhow::Result<Self> {
-        const DIRECTIVE: &str = "@index";
-
         let entity = resolver.entity;
         if columns.is_empty() {
             return Err(directive_error(
                 entity,
-                DIRECTIVE,
+                INDEX_DIRECTIVE,
                 "no columns are listed",
                 "List the columns to index, e.g. `@index(fields: [\"tokenId\", \"owner\"])`.",
             ));
         }
 
-        let resolved = Self(
-            resolver
-                .resolve_distinct(DIRECTIVE, "index", columns)?
+        let (names, directions): (Vec<String>, Vec<IndexFieldDirection>) =
+            columns.into_iter().unzip();
+        let resolved = resolver.resolve_distinct(INDEX_DIRECTIVE, "index", names)?;
+
+        if let [only] = resolved.as_slice() {
+            check_worth_indexing(entity, only)?;
+        }
+
+        Ok(Self(
+            resolved
                 .into_iter()
+                .zip(directions)
                 .map(|(resolved, direction)| IndexField {
                     column: resolved.column,
                     direction,
                 })
                 .collect(),
-        );
-
-        // A lone column is a plain single index, and two of them are never
-        // worth building.
-        match resolved.as_single() {
-            Some(EntityColumn::Declared(name)) if name == "id" => Err(directive_error(
-                entity,
-                DIRECTIVE,
-                "`id` is the primary key, so it is already indexed",
-                "Remove the `@index` directive on it.",
-            )),
-            Some(EntityColumn::Declared(name))
-                if resolver
-                    .fields
-                    .iter()
-                    .any(|f| &f.name == name && f.field_type.has_indexed_directive()) =>
-            {
-                Err(directive_error(
-                    entity,
-                    DIRECTIVE,
-                    &format!("`{name}` is already marked `@index` on the field"),
-                    &format!(
-                        "Keep one of them — the `@index` on the field, or `@index(fields: \
-                         [\"{name}\"])` on the entity."
-                    ),
-                ))
-            }
-            Some(EntityColumn::ChainId) => Err(directive_error(
-                entity,
-                DIRECTIVE,
-                &format!(
-                    "`{CHAIN_ID_FIELD_NAME}` is already part of the primary key, and on its own \
-                     it has one value per chain — too few to index by"
-                ),
-                &format!(
-                    "List it with another field, e.g. `@index(fields: [\"{CHAIN_ID_FIELD_NAME}\", \
-                     \"timestamp\"])`."
-                ),
-            )),
-            _ => Ok(resolved),
-        }
+        ))
     }
 
     fn render_columns(&self) -> String {
-        self.0
-            .iter()
-            .map(|f| format!("`{}`", f.column.field_name()))
-            .collect::<Vec<_>>()
-            .join(", ")
+        backtick_list(self.0.iter().map(|f| f.column.field_name()))
     }
 }
 
@@ -821,9 +845,17 @@ pub const MAX_PG_IDENTIFIER_LENGTH: usize = 63;
 /// but a directive always names it the way the schema would.
 pub const CHAIN_ID_FIELD_NAME: &str = "chainId";
 
-/// Every spelling `chain_id_column_name` can produce, plus the `chainId` name
-/// the appended field keeps on the API surface.
-pub const RESERVED_CHAIN_ID_FIELD_NAMES: [&str; 2] = ["chainId", "chain_id"];
+/// Every entity's primary key.
+pub const ID_FIELD_NAME: &str = "id";
+
+const INDEX_DIRECTIVE: &str = "@index";
+const ORDER_BY_DIRECTIVE: &str = "clickhouse.orderBy";
+
+/// Every spelling the appended column can take. Kept in step with
+/// `chainIdColumnName` in `Config.res`, which is what names the column in
+/// storage — a `column_name_format` added there needs its spelling here, or the
+/// name it produces is neither reserved nor recognized in a directive.
+pub const RESERVED_CHAIN_ID_FIELD_NAMES: [&str; 2] = [CHAIN_ID_FIELD_NAME, "chain_id"];
 
 /// A column an entity directive (`@index`, `@storage(clickhouse: {orderBy})`)
 /// may name: a field the schema declares, or the chain id envio appends to a
@@ -864,6 +896,12 @@ pub struct Entity {
 }
 
 impl Entity {
+    /// Whether the entity's rows are shared across chains, which decides
+    /// whether envio appends the chain-id column to its table.
+    pub fn is_cross_chain(&self, default_scope: DefaultChainScope) -> bool {
+        default_scope.is_cross_chain(self.cross_chain)
+    }
+
     /// Builds the entity from its GraphQL definition, resolving directive
     /// column references as it goes. `default_scope` decides whether the
     /// entity gets the chain-id column envio appends, which is why the document
@@ -876,7 +914,7 @@ impl Entity {
         let name = &obj.name;
         let at_entity = at(source, obj.position);
 
-        let has_id = obj.fields.iter().any(|field| field.name == "id");
+        let has_id = obj.fields.iter().any(|field| field.name == ID_FIELD_NAME);
         if !has_id {
             return Err(anyhow!(
                 "{at_entity}: No 'id' field found on entity {name}. Please add an 'id' field to \
@@ -905,7 +943,7 @@ impl Entity {
         let resolver = ColumnResolver {
             entity: name,
             fields: &fields,
-            has_chain_id_column: !default_scope.is_cross_chain(cross_chain),
+            default_scope,
             cross_chain,
         };
 
@@ -931,17 +969,7 @@ impl Entity {
             multi_field_indexes.push(index);
         }
 
-        // Points at the `@storage` directive when there is one; without it
-        // nothing here can fail, so the entity's own position is a fine floor.
-        let at_storage = obj
-            .directives
-            .iter()
-            .find(|directive| directive.name == "storage")
-            .map_or_else(
-                || at_entity.clone(),
-                |directive| at(source, directive.position),
-            );
-        let (postgres, clickhouse) = parse_storage_directive(obj, &resolver).context(at_storage)?;
+        let (postgres, clickhouse) = parse_storage_directive(obj, &resolver, source)?;
 
         Ok(Self {
             name: name.to_string(),
@@ -1052,7 +1080,7 @@ impl Entity {
     /// so this never resolves to a relation or derived field.
     pub fn get_id_scalar(&self) -> anyhow::Result<GqlScalar> {
         let id_field = self
-            .get_field("id")
+            .get_field(ID_FIELD_NAME)
             .ok_or_else(|| anyhow!("Entity {} is missing an 'id' field", self.name))?;
         match &id_field.field_type {
             FieldType::RegularField { field_type, .. } => Ok(field_type.get_underlying_scalar()),
@@ -1141,8 +1169,7 @@ impl Entity {
     }
 }
 
-/// Checks the entity holds together as written, before any config is in play:
-/// unique field names, a usable `id`, a name Postgres can hold.
+/// Checks that hold for the entity on its own, before any config is in play.
 fn validate_entity_shape(name: &str, fields: &[Field]) -> anyhow::Result<()> {
     let mut field_names_set = HashSet::new();
     for field in fields {
@@ -1158,7 +1185,7 @@ fn validate_entity_shape(name: &str, fields: &[Field]) -> anyhow::Result<()> {
     // type, and the storage/codegen layers only implement a fixed set of id
     // scalars. Reject anything outside that set up front so the mismatch never
     // reaches codegen.
-    if let Some(id_field) = fields.iter().find(|f| f.name == "id") {
+    if let Some(id_field) = fields.iter().find(|f| f.name == ID_FIELD_NAME) {
         match &id_field.field_type {
             FieldType::DerivedFromField { .. } => {
                 return Err(anyhow!(
@@ -1251,26 +1278,34 @@ fn parse_flag_directive(
 fn parse_storage_directive(
     obj: &ObjectType<String>,
     resolver: &ColumnResolver,
+    source: &str,
 ) -> anyhow::Result<(Option<bool>, Option<ClickHouseEntityStorage>)> {
-    let storage_directives: Vec<&Directive<'_, String>> = obj
+    let mut storage_directives = obj
         .directives
         .iter()
-        .filter(|directive| directive.name == "storage")
-        .collect();
+        .filter(|directive| directive.name == "storage");
 
-    if storage_directives.is_empty() {
+    let Some(directive) = storage_directives.next() else {
         return Ok((None, None));
-    }
+    };
 
-    if storage_directives.len() > 1 {
+    if let Some(duplicate) = storage_directives.next() {
         return Err(anyhow!(
             "Invalid @storage directive on `{}`. Only one @storage directive is allowed per \
              entity. {STORAGE_DIRECTIVE_HINT}",
             obj.name
-        ));
+        ))
+        .context(at(source, duplicate.position));
     }
 
-    let directive = storage_directives[0];
+    parse_storage_arguments(obj, directive, resolver).context(at(source, directive.position))
+}
+
+fn parse_storage_arguments(
+    obj: &ObjectType<String>,
+    directive: &Directive<'_, String>,
+    resolver: &ColumnResolver,
+) -> anyhow::Result<(Option<bool>, Option<ClickHouseEntityStorage>)> {
     let mut postgres: Option<bool> = None;
     let mut clickhouse: Option<ClickHouseEntityStorage> = None;
 
@@ -1885,7 +1920,6 @@ impl MultiFieldIndex {
         &self.0
     }
 
-    /// The single column this index is over, if it only has one.
     fn as_single(&self) -> Option<&EntityColumn> {
         match self.0.as_slice() {
             [only] => Some(&only.column),
