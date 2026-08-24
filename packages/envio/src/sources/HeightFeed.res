@@ -181,11 +181,20 @@ let currentInterval = (feed: t) =>
 // One poll, with the escalating backoff a failing endpoint earns: it is usually
 // the same endpoint whose stream just dropped, so asking again at the polling
 // interval would lean on something already in trouble.
-let pollOnce = async (feed: t) =>
+let pollOnce = async (feed: t) => {
+  let generation = feed.connectionGeneration
   try {
     let res = await feed.source.getHeightOrThrow()
     feed.recordRequestStats(res.requestStats)
     feed.pollRetry = 0
+    // Fetching the head is the whole job a connect's catch-up exists to do, so
+    // a poll that answers closes that gap too — as long as it was asked for the
+    // connection still in place. Without this a stream whose delivery is slower
+    // than the polling interval would never clear the flag: the poll would reach
+    // each head first, and the push behind it would arrive as one already known.
+    if generation === feed.connectionGeneration {
+      feed.connectionUnproven = false
+    }
     feed->recordHeight(res.height)
     feed->currentInterval
   } catch {
@@ -198,6 +207,7 @@ let pollOnce = async (feed: t) =>
     feed.pollRetry = feed.pollRetry + 1
     retryInterval
   }
+}
 
 let runPollLoop = async (feed: t) => {
   while feed->shouldPoll {

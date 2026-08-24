@@ -865,6 +865,10 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
             }, delay),
           )
 
+      // The first one waits exactly what it was configured to: newBlockStallTimeout
+      // is a promise to the operator about when they hear about a quiet chain,
+      // and spreading that would report it early. The repeats carry the spread
+      // instead, which is where indexers would otherwise stay in lockstep.
       armStallTimeout(~recruitFallbacks=true, ~delay=stallTimeout)
       cleanups
       ->Array.push(
