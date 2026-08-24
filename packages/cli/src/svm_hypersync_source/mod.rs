@@ -973,6 +973,43 @@ mod tests {
     }
 
     #[test]
+    fn logs_without_an_instruction_address_still_reach_the_instruction() {
+        // SQD/RPC-ingested ranges - which is what the head of Solana is served
+        // from - return log rows with a null `instruction_address`, so the
+        // (slot, transactionIndex, path) key matches nothing and the handler
+        // gets no logs at all. Verified against solana.hypersync.xyz: at slot
+        // ~441_370_000 not one log row carries the column.
+        let (store, set) = fixture(&["TokenMetadata"]);
+        let built = SelectionBuilder::from_registrations(
+            &[reg_input(0, "0x21", true)],
+            &store.handle().read().unwrap(),
+        )
+        .unwrap()
+        .build(&[0])
+        .unwrap();
+        let instr = committed_instruction(&[0x21]);
+        let log = simple::Log {
+            slot: Some(42),
+            transaction_index: Some(7),
+            instruction_address: None,
+            kind: Some(simple::LogKind::Log),
+            message: Some("Instruction: Swap".to_string()),
+            ..Default::default()
+        };
+        let items = route(&store, &set, &[instr], vec![log], &built).unwrap();
+        assert_eq!(
+            items[0].logs.as_ref().map(|logs| logs
+                .iter()
+                .map(|l| (l.kind.clone(), l.message.clone()))
+                .collect::<Vec<_>>()),
+            Some(vec![(
+                Some("log".to_string()),
+                Some("Instruction: Swap".to_string())
+            )])
+        );
+    }
+
+    #[test]
     fn kind_only_log_selection_omits_message() {
         let (store, set) = fixture(&["TokenMetadata"]);
         let mut input = reg_input(0, "0x21", false);
