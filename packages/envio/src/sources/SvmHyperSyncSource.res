@@ -10,11 +10,6 @@ type options = {
   addressStore: AddressStore.t,
 }
 
-let parseArgs = (d: SvmHyperSyncClient.ResponseTypes.decodedInstruction): JSON.t =>
-  try JSON.parseOrThrow(d.argsJson) catch {
-  | _ => JSON.Object(Dict.make())
-  }
-
 let namedAccounts = (
   ~idlNames: array<string>,
   ~accountArguments: array<string>,
@@ -40,13 +35,13 @@ let namedAccounts = (
 let selectedLog = (log: SvmHyperSyncClient.EventItems.log, ~logFields: Utils.Set.t<string>): Envio.svmLog => {
   let out = Dict.make()
   if logFields->Utils.Set.has("kind") {
-    switch log.kind {
+    switch log.kind->Null.toOption {
     | Some(kind) => out->Dict.set("kind", kind)
     | None => ()
     }
   }
   if logFields->Utils.Set.has("message") {
-    switch log.message {
+    switch log.message->Null.toOption {
     | Some(message) => out->Dict.set("message", message)
     | None => ()
     }
@@ -89,7 +84,7 @@ let toSvmInstruction = (
     out->setField("isInner", item.isInner)
   }
   if hasSelection("args") {
-    out->setField("args", item.decoded->Option.map(parseArgs))
+    out->setField("args", item.argsJson->JSON.parseOrThrow)
   }
   if hasSelection("accounts") {
     out->setField(
@@ -104,7 +99,7 @@ let toSvmInstruction = (
     out->setField(
       "logs",
       item.logs
-      ->Option.getOr([])
+      ->Null.getOr([])
       ->Array.map(log => selectedLog(log, ~logFields=fieldSelection.logFields)),
     )
   }

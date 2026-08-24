@@ -438,7 +438,7 @@ if (0) {
       },
     },
     async ({ instruction }) => {
-      expectType<TypeEqual<typeof instruction.args, { readonly amountIn: string; readonly minAmountOut: string } | undefined>>(true);
+      expectType<TypeEqual<typeof instruction.args, { readonly amountIn: string; readonly minAmountOut: string }>>(true);
       expectType<TypeEqual<typeof instruction.accounts.source.address, string>>(true);
       expectType<TypeEqual<typeof instruction.accounts.source.accountName, "source">>(true);
       expectType<TypeEqual<typeof instruction.accounts.source.instructionAccountIndex, number>>(true);
