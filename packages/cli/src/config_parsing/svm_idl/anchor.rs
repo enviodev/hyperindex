@@ -1,11 +1,11 @@
 //! Anchor IDL parsing, both dialects behind one code path.
 //!
 //! - **0.30+**: instructions carry an inline 8-byte `discriminator`; type refs
-//!   are `{"defined": {"name": T}}`; account flags are
-//!   `writable`/`signer`/`optional`; the pubkey primitive is `"pubkey"`.
+//!   are `{"defined": {"name": T}}`; optional accounts use `optional`; the
+//!   pubkey primitive is `"pubkey"`.
 //! - **Legacy (<=0.29)**: no inline discriminator; type refs are
-//!   `{"defined": T}`; account flags are `isMut`/`isSigner`/`isOptional`; the
-//!   pubkey primitive is `"publicKey"`.
+//!   `{"defined": T}`; optional accounts use `isOptional`; the pubkey
+//!   primitive is `"publicKey"`.
 //!
 //! Both shapes are accepted for every divergent field, so no format toggle is
 //! needed. An IDL is legacy precisely when its instructions lack an inline
@@ -14,14 +14,15 @@
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, bail, Context, Result};
-use heck::ToSnakeCase;
 use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
+use crate::config_parsing::field_types::to_snake_case;
+
 use super::{
-    collect_instructions, collect_named, required_str, IdlAccount, Instructions, IxIdl,
-    ProgramIdl, Unusable,
+    collect_instructions, collect_named, required_str, IdlAccount,
+    Instructions, IxIdl, ProgramIdl, Unusable,
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
@@ -72,7 +73,7 @@ fn parse_instructions(root: &Map<String, Value>) -> Result<Instructions> {
         |name, ix| {
             let bytes = match ix.get("discriminator") {
                 Some(node) => parse_byte_array(node).context("discriminator")?,
-                None => hashed_discriminator("global:", &name.to_snake_case()),
+                None => hashed_discriminator("global:", &to_snake_case(name)),
             };
             Ok((bytes, ()))
         },
@@ -121,19 +122,18 @@ fn parse_accounts(node: Option<&Value>) -> Result<Vec<IdlAccount>> {
         }
         out.push(IdlAccount {
             name: required_str(a, "name")?.to_string(),
-            optional: flag(a, "optional", "isOptional"),
-            writable: flag(a, "writable", "isMut"),
-            signer: flag(a, "signer", "isSigner"),
+            optional: flag(a, "optional", "isOptional")?,
         });
     }
     Ok(out)
 }
 
-fn flag(node: &Value, modern: &str, legacy: &str) -> bool {
-    node.get(modern)
-        .or_else(|| node.get(legacy))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+fn flag(node: &Value, modern: &str, legacy: &str) -> Result<bool> {
+    match node.get(modern).or_else(|| node.get(legacy)) {
+        None => Ok(false),
+        Some(Value::Bool(value)) => Ok(*value),
+        Some(other) => bail!("{modern} must be a boolean, got {other}"),
+    }
 }
 
 fn parse_named_fields(node: Option<&Value>, path: &str) -> Result<Vec<NamedField>> {
@@ -156,7 +156,7 @@ fn parse_named_field(f: &Value, path: &str) -> Result<NamedField> {
 
 fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
     if let Some(s) = node.as_str() {
-        return Ok(parse_primitive(s));
+        return parse_primitive(s).with_context(|| path.to_string());
     }
     let obj = node
         .as_object()
@@ -208,20 +208,17 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
     bail!("{path}: unsupported type {node}")
 }
 
-fn parse_primitive(s: &str) -> FieldType {
+fn parse_primitive(s: &str) -> Result<FieldType> {
     if let Some(numeric) = super::numeric_field_type(s) {
-        return numeric;
+        return Ok(numeric);
     }
-    match s {
+    Ok(match s {
         "bool" => FieldType::Bool,
         "string" => FieldType::String,
         "bytes" => FieldType::Bytes,
         "pubkey" | "publicKey" => FieldType::Pubkey,
-        // Tools sometimes emit a nominal name where a primitive is expected.
-        // Falling through to `Defined` lets `types` supply the layout instead
-        // of failing the whole IDL.
-        other => FieldType::Defined(other.to_string()),
-    }
+        other => bail!("unknown type '{other}'"),
+    })
 }
 
 fn parse_type_def(name: &str, node: &Value) -> Result<FieldType> {

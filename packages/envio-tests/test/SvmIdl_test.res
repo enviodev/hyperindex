@@ -20,7 +20,7 @@ let eventNames = (config: Config.t) =>
   )
 
 // An Anchor 0.30+ IDL: inline discriminators, `{"defined": {"name": T}}` type
-// refs, `writable`/`signer` account flags.
+// refs.
 let anchorIdl = `{
   "address": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
   "metadata": { "name": "swapper", "version": "0.1.0", "spec": "0.1.0" },

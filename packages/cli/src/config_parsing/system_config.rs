@@ -36,10 +36,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use hypersync_client_solana::decode::{
-    FieldType as SvmFieldType, InstructionSchema as SvmInstructionSchema,
-    NamedAccount as SvmNamedAccount, NamedField as SvmNamedField,
-};
+use hypersync_client_solana::decode::{FieldType as SvmFieldType, NamedField as SvmNamedField};
 
 type ContractNameKey = String;
 type NetworkIdKey = u64;
@@ -1428,12 +1425,7 @@ impl SystemConfig {
                         .unwrap_or(&[]);
                     let mut chain_contracts = Vec::new();
                     for program in programs {
-                        let (svm_abi, events) = (|| {
-                            let svm_abi = resolve_program_schema(program, source)?;
-                            let events = events_from_idl(program, &svm_abi)?;
-                            anyhow::Ok((svm_abi, events))
-                        })()
-                        .with_context(|| {
+                        let (svm_abi, events) = resolve_program(program, source).with_context(|| {
                             format!(
                                 "Resolving Borsh schema for program '{}' ({})",
                                 program.name, program.program_id
@@ -1864,30 +1856,10 @@ impl EvmAbi {
     }
 }
 
-fn to_instruction_schema(name: String, ix: svm_idl::IxIdl) -> SvmInstructionSchema {
-    let optional = svm_idl::trailing_optional_mask(&ix.accounts);
-    SvmInstructionSchema {
-        name,
-        discriminator: ix.discriminator,
-        accounts: ix
-            .accounts
-            .into_iter()
-            .zip(optional)
-            .map(|(a, optional)| SvmNamedAccount {
-                name: a.name,
-                writable: a.writable,
-                signer: a.signer,
-                optional,
-            })
-            .collect(),
-        args: ix.args,
-    }
-}
-
-fn resolve_program_schema(
+fn resolve_program(
     program: &human_config::svm::Program,
     source: &dyn ConfigSource,
-) -> Result<SvmAbi> {
+) -> Result<(SvmAbi, Vec<Event>)> {
     let resolved = source
         .read_project_relative_file(&program.idl)
         .with_context(|| format!("reading IDL at '{}'", program.idl))?;
@@ -1902,24 +1874,8 @@ fn resolve_program_schema(
             ));
         }
     }
-    Ok(SvmAbi {
-        program_id: program.program_id.clone(),
-        instructions: idl
-            .instructions
-            .into_iter()
-            .map(|(name, ix)| (name.clone(), to_instruction_schema(name, ix)))
-            .collect(),
-        defined_types: idl.defined_types,
-        unusable: idl.unusable,
-        source: SvmSchemaSource::Idl {
-            path: program.idl.clone(),
-        },
-    })
-}
-
-fn events_from_idl(program: &human_config::svm::Program, abi: &SvmAbi) -> Result<Vec<Event>> {
-    if abi.instructions.is_empty() {
-        let reasons = abi
+    if idl.instructions.is_empty() {
+        let reasons = idl
             .unusable
             .iter()
             .map(|(name, reason)| format!("{name} ({reason})"))
@@ -1935,87 +1891,47 @@ fn events_from_idl(program: &human_config::svm::Program, abi: &SvmAbi) -> Result
             }
         ));
     }
-    Ok(abi
+    let events = idl
         .instructions
-        .iter()
-        .map(|(name, schema)| {
-            let disc = format!("0x{}", crate::hex::encode(&schema.discriminator));
+        .into_iter()
+        .map(|(name, ix)| {
+            let optional = svm_idl::trailing_optional_mask(&ix.accounts);
+            let disc = format!("0x{}", crate::hex::encode(&ix.discriminator));
             Event {
-                name: name.clone(),
+                name,
                 kind: EventKind::Svm(SvmEventKind {
                     discriminator: Some(disc.clone()),
-                    discriminator_byte_len: schema.discriminator.len() as u8,
+                    discriminator_byte_len: ix.discriminator.len() as u8,
                     account_filters: vec![],
                     is_inner: None,
-                    accounts: schema
+                    accounts: ix
                         .accounts
-                        .iter()
-                        .map(|a| SvmAccountName {
-                            name: a.name.clone(),
-                            optional: a.optional,
+                        .into_iter()
+                        .zip(optional)
+                        .map(|(a, optional)| SvmAccountName {
+                            name: a.name,
+                            optional,
                         })
                         .collect(),
-                    args: schema.args.clone(),
+                    args: ix.args,
                 }),
                 sighash: disc,
                 event_signature: String::new(),
                 field_selection: None,
             }
         })
-        .collect())
-}
-
-/// Convert an upstream `FieldType` into the internal_config wire `ArgType`.
-pub fn field_type_to_arg_type(ty: &SvmFieldType) -> human_config::svm::ArgType {
-    use human_config::svm::{ArgComposite as C, ArgPrimitive as P, ArgType as T};
-    match ty {
-        SvmFieldType::Bool => T::Primitive(P::Bool),
-        SvmFieldType::U8 => T::Primitive(P::U8),
-        SvmFieldType::U16 => T::Primitive(P::U16),
-        SvmFieldType::U32 => T::Primitive(P::U32),
-        SvmFieldType::U64 => T::Primitive(P::U64),
-        SvmFieldType::U128 => T::Primitive(P::U128),
-        SvmFieldType::I8 => T::Primitive(P::I8),
-        SvmFieldType::I16 => T::Primitive(P::I16),
-        SvmFieldType::I32 => T::Primitive(P::I32),
-        SvmFieldType::I64 => T::Primitive(P::I64),
-        SvmFieldType::I128 => T::Primitive(P::I128),
-        SvmFieldType::F32 => T::Primitive(P::F32),
-        SvmFieldType::F64 => T::Primitive(P::F64),
-        SvmFieldType::String => T::Primitive(P::String),
-        SvmFieldType::Bytes => T::Primitive(P::Bytes),
-        SvmFieldType::Pubkey => T::Primitive(P::Pubkey),
-        SvmFieldType::Option(inner) => {
-            T::Composite(C::Option(Box::new(field_type_to_arg_type(inner))))
-        }
-        SvmFieldType::Vec(inner) => T::Composite(C::Vec(Box::new(field_type_to_arg_type(inner)))),
-        SvmFieldType::Array { ty, len } => {
-            T::Composite(C::Array(Box::new(field_type_to_arg_type(ty)), *len))
-        }
-        SvmFieldType::Defined(name) => T::Composite(C::Defined(name.clone())),
-        SvmFieldType::Struct(fields) => T::Composite(C::Struct(
-            fields.iter().map(named_field_to_arg_def).collect(),
-        )),
-        SvmFieldType::Enum(variants) => T::Composite(C::Enum(
-            variants
-                .iter()
-                .map(|v| human_config::svm::ArgEnumVariant {
-                    name: v.name.clone(),
-                    fields: v
-                        .fields
-                        .as_ref()
-                        .map(|fs| fs.iter().map(named_field_to_arg_def).collect()),
-                })
-                .collect(),
-        )),
-    }
-}
-
-pub fn named_field_to_arg_def(nf: &SvmNamedField) -> human_config::svm::ArgDef {
-    human_config::svm::ArgDef {
-        name: nf.name.clone(),
-        ty: field_type_to_arg_type(&nf.ty),
-    }
+        .collect();
+    Ok((
+        SvmAbi {
+            program_id: program.program_id.clone(),
+            defined_types: idl.defined_types,
+            unusable: idl.unusable,
+            source: SvmSchemaSource::Idl {
+                path: program.idl.clone(),
+            },
+        },
+        events,
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2033,7 +1949,6 @@ pub enum Abi {
 pub struct SvmAbi {
     /// Base58 program id this schema describes.
     pub program_id: String,
-    pub instructions: BTreeMap<String, SvmInstructionSchema>,
     pub defined_types: BTreeMap<String, SvmFieldType>,
     pub unusable: svm_idl::Unusable,
     pub source: SvmSchemaSource,
@@ -3713,44 +3628,9 @@ type Foo {
 
     mod svm_translation {
         use super::SystemConfig;
-        use crate::config_parsing::svm_idl::{IdlAccount, IxIdl};
         use crate::config_parsing::system_config::{Abi, DataSource, EventKind};
-        use super::super::to_instruction_schema;
         use crate::project_paths::ParsedProjectPaths;
         use pretty_assertions::assert_eq;
-
-        #[test]
-        fn to_instruction_schema_forwards_account_flags() {
-            let schema = to_instruction_schema(
-                "create".to_string(),
-                IxIdl {
-                    discriminator: vec![1],
-                    accounts: vec![
-                        IdlAccount {
-                            name: "payer".to_string(),
-                            optional: false,
-                            writable: true,
-                            signer: true,
-                        },
-                        IdlAccount {
-                            name: "rent".to_string(),
-                            optional: true,
-                            writable: false,
-                            signer: false,
-                        },
-                    ],
-                    args: vec![],
-                },
-            );
-            assert_eq!(
-                schema
-                    .accounts
-                    .iter()
-                    .map(|a| (a.name.as_str(), a.writable, a.signer, a.optional))
-                    .collect::<Vec<_>>(),
-                vec![("payer", true, true, false), ("rent", false, false, true)]
-            );
-        }
 
         /// End-to-end: the Metaplex YAML fixture deserializes, validates, and
         /// translates into a single Contract whose two Events carry the

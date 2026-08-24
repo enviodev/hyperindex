@@ -146,7 +146,6 @@ fn separates_file_level_defects_from_instruction_level_ones() {
                                       "name": "tag", "offset": 0 }] }] } }"#,
         ),
         (
-            // Ambiguous for whatever reaches it, harmless for everything else.
             "duplicate type name",
             r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
                  "args": [{ "name": "fee", "type": { "defined": "Fee" } }] }],
@@ -155,6 +154,11 @@ fn separates_file_level_defects_from_instruction_level_ones() {
                      "fields": [{ "name": "bps", "type": "u16" }] } },
                    { "name": "Fee", "type": { "kind": "struct",
                      "fields": [{ "name": "bps", "type": "u32" }] } }] }"#,
+        ),
+        (
+            "duplicate account name",
+            r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
+                 "accounts": [{ "name": "vault" }, { "name": "vault" }] }] }"#,
         ),
     ];
 
@@ -186,7 +190,7 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "neither dialect: fatal: unrecognized IDL: expected an Anchor IDL (top-level 'instructions') or a Codama IDL (a 'rootNode' or 'programNode')",
             "duplicate instruction name: fatal: IDL declares instruction 'swap' more than once",
             "anchor coption: initializeMint set aside: args.freezeAuthority: `coption` is not Borsh-compatible and cannot be decoded",
-            "undefined type reference: swap set aside: it references undefined type 'u46'",
+            "undefined type reference: swap set aside: args.amount: unknown type 'u46'",
             "discriminator wider than dispatch probes: swap set aside: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8",
             "instruction with no discriminator at all: swap set aside: its discriminator is 0 bytes, and dispatch matches only 1, 2, 4, or 8",
             "one discriminator a prefix of another: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferChecked set aside: its discriminator 0x0c02 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead",
@@ -199,7 +203,8 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "one discriminator a prefix of several others: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferAll set aside: its discriminator 0x0c03 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead; transferChecked set aside: its discriminator 0x0c02 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead",
             "instruction shadowed by one of an undispatchable width: swap set aside: its discriminator 0x0102 is a prefix of 'swapV2''s 0x010203, so 'swapV2' takes every call that would have matched it; swapV2 set aside: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8",
             "codama discriminator argument out of declaration order: swap set aside: the discriminator reads [\"tag\"], but the arguments begin [\"amount\"]; their offsets and their declaration order disagree",
-            "duplicate type name: swap set aside: it reaches type 'Fee', which cannot be decoded: the IDL declares type 'Fee' more than once",
+            "duplicate type name: fatal: IDL declares type 'Fee' more than once",
+            "duplicate account name: fatal: IDL declares account 'vault' more than once",
         ]
     );
 }

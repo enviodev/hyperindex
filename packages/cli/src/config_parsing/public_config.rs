@@ -1,10 +1,11 @@
 use super::{
     entity_parsing::{self, IndexFieldDirection},
     field_types,
-    human_config::{self, evm::For, ColumnNameFormat},
+    human_config::{evm::For, ColumnNameFormat},
+    svm_args::{self, field_type_to_arg_type, named_field_to_arg_def},
     system_config::{
-        self, field_type_to_arg_type, named_field_to_arg_def, Abi, ChainIdMode, Ecosystem,
-        EventKind, FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
+        self, Abi, ChainIdMode, Ecosystem, EventKind, FuelEventKind, SvmAbi, SvmSchemaSource,
+        SystemConfig,
     },
 };
 use crate::{config_parsing::chain_helpers::Network, utils::text::Capitalize};
@@ -433,7 +434,7 @@ struct SvmEventItem {
     /// Borsh args layout. `[]` means the runtime won't expose
     /// `decoded.args`; the raw `instruction.data` hex is still available.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    args: Vec<human_config::svm::ArgDef>,
+    args: Vec<svm_args::ArgDef>,
 }
 
 /// Program-level Borsh schema metadata. Emitted onto `ContractConfig.svm_abi`
@@ -445,7 +446,7 @@ struct SvmAbiJson {
     /// Nominal-type registry referenced by `ArgComposite::Defined`. The
     /// runtime resolves these once per program at startup.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    defined_types: std::collections::BTreeMap<String, human_config::svm::ArgType>,
+    defined_types: std::collections::BTreeMap<String, svm_args::ArgType>,
     source: &'static str,
 }
 
@@ -671,7 +672,6 @@ impl SystemConfig {
                     let svm_abi = match &contract.abi {
                         Abi::Svm(SvmAbi {
                             program_id,
-                            instructions: _,
                             unusable: _,
                             defined_types,
                             source,

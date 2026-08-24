@@ -13,20 +13,10 @@ pub(super) fn render(idl: &ProgramIdl) -> String {
             .accounts
             .iter()
             .map(|a| {
-                let mut flags = String::new();
-                if a.writable {
-                    flags.push('w');
-                }
-                if a.signer {
-                    flags.push('s');
-                }
                 if a.optional {
-                    flags.push('?');
-                }
-                if flags.is_empty() {
-                    a.name.clone()
+                    format!("{}:?", a.name)
                 } else {
-                    format!("{}:{flags}", a.name)
+                    a.name.clone()
                 }
             })
             .collect::<Vec<_>>()
@@ -122,7 +112,7 @@ fn parses_a_codama_program_node_without_root_wrapper() {
     assert_eq!(
         render(&idl),
         "address: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n\
-         instruction transfer 0x03 (source:w, destination:w) (amount: u64)\n"
+         instruction transfer 0x03 (source, destination) (amount: u64)\n"
     );
 }
 
@@ -131,8 +121,6 @@ fn trailing_optional_mask_keeps_middle_slots_required() {
     let account = |name: &str, optional| IdlAccount {
         name: name.to_string(),
         optional,
-        writable: false,
-        signer: false,
     };
     assert_eq!(
         [
@@ -212,16 +200,16 @@ fn derives_discriminators_for_legacy_anchor_idl() {
     assert_eq!(
         render(&idl),
         "address: -\n\
-         instruction sharedAccountsRoute 0xc1209b3341d69c81 (tokenProgram, userTransferAuthority:ws, platformFeeAccount:w?) (id: u8, routePlan: Vec<@RoutePlanStep>, limitPrice: Option<u64>)\n\
+         instruction sharedAccountsRoute 0xc1209b3341d69c81 (tokenProgram, userTransferAuthority, platformFeeAccount:?) (id: u8, routePlan: Vec<@RoutePlanStep>, limitPrice: Option<u64>)\n\
          type RoutePlanStep = {percent: u8, swap: @Swap}\n\
          type Swap = enum {Saber, Serum(side: u8), Raydium(_0: u8, _1: u64)}\n"
     );
 }
 
-/// Anchor derives the pre-0.30 discriminator from `heck`'s snake_case, which
-/// splits an acronym run. A hand-rolled converter that only breaks on
-/// lower→upper collapses `CLMM` into one word and derives the wrong bytes for
-/// every such instruction — silently, since the IDL still parses.
+/// Anchor derives the pre-0.30 discriminator from snake_case that splits an
+/// acronym run. A converter that only breaks on lower→upper collapses `CLMM`
+/// into one word and derives the wrong bytes for every such instruction —
+/// silently, since the IDL still parses.
 #[test]
 fn splits_acronym_runs_like_anchor_does() {
     let idl = parse_idl(
@@ -235,9 +223,9 @@ fn splits_acronym_runs_like_anchor_does() {
     );
 }
 
-/// Anchor 0.30+ ships inline discriminators, `metadata.address`, the
-/// `{"defined": {"name": T}}` type ref and the `writable`/`signer` flags; an
-/// event's payload lives in `types` under the event's own name.
+/// Anchor 0.30+ ships inline discriminators, `metadata.address`, and
+/// `{"defined": {"name": T}}` type refs; an event's payload lives in `types`
+/// under the event's own name.
 #[test]
 fn parses_anchor_030_idl() {
     let idl = parse_idl(
@@ -287,7 +275,7 @@ fn parses_anchor_030_idl() {
     assert_eq!(
         render(&idl),
         "address: MyProgram1111111111111111111111111111111111\n\
-         instruction initialize 0xafaf6d1f0d989bed (payer:ws, config:w, optionalAuthority:?, systemProgram) (seed: [u8; 32], authority: pubkey, config: @Config)\n\
+         instruction initialize 0xafaf6d1f0d989bed (payer, config, optionalAuthority:?, systemProgram) (seed: [u8; 32], authority: pubkey, config: @Config)\n\
          type Alias = pubkey\n\
          type Config = {fee: u16}\n\
          type Initialized = {slot: u64, label: string}\n"
@@ -463,10 +451,10 @@ fn parses_codama_spl_token_idl() {
     assert_eq!(
         render(&idl),
         "address: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n\
-         instruction initializeMint 0x00 (mint:w, rent:?) (decimals: u8, mintAuthority: pubkey, freezeAuthority: Option<pubkey>)\n\
+         instruction initializeMint 0x00 (mint, rent:?) (decimals: u8, mintAuthority: pubkey, freezeAuthority: Option<pubkey>)\n\
          instruction syncNative 0x11 () ()\n\
-         instruction transfer 0x03 (source:w, destination:w, authority:s) (amount: u64)\n\
-         instruction transferChecked 0x0c01 (source:w) (amount: u64)\n\
+         instruction transfer 0x03 (source, destination, authority) (amount: u64)\n\
+         instruction transferChecked 0x0c01 (source) (amount: u64)\n\
          type accountState = enum {uninitialized, frozen(since: u64), initialized(_0: bool, _1: pubkey)}\n\
          type multisig = {m: u8, signers: [pubkey; 11], memo: string, history: Vec<@accountState>}\n"
     );

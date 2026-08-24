@@ -20,7 +20,7 @@ use hypersync_client_solana::decode::{
 };
 use hypersync_client_solana::simple_types::InstructionCall as UpstreamInstructionCall;
 
-use crate::config_parsing::human_config::svm::{ArgComposite, ArgDef, ArgPrimitive, ArgType};
+use crate::config_parsing::svm_args::{ArgComposite, ArgDef, ArgPrimitive, ArgType};
 
 use super::mod_helpers::hex_to_bytes;
 

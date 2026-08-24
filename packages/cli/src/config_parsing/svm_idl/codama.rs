@@ -12,8 +12,8 @@ use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 
 use super::{
-    collect_instructions, collect_named, required_str, IdlAccount, Instructions, IxIdl,
-    ProgramIdl, Unusable,
+    collect_instructions, collect_named, required_str, IdlAccount,
+    Instructions, IxIdl, ProgramIdl, Unusable,
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
@@ -223,17 +223,6 @@ fn parse_accounts(node: Option<&Value>) -> Result<Vec<IdlAccount>> {
                     .get("isOptional")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
-                writable: a
-                    .get("isWritable")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                // `isSigner` is a tri-state: `true`, `false`, or `"either"`
-                // for a slot that may or may not sign.
-                signer: match a.get("isSigner") {
-                    Some(Value::Bool(signer)) => *signer,
-                    Some(Value::String(s)) => s == "either",
-                    _ => false,
-                },
             })
         })
         .collect()

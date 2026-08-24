@@ -17,8 +17,6 @@ use serde_json::{Map, Value};
 pub struct IdlAccount {
     pub name: String,
     pub optional: bool,
-    pub writable: bool,
-    pub signer: bool,
 }
 
 /// Only a trailing run of optional slots can be omitted from a transaction.
@@ -365,6 +363,7 @@ fn collect_instructions<T>(
         };
         match layout_of(entry, discriminator.clone(), carried) {
             Ok(ix) => {
+                reject_duplicate_account_names(&ix.accounts)?;
                 out.insert(name, ix);
             }
             Err(e) => {
@@ -391,12 +390,7 @@ fn collect_named<T>(
             .with_context(|| name_context.to_string())?
             .to_string();
         if out.contains_key(&name) || unusable.contains_key(&name) {
-            out.remove(&name);
-            unusable.insert(
-                name.clone(),
-                format!("the IDL declares {noun} '{name}' more than once"),
-            );
-            continue;
+            bail!("IDL declares {noun} '{name}' more than once");
         }
         match parse_one(&name, entry) {
             Ok(parsed) => {
@@ -408,6 +402,16 @@ fn collect_named<T>(
         }
     }
     Ok((out, unusable))
+}
+
+pub(super) fn reject_duplicate_account_names(accounts: &[IdlAccount]) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for account in accounts {
+        if !seen.insert(account.name.as_str()) {
+            bail!("IDL declares account '{}' more than once", account.name);
+        }
+    }
+    Ok(())
 }
 
 fn required_str<'a>(node: &'a Value, key: &str) -> Result<&'a str> {

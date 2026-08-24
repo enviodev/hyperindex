@@ -585,7 +585,7 @@ type svmInstructionEventConfig = {
   /** Positional account names from the Borsh schema, in declared order.
    `[]` means no schema is attached for this instruction. */
   accounts: array<string>,
-  /** Borsh args layout as `Vec<ArgDef>` JSON (see `human_config::svm::ArgDef`
+  /** Borsh args layout as `Vec<ArgDef>` JSON (see `config_parsing::svm_args::ArgDef`
    on the Rust side). `JSON.Null` means no schema is attached. */
   args: JSON.t,
   /** Program-level nominal-type registry (`BTreeMap<String, ArgType>` JSON).
