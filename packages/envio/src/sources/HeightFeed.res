@@ -266,11 +266,23 @@ let pollOnce = async (feed: t) => {
 }
 
 let runPollLoop = async (feed: t) => {
-  while feed->shouldPoll {
-    let interval = await feed->pollOnce
-    if feed->shouldPoll {
-      await feed->sleep(interval)
+  // Nothing inside is meant to throw — a poll's failure is a value, and a
+  // waiter's is caught where it fires — but the flag has to come back down
+  // whatever happens. Left up it says a loop is running when none is, and this
+  // source is never polled again.
+  try {
+    while feed->shouldPoll {
+      let interval = await feed->pollOnce
+      if feed->shouldPoll {
+        await feed->sleep(interval)
+      }
     }
+  } catch {
+  | exn =>
+    feed.logger->Logging.childError({
+      "msg": "The height poll loop threw. Stopping it rather than leaving the source looking covered.",
+      "err": exn->Utils.prettifyExn,
+    })
   }
   feed.polling = false
 }
