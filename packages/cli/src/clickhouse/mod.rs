@@ -5,24 +5,20 @@
 //! hot path never touches the Node main thread — column values cross the
 //! boundary columnar, get encoded in Rust, and are sent from a tokio task.
 //!
-//! A table is registered once, before any batch. Registration parses each
-//! column's declared type and builds the insert statement, so a batch carries
-//! nothing but values and a handle, and a type this encoder cannot hold is
-//! refused at startup rather than against a live table.
+//! A table is registered once, before any batch. Registration derives each
+//! column's type from the schema field it stores and builds the insert
+//! statement, so a batch carries nothing but values and a handle.
 //!
 //! Splitting `stage` from `write_batch` is what makes the second half
 //! off-thread work: a JS value can only be read while holding the isolate, so
 //! `stage` copies the batch into owned Rust memory on the JS thread and
 //! `write_batch` does the encoding and the HTTP round trips on the tokio pool.
 //!
-//! Column types come from the caller, which is what creates these tables;
-//! asking the server to describe them back would only add a round trip and a
-//! second answer to keep in step. The insert names every column it sends, so
-//! the table's own column order stops mattering and anything envio does not
-//! write — a column a user added, a DEFAULT or MATERIALIZED expression — is
-//! left for the server to fill.
+//! The runtime hands over the schema rather than ClickHouse types; `ch_type`
+//! turns it into both the DDL and the encoder's layout.
 
 pub mod ch_type;
+pub mod ddl;
 #[cfg(test)]
 mod mock_server;
 pub mod row_binary;
@@ -40,7 +36,7 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::{Env, Status};
 use napi_derive::napi;
 
-use ch_type::{ChType, ColumnKind};
+use ch_type::{ChType, ChainIdMode, ColumnKind, FieldSpec};
 use row_binary::{Column, ColumnValues, EncodedRows};
 
 /// Retries an insert this many times before giving up, matching the JS client's
@@ -52,6 +48,11 @@ const MAX_RETRIES: u32 = 8;
 /// — a black-holed socket through a load balancer sends neither RST nor FIN —
 /// leaves the request hanging forever, and with it the whole write batch.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// What a schema or maintenance statement gets instead. `DROP DATABASE ... SYNC`
+/// and the reorg trim's `ALTER ... DELETE ... mutations_sync` both run for as
+/// long as the data takes, so holding them to the insert deadline would fail a
+/// restart on a large history table — the one case the trim exists for.
+const STATEMENT_TIMEOUT: Duration = Duration::from_secs(600);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Probes an idle pooled socket so a connection dropped by a NAT or proxy is
 /// discovered before a batch is handed to it.
@@ -71,6 +72,9 @@ const MAX_RETRY_DELAY: Duration = Duration::from_millis(1_000);
 #[derive(Debug, Clone, Copy)]
 struct Tuning {
     attempts: u32,
+    /// Deadline for a schema or maintenance statement, which is not the insert
+    /// deadline: these run as long as the data takes.
+    statement_timeout: Duration,
     /// Ceiling on the retry backoff. Tests pass `ZERO` to skip the waits, which
     /// are the policy's concern rather than the encoder's.
     max_retry_delay: Duration,
@@ -83,6 +87,7 @@ impl Default for Tuning {
             attempts: MAX_RETRIES,
             max_retry_delay: MAX_RETRY_DELAY,
             request_timeout: REQUEST_TIMEOUT,
+            statement_timeout: STATEMENT_TIMEOUT,
         }
     }
 }
@@ -104,22 +109,130 @@ impl Tuning {
     }
 }
 
-/// A column of a table the caller is registering: the name it goes by and the
-/// ClickHouse type the DDL declared it with.
+/// A column of a table the caller is registering: the name it goes by, the
+/// schema field name a user-written table expression references it by, and the
+/// field it stores.
 #[napi(object)]
-pub struct ColumnSpec {
+pub struct ColumnSpecInput {
     pub name: String,
-    pub ch_type: String,
+    /// Omitted when it matches `name`, which it does unless a column rename is
+    /// configured.
+    pub field_name: Option<String>,
+    /// One of `Table.fieldType`'s tags.
+    pub field_type: String,
+    pub is_nullable: Option<bool>,
+    pub is_array: Option<bool>,
+    /// A `BigInt`'s digit count or a `BigDecimal`'s precision.
+    pub precision: Option<u32>,
+    /// A `BigDecimal`'s scale.
+    pub scale: Option<u32>,
+    /// An `Enum`'s variants, in the order their numbering follows.
+    pub enum_variants: Option<Vec<String>>,
+}
+
+impl From<ColumnSpecInput> for ddl::ColumnSpec {
+    fn from(input: ColumnSpecInput) -> Self {
+        let ColumnSpecInput {
+            name,
+            field_name,
+            field_type,
+            is_nullable,
+            is_array,
+            precision,
+            scale,
+            enum_variants,
+        } = input;
+        ddl::ColumnSpec {
+            field_name: field_name.unwrap_or_else(|| name.clone()),
+            name,
+            field: FieldSpec {
+                field_type,
+                is_nullable: is_nullable.unwrap_or(false),
+                is_array: is_array.unwrap_or(false),
+                precision,
+                scale,
+                enum_variants,
+            },
+        }
+    }
+}
+
+/// A data-skipping index on an entity's history table.
+#[napi(object)]
+pub struct SkippingIndexInput {
+    pub name: String,
+    pub expr: String,
+    pub index_type: String,
+    pub granularity: Option<u32>,
+}
+
+impl From<SkippingIndexInput> for ddl::SkippingIndexSpec {
+    fn from(input: SkippingIndexInput) -> Self {
+        ddl::SkippingIndexSpec {
+            name: input.name,
+            expr: input.expr,
+            index_type: input.index_type,
+            granularity: input.granularity,
+        }
+    }
+}
+
+/// One entity as the sink needs it: the table its history goes to, the columns
+/// it declares, and the layout options its `@storage` directive asked for.
+#[napi(object)]
+pub struct EntitySpecInput {
+    pub name: String,
+    pub history_table: String,
+    pub columns: Vec<ColumnSpecInput>,
+    /// Set when the entity is per-chain, which the current-state view dedups on.
+    pub chain_id_column: Option<String>,
+    pub partition_by: Option<String>,
+    pub order_by: Option<Vec<String>>,
+    pub ttl: Option<String>,
+    pub skipping_indexes: Option<Vec<SkippingIndexInput>>,
+}
+
+impl From<EntitySpecInput> for ddl::EntitySpec {
+    fn from(input: EntitySpecInput) -> Self {
+        ddl::EntitySpec {
+            name: input.name,
+            history_table: input.history_table,
+            columns: input.columns.into_iter().map(Into::into).collect(),
+            chain_id_column: input.chain_id_column,
+            partition_by: input.partition_by,
+            order_by: input.order_by,
+            ttl: input.ttl,
+            skipping_indexes: input
+                .skipping_indexes
+                .unwrap_or_default()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        }
+    }
+}
+
+/// Everything `initialize` creates, in one crossing.
+#[napi(object)]
+pub struct InitializeInput {
+    pub entities: Vec<EntitySpecInput>,
+    pub checkpoint_columns: Vec<ColumnSpecInput>,
+    /// `ENVIO_CLICKHOUSE_REPLICATED`.
+    pub replicated: bool,
+    /// `ENVIO_CLICKHOUSE_DATABASE_ENGINE`.
+    pub database_engine: Option<String>,
 }
 
 /// What a caller needs back to feed a registered table: the handle every batch
-/// quotes, and the wire kind each column must be sent as — derived from the
-/// type parsed here, so the JS side never maps envio's own field types to a
-/// kind a second time.
+/// quotes, and the wire kind each column must be sent as.
 #[napi(object)]
 #[derive(Debug)]
 pub struct RegisteredTable {
     pub handle: u32,
+    /// Every column the table declares, in the order a batch must send them.
+    /// A history table carries the checkpoint id and change columns this side
+    /// appends, so the list runs past the entity's own.
+    pub names: Vec<String>,
     pub kinds: Vec<u8>,
 }
 
@@ -181,6 +294,8 @@ pub struct ClickHouseSink {
     next_handle: AtomicU32,
     tuning: Tuning,
     warn: WarningSink,
+    chain_id_mode: ChainIdMode,
+    history: ddl::HistorySchema,
 }
 
 /// Where a degradation notice goes. Retries happen while a `flush` is still in
@@ -194,6 +309,53 @@ pub struct ClickHouseSinkOptions {
     pub username: String,
     pub password: String,
     pub database: String,
+    /// `"Int32"` or `"Int64"`, which every chain-scoped column follows.
+    pub chain_id_mode: String,
+    /// The column and table names the runtime's history format fixes.
+    pub history: HistorySchemaInput,
+}
+
+/// The runtime's history schema names.
+#[napi(object)]
+pub struct HistorySchemaInput {
+    pub id_column: String,
+    pub checkpoint_id_column: String,
+    pub change_column: String,
+    /// In numbering order.
+    pub change_variants: Vec<String>,
+    /// The variant marking a row that set the entity.
+    pub set_variant: String,
+    pub checkpoints_table: String,
+    pub history_table_prefix: String,
+}
+
+impl From<HistorySchemaInput> for ddl::HistorySchema {
+    fn from(input: HistorySchemaInput) -> Self {
+        ddl::HistorySchema {
+            id_column: input.id_column,
+            checkpoint_id_column: input.checkpoint_id_column,
+            change_column: input.change_column,
+            change_variants: input.change_variants,
+            set_variant: input.set_variant,
+            checkpoints_table: input.checkpoints_table,
+            history_table_prefix: input.history_table_prefix,
+        }
+    }
+}
+
+/// Backtick-quotes an identifier. ClickHouse reads C-style escapes inside one
+/// just as it does inside a string, so a backslash is doubled alongside the
+/// backtick — left alone, a name holding `a\tb` would be created with a tab in
+/// it.
+pub(crate) fn quoted(name: &str) -> String {
+    format!("`{}`", name.replace('\\', "\\\\").replace('`', "``"))
+}
+
+/// Single-quotes a string literal. ClickHouse reads C-style escapes inside one,
+/// so a backslash has to be doubled as well as a quote — left alone, `a\tb`
+/// would be stored as `a`, a tab, `b`.
+pub(crate) fn literal(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
 }
 
 fn to_napi(err: anyhow::Error) -> napi::Error {
@@ -245,6 +407,7 @@ impl ClickHouseSink {
             .no_proxy()
             .build()
             .map_err(|e| napi::Error::from_reason(format!("Failed building HTTP client: {e}")))?;
+        let chain_id_mode = ChainIdMode::parse(&options.chain_id_mode).map_err(to_napi)?;
         Ok(Self {
             client,
             url: options.url.trim_end_matches('/').to_string(),
@@ -256,49 +419,51 @@ impl ClickHouseSink {
             next_handle: AtomicU32::new(1),
             tuning,
             warn,
+            chain_id_mode,
+            history: options.history.into(),
         })
     }
 
-    /// Parses a table's column types and keeps them under a handle. Every batch
-    /// quotes that handle instead of re-sending the shape, and a type this
-    /// encoder cannot hold is refused here — at startup, against no rows —
-    /// rather than when a live batch first reaches the column.
+    /// Registers an entity's history table and keeps its columns under a
+    /// handle, which every batch quotes instead of re-sending the shape.
+    ///
+    /// Separate from `initialize` because an indexer resuming an existing
+    /// storage never runs it, so the write path registers on demand instead of
+    /// depending on that.
     #[napi]
-    pub fn register_table(
+    pub fn register_entity_table(&self, entity: EntitySpecInput) -> napi::Result<RegisteredTable> {
+        let entity: ddl::EntitySpec = entity.into();
+        let columns = entity
+            .history_columns(&self.history, self.chain_id_mode)
+            .map_err(to_napi)?;
+        self.register(entity.history_table.clone(), columns)
+    }
+
+    /// Registers the checkpoints table, whose columns the runtime supplies the
+    /// same way an entity's are supplied.
+    #[napi]
+    pub fn register_checkpoints_table(
         &self,
-        table: String,
-        columns: Vec<ColumnSpec>,
+        columns: Vec<ColumnSpecInput>,
     ) -> napi::Result<RegisteredTable> {
-        if columns.is_empty() {
-            return Err(napi::Error::from_reason(format!(
-                "ClickHouse table `{table}` was registered with no columns"
-            )));
-        }
-        let mut parsed = Vec::with_capacity(columns.len());
-        for ColumnSpec { name, ch_type } in columns {
-            let parsed_type = ch_type::parse(&ch_type)
-                .with_context(|| {
-                    format!("Column `{name}` of ClickHouse table `{table}` has type `{ch_type}`")
-                })
-                .map_err(to_napi)?;
-            parsed.push(ColumnSchema {
-                kind: parsed_type.column_kind(),
-                ch_type: parsed_type,
-                name,
-            });
-        }
-        let kinds = parsed.iter().map(|column| column.kind as u8).collect();
-        let insert_query = insert_query(&self.database, &table, &parsed);
-        let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        self.tables.lock().unwrap().insert(
-            handle,
-            Arc::new(TableSchema {
-                table,
-                columns: parsed,
-                insert_query,
-            }),
-        );
-        Ok(RegisteredTable { handle, kinds })
+        let columns = self
+            .checkpoint_column_types(columns.into_iter().map(Into::into).collect())
+            .map_err(to_napi)?;
+        self.register(self.history.checkpoints_table.clone(), columns)
+    }
+
+    /// Creates the database, every entity's history table, and the current-state
+    /// views over them.
+    #[napi]
+    pub async fn initialize(&self, input: InitializeInput) -> napi::Result<()> {
+        self.initialize_inner(input).await.map_err(to_napi)
+    }
+
+    /// Drops everything written past `checkpoint_id`, which is how a restart
+    /// rewinds ClickHouse to the checkpoint Postgres committed.
+    #[napi]
+    pub async fn resume(&self, checkpoint_id: String) -> napi::Result<()> {
+        self.resume_inner(&checkpoint_id).await.map_err(to_napi)
     }
 
     /// Copies a batch into Rust memory and returns a handle to pass to
@@ -405,25 +570,258 @@ impl ClickHouseSink {
             staged.remove(&handle);
         }
     }
-
-    /// Runs a statement that returns nothing — the DDL and the reorg cleanup.
-    #[napi]
-    pub async fn exec(&self, query: String) -> napi::Result<()> {
-        self.post_statement(query)
-            .await
-            .map(|_| ())
-            .map_err(to_napi)
-    }
-
-    /// Runs a statement and hands back the server's response body verbatim, so
-    /// the caller picks the `FORMAT` it wants to parse.
-    #[napi]
-    pub async fn query(&self, query: String) -> napi::Result<String> {
-        self.post_statement(query).await.map_err(to_napi)
-    }
 }
 
 impl ClickHouseSink {
+    /// Keeps a table's columns under a fresh handle and builds the insert its
+    /// batches are sent with.
+    fn register(
+        &self,
+        table: String,
+        columns: Vec<(String, ChType)>,
+    ) -> napi::Result<RegisteredTable> {
+        if columns.is_empty() {
+            return Err(napi::Error::from_reason(format!(
+                "ClickHouse table `{table}` was registered with no columns"
+            )));
+        }
+        let columns: Vec<ColumnSchema> = columns
+            .into_iter()
+            .map(|(name, ch_type)| ColumnSchema {
+                kind: ch_type.column_kind(),
+                ch_type,
+                name,
+            })
+            .collect();
+        let names = columns.iter().map(|column| column.name.clone()).collect();
+        let kinds = columns.iter().map(|column| column.kind as u8).collect();
+        let insert_query = ddl::insert_query(
+            &self.database,
+            &table,
+            columns.iter().map(|column| &column.name),
+        );
+        let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
+        self.tables.lock().unwrap().insert(
+            handle,
+            Arc::new(TableSchema {
+                table,
+                columns,
+                insert_query,
+            }),
+        );
+        Ok(RegisteredTable {
+            handle,
+            names,
+            kinds,
+        })
+    }
+
+    /// The checkpoints table's columns as the DDL declares them and the encoder
+    /// writes them — one derivation feeding both.
+    fn checkpoint_column_types(
+        &self,
+        columns: Vec<ddl::ColumnSpec>,
+    ) -> Result<Vec<(String, ChType)>> {
+        let context = format!("ClickHouse table `{}`", self.history.checkpoints_table);
+        columns
+            .iter()
+            .map(|column| column.typed(self.chain_id_mode, &context))
+            .collect()
+    }
+
+    async fn initialize_inner(&self, input: InitializeInput) -> Result<()> {
+        let InitializeInput {
+            entities,
+            checkpoint_columns,
+            replicated: env_replicated,
+            database_engine,
+        } = input;
+        let entities: Vec<ddl::EntitySpec> = entities.into_iter().map(Into::into).collect();
+        let checkpoint_columns =
+            self.checkpoint_column_types(checkpoint_columns.into_iter().map(Into::into).collect())?;
+
+        let engine_name = database_engine.as_deref().map(ddl::database_engine_name);
+        // A Replicated database engine only replicates data when its tables use
+        // the ReplicatedMergeTree engine, so it implies replicated mode even
+        // when ENVIO_CLICKHOUSE_REPLICATED is unset.
+        let has_replicated_engine = engine_name == Some("Replicated");
+        let replicated = env_replicated || has_replicated_engine;
+        if has_replicated_engine && !env_replicated {
+            (self.warn)(
+                "ENVIO_CLICKHOUSE_DATABASE_ENGINE is Replicated; enabling replicated mode so \
+                 tables use the ReplicatedMergeTree engine.",
+            );
+        }
+        let topology = ddl::Topology {
+            replicated,
+            // DDL a Replicated database engine propagates itself must not carry
+            // ON CLUSTER on top of it.
+            ddl_on_cluster: replicated && !has_replicated_engine,
+        };
+        // The `ddl` helpers quote the database name themselves, so they take
+        // `self.database` and only the statements written inline take this.
+        let database_ident = quoted(&self.database);
+
+        if let Some(engine_spec) = &database_engine {
+            let expected = ddl::database_engine_name(engine_spec);
+            let existing = self
+                .post_statement(format!(
+                    "SELECT engine FROM system.databases WHERE name = {} \
+                     FORMAT TabSeparated",
+                    literal(&self.database)
+                ))
+                .await?;
+            match existing.trim() {
+                "" => {}
+                engine if engine != expected => bail!(
+                    "ClickHouse database \"{}\" exists with engine \"{engine}\" but \
+                     ENVIO_CLICKHOUSE_DATABASE_ENGINE specifies \"{expected}\" (from \
+                     \"{engine_spec}\"). Drop the database manually to change its engine.",
+                    self.database
+                ),
+                _ => {}
+            }
+        }
+
+        // Rendered before anything destructive runs: deriving a column type is
+        // where a field this encoder cannot hold is refused, and the database
+        // must not already be gone when that happens.
+        let history_tables = entities
+            .iter()
+            .map(|entity| {
+                ddl::create_history_table(
+                    entity,
+                    &self.database,
+                    &self.history,
+                    topology,
+                    self.chain_id_mode,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        if has_replicated_engine {
+            // TRUNCATE DATABASE is unsupported on Replicated databases, so a
+            // reset has to DROP and recreate instead. ON CLUSTER removes the
+            // database from every node — the engine's own log can't replicate
+            // the drop of the database it lives in — and SYNC waits for the drop
+            // to finish before the CREATE below.
+            self.post_statement(format!(
+                "DROP DATABASE IF EXISTS {database_ident} ON CLUSTER '{{cluster}}' SYNC"
+            ))
+            .await?;
+        } else {
+            self.post_statement(format!(
+                "TRUNCATE DATABASE IF EXISTS {database_ident}{}",
+                ddl::on_cluster_clause(topology.ddl_on_cluster)
+            ))
+            .await?;
+        }
+        self.post_statement(format!(
+            "CREATE DATABASE IF NOT EXISTS {database_ident}{}{}",
+            ddl::on_cluster_clause(replicated),
+            match &database_engine {
+                Some(engine) => format!(" ENGINE = {engine}"),
+                None => String::new(),
+            }
+        ))
+        .await?;
+
+        futures_util::future::try_join_all(
+            history_tables
+                .into_iter()
+                .map(|query| self.post_statement(query)),
+        )
+        .await?;
+
+        self.post_statement(ddl::create_checkpoints_table(
+            &checkpoint_columns,
+            &self.database,
+            &self.history,
+            topology,
+        ))
+        .await?;
+
+        // The client pools HTTP connections, so consecutive statements may reach
+        // different replicas, while a Replicated database applies DDL from its
+        // Keeper log asynchronously. A CREATE VIEW is analyzed against the
+        // node's local metadata and can land on a replica that hasn't applied
+        // the table creates yet, failing with UNKNOWN_TABLE. Block until every
+        // replica has caught up first. ON CLUSTER must precede the database name
+        // in this command's grammar.
+        if has_replicated_engine {
+            self.post_statement(format!(
+                "SYSTEM SYNC DATABASE REPLICA ON CLUSTER '{{cluster}}' {database_ident}"
+            ))
+            .await?;
+        }
+
+        futures_util::future::try_join_all(entities.iter().map(|entity| {
+            self.post_statement(ddl::create_view(
+                entity,
+                &self.database,
+                &self.history,
+                topology,
+            ))
+        }))
+        .await?;
+
+        Ok(())
+    }
+
+    async fn resume_inner(&self, checkpoint_id: &str) -> Result<()> {
+        // Interpolated into every statement below, so it has to be the number it
+        // claims to be rather than trusted for being internal.
+        if checkpoint_id.is_empty() || !checkpoint_id.bytes().all(|b| b.is_ascii_digit()) {
+            bail!("`{checkpoint_id}` is not a checkpoint id");
+        }
+        let database_ident = quoted(&self.database);
+        self.post_statement(format!("USE {database_ident}"))
+            .await
+            .with_context(|| {
+                format!(
+                    "ClickHouse storage database \"{}\" not found. Please run \
+                     'envio start -r' to reinitialize the indexer (it'll also drop Postgres \
+                     database).",
+                    self.database
+                )
+            })?;
+
+        // `startsWith` rather than `LIKE`: the prefix holds underscores, which
+        // LIKE reads as single-character wildcards. TabSeparated answers one
+        // table name per line, which is all this reads.
+        let tables = self
+            .post_statement(format!(
+                "SELECT name FROM system.tables WHERE database = {} AND \
+                 startsWith(name, {}) FORMAT TabSeparated",
+                literal(&self.database),
+                literal(&self.history.history_table_prefix)
+            ))
+            .await?;
+        futures_util::future::try_join_all(
+            tables
+                .lines()
+                .map(str::trim)
+                .filter(|table| !table.is_empty())
+                .map(|table| {
+                    self.post_statement(ddl::trim_history_table(
+                        &self.database,
+                        table,
+                        &self.history,
+                        checkpoint_id,
+                    ))
+                }),
+        )
+        .await?;
+
+        self.post_statement(ddl::trim_checkpoints(
+            &self.database,
+            &self.history,
+            checkpoint_id,
+        ))
+        .await?;
+        Ok(())
+    }
+
     fn table_schema(&self, handle: u32) -> Result<Arc<TableSchema>> {
         self.tables
             .lock()
@@ -471,6 +869,7 @@ impl ClickHouseSink {
         let response = self
             .client
             .post(&self.url)
+            .timeout(self.tuning.statement_timeout)
             .basic_auth(&self.username, Some(&self.password))
             .body(query)
             .send()
@@ -660,40 +1059,10 @@ fn clickhouse_error_code(body: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
-/// Names every column the body carries, so the table's own column order stops
-/// mattering and anything envio does not write — an extra column a user added, a
-/// MATERIALIZED or DEFAULT expression — is left for the server to fill.
-fn insert_query(database: &str, table: &str, columns: &[ColumnSchema]) -> String {
-    let names = columns
-        .iter()
-        .map(|column| quote_identifier(&column.name))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "INSERT INTO {}.{} ({names}) FORMAT RowBinary",
-        quote_identifier(database),
-        quote_identifier(table)
-    )
-}
-
-fn quote_identifier(name: &str) -> String {
-    format!("`{}`", name.replace('`', "``"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-
-    /// A column of text values as `insert_query` sees it, declared as `ty`.
-    fn column(name: &str, ty: &str) -> ColumnSchema {
-        let ch_type = ch_type::parse(ty).unwrap();
-        ColumnSchema {
-            name: name.to_string(),
-            kind: ch_type.column_kind(),
-            ch_type,
-        }
-    }
 
     fn text_values(values: &[&str]) -> ColumnValuesInput {
         ColumnValuesInput {
@@ -705,38 +1074,87 @@ mod tests {
         }
     }
 
-    fn spec(name: &str, ty: &str) -> ColumnSpec {
-        ColumnSpec {
+    /// A column spec with everything optional left out.
+    fn spec(name: &str, field_type: &str) -> ColumnSpecInput {
+        ColumnSpecInput {
             name: name.to_string(),
-            ch_type: ty.to_string(),
+            field_name: None,
+            field_type: field_type.to_string(),
+            is_nullable: None,
+            is_array: None,
+            precision: None,
+            scale: None,
+            enum_variants: None,
         }
     }
 
-    // A column's type is parsed when the table is registered, so a type this
-    // encoder cannot hold is refused at startup rather than by the first batch
-    // that reaches the column.
-    #[test]
-    fn registering_rejects_a_type_it_cannot_encode() {
-        let server_less = ClickHouseSink::build(
-            ClickHouseSinkOptions {
-                url: "http://127.0.0.1:1".to_string(),
-                username: "default".to_string(),
-                password: String::new(),
-                database: "mock".to_string(),
+    fn options(url: String) -> ClickHouseSinkOptions {
+        ClickHouseSinkOptions {
+            url,
+            username: "default".to_string(),
+            password: String::new(),
+            database: "mock".to_string(),
+            chain_id_mode: "Int32".to_string(),
+            history: HistorySchemaInput {
+                id_column: "id".to_string(),
+                checkpoint_id_column: "envio_checkpoint_id".to_string(),
+                change_column: "envio_change".to_string(),
+                change_variants: vec!["SET".to_string(), "DELETE".to_string()],
+                set_variant: "SET".to_string(),
+                checkpoints_table: "envio_checkpoints".to_string(),
+                history_table_prefix: "envio_history_".to_string(),
             },
+        }
+    }
+
+    /// Every one of these round-trips back to the input through ClickHouse's own
+    /// parser. A trailing backslash is the case that matters: unescaped, it
+    /// escapes the closing quote and the rest of the statement becomes SQL.
+    #[test]
+    fn a_literal_survives_whatever_it_is_given() {
+        let escaped = [
+            r"abc\",
+            r"a\'b",
+            "it's",
+            "''",
+            r"a\tb",
+            "x'; DROP TABLE y; --",
+            "plain",
+        ]
+        .map(literal);
+        assert_eq!(
+            escaped,
+            [
+                r"'abc\\'",
+                r"'a\\''b'",
+                "'it''s'",
+                "''''''",
+                r"'a\\tb'",
+                "'x''; DROP TABLE y; --'",
+                "'plain'",
+            ]
+        );
+    }
+
+    /// A field type the derivation does not cover is refused when the table is
+    /// registered — at startup, against no rows — rather than when a live batch
+    /// first reaches the column.
+    #[test]
+    fn registering_rejects_a_field_type_it_cannot_encode() {
+        let server_less = ClickHouseSink::build(
+            options("http://127.0.0.1:1".to_string()),
             Tuning::default(),
             Arc::new(|_: &str| {}),
         )
         .unwrap();
 
         let err = server_less
-            .register_table("t".to_string(), vec![spec("t", "Tuple(String, UInt8)")])
+            .register_checkpoints_table(vec![spec("t", "Tuple")])
             .unwrap_err();
 
         assert_eq!(
             err.reason,
-            "Column `t` of ClickHouse table `t` has type `Tuple(String, UInt8)`: \
-             unsupported ClickHouse type `Tuple`"
+            "Column `t` of ClickHouse table `envio_checkpoints`: unsupported field type `Tuple`"
         );
     }
 
@@ -764,12 +1182,7 @@ mod tests {
         let warnings = Arc::new(Mutex::new(Vec::new()));
         let collected = warnings.clone();
         let sink = ClickHouseSink::build(
-            ClickHouseSinkOptions {
-                url: server.url.clone(),
-                username: "default".to_string(),
-                password: String::new(),
-                database: "mock".to_string(),
-            },
+            options(server.url.clone()),
             tuning,
             Arc::new(move |message: &str| collected.lock().unwrap().push(message.to_string())),
         )
@@ -794,7 +1207,7 @@ mod tests {
     /// table it belongs to.
     fn stage_ids(sink: &ClickHouseSink, values: &[&str]) -> u32 {
         let table = sink
-            .register_table("t".to_string(), vec![spec("id", "String")])
+            .register_checkpoints_table(vec![spec("id", "String")])
             .unwrap();
         sink.stage(table.handle, values.len() as u32, vec![text_values(values)])
             .unwrap()
@@ -931,6 +1344,7 @@ mod tests {
                 attempts: 1,
                 max_retry_delay: Duration::ZERO,
                 request_timeout: Duration::from_millis(150),
+                statement_timeout: Duration::from_millis(150),
             },
         );
         let handle = stage_ids(&sink, &["a"]);
@@ -963,7 +1377,10 @@ mod tests {
         let server = mock_server::MockClickHouse::start(0).await;
         let sink = sink_for(&server, 4);
         let table = sink
-            .register_table("t".to_string(), vec![spec("e", "Enum8('SET' = 1)")])
+            .register_checkpoints_table(vec![ColumnSpecInput {
+                enum_variants: Some(vec!["SET".to_string()]),
+                ..spec("e", "Enum")
+            }])
             .unwrap();
         let handle = sink
             .stage(table.handle, 1, vec![text_values(&["NOPE"])])
@@ -987,10 +1404,9 @@ mod tests {
         let server = mock_server::MockClickHouse::start(0).await;
         let sink = ClickHouseSink::build(
             ClickHouseSinkOptions {
-                url: server.url.clone(),
                 username: "défaut".to_string(),
                 password: "pässwörd".to_string(),
-                database: "mock".to_string(),
+                ..options(server.url.clone())
             },
             Tuning::default(),
             Arc::new(|_: &str| ()),
@@ -1014,15 +1430,6 @@ mod tests {
             ),
             (true, true, vec!["a".to_string()]),
             "expected a Basic credential, got head: {head}"
-        );
-    }
-
-    #[test]
-    fn the_insert_names_every_column_it_sends() {
-        let columns = vec![column("id", "String"), column("n`quoted", "String")];
-        assert_eq!(
-            insert_query("db", "envio_history_A`B", &columns),
-            "INSERT INTO `db`.`envio_history_A``B` (`id`, `n``quoted`) FORMAT RowBinary"
         );
     }
 }

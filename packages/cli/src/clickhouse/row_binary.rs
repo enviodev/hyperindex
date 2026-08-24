@@ -225,7 +225,7 @@ fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
         ChType::Bool => (0, 1),
         ChType::UInt32 => (0, u32::MAX as i128),
         ChType::UInt64 => (0, u64::MAX as i128),
-        ChType::DateTime64 { .. } => (i64::MIN as i128, i64::MAX as i128),
+        ChType::DateTime64 => (i64::MIN as i128, i64::MAX as i128),
         // A Decimal's precision, not its byte width, is what it accepts.
         ChType::Decimal { precision, .. } => {
             let limit = POW10
@@ -233,8 +233,8 @@ fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
                 .context("Decimal precision is wider than the value the encoder carries")?;
             (1 - limit, limit - 1)
         }
-        ChType::Enum { bytes, .. } => {
-            if *bytes == 1 {
+        ChType::Enum { variants } => {
+            if ChType::enum_bytes(variants) == 1 {
                 (i8::MIN as i128, i8::MAX as i128)
             } else {
                 (i16::MIN as i128, i16::MAX as i128)
@@ -272,8 +272,7 @@ fn encode_text_scalar(out: &mut Vec<u8>, ch_type: &ChType, text: &str) -> Result
 }
 
 /// A JSON number as the integer its column stores. A fractional value is
-/// rejected rather than truncated: the column has no fractional part to put it
-/// in, and ClickHouse itself rejected it on the JSONEachRow path this replaced.
+/// rejected rather than truncated: the column has no fractional part for it.
 fn json_integer(number: &serde_json::Number, ch_type: &ChType) -> Result<i128> {
     if let Some(value) = number.as_i64() {
         return Ok(i128::from(value));
@@ -304,8 +303,7 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
             }
         }
         // Outside a Nullable column RowBinary has nowhere to put a null, and
-        // writing the type's default would store a value the handler never set —
-        // the JSONEachRow path this replaced had the server reject it instead.
+        // writing the type's default would store a value the handler never set.
         (_, Value::Null) => bail!("null is not a value a {ch_type:?} element can hold"),
         (ChType::Array(inner), _) => {
             let items = value
@@ -333,7 +331,21 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
         (ChType::Enum { .. }, Value::String(text)) => encode_text_scalar(out, ch_type, text)?,
         (ChType::Decimal { .. }, Value::String(text)) => encode_text_scalar(out, ch_type, text)?,
         (ChType::Decimal { scale, .. }, Value::Number(number)) => {
-            put_int(out, decimal_to_i128(&number.to_string(), *scale)?, ch_type)?
+            // A JSON integer is already the digits the column stores, short of
+            // the scale; rendering it back to text to re-parse would allocate
+            // once per element. Only a fractional literal needs the parser.
+            let scaled = match number
+                .as_i64()
+                .map(i128::from)
+                .or_else(|| number.as_u64().map(i128::from))
+            {
+                Some(value) => POW10
+                    .get(*scale as usize)
+                    .and_then(|factor| value.checked_mul(*factor))
+                    .context("decimal overflows the column's precision")?,
+                None => decimal_to_i128(&number.to_string(), *scale)?,
+            };
+            put_int(out, scaled, ch_type)?
         }
         // The integer columns, whose elements JSON carries natively. Feeding the
         // number straight in keeps the encode loop off a render-to-text and
@@ -349,10 +361,10 @@ fn fixed_width(ch_type: &ChType) -> Result<usize> {
     Ok(match ch_type {
         ChType::Bool => 1,
         ChType::Int32 | ChType::UInt32 => 4,
-        ChType::Int64 | ChType::UInt64 | ChType::DateTime64 { .. } => 8,
+        ChType::Int64 | ChType::UInt64 | ChType::DateTime64 => 8,
         ChType::Float64 => 8,
         ChType::Decimal { precision, .. } => super::ch_type::decimal_bytes(*precision)?,
-        ChType::Enum { bytes, .. } => *bytes,
+        ChType::Enum { variants } => ChType::enum_bytes(variants),
         other => bail!("{other:?} has no fixed width"),
     })
 }
@@ -366,9 +378,9 @@ fn put_default(out: &mut Vec<u8>, ch_type: &ChType) -> Result<()> {
         ChType::Array(_) => put_varint(out, 0),
         ChType::String => put_varint(out, 0),
         ChType::Float64 => out.extend_from_slice(&0f64.to_le_bytes()),
-        // An Enum's default is its first variant, which is how ClickHouse fills
-        // an omitted enum column.
-        ChType::Enum { bytes, variants } => put_int_raw(out, variants[0].1 as i128, *bytes),
+        // An Enum's default is its first variant, numbered 1, which is how
+        // ClickHouse fills an omitted enum column.
+        ChType::Enum { variants } => put_int_raw(out, 1, ChType::enum_bytes(variants)),
         other => out.extend(std::iter::repeat_n(0u8, fixed_width(other)?)),
     }
     Ok(())
@@ -484,15 +496,67 @@ pub fn encode(columns: &[Column], rows: usize) -> Result<EncodedRows> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clickhouse::ch_type;
     use pretty_assertions::assert_eq;
 
     fn owned_column(name: &str, ty: &str, values: ColumnValues) -> Column<'static> {
         Column {
             name: Cow::Owned(name.to_string()),
-            ch_type: Cow::Owned(ch_type::parse(ty).unwrap()),
+            ch_type: Cow::Owned(parse_test_type(ty)),
             values,
             nulls: Vec::new(),
+        }
+    }
+
+    /// Builds a [`ChType`] from the ClickHouse type text a column is declared
+    /// with. The encoder's contract is "given this column type, write these
+    /// bytes", so its tests name the type rather than the field behind it —
+    /// what maps a field to a type is [`ch_type`]'s own tests.
+    fn parse_test_type(ty: &str) -> ChType {
+        let ty = ty.trim();
+        if let Some((name, args)) = ty.split_once('(').map(|(name, rest)| {
+            (
+                name,
+                rest.strip_suffix(')')
+                    .expect("a parenthesised type ends in )"),
+            )
+        }) {
+            return match name {
+                "Nullable" => ChType::Nullable(Box::new(parse_test_type(args))),
+                "Array" => ChType::Array(Box::new(parse_test_type(args))),
+                "DateTime64" => ChType::DateTime64,
+                "Decimal" => {
+                    let (precision, scale) = args.split_once(',').expect("Decimal(P, S)");
+                    ChType::Decimal {
+                        precision: precision.trim().parse().unwrap(),
+                        scale: scale.trim().parse().unwrap(),
+                    }
+                }
+                "Enum8" | "Enum16" => ChType::Enum {
+                    variants: args
+                        .split(',')
+                        .map(|variant| {
+                            variant
+                                .split_once('=')
+                                .expect("a variant carries its number")
+                                .0
+                                .trim()
+                                .trim_matches('\'')
+                                .to_string()
+                        })
+                        .collect(),
+                },
+                other => panic!("test type `{other}` is not one the DDL emits"),
+            };
+        }
+        match ty {
+            "Int32" => ChType::Int32,
+            "Int64" => ChType::Int64,
+            "UInt32" => ChType::UInt32,
+            "UInt64" => ChType::UInt64,
+            "Float64" => ChType::Float64,
+            "Bool" => ChType::Bool,
+            "String" => ChType::String,
+            other => panic!("test type `{other}` is not one the DDL emits"),
         }
     }
 
@@ -601,6 +665,20 @@ mod tests {
     fn encodes_decimal_in_exponential_notation() {
         let encoded = encode(&[text_column("a", "Decimal(18, 4)", &["1.5e3"])], 1).unwrap();
         assert_eq!(encoded.body, 15_000_000i64.to_le_bytes().to_vec());
+    }
+
+    /// An exponent is an unconstrained `i32`, so a literal like `1e-1000000000`
+    /// names a shift of a billion steps. Each step past zero is a no-op, which
+    /// is what bounds the loop — without that the encoder would sit on one cell
+    /// for the length of the exponent while the batch behind it waits.
+    #[test]
+    fn an_absurd_exponent_settles_instead_of_running_out_the_shift() {
+        let tiny = encode(&[text_column("a", "Decimal(18, 4)", &["1e-1000000000"])], 1).unwrap();
+        let huge = encode(&[text_column("a", "Decimal(18, 4)", &["1e1000000000"])], 1);
+        assert_eq!(
+            (tiny.body, huge.is_err()),
+            (0i64.to_le_bytes().to_vec().into(), true)
+        );
     }
 
     #[test]
@@ -714,6 +792,38 @@ mod tests {
             expected.extend_from_slice(value.as_bytes());
         }
         assert_eq!(encoded.body, expected);
+    }
+
+    /// A `Decimal` element can arrive as a JSON number rather than a string,
+    /// which takes a different arm of the encoder — one that scales the integer
+    /// directly instead of parsing a literal.
+    #[test]
+    fn encodes_decimal_array_elements_given_as_json_numbers() {
+        let encoded = encode(
+            &[text_column("xs", "Array(Decimal(18, 2))", &["[10,-3,1.5]"])],
+            1,
+        )
+        .unwrap();
+        let mut expected = vec![3];
+        for scaled in [1_000i64, -300, 150] {
+            expected.extend_from_slice(&scaled.to_le_bytes());
+        }
+        assert_eq!(encoded.body, expected);
+    }
+
+    /// The scaling can carry a value past what the column accepts, which has to
+    /// be an error rather than a wrapped integer: RowBinary has no room to
+    /// report one.
+    #[test]
+    fn rejects_a_decimal_array_element_the_column_cannot_hold() {
+        let encoded = encode(
+            &[text_column("xs", "Array(Decimal(9, 2))", &["[99999999]"])],
+            1,
+        );
+        assert!(
+            encoded.is_err(),
+            "expected the column's precision to refuse the value"
+        );
     }
 
     #[test]

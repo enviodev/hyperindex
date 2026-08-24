@@ -36,4 +36,3 @@ build
 .nyc_output
 .env
 .pnpm-store
-.env.bench

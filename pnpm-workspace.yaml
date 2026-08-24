@@ -1,7 +1,6 @@
 packages:
   - "packages/*"
   - "scenarios/*"
-  - "bench"
 onlyBuiltDependencies:
   - rescript
   - esbuild

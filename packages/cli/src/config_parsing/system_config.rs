@@ -420,11 +420,6 @@ impl Storage {
     }
 }
 
-/// Largest BigInt precision ClickHouse still stores as a numeric `Decimal`;
-/// above this (or with no precision) it falls back to `String`. Kept in sync
-/// with the BigInt branch of `getClickHouseFieldType` in ClickHouse.res.
-const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
-
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
 pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
@@ -462,18 +457,21 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
         }
     }
 
-    // ClickHouse stores a BigInt whose precision is unset (or above its Decimal
-    // ceiling) as a String, which sorts lexicographically — wrong for anything
-    // in the sorting key. See the BigInt branch of `getClickHouseFieldType` in
-    // ClickHouse.res.
+    // ClickHouse stores a BigInt whose precision is unset (or wider than a
+    // Decimal the encoder can carry) as a String, which sorts
+    // lexicographically — wrong for anything in the sorting key. The predicate
+    // is `clickhouse::ch_type`'s own, so this cannot disagree with the column
+    // the DDL declares.
     //
     // Which column that applies to depends on `@storage(clickhouse: {orderBy})`:
-    // without it the sorting key is `id`, with it the listed fields replace `id`
-    // (see `makeCreateHistoryTableQuery`). Unlike the parse-time
+    // without it the sorting key is `id`, with it the listed fields replace `id`.
+    // Unlike the parse-time
     // `validate_clickhouse_order_by_fields`, the schema is available here, so a
     // relation in the sorting key can be resolved to the id it actually stores.
-    let bigint_stored_as_string =
-        |precision: Option<u32>| precision.is_none_or(|p| p > CLICKHOUSE_DECIMAL_MAX_PRECISION);
+    let max_precision = crate::clickhouse::ch_type::MAX_DECIMAL_PRECISION;
+    let bigint_stored_as_string = |precision: Option<u32>| {
+        precision.is_none_or(|p| crate::clickhouse::ch_type::decimal_bytes(p).is_err())
+    };
     for entity in &entities {
         let uses_clickhouse = if entity.has_storage_directive() {
             entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
@@ -506,7 +504,7 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                                  `{field_name}`, which stores a BigInt that ClickHouse keeps as a \
                                  String (sorted lexicographically, not numerically) unless a \
                                  precision is set. Add `@config(precision: N)` with N <= \
-                                 {CLICKHOUSE_DECIMAL_MAX_PRECISION} to the BigInt it stores so it \
+                                 {max_precision} to the BigInt it stores so it \
                                  sorts as a numeric Decimal.",
                                 entity.name
                             ));
@@ -523,7 +521,7 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                              stores as a String (sorted lexicographically, not numerically) \
                              unless a precision is set. Since `id` is ClickHouse's sorting key, \
                              add `@config(precision: N)` with N <= \
-                             {CLICKHOUSE_DECIMAL_MAX_PRECISION} so the id stores as a numeric \
+                             {max_precision} so the id stores as a numeric \
                              Decimal, or set `@storage(clickhouse: {{orderBy: [...]}})` to sort \
                              by other fields.",
                             entity.name
