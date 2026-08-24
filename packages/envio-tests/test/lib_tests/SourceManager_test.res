@@ -1311,8 +1311,8 @@ describe("SourceManager wait for new blocks", () => {
 
       t.expect(
         sync.getHeightOrThrowCalls->Array.length,
-        ~message="Should call on the next waitForNewBlock",
-      ).toEqual(4)
+        ~message="A poll is already in flight for sync, and it answers the new wait rather than being stacked on",
+      ).toEqual(3)
       t.expect(
         fallback.getHeightOrThrowCalls->Array.length,
         ~message="Fallback is secondary, not polled immediately on next waitForNewBlock",
@@ -1334,7 +1334,7 @@ describe("SourceManager wait for new blocks", () => {
       t.expect(
         sync.getHeightOrThrowCalls->Array.length,
         ~message="Polling for sync source should stop after successful response",
-      ).toEqual(4)
+      ).toEqual(3)
       t.expect(
         fallback.getHeightOrThrowCalls->Array.length,
         ~message="Polling for fallback source should stop after successful response",
@@ -2887,8 +2887,8 @@ describe("SourceManager height subscription", () => {
       )
     t.expect(
       mock.getHeightOrThrowCalls->Array.length,
-      ~message="Should only have the poll that created the subscription, the one issued while it had not connected yet, and the catch-up on connect",
-    ).toEqual(3)
+      ~message="Should only have the poll covering the stream until it connected, and the catch-up on connect",
+    ).toEqual(2)
     t.expect(await p2, ~message="Should immediately return cached height").toEqual(105)
   })
 
@@ -2920,8 +2920,8 @@ describe("SourceManager height subscription", () => {
         )
       t.expect(
         mock.getHeightOrThrowCalls->Array.length,
-        ~message="Should only have the poll that created the subscription, the one issued while it had not connected yet, and the catch-up on connect",
-      ).toEqual(3)
+        ~message="Should only have the poll covering the stream until it connected, and the catch-up on connect",
+      ).toEqual(2)
 
       // Trigger new height
       mock.triggerHeightSubscription(102)
@@ -3228,13 +3228,16 @@ describe("SourceManager height subscription", () => {
     t.expect((pollsWhileLive, pollsAfterDown, await waiting)).toStrictEqual((0, 1, 102))
   })
 
-  Async.it("Polls immediately while the subscription has never connected", async t => {
-    let stallTimeout = 2_000
-    let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
+  Async.it("Polls at the source's interval while the subscription has never connected", async t => {
+    let pollingInterval = 10
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval,
+    )
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[mock.source],
-      ~newBlockStallTimeoutRealtime=stallTimeout,
+      ~newBlockStallTimeoutRealtime=2_000,
     )
 
     let waiting =
@@ -3243,16 +3246,22 @@ describe("SourceManager height subscription", () => {
         ~knownHeight=100,
         ~reducedPolling=false,
       )
-    mock.resolveGetHeightOrThrow(100)
-    await Utils.delay(0)
+    // Subscribing is the first thing the wait does, so the poll beside it is
+    // covering a stream that has not reported itself live yet.
     let subscriptions = mock.heightSubscriptionCalls->Array.length
-    // The poll that created the subscription, plus one straight after it
-    // because the stream has not reported itself live yet.
-    let polls = mock.getHeightOrThrowCalls->Array.length
+    let immediatePolls = mock.getHeightOrThrowCalls->Array.length
 
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(pollingInterval + 5)
+    let pollsAfterInterval = mock.getHeightOrThrowCalls->Array.length
     mock.resolveGetHeightOrThrow(101)
 
-    t.expect((subscriptions, polls, await waiting)).toStrictEqual((1, 2, 101))
+    t.expect((subscriptions, immediatePolls, pollsAfterInterval, await waiting)).toStrictEqual((
+      1,
+      1,
+      2,
+      101,
+    ))
   })
 
   Async.it("Runs a single poll loop no matter how often the stream reports down", async t => {

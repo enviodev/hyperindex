@@ -58,9 +58,35 @@ let makeHarness = (~staleTimeout=15_000, ~failOnConnect=?, ~throwOnConnect=false
 
 let driverAt = (harness, index): HeightStream.driver => harness.drivers->Array.getUnsafe(index)
 
+// The retry wait is jittered across [delay/2, delay), so a test can only pin the
+// window: nothing has reconnected before the earliest instant it could fire, and
+// something has by the last one. Advancing in two steps asserts both ends.
+let advanceThroughRetryWindow = async (harness, ~delay) => {
+  let earliest = delay / 2
+  await Vi.advanceTimersByTimeAsync(earliest - 1)
+  let beforeEarliest = harness.drivers->Array.length
+  await Vi.advanceTimersByTimeAsync(delay - earliest)
+  (beforeEarliest, harness.drivers->Array.length)
+}
+
 describe("HeightStream reconnect driver", () => {
   beforeEach(() => Vi.useFakeTimers())
   afterEach(() => Vi.useRealTimers())
+
+  it("Spreads a retry wait across the half-window below it", t => {
+    // Every indexer on one provider loses its stream in the same instant when
+    // that provider blinks; reconnecting them all on one schedule is what turns
+    // a blip into a stampede.
+    let samples = Belt.Array.makeBy(200, _ => HeightStream.jitter(1_000))
+    let first = samples->Array.getUnsafe(0)
+
+    t.expect((
+      samples->Array.every(v => v >= 500 && v < 1_000),
+      samples->Array.some(v => v !== first),
+      // Nothing to spread on a first connection, which nothing preceded.
+      HeightStream.jitter(0),
+    )).toStrictEqual((true, true, 0))
+  })
 
   Async.it("Backs off exponentially to a 60s cap and never gives up", async t => {
     let harness = makeHarness()
@@ -71,10 +97,9 @@ describe("HeightStream reconnect driver", () => {
     let connectsAroundRetry = []
     for attempt in 0 to schedule->Array.length - 1 {
       (harness->driverAt(attempt)).onFailure(~reason="closed")
-      await Vi.advanceTimersByTimeAsync(schedule->Array.getUnsafe(attempt) - 1)
-      let beforeDue = harness.drivers->Array.length
-      await Vi.advanceTimersByTimeAsync(1)
-      connectsAroundRetry->Array.push((beforeDue, harness.drivers->Array.length))->ignore
+      connectsAroundRetry
+      ->Array.push(await harness->advanceThroughRetryWindow(~delay=schedule->Array.getUnsafe(attempt)))
+      ->ignore
     }
     harness.unsubscribe()
 
@@ -99,12 +124,10 @@ describe("HeightStream reconnect driver", () => {
     rotated.onHeight(101)
     rotated.onFailure(~reason="closed")
 
-    await Vi.advanceTimersByTimeAsync(249)
-    let beforeBaseDelay = harness.drivers->Array.length
-    await Vi.advanceTimersByTimeAsync(1)
+    let window = await harness->advanceThroughRetryWindow(~delay=250)
     harness.unsubscribe()
 
-    t.expect((beforeBaseDelay, harness.drivers->Array.length)).toStrictEqual((3, 4))
+    t.expect(window).toStrictEqual((3, 4))
   })
 
   Async.it("Keeps backing off when connections die younger than the wait before them", async t => {
@@ -122,10 +145,9 @@ describe("HeightStream reconnect driver", () => {
       driver.onHeight(100 + attempt)
       await Vi.advanceTimersByTimeAsync(300)
       driver.onFailure(~reason="closed")
-      await Vi.advanceTimersByTimeAsync(schedule->Array.getUnsafe(attempt) - 1)
-      let beforeDue = harness.drivers->Array.length
-      await Vi.advanceTimersByTimeAsync(1)
-      connectsAroundRetry->Array.push((beforeDue, harness.drivers->Array.length))->ignore
+      connectsAroundRetry
+      ->Array.push(await harness->advanceThroughRetryWindow(~delay=schedule->Array.getUnsafe(attempt)))
+      ->ignore
     }
     harness.unsubscribe()
 
@@ -145,10 +167,9 @@ describe("HeightStream reconnect driver", () => {
     for attempt in 0 to schedule->Array.length - 1 {
       await Vi.advanceTimersByTimeAsync(2_000)
       (harness->driverAt(attempt)).onFailure(~reason="502")
-      await Vi.advanceTimersByTimeAsync(schedule->Array.getUnsafe(attempt) - 1)
-      let beforeDue = harness.drivers->Array.length
-      await Vi.advanceTimersByTimeAsync(1)
-      connectsAroundRetry->Array.push((beforeDue, harness.drivers->Array.length))->ignore
+      connectsAroundRetry
+      ->Array.push(await harness->advanceThroughRetryWindow(~delay=schedule->Array.getUnsafe(attempt)))
+      ->ignore
     }
     harness.unsubscribe()
 
@@ -170,10 +191,9 @@ describe("HeightStream reconnect driver", () => {
       driver.onConnected()
       await Vi.advanceTimersByTimeAsync(3_000)
       driver.onFailure(~reason="closed")
-      await Vi.advanceTimersByTimeAsync(schedule->Array.getUnsafe(attempt) - 1)
-      let beforeDue = harness.drivers->Array.length
-      await Vi.advanceTimersByTimeAsync(1)
-      connectsAroundRetry->Array.push((beforeDue, harness.drivers->Array.length))->ignore
+      connectsAroundRetry
+      ->Array.push(await harness->advanceThroughRetryWindow(~delay=schedule->Array.getUnsafe(attempt)))
+      ->ignore
     }
     harness.unsubscribe()
 
@@ -416,10 +436,7 @@ describe("HeightStream reconnect driver", () => {
     for attempt in 0 to 3 {
       (harness->driverAt(attempt)).onConnected()
       await Vi.advanceTimersByTimeAsync(15_000)
-      await Vi.advanceTimersByTimeAsync(249)
-      let beforeDue = harness.drivers->Array.length
-      await Vi.advanceTimersByTimeAsync(1)
-      connectsAroundRetry->Array.push((beforeDue, harness.drivers->Array.length))->ignore
+      connectsAroundRetry->Array.push(await harness->advanceThroughRetryWindow(~delay=250))->ignore
     }
     harness.unsubscribe()
 
@@ -431,12 +448,10 @@ describe("HeightStream reconnect driver", () => {
     // process down instead.
     let harness = makeHarness(~throwOnConnect=true)
 
-    await Vi.advanceTimersByTimeAsync(249)
-    let beforeRetry = harness.drivers->Array.length
-    await Vi.advanceTimersByTimeAsync(1)
+    let (beforeRetry, afterRetry) = await harness->advanceThroughRetryWindow(~delay=250)
     harness.unsubscribe()
 
-    t.expect((beforeRetry, harness.drivers->Array.length, harness.statuses)).toStrictEqual((
+    t.expect((beforeRetry, afterRetry, harness.statuses)).toStrictEqual((
       1,
       2,
       ["down:connect-failed", "down:connect-failed"],
@@ -446,12 +461,10 @@ describe("HeightStream reconnect driver", () => {
   Async.it("Retries rather than waits for staleness when connect fails immediately", async t => {
     let harness = makeHarness(~failOnConnect="401")
 
-    await Vi.advanceTimersByTimeAsync(249)
-    let beforeRetry = harness.drivers->Array.length
-    await Vi.advanceTimersByTimeAsync(1)
+    let (beforeRetry, afterRetry) = await harness->advanceThroughRetryWindow(~delay=250)
     harness.unsubscribe()
 
-    t.expect((beforeRetry, harness.drivers->Array.length, harness.statuses)).toStrictEqual((
+    t.expect((beforeRetry, afterRetry, harness.statuses)).toStrictEqual((
       1,
       2,
       ["down:401", "down:401"],

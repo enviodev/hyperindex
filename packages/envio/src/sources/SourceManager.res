@@ -7,22 +7,10 @@ type requestStatAgg = {mutable count: int, mutable seconds: float}
 
 type sourceState = {
   source: Source.t,
-  mutable knownHeight: int,
-  mutable unsubscribe: option<unit => unit>,
-  mutable pendingHeightResolvers: array<int => unit>,
-  // Whether the height subscription is currently delivering. While it isn't,
-  // waiters poll straight away instead of sitting on the staleness backstop.
-  mutable subscriptionLive: bool,
-  mutable pendingSubscriptionDownResolvers: array<unit => unit>,
-  // Every connect, and every disconnect keyed by reason. Both stay at zero for
-  // a source that never subscribes, which keeps the
-  // envio_source_height_stream_* series off its scrape entirely.
-  mutable heightStreamConnects: int,
-  heightStreamDisconnects: dict<int>,
-  // Catch-up polls that completed. A fallback poller retires against this
-  // rather than against the reconnect, because it is the catch-up that takes
-  // over its job, and a failed one takes over nothing.
-  mutable heightStreamCatchUps: int,
+  // Everything about this source's current height: the stream when one is
+  // connected, the polling that covers it when one isn't, and the counters
+  // describing both.
+  feed: HeightFeed.t,
   mutable disabled: bool,
   // Timestamp (ms) when this source last failed during executeQuery.
   // Used to decide when to attempt recovery to this source.
@@ -30,52 +18,22 @@ type sourceState = {
   requestStats: dict<requestStatAgg>,
 }
 
-let recordRequestStats = (sourceState: sourceState, requestStats: array<Source.requestStat>) => {
+let recordStatsInto = (
+  aggregates: dict<requestStatAgg>,
+  requestStats: array<Source.requestStat>,
+) => {
   requestStats->Array.forEach(({method, seconds}) => {
-    switch sourceState.requestStats->Utils.Dict.dangerouslyGetNonOption(method) {
+    switch aggregates->Utils.Dict.dangerouslyGetNonOption(method) {
     | Some(agg) =>
       agg.count = agg.count + 1
       agg.seconds = agg.seconds +. seconds
-    | None => sourceState.requestStats->Dict.set(method, {count: 1, seconds})
+    | None => aggregates->Dict.set(method, {count: 1, seconds})
     }
   })
 }
 
-// Drop a resolver this wait pushed but never used, so a source that keeps not
-// answering doesn't leave one closure per iteration behind it (#1270).
-let dropResolver = (pending, resolver) =>
-  switch resolver.contents {
-  | Some(resolve) => pending->Array.filter(p => p !== resolve)
-  | None => pending
-  }
-
-let resolveHeight = (sourceState: sourceState, height: int) => {
-  sourceState.knownHeight = height
-  let resolvers = sourceState.pendingHeightResolvers
-  sourceState.pendingHeightResolvers = []
-  resolvers->Array.forEach(resolve => resolve(height))
-}
-
-// Counted per reason so envio_source_height_stream_disconnects_total shows what
-// ended each connection: a rotation, or the kind of trouble a flapping stream
-// is in. Only a connection that was delivering can be lost, so every caller has
-// to check that first.
-let recordHeightStreamDisconnect = (sourceState: sourceState, ~reason) =>
-  sourceState.heightStreamDisconnects->Dict.set(
-    reason,
-    switch sourceState.heightStreamDisconnects->Utils.Dict.dangerouslyGetNonOption(reason) {
-    | Some(count) => count + 1
-    | None => 1
-    },
-  )
-
-// Wake every waiter sitting on the staleness backstop so it starts polling now.
-let markSubscriptionDown = (sourceState: sourceState) => {
-  sourceState.subscriptionLive = false
-  let resolvers = sourceState.pendingSubscriptionDownResolvers
-  sourceState.pendingSubscriptionDownResolvers = []
-  resolvers->Array.forEach(resolve => resolve())
-}
+let recordRequestStats = (sourceState: sourceState, requestStats: array<Source.requestStat>) =>
+  sourceState.requestStats->recordStatsInto(requestStats)
 
 // Flattened (source, method) aggregates for Metrics.renderSourceRequests to
 // inline into the /metrics response.
@@ -157,11 +115,12 @@ type sourceHeightSample = {
 let getSourceHeightSamples = (sourceManager: t): array<sourceHeightSample> => {
   let samples = []
   sourceManager.sourcesState->Array.forEach(sourceState => {
-    if sourceState.knownHeight > 0 {
+    let knownHeight = sourceState.feed->HeightFeed.knownHeight
+    if knownHeight > 0 {
       samples->Array.push({
         sourceName: sourceState.source.name,
         chainId: sourceState.source.chainId,
-        height: sourceState.knownHeight,
+        height: knownHeight,
       })
     }
   })
@@ -182,23 +141,18 @@ type heightStreamSample = {
 
 let getHeightStreamSamples = (sourceManager: t): array<heightStreamSample> => {
   let samples = []
-  sourceManager.sourcesState->Array.forEach(sourceState => {
-    // Sorted because a dict orders integer-like keys (HTTP statuses) ahead of
-    // the named reasons, which would make the rendered order depend on which
-    // reasons a stream happened to hit.
-    let disconnects =
-      sourceState.heightStreamDisconnects
-      ->Dict.toArray
-      ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b))
-    if sourceState.source.createHeightSubscription->Option.isSome {
+  sourceManager.sourcesState->Array.forEach(sourceState =>
+    switch (sourceState.feed->HeightFeed.sample).stream {
+    | Some({connectCount, disconnects}) =>
       samples->Array.push({
         sourceName: sourceState.source.name,
         chainId: sourceState.source.chainId,
-        connectCount: sourceState.heightStreamConnects,
+        connectCount,
         disconnects,
       })
+    | None => ()
     }
-  })
+  )
   samples
 }
 
@@ -391,18 +345,18 @@ let make = (
   }
   {
     sourcesState: sources->Array.map(source => {
-      source,
-      knownHeight: 0,
-      unsubscribe: None,
-      pendingHeightResolvers: [],
-      subscriptionLive: false,
-      pendingSubscriptionDownResolvers: [],
-      heightStreamConnects: 0,
-      heightStreamDisconnects: Dict.make(),
-      heightStreamCatchUps: 0,
-      disabled: false,
-      lastFailedAt: None,
-      requestStats: Dict.make(),
+      let requestStats = Dict.make()
+      {
+        source,
+        feed: HeightFeed.make(
+          ~source,
+          ~recordRequestStats=stats => requestStats->recordStatsInto(stats),
+          ~getHeightRetryInterval,
+        ),
+        disabled: false,
+        lastFailedAt: None,
+        requestStats,
+      }
     }),
     activeSource: initialActiveSource,
     waitingForNewBlockStateId: None,
@@ -494,31 +448,10 @@ let dispatch = async (
   }
 }
 
-type status = Active | Stalled | Done
-
 let disableSource = (sourceManager: t, sourceState: sourceState) => {
   if !sourceState.disabled {
     sourceState.disabled = true
-    switch sourceState.unsubscribe {
-    | Some(unsubscribe) =>
-      unsubscribe()
-      // Cleared so the state can't claim a subscription that has been closed:
-      // a second teardown would call the same close function again, and
-      // `ensureSubscribed` reads this to decide whether one is still live.
-      sourceState.unsubscribe = None
-      // Closing a live connection is a disconnect like any other, and leaving it
-      // uncounted would leave the source reporting one more connect than
-      // disconnects — a stream still delivering — for the rest of the process.
-      if sourceState.subscriptionLive {
-        sourceState->recordHeightStreamDisconnect(~reason="unsubscribed")
-      }
-      // The subscription is gone, so the source must not keep looking live to a
-      // wait still in flight for it. That wait polls the benched source until
-      // another one answers, at the same interval the no-subscription path
-      // would use — disabling is a capability verdict, not an outage.
-      sourceState->markSubscriptionDown
-    | None => ()
-    }
+    sourceState.feed->HeightFeed.stop
     if sourceState.source.sourceFor === Realtime {
       // Only clear hasRealtime if no other non-disabled Realtime sources remain
       let hasOtherRealtime =
@@ -531,270 +464,6 @@ let disableSource = (sourceManager: t, sourceState: sourceState) => {
   } else {
     false
   }
-}
-
-// One-shot poll on every height stream connect, closing the gap left by heights
-// emitted before this connection existed. A failure deliberately leaves the
-// count alone: the fallback poller retires against a completed catch-up, so not
-// counting a failed one is what keeps that poller going — nothing else is
-// fetching the height while the stream is unproven.
-let catchUpHeight = async (sourceState: sourceState, ~logger) => {
-  try {
-    let res = await sourceState.source.getHeightOrThrow()
-    sourceState->recordRequestStats(res.requestStats)
-    if res.height > sourceState.knownHeight {
-      sourceState->resolveHeight(res.height)
-    }
-    sourceState.heightStreamCatchUps = sourceState.heightStreamCatchUps + 1
-  } catch {
-  | exn =>
-    logger->Logging.childTrace({
-      "msg": `Height stream catch-up from ${sourceState.source.name} source failed. The fallback poll keeps running until the stream delivers.`,
-      "source": sourceState.source.name,
-      "err": exn->Utils.prettifyExn,
-    })
-  }
-}
-
-let handlePushedHeight = (sourceState: sourceState, pushedHeight: int) =>
-  // Ignore non-increasing heights. The height stream re-emits the current head
-  // on every (re)connect; waking the wait loop on a height we already know
-  // spins it and leaks fallback pollers (#1270).
-  if pushedHeight > sourceState.knownHeight {
-    sourceState->recordRequestStats([{Source.method: "heightPush", seconds: 0.}])
-    sourceState->resolveHeight(pushedHeight)
-  } else {
-    sourceState->recordRequestStats([{Source.method: "heightPushIgnored", seconds: 0.}])
-  }
-
-let handleSubscriptionStatus = (
-  sourceState: sourceState,
-  status: Source.heightSubscriptionStatus,
-  ~logger,
-) =>
-  switch status {
-  | Live =>
-    if !sourceState.subscriptionLive {
-      sourceState.subscriptionLive = true
-      sourceState.heightStreamConnects = sourceState.heightStreamConnects + 1
-      // Any height from before this connection is lost, because eth_subscribe
-      // only ever delivers the next block. Ask once rather than leaving the
-      // chain blind until the next one is mined.
-      sourceState->catchUpHeight(~logger)->Promise.ignore
-    }
-  | Down({reason} as down) =>
-    // A stream that is down stays down through every failed retry, and each of
-    // those reports `Down` again. Counting them would make the total measure how
-    // long an outage lasted instead of how many there were, and would leave a
-    // stream that has never connected disconnecting without ever connecting.
-    if sourceState.subscriptionLive {
-      sourceState->recordHeightStreamDisconnect(~reason)
-    }
-    sourceState->markSubscriptionDown
-    // The counters say a stream is flapping and how often, but only the
-    // provider's own words say why, and a frame nobody could read is
-    // unrecoverable from a bucketed label.
-    logger->Logging.childTrace({
-      "msg": `Height subscription for ${sourceState.source.name} source went down (${reason}). Polling for the height until it reconnects.`,
-      "source": sourceState.source.name,
-      "reason": reason,
-      "detail": down.detail,
-    })
-  }
-
-// The only place that installs `unsubscribe`, and it has to stay that way: after
-// a rollback two waits run for the same source (the pre-rollback one isn't
-// cancelled), both reach this across an await, and a second assignment would
-// overwrite a live connection's close function — leaving a socket nothing can
-// close, still pushing heights and still retrying, for the life of the process.
-let ensureSubscribed = (sourceState: sourceState, ~isRealtime, ~logger) => {
-  switch (sourceState.source.createHeightSubscription, sourceState.unsubscribe) {
-  | (Some(createSubscription), None) if isRealtime && !sourceState.disabled =>
-    sourceState.unsubscribe = Some(
-      createSubscription(
-        ~onHeight=height => sourceState->handlePushedHeight(height),
-        ~onStatus=status => sourceState->handleSubscriptionStatus(status, ~logger),
-      ),
-    )
-  | _ => ()
-  }
-  sourceState.unsubscribe->Option.isSome
-}
-
-// One height poll with the failure handling both loops below share: they
-// escalate on the same schedule and report the same line, so the interval to
-// wait before the next attempt comes back with the result.
-let pollHeightOnce = async (
-  sourceManager: t,
-  sourceState: sourceState,
-  ~retry: ref<int>,
-  ~logger,
-  ~pollingInterval,
-) =>
-  try {
-    let res = await sourceState.source.getHeightOrThrow()
-    sourceState->recordRequestStats(res.requestStats)
-    retry := 0
-    (Some(res.height), pollingInterval())
-  } catch {
-  | exn =>
-    // An endpoint whose stream just dropped is often the one failing these too,
-    // so escalate rather than asking again every polling interval.
-    let retryInterval = sourceManager.getHeightRetryInterval(~retry=retry.contents)
-    logger->Logging.childTrace({
-      "msg": `Height retrieval from ${sourceState.source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
-      "source": sourceState.source.name,
-      "err": exn->Utils.prettifyExn,
-    })
-    retry := retry.contents + 1
-    (None, retryInterval)
-  }
-
-let getSourceNewHeight = async (
-  sourceManager,
-  ~sourceState: sourceState,
-  ~knownHeight,
-  ~stallTimeout,
-  ~isRealtime,
-  ~status: ref<status>,
-  ~logger,
-  ~reducedPolling,
-) => {
-  let source = sourceState.source
-  let initialHeight = sourceState.knownHeight
-  let newHeight = ref(initialHeight)
-  let retry = ref(0)
-  let pollingInterval = () =>
-    if reducedPolling {
-      sourceManager.reducedPollingInterval
-    } else if status.contents === Stalled {
-      sourceManager.stalledPollingInterval
-    } else {
-      source.pollingInterval
-    }
-
-  while newHeight.contents <= knownHeight && status.contents !== Done {
-    switch sourceState.unsubscribe {
-    | Some(_) =>
-      // The height this iteration has to beat, which is not initialHeight once
-      // the subscription has pushed one that didn't reach knownHeight.
-      let iterationHeight = newHeight.contents
-      let settled = ref(false)
-      // Both resolvers are dropped once the race settles, so a healthy stream
-      // doesn't accumulate one closure per block in the pending arrays.
-      let heightResolver = ref(None)
-      let downResolver = ref(None)
-      let subscriptionPromise = Promise.make((resolve, _reject) => {
-        heightResolver := Some(resolve)
-        sourceState.pendingHeightResolvers->Array.push(resolve)
-      })
-
-      // Released once the race settles: a healthy stream answers within a block
-      // time, and leaving the backstop pending would hold this iteration's
-      // closures for the rest of its window, once per block.
-      let cancelBackstop = ref(None)
-      let pollingTrigger = if sourceState.subscriptionLive {
-        let subscriptionDown = Promise.make((resolve, _reject) => {
-          downResolver := Some(resolve)
-          sourceState.pendingSubscriptionDownResolvers->Array.push(resolve)
-        })
-        // A live subscription that simply goes quiet is caught by a backstop
-        // instead. Jitter it across [stallTimeout/2, stallTimeout) so indexers
-        // that go quiet together don't all start polling at the same instant.
-        let half = stallTimeout / 2
-        let (backstop, cancel) = Utils.delayWithCancel(
-          half + (Math.random() *. half->Int.toFloat)->Float.toInt,
-        )
-        cancelBackstop := Some(cancel)
-        Promise.race([subscriptionDown, backstop])
-      } else {
-        // Nothing is pushing heights, so don't wait to start asking for them.
-        Promise.resolve()
-      }
-
-      let pollingFallback = pollingTrigger->Promise.then(async () => {
-        let h = ref(iterationHeight)
-        // A reconnect's catch-up poll takes this loop's job over, so polling past
-        // one is wasted load on an endpoint that was struggling a moment ago.
-        // Counting catch-ups rather than reading subscriptionLive keeps the
-        // backstop working — that one polls a stream which claims to be live but
-        // has gone quiet.
-        let catchUpsWhenTriggered = sourceState.heightStreamCatchUps
-        // Stopping once this iteration's race is over matters: otherwise a
-        // source that never returns a new height leaves a poller running for
-        // the rest of the process, and every later iteration adds another.
-        let shouldPoll = () =>
-          h.contents <= knownHeight &&
-          !settled.contents &&
-          status.contents !== Done &&
-          sourceState.heightStreamCatchUps === catchUpsWhenTriggered
-        let pollRetry = ref(0)
-        while shouldPoll() {
-          let (polled, interval) = await sourceManager->pollHeightOnce(
-            sourceState,
-            ~retry=pollRetry,
-            ~logger,
-            ~pollingInterval,
-          )
-          switch polled {
-          | Some(height) => h := height
-          | None => ()
-          }
-          if shouldPoll() {
-            await Utils.delay(interval)
-          }
-        }
-        h.contents
-      })
-      let height = await Promise.race([subscriptionPromise, pollingFallback])
-      settled := true
-      switch cancelBackstop.contents {
-      | Some(cancel) => cancel()
-      | None => ()
-      }
-
-      sourceState.pendingHeightResolvers =
-        sourceState.pendingHeightResolvers->dropResolver(heightResolver)
-      sourceState.pendingSubscriptionDownResolvers =
-        sourceState.pendingSubscriptionDownResolvers->dropResolver(downResolver)
-
-      if height > newHeight.contents {
-        newHeight := height
-      }
-      // A catch-up's continuation can land between this race resolving and this
-      // line, recording a head into knownHeight with the resolvers already
-      // drained. Taking it here keeps the next iteration from starting behind
-      // what the source already knows.
-      if sourceState.knownHeight > newHeight.contents {
-        newHeight := sourceState.knownHeight
-      }
-    | None =>
-      // No subscription, use REST polling
-      let (polled, interval) = await sourceManager->pollHeightOnce(
-        sourceState,
-        ~retry,
-        ~logger,
-        ~pollingInterval,
-      )
-      switch polled {
-      | Some(height) =>
-        newHeight := height
-        // A stream takes over from polling once the chain stops progressing,
-        // so a source that can push heights only subscribes at the head.
-        if height <= knownHeight && !(sourceState->ensureSubscribed(~isRealtime, ~logger)) {
-          // Slowdown polling when the chain isn't progressing
-          await Utils.delay(interval)
-        }
-      | None => await Utils.delay(interval)
-      }
-    }
-  }
-
-  if newHeight.contents > sourceState.knownHeight {
-    sourceState.knownHeight = newHeight.contents
-  }
-
-  newHeight.contents
 }
 
 let compareByOldestFailure = (a: sourceState, b: sourceState) =>
@@ -1005,7 +674,17 @@ let retryInconsistentResponse = async (
 }
 
 // Polls for a block height greater than the given block number to ensure a new block is available for indexing.
-let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
+/*
+Resolves at the first height above `knownHeight` that any eligible source
+reports. The one place this module still speaks promises: the indexer loop
+awaits it, while everything below is callbacks, so this is where the two meet.
+
+A waiter is registered per source and the first one to fire wins — cancelling
+the rest, which is the whole reason the layer below is not promise-based. A
+losing arm of a race cannot be taken back, so a promise design has to outlive
+its losers and clean up after them; here they are simply removed.
+*/
+let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
   let {sourcesState} = sourceManager
 
   let logger = Logging.createChild(
@@ -1017,8 +696,8 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
   if !sourceManager.waitingLogged {
     logger->Logging.childTrace(
       reducedPolling
-        ? `Waiting for new blocks with reduced polling (${(sourceManager.reducedPollingInterval / 1000)
-              ->Int.toString}s). Chain is caught up, waiting for other chains to backfill.`
+        ? `Waiting for new blocks with reduced polling (${(sourceManager.reducedPollingInterval /
+              1000)->Int.toString}s). Chain is caught up, waiting for other chains to backfill.`
         : "Initiating check for new blocks.",
     )
     sourceManager.waitingLogged = true
@@ -1026,7 +705,9 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
 
   let mainSources = sourceManager->getNextSources(~isRealtime)
 
-  let status = ref(Active)
+  // Whether this wait has already run out its stall window. It only changes the
+  // cadence the sources poll at and the level the closing line is logged at.
+  let stalled = ref(false)
 
   // Use a much longer stall timeout when reduced polling is active
   // to avoid spurious stall warnings while waiting for other chains to backfill
@@ -1038,104 +719,118 @@ let waitForNewBlock = async (sourceManager: t, ~knownHeight, ~isRealtime, ~reduc
     sourceManager.newBlockStallTimeout
   }
 
-  // Released once a source answers, so a wait that resolves in a block time
-  // doesn't leave a stall timer pending — and its whole continuation waiting to
-  // run against a race nobody is listening to — for the rest of the window.
-  let (stallElapsed, cancelStallTimeout) = Utils.delayWithCancel(stallTimeout)
+  Promise.make((resolve, _reject) => {
+    // Every waiter this wait registered, plus its stall timer. Draining is safe
+    // to repeat: unsubscribing twice removes a waiter that is already gone.
+    let cleanups = []
+    let cleanup = () => {
+      cleanups->Array.forEach(release => release())
+      cleanups->Utils.Array.clearInPlace
+    }
 
-  let (source, newBlockHeight) = await Promise.race(
-    mainSources
-    ->Array.map(async sourceState => {
-      (
-        sourceState.source,
-        await sourceManager->getSourceNewHeight(
-          ~sourceState,
+    let settled = ref(false)
+    let settle = (source: Source.t, height) =>
+      if !settled.contents {
+        settled := true
+        // Before anything else: the sources still watching have no reason to
+        // keep polling for a height this wait already has.
+        cleanup()
+        sourceManager.activeSource = source
+        // Show a higher level log if we displayed a warning/error after newBlockStallTimeout
+        let log = stalled.contents ? Logging.childInfo : Logging.childTrace
+        logger->log({
+          "msg": `New blocks successfully found.`,
+          "source": source.name,
+          "newBlockHeight": height,
+        })
+        sourceManager.waitingLogged = false
+        resolve(height)
+      }
+
+    let watch = (sourceState: sourceState) => {
+      if isRealtime {
+        // Lazy and explicit: a source that can push heights subscribes when a
+        // realtime wait starts wanting them, and not before.
+        sourceState.feed->HeightFeed.enableStream
+      }
+      cleanups
+      ->Array.push(
+        sourceState.feed->HeightFeed.onHeightAbove(
           ~knownHeight,
-          ~stallTimeout,
-          ~isRealtime,
-          ~status,
-          ~logger,
-          ~reducedPolling,
+          // Read per poll rather than captured, so a wait that goes on to stall
+          // slows its own polling down without anything having to restart it.
+          ~interval=() =>
+            if reducedPolling {
+              sourceManager.reducedPollingInterval
+            } else if stalled.contents {
+              sourceManager.stalledPollingInterval
+            } else {
+              sourceState.source.pollingInterval
+            },
+          ~onHeight=height => settle(sourceState.source, height),
         ),
       )
-    })
-    ->Array.concat([
-      stallElapsed->Promise.then(() =>
-        if status.contents === Done {
-          // Nothing to fall back to: a source already answered, and every
-          // getSourceNewHeight started from here would return without asking it
-          // anything.
-          Utils.neverSettles()
-        } else {
-          // Build fallback: non-disabled sources not in mainSources with a valid role, even with recent lastFailedAt
-          let fallbackSources = []
-          sourcesState->Array.forEach(sourceState => {
-            if (
-              !sourceState.disabled &&
-              !(mainSources->Array.includes(sourceState)) &&
-              getSourceRole(
-                ~sourceFor=sourceState.source.sourceFor,
-                ~isRealtime,
-                ~hasRealtime=sourceManager.hasRealtime,
-              )->Option.isSome
-            ) {
-              fallbackSources->Array.push(sourceState)
-            }
-          })
+      ->ignore
+    }
 
-          status := Stalled
+    mainSources->Array.forEach(sourceState =>
+      if !settled.contents {
+        sourceState->watch
+      }
+    )
 
-          switch fallbackSources {
-          | [] =>
-            logger->Logging.childWarn(
-              `No new blocks detected within ${(stallTimeout / 1000)
-                  ->Int.toString}s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync`,
-            )
-            // The main sources are still racing on their own arms; this one has
-            // nothing left to offer them.
-            Utils.neverSettles()
-          | _ =>
-            logger->Logging.childWarn(
-              `No new blocks detected within ${(stallTimeout / 1000)
-                  ->Int.toString}s. Continuing polling with secondary RPC sources from the configuration.`,
-            )
-            Promise.race(
-              fallbackSources->Array.map(async sourceState => {
-                (
-                  sourceState.source,
-                  await sourceManager->getSourceNewHeight(
-                    ~sourceState,
-                    ~knownHeight,
-                    ~stallTimeout,
-                    ~isRealtime,
-                    ~status,
-                    ~logger,
-                    ~reducedPolling,
-                  ),
-                )
-              }),
-            )
+    if settled.contents {
+      // A source answered from a height it already knew while the rest were
+      // still being registered. Those are attached now, so take them back off.
+      cleanup()
+    } else {
+      let stallTimeoutId = setTimeout(() => {
+        stalled := true
+
+        // Build fallback: non-disabled sources not in mainSources with a valid role, even with recent lastFailedAt
+        let fallbackSources = []
+        sourcesState->Array.forEach(sourceState => {
+          if (
+            !sourceState.disabled &&
+            !(mainSources->Array.includes(sourceState)) &&
+            getSourceRole(
+              ~sourceFor=sourceState.source.sourceFor,
+              ~isRealtime,
+              ~hasRealtime=sourceManager.hasRealtime,
+            )->Option.isSome
+          ) {
+            fallbackSources->Array.push(sourceState)
           }
+        })
+
+        switch fallbackSources {
+        | [] =>
+          logger->Logging.childWarn(
+            `No new blocks detected within ${(stallTimeout / 1000)
+                ->Int.toString}s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync`,
+          )
+        | _ =>
+          logger->Logging.childWarn(
+            `No new blocks detected within ${(stallTimeout / 1000)
+                ->Int.toString}s. Continuing polling with secondary RPC sources from the configuration.`,
+          )
         }
-      ),
-    ]),
-  )
 
-  cancelStallTimeout()
-  sourceManager.activeSource = source
+        // A whole stall window of silence from a stream that says it is
+        // connected: stop taking its word for it and poll alongside it. This is
+        // the one failure a stream's own staleness detector cannot see, because
+        // a transport that keeps pinging looks alive to it.
+        mainSources->Array.forEach(sourceState => sourceState.feed->HeightFeed.poke)
 
-  // Show a higher level log if we displayed a warning/error after newBlockStallTimeout
-  let log = status.contents === Stalled ? Logging.childInfo : Logging.childTrace
-  logger->log({
-    "msg": `New blocks successfully found.`,
-    "source": source.name,
-    "newBlockHeight": newBlockHeight,
+        fallbackSources->Array.forEach(sourceState =>
+          if !settled.contents {
+            sourceState->watch
+          }
+        )
+      }, stallTimeout)
+      cleanups->Array.push(() => clearTimeout(stallTimeoutId))->ignore
+    }
   })
-  sourceManager.waitingLogged = false
-
-  status := Done
-
-  newBlockHeight
 }
 
 let executeQuery = async (
@@ -1209,11 +904,10 @@ let executeQuery = async (
       sourceState.lastFailedAt = None
 
       // The response carries a fresh height for exactly this source, so during a
-      // long backfill (when the wait loop doesn't run) it keeps the per-source
-      // envio_source_known_height current.
-      if response.knownHeight > sourceState.knownHeight {
-        sourceState.knownHeight = response.knownHeight
-      }
+      // long backfill (when nothing is waiting on the feed) it keeps the
+      // per-source envio_source_known_height current — and if a wait is in
+      // flight, a height learned this way can settle it.
+      sourceState.feed->HeightFeed.recordHeight(response.knownHeight)
       responseRef := Some(response)
     } catch {
     | Source.RateLimited({resetMs, requestStats}) =>

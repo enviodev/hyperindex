@@ -54,7 +54,9 @@ let rotatedReason = "rotated"
 let maxDetailLength = 200
 
 // The wait that follows `count` consecutive failures. Zero for a first
-// connection, which nothing preceded.
+// connection, which nothing preceded. Deterministic: the bar a connection has
+// to clear to count as proven is derived from it, and a jittered bar would make
+// the rotated/closed split depend on a coin flip.
 let retryDelayFor = count =>
   count <= 0
     ? 0
@@ -63,6 +65,12 @@ let retryDelayFor = count =>
         Math.pow(2.0, ~exp=Pervasives.min(count - 1, maxRetryExponent)->Int.toFloat)->Float.toInt,
         maxRetryMillis,
       )
+
+// Half the delay fixed, half spread across it. Every indexer pointed at one
+// provider drops its stream in the same instant when that provider blinks, and
+// reconnecting them all on the same schedule is how a blip becomes a stampede.
+// Applied to the wait only, never to the proven bar.
+let jitter = delay => delay === 0 ? 0 : delay / 2 + (Math.random() *. (delay / 2)->Int.toFloat)->Float.toInt
 
 let truncateDetail = detail =>
   detail->String.length > maxDetailLength
@@ -157,7 +165,7 @@ let subscribe = (
         failureCount.contents + 1
       }
 
-    let retryMillis = retryDelayFor(failureCount.contents)
+    let retryMillis = retryDelayFor(failureCount.contents)->jitter
 
     // A clean end to a connection that had proven itself is a rotation: routine,
     // and worth telling apart from the same clean end arriving early, which is a
