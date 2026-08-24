@@ -259,6 +259,27 @@ describe("HeightFeed stream state", () => {
     )).toStrictEqual((2, 2, 3, [101], 3))
   })
 
+  Async.it("Ignores a poke when nobody is waiting", async t => {
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let (feed, _stats) = makeFeed(mock)
+    feed->HeightFeed.enableStream
+    mock.setHeightSubscriptionStatus(Live)
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+    let pollsBefore = mock.getHeightOrThrowCalls->Array.length
+
+    // There is nobody to poll for, and setting the flag anyway would leave it
+    // sitting there for the next wait to act on a stream that is delivering.
+    feed->HeightFeed.poke
+    let (_heights, _unsubscribe) = feed->watch(~knownHeight=100)
+    await Utils.delay(10)
+
+    t.expect((pollsBefore, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((1, 1))
+  })
+
   Async.it("Ignores a push that does not clear the height it already knows", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],

@@ -3662,8 +3662,59 @@ describe("SourceManager height subscription", () => {
     t.expect((pollsAdded, await waiting)).toStrictEqual((1, 111))
   })
 
+  Async.it("Keeps covering a stream that goes quiet again after the stall", async t => {
+    let stallTimeout = 100
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let sourceManager = SourceManager.make(
+      ~isRealtime=true,
+      ~sources=[mock.source],
+      ~newBlockStallTimeoutRealtime=stallTimeout,
+    )
+
+    let waiting =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=true,
+        ~knownHeight=100,
+        ~reducedPolling=false,
+      )
+    mock.setHeightSubscriptionStatus(Live)
+    await Utils.delay(0)
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(10)
+    let pollsWhileProven = mock.getHeightOrThrowCalls->Array.length
+
+    await Utils.delay(stallTimeout)
+    let pollsAfterFirstStall = mock.getHeightOrThrowCalls->Array.length
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+
+    // A reconnect part way through the wait, whose catch-up succeeds: that takes
+    // the stream at its word again, and it goes quiet in exactly the same way.
+    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Live)
+    await Utils.delay(0)
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(10)
+    let pollsAfterReconnect = mock.getHeightOrThrowCalls->Array.length
+
+    await Utils.delay(stallTimeout)
+    let pollsAfterSecondStall = mock.getHeightOrThrowCalls->Array.length
+    mock.triggerHeightSubscription(101)
+
+    t.expect((
+      pollsAfterFirstStall > pollsWhileProven,
+      pollsAfterSecondStall > pollsAfterReconnect,
+      await waiting,
+    )).toStrictEqual((true, true, 101))
+  })
+
   Async.it("Polls a recruited fallback whose own stream has gone quiet", async t => {
-    let stallTimeout = 20
+    // Long enough that the re-armed stall timer cannot fire again while the
+    // first wait is being driven to its answer.
+    let stallTimeout = 200
     let sync = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
     let fallback = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
@@ -3684,7 +3735,7 @@ describe("SourceManager height subscription", () => {
         ~knownHeight=100,
         ~reducedPolling=false,
       )
-    await Utils.delay(stallTimeout + 10)
+    await Utils.delay(stallTimeout + 20)
     fallback.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
     fallback.resolveGetHeightOrThrow(100)
@@ -3702,15 +3753,16 @@ describe("SourceManager height subscription", () => {
         ~knownHeight=101,
         ~reducedPolling=false,
       )
-    await Utils.delay(stallTimeout + 10)
+    let pollsBeforeStall = fallback.getHeightOrThrowCalls->Array.length
+    await Utils.delay(stallTimeout + 20)
     let pollsAfterStall = fallback.getHeightOrThrowCalls->Array.length
     fallback.resolveGetHeightOrThrow(102)
 
-    t.expect((pollsAfterFirst, pollsAfterStall > pollsAfterFirst, await second)).toStrictEqual((
-      2,
-      true,
-      102,
-    ))
+    t.expect((
+      pollsBeforeStall === pollsAfterFirst,
+      pollsAfterStall > pollsBeforeStall,
+      await second,
+    )).toStrictEqual((true, true, 102))
   })
 
   Async.it("Reports height stream connects and disconnects as metrics", async t => {

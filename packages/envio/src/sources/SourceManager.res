@@ -747,7 +747,12 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
         resolve(height)
       }
 
+    // Every source this wait has a waiter on, primaries and any fallback
+    // recruited later, so the stall poke reaches all of them.
+    let watched = []
+
     let watch = (sourceState: sourceState) => {
+      watched->Array.push(sourceState)->ignore
       if isRealtime {
         // Lazy and explicit: a source that can push heights subscribes when a
         // realtime wait starts wanting them, and not before.
@@ -784,59 +789,83 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
       // still being registered. Those are attached now, so take them back off.
       cleanup()
     } else {
-      let stallTimeoutId = setTimeout(() => {
-        stalled := true
+      // Re-armed every time it fires. Poking a stream is a one-shot — the next
+      // height it delivers, or the catch-up of a reconnect part way through this
+      // wait, takes it back at its word — and the silence that earned the poke
+      // can come straight back. Left un-armed, one such recovery would retire
+      // the polling for the rest of the wait, and a stream that keeps its
+      // keep-alives flowing while it stops sending heights would hang it
+      // indefinitely, since its own staleness detector never trips.
+      let stallTimeoutId = ref(None)
+      let rec armStallTimeout = (~recruitFallbacks) =>
+        stallTimeoutId :=
+          Some(
+            setTimeout(() => {
+              if !settled.contents {
+                stalled := true
 
-        // Build fallback: non-disabled sources not in mainSources with a valid role, even with recent lastFailedAt
-        let fallbackSources = []
-        sourcesState->Array.forEach(sourceState => {
-          if (
-            !sourceState.disabled &&
-            !(mainSources->Array.includes(sourceState)) &&
-            getSourceRole(
-              ~sourceFor=sourceState.source.sourceFor,
-              ~isRealtime,
-              ~hasRealtime=sourceManager.hasRealtime,
-            )->Option.isSome
-          ) {
-            fallbackSources->Array.push(sourceState)
-          }
-        })
+                if recruitFallbacks {
+                  // Build fallback: non-disabled sources not in mainSources with a valid role, even with recent lastFailedAt
+                  let fallbackSources = []
+                  sourcesState->Array.forEach(sourceState => {
+                    if (
+                      !sourceState.disabled &&
+                      !(mainSources->Array.includes(sourceState)) &&
+                      getSourceRole(
+                        ~sourceFor=sourceState.source.sourceFor,
+                        ~isRealtime,
+                        ~hasRealtime=sourceManager.hasRealtime,
+                      )->Option.isSome
+                    ) {
+                      fallbackSources->Array.push(sourceState)
+                    }
+                  })
 
-        switch fallbackSources {
-        | [] =>
-          logger->Logging.childWarn(
-            `No new blocks detected within ${(stallTimeout / 1000)
-                ->Int.toString}s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync`,
+                  switch fallbackSources {
+                  | [] =>
+                    logger->Logging.childWarn(
+                      `No new blocks detected within ${(stallTimeout / 1000)
+                          ->Int.toString}s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync`,
+                    )
+                  | _ =>
+                    logger->Logging.childWarn(
+                      `No new blocks detected within ${(stallTimeout / 1000)
+                          ->Int.toString}s. Continuing polling with secondary RPC sources from the configuration.`,
+                    )
+                  }
+
+                  fallbackSources->Array.forEach(sourceState =>
+                    if !settled.contents {
+                      sourceState->watch
+                    }
+                  )
+                }
+
+                // A whole stall window of silence from a stream that says it is
+                // connected: stop taking its word for it and poll alongside it.
+                // This is the one failure a stream's own staleness detector
+                // cannot see, because a transport that keeps pinging looks alive
+                // to it. The warning above stands rather than waiting to see
+                // whether the polling recovers — a stream that has to be covered
+                // this way was silently costing a stall window per block, which
+                // is worth saying out loud — but it is said once per wait.
+                watched->Array.forEach(sourceState => sourceState.feed->HeightFeed.poke)
+
+                armStallTimeout(~recruitFallbacks=false)
+              }
+            }, stallTimeout),
           )
-        | _ =>
-          logger->Logging.childWarn(
-            `No new blocks detected within ${(stallTimeout / 1000)
-                ->Int.toString}s. Continuing polling with secondary RPC sources from the configuration.`,
-          )
-        }
 
-        // A whole stall window of silence from a stream that says it is
-        // connected: stop taking its word for it and poll alongside it. This is
-        // the one failure a stream's own staleness detector cannot see, because
-        // a transport that keeps pinging looks alive to it. The warning above
-        // stands rather than waiting to see whether the polling recovers: a
-        // stream that has to be covered this way was silently costing a stall
-        // window per block, which is worth saying out loud.
-        mainSources->Array.forEach(sourceState => sourceState.feed->HeightFeed.poke)
-
-        fallbackSources->Array.forEach(sourceState =>
-          if !settled.contents {
-            sourceState->watch
-            // A fallback brought in by an earlier stall may still be holding a
-            // stream of its own, and it is being recruited precisely because
-            // nothing has been heard. Take its word for it no more than the
-            // primaries'.
-            sourceState.feed->HeightFeed.poke
-          }
-        )
-      }, stallTimeout)
-      cleanups->Array.push(() => clearTimeout(stallTimeoutId))->ignore
+      armStallTimeout(~recruitFallbacks=true)
+      cleanups
+      ->Array.push(
+        () =>
+          switch stallTimeoutId.contents {
+          | Some(timeoutId) => clearTimeout(timeoutId)
+          | None => ()
+          },
+      )
+      ->ignore
     }
   })
 }

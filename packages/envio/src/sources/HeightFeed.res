@@ -40,6 +40,9 @@ type t = {
   // Ends the poll loop's sleep early, so a waiter arriving mid-interval doesn't
   // wait out a sleep that started for someone else.
   mutable wakePoll: option<unit => unit>,
+  // Outlives a single wait on purpose. Waits come and go once a block, and
+  // restarting the ramp with each one would keep an endpoint that fails every
+  // time pinned near the base delay forever. A poll that answers clears it.
   mutable pollRetry: int,
   // Bumped whenever the connection in place changes hands. A request made for
   // one connection can land after another has replaced it, and what it says
@@ -372,7 +375,9 @@ let onHeightAbove = (feed: t, ~knownHeight, ~interval, ~onHeight) =>
 // otherwise: a transport that keeps pinging but has stopped sending heights is
 // the one failure its own staleness detector cannot see.
 let poke = (feed: t) =>
-  if feed.streamLive && !feed.streamUnproven {
+  // Nobody waiting means nobody to poll for, and setting the flag anyway would
+  // leave it sitting there to make the next wait poll a stream that is fine.
+  if feed.waiters->Array.length > 0 && feed.streamLive && !feed.streamUnproven {
     feed.streamUnproven = true
     feed->startPolling
   }
