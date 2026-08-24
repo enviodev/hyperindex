@@ -115,6 +115,8 @@ describe("SVM instruction payload assembly", () => {
       accounts: ["Src111111111111111111111111111111111111111", "Dst111111111111111111111111111111111111111"],
       data: "0x09",
       isInner: false,
+      decoded: Null.null,
+      logs: Null.null,
     }
     let instruction = SvmHyperSyncSource.toSvmInstruction(
       item,
@@ -168,9 +170,19 @@ describe("SVM instruction payload assembly", () => {
       accounts: [],
       data: "0x09",
       isInner: false,
+      decoded: Null.null,
+      logs: Null.null,
     }
     let decoded = SvmHyperSyncSource.toSvmInstruction(
-      {...base, decoded: {name: "swap", argsJson: `{"amountIn":"1"}`, accountsJson: "{}", extraAccounts: []}},
+      {
+        ...base,
+        decoded: Null.make({
+          SvmHyperSyncClient.ResponseTypes.name: "swap",
+          argsJson: `{"amountIn":"1"}`,
+          accountsJson: "{}",
+          extraAccounts: [],
+        }),
+      },
       ~programName="Swapper",
       ~instructionName="swap",
       ~eventConfig,
@@ -186,7 +198,9 @@ describe("SVM instruction payload assembly", () => {
     t.expect((decoded.args, failed.args)).toEqual((Some(%raw(`{"amountIn":"1"}`)), None))
   })
 
-  it("emits an empty logs array when log fields are selected and none are scoped", t => {
+  // NAPI sends Rust `None` as `null`: an instruction whose logs didn't attach
+  // arrives with `logs: null`, not with the key missing.
+  it("emits an empty logs array when log fields are selected and the logs are null", t => {
     let reg = registrations()->Array.getUnsafe(0)
     let eventConfig =
       reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
@@ -200,37 +214,9 @@ describe("SVM instruction payload assembly", () => {
         accounts: [],
         data: "0x09",
         isInner: false,
+        decoded: Null.null,
+        logs: Null.null,
       },
-      ~programName="Swapper",
-      ~instructionName="swap",
-      ~eventConfig,
-      ~fieldSelection=reg.fieldSelection,
-    )
-    t.expect(instruction.logs).toEqual(Some([]))
-  })
-
-  // The addon sends Rust `None` as `null`, never `undefined`, so an item whose
-  // logs didn't attach carries `logs: null` - not a missing key.
-  it("emits an empty logs array when the item carries a null logs field", t => {
-    let reg = registrations()->Array.getUnsafe(0)
-    let eventConfig =
-      reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-    let item: SvmHyperSyncClient.EventItems.item = {
-      onEventRegistrationIndex: 0,
-      slot: 10,
-      transactionIndex: 1,
-      path: [0],
-      programId: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
-      accounts: [],
-      data: "0x09",
-      isInner: false,
-    }
-    (item->(Utils.magic: SvmHyperSyncClient.EventItems.item => dict<unknown>))->Dict.set(
-      "logs",
-      %raw(`null`),
-    )
-    let instruction = SvmHyperSyncSource.toSvmInstruction(
-      item,
       ~programName="Swapper",
       ~instructionName="swap",
       ~eventConfig,
@@ -253,7 +239,10 @@ describe("SVM instruction payload assembly", () => {
         accounts: [],
         data: "0x09",
         isInner: false,
-        logs: [{kind: "data", message: "hello"}],
+        decoded: Null.null,
+        logs: Null.make([
+          {SvmHyperSyncClient.EventItems.kind: Null.make("data"), message: Null.null},
+        ]),
       },
       ~programName="Swapper",
       ~instructionName="swap",

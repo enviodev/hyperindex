@@ -382,8 +382,8 @@ let parse = (
       ))
       let logs = item.logs->Option.map(logs =>
         logs->Array.map((log): SvmHyperSyncClient.EventItems.log => {
-          kind: ?log.kind,
-          message: ?log.message,
+          kind: log.kind->Null.fromOption,
+          message: log.message->Null.fromOption,
         })
       )
 
@@ -463,8 +463,8 @@ let parse = (
             accounts: accountArguments,
             data,
             isInner: item.isInner->Option.getOr(false),
-            ?decoded,
-            ?logs,
+            decoded: decoded->Null.fromOption,
+            logs: logs->Null.fromOption,
           },
           ~programName,
           ~instructionName,
