@@ -30,14 +30,14 @@ type staged = {
 type seedRows = {
   // Store keys packed back to back.
   addresses: NodeJs.Buffer.t,
-  lengths: Null.t<array<int>>,
+  lengths: array<int>,
   contractIds: array<int>,
   registrationBlocks: array<int>,
 }
 
 let emptySeedRows = (): seedRows => {
   addresses: NodeJs.Buffer.empty,
-  lengths: Null.null,
+  lengths: [],
   contractIds: [],
   registrationBlocks: [],
 }
@@ -52,14 +52,21 @@ let keyOf = (row: row): key => {
   contractId: row.contractId,
 }
 
-// The columnar form the address store seeds from. Lengths are always carried:
-// key widths are the Rust codec's knowledge, so no caller ever answers that
-// question for it.
+// The form every napi crossing takes the keys in: packed back to back with the
+// length of each, so the Rust codec owns every question about how wide a key is.
+let packKeys = (rows: array<row>) => (
+  NodeJs.Buffer.concat(rows->Array.map(row => row.address)),
+  rows->Array.map(row => row.address->NodeJs.Buffer.length),
+)
+
 let seedRowsOf = (rows: array<row>): seedRows => {
-  addresses: NodeJs.Buffer.concat(rows->Array.map(row => row.address)),
-  lengths: Null.make(rows->Array.map(row => row.address->NodeJs.Buffer.length)),
-  contractIds: rows->Array.map(row => row.contractId),
-  registrationBlocks: rows->Array.map(row => row.registrationBlock),
+  let (addresses, lengths) = rows->packKeys
+  {
+    addresses,
+    lengths,
+    contractIds: rows->Array.map(row => row.contractId),
+    registrationBlocks: rows->Array.map(row => row.registrationBlock),
+  }
 }
 
 // Groups stored rows per chain, keyed by the normalized chain id string.
@@ -71,41 +78,42 @@ let group = (rows: array<row>): dict<seedRows> => {
   rowsByChain->Utils.Dict.mapValues(seedRowsOf)
 }
 
-// The in-memory storages index rows by their primary key with this. Base64 is
-// how a Buffer becomes a set key here, nothing to do with how an address is
-// stored.
-let storageKey = (key: key) =>
-  `${key.chainId->ChainId.toString}|${key.contractId->Int.toString}|${key.address->NodeJs.Buffer.toBase64}`
-
-// The in-memory twin of the envio_addresses table, shared by every storage
-// that fakes it: rows keyed by their primary key, so an insert is idempotent
-// (Postgres' ON CONFLICT DO NOTHING) and a rollback deletes by key.
+// The in-memory twin of envio_addresses.
 module Table = {
   type t = dict<row>
 
+  // Base64 is how a Buffer becomes a dict key here, nothing to do with how an
+  // address is stored.
+  let storageKey = (key: key) =>
+    `${key.chainId->ChainId.toString}|${key.contractId->Int.toString}|${key.address->NodeJs.Buffer.toBase64}`
+
   let make = (): t => Dict.make()
 
-  // Returns whether the row was new — a re-inserted primary key is a no-op.
-  let insert = (table: t, row: row): bool => {
+  let clear = (table: t) =>
+    table->Dict.keysToArray->Array.forEach(key => table->Utils.Dict.deleteInPlace(key))
+
+  // Keeps the row already stored under the key, exactly as the write path's
+  // ON CONFLICT DO NOTHING does — a replayed insert must not restate the
+  // registration block a rollback would then delete by.
+  let insert = (table: t, row: row) => {
     let key = row->keyOf->storageKey
     switch table->Utils.Dict.dangerouslyGetNonOption(key) {
-    | Some(_) => false
-    | None =>
-      table->Dict.set(key, row)
-      true
+    | Some(_) => ()
+    | None => table->Dict.set(key, row)
     }
   }
+
+  let insertMany = (table: t, rows: array<row>) => rows->Array.forEach(row => table->insert(row))
 
   let delete = (table: t, key: key) => table->Utils.Dict.deleteInPlace(key->storageKey)
 
   let rows = (table: t): array<row> => table->Dict.valuesToArray
+
+  let groupByChain = (table: t) => table->rows->group
 }
 
 // Rows rendered back to user-facing addresses, one napi crossing for the lot.
-let render = (rows: array<row>, ~ecosystem: string, ~shouldChecksum: bool) =>
-  Core.getAddon().renderAddresses(
-    ~ecosystem,
-    ~shouldChecksum,
-    ~bytes=NodeJs.Buffer.concat(rows->Array.map(row => row.address)),
-    ~lengths=Null.make(rows->Array.map(row => row.address->NodeJs.Buffer.length)),
-  )
+let render = (rows: array<row>, ~ecosystem: string, ~shouldChecksum: bool) => {
+  let (bytes, lengths) = rows->packKeys
+  Core.getAddon().renderAddresses(~ecosystem, ~shouldChecksum, ~bytes, ~lengths)
+}

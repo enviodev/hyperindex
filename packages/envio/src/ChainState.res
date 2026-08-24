@@ -1214,16 +1214,16 @@ let rollback = (
   ~rollbackTargetBlockNumber,
   ~isReorgChain,
 ): array<AddressRows.key> => {
-  // Prunes the store, which `FetchState.rollback` then reads as the source of
-  // truth for which addresses survive.
-  let pruneAddresses = targetBlockNumber =>
-    cs.addressStore
-    ->AddressStore.rollback(targetBlockNumber)
-    ->Array.map(({address, contractId}): AddressRows.key => {
+  let rollbackTo = targetBlockNumber => {
+    let {fetchState, rolledBackAddresses} =
+      cs.fetchState->FetchState.rollback(~addressStore=cs.addressStore, ~targetBlockNumber)
+    cs.fetchState = fetchState
+    rolledBackAddresses->Array.map(({address, contractId}): AddressRows.key => {
       chainId: cs.chainConfig.id,
       address,
       contractId,
     })
+  }
 
   switch newProgressBlockNumber {
   | Some(newProgressBlockNumber) =>
@@ -1244,12 +1244,7 @@ let rollback = (
       )
     | None => ()
     }
-    let rolledBackAddresses = pruneAddresses(newProgressBlockNumber)
-    cs.fetchState =
-      cs.fetchState->FetchState.rollback(
-        ~rollbackedAddressStore=cs.addressStore,
-        ~targetBlockNumber=newProgressBlockNumber,
-      )
+    let rolledBackAddresses = rollbackTo(newProgressBlockNumber)
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
     cs.blockStore->BlockStore.rollback(newProgressBlockNumber)
     cs.committedProgressBlockNumber = newProgressBlockNumber
@@ -1258,12 +1253,7 @@ let rollback = (
     rolledBackAddresses
   | None =>
     if isReorgChain {
-      let rolledBackAddresses = pruneAddresses(rollbackTargetBlockNumber)
-      cs.fetchState =
-        cs.fetchState->FetchState.rollback(
-          ~rollbackedAddressStore=cs.addressStore,
-          ~targetBlockNumber=rollbackTargetBlockNumber,
-        )
+      let rolledBackAddresses = rollbackTo(rollbackTargetBlockNumber)
       cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
       cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber)
       cs.committedProgressBlockNumber = Pervasives.min(

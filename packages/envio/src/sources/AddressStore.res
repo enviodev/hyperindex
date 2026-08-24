@@ -170,7 +170,7 @@ external registerBatchRaw: (t, array<registration>) => array<rawVerdict> = "regi
 external seedRowsRaw: (
   t,
   NodeJs.Buffer.t,
-  Null.t<array<int>>,
+  array<int>,
   array<int>,
   array<int>,
 ) => array<rejectedRow> = "seedRows"

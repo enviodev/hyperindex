@@ -26,11 +26,10 @@ type fromUserApiResult = {
   indexerCode: Null.t<string>,
 }
 
-// Address keys packed back to back. `lengths` is present only for SVM, whose
-// base58 keys vary in width.
+// Address keys packed back to back, with the length of each.
 type packedAddresses = {
   bytes: NodeJs.Buffer.t,
-  lengths: Null.t<array<int>>,
+  lengths: array<int>,
 }
 
 type addon = {
@@ -60,19 +59,19 @@ type addon = {
   splitAddresses: (
     ~ecosystem: string,
     ~bytes: NodeJs.Buffer.t,
-    ~lengths: Null.t<array<int>>,
+    ~lengths: array<int>,
   ) => array<NodeJs.Buffer.t>,
   renderAddresses: (
     ~ecosystem: string,
     ~shouldChecksum: bool,
     ~bytes: NodeJs.Buffer.t,
-    ~lengths: Null.t<array<int>>,
+    ~lengths: array<int>,
   ) => array<Address.t>,
   renderContractAddresses: (
     ~ecosystem: string,
     ~shouldChecksum: bool,
     ~bytes: NodeJs.Buffer.t,
-    ~lengths: Null.t<array<int>>,
+    ~lengths: array<int>,
     ~contractIds: array<int>,
     ~contractId: int,
   ) => array<Address.t>,

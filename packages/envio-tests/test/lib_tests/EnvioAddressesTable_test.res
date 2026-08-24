@@ -89,7 +89,7 @@ let storedRows = async (~pgSchema) => {
     ~ecosystem="evm",
     ~shouldChecksum=true,
     ~bytes=NodeJs.Buffer.concat(rows->Array.map(row => row.address)),
-    ~lengths=Null.make(rows->Array.map(row => row.address->NodeJs.Buffer.length)),
+    ~lengths=rows->Array.map(row => row.address->NodeJs.Buffer.length),
   )
   rows->Array.mapWithIndex((row, idx) => (
     rendered->Array.getUnsafe(idx),

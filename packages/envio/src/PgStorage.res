@@ -2227,16 +2227,9 @@ let make = (
         >
       ),
       InternalTable.EnvioContracts.read(sql, ~pgSchema)->Promise.thenResolve(stored =>
-        switch stored {
-        | Some(contractNames) => contractNames
-        // The resume gate refuses to resume without the table, so reaching here
-        // means the gate was skipped — fail loudly rather than decode every
-        // stored contract id against an empty list.
-        | None =>
-          JsError.throwWithMessage(
-            `The "${pgSchema}" schema has no "envio_contracts" table: it was initialized by an older envio version, so it can't be resumed.`,
-          )
-        }
+        // `readEnvioInfo` already refused the resume without this table, so a
+        // missing one here means the gate was skipped, not an old schema.
+        stored->Option.getOrThrow(~message=`Resumed without a stored contract mapping.`)
       ),
     ))
 

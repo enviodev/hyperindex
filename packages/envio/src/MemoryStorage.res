@@ -49,8 +49,7 @@ type t = {
   cache: dict<Persistence.effectCacheRecord>,
   effectCache: dict<dict<Internal.effectCacheItem>>,
   mutable envioInfo: option<JSON.t>,
-  // Every indexed address, insert-only — the in-memory twin of envio_addresses.
-  mutable addresses: AddressRows.Table.t,
+  addresses: AddressRows.Table.t,
   // The canonical contract mapping, assigned at initialize and read back on a
   // resume just as the stored one is.
   mutable contractNames: array<string>,
@@ -128,16 +127,16 @@ let seedConfigAddresses = (state: t, ~chainConfigs: array<Config.chain>, ~ecosys
   // Initialize starts from an empty schema — the Postgres DDL drops and
   // recreates one — so a re-initialize must not stack a second copy of the
   // config's addresses on what a previous one left behind.
-  state.addresses = AddressRows.Table.make()
+  state.addresses->AddressRows.Table.clear
   state.contractNames = Config.canonicalContractNames(~chainConfigs)
   chainConfigs->Array.forEach(chainConfig =>
-    chainConfig
-    ->ChainState.configStorageRows(~ecosystem, ~contractNames=state.contractNames)
-    ->Array.forEach(row => state.addresses->AddressRows.Table.insert(row)->ignore)
+    state.addresses->AddressRows.Table.insertMany(
+      chainConfig->ChainState.configStorageRows(~ecosystem, ~contractNames=state.contractNames),
+    )
   )
 }
 
-let addressRowsByChain = (state: t) => state.addresses->AddressRows.Table.rows->AddressRows.group
+let addressRowsByChain = (state: t) => state.addresses->AddressRows.Table.groupByChain
 
 let toInitialChainStates = (state: t): array<Persistence.initialChainState> => {
   let addressesByChain = state->addressRowsByChain
@@ -306,9 +305,7 @@ let writeBatch = (
   | None => ()
   }
 
-  registeredAddresses->Array.forEach(({row}) =>
-    state.addresses->AddressRows.Table.insert(row)->ignore
-  )
+  registeredAddresses->Array.forEach(({row}) => state.addresses->AddressRows.Table.insert(row))
 
   // The rollback diff restates what the reverted state already is, so it is not
   // a change history should record — and an id it touches needs no backfill
@@ -579,7 +576,7 @@ let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
     state.effectCache->clear
     state.cache->clear
     state.checkpoints = []
-    state.addresses = AddressRows.Table.make()
+    state.addresses->AddressRows.Table.clear
     state.contractNames = []
     state.envioInfo = None
     state.isInitialized = false

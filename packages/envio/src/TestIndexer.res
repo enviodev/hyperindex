@@ -37,7 +37,6 @@ type testIndexerState = {
   // Store decoded entities (not JSON) for proper comparison operations
   entities: dict<dict<Internal.entity>>,
   entityConfigs: dict<Internal.entityConfig>,
-  // Every indexed address, insert-only — the in-memory twin of envio_addresses.
   addresses: AddressRows.Table.t,
   // The canonical contract mapping, a name's position being its id.
   contractNames: array<string>,
@@ -45,7 +44,7 @@ type testIndexerState = {
 }
 
 let addressRowsByChain = (state: testIndexerState) =>
-  state.addresses->AddressRows.Table.rows->AddressRows.group
+  state.addresses->AddressRows.Table.groupByChain
 
 let renderRows = (rows: array<AddressRows.row>, ~config: Config.t) =>
   rows->AddressRows.render(
@@ -120,18 +119,14 @@ let handleWriteBatch = (
   let addressesByCheckpoint: dict<array<{"address": Address.t, "contract": string}>> = Dict.make()
   let rendered = registeredAddresses->Array.map(({row}) => row)->renderRows(~config)
   registeredAddresses->Array.forEachWithIndex(({row, checkpointId}, idx) => {
-    // A re-inserted primary key is a no-op, like the Postgres ON CONFLICT DO
-    // NOTHING — so a replayed write neither double-lists the address nor
-    // re-reports it in the change log.
-    if state.addresses->AddressRows.Table.insert(row) {
-      addressesByCheckpoint->Utils.Dict.push(
-        checkpointId->BigInt.toString,
-        {
-          "address": rendered->Array.getUnsafe(idx),
-          "contract": state.contractNames->Array.getUnsafe(row.contractId),
-        },
-      )
-    }
+    state.addresses->AddressRows.Table.insert(row)
+    addressesByCheckpoint->Utils.Dict.push(
+      checkpointId->BigInt.toString,
+      {
+        "address": rendered->Array.getUnsafe(idx),
+        "contract": state.contractNames->Array.getUnsafe(row.contractId),
+      },
+    )
   })
 
   updatedEntities->Array.forEach(({entityConfig, scope, changes}: Persistence.updatedEntity) => {
@@ -693,9 +688,9 @@ let createTestIndexer = (): t<'processConfig> => {
   let ecosystem = config.ecosystem.name
   let addresses = AddressRows.Table.make()
   chainConfigs->Array.forEach(chainConfig =>
-    chainConfig
-    ->ChainState.configStorageRows(~ecosystem, ~contractNames)
-    ->Array.forEach(row => addresses->AddressRows.Table.insert(row)->ignore)
+    addresses->AddressRows.Table.insertMany(
+      chainConfig->ChainState.configStorageRows(~ecosystem, ~contractNames),
+    )
   )
 
   let state = {

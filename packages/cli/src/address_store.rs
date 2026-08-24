@@ -101,12 +101,11 @@ fn ecosystem_by_name(name: &str, should_checksum: bool) -> napi::Result<Ecosyste
 }
 
 /// Address keys packed into one buffer — the columnar form `seed_rows` takes
-/// and the write path binds to a `BYTEA[]`. `lengths` is present only for SVM,
-/// whose keys vary in width.
+/// and the write path binds to a `BYTEA[]`.
 #[napi(object)]
 pub struct PackedAddresses {
     pub bytes: Buffer,
-    pub lengths: Option<Vec<u32>>,
+    pub lengths: Vec<u32>,
 }
 
 /// Encodes address strings to their store keys. The one encoder: config
@@ -126,44 +125,46 @@ pub fn pack_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result
     }
     Ok(PackedAddresses {
         bytes: bytes.into(),
-        lengths: key_width(ecosystem).is_none().then_some(lengths),
+        lengths,
     })
 }
 
-/// Walks a packed address column, yielding one key slice per row. `lengths` is
-/// present only for SVM, whose keys vary in width; every other ecosystem strides
-/// by `key_width`.
+/// Walks a packed address column, yielding one key slice per row. Every column
+/// carries its keys' lengths, so this is also where a column that doesn't hold
+/// what it claims — a key of the wrong width for the ecosystem, or bytes the
+/// lengths don't account for — is rejected rather than decoded into keys that
+/// can never match a log address.
 fn key_slices<'a>(
     ecosystem: Ecosystem,
     bytes: &'a [u8],
-    lengths: Option<&[u32]>,
+    lengths: &[u32],
 ) -> napi::Result<Vec<&'a [u8]>> {
-    let widths: Vec<usize> = match lengths {
-        Some(lengths) => lengths.iter().map(|&len| len as usize).collect(),
-        // An empty column has no key to measure, so it needs no width — a chain
-        // with no stored addresses seeds one, SVM included.
-        None if bytes.is_empty() => Vec::new(),
-        None => {
-            let width = key_width(ecosystem).ok_or_else(|| {
-                napi::Error::from_reason("SVM addresses can only be read with their lengths.")
-            })?;
-            if !bytes.len().is_multiple_of(width) {
+    let fixed_width = key_width(ecosystem);
+    let mut total = 0;
+    for &length in lengths {
+        let width = length as usize;
+        if let Some(expected) = fixed_width {
+            if width != expected {
                 return Err(napi::Error::from_reason(format!(
-                    "Packed addresses of {} bytes don't divide into {width}-byte keys.",
-                    bytes.len()
+                    "Address keys are {expected} bytes, but a row claims {width}."
                 )));
             }
-            vec![width; bytes.len() / width]
         }
-    };
-    let mut slices = Vec::with_capacity(widths.len());
+        total += width;
+    }
+    if total != bytes.len() {
+        return Err(napi::Error::from_reason(format!(
+            "Packed addresses are {} bytes, but their keys account for {total}.",
+            bytes.len()
+        )));
+    }
+
+    // Every key is now known to sit inside the buffer, so the walk can't run off
+    // the end.
+    let mut slices = Vec::with_capacity(lengths.len());
     let mut offset = 0;
-    for width in widths {
-        if offset + width > bytes.len() {
-            return Err(napi::Error::from_reason(
-                "Packed addresses are shorter than their lengths claim.",
-            ));
-        }
+    for &length in lengths {
+        let width = length as usize;
         slices.push(&bytes[offset..offset + width]);
         offset += width;
     }
@@ -171,16 +172,15 @@ fn key_slices<'a>(
 }
 
 /// Splits packed address keys into one buffer per row — the form the write
-/// path binds to a `BYTEA[]`. The widths come from the ecosystem, so nothing
-/// outside this module needs to know how wide a key is.
+/// path binds to a `BYTEA[]`.
 #[napi]
 pub fn split_addresses(
     ecosystem: String,
     bytes: Buffer,
-    lengths: Option<Vec<u32>>,
+    lengths: Vec<u32>,
 ) -> napi::Result<Vec<Buffer>> {
     let ecosystem = ecosystem_by_name(&ecosystem, false)?;
-    Ok(key_slices(ecosystem, &bytes, lengths.as_deref())?
+    Ok(key_slices(ecosystem, &bytes, &lengths)?
         .into_iter()
         .map(|key| key.to_vec().into())
         .collect())
@@ -193,10 +193,10 @@ pub fn render_addresses(
     ecosystem: String,
     should_checksum: bool,
     bytes: Buffer,
-    lengths: Option<Vec<u32>>,
+    lengths: Vec<u32>,
 ) -> napi::Result<Vec<String>> {
     let ecosystem = ecosystem_by_name(&ecosystem, should_checksum)?;
-    Ok(key_slices(ecosystem, &bytes, lengths.as_deref())?
+    Ok(key_slices(ecosystem, &bytes, &lengths)?
         .into_iter()
         .map(|key| address_string(ecosystem, key))
         .collect())
@@ -210,12 +210,12 @@ pub fn render_contract_addresses(
     ecosystem: String,
     should_checksum: bool,
     bytes: Buffer,
-    lengths: Option<Vec<u32>>,
+    lengths: Vec<u32>,
     contract_ids: Vec<u32>,
     contract_id: u32,
 ) -> napi::Result<Vec<String>> {
     let ecosystem = ecosystem_by_name(&ecosystem, should_checksum)?;
-    let keys = key_slices(ecosystem, &bytes, lengths.as_deref())?;
+    let keys = key_slices(ecosystem, &bytes, &lengths)?;
     if keys.len() != contract_ids.len() {
         return Err(napi::Error::from_reason(format!(
             "Packed addresses hold {} keys but {} contract ids.",
@@ -576,42 +576,32 @@ impl AddressStore {
     }
 
     /// `seed_batch` for rows read back from storage, columnar: one packed
-    /// buffer of address keys with their `lengths` (omittable for a
-    /// fixed-width ecosystem) plus the parallel contract ids and
-    /// registration blocks. A resume seeds millions of rows, so nothing here
-    /// allocates a string per row — the keys are already the store's own
+    /// buffer of address keys with their `lengths`, plus the parallel contract
+    /// ids and registration blocks. A resume seeds millions of rows, so nothing
+    /// here allocates a string per row — the keys are already the store's own
     /// encoding, and only the (defensive) rejections come back rendered.
     #[napi]
     pub fn seed_rows(
         &self,
         addresses: Buffer,
-        lengths: Option<Vec<u32>>,
+        lengths: Vec<u32>,
         contract_ids: Vec<u32>,
         registration_blocks: Vec<i64>,
     ) -> napi::Result<Vec<RejectedRow>> {
         let mut store = self.inner.write().unwrap();
         let count = contract_ids.len();
-        if registration_blocks.len() != count {
+        if lengths.len() != count || registration_blocks.len() != count {
             return Err(napi::Error::from_reason(format!(
-                "Seeded address columns disagree: {count} contract ids, {} registration blocks.",
+                "Seeded address columns disagree: {count} contract ids, {} address lengths, {} \
+                 registration blocks.",
+                lengths.len(),
                 registration_blocks.len()
             )));
         }
-        if count == 0 {
-            return Ok(Vec::new());
-        }
-        let bytes: &[u8] = &addresses;
-        let keys = key_slices(store.ecosystem, bytes, lengths.as_deref())?;
-        if keys.len() != count {
-            return Err(napi::Error::from_reason(format!(
-                "Seeded address columns disagree: {count} contract ids, {} addresses.",
-                keys.len()
-            )));
-        }
+        let keys = key_slices(store.ecosystem, &addresses, &lengths)?;
 
         let mut rejected = Vec::new();
-        for idx in 0..count {
-            let key: Key = keys[idx].to_vec().into_boxed_slice();
+        for (idx, key) in keys.into_iter().enumerate() {
             let contract_idx = contract_ids[idx];
             if contract_idx as usize >= store.contract_names.len() {
                 return Err(napi::Error::from_reason(format!(
@@ -619,6 +609,7 @@ impl AddressStore {
                      store doesn't hold."
                 )));
             }
+            let key: Key = key.to_vec().into_boxed_slice();
             if let Some(reason) = store.seed_one(key, contract_idx, registration_blocks[idx]) {
                 rejected.push(reason);
             }
@@ -1886,17 +1877,23 @@ mod tests {
             .collect()
     }
 
-    // A chain with no stored addresses seeds an empty column, and SVM carries no
-    // fixed key width to fall back on — asking for its contract's addresses must
-    // still answer with none rather than refuse to read the column.
+    // A chain with no stored addresses seeds an empty column: asking for its
+    // contract's addresses must answer with none rather than refuse to read it.
     #[test]
-    fn an_empty_column_renders_as_no_addresses_without_lengths() {
+    fn an_empty_column_renders_as_no_addresses() {
         assert_eq!(
             (
-                render_contract_addresses("svm".to_string(), false, vec![].into(), None, vec![], 0)
-                    .unwrap(),
-                render_addresses("svm".to_string(), false, vec![].into(), None).unwrap(),
-                split_addresses("svm".to_string(), vec![].into(), None)
+                render_contract_addresses(
+                    "svm".to_string(),
+                    false,
+                    vec![].into(),
+                    vec![],
+                    vec![],
+                    0
+                )
+                .unwrap(),
+                render_addresses("svm".to_string(), false, vec![].into(), vec![]).unwrap(),
+                split_addresses("svm".to_string(), vec![].into(), vec![])
                     .unwrap()
                     .len(),
             ),
@@ -2223,6 +2220,58 @@ mod tests {
             ),
             // The registration already held starts at the contract's start block.
             (vec![(A, "C", 100)], 1)
+        );
+    }
+
+    #[test]
+    fn seeding_rejects_a_column_the_keys_dont_account_for() {
+        let store = store();
+        let packed = pack_addresses("evm".to_string(), vec![A.to_string(), B.to_string()]).unwrap();
+        // One row's worth of columns over a two-address buffer: B's bytes are
+        // unaccounted for, so the column is not what the row count claims.
+        let error = store
+            .seed_rows(packed.bytes, vec![20], vec![0], vec![-1])
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(
+            (error.reason.as_str(), store.size()),
+            (
+                "Packed addresses are 40 bytes, but their keys account for 20.",
+                0
+            )
+        );
+    }
+
+    #[test]
+    fn seeding_rejects_a_key_that_isnt_the_ecosystems_width() {
+        let store = store();
+        let packed = pack_addresses("evm".to_string(), vec![A.to_string(), B.to_string()]).unwrap();
+        // Widths that still consume the whole buffer, so only the ecosystem's
+        // own key width can catch them.
+        let error = store
+            .seed_rows(packed.bytes, vec![19, 21], vec![0, 0], vec![-1, -1])
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(
+            (error.reason.as_str(), store.size()),
+            ("Address keys are 20 bytes, but a row claims 19.", 0)
+        );
+    }
+
+    #[test]
+    fn seeding_reads_svm_keys_at_the_widths_they_carry() {
+        let store =
+            AddressStore::with_ecosystem(Ecosystem::Svm, contracts(&[("C", None)])).unwrap();
+        let short = "So11111111111111111111111111111111111111112";
+        let long = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+        let packed =
+            pack_addresses("svm".to_string(), vec![short.to_string(), long.to_string()]).unwrap();
+        let rejected = store
+            .seed_rows(packed.bytes, packed.lengths, vec![0, 0], vec![-1, -1])
+            .unwrap();
+        assert_eq!(
+            (rejected.len(), store.contract_addresses("C".to_string())),
+            (0, vec![short.to_string(), long.to_string()])
         );
     }
 

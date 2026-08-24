@@ -401,7 +401,7 @@ let run = async (
           ~ecosystem=(config.ecosystem.name :> string),
           ~shouldChecksum=!config.lowercaseAddresses,
           ~bytes=NodeJs.Buffer.concat(rows->Array.map(row => row.address)),
-          ~lengths=Null.make(rows->Array.map(row => row.address->NodeJs.Buffer.length)),
+          ~lengths=rows->Array.map(row => row.address->NodeJs.Buffer.length),
         )
         rows->Array.mapWithIndex((row, idx): addressRow => {
           chainId: row.chainId->ChainId.normalizeOrThrow,

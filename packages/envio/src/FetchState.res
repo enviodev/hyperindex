@@ -2833,18 +2833,28 @@ let rollbackPendingQueries = (mutPendingQueries: array<pendingQuery>, ~targetBlo
   adjusted
 }
 
+type rollbackResult = {
+  fetchState: t,
+  // The registrations the prune dropped, for the storage that deletes their rows.
+  rolledBackAddresses: array<AddressStore.rolledBackAddress>,
+}
+
 /**
 Rolls back fetch state to the given valid block.
+Prunes the store first, then rebuilds partitions from it: an address survives iff
+`filterByRegistrationBlock` keeps it, so the partitions and the rows the caller
+goes on to delete can't disagree about which registrations died.
 Always recreates optimized partitions to avoid duplicate addresses:
 - Wildcard: only rollback latestFetchedBlock
 - Non-wildcard with lfb <= target: keep, adjust pending queries and mergeBlock
 - Non-wildcard with lfb > target: delete, track addresses for recreation
 */
-// The caller must have pruned the store to the same target first — it owns what
-// the storage has to delete, and this reads the pruned store as the source of
-// truth for partition cleanup: an address survives iff
-// `filterByRegistrationBlock` keeps it.
-let rollback = (fetchState: t, ~rollbackedAddressStore: AddressStore.t, ~targetBlockNumber) => {
+let rollback = (
+  fetchState: t,
+  ~addressStore: AddressStore.t,
+  ~targetBlockNumber,
+): rollbackResult => {
+  let rolledBackAddresses = addressStore->AddressStore.rollback(targetBlockNumber)
   let keptPartitions = []
   let nextKeptIdRef = ref(0)
   let registeringSetsByContract: dict<AddressSet.t> = Dict.make()
@@ -2924,7 +2934,7 @@ let rollback = (fetchState: t, ~rollbackedAddressStore: AddressStore.t, ~targetB
   // Recreate partitions from deleted partition addresses
   let optimizedPartitions = createPartitions(
     ~registeringSetsByContract,
-    ~addressStore=rollbackedAddressStore,
+    ~addressStore,
     ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
     ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
     ~normalSelection=fetchState.normalSelection,
@@ -2936,7 +2946,7 @@ let rollback = (fetchState: t, ~rollbackedAddressStore: AddressStore.t, ~targetB
   )
 
   // Step 4: Update state
-  {
+  let rolledBack = {
     ...fetchState,
     // TODO: Test this. Currently it's not tested.
     latestOnBlockBlockNumber: Pervasives.min(
@@ -2955,6 +2965,7 @@ let rollback = (fetchState: t, ~rollbackedAddressStore: AddressStore.t, ~targetB
       targetBlockNumber
     ),
   )
+  {fetchState: rolledBack, rolledBackAddresses}
 }
 
 // Reset pending queries by removing in-flight queries (ones without fetchedBlock).
