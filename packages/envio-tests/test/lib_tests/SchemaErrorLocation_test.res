@@ -1,8 +1,5 @@
 open Vitest
 
-// Schema errors carry `<file>:<line>:<column>` so an editor can jump to the
-// offending directive rather than the reader hunting for it.
-
 let parseError = schema =>
   try {
     InternalTestIndexer.fromUserApi(
