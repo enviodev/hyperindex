@@ -49,10 +49,8 @@ type t = {
   cache: dict<Persistence.effectCacheRecord>,
   effectCache: dict<dict<Internal.effectCacheItem>>,
   mutable envioInfo: option<JSON.t>,
-  // Every indexed address, insert-only — the in-memory twin of envio_addresses,
-  // with the keys that stand in for its primary key.
-  mutable addresses: array<AddressRows.row>,
-  addressKeys: Utils.Set.t<string>,
+  // Every indexed address, insert-only — the in-memory twin of envio_addresses.
+  mutable addresses: AddressRows.Table.t,
   // The canonical contract mapping, assigned at initialize and read back on a
   // resume just as the stored one is.
   mutable contractNames: array<string>,
@@ -68,8 +66,7 @@ let make = (): t => {
   cache: Dict.make(),
   effectCache: Dict.make(),
   envioInfo: None,
-  addresses: [],
-  addressKeys: Utils.Set.make(),
+  addresses: AddressRows.Table.make(),
   contractNames: [],
   isInitialized: false,
 }
@@ -131,22 +128,16 @@ let seedConfigAddresses = (state: t, ~chainConfigs: array<Config.chain>, ~ecosys
   // Initialize starts from an empty schema — the Postgres DDL drops and
   // recreates one — so a re-initialize must not stack a second copy of the
   // config's addresses on what a previous one left behind.
-  state.addresses = []
-  state.addressKeys->Utils.Set.clear
+  state.addresses = AddressRows.Table.make()
   state.contractNames = Config.canonicalContractNames(~chainConfigs)
   chainConfigs->Array.forEach(chainConfig =>
     chainConfig
     ->ChainState.configStorageRows(~ecosystem, ~contractNames=state.contractNames)
-    ->Array.forEach(row => {
-      state.addressKeys->Utils.Set.add(row->AddressRows.keyOf->AddressRows.storageKey)->ignore
-      state.addresses->Array.push(row)->ignore
-    })
+    ->Array.forEach(row => state.addresses->AddressRows.Table.insert(row)->ignore)
   )
 }
 
-// Rows are always grouped with their lengths carried, so the in-memory
-// storages never need to know how wide an ecosystem's key is.
-let addressRowsByChain = (state: t) => state.addresses->AddressRows.group(~isFixedWidth=false)
+let addressRowsByChain = (state: t) => state.addresses->AddressRows.Table.rows->AddressRows.group
 
 let toInitialChainStates = (state: t): array<Persistence.initialChainState> => {
   let addressesByChain = state->addressRowsByChain
@@ -286,13 +277,7 @@ let backfillHistory = (
 let applyRollback = (state: t, ~targetCheckpointId, ~rolledBackAddresses) => {
   state.checkpoints = state.checkpoints->Array.filter(cp => cp.id <= targetCheckpointId)
   // Addresses are removed by primary key, exactly like the Postgres delete.
-  rolledBackAddresses->Array.forEach(key =>
-    state.addressKeys->Utils.Set.delete(key->AddressRows.storageKey)->ignore
-  )
-  state.addresses =
-    state.addresses->Array.filter(row =>
-      state.addressKeys->Utils.Set.has(row->AddressRows.keyOf->AddressRows.storageKey)
-    )
+  rolledBackAddresses->Array.forEach(key => state.addresses->AddressRows.Table.delete(key))
   state.history
   ->Dict.toArray
   ->Array.forEach(((name, rows)) =>
@@ -321,15 +306,9 @@ let writeBatch = (
   | None => ()
   }
 
-  // Insert-only and idempotent on (chain, address, contract), matching the
-  // `ON CONFLICT DO NOTHING` the Postgres write uses.
-  registeredAddresses->Array.forEach(({row}) => {
-    let key = row->AddressRows.keyOf->AddressRows.storageKey
-    if !(state.addressKeys->Utils.Set.has(key)) {
-      state.addressKeys->Utils.Set.add(key)->ignore
-      state.addresses->Array.push(row)->ignore
-    }
-  })
+  registeredAddresses->Array.forEach(({row}) =>
+    state.addresses->AddressRows.Table.insert(row)->ignore
+  )
 
   // The rollback diff restates what the reverted state already is, so it is not
   // a change history should record — and an id it touches needs no backfill
@@ -501,8 +480,7 @@ let getRollbackData = (
       ->ignore
     | Some({action: DELETE, entityId, scope}) =>
       removals->Array.push({Persistence.entityId, scope})->ignore
-    | Some({action: SET, entity: Some(entity)}) =>
-      restored->Array.push(entity)->ignore
+    | Some({action: SET, entity: Some(entity)}) => restored->Array.push(entity)->ignore
     | Some({action: SET, entity: None}) => ()
     }
   })
@@ -601,8 +579,7 @@ let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
     state.effectCache->clear
     state.cache->clear
     state.checkpoints = []
-    state.addresses = []
-    state.addressKeys->Utils.Set.clear
+    state.addresses = AddressRows.Table.make()
     state.contractNames = []
     state.envioInfo = None
     state.isInitialized = false

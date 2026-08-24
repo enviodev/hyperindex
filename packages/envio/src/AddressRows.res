@@ -52,33 +52,23 @@ let keyOf = (row: row): key => {
   contractId: row.contractId,
 }
 
-// The columnar form the address store seeds from. `isFixedWidth` drops the
-// lengths column, which only a caller that knows every key is a fixed stride
-// may do — the resume path, which has the ecosystem to decide it.
-let seedRowsOf = (rows: array<row>, ~isFixedWidth: bool): seedRows => {
+// The columnar form the address store seeds from. Lengths are always carried:
+// key widths are the Rust codec's knowledge, so no caller ever answers that
+// question for it.
+let seedRowsOf = (rows: array<row>): seedRows => {
   addresses: NodeJs.Buffer.concat(rows->Array.map(row => row.address)),
-  lengths: isFixedWidth
-    ? Null.null
-    : Null.make(rows->Array.map(row => row.address->NodeJs.Buffer.length)),
+  lengths: Null.make(rows->Array.map(row => row.address->NodeJs.Buffer.length)),
   contractIds: rows->Array.map(row => row.contractId),
   registrationBlocks: rows->Array.map(row => row.registrationBlock),
 }
 
 // Groups stored rows per chain, keyed by the normalized chain id string.
-let group = (rows: array<row>, ~isFixedWidth: bool): dict<seedRows> => {
+let group = (rows: array<row>): dict<seedRows> => {
   let rowsByChain: dict<array<row>> = Dict.make()
-  rows->Array.forEach(row => {
-    let key = row.chainId->ChainId.normalizeOrThrow->ChainId.toString
-    switch rowsByChain->Utils.Dict.dangerouslyGetNonOption(key) {
-    | Some(chainRows) => chainRows->Array.push(row)->ignore
-    | None => rowsByChain->Dict.set(key, [row])
-    }
-  })
-  let seedRowsByChain = Dict.make()
-  rowsByChain->Utils.Dict.forEachWithKey((chainRows, key) =>
-    seedRowsByChain->Dict.set(key, chainRows->seedRowsOf(~isFixedWidth))
+  rows->Array.forEach(row =>
+    rowsByChain->Utils.Dict.push(row.chainId->ChainId.normalizeOrThrow->ChainId.toString, row)
   )
-  seedRowsByChain
+  rowsByChain->Utils.Dict.mapValues(seedRowsOf)
 }
 
 // The in-memory storages index rows by their primary key with this. Base64 is
@@ -86,6 +76,30 @@ let group = (rows: array<row>, ~isFixedWidth: bool): dict<seedRows> => {
 // stored.
 let storageKey = (key: key) =>
   `${key.chainId->ChainId.toString}|${key.contractId->Int.toString}|${key.address->NodeJs.Buffer.toBase64}`
+
+// The in-memory twin of the envio_addresses table, shared by every storage
+// that fakes it: rows keyed by their primary key, so an insert is idempotent
+// (Postgres' ON CONFLICT DO NOTHING) and a rollback deletes by key.
+module Table = {
+  type t = dict<row>
+
+  let make = (): t => Dict.make()
+
+  // Returns whether the row was new — a re-inserted primary key is a no-op.
+  let insert = (table: t, row: row): bool => {
+    let key = row->keyOf->storageKey
+    switch table->Utils.Dict.dangerouslyGetNonOption(key) {
+    | Some(_) => false
+    | None =>
+      table->Dict.set(key, row)
+      true
+    }
+  }
+
+  let delete = (table: t, key: key) => table->Utils.Dict.deleteInPlace(key->storageKey)
+
+  let rows = (table: t): array<row> => table->Dict.valuesToArray
+}
 
 // Rows rendered back to user-facing addresses, one napi crossing for the lot.
 let render = (rows: array<row>, ~ecosystem: string, ~shouldChecksum: bool) =>

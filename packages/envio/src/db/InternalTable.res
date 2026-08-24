@@ -380,7 +380,7 @@ FROM "${pgSchema}"."${table.tableName}";`
   // json_agg: a single chain's aggregate can exceed V8's max string length
   // (postgres.js decodes the column with Buffer.toString and throws
   // ERR_STRING_TOO_LONG). Grouping happens in JS instead — see getInitialState.
-  let getInitialState = async (sql, ~pgSchema, ~isFixedWidthAddresses) => {
+  let getInitialState = async (sql, ~pgSchema) => {
     let (rawInitialStates, rawAddressRows) = await Promise.all2((
       sql
       ->Postgres.unsafe(makeGetInitialStateQuery(~pgSchema))
@@ -390,8 +390,7 @@ FROM "${pgSchema}"."${table.tableName}";`
       ->(Utils.magic: promise<array<unknown>> => promise<array<AddressRows.row>>),
     ))
 
-    let addressRowsByChainId =
-      rawAddressRows->AddressRows.group(~isFixedWidth=isFixedWidthAddresses)
+    let addressRowsByChainId = rawAddressRows->AddressRows.group
 
     rawInitialStates->Array.map(rawInitialState => {
       let id = rawInitialState.id->ChainId.normalizeOrThrow

@@ -341,7 +341,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
       progressBlockByChain: Dict.make(),
       entities: Dict.make(),
       entityConfigs,
-      addresses: [],
+      addresses: AddressRows.Table.make(),
       contractNames: [],
       processChanges: [],
     }

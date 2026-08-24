@@ -38,16 +38,14 @@ type testIndexerState = {
   entities: dict<dict<Internal.entity>>,
   entityConfigs: dict<Internal.entityConfig>,
   // Every indexed address, insert-only — the in-memory twin of envio_addresses.
-  mutable addresses: array<AddressRows.row>,
+  addresses: AddressRows.Table.t,
   // The canonical contract mapping, a name's position being its id.
   contractNames: array<string>,
   mutable processChanges: array<unknown>,
 }
 
-// Rows are always grouped with their lengths carried, so this side never needs
-// to know how wide an ecosystem's key is.
 let addressRowsByChain = (state: testIndexerState) =>
-  state.addresses->AddressRows.group(~isFixedWidth=false)
+  state.addresses->AddressRows.Table.rows->AddressRows.group
 
 let renderRows = (rows: array<AddressRows.row>, ~config: Config.t) =>
   rows->AddressRows.render(
@@ -122,21 +120,18 @@ let handleWriteBatch = (
   let addressesByCheckpoint: dict<array<{"address": Address.t, "contract": string}>> = Dict.make()
   let rendered = registeredAddresses->Array.map(({row}) => row)->renderRows(~config)
   registeredAddresses->Array.forEachWithIndex(({row, checkpointId}, idx) => {
-    state.addresses->Array.push(row)->ignore
-    let key = checkpointId->BigInt.toString
-    let forCheckpoint = switch addressesByCheckpoint->Utils.Dict.dangerouslyGetNonOption(key) {
-    | Some(forCheckpoint) => forCheckpoint
-    | None =>
-      let forCheckpoint = []
-      addressesByCheckpoint->Dict.set(key, forCheckpoint)
-      forCheckpoint
+    // A re-inserted primary key is a no-op, like the Postgres ON CONFLICT DO
+    // NOTHING — so a replayed write neither double-lists the address nor
+    // re-reports it in the change log.
+    if state.addresses->AddressRows.Table.insert(row) {
+      addressesByCheckpoint->Utils.Dict.push(
+        checkpointId->BigInt.toString,
+        {
+          "address": rendered->Array.getUnsafe(idx),
+          "contract": state.contractNames->Array.getUnsafe(row.contractId),
+        },
+      )
     }
-    forCheckpoint
-    ->Array.push({
-      "address": rendered->Array.getUnsafe(idx),
-      "contract": state.contractNames->Array.getUnsafe(row.contractId),
-    })
-    ->ignore
   })
 
   updatedEntities->Array.forEach(({entityConfig, scope, changes}: Persistence.updatedEntity) => {
@@ -696,12 +691,12 @@ let createTestIndexer = (): t<'processConfig> => {
   let chainConfigs = config.chainMap->ChainMap.values
   let contractNames = Config.canonicalContractNames(~chainConfigs)
   let ecosystem = config.ecosystem.name
-  let addresses =
-    chainConfigs
-    ->Array.map(chainConfig =>
-      chainConfig->ChainState.configStorageRows(~ecosystem, ~contractNames)
-    )
-    ->Array.flat
+  let addresses = AddressRows.Table.make()
+  chainConfigs->Array.forEach(chainConfig =>
+    chainConfig
+    ->ChainState.configStorageRows(~ecosystem, ~contractNames)
+    ->Array.forEach(row => addresses->AddressRows.Table.insert(row)->ignore)
+  )
 
   let state = {
     processInProgress: false,
@@ -786,6 +781,7 @@ let createTestIndexer = (): t<'processConfig> => {
             }
             let contractId = state.contractNames->Array.indexOf(contract.name)
             state.addresses
+            ->AddressRows.Table.rows
             ->Array.filter(row => row.chainId === chainConfig.id && row.contractId === contractId)
             ->renderRows(~config)
           },

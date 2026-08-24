@@ -57,11 +57,7 @@ describe("Dynamic contracts startup size", () => {
   ON CONFLICT DO NOTHING;`,
           )
 
-          let initialStates = await InternalTable.Chains.getInitialState(
-            sql,
-            ~pgSchema,
-            ~isFixedWidthAddresses=true,
-          )
+          let initialStates = await InternalTable.Chains.getInitialState(sql, ~pgSchema)
           let chainState =
             initialStates->Array.find(state => state.id === chainId)->Option.getOrThrow
 

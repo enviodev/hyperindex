@@ -294,11 +294,7 @@ impl StoreInner {
     /// contract)` is total over live entries.
     fn sort_key(&self, id: u64) -> (i64, &[u8], u32) {
         let entry = self.entry(id);
-        (
-            entry.effective_start_block,
-            &entry.key,
-            entry.contract_idx,
-        )
+        (entry.effective_start_block, &entry.key, entry.contract_idx)
     }
 
     /// Live ids registered for an address, one per owning contract.
@@ -580,8 +576,8 @@ impl AddressStore {
     }
 
     /// `seed_batch` for rows read back from storage, columnar: one packed
-    /// buffer of address keys (fixed-width for EVM and Fuel, `lengths` for
-    /// SVM's variable base58 keys) plus the parallel contract ids and
+    /// buffer of address keys with their `lengths` (omittable for a
+    /// fixed-width ecosystem) plus the parallel contract ids and
     /// registration blocks. A resume seeds millions of rows, so nothing here
     /// allocates a string per row — the keys are already the store's own
     /// encoding, and only the (defensive) rejections come back rendered.
@@ -605,40 +601,17 @@ impl AddressStore {
             return Ok(Vec::new());
         }
         let bytes: &[u8] = &addresses;
-        let widths: Vec<usize> = match &lengths {
-            Some(lengths) => {
-                if lengths.len() != count {
-                    return Err(napi::Error::from_reason(format!(
-                        "Seeded address columns disagree: {count} contract ids, {} address \
-                         lengths.",
-                        lengths.len()
-                    )));
-                }
-                lengths.iter().map(|&len| len as usize).collect()
-            }
-            None => {
-                let width = key_width(store.ecosystem).ok_or_else(|| {
-                    napi::Error::from_reason(
-                        "Seeded SVM addresses must carry their lengths: base58 keys are \
-                         variable-width.",
-                    )
-                })?;
-                vec![width; count]
-            }
-        };
-        let total: usize = widths.iter().sum();
-        if total != bytes.len() {
+        let keys = key_slices(store.ecosystem, bytes, lengths.as_deref())?;
+        if keys.len() != count {
             return Err(napi::Error::from_reason(format!(
-                "Seeded address bytes are {} long, but the {count} rows need {total}.",
-                bytes.len()
+                "Seeded address columns disagree: {count} contract ids, {} addresses.",
+                keys.len()
             )));
         }
 
         let mut rejected = Vec::new();
-        let mut offset = 0;
         for idx in 0..count {
-            let key: Key = bytes[offset..offset + widths[idx]].to_vec().into_boxed_slice();
-            offset += widths[idx];
+            let key: Key = keys[idx].to_vec().into_boxed_slice();
             let contract_idx = contract_ids[idx];
             if contract_idx as usize >= store.contract_names.len() {
                 return Err(napi::Error::from_reason(format!(
@@ -1067,7 +1040,12 @@ impl StoreInner {
             };
         }
 
-        let id = self.insert(key, contract_idx, reg.registration_block, effective_start_block);
+        let id = self.insert(
+            key,
+            contract_idx,
+            reg.registration_block,
+            effective_start_block,
+        );
         if track_unwritten {
             self.unwritten.push(id);
         }
@@ -1172,11 +1150,10 @@ pub struct ContractSlice {
 pub struct SetCache {
     contracts: Vec<ContractSlice>,
     index_by_name: HashMap<String, usize>,
-    /// First owning contract of each address in the set, plus the rare tail for
-    /// an address several contracts index — so the common single-owner case
-    /// costs no allocation per address.
-    owner_by_key: HashMap<Key, u32>,
-    extra_owners_by_key: HashMap<Key, Vec<u32>>,
+    /// The owning contracts of each address in the set. The first owner sits
+    /// inline so the common single-owner case allocates nothing per address —
+    /// only an address several contracts index grows the tail.
+    owners_by_key: HashMap<Key, (u32, Vec<u32>)>,
     len: usize,
 }
 
@@ -1221,12 +1198,12 @@ impl SetCache {
     /// (EVM/Fuel address bytes, an SVM `programId`'s base58 bytes). Empty means
     /// the address isn't in this partition — the log routes to wildcards only.
     pub fn owners_of(&self, key: &[u8]) -> Owners<'_> {
-        Owners {
-            first: self.owner_by_key.get(key).copied(),
-            rest: self
-                .extra_owners_by_key
-                .get(key)
-                .map_or(&[][..], |owners| owners.as_slice()),
+        match self.owners_by_key.get(key) {
+            Some((first, rest)) => Owners {
+                first: Some(*first),
+                rest,
+            },
+            None => Owners::default(),
         }
     }
 
@@ -1436,8 +1413,8 @@ impl AddressSet {
             let store = self.store.read().unwrap();
             let mut contracts: Vec<ContractSlice> = Vec::new();
             let mut index_by_contract_idx: HashMap<u32, usize> = HashMap::new();
-            let mut owner_by_key: HashMap<Key, u32> = HashMap::with_capacity(self.ids.len());
-            let mut extra_owners_by_key: HashMap<Key, Vec<u32>> = HashMap::new();
+            let mut owners_by_key: HashMap<Key, (u32, Vec<u32>)> =
+                HashMap::with_capacity(self.ids.len());
             for &id in self.ids.iter() {
                 let entry = store.entry(id);
                 let slot = *index_by_contract_idx
@@ -1457,15 +1434,12 @@ impl AddressSet {
                 if matches!(store.ecosystem, Ecosystem::Evm { .. }) {
                     contracts[slot].topics.push(address_topic(&entry.key));
                 }
-                match owner_by_key.entry(entry.key.clone()) {
+                match owners_by_key.entry(entry.key.clone()) {
                     std::collections::hash_map::Entry::Vacant(vacant) => {
-                        vacant.insert(entry.contract_idx);
+                        vacant.insert((entry.contract_idx, Vec::new()));
                     }
-                    std::collections::hash_map::Entry::Occupied(_) => {
-                        extra_owners_by_key
-                            .entry(entry.key.clone())
-                            .or_default()
-                            .push(entry.contract_idx);
+                    std::collections::hash_map::Entry::Occupied(occupied) => {
+                        occupied.into_mut().1.push(entry.contract_idx);
                     }
                 }
             }
@@ -1477,8 +1451,7 @@ impl AddressSet {
             Arc::new(SetCache {
                 contracts,
                 index_by_name,
-                owner_by_key,
-                extra_owners_by_key,
+                owners_by_key,
                 len: self.ids.len(),
             })
         })
@@ -1750,7 +1723,8 @@ mod tests {
         // newest-first, so registering D second but at the highest block puts
         // the one the rollback kills in the middle of that chain.
         let store =
-            AddressStore::new_evm(false, contracts(&[("C", None), ("D", None), ("E", None)])).unwrap();
+            AddressStore::new_evm(false, contracts(&[("C", None), ("D", None), ("E", None)]))
+                .unwrap();
         store
             .register_batch(vec![reg(A, "C", 100), reg(A, "D", 700), reg(A, "E", 200)])
             .unwrap();
@@ -1848,7 +1822,8 @@ mod tests {
                 contracts(&[("C", None)]).remove(0),
                 address_independent_contract(1, "D"),
             ],
-        ).unwrap();
+        )
+        .unwrap();
         let verdicts = store.register_seed(vec![reg(A, "C", 10), reg(B, "D", 20)]);
         assert_eq!(
             verdicts.iter().map(|v| v.fetchable).collect::<Vec<_>>(),
@@ -1978,7 +1953,11 @@ mod tests {
         // Still queued for insert: nothing to delete.
         store.register_batch(vec![reg(B, "C", 500)]).unwrap();
         assert_eq!(
-            (rolled_back(&store, 300), store.size(), store.pending_count()),
+            (
+                rolled_back(&store, 300),
+                store.size(),
+                store.pending_count()
+            ),
             (vec![(A.to_string(), 0)], 0, 0)
         );
     }
@@ -2195,7 +2174,12 @@ mod tests {
         )
         .unwrap();
         let rejected = store
-            .seed_rows(packed.bytes, packed.lengths, vec![0, 1, 0], vec![-1, 40, 50])
+            .seed_rows(
+                packed.bytes,
+                packed.lengths,
+                vec![0, 1, 0],
+                vec![-1, 40, 50],
+            )
             .unwrap();
         assert_eq!(
             (
@@ -2370,9 +2354,11 @@ mod tests {
                 // Registered for D chain-wide, but this set holds only C's
                 // registration of it.
                 set.contains_at(A.to_string(), "D".to_string(), 100),
-                store
-                    .make_set_of(vec![A.to_string()])
-                    .contains_at(A.to_string(), "D".to_string(), 100),
+                store.make_set_of(vec![A.to_string()]).contains_at(
+                    A.to_string(),
+                    "D".to_string(),
+                    100
+                ),
             ),
             (true, false, true)
         );

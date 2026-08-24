@@ -1748,11 +1748,12 @@ let make = (
     // The envio_info row is written in the same transaction so a successful
     // initialize is atomic — no schema can come up without the matching row.
     let contractNames = Config.canonicalContractNames(~chainConfigs)
-    if contractNames->Array.length > 32767 {
+    // Ids are 0-based positions in a smallint column, so 32768 contracts fit.
+    if contractNames->Array.length > 32768 {
       JsError.throwWithMessage(
         `The indexer declares ${contractNames
           ->Array.length
-          ->Int.toString} contracts, more than the 32767 a contract id can hold.`,
+          ->Int.toString} contracts, more than the 32768 a smallint contract id can hold.`,
       )
     }
     let rowsByChain =
@@ -1804,7 +1805,7 @@ let make = (
         numEventsProcessed: 0.,
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
-        addressRows: rowsByChain->Array.getUnsafe(idx)->AddressRows.seedRowsOf(~isFixedWidth=false),
+        addressRows: rowsByChain->Array.getUnsafe(idx)->AddressRows.seedRowsOf,
         sourceBlockNumber: 0,
       }),
       checkpointId: InternalTable.Checkpoints.initialCheckpointId,
@@ -2193,22 +2194,10 @@ let make = (
     }
   }
 
-  // Read by the resume gate, which always runs first and refuses the resume
-  // unless the table is there — so the resume itself needs no second read.
-  let storedContractNames = ref(None)
-
   let resumeInitialState = async (): Persistence.initialState => {
     let (cache, chains, checkpointIdResult, reorgCheckpoints, contractNames) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
-      InternalTable.Chains.getInitialState(
-        sql,
-        ~pgSchema,
-        // Only SVM's base58 keys vary in width.
-        ~isFixedWidthAddresses=switch ecosystem {
-        | Svm => false
-        | Evm | Fuel => true
-        },
-      )->Promise.thenResolve(rawInitialStates => {
+      InternalTable.Chains.getInitialState(sql, ~pgSchema)->Promise.thenResolve(rawInitialStates => {
         rawInitialStates->Array.map((rawInitialState): Persistence.initialChainState => {
           id: rawInitialState.id,
           startBlock: rawInitialState.startBlock,
@@ -2237,13 +2226,18 @@ let make = (
           }>,
         >
       ),
-      switch storedContractNames.contents {
-      | Some(contractNames) => Promise.resolve(contractNames)
-      | None =>
-        InternalTable.EnvioContracts.read(sql, ~pgSchema)->Promise.thenResolve(stored =>
-          stored->Option.getOr([])
-        )
-      },
+      InternalTable.EnvioContracts.read(sql, ~pgSchema)->Promise.thenResolve(stored =>
+        switch stored {
+        | Some(contractNames) => contractNames
+        // The resume gate refuses to resume without the table, so reaching here
+        // means the gate was skipped — fail loudly rather than decode every
+        // stored contract id against an empty list.
+        | None =>
+          JsError.throwWithMessage(
+            `The "${pgSchema}" schema has no "envio_contracts" table: it was initialized by an older envio version, so it can't be resumed.`,
+          )
+        }
+      ),
     ))
 
     await reloadIndexCatalog()
@@ -2424,17 +2418,19 @@ let make = (
     name: storageName,
     isInitialized,
     initialize,
-    readEnvioInfo: async () =>
-      switch await InternalTable.EnvioInfo.read(sql, ~pgSchema) {
-      | Some(envioInfo) =>
-        switch await InternalTable.EnvioContracts.read(sql, ~pgSchema) {
-        | Some(contractNames) =>
-          storedContractNames := Some(contractNames)
-          Some(envioInfo)
-        | None => None
-        }
-      | None => None
-      },
+    readEnvioInfo: async () => {
+      let (envioInfo, contractNames) = await Promise.all2((
+        InternalTable.EnvioInfo.read(sql, ~pgSchema),
+        InternalTable.EnvioContracts.read(sql, ~pgSchema),
+      ))
+      // Both tables joined the schema together, so an envio_info row without
+      // the contract mapping is an older envio's schema — report it as such
+      // rather than resuming address rows nothing can decode.
+      switch (envioInfo, contractNames) {
+      | (Some(envioInfo), Some(_)) => Some(envioInfo)
+      | _ => None
+      }
+    },
     resumeInitialState,
     loadOrThrow,
     ensureQueryIndexes,

@@ -257,6 +257,9 @@ let runSeed = (~seed, ~ops) => {
       run.fetchState = run.fetchState->FetchState.resetPendingQueries
       let upper = Pervasives.max(run->minFrontier, 1)
       let target = (rng() *. upper->Int.toFloat)->Float.toInt
+      // Prune the store first, as ChainState.rollback does — FetchState.rollback
+      // reads the pruned store as the source of truth for partition cleanup.
+      let _ = run.addressStore->AddressStore.rollback(target)
       run.fetchState =
         run.fetchState->FetchState.rollback(
           ~rollbackedAddressStore=run.addressStore,

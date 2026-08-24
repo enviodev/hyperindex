@@ -192,7 +192,6 @@ Although it should load effect caches metadata.`,
     // The rejection is captured as init runs, not awaited afterwards: the
     // compat gate throws before the mock's resume call is ever made, and an
     // unattached rejection would surface as an unhandled one.
-    let raisedRef = ref(None)
     let settled = (
       async () =>
         switch await persistence->Persistence.init(
@@ -201,8 +200,8 @@ Although it should load effect caches metadata.`,
           ~resetCommand,
           ~runCommand,
         ) {
-        | () => ()
-        | exception exn => raisedRef := Some(exn)
+        | () => None
+        | exception exn => Some(exn)
         }
     )()
     storageMock.resolveIsInitialized(true)
@@ -217,8 +216,7 @@ Although it should load effect caches metadata.`,
     }
     storageMock.resolveLoadInitialState(initialState)
 
-    await settled
-    let raised = raisedRef.contents
+    let raised = await settled
     let message = switch raised {
     | Some(JsExn(e)) => e->JsExn.message->Option.getOr("")
     | _ => ""

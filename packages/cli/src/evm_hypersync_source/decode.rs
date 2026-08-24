@@ -854,7 +854,8 @@ mod tests {
                 start_block: None,
                 depends_on_addresses: true,
             }],
-        ).unwrap();
+        )
+        .unwrap();
         address_store.register_seed(vec![crate::address_store::AddressRegistration {
             address: EMITTER.to_string(),
             contract_name: "Owned".to_string(),
@@ -895,10 +896,7 @@ mod tests {
         .unwrap();
         let log = value_log(VALID_SIGHASH);
         let decoder = selection_of(&core, &[0], &Default::default()).unwrap();
-        assert_eq!(
-            routed_indexes(&route(&decoder, &log, &owned(0))),
-            vec![0]
-        );
+        assert_eq!(routed_indexes(&route(&decoder, &log, &owned(0))), vec![0]);
     }
 
     #[test]
@@ -1070,7 +1068,8 @@ mod tests {
                 start_block: None,
                 depends_on_addresses: true,
             }],
-        ).unwrap();
+        )
+        .unwrap();
         address_store.register_seed(vec![crate::address_store::AddressRegistration {
             address: EMITTER.to_string(),
             contract_name: "C".to_string(),
