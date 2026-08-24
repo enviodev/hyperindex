@@ -338,8 +338,8 @@ describe("AddressStore", () => {
       "addressesOfB": store->AddressStore.contractAddresses("B"),
       // One registration per (address, contract).
       "size": store->AddressStore.size,
-      // One partition per contract: a partition never mixes contracts once
-      // both of them index the same address.
+      // Both contracts start at 0, so one partition covers them — sharing an
+      // address doesn't split it.
       "partitions": fetchState.optimizedPartitions->FetchState.OptimizedPartitions.count,
     }).toEqual({
       "addressesOfA": [addr(0)],

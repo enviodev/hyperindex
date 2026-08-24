@@ -2193,6 +2193,10 @@ let make = (
     }
   }
 
+  // Read by the resume gate, which always runs first and refuses the resume
+  // unless the table is there — so the resume itself needs no second read.
+  let storedContractNames = ref(None)
+
   let resumeInitialState = async (): Persistence.initialState => {
     let (cache, chains, checkpointIdResult, reorgCheckpoints, contractNames) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
@@ -2233,7 +2237,13 @@ let make = (
           }>,
         >
       ),
-      InternalTable.EnvioContracts.read(sql, ~pgSchema),
+      switch storedContractNames.contents {
+      | Some(contractNames) => Promise.resolve(contractNames)
+      | None =>
+        InternalTable.EnvioContracts.read(sql, ~pgSchema)->Promise.thenResolve(stored =>
+          stored->Option.getOr([])
+        )
+      },
     ))
 
     await reloadIndexCatalog()
@@ -2416,9 +2426,14 @@ let make = (
     initialize,
     readEnvioInfo: async () =>
       switch await InternalTable.EnvioInfo.read(sql, ~pgSchema) {
-      | Some(envioInfo) if await InternalTable.EnvioContracts.exists(sql, ~pgSchema) =>
-        Some(envioInfo)
-      | _ => None
+      | Some(envioInfo) =>
+        switch await InternalTable.EnvioContracts.read(sql, ~pgSchema) {
+        | Some(contractNames) =>
+          storedContractNames := Some(contractNames)
+          Some(envioInfo)
+        | None => None
+        }
+      | None => None
       },
     resumeInitialState,
     loadOrThrow,

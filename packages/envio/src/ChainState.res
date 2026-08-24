@@ -1247,7 +1247,7 @@ let rollback = (
     let rolledBackAddresses = pruneAddresses(newProgressBlockNumber)
     cs.fetchState =
       cs.fetchState->FetchState.rollback(
-        ~addressStore=cs.addressStore,
+        ~rollbackedAddressStore=cs.addressStore,
         ~targetBlockNumber=newProgressBlockNumber,
       )
     cs.transactionStore->TransactionStore.rollback(newProgressBlockNumber)
@@ -1261,7 +1261,7 @@ let rollback = (
       let rolledBackAddresses = pruneAddresses(rollbackTargetBlockNumber)
       cs.fetchState =
         cs.fetchState->FetchState.rollback(
-          ~addressStore=cs.addressStore,
+          ~rollbackedAddressStore=cs.addressStore,
           ~targetBlockNumber=rollbackTargetBlockNumber,
         )
       cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)

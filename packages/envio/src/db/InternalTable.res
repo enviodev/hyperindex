@@ -45,24 +45,20 @@ SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(T
     )
     ->Utils.Promise.ignoreValue
 
-  // Ordered by id, so the result is the canonical list itself.
-  let read = async (sql, ~pgSchema): array<string> => {
-    let rows: array<{"name": string}> = await sql->Postgres.unsafe(
-      `SELECT "name" FROM "${pgSchema}"."${table.tableName}" ORDER BY "id";`,
-    )
-    rows->Array.map(row => row["name"])
-  }
+  // Ordered by id, so the result is the canonical list itself. None when the
+  // schema has no such table: it was written by an envio that predates the
+  // contract mapping, and every address row in it is shaped differently — so a
+  // resume has to stop at the compat check rather than at a missing column.
+  let read = async (sql, ~pgSchema): option<array<string>> =>
+    try {
+      let rows: array<{"name": string}> = await sql->Postgres.unsafe(
+        `SELECT "name" FROM "${pgSchema}"."${table.tableName}" ORDER BY "id";`,
+      )
+      Some(rows->Array.map(row => row["name"]))
+    } catch {
+    | exn => isUndefinedTable(exn) ? None : throw(exn)
+    }
 
-  // Whether the schema carries this table at all. A schema written by an envio
-  // that predates the contract mapping doesn't, and every address row in it is
-  // shaped differently — so a resume has to stop at the compat check rather
-  // than at a missing column.
-  let exists = async (sql, ~pgSchema): bool => {
-    let rows: array<{"exists": bool}> = await sql->Postgres.unsafe(
-      `SELECT to_regclass('"${pgSchema}"."${table.tableName}"') IS NOT NULL AS "exists";`,
-    )
-    (rows->Array.getUnsafe(0))["exists"]
-  }
 }
 
 // Every address the indexer indexes, one row per (chain, address, contract).
@@ -100,18 +96,29 @@ SELECT * FROM unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :
 ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
   }
 
-  let insert = (sql, ~pgSchema, ~rows: array<AddressRows.row>, ~chainIdMode: ChainId.mode=Int32) =>
+  let insert = (sql, ~pgSchema, ~rows: array<AddressRows.row>, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIds = []
+    let addresses = []
+    let contractIds = []
+    let registrationBlocks = []
+    rows->Array.forEach(row => {
+      chainIds->Array.push(row.chainId)->ignore
+      addresses->Array.push(row.address)->ignore
+      contractIds->Array.push(row.contractId)->ignore
+      registrationBlocks->Array.push(row.registrationBlock)->ignore
+    })
     sql
     ->Postgres.preparedUnsafe(
       makeInsertQuery(~pgSchema, ~chainIdMode),
       (
-        rows->Array.map(row => row.chainId),
-        sql->Postgres.typed(rows->Array.map(row => row.address), Postgres.byteaArrayOid),
-        rows->Array.map(row => row.contractId),
-        rows->Array.map(row => row.registrationBlock),
+        chainIds,
+        sql->Postgres.typed(addresses, Postgres.byteaArrayOid),
+        contractIds,
+        registrationBlocks,
       )->(Utils.magic: ((array<ChainId.t>, unknown, array<int>, array<int>)) => unknown),
     )
     ->Utils.Promise.ignoreValue
+  }
 
   let makeDeleteQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
     let chainIdArrayType = Table.getPgFieldType(
@@ -132,17 +139,26 @@ WHERE "${table.tableName}"."chain_id" = dead.chain_id
   // A rollback removes exactly the registrations the address store dropped, by
   // primary key — so the table needs no index beyond the one it already has,
   // and the two halves of a rollback can't disagree about what to remove.
-  let delete = (sql, ~pgSchema, ~keys: array<AddressRows.key>, ~chainIdMode: ChainId.mode=Int32) =>
+  let delete = (sql, ~pgSchema, ~keys: array<AddressRows.key>, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIds = []
+    let addresses = []
+    let contractIds = []
+    keys->Array.forEach(key => {
+      chainIds->Array.push(key.chainId)->ignore
+      addresses->Array.push(key.address)->ignore
+      contractIds->Array.push(key.contractId)->ignore
+    })
     sql
     ->Postgres.preparedUnsafe(
       makeDeleteQuery(~pgSchema, ~chainIdMode),
       (
-        keys->Array.map(key => key.chainId),
-        sql->Postgres.typed(keys->Array.map(key => key.address), Postgres.byteaArrayOid),
-        keys->Array.map(key => key.contractId),
+        chainIds,
+        sql->Postgres.typed(addresses, Postgres.byteaArrayOid),
+        contractIds,
       )->(Utils.magic: ((array<ChainId.t>, unknown, array<int>)) => unknown),
     )
     ->Utils.Promise.ignoreValue
+  }
 
   let makeGetRowsQuery = (~pgSchema) =>
     `SELECT "chain_id" as "chainId",

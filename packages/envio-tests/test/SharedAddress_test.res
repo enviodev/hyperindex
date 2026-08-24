@@ -1,8 +1,7 @@
 // https://github.com/enviodev/hyperindex/issues/1187
 //
-// One address indexed by two contract definitions. Each contract keeps its own
-// events, its own start block and its own handlers; the address is registered
-// once per contract rather than claimed by whichever got there first.
+// The address is registered once per contract rather than claimed by whichever
+// contract got there first.
 let _ = InternalTestIndexer.fromUserApi(
   ~configYaml=`
 name: shared-address

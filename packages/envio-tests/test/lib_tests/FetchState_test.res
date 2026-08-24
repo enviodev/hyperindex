@@ -2454,7 +2454,7 @@ describe("FetchState.getNextQuery & integration", () => {
     // Rollback to block 2: both DCs survive (regBlock <= 2)
     // Partition "0" (lfb=10 > 2) -> DELETED, addresses recreated as partition "1"
     // Partition "2" (lfb=2 <= 2) -> KEPT as partition "0" (IDs reset)
-    let fetchStateAfterRollback1 = fetchState->FetchState.rollback(~addressStore, ~targetBlockNumber=2)
+    let fetchStateAfterRollback1 = fetchState->FetchState.rollback(~rollbackedAddressStore=addressStore, ~targetBlockNumber=2)
     t.expect((fetchStateAfterRollback1)->TestAddresses.fetchState,
       ~message=`Rollbacks partitions: kept "0", recreated "1" from deleted`,
     ).toEqual(({
@@ -2498,7 +2498,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     // Rollback to block 1: dc2 and dc3 removed (regBlock=2 > 1)
     // Both partitions deleted (lfb > 1), surviving addresses [addr0, addr1] recreated
-    let fetchStateAfterRollback2 = fetchState->FetchState.rollback(~addressStore, ~targetBlockNumber=1)
+    let fetchStateAfterRollback2 = fetchState->FetchState.rollback(~rollbackedAddressStore=addressStore, ~targetBlockNumber=1)
     t.expect((fetchStateAfterRollback2)->TestAddresses.fetchState,
       ~message=`Both partitions deleted, surviving addresses recreated as partition "0"`,
     ).toEqual(({
@@ -2532,7 +2532,7 @@ describe("FetchState.getNextQuery & integration", () => {
     })->TestAddresses.fetchState)
 
     // Rollback to block -1: all DCs removed, only static addr0 survives
-    let fetchStateAfterRollback3 = fetchState->FetchState.rollback(~addressStore, ~targetBlockNumber=-1)
+    let fetchStateAfterRollback3 = fetchState->FetchState.rollback(~rollbackedAddressStore=addressStore, ~targetBlockNumber=-1)
     t.expect((fetchStateAfterRollback3)->TestAddresses.fetchState,
       ~message=`All DCs removed, only static addr0 recreated as partition "0"`,
     ).toEqual(({
@@ -2615,7 +2615,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     // resetPendingQueries must be called before rollback (removes in-flight queries)
     let fetchStateReset = fetchState->FetchState.resetPendingQueries
-    let fetchStateAfterRollback = fetchStateReset->FetchState.rollback(~addressStore, ~targetBlockNumber=1)
+    let fetchStateAfterRollback = fetchStateReset->FetchState.rollback(~rollbackedAddressStore=addressStore, ~targetBlockNumber=1)
 
     t.expect((fetchStateAfterRollback)->TestAddresses.fetchState,
       ~message=`Should keep Wildcard partition even if it's empty`,
@@ -5520,7 +5520,7 @@ describe("FetchState client-side address filtering", () => {
         makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToRegistration,
         makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToRegistration,
       ])
-    let rolledBack = collapsed->FetchState.rollback(~addressStore, ~targetBlockNumber=3)
+    let rolledBack = collapsed->FetchState.rollback(~rollbackedAddressStore=addressStore, ~targetBlockNumber=3)
     t.expect(
       (
         rolledBack.optimizedPartitions.clientFilteredContracts->Utils.Set.toArray,
@@ -5873,7 +5873,7 @@ describe("FetchState client-side address filtering", () => {
     // Rolling back to 40 keeps the address (registered at 20) and puts every
     // partition on the same frontier — nothing is left for a catch-up to cover,
     // so the address-free partition stands alone again.
-    let rolledBack = advancedCatchUp->FetchState.rollback(~addressStore, ~targetBlockNumber=40)
+    let rolledBack = advancedCatchUp->FetchState.rollback(~rollbackedAddressStore=addressStore, ~targetBlockNumber=40)
     t.expect(
       (advancedCatchUp->frontierShape, rolledBack->frontierShape),
       ~message="catch-up merges into the address-free partition instead of surviving the rollback",
@@ -5888,7 +5888,7 @@ describe("FetchState client-side address filtering", () => {
       ])
     // The catch-up is still at 19 after the rollback to 30, so it keeps its
     // range — now bounded by where the address-free partition was rolled back to.
-    let rolledBack = afterReg->FetchState.rollback(~addressStore, ~targetBlockNumber=30)
+    let rolledBack = afterReg->FetchState.rollback(~rollbackedAddressStore=addressStore, ~targetBlockNumber=30)
     t.expect(
       rolledBack->frontierShape,
       ~message="catch-up survives with its merge block capped at the rollback target",

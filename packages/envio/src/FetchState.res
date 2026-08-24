@@ -2840,11 +2840,11 @@ Always recreates optimized partitions to avoid duplicate addresses:
 - Non-wildcard with lfb <= target: keep, adjust pending queries and mergeBlock
 - Non-wildcard with lfb > target: delete, track addresses for recreation
 */
-// The caller must have pruned `addressStore` to the same target first — it
-// owns what the storage has to delete, and this reads the pruned store as the
-// source of truth for partition cleanup: an address survives iff
+// The caller must have pruned the store to the same target first — it owns what
+// the storage has to delete, and this reads the pruned store as the source of
+// truth for partition cleanup: an address survives iff
 // `filterByRegistrationBlock` keeps it.
-let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber) => {
+let rollback = (fetchState: t, ~rollbackedAddressStore: AddressStore.t, ~targetBlockNumber) => {
   let keptPartitions = []
   let nextKeptIdRef = ref(0)
   let registeringSetsByContract: dict<AddressSet.t> = Dict.make()
@@ -2924,7 +2924,7 @@ let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber
   // Recreate partitions from deleted partition addresses
   let optimizedPartitions = createPartitions(
     ~registeringSetsByContract,
-    ~addressStore,
+    ~addressStore=rollbackedAddressStore,
     ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
     ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
     ~normalSelection=fetchState.normalSelection,

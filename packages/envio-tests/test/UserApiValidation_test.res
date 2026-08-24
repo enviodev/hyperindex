@@ -170,8 +170,6 @@ chains:
         address: "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9"
 `,
     )
-    // Both contracts keep the address, spelled the way the chain's address
-    // format renders it.
     t.expect(
       (config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts->Array.map(contract => (
         contract.name,

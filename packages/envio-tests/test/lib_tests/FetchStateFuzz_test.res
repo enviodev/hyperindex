@@ -259,7 +259,7 @@ let runSeed = (~seed, ~ops) => {
       let target = (rng() *. upper->Int.toFloat)->Float.toInt
       run.fetchState =
         run.fetchState->FetchState.rollback(
-          ~addressStore=run.addressStore,
+          ~rollbackedAddressStore=run.addressStore,
           ~targetBlockNumber=target,
         )
       run->log(`rollback->${target->Int.toString}`)
