@@ -3662,6 +3662,49 @@ describe("SourceManager height subscription", () => {
     t.expect((pollsAdded, await waiting)).toStrictEqual((1, 111))
   })
 
+  Async.it("Leaves no stall timer behind when recruiting a fallback answers the wait", async t => {
+    Vi.useFakeTimers()
+    let stallTimeout = 100
+    let sync = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
+    let fallback = MockSource.make(
+      [#getHeightOrThrow],
+      ~sourceFor=Fallback,
+      ~pollingInterval=10_000,
+    )
+    let sourceManager = SourceManager.make(
+      ~isRealtime=false,
+      ~sources=[sync.source, fallback.source],
+      ~newBlockStallTimeout=stallTimeout,
+    )
+
+    let first =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=false,
+        ~knownHeight=100,
+        ~reducedPolling=false,
+      )
+    await Vi.advanceTimersByTimeAsync(stallTimeout)
+    fallback.resolveGetHeightOrThrow(105)
+    let firstHeight = await first
+
+    // The fallback already knows a height past this one, so recruiting it
+    // answers the wait inside the stall callback that recruited it. Anything the
+    // callback goes on to do belongs to a wait that is over — and a timer armed
+    // after the cleanup has run is one nothing can ever clear.
+    let second =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=false,
+        ~knownHeight=101,
+        ~reducedPolling=false,
+      )
+    await Vi.advanceTimersByTimeAsync(stallTimeout)
+    let secondHeight = await second
+    let timersLeftBehind = Vi.getTimerCount()
+    Vi.useRealTimers()
+
+    t.expect((firstHeight, secondHeight, timersLeftBehind)).toStrictEqual((105, 105, 0))
+  })
+
   Async.it("Keeps covering a stream that goes quiet again after the stall", async t => {
     let stallTimeout = 100
     let mock = MockSource.make(

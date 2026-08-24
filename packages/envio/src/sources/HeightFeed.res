@@ -31,11 +31,16 @@ type t = {
   mutable waiters: array<waiter>,
   mutable unsubscribe: option<unit => unit>,
   mutable streamLive: bool,
-  // The stream says it is connected but hasn't delivered since it said so:
-  // either it just connected and its catch-up hasn't landed, or the wait above
-  // sat through its whole stall window in silence. Polling covers the source
-  // until a pushed height proves the stream is carrying them again.
-  mutable streamUnproven: bool,
+  // The stream connected but has not shown yet that it closed the gap the
+  // connect left: a connect only ever delivers the *next* block, so until its
+  // catch-up lands or a height arrives, the head it connected on is unaccounted
+  // for.
+  mutable connectionUnproven: bool,
+  // The wait above sat out a whole window hearing nothing from a stream that
+  // says it is connected. Any push at all answers that — even one of a height
+  // already known, which is the stream delivering — where the gap above needs a
+  // height that actually advances.
+  mutable pollDespiteStream: bool,
   mutable polling: bool,
   // Ends the poll loop's sleep early, so a waiter arriving mid-interval doesn't
   // wait out a sleep that started for someone else.
@@ -64,7 +69,8 @@ let make = (~source: Source.t, ~recordRequestStats, ~getHeightRetryInterval): t 
   waiters: [],
   unsubscribe: None,
   streamLive: false,
-  streamUnproven: false,
+  connectionUnproven: false,
+  pollDespiteStream: false,
   polling: false,
   wakePoll: None,
   pollRetry: 0,
@@ -105,7 +111,8 @@ let sample = (feed: t): sample => {
 // The loop runs exactly while somebody is waiting and nothing is proving that
 // the stream delivers.
 let shouldPoll = (feed: t) =>
-  feed.waiters->Array.length > 0 && (!feed.streamLive || feed.streamUnproven)
+  feed.waiters->Array.length > 0 &&
+    (!feed.streamLive || feed.connectionUnproven || feed.pollDespiteStream)
 
 let wake = (feed: t) =>
   switch feed.wakePoll {
@@ -236,7 +243,7 @@ let catchUp = async (feed: t, ~generation) =>
     // lands after its connection was replaced would otherwise retire the polling
     // covering a replacement that has delivered nothing.
     if generation === feed.connectionGeneration {
-      feed.streamUnproven = false
+      feed.connectionUnproven = false
       feed->wakeIfIdle
     }
   } catch {
@@ -253,14 +260,19 @@ let handlePushedHeight = (feed: t, height) =>
   if height > feed.knownHeight {
     feed.recordRequestStats([{Source.method: "heightPush", seconds: 0.}])
 
-    // A height that advances is the stream proving it still carries them. The
-    // head re-emitted on reconnect proves nothing — it is exactly what the
-    // catch-up would have fetched anyway.
-    feed.streamUnproven = false
+    // A height that advances accounts for the gap a connect leaves as well as
+    // showing the stream is delivering.
+    feed.connectionUnproven = false
+    feed.pollDespiteStream = false
     feed->recordHeight(height)
     feed->wakeIfIdle
   } else {
     feed.recordRequestStats([{Source.method: "heightPushIgnored", seconds: 0.}])
+    // Not a height worth having — the head a stream re-emits on reconnect is
+    // what its catch-up is already fetching — but it is the stream delivering,
+    // which is all the silence behind a poke ever claimed otherwise.
+    feed.pollDespiteStream = false
+    feed->wakeIfIdle
   }
 
 let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
@@ -273,7 +285,7 @@ let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
 
       // Live is a claim, not a delivery: polling keeps covering the source until
       // the catch-up lands or a height arrives.
-      feed.streamUnproven = true
+      feed.connectionUnproven = true
       // Whoever was waiting is already being polled for — the loop cannot have
       // stopped while a waiter sat behind a stream that was not live — so the
       // catch-up is all this moment adds.
@@ -288,7 +300,8 @@ let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
       feed->recordDisconnect(~reason)
     }
     feed.streamLive = false
-    feed.streamUnproven = false
+    feed.connectionUnproven = false
+    feed.pollDespiteStream = false
     feed.connectionGeneration = feed.connectionGeneration + 1
     feed->startPolling
     // The counters say a stream is flapping and how often, but only the
@@ -332,7 +345,8 @@ let stop = (feed: t) => {
       feed->recordDisconnect(~reason="unsubscribed")
     }
     feed.streamLive = false
-    feed.streamUnproven = false
+    feed.connectionUnproven = false
+    feed.pollDespiteStream = false
     feed.connectionGeneration = feed.connectionGeneration + 1
     // Whoever is still waiting has nothing pushing for them now. Being benched
     // is a capability verdict, not an outage: the source can still answer a
@@ -377,7 +391,7 @@ let onHeightAbove = (feed: t, ~knownHeight, ~interval, ~onHeight) =>
 let poke = (feed: t) =>
   // Nobody waiting means nobody to poll for, and setting the flag anyway would
   // leave it sitting there to make the next wait poll a stream that is fine.
-  if feed.waiters->Array.length > 0 && feed.streamLive && !feed.streamUnproven {
-    feed.streamUnproven = true
+  if feed.waiters->Array.length > 0 && feed.streamLive && !feed.pollDespiteStream {
+    feed.pollDespiteStream = true
     feed->startPolling
   }

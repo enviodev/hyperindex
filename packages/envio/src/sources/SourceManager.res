@@ -797,7 +797,7 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
       // keep-alives flowing while it stops sending heights would hang it
       // indefinitely, since its own staleness detector never trips.
       let stallTimeoutId = ref(None)
-      let rec armStallTimeout = (~recruitFallbacks) =>
+      let rec armStallTimeout = (~recruitFallbacks, ~delay) =>
         stallTimeoutId :=
           Some(
             setTimeout(() => {
@@ -849,14 +849,23 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
                 // whether the polling recovers — a stream that has to be covered
                 // this way was silently costing a stall window per block, which
                 // is worth saying out loud — but it is said once per wait.
-                watched->Array.forEach(sourceState => sourceState.feed->HeightFeed.poke)
+                // Recruiting a fallback can answer the wait on the spot, from a
+                // height it already knew. Nothing below is for a wait that is
+                // over — least of all arming another timer, which the cleanup
+                // that just ran can no longer reach.
+                if !settled.contents {
+                  watched->Array.forEach(sourceState => sourceState.feed->HeightFeed.poke)
 
-                armStallTimeout(~recruitFallbacks=false)
+                  // Spread the repeats: every indexer on one provider stalls in
+                  // the same instant, and a fixed period would keep them polling
+                  // in lockstep for as long as the chain stays quiet.
+                  armStallTimeout(~recruitFallbacks=false, ~delay=Utils.jitter(stallTimeout))
+                }
               }
-            }, stallTimeout),
+            }, delay),
           )
 
-      armStallTimeout(~recruitFallbacks=true)
+      armStallTimeout(~recruitFallbacks=true, ~delay=stallTimeout)
       cleanups
       ->Array.push(
         () =>

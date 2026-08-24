@@ -86,14 +86,14 @@ describe("HeightStream reconnect driver", () => {
     // Every indexer on one provider loses its stream in the same instant when
     // that provider blinks; reconnecting them all on one schedule is what turns
     // a blip into a stampede.
-    let samples = Belt.Array.makeBy(200, _ => HeightStream.jitter(1_000))
+    let samples = Belt.Array.makeBy(200, _ => Utils.jitter(1_000))
     let first = samples->Array.getUnsafe(0)
 
     t.expect((
       samples->Array.every(v => v >= 500 && v < 1_000),
       samples->Array.some(v => v !== first),
       // Nothing to spread on a first connection, which nothing preceded.
-      HeightStream.jitter(0),
+      Utils.jitter(0),
     )).toStrictEqual((true, true, 0))
   })
 

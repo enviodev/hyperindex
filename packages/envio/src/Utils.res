@@ -18,6 +18,13 @@ external importPathWithJson: (
   "default": JSON.t,
 }> = "import"
 
+// Half the delay fixed, half spread across it. Every indexer pointed at one
+// provider loses its stream, or gives up on a quiet chain, in the same instant
+// that provider blinks, and putting them all back on the same schedule is how a
+// blip becomes a stampede.
+let jitter = delay =>
+  delay === 0 ? 0 : delay / 2 + (Math.random() *. (delay / 2)->Int.toFloat)->Float.toInt
+
 let delay = milliseconds =>
   Promise.make((resolve, _) => {
     let _interval = setTimeout(_ => {

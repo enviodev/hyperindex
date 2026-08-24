@@ -259,6 +259,38 @@ describe("HeightFeed stream state", () => {
     )).toStrictEqual((2, 2, 3, [101], 3))
   })
 
+  Async.it("Takes a poke back on any push, even of a height it already knew", async t => {
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let (feed, _stats) = makeFeed(mock)
+    feed->HeightFeed.enableStream
+    let (_heights, unsubscribe) = feed->watch(~knownHeight=100)
+    mock.setHeightSubscriptionStatus(Live)
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+
+    feed->HeightFeed.poke
+    let pollsAfterPoke = mock.getHeightOrThrowCalls->Array.length
+
+    // The poll beat the stream to the head, so what the stream pushes next is a
+    // height already known. It is still the stream delivering, which is all the
+    // poke was ever complaining it did not do.
+    mock.triggerHeightSubscription(100)
+    await Utils.delay(0)
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+    unsubscribe()
+    await Utils.delay(0)
+
+    // Nothing for the next wait to inherit: the stream is live and delivering.
+    let (_later, _unsubscribeLater) = feed->watch(~knownHeight=100)
+    await Utils.delay(10)
+
+    t.expect((pollsAfterPoke, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((3, 3))
+  })
+
   Async.it("Ignores a poke when nobody is waiting", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
