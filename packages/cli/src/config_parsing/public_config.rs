@@ -1,6 +1,5 @@
 use super::{
-    entity_parsing::{self, IndexFieldDirection},
-    field_types,
+    entity_parsing, field_types,
     human_config::{self, evm::For, ColumnNameFormat},
     system_config::{
         self, field_type_to_arg_type, named_field_to_arg_def, Abi, ChainIdMode, Ecosystem,
@@ -843,10 +842,7 @@ impl SystemConfig {
                             .iter()
                             .map(|f| CompositeIndexJson {
                                 field_name: f.column.field_name().to_string(),
-                                direction: match f.direction {
-                                    IndexFieldDirection::Asc => "Asc".to_string(),
-                                    IndexFieldDirection::Desc => "Desc".to_string(),
-                                },
+                                direction: f.direction.as_pascal_str().to_string(),
                             })
                             .collect()
                     })

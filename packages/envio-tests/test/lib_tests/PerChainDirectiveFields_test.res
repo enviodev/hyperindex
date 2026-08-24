@@ -111,7 +111,7 @@ type Transfer @storage(clickhouse: {orderBy: ["chain_id"]}) {
 }
 `,
       ),
-    ).toBe(`schema.graphql:1:15: Invalid \`clickhouse.orderBy\` on \`Transfer\`: \`chain_id\` is not a column of the entity.
+    ).toBe(`schema.graphql:2:15: Invalid \`clickhouse.orderBy\` on \`Transfer\`: \`chain_id\` is not a column of the entity.
   Spell the chain column as \`chainId\`, the way it's named in the schema, whatever \`column_name_format\` the storage uses.`)
   })
 
@@ -126,7 +126,7 @@ type Transfer @crossChain @storage(clickhouse: {orderBy: ["chainId"]}) {
 }
 `,
       ),
-    ).toBe(`schema.graphql:1:27: Invalid \`clickhouse.orderBy\` on \`Transfer\`: \`chainId\` is not a column of the entity.
+    ).toBe(`schema.graphql:2:27: Invalid \`clickhouse.orderBy\` on \`Transfer\`: \`chainId\` is not a column of the entity.
   envio only appends a chain column to per-chain entities, and \`Transfer\` is \`@crossChain\`. Drop \`@crossChain\`, or declare a \`chainId\` field yourself.`)
   })
 
@@ -141,7 +141,7 @@ type Transfer @storage(clickhouse: {orderBy: ["chainId"]}) {
 }
 `,
       ),
-    ).toBe(`schema.graphql:1:15: Invalid \`clickhouse.orderBy\` on \`Transfer\`: \`chainId\` is not a column of the entity.
+    ).toBe(`schema.graphql:2:15: Invalid \`clickhouse.orderBy\` on \`Transfer\`: \`chainId\` is not a column of the entity.
   envio only appends a chain column to per-chain entities, and entities are cross-chain unless config.yaml sets \`disable_default_cross_chain: true\`. Set it, or declare a \`chainId\` field yourself.`)
   })
 
@@ -186,7 +186,7 @@ type Transfer @storage(clickhouse: {orderBy: ["blockNumber"]}) {
 }
 `,
       ),
-    ).toBe(`schema.graphql:1:15: Invalid \`clickhouse.orderBy\` on \`Transfer\`: \`blockNumber\` is not a column of the entity.
+    ).toBe(`schema.graphql:2:15: Invalid \`clickhouse.orderBy\` on \`Transfer\`: \`blockNumber\` is not a column of the entity.
   Available columns: \`timestamp\`, \`chainId\`.`)
   })
 })
@@ -225,7 +225,7 @@ type Transfer @index(fields: ["chainId"]) {
 }
 `,
       ),
-    ).toBe(`schema.graphql:1:15: Invalid \`@index\` on \`Transfer\`: \`chainId\` is already part of the primary key, and on its own it has one value per chain — too few to index by.
+    ).toBe(`schema.graphql:2:15: Invalid \`@index\` on \`Transfer\`: \`chainId\` is already part of the primary key, and on its own it has one value per chain — too few to index by.
   List it with another field, e.g. \`@index(fields: ["chainId", "timestamp"])\`.`)
   })
 
@@ -240,7 +240,7 @@ type Transfer @crossChain @index(fields: ["chainId", "timestamp"]) {
 }
 `,
       ),
-    ).toBe(`schema.graphql:1:27: Invalid \`@index\` on \`Transfer\`: \`chainId\` is not a column of the entity.
+    ).toBe(`schema.graphql:2:27: Invalid \`@index\` on \`Transfer\`: \`chainId\` is not a column of the entity.
   envio only appends a chain column to per-chain entities, and \`Transfer\` is \`@crossChain\`. Drop \`@crossChain\`, or declare a \`chainId\` field yourself.`)
   })
 
@@ -255,7 +255,7 @@ type Transfer @index(fields: ["db_write_timestamp", "timestamp"]) {
 }
 `,
       ),
-    ).toBe(`schema.graphql:1:15: Invalid \`@index\` on \`Transfer\`: \`db_write_timestamp\` is not a column of the entity.
+    ).toBe(`schema.graphql:2:15: Invalid \`@index\` on \`Transfer\`: \`db_write_timestamp\` is not a column of the entity.
   Available columns: \`timestamp\`, \`chainId\`.`)
   })
 })

@@ -1389,7 +1389,7 @@ type Token {
   value: BigInt!
 }
 `,
-      "schema.graphql:1:1: No 'id' field found on entity Token. Please add an 'id' field to your entity.",
+      "schema.graphql:2:1: No 'id' field found on entity Token. Please add an 'id' field to your entity.",
     ),
     (
       "rejects duplicate fields",
@@ -1400,7 +1400,7 @@ type Token {
   value: String!
 }
 `,
-      "schema.graphql:1:1: Found fields with duplicate names on Entity Token: 'value'",
+      "schema.graphql:2:1: Found fields with duplicate names on Entity Token: 'value'",
     ),
     (
       "rejects an index that references a missing field",
@@ -1409,7 +1409,7 @@ type Token @index(fields: ["missing"]) {
   id: ID!
 }
 `,
-      `schema.graphql:1:12: Invalid \`@index\` on \`Token\`: \`missing\` is not a column of the entity.
+      `schema.graphql:2:12: Invalid \`@index\` on \`Token\`: \`missing\` is not a column of the entity.
   The entity declares no columns besides \`id\`.`,
     ),
     (
@@ -1419,7 +1419,7 @@ type Token @storage(redis: true) {
   id: ID!
 }
 `,
-      "schema.graphql:1:12: Invalid @storage directive on \`Token\`. Unknown argument \`redis\`. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
+      "schema.graphql:2:12: Invalid @storage directive on \`Token\`. Unknown argument \`redis\`. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
     ),
     (
       "rejects entities routed to a disabled backend",
@@ -1438,7 +1438,7 @@ type Token {
   owner: String @derivedFrom(field: "tokens") @index
 }
 `,
-      "schema.graphql:3:3: Failed parsing field owner on entity Token: A field cannot be both @derivedFrom and @index: owner",
+      "schema.graphql:4:3: Failed parsing field owner on entity Token: A field cannot be both @derivedFrom and @index: owner",
     ),
     (
       "rejects id fields with an index directive",
@@ -1447,7 +1447,7 @@ type Token {
   id: ID! @index
 }
 `,
-      "schema.graphql:2:3: Failed parsing field id on entity Token: The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove the @index or @derivedFrom directive from field id",
+      "schema.graphql:3:3: Failed parsing field id on entity Token: The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove the @index or @derivedFrom directive from field id",
     ),
     (
       "rejects duplicate derivedFrom directives",
@@ -1457,7 +1457,7 @@ type Token {
   owner: String @derivedFrom(field: "one") @derivedFrom(field: "two")
 }
 `,
-      "schema.graphql:3:3: Failed parsing field owner on entity Token: Cannot use more than one of the same directive on field owner",
+      "schema.graphql:4:3: Failed parsing field owner on entity Token: Cannot use more than one of the same directive on field owner",
     ),
     (
       "rejects duplicate field index directives",
@@ -1467,7 +1467,7 @@ type Token {
   value: String @index @index
 }
 `,
-      "schema.graphql:3:3: Failed parsing field value on entity Token: Cannot use more than one of the same directive on field value",
+      "schema.graphql:4:3: Failed parsing field value on entity Token: Cannot use more than one of the same directive on field value",
     ),
     (
       "rejects duplicate entity index definitions",
@@ -1477,7 +1477,7 @@ type Token @index(fields: ["value"]) @index(fields: ["value"]) {
   value: String!
 }
 `,
-      `schema.graphql:1:1: Invalid \`@index\` on \`Token\`: the index over \`value\` is declared twice.
+      `schema.graphql:2:38: Invalid \`@index\` on \`Token\`: the index over \`value\` is declared twice.
   Remove the duplicate \`@index\` directive.`,
     ),
     (
@@ -1488,7 +1488,7 @@ type Token @index(fields: ["value"]) {
   value: String! @index
 }
 `,
-      `schema.graphql:1:12: Invalid \`@index\` on \`Token\`: \`value\` is already marked \`@index\` on the field.
+      `schema.graphql:2:12: Invalid \`@index\` on \`Token\`: \`value\` is already marked \`@index\` on the field.
   Keep one of them — the \`@index\` on the field, or \`@index(fields: ["value"])\` on the entity.`,
     ),
     (
@@ -1503,7 +1503,7 @@ type Token {
   owner: User!
 }
 `,
-      `schema.graphql:1:11: Invalid \`@index\` on \`User\`: \`tokens\` is a @derivedFrom field, which has no column.
+      `schema.graphql:2:11: Invalid \`@index\` on \`User\`: \`tokens\` is a @derivedFrom field, which has no column.
   Use a stored field instead.`,
     ),
     (
@@ -1514,7 +1514,7 @@ type Token @index(fields: [["value", "SIDEWAYS"]]) {
   value: String!
 }
 `,
-      "schema.graphql:1:12: Invalid `@index` on `Token`: Failed to get fields in index: Index direction must be \"ASC\" or \"DESC\", got \"SIDEWAYS\"",
+      "schema.graphql:2:12: Invalid `@index` on `Token`: Failed to get fields in index: Index direction must be \"ASC\" or \"DESC\", got \"SIDEWAYS\"",
     ),
     (
       "rejects malformed directional index entries",
@@ -1524,7 +1524,7 @@ type Token @index(fields: [["value", "DESC", "extra"]]) {
   value: String!
 }
 `,
-      "schema.graphql:1:12: Invalid `@index` on `Token`: Failed to get fields in index: Index field with direction must be a list of exactly 2 elements: [\"fieldName\", \"ASC\" or \"DESC\"]. Got 3 elements.",
+      "schema.graphql:2:12: Invalid `@index` on `Token`: Failed to get fields in index: Index field with direction must be a list of exactly 2 elements: [\"fieldName\", \"ASC\" or \"DESC\"]. Got 3 elements.",
     ),
     (
       "rejects config directives on unsupported scalar types",
@@ -1534,7 +1534,7 @@ type Token {
   value: String @config(precision: 76)
 }
 `,
-      "schema.graphql:3:3: Failed parsing field value on entity Token: The config directive is only applicable to BigInt and BigDecimal scalar types. Field 'value'",
+      "schema.graphql:4:3: Failed parsing field value on entity Token: The config directive is only applicable to BigInt and BigDecimal scalar types. Field 'value'",
     ),
     (
       "rejects unknown BigInt config arguments",
@@ -1544,7 +1544,7 @@ type Token {
   value: BigInt @config(scale: 2)
 }
 `,
-      "schema.graphql:3:3: Failed parsing field value on entity Token: The config directive on a BigInt should only have a 'precision' parameter. Unknown parameter 'scale'. Field 'value'",
+      "schema.graphql:4:3: Failed parsing field value on entity Token: The config directive on a BigInt should only have a 'precision' parameter. Unknown parameter 'scale'. Field 'value'",
     ),
     (
       "rejects unknown BigDecimal config arguments",
@@ -1554,7 +1554,7 @@ type Token {
   value: BigDecimal @config(precision: 20, scale: 2, rounding: 1)
 }
 `,
-      "schema.graphql:3:3: Failed parsing field value on entity Token: The config directive on a BigDecimal should only have 'precision' and 'scale' parameters. Unknown parameter(s) 'rounding'. Field 'value'",
+      "schema.graphql:4:3: Failed parsing field value on entity Token: The config directive on a BigDecimal should only have 'precision' and 'scale' parameters. Unknown parameter(s) 'rounding'. Field 'value'",
     ),
     (
       "requires both BigDecimal config arguments",
@@ -1564,7 +1564,7 @@ type Token {
   value: BigDecimal @config(precision: 20)
 }
 `,
-      "schema.graphql:3:3: Failed parsing field value on entity Token: The config directive on a BigDecimal must have both 'precision' and 'scale' parameters. Field 'value'",
+      "schema.graphql:4:3: Failed parsing field value on entity Token: The config directive on a BigDecimal must have both 'precision' and 'scale' parameters. Field 'value'",
     ),
     (
       "rejects non-boolean storage arguments",
@@ -1573,7 +1573,7 @@ type Token @storage(postgres: "yes") {
   id: ID!
 }
 `,
-      "schema.graphql:1:12: Invalid @storage directive on \`Token\`. Argument \`postgres\` must be a boolean. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
+      "schema.graphql:2:12: Invalid @storage directive on \`Token\`. Argument \`postgres\` must be a boolean. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
     ),
     (
       "rejects duplicate storage directives",
@@ -1582,7 +1582,7 @@ type Token @storage(postgres: true) @storage(clickhouse: true) {
   id: ID!
 }
 `,
-      "schema.graphql:1:12: Invalid @storage directive on \`Token\`. Only one @storage directive is allowed per entity. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
+      "schema.graphql:2:12: Invalid @storage directive on \`Token\`. Only one @storage directive is allowed per entity. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
     ),
     (
       "rejects duplicate storage arguments",
@@ -1591,7 +1591,7 @@ type Token @storage(postgres: true, postgres: false) {
   id: ID!
 }
 `,
-      "schema.graphql:1:12: Invalid @storage directive on \`Token\`. Argument \`postgres\` is specified more than once. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
+      "schema.graphql:2:12: Invalid @storage directive on \`Token\`. Argument \`postgres\` is specified more than once. Expected args from {postgres, clickhouse}: \`postgres\` takes a boolean, \`clickhouse\` takes a boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}).",
     ),
     (
       "rejects storage directives that disable every backend",
@@ -1600,7 +1600,7 @@ type Token @storage(postgres: false, clickhouse: false) {
   id: ID!
 }
 `,
-      "schema.graphql:1:12: @storage on \`Token\` enables no storage. At least one of {postgres, clickhouse} must be true.",
+      "schema.graphql:2:12: @storage on \`Token\` enables no storage. At least one of {postgres, clickhouse} must be true.",
     ),
     (
       "rejects unknown clickhouse table options",
@@ -1609,7 +1609,7 @@ type Token @storage(clickhouse: {indexGranularity: 1024}) {
   id: ID!
 }
 `,
-      "schema.graphql:1:12: Invalid @storage directive on \`Token\`. Unknown \`clickhouse\` option \`indexGranularity\`. Expected options from {partitionBy, orderBy, ttl, skippingIndexes}, e.g. clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}.",
+      "schema.graphql:2:12: Invalid @storage directive on \`Token\`. Unknown \`clickhouse\` option \`indexGranularity\`. Expected options from {partitionBy, orderBy, ttl, skippingIndexes}, e.g. clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \"timestamp + INTERVAL 2 YEAR\"}.",
     ),
     (
       "rejects empty storage directives",
@@ -1618,7 +1618,7 @@ type Token @storage {
   id: ID!
 }
 `,
-      "schema.graphql:1:12: @storage on \`Token\` enables no storage. At least one of {postgres, clickhouse} must be true.",
+      "schema.graphql:2:12: @storage on \`Token\` enables no storage. At least one of {postgres, clickhouse} must be true.",
     ),
     (
       // Entities are exposed on the handler context under their capitalized

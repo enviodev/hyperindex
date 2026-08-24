@@ -1,9 +1,8 @@
 open Vitest
 
-// `@storage(clickhouse: {orderBy})` names the columns that lead the history
-// table's sorting key. A ClickHouse sorting key can't hold a nullable, array or
-// String-stored column, so those are rejected against the schema rather than
-// left to fail at CREATE TABLE.
+// A ClickHouse sorting key can't hold a nullable, array or String-stored
+// column, so those are rejected against the schema rather than left to fail at
+// CREATE TABLE.
 
 let parse = schema =>
   InternalTestIndexer.fromUserApi(
@@ -38,7 +37,7 @@ type Token @storage(clickhouse: {orderBy: ["missing"]}) {
   timestamp: Timestamp!
 }
 `),
-    ).toBe(`schema.graphql:1:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`missing\` is not a column of the entity.
+    ).toBe(`schema.graphql:2:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`missing\` is not a column of the entity.
   Available columns: \`timestamp\`.`)
   })
 
@@ -49,7 +48,7 @@ type Token @storage(clickhouse: {orderBy: ["id"]}) {
   id: ID!
 }
 `),
-    ).toBe(`schema.graphql:1:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`id\` is already the sorting key when no \`orderBy\` is given.
+    ).toBe(`schema.graphql:2:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`id\` is already the sorting key when no \`orderBy\` is given.
   List only the columns to sort by instead of \`id\`.`)
   })
 
@@ -61,7 +60,7 @@ type Token @storage(clickhouse: {orderBy: ["timestamp", "timestamp"]}) {
   timestamp: Timestamp!
 }
 `),
-    ).toBe(`schema.graphql:1:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`timestamp\` is listed twice.
+    ).toBe(`schema.graphql:2:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`timestamp\` is listed twice.
   List each column once — repeating it adds nothing to the sorting key.`)
   })
 
@@ -73,7 +72,7 @@ type Token @storage(clickhouse: {orderBy: ["timestamp"]}) {
   timestamp: Timestamp
 }
 `),
-    ).toBe(`schema.graphql:1:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`timestamp\` is nullable, and ClickHouse won't sort by a nullable column.
+    ).toBe(`schema.graphql:2:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`timestamp\` is nullable, and ClickHouse won't sort by a nullable column.
   Make the field non-nullable to sort by it.`)
   })
 
@@ -85,7 +84,7 @@ type Token @storage(clickhouse: {orderBy: ["tags"]}) {
   tags: [String!]!
 }
 `),
-    ).toBe(`schema.graphql:1:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`tags\` is an array, and ClickHouse won't sort by an array column.
+    ).toBe(`schema.graphql:2:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`tags\` is an array, and ClickHouse won't sort by an array column.
   Sort by a scalar field instead.`)
   })
 
@@ -102,7 +101,7 @@ type Transfer @storage(clickhouse: true) {
   token: Token!
 }
 `),
-    ).toBe(`schema.graphql:1:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`transfers\` is a @derivedFrom field, which has no column.
+    ).toBe(`schema.graphql:2:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`transfers\` is a @derivedFrom field, which has no column.
   Use a stored field instead.`)
   })
 })
@@ -132,13 +131,13 @@ type Token @storage(clickhouse: {orderBy: ["amount"]}) {
 
   it("Rejects a BigDecimal with no precision", t => {
     t.expect(parseError(schema("BigDecimal", ""))).toBe(
-      "Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigDecimal that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N)` with N <= 38 to the BigDecimal it stores so it sorts as a numeric Decimal.",
+      "Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigDecimal that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N, scale: M)` with M <= N <= 38 to the BigDecimal it stores so it sorts as a numeric Decimal.",
     )
   })
 
   it("Rejects a BigDecimal whose scale overflows its precision", t => {
     t.expect(parseError(schema("BigDecimal", " @config(precision: 10, scale: 20)"))).toBe(
-      "Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigDecimal that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N)` with N <= 38 to the BigDecimal it stores so it sorts as a numeric Decimal.",
+      "Invalid storage for `Token`. `clickhouse.orderBy` sorts by `amount`, which stores a BigDecimal that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N, scale: M)` with M <= N <= 38 to the BigDecimal it stores so it sorts as a numeric Decimal.",
     )
   })
 
