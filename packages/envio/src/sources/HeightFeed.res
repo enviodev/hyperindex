@@ -129,6 +129,18 @@ let wakeIfIdle = (feed: t) =>
     feed->wake
   }
 
+// Wherever the waiter list shrinks. A poke belongs to the wait that made it:
+// "nothing heard from this stream for a whole window" is that wait's complaint,
+// and with nobody left waiting there is no one to carry it into the next one —
+// which would otherwise poll a live stream at full cadence until it happened to
+// push.
+let releaseWaiter = (feed: t) => {
+  if feed.waiters->Array.length === 0 {
+    feed.pollDespiteStream = false
+  }
+  feed->wakeIfIdle
+}
+
 // Collect before firing: a callback is free to cancel waiters — the wait above
 // cancels all of its own the moment one answers — and iterating the live array
 // while it changes underneath is how that goes wrong.
@@ -147,7 +159,7 @@ let fireWaiters = (feed: t, height) => {
     )
     // Answering the last waiter is one of the ways the loop stops being needed,
     // and the callbacks just run may have cancelled others.
-    feed->wakeIfIdle
+    feed->releaseWaiter
   }
 }
 
@@ -390,7 +402,7 @@ let onHeightAbove = (feed: t, ~knownHeight, ~interval, ~onHeight) =>
       // inside onHeight where the waiter has already been taken out.
       feed.waiters = feed.waiters->Array.filter(w => w !== waiter)
       // The loop's reason to run may have just left with it.
-      feed->wakeIfIdle
+      feed->releaseWaiter
     }
   }
 

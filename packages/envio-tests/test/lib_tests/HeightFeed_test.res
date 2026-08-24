@@ -322,6 +322,36 @@ describe("HeightFeed stream state", () => {
     t.expect(mock.getHeightOrThrowCalls->Array.length).toEqual(pollsOnceClosed)
   })
 
+  Async.it("Drops a poke when the wait that made it ends", async t => {
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let (feed, _stats) = makeFeed(mock)
+    feed->HeightFeed.enableStream
+    let (_heights, _unsubscribe) = feed->watch(~knownHeight=100)
+    mock.setHeightSubscriptionStatus(Live)
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+
+    feed->HeightFeed.poke
+    let pollsWhilePoked = mock.getHeightOrThrowCalls->Array.length
+
+    // Answered by a height learned elsewhere — a query response, or a sibling
+    // source settling the wait — so no push ever comes to take the poke back.
+    feed->HeightFeed.recordHeight(101)
+    await Utils.delay(0)
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+
+    // The complaint belonged to a wait that is over. The next one starts on a
+    // stream that is live and delivering, and polls nothing.
+    let (_later, _unsubscribeLater) = feed->watch(~knownHeight=101)
+    await Utils.delay(10)
+
+    t.expect((pollsWhilePoked, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((3, 3))
+  })
+
   Async.it("Ignores a poke when nobody is waiting", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
