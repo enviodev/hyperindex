@@ -43,14 +43,8 @@ let fromStoredNames = indexNames
 
 let names = (mapping: t) => mapping.names
 
-let size = (mapping: t) => mapping.names->Array.length
-
-let idOf = (mapping: t, name) => mapping.idByName->Utils.Dict.dangerouslyGetNonOption(name)
-
-let has = (mapping: t, name) => mapping->idOf(name)->Option.isSome
-
 let idOfOrThrow = (mapping: t, name, ~context="") =>
-  switch mapping->idOf(name) {
+  switch mapping.idByName->Utils.Dict.dangerouslyGetNonOption(name) {
   | Some(id) => id
   | None =>
     JsError.throwWithMessage(

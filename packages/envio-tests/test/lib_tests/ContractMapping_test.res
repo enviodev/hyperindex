@@ -8,8 +8,6 @@ describe("ContractMapping", () => {
       "idOfA": mapping->ContractMapping.idOfOrThrow("A"),
       "idOfB": mapping->ContractMapping.idOfOrThrow("B"),
       "nameOf0": mapping->ContractMapping.nameOfOrThrow(0),
-      "hasUnknown": mapping->ContractMapping.has("C"),
-      "size": mapping->ContractMapping.size,
       // Declaration order must not reach the ids: both orders map identically.
       "matchesReversedDeclaration": mapping->ContractMapping.isEqual(
         ContractMapping.make(~names=["A", "B"]),
@@ -19,8 +17,6 @@ describe("ContractMapping", () => {
       "idOfA": 0,
       "idOfB": 1,
       "nameOf0": "A",
-      "hasUnknown": false,
-      "size": 2,
       "matchesReversedDeclaration": true,
     })
   })
