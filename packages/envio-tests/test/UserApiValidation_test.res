@@ -200,6 +200,31 @@ chains:
     )
   })
 
+  // Codegen capitalizes every config name before it reaches an identifier
+  // position, so a keyword of the generated languages is only ever a keyword in
+  // the YAML.
+  it("accepts contract and event names that are keywords of the generated languages", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: keyword-config
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: let
+        address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
+        events:
+          - event: module()
+          - event: switch()
+`,
+    )
+    t.expect(
+      (config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts->Array.map(
+        contract => (contract.name, contract.events->Array.map(event => event.name)),
+      ),
+    ).toEqual([("Let", ["module", "switch"])])
+  })
+
   it("rejects an address listed twice for one contract", t => {
     expectParseError(
       t,
@@ -890,14 +915,14 @@ chains:
       `
 name: reserved-contract-name
 contracts:
-  - name: module
+  - name: constructor
     events:
       - event: Transfer()
 chains:
   - id: 1
     start_block: 0
 `,
-      "Config parse error: The config contains reserved words for contract names: \"module\". They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.",
+      "Config parse error: The config contains reserved words for contract names: \"constructor\". They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.",
     ),
     (
       "rejects configs where every chain is skipped",
@@ -1680,6 +1705,26 @@ type user { id: ID! }
 type User { id: ID! }
 `,
       "Config parse error: Failed converting schema doc to schema struct: Schema contains entities whose names collide when capitalized. Each entity is exposed on the handler context under its capitalized name, so these must be unique: User (from User, user)",
+    ),
+    (
+      // The test indexer buckets a batch's changes in a dict keyed by entity
+      // name, and a plain object answers `constructor` from its prototype — so
+      // the bucket comes back as `Object` and the write throws on a missing
+      // `sets` array.
+      "rejects an entity named like an Object prototype key",
+      `
+type constructor { id: ID! }
+`,
+      "Config parse error: Failed converting schema doc to schema struct: Schema contains the following reserved keywords: constructor",
+    ),
+    (
+      // `Enum` is already exported by the `envio` module, and every entity is
+      // re-exported there under its capitalized name.
+      "rejects an entity whose capitalized name collides with an envio export",
+      `
+type enum { id: ID! }
+`,
+      "Config parse error: Failed converting schema doc to schema struct: Schema contains the following reserved keywords: enum",
     ),
   ]->Array.forEach(((name, schema, message)) => {
     it(name, t => expectParseError(t, ~schema, baseYaml, message))

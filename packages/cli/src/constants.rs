@@ -24,140 +24,6 @@ pub mod links {
 }
 
 pub mod reserved_keywords {
-    pub const JAVASCRIPT_RESERVED_WORDS: &[&str] = &[
-        // Not a keyword, but generated code indexes plain objects by these
-        // names, and an object answers `__proto__` from its prototype rather
-        // than from what was stored — so a name like this resolves to a bogus
-        // value instead of the one assigned to it.
-        "__proto__",
-        "abstract",
-        "arguments",
-        "await",
-        "boolean",
-        "break",
-        "byte",
-        "case",
-        "catch",
-        "char",
-        "class",
-        "const",
-        "continue",
-        "debugger",
-        "default",
-        "delete",
-        "do",
-        "double",
-        "else",
-        "enum",
-        "eval",
-        "export",
-        "extends",
-        "false",
-        "final",
-        "finally",
-        "float",
-        "for",
-        "function",
-        "goto",
-        "if",
-        "implements",
-        "import",
-        "in",
-        "instanceof",
-        "int",
-        "interface",
-        "let",
-        "long",
-        "native",
-        "new",
-        "null",
-        "package",
-        "private",
-        "protected",
-        "public",
-        "return",
-        "short",
-        "static",
-        "super",
-        "switch",
-        "synchronized",
-        "this",
-        "throw",
-        "throws",
-        "transient",
-        "true",
-        "try",
-        "typeof",
-        "var",
-        "void",
-        "volatile",
-        "while",
-        "with",
-        "yield",
-    ];
-
-    pub const TYPESCRIPT_RESERVED_WORDS: &[&str] = &[
-        "any",
-        "as",
-        "boolean",
-        "break",
-        "case",
-        "catch",
-        "class",
-        "const",
-        "constructor",
-        "continue",
-        "declare",
-        "default",
-        "delete",
-        "do",
-        "else",
-        "enum",
-        "export",
-        "extends",
-        "false",
-        "finally",
-        "for",
-        "from",
-        "function",
-        "get",
-        "if",
-        "implements",
-        "import",
-        "in",
-        "instanceof",
-        "interface",
-        "let",
-        "module",
-        "new",
-        "null",
-        "number",
-        "of",
-        "package",
-        "private",
-        "protected",
-        "public",
-        "require",
-        "return",
-        "set",
-        "static",
-        "string",
-        "super",
-        "switch",
-        "symbol",
-        "this",
-        "throw",
-        "true",
-        "try",
-        "type",
-        "typeof",
-        "var",
-        "void",
-        "while",
-        "with",
-        "yield",
-    ];
-
     pub const RESCRIPT_RESERVED_WORDS: &[&str] = &[
         "and",
         "as",
@@ -187,5 +53,21 @@ pub mod reserved_keywords {
         "with",
     ];
 
-    pub const ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES: &[&str] = &[];
+    /// Names a config or schema may not use. Every other identifier codegen
+    /// emits is capitalized first, which is why a keyword of the generated
+    /// languages is not on this list — only names that stay broken after that.
+    pub const RESERVED_NAMES: &[&str] = &[
+        // Generated code indexes plain objects by these names, and an object
+        // answers a prototype key from its prototype rather than from what was
+        // stored — so the lookup resolves to a bogus value instead of the one
+        // assigned to it. `constructor` is neutralized wherever a name is
+        // capitalized; `__proto__` starts with an underscore and survives
+        // capitalization untouched, which also makes it an illegal ReScript
+        // module name and variant constructor.
+        "__proto__",
+        "constructor",
+        // Every entity is re-exported from the `envio` module under its
+        // capitalized name, where `Enum` is already taken.
+        "enum",
+    ];
 }
