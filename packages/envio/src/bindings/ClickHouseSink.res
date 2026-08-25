@@ -83,6 +83,9 @@ type registeredTable = {
   // history table carries two columns beyond the entity's own.
   names: array<string>,
   kinds: array<int>,
+  // Whether each column accepts NULL, which decides whether a row with no value
+  // for it is stored as absent or refused.
+  nullable: array<bool>,
 }
 
 // Column payload as the Rust `ColumnValuesInput` object expects it: exactly one
@@ -157,15 +160,16 @@ external kindOfOrdinal: int => kind = "%identity"
 
 // A registered table: the handle its batches quote, and its columns with the
 // wire kind Rust resolved for each.
-type column = {name: string, kind: kind}
+type column = {name: string, kind: kind, isNullable: bool}
 type table = {handle: int, name: string, columns: array<column>}
 
-let makeTable = (~name, {handle, names, kinds}: registeredTable) => {
+let makeTable = (~name, {handle, names, kinds, nullable}: registeredTable) => {
   handle,
   name,
   columns: names->Array.mapWithIndex((name, index) => {
     name,
     kind: kinds->Array.getUnsafe(index)->kindOfOrdinal,
+    isNullable: nullable->Array.getUnsafe(index),
   }),
 }
 
@@ -200,6 +204,7 @@ let toText = (value: unknown) =>
 type builder = {
   name: string,
   kind: kind,
+  isNullable: bool,
   floats: Float64Array.t,
   unsigned: BigUint64Array.t,
   signed: BigInt64Array.t,
@@ -215,9 +220,10 @@ type builder = {
 
 // Only the storage the column's kind uses is allocated; the rest share one
 // empty array, since nothing ever reads or writes them.
-let makeBuilder = ({name, kind}: column, ~rows) => {
+let makeBuilder = ({name, kind, isNullable}: column, ~rows) => {
   name,
   kind,
+  isNullable,
   floats: kind === F64 ? Float64Array.fromLength(rows) : noFloats,
   unsigned: kind === U64 ? BigUint64Array.fromLength(rows) : noUnsigned,
   signed: kind === I64 ? BigInt64Array.fromLength(rows) : noSigned,
@@ -252,12 +258,8 @@ let markNull = (builder, ~row) => {
   }
 )
 
-// Writes one value into the column. `undefined`/`null` marks the row's null
-// bit; the slot keeps its zero value, which is what the column stores for it.
-let writeValue = (builder, ~row, value: unknown) =>
-  if value === %raw(`undefined`) || value === %raw(`null`) {
-    builder->markNull(~row)
-  } else {
+%%private(
+  let writePresent = (builder, ~row, value: unknown) =>
     switch builder.kind {
     | F64 => builder.floats->TypedArray.set(row, value->toNumber)
     | U64 =>
@@ -272,6 +274,34 @@ let writeValue = (builder, ~row, value: unknown) =>
       )
     | Text => builder.texts->Array.setUnsafe(row, value->toText)
     }
+)
+
+// Writes one value of a row the handler set. `undefined`/`null` marks the row's
+// null bit, which a column that accepts NULL stores as such — and which one that
+// does not has no way to store: RowBinary carries no "absent", so the row would
+// land holding the type's zero, a value the handler never chose and that nothing
+// downstream could tell from one it did.
+let writeValue = (builder, ~row, value: unknown) =>
+  if value === %raw(`undefined`) || value === %raw(`null`) {
+    if builder.isNullable {
+      builder->markNull(~row)
+    } else {
+      JsError.throwWithMessage(
+        `No value for the \`${builder.name}\` column, which is not nullable. Set the field before saving the entity, or make it optional in the schema.`,
+      )
+    }
+  } else {
+    builder->writePresent(~row, value)
+  }
+
+// Writes one value of a DELETE row, which carries only the columns identifying
+// what was deleted. The rest are deliberately absent and take the column's
+// default, so an unset one is not the mistake it would be on a row that set it.
+let writeDeletedValue = (builder, ~row, value: unknown) =>
+  if value === %raw(`undefined`) || value === %raw(`null`) {
+    builder->markNull(~row)
+  } else {
+    builder->writePresent(~row, value)
   }
 
 let builderPayload = (builder): columnValuesInput => {

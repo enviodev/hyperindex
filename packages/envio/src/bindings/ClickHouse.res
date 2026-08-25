@@ -400,7 +400,10 @@ let stageUpdatesOrThrow = (
         let change = changes->Array.getUnsafe(row)
         // The entity history table is the source of truth for ClickHouse, so
         // every intermediate change must be persisted, not only the current value.
-        let values = switch change {
+        // A DELETE row carries only what identifies it, so the columns it
+        // leaves out are absent on purpose; on a SET row the same gap is a
+        // field the handler never set, which the writer refuses.
+        let (values, write) = switch change {
         | Change.Set(set) =>
           let change = switch stampFieldName {
           | Some((fieldName, chainId)) =>
@@ -410,12 +413,12 @@ let stageUpdatesOrThrow = (
             })
           | None => change
           }
-          convertSetOrThrow(change)
-        | Delete(_) => convertDeleteOrThrow(change)
+          (convertSetOrThrow(change), ClickHouseSink.writeValue)
+        | Delete(_) => (convertDeleteOrThrow(change), ClickHouseSink.writeDeletedValue)
         }
         for column in 0 to columns - 1 {
           let builder = builders->Array.getUnsafe(column)
-          builder->ClickHouseSink.writeValue(~row, values->Dict.getUnsafe(builder.name))
+          builder->write(~row, values->Dict.getUnsafe(builder.name))
         }
       }
       Some(sink->stageBuilders(~table, ~builders, ~rows))

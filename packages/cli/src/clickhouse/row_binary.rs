@@ -392,9 +392,10 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
         }
         other => (other, false),
     };
-    // A non-nullable column with a null marker means the JS side had no value
-    // for a required field; the type's zero value is the only thing ClickHouse
-    // would have accepted anyway.
+    // A null marker on a column that cannot hold NULL is a column the row left
+    // out, which only a DELETE row does — `ClickHouseSink.writeValue` refuses
+    // the same gap on a row that set the entity, so what reaches here is the
+    // deliberate omission and not a field the handler forgot.
     if !is_nullable && column.is_null(row) {
         return put_default(out, ch_type);
     }

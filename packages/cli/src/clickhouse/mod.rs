@@ -215,6 +215,9 @@ pub struct RegisteredTable {
     /// appends, so the list runs past the entity's own.
     pub names: Vec<String>,
     pub kinds: Vec<u8>,
+    /// Whether each column accepts NULL. A batch that has no value for a column
+    /// that does not is refused rather than stored as the type's zero.
+    pub nullable: Vec<bool>,
 }
 
 /// One column's values as they cross the napi boundary. Exactly one of the
@@ -548,6 +551,10 @@ impl ClickHouseSink {
             .collect();
         let names = columns.iter().map(|column| column.name.clone()).collect();
         let kinds = columns.iter().map(|column| column.kind as u8).collect();
+        let nullable = columns
+            .iter()
+            .map(|column| matches!(column.ch_type, ChType::Nullable(_)))
+            .collect();
         let insert_query = ddl::insert_query(
             &self.database,
             &table,
@@ -566,6 +573,7 @@ impl ClickHouseSink {
             handle,
             names,
             kinds,
+            nullable,
         })
     }
 
