@@ -217,8 +217,9 @@ static EXPRESSION_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Rewrites any bare identifier naming an entity field to that field's
-/// ClickHouse column, leaving functions, keywords, numbers, string literals and
-/// already-backticked identifiers untouched.
+/// ClickHouse column, leaving functions, keywords, numbers and anything already
+/// quoted untouched — string literals, and identifiers in either the backtick or
+/// the double-quote form ClickHouse accepts.
 fn resolve_expression_columns(expression: &str, columns: &HashMap<&str, &str>) -> String {
     EXPRESSION_TOKEN
         .replace_all(expression, |captures: &Captures| {
