@@ -178,24 +178,39 @@ external asString: unknown => string = "%identity"
 @val external toBigInt: unknown => bigint = "BigInt"
 @val external stringOf: unknown => string = "String"
 
-// A JSON-ready value straight out of the entity's ClickHouse schema. Anything
-// that isn't already a string — a `Json` field's object, an array column's
-// elements — becomes its JSON text, which is what the target column stores.
-// A native bigint is rendered directly: `JSON.stringify` throws on one, which
-// would fail the whole batch before it reached `stage`.
+// Visits every node on the way into JSON text, which is the one place the two
+// values JSON cannot carry are still themselves. A bigint would make
+// `JSON.stringify` throw and fail the whole batch; a non-finite number is
+// quieter and worse — it renders as `null`, which the column then refuses for a
+// reason naming `null` rather than the NaN the handler actually wrote.
 %%private(
-  let bigintReplacer = (_, value: JSON.t) =>
+  let jsonSafe = (~column) => (_, value: JSON.t) =>
     switch value->typeof {
     | #bigint => value->(Utils.magic: JSON.t => unknown)->stringOf->(Utils.magic: string => JSON.t)
+    | #number =>
+      let number = value->(Utils.magic: JSON.t => float)
+      if number->Float.isFinite {
+        value
+      } else {
+        JsError.throwWithMessage(
+          `${number->Float.toString} has no JSON form, so it cannot be stored in the \`${column}\` column. Store a finite number, or keep it out of the entity.`,
+        )
+      }
     | _ => value
     }
 )
 
-let toText = (value: unknown) =>
+// A JSON-ready value straight out of the entity's ClickHouse schema. Anything
+// that isn't already a string — a `Json` field's object, an array column's
+// elements — becomes its JSON text, which is what the target column stores.
+let toText = (value: unknown, ~column) =>
   switch value->typeof {
   | #string => value->asString
   | #bigint => value->stringOf
-  | _ => value->(Utils.magic: unknown => JSON.t)->JSON.stringify(~replacer=Replacer(bigintReplacer))
+  | _ =>
+    value
+    ->(Utils.magic: unknown => JSON.t)
+    ->JSON.stringify(~replacer=Replacer(jsonSafe(~column)))
   }
 
 // One column's storage for one batch, sized to the batch's row count so the
@@ -272,7 +287,7 @@ let markNull = (builder, ~row) => {
         row,
         value->checkedBigInt(~builder, ~min=-9223372036854775808n, ~max=9223372036854775807n),
       )
-    | Text => builder.texts->Array.setUnsafe(row, value->toText)
+    | Text => builder.texts->Array.setUnsafe(row, value->toText(~column=builder.name))
     }
 )
 
