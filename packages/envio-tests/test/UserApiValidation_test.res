@@ -1718,6 +1718,20 @@ type constructor { id: ID! }
       "Config parse error: Failed converting schema doc to schema struct: Schema contains the following reserved keywords: constructor",
     ),
     (
+      "rejects an entity named toString",
+      `
+type toString { id: ID! }
+`,
+      "Config parse error: Failed converting schema doc to schema struct: Schema contains the following reserved keywords: toString",
+    ),
+    (
+      "rejects an entity named hasOwnProperty",
+      `
+type hasOwnProperty { id: ID! }
+`,
+      "Config parse error: Failed converting schema doc to schema struct: Schema contains the following reserved keywords: hasOwnProperty",
+    ),
+    (
       // `Enum` is already exported by the `envio` module, and every entity is
       // re-exported there under its capitalized name.
       "rejects an entity whose capitalized name collides with an envio export",

@@ -57,15 +57,29 @@ pub mod reserved_keywords {
     /// emits is capitalized first, which is why a keyword of the generated
     /// languages is not on this list — only names that stay broken after that.
     pub const RESERVED_NAMES: &[&str] = &[
-        // Generated code indexes plain objects by these names, and an object
-        // answers a prototype key from its prototype rather than from what was
-        // stored — so the lookup resolves to a bogus value instead of the one
-        // assigned to it. `constructor` is neutralized wherever a name is
-        // capitalized; `__proto__` starts with an underscore and survives
-        // capitalization untouched, which also makes it an illegal ReScript
-        // module name and variant constructor.
+        // Every own property of `Object.prototype`. Generated code indexes
+        // plain objects by these names, and an object answers a prototype key
+        // from its prototype rather than from what was stored, so the lookup
+        // resolves to a bogus value instead of the one assigned to it — an
+        // entity named `toString` reaches the test indexer's per-entity change
+        // bucket as `Object.prototype.toString` and the write throws on its
+        // missing `sets` array. The whole family, not the subset that happens
+        // to read like a keyword: the failure is the prototype lookup, not the
+        // spelling. `__proto__` additionally survives capitalization untouched,
+        // which makes it an illegal ReScript module name and variant
+        // constructor on top of the lookup problem.
+        "__defineGetter__",
+        "__defineSetter__",
+        "__lookupGetter__",
+        "__lookupSetter__",
         "__proto__",
         "constructor",
+        "hasOwnProperty",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+        "toLocaleString",
+        "toString",
+        "valueOf",
         // Every entity is re-exported from the `envio` module under its
         // capitalized name, where `Enum` is already taken.
         "enum",
