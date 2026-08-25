@@ -9,6 +9,7 @@ use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 use anyhow::{bail, Result};
+use napi_derive::napi;
 use regex::{Captures, Regex};
 
 use super::ch_type::{ChType, ChainIdMode, FieldSpec};
@@ -26,7 +27,9 @@ pub struct ColumnSpec {
     pub field: FieldSpec,
 }
 
-/// A data-skipping index declared inside the table's column list.
+/// A data-skipping index declared inside the table's column list. Crosses from
+/// JS as it is: every field is one the renderer uses unchanged.
+#[napi(object)]
 #[derive(Debug, Clone)]
 pub struct SkippingIndexSpec {
     pub name: String,
@@ -55,7 +58,9 @@ pub struct EntitySpec {
     pub skipping_indexes: Vec<SkippingIndexSpec>,
 }
 
-/// Names the runtime's history format fixes.
+/// Names the runtime's history format fixes. Crosses from JS as it is: every
+/// field is one the renderer uses unchanged.
+#[napi(object)]
 #[derive(Debug, Clone)]
 pub struct HistorySchema {
     pub id_column: String,
@@ -195,11 +200,12 @@ impl EntitySpec {
     }
 }
 
-/// Matches a quoted string, a backticked identifier, or a bare identifier. The
-/// first two alternatives are there to be skipped: a token already quoted is
-/// never a bare field name.
+/// Matches a quoted string, a quoted identifier (ClickHouse accepts both
+/// backticks and double quotes for one), or a bare identifier. Every alternative
+/// but the last is there to be skipped: a token already quoted names its column
+/// as written, and rewriting inside one would produce a name nothing has.
 static EXPRESSION_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"'[^']*'|`[^`]*`|[A-Za-z_][A-Za-z0-9_]*").expect("expression token regex")
+    Regex::new(r#"'[^']*'|`[^`]*`|"[^"]*"|[A-Za-z_][A-Za-z0-9_]*"#).expect("expression token regex")
 });
 
 /// Rewrites any bare identifier naming an entity field to that field's
@@ -586,6 +592,10 @@ mod tests {
             "kind = 'createdAt'",
             "`createdAt` + 1",
             "toStartOfDay(createdAt) + INTERVAL 7 DAY",
+            // ClickHouse reads a double-quoted token as an identifier, so one
+            // already names its column and must survive as written.
+            "toYYYYMM(\"created_at\")",
+            "kind = 'a' || \"createdAt\"",
         ]
         .map(|expression| resolve_expression_columns(expression, &columns));
         assert_eq!(
@@ -595,6 +605,8 @@ mod tests {
                 "`kind` = 'createdAt'",
                 "`createdAt` + 1",
                 "toStartOfDay(`created_at`) + INTERVAL 7 DAY",
+                "toYYYYMM(\"created_at\")",
+                "`kind` = 'a' || \"createdAt\"",
             ]
         );
     }

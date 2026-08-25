@@ -44,13 +44,6 @@ impl ColumnValues {
             ColumnValues::Text(v) => v.len(),
         }
     }
-
-    fn text_at(&self, row: usize) -> Result<&str> {
-        match self {
-            ColumnValues::Text(values) => Ok(&values[row]),
-            other => bail!("expected a text column, got {other:?}"),
-        }
-    }
 }
 
 /// Borrowed from the registered table's schema, which outlives the encode: a
@@ -328,8 +321,9 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
         // `input_format_json_read_*_as_strings` defaults), so rendering them
         // here keeps a schema that used to index from failing to encode.
         (ChType::String, _) => put_string(out, &value.to_string()),
-        (ChType::Enum { .. }, Value::String(text)) => encode_text_scalar(out, ch_type, text)?,
-        (ChType::Decimal { .. }, Value::String(text)) => encode_text_scalar(out, ch_type, text)?,
+        (ChType::Enum { .. } | ChType::Decimal { .. }, Value::String(text)) => {
+            encode_text_scalar(out, ch_type, text)?
+        }
         (ChType::Decimal { scale, .. }, Value::Number(number)) => {
             // A JSON integer is already the digits the column stores, short of
             // the scale; rendering it back to text to re-parse would allocate
@@ -426,15 +420,12 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
         (ColumnValues::I64(v), ChType::Int64) => out.extend_from_slice(&v[row].to_le_bytes()),
         (ColumnValues::U64(v), other) => put_int(out, v[row] as i128, other)?,
         (ColumnValues::I64(v), other) => put_int(out, v[row] as i128, other)?,
-        (ColumnValues::Text { .. }, ChType::Array(_)) => {
-            let text = column.values.text_at(row)?;
+        (ColumnValues::Text(v), ChType::Array(_)) => {
             let parsed: serde_json::Value =
-                serde_json::from_str(text).context("value is not JSON")?;
+                serde_json::from_str(&v[row]).context("value is not JSON")?;
             encode_json_value(out, ch_type, &parsed)?;
         }
-        (ColumnValues::Text { .. }, other) => {
-            encode_text_scalar(out, other, column.values.text_at(row)?)?
-        }
+        (ColumnValues::Text(v), other) => encode_text_scalar(out, other, &v[row])?,
     }
     Ok(())
 }
@@ -496,67 +487,15 @@ pub fn encode(columns: &[Column], rows: usize) -> Result<EncodedRows> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clickhouse::ch_type::test_support::parse_type;
     use pretty_assertions::assert_eq;
 
     fn owned_column(name: &str, ty: &str, values: ColumnValues) -> Column<'static> {
         Column {
             name: Cow::Owned(name.to_string()),
-            ch_type: Cow::Owned(parse_test_type(ty)),
+            ch_type: Cow::Owned(parse_type(ty)),
             values,
             nulls: Vec::new(),
-        }
-    }
-
-    /// Builds a [`ChType`] from the ClickHouse type text a column is declared
-    /// with. The encoder's contract is "given this column type, write these
-    /// bytes", so its tests name the type rather than the field behind it —
-    /// what maps a field to a type is [`ch_type`]'s own tests.
-    fn parse_test_type(ty: &str) -> ChType {
-        let ty = ty.trim();
-        if let Some((name, args)) = ty.split_once('(').map(|(name, rest)| {
-            (
-                name,
-                rest.strip_suffix(')')
-                    .expect("a parenthesised type ends in )"),
-            )
-        }) {
-            return match name {
-                "Nullable" => ChType::Nullable(Box::new(parse_test_type(args))),
-                "Array" => ChType::Array(Box::new(parse_test_type(args))),
-                "DateTime64" => ChType::DateTime64,
-                "Decimal" => {
-                    let (precision, scale) = args.split_once(',').expect("Decimal(P, S)");
-                    ChType::Decimal {
-                        precision: precision.trim().parse().unwrap(),
-                        scale: scale.trim().parse().unwrap(),
-                    }
-                }
-                "Enum8" | "Enum16" => ChType::Enum {
-                    variants: args
-                        .split(',')
-                        .map(|variant| {
-                            variant
-                                .split_once('=')
-                                .expect("a variant carries its number")
-                                .0
-                                .trim()
-                                .trim_matches('\'')
-                                .to_string()
-                        })
-                        .collect(),
-                },
-                other => panic!("test type `{other}` is not one the DDL emits"),
-            };
-        }
-        match ty {
-            "Int32" => ChType::Int32,
-            "Int64" => ChType::Int64,
-            "UInt32" => ChType::UInt32,
-            "UInt64" => ChType::UInt64,
-            "Float64" => ChType::Float64,
-            "Bool" => ChType::Bool,
-            "String" => ChType::String,
-            other => panic!("test type `{other}` is not one the DDL emits"),
         }
     }
 

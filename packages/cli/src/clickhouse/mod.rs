@@ -16,6 +16,12 @@
 //!
 //! The runtime hands over the schema rather than ClickHouse types; `ch_type`
 //! turns it into both the DDL and the encoder's layout.
+//!
+//! The encoding and transport are the crate's own rather than the `clickhouse`
+//! crate's, because both ends of this path are shapes its row-oriented serde API
+//! has no room for: values arrive as one array per column with a separate null
+//! mask, and a body has to stay sliceable at row boundaries afterwards so a
+//! failed insert can be retried in halves.
 
 pub mod ch_type;
 pub mod ddl;
@@ -157,26 +163,6 @@ impl From<ColumnSpecInput> for ddl::ColumnSpec {
     }
 }
 
-/// A data-skipping index on an entity's history table.
-#[napi(object)]
-pub struct SkippingIndexInput {
-    pub name: String,
-    pub expr: String,
-    pub index_type: String,
-    pub granularity: Option<u32>,
-}
-
-impl From<SkippingIndexInput> for ddl::SkippingIndexSpec {
-    fn from(input: SkippingIndexInput) -> Self {
-        ddl::SkippingIndexSpec {
-            name: input.name,
-            expr: input.expr,
-            index_type: input.index_type,
-            granularity: input.granularity,
-        }
-    }
-}
-
 /// One entity as the sink needs it: the table its history goes to, the columns
 /// it declares, and the layout options its `@storage` directive asked for.
 #[napi(object)]
@@ -189,7 +175,7 @@ pub struct EntitySpecInput {
     pub partition_by: Option<String>,
     pub order_by: Option<Vec<String>>,
     pub ttl: Option<String>,
-    pub skipping_indexes: Option<Vec<SkippingIndexInput>>,
+    pub skipping_indexes: Option<Vec<ddl::SkippingIndexSpec>>,
 }
 
 impl From<EntitySpecInput> for ddl::EntitySpec {
@@ -202,12 +188,7 @@ impl From<EntitySpecInput> for ddl::EntitySpec {
             partition_by: input.partition_by,
             order_by: input.order_by,
             ttl: input.ttl,
-            skipping_indexes: input
-                .skipping_indexes
-                .unwrap_or_default()
-                .into_iter()
-                .map(Into::into)
-                .collect(),
+            skipping_indexes: input.skipping_indexes.unwrap_or_default(),
         }
     }
 }
@@ -312,35 +293,7 @@ pub struct ClickHouseSinkOptions {
     /// `"Int32"` or `"Int64"`, which every chain-scoped column follows.
     pub chain_id_mode: String,
     /// The column and table names the runtime's history format fixes.
-    pub history: HistorySchemaInput,
-}
-
-/// The runtime's history schema names.
-#[napi(object)]
-pub struct HistorySchemaInput {
-    pub id_column: String,
-    pub checkpoint_id_column: String,
-    pub change_column: String,
-    /// In numbering order.
-    pub change_variants: Vec<String>,
-    /// The variant marking a row that set the entity.
-    pub set_variant: String,
-    pub checkpoints_table: String,
-    pub history_table_prefix: String,
-}
-
-impl From<HistorySchemaInput> for ddl::HistorySchema {
-    fn from(input: HistorySchemaInput) -> Self {
-        ddl::HistorySchema {
-            id_column: input.id_column,
-            checkpoint_id_column: input.checkpoint_id_column,
-            change_column: input.change_column,
-            change_variants: input.change_variants,
-            set_variant: input.set_variant,
-            checkpoints_table: input.checkpoints_table,
-            history_table_prefix: input.history_table_prefix,
-        }
-    }
+    pub history: ddl::HistorySchema,
 }
 
 /// Backtick-quotes an identifier. ClickHouse reads C-style escapes inside one
@@ -420,7 +373,7 @@ impl ClickHouseSink {
             tuning,
             warn,
             chain_id_mode,
-            history: options.history.into(),
+            history: options.history,
         })
     }
 
@@ -942,7 +895,7 @@ impl ClickHouseSink {
         while let Some((start, end, retries)) = pending.pop() {
             match self.post_rows(query, encoded.slice(start, end)).await {
                 Ok(()) => continue,
-                Err(failure) if retries == 0 || !failure.retriable => {
+                Err(failure) if retries == 0 || failure.retry == Retry::Never => {
                     // Every attempt behind this one already left through `warn`
                     // as it happened; what the terminal error still owes the
                     // reader is how many there were.
@@ -963,12 +916,15 @@ impl ClickHouseSink {
                         failure.error
                     ));
                     tokio::time::sleep(self.tuning.delay(retries)).await;
-                    if rows > 1 {
-                        let mid = start + rows / 2;
-                        pending.push((mid, end, retries - 1));
-                        pending.push((start, mid, retries - 1));
-                    } else {
-                        pending.push((start, end, retries - 1));
+                    match failure.retry {
+                        Retry::Halved if rows > 1 => {
+                            let mid = start + rows / 2;
+                            pending.push((mid, end, retries - 1));
+                            pending.push((start, mid, retries - 1));
+                        }
+                        // Either the rows are not what failed, or halving has
+                        // bottomed out at a single row and only the wait is left.
+                        _ => pending.push((start, end, retries - 1)),
                     }
                 }
             }
@@ -995,8 +951,12 @@ impl ClickHouseSink {
             Err(err) => {
                 return Err(InsertFailure {
                     error: anyhow::Error::new(err).context("ClickHouse insert request failed"),
-                    retriable: true,
-                })
+                    // The request never reached a verdict, so nothing about the
+                    // rows has been decided. Halved rather than whole because a
+                    // batch big enough to outrun the client deadline is one of
+                    // the ways to get here, and it is the way a retry can fix.
+                    retry: Retry::Halved,
+                });
             }
         };
         let status = response.status();
@@ -1005,45 +965,85 @@ impl ClickHouseSink {
         }
         let text = response.text().await.unwrap_or_default();
         Err(InsertFailure {
-            retriable: is_retriable(status, &text),
+            retry: retry_for(status, &text),
             error: anyhow!("ClickHouse returned {status}: {text}"),
         })
     }
 }
 
-/// A failed insert, and whether another attempt could answer differently.
+/// A failed insert, and what another attempt could do about it.
 struct InsertFailure {
     error: anyhow::Error,
-    retriable: bool,
+    retry: Retry,
 }
 
-/// ClickHouse error codes worth another attempt: the server was busy, lost a
-/// peer, or could not say what happened — none of which is a verdict on the rows.
-/// Whitelisted rather than blacklisted so a code nobody has thought about ends a
-/// write with the server's own message instead of a batch's worth of doomed
-/// requests.
-const RETRIABLE_ERROR_CODES: &[u32] = &[
-    159,  // TIMEOUT_EXCEEDED
-    202,  // TOO_MANY_SIMULTANEOUS_QUERIES
-    203,  // NO_FREE_CONNECTION
-    209,  // SOCKET_TIMEOUT
-    210,  // NETWORK_ERROR
+/// What a retry should send after a failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Retry {
+    /// Nothing. The server read the rows and rejected them, and it gives the
+    /// same verdict however few of them come back.
+    Never,
+    /// The same rows. The condition belongs to the server or the cluster rather
+    /// than to the batch, so a smaller batch meets it identically — and the two
+    /// requests halving makes would only lean harder on whatever is struggling.
+    SameRows,
+    /// The rows in halves. The batch itself is what could not be taken, so a
+    /// smaller one is the thing that might land.
+    Halved,
+}
+
+/// Error codes where the batch is what the server could not take, so halving is
+/// the retry that changes the answer.
+const HALVED_ERROR_CODES: &[u32] = &[
+    159,  // TIMEOUT_EXCEEDED — the insert did not finish in the time allowed
     241,  // MEMORY_LIMIT_EXCEEDED — the one the halving is actually for
-    252,  // TOO_MANY_PARTS
-    285,  // TOO_FEW_LIVE_REPLICAS
     319,  // UNKNOWN_STATUS_OF_INSERT
     425,  // SYSTEM_ERROR
-    999,  // KEEPER_EXCEPTION
     1002, // UNKNOWN_EXCEPTION
 ];
 
-fn is_retriable(status: reqwest::StatusCode, body: &str) -> bool {
-    match clickhouse_error_code(body) {
-        Some(code) => RETRIABLE_ERROR_CODES.contains(&code),
-        // No ClickHouse verdict in the body, so something in front of it
-        // answered — a proxy or load balancer — and only its status says
-        // whether the rows ever got as far as being judged.
-        None => status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS,
+/// Error codes for a server or cluster that briefly cannot take writes. The rows
+/// are not what it is objecting to, and for the crowding ones (202, 203, 252,
+/// which come of too many requests rather than too large a one) halving is worse
+/// than useless: waiting is the whole remedy.
+const SAME_ROWS_ERROR_CODES: &[u32] = &[
+    202, // TOO_MANY_SIMULTANEOUS_QUERIES
+    203, // NO_FREE_CONNECTION
+    209, // SOCKET_TIMEOUT
+    210, // NETWORK_ERROR
+    236, // ABORTED — a replica on its way down or back up
+    242, // TABLE_IS_READ_ONLY — a replicated table that has lost its Keeper session
+    252, // TOO_MANY_PARTS
+    285, // TOO_FEW_LIVE_REPLICAS
+    999, // KEEPER_EXCEPTION
+];
+
+/// Whitelisted rather than blacklisted so a code nobody has thought about ends a
+/// write with the server's own message instead of a batch's worth of doomed
+/// requests.
+fn retry_for(status: reqwest::StatusCode, body: &str) -> Retry {
+    if let Some(code) = clickhouse_error_code(body) {
+        return if HALVED_ERROR_CODES.contains(&code) {
+            Retry::Halved
+        } else if SAME_ROWS_ERROR_CODES.contains(&code) {
+            Retry::SameRows
+        } else {
+            Retry::Never
+        };
+    }
+    // Nothing in the body is ClickHouse's, so something in front of it answered
+    // — a proxy or load balancer — and only its status says what happened.
+    match status {
+        // A body-size limit is the one proxy verdict a smaller batch meets
+        // differently. Left unretried, a batch that outgrows the limit fails the
+        // same way on every restart.
+        reqwest::StatusCode::PAYLOAD_TOO_LARGE => Retry::Halved,
+        // Rate limiting counts requests, so halving spends the budget faster.
+        reqwest::StatusCode::TOO_MANY_REQUESTS => Retry::SameRows,
+        status if status.is_server_error() => Retry::Halved,
+        // Any other 4xx is the deployment's own configuration — credentials, a
+        // route — which no number of smaller batches talks it out of.
+        _ => Retry::Never,
     }
 }
 
@@ -1095,7 +1095,7 @@ mod tests {
             password: String::new(),
             database: "mock".to_string(),
             chain_id_mode: "Int32".to_string(),
-            history: HistorySchemaInput {
+            history: ddl::HistorySchema {
                 id_column: "id".to_string(),
                 checkpoint_id_column: "envio_checkpoint_id".to_string(),
                 change_column: "envio_change".to_string(),
@@ -1268,6 +1268,83 @@ mod tests {
                 3,
                 1
             )
+        );
+    }
+
+    // A cluster that is briefly unable to take writes — a Keeper session lost,
+    // a replica restarting — is not a verdict on the batch, and halving it makes
+    // two requests where one already failed. The rows go back whole.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_condition_the_batch_is_not_to_blame_for_is_retried_whole() {
+        let server = mock_server::MockClickHouse::rejecting_with(
+            2,
+            "Code: 242. DB::Exception: Table is in readonly mode",
+        )
+        .await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        write(&sink, handle).await.unwrap();
+
+        assert_eq!(
+            (server.accepted_batches(), server.inserts_seen()),
+            // Two rejections, then all four rows in one insert — never split.
+            (
+                vec![vec![
+                    "a".to_string(),
+                    "b".to_string(),
+                    "c".to_string(),
+                    "d".to_string()
+                ]],
+                3
+            )
+        );
+    }
+
+    // A proxy's body-size limit is the one verdict from in front of ClickHouse
+    // that a smaller batch meets differently, so this is the case halving is for
+    // even though nothing in the body names a ClickHouse code.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_batch_too_large_for_a_proxy_is_retried_in_halves() {
+        let server = mock_server::MockClickHouse::rejecting_with_status(
+            1,
+            413,
+            "<html>413 Request Entity Too Large</html>",
+        )
+        .await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        write(&sink, handle).await.unwrap();
+
+        assert_eq!(
+            (server.accepted_batches(), server.inserts_seen()),
+            (
+                vec![
+                    vec!["a".to_string(), "b".to_string()],
+                    vec!["c".to_string(), "d".to_string()]
+                ],
+                3
+            )
+        );
+    }
+
+    // Anything else a proxy answers is a deployment's own misconfiguration —
+    // credentials, a route — which no number of smaller batches talks it out of.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_proxy_rejection_a_smaller_batch_cannot_answer_is_not_retried() {
+        let server =
+            mock_server::MockClickHouse::rejecting_with_status(usize::MAX, 403, "Forbidden").await;
+        let sink = sink_for(&server, 8);
+        let handle = stage_ids(&sink, &["a", "b"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (err.reason.contains("403"), server.inserts_seen()),
+            (true, 1),
+            "expected a single attempt and the proxy's status, got: {}",
+            err.reason
         );
     }
 

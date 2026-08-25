@@ -4,13 +4,12 @@
 //! real. Anything that is not an insert is counted and refused, because a sink
 //! that takes its column types from the caller has no reason to ask.
 
-use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-#[derive(Default)]
+use crate::mock_http;
+
 struct State {
     /// Bodies of the inserts the server accepted, in arrival order.
     accepted: Vec<Vec<u8>>,
@@ -19,12 +18,29 @@ struct State {
     /// The body a rejection carries, which is what tells the sink whether the
     /// rows are worth sending again.
     rejection: String,
+    /// The status a rejection carries. Only what a proxy in front of ClickHouse
+    /// answered is read from this; a body naming a code speaks for itself.
+    rejection_status: u16,
     /// Total inserts seen, accepted or not.
     seen: usize,
     /// Total read queries seen.
     queries: usize,
     /// Request line and headers of every request, in arrival order.
     heads: Vec<String>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            accepted: Vec::new(),
+            reject_next: 0,
+            rejection: String::new(),
+            rejection_status: 500,
+            seen: 0,
+            queries: 0,
+            heads: Vec::new(),
+        }
+    }
 }
 
 pub struct MockClickHouse {
@@ -34,20 +50,28 @@ pub struct MockClickHouse {
 
 impl MockClickHouse {
     /// Serves until dropped. `reject_next` inserts fail with a 500 before the
-    /// server starts accepting, carrying a keeper exception — an error the rows
-    /// themselves are not to blame for, so the sink retries it.
+    /// server starts accepting, carrying a memory limit — the error a batch is
+    /// itself to blame for, so the sink retries it in halves.
     pub async fn start(reject_next: usize) -> Self {
-        Self::rejecting_with(reject_next, "Code: 999. DB::Exception: mock rejection").await
+        Self::rejecting_with(reject_next, "Code: 241. DB::Exception: mock rejection").await
     }
 
     /// Rejects with `rejection` as the body, for a test that turns on how the
     /// sink reads the server's verdict.
     pub async fn rejecting_with(reject_next: usize, rejection: &str) -> Self {
+        Self::rejecting_with_status(reject_next, 500, rejection).await
+    }
+
+    /// Rejects with `status` and `rejection`, for a test about a proxy in front
+    /// of ClickHouse: a body with no `Code:` in it leaves the status as the only
+    /// thing the sink can read the verdict from.
+    pub async fn rejecting_with_status(reject_next: usize, status: u16, rejection: &str) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let state = Arc::new(Mutex::new(State {
             reject_next,
             rejection: rejection.to_string(),
+            rejection_status: status,
             ..Default::default()
         }));
 
@@ -111,120 +135,74 @@ impl MockClickHouse {
         self.state.lock().unwrap().heads.clone()
     }
 
-    /// Decodes every accepted body as rows of one `String` column, flattened in
-    /// arrival order — enough to tell which rows landed and how often. A body
-    /// that is not that shape is a bug in the encoder under test, so it fails
-    /// here rather than being reported as missing rows.
+    /// Decodes every accepted body as rows of one `String` column, one entry per
+    /// insert — enough to tell not just which rows landed but how the retry
+    /// split them. A body that is not that shape is a bug in the encoder under
+    /// test, so it fails here rather than being reported as missing rows.
+    pub fn accepted_batches(&self) -> Vec<Vec<String>> {
+        self.accepted()
+            .iter()
+            .map(|body| {
+                let mut rows = Vec::new();
+                let mut i = 0usize;
+                while i < body.len() {
+                    let (len, read) = super::row_binary::read_varint(&body[i..])
+                        .expect("accepted body is not a String column");
+                    i += read;
+                    let end = i + len as usize;
+                    let bytes = body
+                        .get(i..end)
+                        .expect("accepted body ends mid-string")
+                        .to_vec();
+                    rows.push(String::from_utf8(bytes).unwrap());
+                    i = end;
+                }
+                rows
+            })
+            .collect()
+    }
+
+    /// Every row that landed, flattened across inserts in arrival order.
     pub fn accepted_strings(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        for body in self.accepted() {
-            let mut i = 0usize;
-            while i < body.len() {
-                let (len, read) = super::row_binary::read_varint(&body[i..])
-                    .expect("accepted body is not a String column");
-                i += read;
-                let end = i + len as usize;
-                let bytes = body
-                    .get(i..end)
-                    .expect("accepted body ends mid-string")
-                    .to_vec();
-                out.push(String::from_utf8(bytes).unwrap());
-                i = end;
-            }
-        }
-        out
+        self.accepted_batches().into_iter().flatten().collect()
     }
 }
 
 async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Result<()> {
-    let mut buffered: VecDeque<u8> = VecDeque::new();
-    loop {
-        let head = match read_until_headers(&mut stream, &mut buffered).await? {
-            Some(head) => head,
-            // Peer closed between requests.
-            None => return Ok(()),
-        };
-        let content_length = head
-            .lines()
-            .find_map(|line| {
-                let (name, value) = line.split_once(':')?;
-                name.trim()
-                    .eq_ignore_ascii_case("content-length")
-                    .then(|| value.trim().parse::<usize>().ok())?
-            })
-            .unwrap_or(0);
+    let mut buffered: Vec<u8> = Vec::new();
+    while let Some(request) = mock_http::read_request(&mut stream, &mut buffered).await? {
+        state.lock().unwrap().heads.push(request.head);
 
-        // Whatever of the body already arrived with the headers, then the rest
-        // straight off the socket.
-        let buffered_bytes = buffered.len().min(content_length);
-        let mut body: Vec<u8> = buffered.drain(..buffered_bytes).collect();
-        body.resize(content_length, 0);
-        stream.read_exact(&mut body[buffered_bytes..]).await?;
-
-        state.lock().unwrap().heads.push(head.clone());
-
-        // The request line carries the query for an insert; a read query arrives
-        // in the body instead.
-        let request_line = head.lines().next().unwrap_or_default().to_string();
-        let is_insert = request_line.contains("INSERT");
-
-        let response = if is_insert {
+        // The request target carries the query for an insert; a read query
+        // arrives in the body instead.
+        let (status, body) = if request.path.contains("INSERT") {
             let rejection = {
                 let mut state = state.lock().unwrap();
                 state.seen += 1;
                 if state.reject_next > 0 {
                     state.reject_next -= 1;
-                    Some(state.rejection.clone())
+                    Some((state.rejection_status, state.rejection.clone()))
                 } else {
-                    state.accepted.push(body.clone());
+                    state.accepted.push(request.body);
                     None
                 }
             };
-            match rejection {
-                Some(rejection) => http_response(500, &rejection),
-                None => http_response(200, ""),
-            }
+            rejection.unwrap_or((200, String::new()))
         } else {
             state.lock().unwrap().queries += 1;
-            http_response(400, "the sink should not be querying the server")
+            (
+                400,
+                "the sink should not be querying the server".to_string(),
+            )
         };
-        stream.write_all(&response).await?;
-        stream.flush().await?;
+        mock_http::write_response(
+            &mut stream,
+            status,
+            &[("Connection", "keep-alive")],
+            body.as_bytes(),
+        )
+        .await?;
     }
-}
-
-/// Reads up to and including the blank line ending the headers. `None` when the
-/// peer closed before sending anything.
-async fn read_until_headers(
-    stream: &mut TcpStream,
-    buffered: &mut VecDeque<u8>,
-) -> std::io::Result<Option<String>> {
-    let mut head: Vec<u8> = Vec::new();
-    loop {
-        while let Some(byte) = buffered.pop_front() {
-            head.push(byte);
-            if head.ends_with(b"\r\n\r\n") {
-                return Ok(Some(String::from_utf8_lossy(&head).to_string()));
-            }
-        }
-        let mut chunk = [0u8; 4096];
-        let read = stream.read(&mut chunk).await?;
-        if read == 0 {
-            return Ok(if head.is_empty() {
-                None
-            } else {
-                Some(String::from_utf8_lossy(&head).to_string())
-            });
-        }
-        buffered.extend(&chunk[..read]);
-    }
-}
-
-fn http_response(status: u16, body: &str) -> Vec<u8> {
-    let reason = if status == 200 { "OK" } else { "Internal" };
-    format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{body}",
-        body.len()
-    )
-    .into_bytes()
+    // Peer closed between requests.
+    Ok(())
 }

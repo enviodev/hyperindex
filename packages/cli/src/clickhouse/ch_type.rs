@@ -290,6 +290,76 @@ pub(crate) mod test_support {
     pub fn rendered(spec: &FieldSpec) -> String {
         spec.ch_type(ChainIdMode::Int32).unwrap().to_string()
     }
+
+    /// Builds a [`ChType`] from the `CREATE TABLE` text declaring it — the
+    /// inverse of its [`fmt::Display`], and here beside it so the two stay one
+    /// grammar. The encoder's contract is "given this column type, write these
+    /// bytes", so its tests name the type rather than the field behind it.
+    /// Panics on anything the DDL does not emit.
+    pub fn parse_type(text: &str) -> ChType {
+        let text = text.trim();
+        let Some((name, args)) = text.split_once('(').map(|(name, rest)| {
+            (
+                name,
+                rest.strip_suffix(')')
+                    .expect("a parenthesised type ends in )"),
+            )
+        }) else {
+            return match text {
+                "Int32" => ChType::Int32,
+                "Int64" => ChType::Int64,
+                "UInt32" => ChType::UInt32,
+                "UInt64" => ChType::UInt64,
+                "Float64" => ChType::Float64,
+                "Bool" => ChType::Bool,
+                "String" => ChType::String,
+                other => panic!("test type `{other}` is not one the DDL emits"),
+            };
+        };
+        match name {
+            "Nullable" => ChType::Nullable(Box::new(parse_type(args))),
+            "Array" => ChType::Array(Box::new(parse_type(args))),
+            "DateTime64" => ChType::DateTime64,
+            "Decimal" => {
+                let (precision, scale) = args.split_once(',').expect("Decimal(P, S)");
+                ChType::Decimal {
+                    precision: precision.trim().parse().unwrap(),
+                    scale: scale.trim().parse().unwrap(),
+                }
+            }
+            "Enum8" | "Enum16" => ChType::Enum {
+                variants: parse_enum_variants(args),
+            },
+            other => panic!("test type `{other}` is not one the DDL emits"),
+        }
+    }
+
+    /// Reads the variant names out of an `Enum8`/`Enum16` argument list, undoing
+    /// the escaping [`super::super::literal`] applied. Scanning for the quotes
+    /// rather than splitting on commas is what lets a variant name hold one.
+    fn parse_enum_variants(args: &str) -> Vec<String> {
+        let mut variants = Vec::new();
+        let mut chars = args.chars().peekable();
+        while let Some(character) = chars.next() {
+            if character != '\'' {
+                continue;
+            }
+            let mut variant = String::new();
+            loop {
+                match chars.next().expect("a variant literal is closed") {
+                    '\\' => variant.push(chars.next().expect("an escape carries a character")),
+                    '\'' if chars.peek() == Some(&'\'') => {
+                        chars.next();
+                        variant.push('\'');
+                    }
+                    '\'' => break,
+                    other => variant.push(other),
+                }
+            }
+            variants.push(variant);
+        }
+        variants
+    }
 }
 
 #[cfg(test)]
