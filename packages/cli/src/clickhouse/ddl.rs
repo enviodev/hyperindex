@@ -27,8 +27,10 @@ pub struct ColumnSpec {
     pub field: FieldSpec,
 }
 
-/// A data-skipping index declared inside the table's column list. Crosses from
-/// JS as it is: every field is one the renderer uses unchanged.
+/// A data-skipping index declared inside the table's column list. Crosses the
+/// napi boundary as this same struct: no field needs converting to reach the
+/// renderer, which is not to say the renderer emits them as given —
+/// [`create_history_table`] quotes `name` and resolves the field names in `expr`.
 #[napi(object)]
 #[derive(Debug, Clone)]
 pub struct SkippingIndexSpec {
@@ -58,8 +60,9 @@ pub struct EntitySpec {
     pub skipping_indexes: Vec<SkippingIndexSpec>,
 }
 
-/// Names the runtime's history format fixes. Crosses from JS as it is: every
-/// field is one the renderer uses unchanged.
+/// Names the runtime's history format fixes. Crosses the napi boundary as this
+/// same struct: every field is already a type the boundary carries, so there is
+/// nothing for a conversion to do.
 #[napi(object)]
 #[derive(Debug, Clone)]
 pub struct HistorySchema {
@@ -747,4 +750,3 @@ mod tests {
         );
     }
 }
-

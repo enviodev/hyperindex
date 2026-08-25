@@ -949,8 +949,6 @@ impl ClickHouseSink {
             .body(body);
         let response = match request.send().await {
             Ok(response) => response,
-            // The request never reached a verdict, so nothing about the rows has
-            // been decided and another attempt is worth making.
             Err(err) => {
                 return Err(InsertFailure {
                     error: anyhow::Error::new(err).context("ClickHouse insert request failed"),
@@ -983,8 +981,10 @@ struct InsertFailure {
 /// What a retry should send after a failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Retry {
-    /// Nothing. The server read the rows and rejected them, and it gives the
-    /// same verdict however few of them come back.
+    /// Nothing. Either the rows were read and rejected — the same verdict
+    /// however few of them come back — or the answer came from in front of
+    /// ClickHouse and names something no batch of any size changes, like a
+    /// credential or a route.
     Never,
     /// The same rows. The condition belongs to the server or the cluster rather
     /// than to the batch, so a smaller batch meets it identically — and the two
