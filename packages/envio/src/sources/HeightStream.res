@@ -31,9 +31,6 @@ type driver = {
 // genuinely in trouble.
 let baseRetryMillis = 250
 let maxRetryMillis = 60_000
-// Keeps the doubling from overflowing on a stream that has been failing for
-// days. The delay reaches maxRetryMillis long before this.
-let maxRetryExponent = 20
 // Floor for how long a connection has to serve to have been worth making, as a
 // fraction of the window we would wait before calling it dead. Both transports
 // deliver something the moment they connect — HyperSync sends the head, a
@@ -48,6 +45,9 @@ let provenStaleFraction = 4
 // lasted — the same measure the backoff already trusts.
 let closedReason = "closed"
 let rotatedReason = "rotated"
+// A stream whose frames the transport could not read. Unlike the other reasons
+// this one never heals on its own, so its consumer says so out loud.
+let unreadableReason = "unreadable"
 // A frame nobody could read ends up in a log line, so cap what a provider can
 // put there.
 let maxDetailLength = 200
@@ -59,11 +59,7 @@ let maxDetailLength = 200
 let retryDelayFor = count =>
   count <= 0
     ? 0
-    : Pervasives.min(
-        baseRetryMillis *
-        Math.pow(2.0, ~exp=Pervasives.min(count - 1, maxRetryExponent)->Int.toFloat)->Float.toInt,
-        maxRetryMillis,
-      )
+    : Utils.expBackoff(~base=baseRetryMillis, ~exp=count - 1, ~maxMillis=maxRetryMillis)
 
 let truncateDetail = detail =>
   detail->String.length > maxDetailLength
@@ -130,7 +126,7 @@ let subscribe = (
           // Distinguishes a provider whose message shape we don't understand
           // from a chain that simply has nothing to report.
           switch unreadableDetail.contents {
-          | Some(detail) => fail(~reason="unreadable", ~detail)
+          | Some(detail) => fail(~reason=unreadableReason, ~detail)
           | None => fail(~reason="stale")
           }
         }, staleTimeout))

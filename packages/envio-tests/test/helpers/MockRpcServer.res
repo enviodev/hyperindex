@@ -34,6 +34,10 @@ type address = {port: int}
 @send external writeHead: (res, int, dict<string>) => unit = "writeHead"
 @send external end_: (res, string) => unit = "end"
 @send external destroy: res => unit = "destroy"
+// For a streamed body (an SSE feed arrives in chunks and ends without a final
+// payload), which the request/response RPC handlers below never need.
+@send external write: (res, string) => unit = "write"
+@send external endStream: (res, unit) => unit = "end"
 
 @module("node:util")
 external isDeepStrictEqual: (JSON.t, JSON.t) => bool = "isDeepStrictEqual"

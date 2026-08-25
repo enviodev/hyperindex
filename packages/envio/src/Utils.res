@@ -25,6 +25,19 @@ external importPathWithJson: (
 let jitter = delay =>
   delay === 0 ? 0 : delay / 2 + (Math.random() *. (delay / 2)->Int.toFloat)->Float.toInt
 
+// Keeps the doubling from overflowing on something that has been failing for
+// days. Every caller's delay reaches its cap long before this.
+let maxBackoffExponent = 20
+
+// `base` doubled `exp` times, capped. One ramp shape for everything that backs
+// off, so the cap and the overflow guard can't be right in one place and missing
+// in the next.
+let expBackoff = (~base, ~exp, ~maxMillis) =>
+  Pervasives.min(
+    base * Math.pow(2.0, ~exp=Pervasives.min(exp, maxBackoffExponent)->Int.toFloat)->Float.toInt,
+    maxMillis,
+  )
+
 let delay = milliseconds =>
   Promise.make((resolve, _) => {
     let _interval = setTimeout(_ => {
@@ -103,6 +116,15 @@ module Dict = {
    */
   @get_index
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
+
+  let incrementBy = (dict, key, count) =>
+    dict->Dict.set(
+      key,
+      switch dict->dangerouslyGetNonOption(key) {
+      | Some(current) => current + count
+      | None => count
+      },
+    )
 
   let getOrInsertEmptyDict = (dict, key) => {
     switch dict->dangerouslyGetNonOption(key) {

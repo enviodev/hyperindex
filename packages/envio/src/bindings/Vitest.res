@@ -188,4 +188,7 @@ module Vi = {
 
   @module("vitest") @scope("vi")
   external getTimerCount: unit => int = "getTimerCount"
+
+  @module("vitest") @scope("vi")
+  external clearAllTimers: unit => unit = "clearAllTimers"
 }

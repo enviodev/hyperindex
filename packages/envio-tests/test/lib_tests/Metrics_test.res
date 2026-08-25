@@ -512,7 +512,7 @@ envio_source_request_total{source="HyperSync",chainId="1",method="heightPush"} 7
 # TYPE envio_source_request_seconds_total counter
 envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 33.75
 
-# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected. One more connect than disconnects means the stream is up, equal counts mean it is down and the indexer is polling instead, and zero means it has never come up.
+# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected. Compare against the disconnects total, which is absent until the first disconnect and counts as zero while it is: one more connect than disconnects means the stream is up, equal counts mean it is down and the indexer is polling instead, and zero connects means it has never come up.
 # TYPE envio_source_height_stream_connects_total counter
 envio_source_height_stream_connects_total{source="HyperSync",chainId="1"} 3
 
