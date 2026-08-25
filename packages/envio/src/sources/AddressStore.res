@@ -154,10 +154,6 @@ let contractsOf = (
 // every partition is queried through the same handle.
 @send external emptySet: t => AddressSet.t = "emptySet"
 
-// A set over exactly these addresses, in set order. Every set of a chain must
-// come from that chain's one store — ids are store-scoped, so sets from
-// different stores can't be merged.
-@send external makeSetOf: (t, array<Address.t>) => AddressSet.t = "makeSetOf"
 @send
 external registerBatchRaw: (t, array<registration>) => array<rawVerdict> = "registerBatch"
 @send external seedBatchRaw: (t, array<registration>) => array<rawVerdict> = "seedBatch"

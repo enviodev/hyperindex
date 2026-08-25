@@ -95,9 +95,29 @@ function (contractName, addresses) {
   );
 }`)
 
+// A real set over exactly these addresses, composed from the operations
+// production narrows a set with: the chain's contract sets merged, then sliced
+// down to the addresses asked for. An address several contracts index appears
+// once per owner, as it does in a partition that holds all of them.
+let realSetOf = (store: AddressStore.t, addresses: array<Address.t>) => {
+  let all =
+    store
+    ->AddressStore.contractCounts
+    ->Array.reduce(store->AddressStore.emptySet, (acc, {contractName}) =>
+      acc->AddressSet.merge(store->AddressStore.makeSet(~contractName))
+    )
+  all
+  ->AddressSet.addresses
+  ->Array.reduceWithIndex(store->AddressStore.emptySet, (acc, address, idx) =>
+    addresses->Array.includes(address)
+      ? acc->AddressSet.merge(all->AddressSet.slice(~offset=idx, ~limit=Some(1)))
+      : acc
+  )
+}
+
 let setOf = (~store: option<AddressStore.t>=?, ~contractName=?, addresses) =>
   switch store {
-  | Some(store) => store->AddressStore.makeSetOf(addresses)
+  | Some(store) => store->realSetOf(addresses)
   | None => fakeSetOf(~contractName?, addresses)
   }
 

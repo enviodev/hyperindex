@@ -691,46 +691,11 @@ impl AddressStore {
         AddressSet::new(self.inner.clone(), ids)
     }
 
-    /// A set over exactly these addresses, in set order. Addresses the store
-    /// doesn't hold are skipped. Every set of a chain must come from that
-    /// chain's one store — ids are store-scoped, so sets from different stores
-    /// can't be merged.
-    #[napi]
-    pub fn make_set_of(&self, addresses: Vec<String>) -> AddressSet {
-        let store = self.read();
-        let mut ids: Vec<u64> = addresses
-            .iter()
-            .filter_map(|address| address_key(store.ecosystem, address))
-            // Every contract the address is registered for, not just one of
-            // them: a set built from addresses must hold the same entries the
-            // contract-scoped selections would.
-            .flat_map(|key| store.live_ids(&key))
-            .collect();
-        // An address the caller repeated is still one entry: a set that held it
-        // twice would double every count and send the address twice in a query.
-        ids.sort_unstable();
-        ids.dedup();
-        let ids = store.sorted_ids(ids);
-        drop(store);
-        AddressSet::new(self.inner.clone(), ids)
-    }
-
     /// A set holding nothing — what an address-free (wildcard) partition
     /// carries, so every partition is queried through the same handle.
     #[napi]
     pub fn empty_set(&self) -> AddressSet {
         AddressSet::new(self.inner.clone(), Vec::new())
-    }
-
-    /// The distinct effective start blocks of a contract's addresses, ascending.
-    #[napi]
-    pub fn start_block_groups(&self, contract_name: String) -> Vec<StartBlockGroup> {
-        let store = self.read();
-        let Some(contract_idx) = store.contract_idx(&contract_name) else {
-            return Vec::new();
-        };
-        let ids = store.sorted_live_ids(0, |entry| entry.contract_idx == contract_idx);
-        group_start_blocks(&store, &ids)
     }
 
     /// Live registration counts for the contracts this chain has something to
@@ -1771,29 +1736,6 @@ mod tests {
     }
 
     #[test]
-    fn make_set_of_ignores_repeated_addresses() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 10)]);
-        let set = store.make_set_of(vec![A.to_string(), A.to_string()]);
-        assert_eq!((set.size(), set.count_for("C".to_string())), (1, 1));
-    }
-
-    #[test]
-    fn make_set_of_takes_every_owner_of_an_address() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 10), reg(A, "D", 10), reg(B, "C", 10)]);
-        let set = store.make_set_of(vec![A.to_string()]);
-        assert_eq!(
-            (
-                set.size(),
-                set.count_for("C".to_string()),
-                set.count_for("D".to_string()),
-            ),
-            (2, 1, 1)
-        );
-    }
-
-    #[test]
     fn registering_for_a_contract_the_chain_doesnt_index_is_an_error() {
         let store = store();
         assert!(store.register_batch(vec![reg(A, "Unknown", 10)]).is_err());
@@ -2066,7 +2008,8 @@ mod tests {
         assert_eq!(
             (
                 store
-                    .start_block_groups("C".to_string())
+                    .make_set("C".to_string(), None)
+                    .start_block_groups()
                     .into_iter()
                     .map(|g| (g.start_block, g.count))
                     .collect::<Vec<_>>(),
@@ -2336,7 +2279,8 @@ mod tests {
     fn contains_at_scopes_the_gate_to_the_set() {
         let store = store();
         store.register_seed(vec![reg(A, "C", 300), reg(B, "C", 300)]);
-        let set = store.make_set_of(vec![A.to_string()]);
+        // A partition holding the first of C's two addresses.
+        let set = store.make_set("C".to_string(), None).slice(0, Some(1));
         assert_eq!(
             (
                 set.contains_at(A.to_string(), "C".to_string(), 300),
@@ -2408,11 +2352,10 @@ mod tests {
                 // Registered for D chain-wide, but this set holds only C's
                 // registration of it.
                 set.contains_at(A.to_string(), "D".to_string(), 100),
-                store.make_set_of(vec![A.to_string()]).contains_at(
-                    A.to_string(),
-                    "D".to_string(),
-                    100
-                ),
+                store
+                    .make_set("C".to_string(), None)
+                    .merge(&store.make_set("D".to_string(), None))
+                    .contains_at(A.to_string(), "D".to_string(), 100),
             ),
             (true, false, true)
         );

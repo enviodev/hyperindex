@@ -88,7 +88,7 @@ describe("AddressStore", () => {
         contract(~address=addr(1), ~contractName="A", ~registrationBlock=10),
       ],
     )
-    let set = store->AddressStore.makeSetOf([addr(0)])
+    let set = TestAddresses.setOf(~store, [addr(0)])
     t.expect({
       "inSet": set->AddressSet.containsAt(addr(0), "A", 5),
       // Registered for A, but held by another partition.
