@@ -240,13 +240,13 @@ expectType<SvmOnSlotFilter>(_empty);
   it("shapes the config-independent instruction types", _ =>
     check(`
 import type {
-  SvmAccountActivity,
-  SvmAccountTokenActivity,
-  SvmBlock,
+  SvmAllAccountActivityFields,
+  SvmAllAccountTokenActivityFields,
+  SvmAllBlockFields,
+  SvmAllLogFields,
   SvmBlockFieldName,
   SvmInstruction,
   SvmInstructionAccount,
-  SvmLog,
   SvmTransactionFieldName,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
@@ -255,17 +255,18 @@ type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
   ? true
   : false;
 
-expectType<TypeEqual<SvmInstruction["programName"], string>>(true);
-expectType<TypeEqual<SvmInstruction["instructionName"], string>>(true);
-expectType<TypeEqual<SvmInstruction["discriminator"], string>>(true);
-expectType<IsNotSelected<SvmInstruction["programId"]>>(true);
-expectType<IsNotSelected<SvmInstruction["data"]>>(true);
-expectType<IsNotSelected<SvmInstruction["path"]>>(true);
-expectType<IsNotSelected<SvmInstruction["isInner"]>>(true);
+type NoneSelected = SvmInstruction<{}>;
+expectType<TypeEqual<NoneSelected["programName"], string>>(true);
+expectType<TypeEqual<NoneSelected["instructionName"], string>>(true);
+expectType<TypeEqual<NoneSelected["discriminator"], string>>(true);
+expectType<IsNotSelected<NoneSelected["programId"]>>(true);
+expectType<IsNotSelected<NoneSelected["data"]>>(true);
+expectType<IsNotSelected<NoneSelected["path"]>>(true);
+expectType<IsNotSelected<NoneSelected["isInner"]>>(true);
 
-expectType<TypeEqual<SvmBlock["slot"], number>>(true);
-expectType<TypeEqual<SvmBlock["time"], number>>(true);
-expectType<TypeEqual<SvmAccountTokenActivity["mint"], string>>(true);
+expectType<TypeEqual<SvmAllBlockFields["slot"], number>>(true);
+expectType<TypeEqual<SvmAllBlockFields["time"], number>>(true);
+expectType<TypeEqual<SvmAllAccountTokenActivityFields["mint"], string>>(true);
 expectType<
   TypeEqual<
     SvmTransactionFieldName,
@@ -288,15 +289,15 @@ expectType<
 
 expectType<
   TypeEqual<
-    SvmLog["kind"],
+    SvmAllLogFields["kind"],
     "invoke" | "success" | "failed" | "consumed" | "log" | "data" | (string & {})
   >
 >(true);
-expectType<TypeEqual<SvmLog["message"], string>>(true);
+expectType<TypeEqual<SvmAllLogFields["message"], string>>(true);
 
 expectType<
   TypeEqual<
-    SvmAccountActivity,
+    SvmAllAccountActivityFields,
     {
       readonly address: string;
       readonly transactionAccountIndex: number;
@@ -321,13 +322,13 @@ expectType<
       readonly address: string;
       readonly accountName: string;
       readonly instructionAccountIndex: number;
-      readonly activity: SvmAccountActivity | undefined;
+      readonly activity: SvmAllAccountActivityFields | undefined;
     }
   >
 >(true);
 
-const _openKind: SvmLog["kind"] = "other";
-expectType<SvmLog["kind"]>(_openKind);
+const _openKind: SvmAllLogFields["kind"] = "other";
+expectType<SvmAllLogFields["kind"]>(_openKind);
 `)
   )
 
@@ -347,8 +348,6 @@ type _Acc = import("envio").SvmAccount;
 type _Addr = SvmInstruction["instructionAddress"];
 // @ts-expect-error - SvmInstructionWithFields is gone
 type _With = import("envio").SvmInstructionWithFields;
-// @ts-expect-error - SvmAllTransactionFields is gone
-type _AllTx = import("envio").SvmAllTransactionFields;
 // @ts-expect-error - SvmInstructionBlock is gone
 type _OldBlock = import("envio").SvmInstructionBlock;
 // @ts-expect-error - SvmTokenAll is gone
@@ -360,7 +359,7 @@ type _Without = import("envio").SvmBlockWithoutInstruction;
 
   it("generated program table carries only schema args and accounts", _ =>
     check(`
-import type { Global, SvmTransaction } from "envio";
+import type { Global, SvmAllTransactionFields } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 type Programs = Global extends { config: { svm: { programs: infer P } } } ? P : never;
@@ -374,8 +373,8 @@ type _Tx = Swap["transaction"];
 // @ts-expect-error - block is not config-bound; handler fields.block selects it
 type _Block = Swap["block"];
 
-expectType<TypeEqual<SvmTransaction["signature"], string>>(true);
-expectType<TypeEqual<keyof SvmTransaction, "transactionIndex" | "signature" | "feePayer" | "success" | "err" | "fee" | "computeUnitsConsumed" | "accountKeys" | "recentBlockhash" | "version" | "allSignatures">>(true);
+expectType<TypeEqual<SvmAllTransactionFields["signature"], string>>(true);
+expectType<TypeEqual<keyof SvmAllTransactionFields, "transactionIndex" | "signature" | "feePayer" | "success" | "err" | "fee" | "computeUnitsConsumed" | "accountKeys" | "recentBlockhash" | "version" | "allSignatures">>(true);
 `)
   )
 
@@ -466,6 +465,77 @@ if (0) {
     },
   );
 }
+`)
+  )
+
+  it("types standalone handler helpers via required fields selection", _ =>
+    check(`
+import { indexer } from "envio";
+import type {
+  SvmAllBlockFields,
+  SvmAllFieldsSelection,
+  SvmAllTransactionFields,
+  SvmFieldsSelection,
+  SvmInstruction,
+  SvmTransaction,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
+  ? true
+  : false;
+
+const fields = {
+  instruction: ["args", "programId"],
+  transaction: ["signature"],
+  log: ["message"],
+} as const satisfies SvmFieldsSelection;
+
+const handle = async (
+  instruction: SvmInstruction<typeof fields, "Swapper", "swap">,
+) => {
+  expectType<TypeEqual<typeof instruction.args, { readonly amountIn: string; readonly minAmountOut: string }>>(true);
+  expectType<TypeEqual<typeof instruction.programId, string>>(true);
+  expectType<TypeEqual<typeof instruction.transaction.signature, string>>(true);
+  expectType<TypeEqual<typeof instruction.logs[number]["message"], string>>(true);
+  expectType<IsNotSelected<typeof instruction.logs[number]["kind"]>>(true);
+  expectType<IsNotSelected<typeof instruction.accounts>>(true);
+  expectType<IsNotSelected<typeof instruction.transaction.fee>>(true);
+};
+
+if (0) {
+  indexer.onInstruction(
+    { program: "Swapper", instruction: "swap", fields },
+    async ({ instruction }) => handle(instruction),
+  );
+}
+
+// Without program/instruction names, args stay unknown and accounts unnamed.
+type Unbound = SvmInstruction<typeof fields>;
+expectType<TypeEqual<Unbound["args"], unknown>>(true);
+
+type AllInstr = SvmInstruction<SvmAllFieldsSelection, "Swapper", "swap">;
+expectType<TypeEqual<AllInstr["data"], string>>(true);
+expectType<TypeEqual<AllInstr["isInner"], boolean>>(true);
+expectType<TypeEqual<AllInstr["transaction"]["fee"], bigint>>(true);
+expectType<TypeEqual<AllInstr["block"]["height"], number>>(true);
+expectType<TypeEqual<AllInstr["accounts"]["source"]["accountName"], "source">>(true);
+expectType<TypeEqual<AllInstr["transaction"]["accountActivities"][number]["lamports"], { readonly pre: bigint; readonly post: bigint } | undefined>>(true);
+expectType<TypeEqual<AllInstr["transaction"]["accountActivities"][number]["token"], { readonly mint: string; readonly owner: string; readonly decimals: number; readonly preAmount: bigint | undefined; readonly postAmount: bigint | undefined } | undefined>>(true);
+
+type Tx = SvmTransaction<{ transaction: ["signature"] }>;
+expectType<TypeEqual<Tx["signature"], string>>(true);
+expectType<IsNotSelected<Tx["feePayer"]>>(true);
+
+expectType<TypeEqual<SvmAllTransactionFields["fee"], bigint>>(true);
+expectType<TypeEqual<SvmAllBlockFields["parentHash"], string>>(true);
+
+// @ts-expect-error - fields selection is required
+type _bare = SvmInstruction;
+// @ts-expect-error - unknown program name
+type _badProg = SvmInstruction<typeof fields, "Nope", "swap">;
+// @ts-expect-error - unknown instruction name
+type _badInstr = SvmInstruction<typeof fields, "Swapper", "nope">;
 `)
   )
 
