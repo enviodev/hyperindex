@@ -119,12 +119,26 @@ export const config = {
     return `http://localhost:${this.clickhousePort}`;
   },
 
-  /** Postgres settings, matching what docker_env provisions for tests */
-  pgHost: "localhost",
-  pgPort: 5433,
-  pgUser: "postgres",
-  pgPassword: "testing",
-  pgDatabase: "envio-dev",
+  /**
+   * Postgres settings, matching what docker_env provisions for tests. The
+   * ENVIO_PG_* overrides are read here rather than where a connection is opened,
+   * so every helper reaching for Postgres reaches the same one.
+   */
+  get pgHost() {
+    return process.env.ENVIO_PG_HOST ?? "localhost";
+  },
+  get pgPort() {
+    return Number(process.env.ENVIO_PG_PORT ?? 5433);
+  },
+  get pgUser() {
+    return process.env.ENVIO_PG_USER ?? "postgres";
+  },
+  get pgPassword() {
+    return process.env.ENVIO_PG_PASSWORD ?? "testing";
+  },
+  get pgDatabase() {
+    return process.env.ENVIO_PG_DATABASE ?? "envio-dev";
+  },
 
   /** Timeouts (ms) */
   timeouts: {
