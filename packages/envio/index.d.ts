@@ -1411,7 +1411,7 @@ export type SvmInstruction<
   readonly args: SvmInstrField<
     Fields,
     "args",
-    ProgInstr extends { readonly args: infer A } ? A | undefined : unknown | undefined
+    ProgInstr extends { readonly args: infer A } ? A : unknown
   >;
   readonly accounts: SvmInstrField<
     Fields,
