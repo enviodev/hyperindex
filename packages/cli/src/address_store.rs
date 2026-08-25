@@ -100,33 +100,24 @@ fn ecosystem_by_name(name: &str, should_checksum: bool) -> napi::Result<Ecosyste
     }
 }
 
-/// Address keys packed into one buffer — the columnar form `seed_rows` takes
-/// and the write path binds to a `BYTEA[]`.
-#[napi(object)]
-pub struct PackedAddresses {
-    pub bytes: Buffer,
-    pub lengths: Vec<u32>,
-}
-
-/// Encodes address strings to their store keys. The one encoder: config
-/// addresses reach storage through here, so the bytes a row holds and the bytes
-/// a store keys on can't fork.
+/// Encodes address strings to their store keys, one buffer per address. The one
+/// encoder: config addresses reach storage through here, so the bytes a row
+/// holds and the bytes a store keys on can't fork.
 #[napi]
-pub fn pack_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result<PackedAddresses> {
+pub fn encode_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result<Vec<Buffer>> {
     let ecosystem = ecosystem_by_name(&ecosystem, false)?;
-    let mut bytes = Vec::new();
-    let mut lengths = Vec::with_capacity(addresses.len());
-    for address in addresses.iter() {
-        let key = address_key(ecosystem, address).ok_or_else(|| {
-            napi::Error::from_reason(format!("Address \"{address}\" is not a valid address."))
-        })?;
-        lengths.push(key.len() as u32);
-        bytes.extend_from_slice(&key);
-    }
-    Ok(PackedAddresses {
-        bytes: bytes.into(),
-        lengths,
-    })
+    addresses
+        .iter()
+        .map(|address| {
+            address_key(ecosystem, address)
+                .map(|key| key.to_vec().into())
+                .ok_or_else(|| {
+                    napi::Error::from_reason(format!(
+                        "Address \"{address}\" is not a valid address."
+                    ))
+                })
+        })
+        .collect()
 }
 
 /// Walks a packed address column, yielding one key slice per row. Every column
@@ -171,23 +162,8 @@ fn key_slices<'a>(
     Ok(slices)
 }
 
-/// Splits packed address keys into one buffer per row — the form the write
-/// path binds to a `BYTEA[]`.
-#[napi]
-pub fn split_addresses(
-    ecosystem: String,
-    bytes: Buffer,
-    lengths: Vec<u32>,
-) -> napi::Result<Vec<Buffer>> {
-    let ecosystem = ecosystem_by_name(&ecosystem, false)?;
-    Ok(key_slices(ecosystem, &bytes, &lengths)?
-        .into_iter()
-        .map(|key| key.to_vec().into())
-        .collect())
-}
-
 /// Renders packed address keys back to the canonical strings the JS side shows.
-/// The inverse of `pack_addresses`, and the only decoder.
+/// The inverse of `encode_addresses`, and the only decoder.
 #[napi]
 pub fn render_addresses(
     ecosystem: String,
@@ -715,42 +691,11 @@ impl AddressStore {
         AddressSet::new(self.inner.clone(), ids)
     }
 
-    /// A set over exactly these addresses, in set order. Addresses the store
-    /// doesn't hold are skipped. Every set of a chain must come from that
-    /// chain's one store — ids are store-scoped, so sets from different stores
-    /// can't be merged.
-    #[napi]
-    pub fn make_set_of(&self, addresses: Vec<String>) -> AddressSet {
-        let store = self.read();
-        let ids: Vec<u64> = addresses
-            .iter()
-            .filter_map(|address| address_key(store.ecosystem, address))
-            // Every contract the address is registered for, not just one of
-            // them: a set built from addresses must hold the same entries the
-            // contract-scoped selections would.
-            .flat_map(|key| store.live_ids(&key))
-            .collect();
-        let ids = store.sorted_ids(ids);
-        drop(store);
-        AddressSet::new(self.inner.clone(), ids)
-    }
-
     /// A set holding nothing — what an address-free (wildcard) partition
     /// carries, so every partition is queried through the same handle.
     #[napi]
     pub fn empty_set(&self) -> AddressSet {
         AddressSet::new(self.inner.clone(), Vec::new())
-    }
-
-    /// The distinct effective start blocks of a contract's addresses, ascending.
-    #[napi]
-    pub fn start_block_groups(&self, contract_name: String) -> Vec<StartBlockGroup> {
-        let store = self.read();
-        let Some(contract_idx) = store.contract_idx(&contract_name) else {
-            return Vec::new();
-        };
-        let ids = store.sorted_live_ids(0, |entry| entry.contract_idx == contract_idx);
-        group_start_blocks(&store, &ids)
     }
 
     /// Live registration counts for the contracts this chain has something to
@@ -1552,6 +1497,25 @@ mod tests {
     const B: &str = "0x00000000000000000000000000000000000000bb";
     const C: &str = "0x00000000000000000000000000000000000000cc";
 
+    struct Packed {
+        bytes: Buffer,
+        lengths: Vec<u32>,
+    }
+
+    /// The packed column `seed_rows` and `render_addresses` read, built the way
+    /// storage builds it: encode each address, then concatenate.
+    fn pack_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result<Packed> {
+        let keys = encode_addresses(ecosystem, addresses)?;
+        Ok(Packed {
+            lengths: keys.iter().map(|key| key.len() as u32).collect(),
+            bytes: keys
+                .iter()
+                .flat_map(|key| key.iter().copied())
+                .collect::<Vec<u8>>()
+                .into(),
+        })
+    }
+
     fn contracts(entries: &[(&str, Option<i64>)]) -> Vec<AddressStoreContract> {
         entries
             .iter()
@@ -1772,21 +1736,6 @@ mod tests {
     }
 
     #[test]
-    fn make_set_of_takes_every_owner_of_an_address() {
-        let store = store();
-        store.register_seed(vec![reg(A, "C", 10), reg(A, "D", 10), reg(B, "C", 10)]);
-        let set = store.make_set_of(vec![A.to_string()]);
-        assert_eq!(
-            (
-                set.size(),
-                set.count_for("C".to_string()),
-                set.count_for("D".to_string()),
-            ),
-            (2, 1, 1)
-        );
-    }
-
-    #[test]
     fn registering_for_a_contract_the_chain_doesnt_index_is_an_error() {
         let store = store();
         assert!(store.register_batch(vec![reg(A, "Unknown", 10)]).is_err());
@@ -1893,9 +1842,7 @@ mod tests {
                 )
                 .unwrap(),
                 render_addresses("svm".to_string(), false, vec![].into(), vec![]).unwrap(),
-                split_addresses("svm".to_string(), vec![].into(), vec![])
-                    .unwrap()
-                    .len(),
+                encode_addresses("svm".to_string(), vec![]).unwrap().len(),
             ),
             (Vec::<String>::new(), Vec::<String>::new(), 0)
         );
@@ -2061,7 +2008,8 @@ mod tests {
         assert_eq!(
             (
                 store
-                    .start_block_groups("C".to_string())
+                    .make_set("C".to_string(), None)
+                    .start_block_groups()
                     .into_iter()
                     .map(|g| (g.start_block, g.count))
                     .collect::<Vec<_>>(),
@@ -2331,7 +2279,8 @@ mod tests {
     fn contains_at_scopes_the_gate_to_the_set() {
         let store = store();
         store.register_seed(vec![reg(A, "C", 300), reg(B, "C", 300)]);
-        let set = store.make_set_of(vec![A.to_string()]);
+        // A partition holding the first of C's two addresses.
+        let set = store.make_set("C".to_string(), None).slice(0, Some(1));
         assert_eq!(
             (
                 set.contains_at(A.to_string(), "C".to_string(), 300),
@@ -2403,11 +2352,10 @@ mod tests {
                 // Registered for D chain-wide, but this set holds only C's
                 // registration of it.
                 set.contains_at(A.to_string(), "D".to_string(), 100),
-                store.make_set_of(vec![A.to_string()]).contains_at(
-                    A.to_string(),
-                    "D".to_string(),
-                    100
-                ),
+                store
+                    .make_set("C".to_string(), None)
+                    .merge(&store.make_set("D".to_string(), None))
+                    .contains_at(A.to_string(), "D".to_string(), 100),
             ),
             (true, false, true)
         );

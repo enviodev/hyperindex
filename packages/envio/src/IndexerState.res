@@ -272,7 +272,7 @@ let makeFromDbState = (
         ~isInReorgThreshold,
         ~isRealtime,
         ~config,
-        ~contractNames=initialState.contractNames,
+        ~contractMapping=initialState.contractMapping,
         ~registrationsByChainId,
         ~reducedPollingInterval?,
       ),
@@ -814,7 +814,7 @@ let markCommitted = (state: t, ~upToCheckpointId) => {
 }
 
 let stageRegisteredAddresses = (state: t, rows: array<AddressRows.staged>) =>
-  state.registeredAddresses = state.registeredAddresses->Array.concat(rows)
+  state.registeredAddresses->Array.pushMany(rows)
 
 let snapshotRegisteredAddresses = (state: t, ~upToCheckpointId) =>
   state.registeredAddresses->Array.filter(row => row.checkpointId <= upToCheckpointId)

@@ -92,6 +92,7 @@ let setup = async (~pgSchema, ~fixtures=[], ~sql as client=sql, ~entities=allEnt
   let storage = makeStorage(~sql=client, pgSchema)
   let _ = await storage.initialize(
     ~chainConfigs=config.chainMap->ChainMap.values,
+    ~contractMapping=config.contractMapping,
     ~entities,
     ~enums,
     ~envioInfo=JSON.Encode.object(Dict.make()),

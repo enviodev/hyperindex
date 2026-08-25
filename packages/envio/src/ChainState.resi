@@ -6,7 +6,7 @@ type t
 let configStorageRows: (
   Config.chain,
   ~ecosystem: Ecosystem.name,
-  ~contractNames: array<string>,
+  ~contractMapping: ContractMapping.t,
 ) => array<AddressRows.row>
 
 let make: (
@@ -37,7 +37,7 @@ let makeFromDbState: (
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~config: Config.t,
-  ~contractNames: array<string>,
+  ~contractMapping: ContractMapping.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~reducedPollingInterval: int=?,
 ) => t

@@ -63,22 +63,20 @@ let onEventRegistrations = () => {
 // The chain's store as production builds it: every config contract under its
 // canonical id, seeded with the config's addresses.
 let makeSource = (~url) => {
-  let contractNames = Config.canonicalContractNames(
-    ~chainConfigs=parsed.config.chainMap->ChainMap.values,
-  )
+  let contractMapping = parsed.config.contractMapping
   let addressStore = AddressStore.make(
     ~ecosystem=Ecosystem.Evm,
     ~shouldChecksum=false,
     ~contracts=AddressStore.contractsOf(
       ~onEventRegistrations=onEventRegistrations(),
-      ~contractNames,
+      ~contractMapping,
     ),
   )
   let chainConfig = parsed.config.chainMap->ChainMap.values->Array.getUnsafe(0)
   let _ =
     addressStore->AddressStore.seedRows(
       chainConfig
-      ->ChainState.configStorageRows(~ecosystem=Evm, ~contractNames)
+      ->ChainState.configStorageRows(~ecosystem=Evm, ~contractMapping)
       ->AddressRows.seedRowsOf,
     )
   let source = EvmHyperSyncSource.make({

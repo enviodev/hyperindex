@@ -1,12 +1,8 @@
 // use super::chain_helpers;
 use super::human_config::{self, evm::HumanConfig};
-use crate::constants::reserved_keywords::{
-    ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
-    TYPESCRIPT_RESERVED_WORDS,
-};
+use crate::constants::reserved_keywords::RESERVED_NAMES;
 use anyhow::{anyhow, Context};
 use regex::Regex;
-use std::collections::HashSet;
 
 // It must start with a letter or underscore.
 // It can contain letters, numbers, and underscores.
@@ -36,27 +32,14 @@ fn are_contract_names_unique(contract_names: &[String]) -> bool {
     true
 }
 
-// Check for reserved words in a string, to be applied for schema and config.
-// Words from config and schema are used in the codegen and eventually in eventHandlers for the user, thus cannot contain any reserved words.
-fn check_reserved_words(words: &Vec<String>) -> Vec<String> {
-    let mut flagged_words = Vec::new();
-    // Creating a deduplicated set of reserved words from javascript, typescript and rescript
-    let mut set = HashSet::new();
-    set.extend(JAVASCRIPT_RESERVED_WORDS.iter());
-    set.extend(TYPESCRIPT_RESERVED_WORDS.iter());
-    set.extend(RESCRIPT_RESERVED_WORDS.iter());
-
-    let words_set: Vec<&str> = set.into_iter().cloned().collect();
-
-    // Find all alphanumeric words in the YAML string
-    for word in words {
-        let word = word.as_str();
-        if words_set.contains(&word) {
-            flagged_words.push(word.to_string());
-        }
-    }
-
-    flagged_words
+// Names from the config and the schema both become generated identifiers, so
+// they are held to the same list.
+fn check_reserved_words(words: &[String]) -> Vec<String> {
+    words
+        .iter()
+        .filter(|word| RESERVED_NAMES.contains(&word.as_str()))
+        .cloned()
+        .collect()
 }
 
 fn is_valid_identifier(s: &str) -> bool {
@@ -84,7 +67,7 @@ fn is_valid_identifier(s: &str) -> bool {
 
 // Check if all names in the config file are valid.
 pub fn validate_names_valid_rescript(
-    names_from_config: &Vec<String>,
+    names_from_config: &[String],
     part_of_config: String,
 ) -> anyhow::Result<()> {
     let detected_reserved_words = check_reserved_words(names_from_config);
@@ -353,28 +336,8 @@ pub fn validate_deserialized_svm_config_yaml(
     Ok(())
 }
 
-pub fn check_enums_for_internal_reserved_words(enum_name_words: Vec<String>) -> Vec<String> {
-    enum_name_words
-        .into_iter()
-        .filter(|word| ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES.contains(&word.as_str()))
-        .collect()
-}
-
-// Checking that schema does not include any reserved words
 pub fn check_names_from_schema_for_reserved_words(schema_words: Vec<String>) -> Vec<String> {
-    // Checking that schema does not include any reserved words
-    let mut detected_reserved_words_in_schema = Vec::new();
-    // Creating a deduplicated set of reserved words from javascript or rescript
-    let mut word_set: HashSet<&str> = HashSet::new();
-    word_set.extend(JAVASCRIPT_RESERVED_WORDS.iter());
-    word_set.extend(RESCRIPT_RESERVED_WORDS.iter());
-    for word in schema_words {
-        if word_set.contains(word.as_str()) {
-            detected_reserved_words_in_schema.push(word);
-        }
-    }
-
-    detected_reserved_words_in_schema
+    check_reserved_words(&schema_words)
 }
 
 pub fn check_schema_enums_are_valid_postgres(enum_names: &Vec<String>) -> Vec<String> {
@@ -479,8 +442,8 @@ mod tests {
             "like".to_string(),
             "break".to_string(),
             "import".to_string(),
-            "and".to_string(),
-            "symbol".to_string(),
+            "constructor".to_string(),
+            "enum".to_string(),
             "plus".to_string(),
             "unreserved".to_string(),
             "word".to_string(),
@@ -488,10 +451,7 @@ mod tests {
             "match.".to_string(),
         ];
         let flagged_words = super::check_reserved_words(&words);
-        assert_eq!(
-            flagged_words,
-            vec!["string", "with", "break", "import", "and", "symbol"]
-        );
+        assert_eq!(flagged_words, vec!["constructor", "enum"]);
     }
 
     #[test]
@@ -519,12 +479,26 @@ mod tests {
 
     #[test]
     fn test_names_from_schema_for_reserved_words() {
-        let names_from_schema = "Greeting id greetings lastGreeting lazy open catch"
+        let names_from_schema = "Greeting id greetings lastGreeting lazy open constructor"
             .split(" ")
             .map(|s| s.to_string())
             .collect();
         let flagged_words = super::check_names_from_schema_for_reserved_words(names_from_schema);
-        assert_eq!(flagged_words, vec!["lazy", "open", "catch"]);
+        assert_eq!(flagged_words, vec!["constructor"]);
+    }
+
+    #[test]
+    fn contract_named_like_a_prototype_key_is_rejected() {
+        let result = super::validate_names_valid_rescript(
+            &vec!["MyContract".to_string(), "__proto__".to_string()],
+            "contract".to_string(),
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "The config contains reserved words for contract names: \"__proto__\". They are used \
+             for the generated code and must be valid identifiers, containing only alphanumeric \
+             characters and underscores."
+        );
     }
 
     #[test]
@@ -544,17 +518,17 @@ mod tests {
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
-                "Let".to_string(),
                 "module".to_string(),
-                "this".to_string(),
+                "constructor".to_string(),
+                "enum".to_string(),
                 "1".to_string(),
             ],
             "contract".to_string(),
         );
         assert_eq!(
             reserved_names.unwrap_err().to_string(),
-            "The config contains reserved words for contract names: \"module\", \"this\". They \
-             are used for the generated code and must be valid identifiers, containing only \
+            "The config contains reserved words for contract names: \"constructor\", \"enum\". \
+             They are used for the generated code and must be valid identifiers, containing only \
              alphanumeric characters and underscores."
         );
 

@@ -68,27 +68,21 @@ type t = {
 let configStorageRows = (
   chainConfig: Config.chain,
   ~ecosystem: Ecosystem.name,
-  ~contractNames: array<string>,
+  ~contractMapping: ContractMapping.t,
 ): array<AddressRows.row> => {
   let addresses = []
   let contractIds = []
   chainConfig.contracts->Array.forEach(contract => {
-    let contractId = switch contractNames->Array.indexOf(contract.name) {
-    | -1 =>
-      JsError.throwWithMessage(
-        `Contract "${contract.name}" is missing from the indexer's contract list.`,
-      )
-    | id => id
-    }
+    let contractId = contractMapping->ContractMapping.idOfOrThrow(contract.name)
     contract.addresses->Array.forEach(address => {
       addresses->Array.push(address)->ignore
       contractIds->Array.push(contractId)->ignore
     })
   })
-  let packed = Core.getAddon().packAddresses(~ecosystem=(ecosystem :> string), ~addresses)
-  Core.getAddon()
-  .splitAddresses(~ecosystem=(ecosystem :> string), ~bytes=packed.bytes, ~lengths=packed.lengths)
-  ->Array.mapWithIndex((address, idx) => {
+  Core.getAddon().encodeAddresses(
+    ~ecosystem=(ecosystem :> string),
+    ~addresses,
+  )->Array.mapWithIndex((address, idx) => {
     AddressRows.chainId: chainConfig.id,
     address,
     contractId: contractIds->Array.getUnsafe(idx),
@@ -165,11 +159,9 @@ let make = (
 let makeInternal = (
   ~chainConfig: Config.chain,
   ~addressRows: AddressRows.seedRows,
-  // Every chain's contracts, not just one chain's: `context.chain.X.add`
-  // accepts any config contract, whichever chain declared it, so every chain's
-  // address store has to hold the whole set — under the same ids, since a
-  // persisted row names its contract by id.
-  ~contractNames: array<string>,
+  // Passed rather than read off `config`, because a resume must use the mapping
+  // storage holds: the ids stored rows carry, not the ids this config derives.
+  ~contractMapping: ContractMapping.t,
   ~startBlock,
   ~endBlock,
   ~firstEventBlock=None,
@@ -211,7 +203,7 @@ let makeInternal = (
   let addressStore = AddressStore.make(
     ~ecosystem=config.ecosystem.name,
     ~shouldChecksum=!lowercaseAddresses,
-    ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractNames),
+    ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
   )
 
   let fetchState = FetchState.make(
@@ -392,7 +384,7 @@ let makeFromDbState = (
   ~isInReorgThreshold,
   ~isRealtime,
   ~config,
-  ~contractNames,
+  ~contractMapping,
   ~registrationsByChainId,
   ~reducedPollingInterval=?,
 ) => {
@@ -407,7 +399,7 @@ let makeFromDbState = (
 
   makeInternal(
     ~addressRows=resumedChainState.addressRows,
-    ~contractNames,
+    ~contractMapping,
     ~chainConfig,
     ~startBlock=resumedChainState.startBlock,
     ~endBlock=resumedChainState.endBlock,
@@ -838,9 +830,9 @@ let applyTransactionGroups = async (store: TransactionStore.t, g: transactionGro
       g.payloadGroups->Array.forEachWithIndex((payloads, i) => {
         let tx = txs->Array.getUnsafe(i)
         payloads->Array.forEach(payload => payload->Internal.setPayloadTransaction(tx))
-        switch (
-          tx->(Utils.magic: Internal.eventTransaction => dict<unknown>)
-        )->Dict.get("accountActivities") {
+        switch tx
+        ->(Utils.magic: Internal.eventTransaction => dict<unknown>)
+        ->Dict.get("accountActivities") {
         | Some(_) => payloads->Array.forEach(payload => Svm.attachAccountActivities(payload, tx))
         | None => ()
         }

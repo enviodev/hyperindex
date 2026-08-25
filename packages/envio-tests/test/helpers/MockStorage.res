@@ -88,6 +88,7 @@ let make = (methods: array<method>, ~dbEntities=[], ~storedEnvioInfo=None) => {
         ~chainConfigs=[],
         ~entities=[],
         ~enums=[],
+        ~contractMapping as _,
         ~envioInfo,
       ) => {
         initializeCalls
@@ -192,9 +193,7 @@ let toPersistence = (storageMock: t, ~config: Config.t) => {
     ...PgStorage.makePersistenceFromConfig(~config, ~storage=storageMock.storage),
     storageStatus: Ready({
       cleanRun: false,
-      contractNames: Config.canonicalContractNames(
-        ~chainConfigs=config.chainMap->ChainMap.values,
-      ),
+      contractMapping: config.contractMapping,
       cache: Dict.make(),
       chains: [],
       reorgCheckpoints: [],

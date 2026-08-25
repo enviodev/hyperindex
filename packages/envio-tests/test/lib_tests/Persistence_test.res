@@ -29,7 +29,7 @@ describe("Test Persistence layer init", () => {
 
     let envioInfo = JSON.Encode.object(Dict.make())
     let p =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
 
     t.expect(
       storageMock.isInitializedCalls,
@@ -73,7 +73,7 @@ describe("Test Persistence layer init", () => {
 
     let initialState: Persistence.initialState = {
       cleanRun: true,
-      contractNames: [],
+      contractMapping: ContractMapping.empty,
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
@@ -91,7 +91,7 @@ describe("Test Persistence layer init", () => {
     // Can resolve the promise now
     await p
 
-    await persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+    await persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -105,6 +105,7 @@ describe("Test Persistence layer init", () => {
       persistence->Persistence.init(
         ~reset=true,
         ~chainConfigs=[],
+        ~contractMapping=ContractMapping.empty,
         ~envioInfo,
         ~resetCommand=resetCmd, ~runCommand=runCmd,
       )
@@ -139,12 +140,12 @@ describe("Test Persistence layer init", () => {
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
     let p =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
     // Additional calls to init should not do anything
     let _ =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
     let _ =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
 
     storageMock.resolveIsInitialized(true)
     // The compat gate reads the stored config snapshot before resuming, so the
@@ -153,7 +154,7 @@ describe("Test Persistence layer init", () => {
 
     let initialState: Persistence.initialState = {
       cleanRun: false,
-      contractNames: [],
+      contractMapping: ContractMapping.empty,
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
@@ -196,6 +197,7 @@ Although it should load effect caches metadata.`,
       async () =>
         switch await persistence->Persistence.init(
           ~chainConfigs=[],
+          ~contractMapping=ContractMapping.empty,
           ~envioInfo=current,
           ~resetCommand,
           ~runCommand,
@@ -208,7 +210,7 @@ Although it should load effect caches metadata.`,
     await Utils.delay(0)
     let initialState: Persistence.initialState = {
       cleanRun: false,
-      contractNames: [],
+      contractMapping: ContractMapping.empty,
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],

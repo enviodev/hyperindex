@@ -155,6 +155,7 @@ let run = async (
 
     await persistence->Persistence.init(
       ~chainConfigs=config.chainMap->ChainMap.values,
+      ~contractMapping=config.contractMapping,
       ~envioInfo=JSON.Encode.object(Dict.make()),
       ~resetCommand="envio dev -r",
       ~runCommand=Some("envio dev"),
@@ -394,9 +395,6 @@ let run = async (
             InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema),
           ))->(Utils.magic: unknown => array<AddressRows.row>)
         }
-        let contractNames = Config.canonicalContractNames(
-          ~chainConfigs=config.chainMap->ChainMap.values,
-        )
         let addresses = Core.getAddon().renderAddresses(
           ~ecosystem=(config.ecosystem.name :> string),
           ~shouldChecksum=!config.lowercaseAddresses,
@@ -406,7 +404,7 @@ let run = async (
         rows->Array.mapWithIndex((row, idx): addressRow => {
           chainId: row.chainId->ChainId.normalizeOrThrow,
           address: addresses->Array.getUnsafe(idx),
-          contractName: contractNames->Array.getUnsafe(row.contractId),
+          contractName: config.contractMapping->ContractMapping.nameOfOrThrow(row.contractId),
           registrationBlock: row.registrationBlock,
         })
       },

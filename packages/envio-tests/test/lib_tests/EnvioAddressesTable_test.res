@@ -27,7 +27,7 @@ let enums =
   config.allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
 
 let chainId = (config.chainMap->ChainMap.values->Array.getUnsafe(0)).id
-let contractNames = Config.canonicalContractNames(~chainConfigs=config.chainMap->ChainMap.values)
+let contractMapping = config.contractMapping
 
 let createdSchemas = []
 
@@ -54,6 +54,7 @@ let setup = async () => {
   )
   let _ = await storage.initialize(
     ~chainConfigs=config.chainMap->ChainMap.values,
+    ~contractMapping,
     ~entities=config.userEntities,
     ~enums,
     ~envioInfo=JSON.Encode.object(Dict.make()),
@@ -70,13 +71,12 @@ let configAddress =
 // One row per (chain, address, contract), with the keys encoded exactly as the
 // address store encodes them.
 let row = (~address: Address.t, ~contractName, ~registrationBlock): AddressRows.row => {
-  let packed = Core.getAddon().packAddresses(~ecosystem="evm", ~addresses=[address])
   {
     chainId,
     address: Core.getAddon()
-    .splitAddresses(~ecosystem="evm", ~bytes=packed.bytes, ~lengths=packed.lengths)
+    .encodeAddresses(~ecosystem="evm", ~addresses=[address])
     ->Array.getUnsafe(0),
-    contractId: contractNames->Array.indexOf(contractName),
+    contractId: contractMapping->ContractMapping.idOfOrThrow(contractName),
     registrationBlock,
   }
 }
@@ -93,7 +93,7 @@ let storedRows = async (~pgSchema) => {
   )
   rows->Array.mapWithIndex((row, idx) => (
     rendered->Array.getUnsafe(idx),
-    contractNames->Array.getUnsafe(row.contractId),
+    contractMapping->ContractMapping.nameOfOrThrow(row.contractId),
     row.registrationBlock,
   ))
 }
@@ -151,6 +151,7 @@ describe("envio_addresses", () => {
     let message = try {
       await persistence->Persistence.init(
         ~chainConfigs=config.chainMap->ChainMap.values,
+        ~contractMapping=config.contractMapping,
         ~envioInfo=JSON.Encode.object(Dict.make()),
         ~resetCommand="envio local db-migrate setup",
         ~runCommand=None,
@@ -174,7 +175,7 @@ describe("envio_addresses", () => {
       ~pgSchema,
       ~rows=[
         shared,
-        {...shared, contractId: contractNames->Array.indexOf("NftFactory")},
+        {...shared, contractId: contractMapping->ContractMapping.idOfOrThrow("NftFactory")},
       ],
     )
     // A retried batch write re-inserts what it already wrote.
