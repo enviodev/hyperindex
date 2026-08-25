@@ -1697,7 +1697,7 @@ let make = (
 
     // Call sink.initialize before executing PG queries
     switch sink {
-    | Some(sink) => await sink.initialize(~chainConfigs, ~entities=chEntities, ~enums)
+    | Some(sink) => await sink.initialize(~entities=chEntities)
     | None => ()
     }
 

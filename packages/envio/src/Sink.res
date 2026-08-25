@@ -1,10 +1,6 @@
 type t = {
   name: string,
-  initialize: (
-    ~chainConfigs: array<Config.chain>=?,
-    ~entities: array<Internal.entityConfig>=?,
-    ~enums: array<Table.enumConfig<Table.enum>>=?,
-  ) => promise<unit>,
+  initialize: (~entities: array<Internal.entityConfig>=?) => promise<unit>,
   resume: (~checkpointId: Internal.checkpointId) => promise<unit>,
   writeBatch: (
     ~batch: Batch.t,
@@ -27,7 +23,7 @@ let makeClickHouse = (
 
   {
     name: "clickhouse",
-    initialize: (~chainConfigs as _=[], ~entities=[], ~enums as _=[]) => {
+    initialize: (~entities=[]) => {
       ClickHouse.initialize(sink, ~registry, ~entities)
     },
     resume: (~checkpointId) => {

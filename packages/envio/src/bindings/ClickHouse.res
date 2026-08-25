@@ -96,75 +96,50 @@ type checkpointColumn = {
   valuesOf: Batch.t => array<unknown>,
 }
 
-// The checkpoints table as ClickHouse holds it. The field types and order come
-// from the internal table itself, so a column added there cannot be silently
-// missing here; only the value accessor and the one type that differs are
-// stated. `events_processed` is widened because ClickHouse counts them in a
-// UInt64 where Postgres stores an Int32.
-%%private(let checkpointColumnsCache: ref<option<array<checkpointColumn>>> = ref(None))
-
-// Built on first use rather than at module load: it throws when a column has no
-// value accessor, which at load time would take down an indexer that never
-// writes to ClickHouse at all.
-let checkpointColumns = () =>
-  switch checkpointColumnsCache.contents {
-  | Some(columns) => columns
-  | None =>
-    let columns = {
-      let valuesOf: dict<Batch.t => array<unknown>> = Dict.fromArray([
-        (
-          (#id: InternalTable.Checkpoints.field :> string),
-          (batch: Batch.t) => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
-        ),
-        (
-          (#chain_id: InternalTable.Checkpoints.field :> string),
-          (batch: Batch.t) =>
-            batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
-        ),
-        (
-          (#block_number: InternalTable.Checkpoints.field :> string),
-          (batch: Batch.t) =>
-            batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
-        ),
-        (
-          (#block_hash: InternalTable.Checkpoints.field :> string),
-          (batch: Batch.t) =>
-            batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
-        ),
-        (
-          (#events_processed: InternalTable.Checkpoints.field :> string),
-          (batch: Batch.t) =>
-            batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
-        ),
-      ])
-      InternalTable.Checkpoints.table.fields->Array.filterMap(field =>
-        switch field {
-        | Table.Field(f) =>
-          let name = f.fieldName
-          Some({
-            name,
-            fieldType: name === (#events_processed: InternalTable.Checkpoints.field :> string)
-              ? Table.UInt64
-              : f.fieldType,
-            isNullable: f.isNullable,
-            valuesOf: switch valuesOf->Dict.get(name) {
-            | Some(valuesOf) => valuesOf
-            | None =>
-              JsError.throwWithMessage(
-                `The ClickHouse checkpoints table has no values for the "${name}" column`,
-              )
-            },
-          })
-        | DerivedFrom(_) => None
-        }
+// The checkpoints table as ClickHouse holds it. Order and types come from the
+// internal table itself, so a column added there cannot be silently missing
+// here, and the switch on the field variant is what makes such a column fail to
+// compile until it has a value accessor. A polymorphic variant is its own name
+// at runtime, which is what the downcast rests on.
+let checkpointColumns = InternalTable.Checkpoints.table.fields->Array.filterMap(field =>
+  switch field {
+  | Table.Field(f) =>
+    let (fieldType, valuesOf) = switch f.fieldName->(
+      Utils.magic: string => InternalTable.Checkpoints.field
+    ) {
+    | #id => (
+        f.fieldType,
+        (batch: Batch.t) => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
+      )
+    | #chain_id => (
+        f.fieldType,
+        (batch: Batch.t) =>
+          batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
+      )
+    | #block_number => (
+        f.fieldType,
+        (batch: Batch.t) =>
+          batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
+      )
+    | #block_hash => (
+        f.fieldType,
+        (batch: Batch.t) =>
+          batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
+      )
+    // Widened: ClickHouse counts events in a UInt64 where Postgres stores an Int32.
+    | #events_processed => (
+        Table.UInt64,
+        (batch: Batch.t) =>
+          batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
       )
     }
-    checkpointColumnsCache := Some(columns)
-    columns
+    Some({name: f.fieldName, fieldType, isNullable: f.isNullable, valuesOf})
+  | DerivedFrom(_) => None
   }
+)
 
-let checkpointColumnSpecs = () =>
-  checkpointColumns()->Array.map(({name, fieldType, isNullable}) =>
+let checkpointColumnSpecs =
+  checkpointColumns->Array.map(({name, fieldType, isNullable}) =>
     makeColumnSpec(~name, ~fieldType, ~isNullable)
   )
 
@@ -300,7 +275,7 @@ let checkpointsTable = (sink, ~registry) =>
   | None =>
     let table =
       sink
-      ->ClickHouseSink.registerCheckpointsTable(checkpointColumnSpecs())
+      ->ClickHouseSink.registerCheckpointsTable(checkpointColumnSpecs)
       ->ClickHouseSink.makeTable(~name=InternalTable.Checkpoints.table.tableName)
     registry.checkpoints = Some(table)
     table
@@ -322,26 +297,18 @@ let stageCheckpointsOrThrow = (sink, ~registry, ~batch: Batch.t) => {
     Null.null
   } else {
     let table = sink->checkpointsTable(~registry)
-    // Keyed by name rather than by position: the registered list is the sink's,
-    // and a column it adds of its own would otherwise pair every column after it
-    // with its neighbour's values — which nothing downstream could catch, since
-    // every array reaches the builders as `unknown`.
+    // Keyed by name rather than by position, so the two lists stay independent
+    // of each other's order — pairing a column with its neighbour's values is
+    // something nothing downstream could catch, every array reaching the
+    // builders as `unknown`.
     let values = Dict.make()
-    checkpointColumns()->Array.forEach(({name, valuesOf}) =>
-      values->Dict.set(name, valuesOf(batch))
-    )
+    checkpointColumns->Array.forEach(({name, valuesOf}) => values->Dict.set(name, valuesOf(batch)))
     try {
       let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
       // A checkpoint id past what UInt64 holds is refused here rather than being
       // reduced to a different id by the typed array it would land in.
       builders->Array.forEach(builder => {
-        let columnValues = switch values->Dict.get(builder.name) {
-        | Some(columnValues) => columnValues
-        | None =>
-          JsError.throwWithMessage(
-            `The ClickHouse checkpoints table has no values for the "${builder.name}" column`,
-          )
-        }
+        let columnValues = values->Dict.getUnsafe(builder.name)
         for row in 0 to rows - 1 {
           builder->ClickHouseSink.writeValue(~row, columnValues->Array.getUnsafe(row))
         }
@@ -451,7 +418,7 @@ let initialize = async (sink, ~registry, ~entities: array<Internal.entityConfig>
   try {
     await sink->ClickHouseSink.initialize({
       entities: entities->Array.map(entityConfig => entitySpec(~entityConfig)),
-      checkpointColumns: checkpointColumnSpecs(),
+      checkpointColumns: checkpointColumnSpecs,
       replicated: Env.ClickHouse.replicated(),
       databaseEngine: ?Env.ClickHouse.databaseEngine(),
     })

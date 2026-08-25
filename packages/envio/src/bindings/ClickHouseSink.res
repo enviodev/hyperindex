@@ -169,8 +169,6 @@ let makeTable = (~name, {handle, names, kinds}: registeredTable) => {
   }),
 }
 
-%%private(let isString: unknown => bool = %raw(`(v) => typeof v === "string"`))
-%%private(let isBigInt: unknown => bool = %raw(`(v) => typeof v === "bigint"`))
 external asString: unknown => string = "%identity"
 @val external toNumber: unknown => float = "Number"
 @val external toBigInt: unknown => bigint = "BigInt"
@@ -182,21 +180,18 @@ external asString: unknown => string = "%identity"
 // A native bigint is rendered directly: `JSON.stringify` throws on one, which
 // would fail the whole batch before it reached `stage`.
 %%private(
-  let bigintReplacer = (_, value: JSON.t) => {
-    let value = value->(Utils.magic: JSON.t => unknown)
-    value->isBigInt
-      ? value->stringOf->(Utils.magic: string => JSON.t)
-      : value->(Utils.magic: unknown => JSON.t)
-  }
+  let bigintReplacer = (_, value: JSON.t) =>
+    switch value->typeof {
+    | #bigint => value->(Utils.magic: JSON.t => unknown)->stringOf->(Utils.magic: string => JSON.t)
+    | _ => value
+    }
 )
 
 let toText = (value: unknown) =>
-  if value->isString {
-    value->asString
-  } else if value->isBigInt {
-    value->stringOf
-  } else {
-    value->(Utils.magic: unknown => JSON.t)->JSON.stringify(~replacer=Replacer(bigintReplacer))
+  switch value->typeof {
+  | #string => value->asString
+  | #bigint => value->stringOf
+  | _ => value->(Utils.magic: unknown => JSON.t)->JSON.stringify(~replacer=Replacer(bigintReplacer))
   }
 
 // One column's storage for one batch, sized to the batch's row count so the

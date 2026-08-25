@@ -158,7 +158,7 @@ describe("Test makeClickHouseEntitySchema", () => {
 describe("ClickHouse checkpoints columns", () => {
   Async.it("cover every column the checkpoints table declares, in its order", async t => {
     let declared = InternalTable.Checkpoints.table.fields->Array.map(Table.getUserDefinedFieldName)
-    t.expect(ClickHouse.checkpointColumns()->Array.map(({name}) => name)).toEqual(declared)
+    t.expect(ClickHouse.checkpointColumns->Array.map(({name}) => name)).toEqual(declared)
   })
 })
 
