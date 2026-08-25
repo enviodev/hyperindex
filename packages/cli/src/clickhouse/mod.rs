@@ -45,8 +45,8 @@ use napi_derive::napi;
 use ch_type::{ChType, ChainIdMode, ColumnKind, FieldSpec};
 use row_binary::{Column, ColumnValues, EncodedRows};
 
-/// Retries an insert this many times before giving up, matching the JS client's
-/// policy: halve the batch while more than one row remains, otherwise wait.
+/// Retries an insert this many times before giving up, as the JS client did.
+/// What each retry sends is [`retry_for`]'s to decide.
 const MAX_RETRIES: u32 = 8;
 
 /// `@clickhouse/client`'s `request_timeout` default, which the JS insert path
@@ -875,13 +875,16 @@ impl ClickHouseSink {
             .await
     }
 
-    /// Halves a failed range and retries each half; with a single row left, waits
-    /// and retries it. The delay grows from 100ms to 1s as retries run down.
+    /// Sends the batch, retrying what fails. What goes back depends on the
+    /// failure ([`retry_for`]): a batch the server could not take is replaced by
+    /// its two halves, down to a single row, while a server or cluster that
+    /// briefly cannot take writes gets the same rows again after the wait. The
+    /// delay grows from 100ms to 1s as retries run down.
     ///
-    /// Only a failure another attempt could answer differently is retried. A
-    /// server that read the rows and rejected them gives the same verdict however
-    /// few of them come back, so retrying one costs a batch's worth of doomed
-    /// requests and every backoff between them before the error surfaces.
+    /// Only a failure another attempt could answer differently is retried at
+    /// all. A server that read the rows and rejected them gives the same verdict
+    /// however few of them come back, so retrying one costs a batch's worth of
+    /// doomed requests and every backoff between them before the error surfaces.
     async fn insert_with_retry(
         &self,
         table: &str,
@@ -1025,32 +1028,26 @@ const SAME_ROWS_ERROR_CODES: &[u32] = &[
 /// write with the server's own message instead of a batch's worth of doomed
 /// requests.
 fn retry_for(status: reqwest::StatusCode, body: &str) -> Retry {
-    if let Some(code) = clickhouse_error_code(body) {
-        return if HALVED_ERROR_CODES.contains(&code) {
-            Retry::Halved
-        } else if SAME_ROWS_ERROR_CODES.contains(&code) {
-            Retry::SameRows
-        } else {
-            Retry::Never
-        };
-    }
-    // Nothing in the body is ClickHouse's, so something in front of it answered
-    // — a proxy or load balancer — and only its status says what happened.
-    match status {
-        // A body-size limit is the one proxy verdict a smaller batch meets
-        // differently. Left unretried, a batch that outgrows the limit fails the
-        // same way on every restart.
-        reqwest::StatusCode::PAYLOAD_TOO_LARGE => Retry::Halved,
-        // Rate limiting counts requests, so halving spends the budget faster,
-        // and a 5xx from in front of ClickHouse is the same shape of answer — an
-        // overloaded proxy, a refused upstream. 413 above is the only status
-        // that names something a smaller batch could do anything about.
-        status if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() => {
-            Retry::SameRows
-        }
-        // Any other 4xx is the deployment's own configuration — credentials, a
-        // route — which no number of smaller batches talks it out of.
-        _ => Retry::Never,
+    match clickhouse_error_code(body) {
+        Some(code) if HALVED_ERROR_CODES.contains(&code) => Retry::Halved,
+        Some(code) if SAME_ROWS_ERROR_CODES.contains(&code) => Retry::SameRows,
+        Some(_) => Retry::Never,
+        // Nothing in the body is ClickHouse's, so something in front of it
+        // answered — a proxy or load balancer — and only its status says what.
+        None => match status {
+            // A body-size limit is the one proxy verdict a smaller batch meets
+            // differently. Left unretried, a batch that outgrows the limit fails
+            // the same way on every restart.
+            reqwest::StatusCode::PAYLOAD_TOO_LARGE => Retry::Halved,
+            // Rate limiting counts requests, so halving spends the budget
+            // faster, and a 5xx from in front of ClickHouse is the same shape of
+            // answer — an overloaded proxy, a refused upstream.
+            reqwest::StatusCode::TOO_MANY_REQUESTS => Retry::SameRows,
+            status if status.is_server_error() => Retry::SameRows,
+            // Any other 4xx is the deployment's own configuration —
+            // credentials, a route — which no smaller batch talks it out of.
+            _ => Retry::Never,
+        },
     }
 }
 
