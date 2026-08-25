@@ -1,3 +1,4 @@
+use crate::config_parsing::entity_parsing::DefaultChainScope;
 use crate::utils::normalized_list::{NormalizedList, SingleOrList};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
@@ -99,6 +100,19 @@ pub struct BaseConfig {
                        false)"
     )]
     pub disable_default_cross_chain: Option<bool>,
+}
+
+impl BaseConfig {
+    /// Entities and effect caches are shared across chains unless the config
+    /// opts out. Decides which entities get an appended chain-id column, so the
+    /// schema parser and the validators have to agree on it.
+    pub fn default_chain_scope(&self) -> DefaultChainScope {
+        if self.disable_default_cross_chain.unwrap_or(false) {
+            DefaultChainScope::PerChain
+        } else {
+            DefaultChainScope::CrossChain
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]

@@ -40,7 +40,7 @@ describe_skip("SvmHyperSyncClient live", () => {
 
     let blockTimeBySlot = Dict.make()
     resp.data.blocks->Array.forEach(b =>
-      switch b.blockTime {
+      switch b.blockTime->Null.toOption {
       | Some(time) => blockTimeBySlot->Dict.set(b.slot->Int.toString, time)
       | None => ()
       }
