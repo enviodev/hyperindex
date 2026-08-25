@@ -33,7 +33,6 @@ let parseError = schema =>
   | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
   }
 
-// A field's own name plus, for a derived field, the lookup it stands for.
 let describeFields = (config: Config.t, entityName) => {
   let {table} = config.userEntities->Array.find(e => e.name === entityName)->Option.getOrThrow
   table.fields->Array.map(field =>
