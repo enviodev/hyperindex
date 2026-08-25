@@ -171,14 +171,37 @@ chains:
 `,
     )
     t.expect(
-      (config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts->Array.map(contract => (
-        contract.name,
-        contract.addresses,
-      )),
+      (config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts->Array.map(
+        contract => (contract.name, contract.addresses),
+      ),
     ).toEqual([
       ("AaveToken", ["0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"->Address.unsafeFromString]),
       ("AaveV3", ["0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"->Address.unsafeFromString]),
     ])
+  })
+
+  // Generated code indexes plain objects by contract name, and an object serves
+  // `__proto__` from its prototype rather than from what was stored — so the
+  // name has to be refused here, where every other unusable name is, rather
+  // than worked around at each lookup.
+  it("rejects a contract named like an Object prototype key", t => {
+    expectParseError(
+      t,
+      `
+name: proto-contract
+contracts:
+  - name: __proto__
+    events:
+      - event: Transfer()
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: __proto__
+        address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
+`,
+      "Config parse error: The config contains reserved words for contract names: \"__proto__\". They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.",
+    )
   })
 
   it("rejects an address listed twice for one contract", t => {

@@ -25,6 +25,11 @@ pub mod links {
 
 pub mod reserved_keywords {
     pub const JAVASCRIPT_RESERVED_WORDS: &[&str] = &[
+        // Not a keyword, but generated code indexes plain objects by these
+        // names, and an object answers `__proto__` from its prototype rather
+        // than from what was stored — so a name like this resolves to a bogus
+        // value instead of the one assigned to it.
+        "__proto__",
         "abstract",
         "arguments",
         "await",

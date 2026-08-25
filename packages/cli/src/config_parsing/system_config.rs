@@ -2229,6 +2229,9 @@ impl Contract {
         events: Vec<Event>,
         abi: Abi,
     ) -> Result<Self> {
+        // Every ecosystem builds its contracts through here, unlike
+        // `validate_deserialized_config_yaml`, which only sees EVM configs.
+        validate_names_valid_rescript(&vec![name.clone()], "contract".to_string())?;
         validate_names_valid_rescript(
             &events.iter().map(|e| e.name.clone()).collect(),
             "event".to_string(),
