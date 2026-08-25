@@ -116,7 +116,7 @@ describe("@derivedFrom spellings", () => {
     t.expect(
       parseError(schemaWith(`  children: [String!]! @derivedFrom(field: "parent")`)),
     ).toEqual(
-      `Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Parent: Failed parsing field children: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
+      `schema.graphql:4:3: Failed parsing field children on entity Parent: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
     )
   })
 
@@ -126,7 +126,7 @@ describe("@derivedFrom spellings", () => {
     t.expect(
       parseError(schemaWith(`  children: [[Child!]!]! @derivedFrom(field: "parent")`)),
     ).toEqual(
-      `Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Parent: Failed parsing field children: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
+      `schema.graphql:4:3: Failed parsing field children on entity Parent: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
     )
   })
 
@@ -135,7 +135,7 @@ describe("@derivedFrom spellings", () => {
   // one-to-one spelling is refused rather than quietly answered with an array.
   it("rejects a one-to-one derived field", t => {
     t.expect(parseError(schemaWith(`  child: Child @derivedFrom(field: "parent")`))).toEqual(
-      `Config parse error: Failed converting schema doc to schema struct: Failed constructing entities in schema from document: Failed parsing fields on entity Parent: Failed parsing field child: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
+      `schema.graphql:4:3: Failed parsing field child on entity Parent: Field marked with @derivedFrom directive does not meet the required structure. Field should be a list of entities, for example: [<ENTITY_NAME>!]! @derivedFrom(field: "parent")`,
     )
   })
 
@@ -149,7 +149,7 @@ type Parent {
 }
 `),
     ).toEqual(
-      "Config parse error: Failed converting schema doc to schema struct: Cannot derive field parent from enum Status. derivedFrom is intended to be used with Entity type definitions",
+      "Cannot derive field parent from enum Status. derivedFrom is intended to be used with Entity type definitions",
     )
   })
 })
