@@ -477,6 +477,8 @@ import type {
   SvmAllTransactionFields,
   SvmFieldsSelection,
   SvmInstruction,
+  SvmOnInstructionHandler,
+  SvmOnInstructionHandlerArgs,
   SvmTransaction,
 } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
@@ -503,7 +505,25 @@ const handle = async (
   expectType<IsNotSelected<typeof instruction.transaction.fee>>(true);
 };
 
+const handleSwap: SvmOnInstructionHandler<typeof fields, "Swapper", "swap"> =
+  async ({ instruction, context }) => {
+    expectType<TypeEqual<typeof instruction.args, { readonly amountIn: string; readonly minAmountOut: string }>>(true);
+    expectType<TypeEqual<typeof context.isPreload, boolean>>(true);
+    await handle(instruction);
+  };
+
+expectType<
+  TypeEqual<
+    Parameters<typeof handleSwap>[0],
+    SvmOnInstructionHandlerArgs<typeof fields, "Swapper", "swap">
+  >
+>(true);
+
 if (0) {
+  indexer.onInstruction(
+    { program: "Swapper", instruction: "swap", fields },
+    handleSwap,
+  );
   indexer.onInstruction(
     { program: "Swapper", instruction: "swap", fields },
     async ({ instruction }) => handle(instruction),

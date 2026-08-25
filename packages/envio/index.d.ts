@@ -1481,13 +1481,15 @@ export type SvmAccountActivity<Fields extends SvmFieldsSelection> =
 export type SvmAccountTokenActivity<Fields extends SvmFieldsSelection> =
   SvmSelectedToken<Fields>;
 
-/** Arguments passed to handlers registered via `indexer.onInstruction`. */
+/** Arguments passed to handlers registered via `indexer.onInstruction`.
+ * Takes the same type arguments as {@link SvmInstruction}. */
 export type SvmOnInstructionHandlerArgs<
-  Instr,
-  Config extends IndexerConfigTypes = GlobalConfig,
+  Fields extends SvmFieldsSelection,
+  Program extends keyof SvmProgramsT & string = never,
+  Instruction extends keyof SvmProgramsT[Program] & string = never,
 > = {
-  readonly instruction: Instr;
-  readonly context: SvmOnSlotContext<Config>;
+  readonly instruction: SvmInstruction<Fields, Program, Instruction>;
+  readonly context: SvmOnSlotContext<GlobalConfig>;
 };
 
 /** Options for an SVM `indexer.onInstruction` registration. */
@@ -1505,11 +1507,20 @@ export type SvmOnInstructionOptions<
   readonly fields?: Fields & SvmFieldsLiteralCheck<Fields>;
 };
 
-/** Handler function for an SVM `indexer.onInstruction` registration. */
+/** Handler function for an SVM `indexer.onInstruction` registration. Takes
+ * the same type arguments as {@link SvmInstruction}, so a standalone handler
+ * needs a single annotation:
+ *
+ *     const handleSwap: SvmOnInstructionHandler<typeof fields, "Swapper", "swap"> =
+ *       async ({ instruction, context }) => { ... };
+ */
 export type SvmOnInstructionHandler<
-  Instr,
-  Config extends IndexerConfigTypes = GlobalConfig,
-> = (args: SvmOnInstructionHandlerArgs<Instr, Config>) => Promise<void>;
+  Fields extends SvmFieldsSelection,
+  Program extends keyof SvmProgramsT & string = never,
+  Instruction extends keyof SvmProgramsT[Program] & string = never,
+> = (
+  args: SvmOnInstructionHandlerArgs<Fields, Program, Instruction>,
+) => Promise<void>;
 
 // ============== Indexer Types ==============
 
@@ -1742,15 +1753,13 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                   const F extends SvmFieldsSelection | undefined,
                 >(
                   options: SvmOnInstructionOptions<P, I, F>,
-                  handler: (
-                    args: SvmOnInstructionHandlerArgs<
-                      SvmSelectedInstruction<
-                        [F] extends [undefined] ? {} : F,
-                        Programs[P][I]
-                      >,
-                      Config
-                    >,
-                  ) => Promise<void>,
+                  handler: (args: {
+                    readonly instruction: SvmSelectedInstruction<
+                      [F] extends [undefined] ? {} : F,
+                      Programs[P][I]
+                    >;
+                    readonly context: SvmOnSlotContext<Config>;
+                  }) => Promise<void>,
                 ) => void;
               }
             : {
