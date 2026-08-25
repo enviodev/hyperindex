@@ -720,12 +720,20 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
   }
 
   Promise.make((resolve, _reject) => {
-    // Every waiter this wait registered, plus its stall timer. Draining is safe
-    // to repeat: unsubscribing twice removes a waiter that is already gone.
-    let cleanups = []
+    // Every waiter this wait holds, on primaries and on any fallback recruited
+    // later, so the stall poke reaches all of them.
+    let watched: array<HeightFeed.subscription> = []
+    let stallTimeoutId = ref(None)
+
+    // Safe to repeat: unsubscribing twice removes a waiter that is already gone.
     let cleanup = () => {
-      cleanups->Array.forEach(release => release())
-      cleanups->Utils.Array.clearInPlace
+      watched->Array.forEach(subscription => subscription.unsubscribe())
+      watched->Utils.Array.clearInPlace
+      switch stallTimeoutId.contents {
+      | Some(timeoutId) => clearTimeout(timeoutId)
+      | None => ()
+      }
+      stallTimeoutId := None
     }
 
     let settled = ref(false)
@@ -746,10 +754,6 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
         sourceManager.waitingLogged = false
         resolve(height)
       }
-
-    // Every waiter this wait holds, on primaries and on any fallback recruited
-    // later, so the stall poke reaches all of them.
-    let watched = []
 
     let watch = (sourceState: sourceState) => {
       if isRealtime {
@@ -773,7 +777,6 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
           ~onHeight=height => settle(sourceState.source, height),
         )
       watched->Array.push(subscription)->ignore
-      cleanups->Array.push(subscription.unsubscribe)->ignore
     }
 
     mainSources->Array.forEach(sourceState =>
@@ -794,7 +797,6 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
       // the polling for the rest of the wait, and a stream that keeps its
       // keep-alives flowing while it stops sending heights would hang it
       // indefinitely, since its own staleness detector never trips.
-      let stallTimeoutId = ref(None)
       let rec armStallTimeout = (~recruitFallbacks, ~delay) =>
         stallTimeoutId :=
           Some(
@@ -868,15 +870,6 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
       // and spreading that would report it early. The repeats carry the spread
       // instead, which is where indexers would otherwise stay in lockstep.
       armStallTimeout(~recruitFallbacks=true, ~delay=stallTimeout)
-      cleanups
-      ->Array.push(
-        () =>
-          switch stallTimeoutId.contents {
-          | Some(timeoutId) => clearTimeout(timeoutId)
-          | None => ()
-          },
-      )
-      ->ignore
     }
   })
 }

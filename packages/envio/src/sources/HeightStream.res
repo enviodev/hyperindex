@@ -14,7 +14,6 @@ type driver = {
   // The stream is usable: for SSE the connection opened, for WebSocket the
   // subscription was confirmed.
   onConnected: unit => unit,
-  // Traffic that proves the connection is alive without carrying a height.
   onKeepAlive: unit => unit,
   onHeight: int => unit,
   // A message the transport couldn't read. Not a failure by itself, but from

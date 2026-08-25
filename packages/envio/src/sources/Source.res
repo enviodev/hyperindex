@@ -134,8 +134,10 @@ type sourceFor = Sync | Fallback | Realtime
 // `Down` repeats on each failed retry while the stream stays broken, and `Live`
 // fires on every (re)connect, so consumers must treat both as idempotent.
 // `reason` is pre-bucketed for use as a metric label. The shipped transports
-// report an HTTP status, or "closed", "error", "connect-failed", "stale",
-// "unreadable" or "subscribe-rejected". `detail` is whatever the provider said
+// report an HTTP status, or "error", "connect-failed", "stale", "unreadable" or
+// "subscribe-rejected"; a connection that ends cleanly arrives as "rotated" or
+// "closed", depending on whether it had served long enough to be worth making.
+// `detail` is whatever the provider said
 // for this one failure — an error message, or the frame nobody could read — so
 // it belongs in a log line and never in a label.
 type heightSubscriptionStatus = Live | Down({reason: string, detail?: string})

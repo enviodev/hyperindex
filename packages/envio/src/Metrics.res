@@ -230,9 +230,7 @@ let renderMetrics = (b: builder, metrics: t) => {
     metrics.historyPrunes->Array.map(s => (`{entity="${s.entity->escapeLabelValue}"}`, s))
   // Every per-source series is keyed by these, so they are built in one place:
   // a scrape whose label sets disagree between two of them is one nothing can
-  // join on. No series here carries more than one label beyond the pair, and
-  // building the string directly costs a fraction of assembling it from an
-  // array — this runs once per sample of every per-source family.
+  // join on.
   let sourceLabels = (~source, ~chainId, ~extra: option<(string, string)>=?) => {
     let pair = `{source="${source->escapeLabelValue}",chainId="${chainId->ChainId.toString}"`
     switch extra {

@@ -114,8 +114,6 @@ let sample = (feed: t): sample => {
   },
 }
 
-// The loop runs exactly while somebody is waiting and nothing is proving that
-// the stream delivers.
 let shouldPoll = (feed: t) =>
   feed.waiters->Array.length > 0 &&
     (!feed.streamLive ||
