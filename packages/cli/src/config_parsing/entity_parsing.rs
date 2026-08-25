@@ -564,7 +564,7 @@ fn resolve_order_by(
                 resolver.entity,
                 ORDER_BY_DIRECTIVE,
                 "`id` on its own is already the sorting key when no `orderBy` is given",
-                "Drop the `orderBy`, or list the columns to sort by before `id`.",
+                "Drop the `orderBy`, or add the columns to sort by alongside `id`.",
             ));
         }
     }
@@ -636,11 +636,11 @@ fn check_worth_indexing(entity: &str, only: &ResolvedColumn) -> anyhow::Result<(
             entity,
             INDEX_DIRECTIVE,
             &format!(
-                "`{CHAIN_ID_FIELD_NAME}` is already part of the primary key, and on its own it \
-                 has one value per chain — too few to index by"
+                "`{CHAIN_ID_FIELD_NAME}` is part of the primary key envio appends to every \
+                 per-chain entity, so it is already indexed"
             ),
             &format!(
-                "List it with another field, e.g. `@index(fields: [\"{CHAIN_ID_FIELD_NAME}\", \
+                "List it with another column, e.g. `@index(fields: [\"{CHAIN_ID_FIELD_NAME}\", \
                  \"timestamp\"])`."
             ),
         )),

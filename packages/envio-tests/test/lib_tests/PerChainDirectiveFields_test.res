@@ -65,6 +65,35 @@ ENGINE = MergeTree()
 ORDER BY (\`chain_id\`, \`timestamp\`, envio_checkpoint_id)`)
   })
 
+  it("Sorts by the chain column alone, overriding the default id sorting key", t => {
+    let config = parse(
+      ~perChain=true,
+      ~columnNameFormat="snake_case",
+      `
+type Transfer @storage(clickhouse: {orderBy: ["chainId"]}) {
+  id: ID!
+  timestamp: Timestamp!
+}
+`,
+    )
+
+    t.expect(
+      ClickHouse.makeCreateHistoryTableQuery(
+        ~entityConfig=config->entityConfig("Transfer"),
+        ~database="db",
+      ),
+      ~message="a lone chain column replaces the default id prefix",
+    ).toBe(`CREATE TABLE IF NOT EXISTS db.\`envio_history_Transfer\` (
+  \`id\` String,
+  \`timestamp\` DateTime64(3, 'UTC'),
+  \`chain_id\` Int32,
+  \`envio_checkpoint_id\` UInt64,
+  \`envio_change\` Enum8('SET', 'DELETE')
+)
+ENGINE = MergeTree()
+ORDER BY (\`chain_id\`, envio_checkpoint_id)`)
+  })
+
   it("Keeps the listed position, so a trailing chain column stays trailing", t => {
     let config = parse(
       ~perChain=true,
@@ -235,8 +264,8 @@ type Transfer @index(fields: ["chainId"]) {
 }
 `,
       ),
-    ).toBe(`schema.graphql:2:15: Invalid \`@index\` on \`Transfer\`: \`chainId\` is already part of the primary key, and on its own it has one value per chain — too few to index by.
-  List it with another field, e.g. \`@index(fields: ["chainId", "timestamp"])\`.`)
+    ).toBe(`schema.graphql:2:15: Invalid \`@index\` on \`Transfer\`: \`chainId\` is part of the primary key envio appends to every per-chain entity, so it is already indexed.
+  List it with another column, e.g. \`@index(fields: ["chainId", "timestamp"])\`.`)
   })
 
   it("Rejects the chain column on a cross-chain entity, which never gets one", t => {

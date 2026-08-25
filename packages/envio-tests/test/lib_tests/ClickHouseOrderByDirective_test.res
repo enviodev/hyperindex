@@ -41,7 +41,7 @@ type Token @storage(clickhouse: {orderBy: ["id"]}) {
 }
 `),
     ).toBe(`schema.graphql:2:12: Invalid \`clickhouse.orderBy\` on \`Token\`: \`id\` on its own is already the sorting key when no \`orderBy\` is given.
-  Drop the \`orderBy\`, or list the columns to sort by before \`id\`.`)
+  Drop the \`orderBy\`, or add the columns to sort by alongside \`id\`.`)
   })
 
   it("Sorts by id alongside another column", t => {
