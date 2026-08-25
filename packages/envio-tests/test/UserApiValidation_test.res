@@ -180,10 +180,6 @@ chains:
     ])
   })
 
-  // Generated code indexes plain objects by contract name, and an object serves
-  // `__proto__` from its prototype rather than from what was stored — so the
-  // name has to be refused here, where every other unusable name is, rather
-  // than worked around at each lookup.
   it("rejects a contract named like an Object prototype key", t => {
     expectParseError(
       t,

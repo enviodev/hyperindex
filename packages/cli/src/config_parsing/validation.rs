@@ -527,10 +527,6 @@ mod tests {
         assert_eq!(flagged_words, vec!["lazy", "open", "catch"]);
     }
 
-    // `__proto__` is a valid identifier and reads like an ordinary name, but a
-    // JS object keyed by it answers from its prototype instead of from what was
-    // stored — so a contract named that would silently resolve to a bogus id
-    // wherever the generated code indexes a plain object by contract name.
     #[test]
     fn contract_named_like_a_prototype_key_is_rejected() {
         let result = super::validate_names_valid_rescript(

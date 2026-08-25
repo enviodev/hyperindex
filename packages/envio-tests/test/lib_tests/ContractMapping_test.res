@@ -46,11 +46,8 @@ describe("ContractMapping", () => {
     )
   )
 
-  // The resume gate compares the mapping storage holds against the config's.
-  // Comparing the two name lists joined on a separator calls the first pair
-  // below equal, and every stored address row would then be attributed to the
-  // wrong contract. A real config.yaml can't declare a contract named "A,B", so
-  // the mapping itself is the only rung this aliasing is reachable from.
+  // A comma-bearing name is unreachable from a real config.yaml, so the mapping
+  // is the only rung this can be tested from.
   it("compares mappings elementwise, not as a joined string", t =>
     t.expect({
       "commaBearingNameVsTwoNames": ContractMapping.fromStoredNames([
@@ -73,15 +70,10 @@ describe("ContractMapping", () => {
     })
   )
 
-  // A stored mapping is the id order its rows were written against, so it must
-  // survive the round trip untouched — re-canonicalizing would paper over a
-  // mapping that no longer matches those rows.
   it("keeps a stored mapping in the order it was stored", t =>
     t.expect(ContractMapping.fromStoredNames(["B", "A"])->ContractMapping.names).toEqual(["B", "A"])
   )
 
-  // Ids are 0-based positions in a smallint column. Building the mapping is
-  // where the ceiling is enforced, so every storage inherits the same limit.
   it("refuses more contracts than a smallint id can hold", t =>
     t->toThrowErrorEqual(
       () =>
