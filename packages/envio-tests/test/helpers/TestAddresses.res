@@ -2,17 +2,17 @@
 // `ChainState.makeInternal` does in production: one store per chain, built from
 // that chain's registrations, holding every address the chain indexes.
 
-// The canonical contract list a chain's store is built from — every contract
-// the config declares, in the order their ids come from.
-let contractNames = (
+// The contract mapping a chain's store is built from — every contract the
+// config declares, under the ids their names canonicalize to.
+let contractMapping = (
   ~onEventRegistrations: array<Internal.onEventRegistration>=[],
   // Config contracts the chain has no events for. Registering an address for a
   // name outside the store's contracts throws, so a test exercising the
   // no-events path declares it here.
   ~configContractNames: array<string>=[],
 ) =>
-  Core.getAddon().canonicalContractNames(
-    onEventRegistrations
+  ContractMapping.make(
+    ~names=onEventRegistrations
     ->Array.map(reg => reg.eventConfig.contractName)
     ->Array.concat(configContractNames),
   )
@@ -25,25 +25,23 @@ let addressRows = (
   ~configContractNames: array<string>=[],
   ~ecosystem: Ecosystem.name=Evm,
 ): AddressRows.seedRows => {
-  let contractNames = contractNames(~onEventRegistrations, ~configContractNames)
-  let packed = Core.getAddon().packAddresses(
+  let contractMapping = contractMapping(~onEventRegistrations, ~configContractNames)
+  let keys = Core.getAddon().encodeAddresses(
     ~ecosystem=(ecosystem :> string),
     ~addresses=addresses->Array.map(a => a.address),
   )
-  {
-    addresses: packed.bytes,
-    lengths: packed.lengths,
-    contractIds: addresses->Array.map(a =>
-      switch contractNames->Array.indexOf(a.contractName) {
-      | -1 =>
-        JsError.throwWithMessage(
-          `Test address registered for "${a.contractName}", which the store doesn't hold.`,
-        )
-      | id => id
-      }
+  addresses
+  ->Array.mapWithIndex((a, idx): AddressRows.row => {
+    // The seed form is per-chain, so any chain id serves — `seedRowsOf` drops it.
+    chainId: ChainId.fromInt(0),
+    address: keys->Array.getUnsafe(idx),
+    contractId: contractMapping->ContractMapping.idOfOrThrow(
+      a.contractName,
+      ~context=" registered by a test address",
     ),
-    registrationBlocks: addresses->Array.map(a => a.registrationBlock),
-  }
+    registrationBlock: a.registrationBlock,
+  })
+  ->AddressRows.seedRowsOf
 }
 
 let makeStore = (
@@ -60,7 +58,7 @@ let makeStore = (
     ~shouldChecksum,
     ~contracts=AddressStore.contractsOf(
       ~onEventRegistrations,
-      ~contractNames=contractNames(~onEventRegistrations, ~configContractNames),
+      ~contractMapping=contractMapping(~onEventRegistrations, ~configContractNames),
     ),
   )
   // Config addresses, like `FetchState.make` seeds them: already stored, so

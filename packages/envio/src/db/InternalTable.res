@@ -17,6 +17,19 @@ let isUndefinedTable = exn =>
   | _ => false
   }
 
+// The array type an unnest binds a chain-id column to. Resolved from the
+// config's mode, so every internal query casts the parameter the same way the
+// column was created.
+let chainIdArrayType = (~pgSchema, ~chainIdMode: ChainId.mode) =>
+  Table.getPgFieldType(
+    ~fieldType=ChainId,
+    ~pgSchema,
+    ~isArray=true,
+    ~isNumericArrayAsText=false,
+    ~isNullable=false,
+    ~chainIdMode,
+  )
+
 // The canonical contract ids. Written once at initialize from the config's
 // contract names in byte order, so an id names the same contract on every
 // chain and across restarts; read back on resume, where the stored mapping is
@@ -51,14 +64,15 @@ SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(T
   // resume has to stop at the compat check rather than at a missing column.
   let read = async (sql, ~pgSchema): option<array<string>> =>
     try {
-      let rows: array<{"name": string}> = await sql->Postgres.unsafe(
+      let rows: array<{
+        "name": string,
+      }> = await sql->Postgres.unsafe(
         `SELECT "name" FROM "${pgSchema}"."${table.tableName}" ORDER BY "id";`,
       )
       Some(rows->Array.map(row => row["name"]))
     } catch {
     | exn => isUndefinedTable(exn) ? None : throw(exn)
     }
-
 }
 
 // Every address the indexer indexes, one row per (chain, address, contract).
@@ -81,14 +95,7 @@ module EnvioAddresses = {
   )
 
   let makeInsertQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
-    let chainIdArrayType = Table.getPgFieldType(
-      ~fieldType=ChainId,
-      ~pgSchema,
-      ~isArray=true,
-      ~isNumericArrayAsText=false,
-      ~isNullable=false,
-      ~chainIdMode,
-    )
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
     // Idempotent: a batch write retried after a failed transaction re-inserts
     // rows the store still holds.
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("chain_id", "address", "contract_id", "registration_block")
@@ -96,7 +103,12 @@ SELECT * FROM unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :
 ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
   }
 
-  let insert = (sql, ~pgSchema, ~rows: array<AddressRows.row>, ~chainIdMode: ChainId.mode=Int32) => {
+  let insert = (
+    sql,
+    ~pgSchema,
+    ~rows: array<AddressRows.row>,
+    ~chainIdMode: ChainId.mode=Int32,
+  ) => {
     let chainIds = []
     let addresses = []
     let contractIds = []
@@ -121,14 +133,7 @@ ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
   }
 
   let makeDeleteQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
-    let chainIdArrayType = Table.getPgFieldType(
-      ~fieldType=ChainId,
-      ~pgSchema,
-      ~isArray=true,
-      ~isNumericArrayAsText=false,
-      ~isNullable=false,
-      ~chainIdMode,
-    )
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
     `DELETE FROM "${pgSchema}"."${table.tableName}"
 USING unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[]) AS dead(chain_id, address, contract_id)
 WHERE "${table.tableName}"."chain_id" = dead.chain_id
@@ -139,7 +144,12 @@ WHERE "${table.tableName}"."chain_id" = dead.chain_id
   // A rollback removes exactly the registrations the address store dropped, by
   // primary key — so the table needs no index beyond the one it already has,
   // and the two halves of a rollback can't disagree about what to remove.
-  let delete = (sql, ~pgSchema, ~keys: array<AddressRows.key>, ~chainIdMode: ChainId.mode=Int32) => {
+  let delete = (
+    sql,
+    ~pgSchema,
+    ~keys: array<AddressRows.key>,
+    ~chainIdMode: ChainId.mode=Int32,
+  ) => {
     let chainIds = []
     let addresses = []
     let contractIds = []
@@ -151,11 +161,9 @@ WHERE "${table.tableName}"."chain_id" = dead.chain_id
     sql
     ->Postgres.preparedUnsafe(
       makeDeleteQuery(~pgSchema, ~chainIdMode),
-      (
-        chainIds,
-        sql->Postgres.typed(addresses, Postgres.byteaArrayOid),
-        contractIds,
-      )->(Utils.magic: ((array<ChainId.t>, unknown, array<int>)) => unknown),
+      (chainIds, sql->Postgres.typed(addresses, Postgres.byteaArrayOid), contractIds)->(
+        Utils.magic: ((array<ChainId.t>, unknown, array<int>)) => unknown
+      ),
     )
     ->Utils.Promise.ignoreValue
   }
@@ -599,14 +607,7 @@ WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
   }
 
   let makeInsertCheckpointQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
-    let chainIdArrayType = Table.getPgFieldType(
-      ~fieldType=ChainId,
-      ~pgSchema,
-      ~isArray=true,
-      ~isNumericArrayAsText=false,
-      ~isNullable=false,
-      ~chainIdMode,
-    )
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
 SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chainIdArrayType},$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
   }

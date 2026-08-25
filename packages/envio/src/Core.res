@@ -26,12 +26,6 @@ type fromUserApiResult = {
   indexerCode: Null.t<string>,
 }
 
-// Address keys packed back to back, with the length of each.
-type packedAddresses = {
-  bytes: NodeJs.Buffer.t,
-  lengths: array<int>,
-}
-
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
   encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
@@ -55,12 +49,7 @@ type addon = {
   mockHyperSyncServer: mockHyperSyncServerCtor,
   // Address keys are encoded and rendered only in Rust — the store's key is
   // exactly what a persisted row holds, so a JS-side codec could fork from it.
-  packAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => packedAddresses,
-  splitAddresses: (
-    ~ecosystem: string,
-    ~bytes: NodeJs.Buffer.t,
-    ~lengths: array<int>,
-  ) => array<NodeJs.Buffer.t>,
+  encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
   renderAddresses: (
     ~ecosystem: string,
     ~shouldChecksum: bool,

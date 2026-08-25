@@ -35,10 +35,9 @@ type initialChainState = {
 
 type initialState = {
   cleanRun: bool,
-  // The stored contract mapping: a name's position is the id its addresses'
-  // rows carry. On a resume this is what the database holds, not what the
-  // config would derive — the ids must never reshuffle under stored rows.
-  contractNames: array<string>,
+  // On a resume this is what the database holds, not what the config would
+  // derive — the ids must never reshuffle under stored rows.
+  contractMapping: ContractMapping.t,
   cache: dict<effectCacheRecord>,
   chains: array<initialChainState>,
   checkpointId: Internal.checkpointId,
@@ -96,6 +95,7 @@ type storage = {
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Table.enumConfig<Table.enum>>=?,
+    ~contractMapping: ContractMapping.t,
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
   // The public config snapshot stored by the last successful initialize, for
@@ -220,7 +220,15 @@ let make = (
 }
 
 let init = {
-  async (persistence, ~chainConfigs, ~envioInfo, ~resetCommand, ~runCommand, ~reset=false) => {
+  async (
+    persistence,
+    ~chainConfigs,
+    ~contractMapping,
+    ~envioInfo,
+    ~resetCommand,
+    ~runCommand,
+    ~reset=false,
+  ) => {
     try {
       let shouldRun = switch persistence.storageStatus {
       | Unknown => true
@@ -242,6 +250,7 @@ let init = {
             ~entities=persistence.allEntities,
             ~enums=persistence.allEnums,
             ~chainConfigs,
+            ~contractMapping,
             ~envioInfo,
           )
           Logging.info(`The indexer storage is ready. Starting indexing!`)
@@ -281,21 +290,13 @@ let init = {
           }
           Config.throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
           let initialState = await persistence.storage.resumeInitialState()
+
           // Belt and braces on top of the config diff: every stored address row
           // names its contract by the id this mapping assigns, so a mapping
           // that no longer matches the config would silently attribute
-          // addresses to the wrong contract. Both lists are in canonical order,
-          // so comparing them joined is comparing the mappings themselves.
-          if (
-            initialState.contractNames->Array.joinUnsafe(",") !==
-              Config.canonicalContractNames(~chainConfigs)->Array.joinUnsafe(",")
-          ) {
-            Config.throwIfIncompatible(
-              ["contracts"],
-              ~resetCommand,
-              ~runCommand,
-              ~hasClickhouse,
-            )
+          // addresses to the wrong contract.
+          if !(initialState.contractMapping->ContractMapping.isEqual(contractMapping)) {
+            Config.throwIfIncompatible(["contracts"], ~resetCommand, ~runCommand, ~hasClickhouse)
           }
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()

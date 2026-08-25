@@ -119,18 +119,18 @@ describe("AddressStore", () => {
       // whichever order the registrations arrive in.
       "noneThenSome": AddressStore.contractsOf(
         ~onEventRegistrations=[reg(~contractName="A"), reg(~contractName="A", ~startBlock=100)],
-        ~contractNames=["A"],
+        ~contractMapping=ContractMapping.make(~names=["A"]),
       ),
       "someThenNone": AddressStore.contractsOf(
         ~onEventRegistrations=[reg(~contractName="A", ~startBlock=100), reg(~contractName="A")],
-        ~contractNames=["A"],
+        ~contractMapping=ContractMapping.make(~names=["A"]),
       ),
       "allRestricted": AddressStore.contractsOf(
         ~onEventRegistrations=[
           reg(~contractName="A", ~startBlock=100),
           reg(~contractName="A", ~startBlock=50),
         ],
-        ~contractNames=["A"],
+        ~contractMapping=ContractMapping.make(~names=["A"]),
       ),
       // Contracts stay independent, and their ids follow the canonical list
       // rather than the order registrations arrive in.
@@ -140,18 +140,18 @@ describe("AddressStore", () => {
           reg(~contractName="A"),
           reg(~contractName="B", ~startBlock=50),
         ],
-        ~contractNames=["A", "B"],
+        ~contractMapping=ContractMapping.make(~names=["A", "B"]),
       ),
       // A contract only the config names is registrable but never fetched.
       "configOnly": AddressStore.contractsOf(
         ~onEventRegistrations=[reg(~contractName="A")],
-        ~contractNames=["A", "NoEvents"],
+        ~contractMapping=ContractMapping.make(~names=["A", "NoEvents"]),
       ),
       // A wildcard event is fetched without consulting addresses, so
       // registering one changes nothing about what's queried.
       "wildcardOnly": AddressStore.contractsOf(
         ~onEventRegistrations=[reg(~contractName="A", ~isWildcard=true)],
-        ~contractNames=["A"],
+        ~contractMapping=ContractMapping.make(~names=["A"]),
       ),
     }).toEqual({
       "noneThenSome": [
@@ -316,11 +316,11 @@ describe("AddressStore", () => {
       contract(~address=addr(0), ~contractName="B", ~registrationBlock=-1),
       contract(~address=addr(1), ~contractName="B", ~registrationBlock=-1),
     ]
-    let contractNames = TestAddresses.contractNames(~onEventRegistrations)
+    let contractMapping = TestAddresses.contractMapping(~onEventRegistrations)
     let store = AddressStore.make(
       ~ecosystem=Evm,
       ~shouldChecksum=true,
-      ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractNames),
+      ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
     )
     let fetchState = FetchState.make(
       ~onEventRegistrations,

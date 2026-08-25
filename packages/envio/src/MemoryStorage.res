@@ -52,7 +52,7 @@ type t = {
   addresses: AddressRows.Table.t,
   // The canonical contract mapping, assigned at initialize and read back on a
   // resume just as the stored one is.
-  mutable contractNames: array<string>,
+  mutable contractMapping: ContractMapping.t,
   mutable isInitialized: bool,
 }
 
@@ -66,7 +66,7 @@ let make = (): t => {
   effectCache: Dict.make(),
   envioInfo: None,
   addresses: AddressRows.Table.make(),
-  contractNames: [],
+  contractMapping: ContractMapping.empty,
   isInitialized: false,
 }
 
@@ -123,15 +123,20 @@ let registerEntities = (state: t, ~entities: array<Internal.entityConfig>) =>
 
 // Seeds the config's contract addresses, mirroring what PgStorage.initialize
 // writes into `envio_addresses`.
-let seedConfigAddresses = (state: t, ~chainConfigs: array<Config.chain>, ~ecosystem) => {
+let seedConfigAddresses = (
+  state: t,
+  ~chainConfigs: array<Config.chain>,
+  ~contractMapping,
+  ~ecosystem,
+) => {
   // Initialize starts from an empty schema — the Postgres DDL drops and
   // recreates one — so a re-initialize must not stack a second copy of the
   // config's addresses on what a previous one left behind.
   state.addresses->AddressRows.Table.clear
-  state.contractNames = Config.canonicalContractNames(~chainConfigs)
+  state.contractMapping = contractMapping
   chainConfigs->Array.forEach(chainConfig =>
     state.addresses->AddressRows.Table.insertMany(
-      chainConfig->ChainState.configStorageRows(~ecosystem, ~contractNames=state.contractNames),
+      chainConfig->ChainState.configStorageRows(~ecosystem, ~contractMapping),
     )
   )
 }
@@ -190,7 +195,7 @@ let reorgCheckpoints = (state: t): array<Internal.reorgCheckpoint> =>
 
 let toInitialState = (state: t, ~cleanRun): Persistence.initialState => {
   cleanRun,
-  contractNames: state.contractNames,
+  contractMapping: state.contractMapping,
   cache: state.cache,
   chains: state->toInitialChainStates,
   checkpointId: state->committedCheckpointId,
@@ -526,9 +531,9 @@ let getRollbackProgressDiff = (state: t, ~rollbackTargetCheckpointId) => {
 let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
   name: "memory",
   isInitialized: async () => state.isInitialized,
-  initialize: async (~chainConfigs=[], ~entities=[], ~enums as _=[], ~envioInfo) => {
+  initialize: async (~chainConfigs=[], ~entities=[], ~enums as _=[], ~contractMapping, ~envioInfo) => {
     state->registerEntities(~entities)
-    state->seedConfigAddresses(~chainConfigs, ~ecosystem=config.ecosystem.name)
+    state->seedConfigAddresses(~chainConfigs, ~contractMapping, ~ecosystem=config.ecosystem.name)
     chainConfigs->Array.forEach(chainConfig =>
       state.chains->Dict.set(
         chainConfig.id->ChainId.toString,
@@ -577,7 +582,7 @@ let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
     state.cache->clear
     state.checkpoints = []
     state.addresses->AddressRows.Table.clear
-    state.contractNames = []
+    state.contractMapping = ContractMapping.empty
     state.envioInfo = None
     state.isInitialized = false
   },

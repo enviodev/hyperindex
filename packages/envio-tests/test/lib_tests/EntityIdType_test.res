@@ -342,7 +342,7 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
       entities: Dict.make(),
       entityConfigs,
       addresses: AddressRows.Table.make(),
-      contractNames: [],
+      contractMapping: ContractMapping.empty,
       processChanges: [],
     }
   }

@@ -100,33 +100,24 @@ fn ecosystem_by_name(name: &str, should_checksum: bool) -> napi::Result<Ecosyste
     }
 }
 
-/// Address keys packed into one buffer — the columnar form `seed_rows` takes
-/// and the write path binds to a `BYTEA[]`.
-#[napi(object)]
-pub struct PackedAddresses {
-    pub bytes: Buffer,
-    pub lengths: Vec<u32>,
-}
-
-/// Encodes address strings to their store keys. The one encoder: config
-/// addresses reach storage through here, so the bytes a row holds and the bytes
-/// a store keys on can't fork.
+/// Encodes address strings to their store keys, one buffer per address. The one
+/// encoder: config addresses reach storage through here, so the bytes a row
+/// holds and the bytes a store keys on can't fork.
 #[napi]
-pub fn pack_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result<PackedAddresses> {
+pub fn encode_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result<Vec<Buffer>> {
     let ecosystem = ecosystem_by_name(&ecosystem, false)?;
-    let mut bytes = Vec::new();
-    let mut lengths = Vec::with_capacity(addresses.len());
-    for address in addresses.iter() {
-        let key = address_key(ecosystem, address).ok_or_else(|| {
-            napi::Error::from_reason(format!("Address \"{address}\" is not a valid address."))
-        })?;
-        lengths.push(key.len() as u32);
-        bytes.extend_from_slice(&key);
-    }
-    Ok(PackedAddresses {
-        bytes: bytes.into(),
-        lengths,
-    })
+    addresses
+        .iter()
+        .map(|address| {
+            address_key(ecosystem, address)
+                .map(|key| key.to_vec().into())
+                .ok_or_else(|| {
+                    napi::Error::from_reason(format!(
+                        "Address \"{address}\" is not a valid address."
+                    ))
+                })
+        })
+        .collect()
 }
 
 /// Walks a packed address column, yielding one key slice per row. Every column
@@ -171,23 +162,8 @@ fn key_slices<'a>(
     Ok(slices)
 }
 
-/// Splits packed address keys into one buffer per row — the form the write
-/// path binds to a `BYTEA[]`.
-#[napi]
-pub fn split_addresses(
-    ecosystem: String,
-    bytes: Buffer,
-    lengths: Vec<u32>,
-) -> napi::Result<Vec<Buffer>> {
-    let ecosystem = ecosystem_by_name(&ecosystem, false)?;
-    Ok(key_slices(ecosystem, &bytes, &lengths)?
-        .into_iter()
-        .map(|key| key.to_vec().into())
-        .collect())
-}
-
 /// Renders packed address keys back to the canonical strings the JS side shows.
-/// The inverse of `pack_addresses`, and the only decoder.
+/// The inverse of `encode_addresses`, and the only decoder.
 #[napi]
 pub fn render_addresses(
     ecosystem: String,
@@ -722,7 +698,7 @@ impl AddressStore {
     #[napi]
     pub fn make_set_of(&self, addresses: Vec<String>) -> AddressSet {
         let store = self.read();
-        let ids: Vec<u64> = addresses
+        let mut ids: Vec<u64> = addresses
             .iter()
             .filter_map(|address| address_key(store.ecosystem, address))
             // Every contract the address is registered for, not just one of
@@ -730,6 +706,10 @@ impl AddressStore {
             // contract-scoped selections would.
             .flat_map(|key| store.live_ids(&key))
             .collect();
+        // An address the caller repeated is still one entry: a set that held it
+        // twice would double every count and send the address twice in a query.
+        ids.sort_unstable();
+        ids.dedup();
         let ids = store.sorted_ids(ids);
         drop(store);
         AddressSet::new(self.inner.clone(), ids)
@@ -1552,6 +1532,25 @@ mod tests {
     const B: &str = "0x00000000000000000000000000000000000000bb";
     const C: &str = "0x00000000000000000000000000000000000000cc";
 
+    struct Packed {
+        bytes: Buffer,
+        lengths: Vec<u32>,
+    }
+
+    /// The packed column `seed_rows` and `render_addresses` read, built the way
+    /// storage builds it: encode each address, then concatenate.
+    fn pack_addresses(ecosystem: String, addresses: Vec<String>) -> napi::Result<Packed> {
+        let keys = encode_addresses(ecosystem, addresses)?;
+        Ok(Packed {
+            lengths: keys.iter().map(|key| key.len() as u32).collect(),
+            bytes: keys
+                .iter()
+                .flat_map(|key| key.iter().copied())
+                .collect::<Vec<u8>>()
+                .into(),
+        })
+    }
+
     fn contracts(entries: &[(&str, Option<i64>)]) -> Vec<AddressStoreContract> {
         entries
             .iter()
@@ -1772,6 +1771,14 @@ mod tests {
     }
 
     #[test]
+    fn make_set_of_ignores_repeated_addresses() {
+        let store = store();
+        store.register_seed(vec![reg(A, "C", 10)]);
+        let set = store.make_set_of(vec![A.to_string(), A.to_string()]);
+        assert_eq!((set.size(), set.count_for("C".to_string())), (1, 1));
+    }
+
+    #[test]
     fn make_set_of_takes_every_owner_of_an_address() {
         let store = store();
         store.register_seed(vec![reg(A, "C", 10), reg(A, "D", 10), reg(B, "C", 10)]);
@@ -1893,9 +1900,7 @@ mod tests {
                 )
                 .unwrap(),
                 render_addresses("svm".to_string(), false, vec![].into(), vec![]).unwrap(),
-                split_addresses("svm".to_string(), vec![].into(), vec![])
-                    .unwrap()
-                    .len(),
+                encode_addresses("svm".to_string(), vec![]).unwrap().len(),
             ),
             (Vec::<String>::new(), Vec::<String>::new(), 0)
         );

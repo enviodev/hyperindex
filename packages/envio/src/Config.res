@@ -107,6 +107,9 @@ type t = {
   // they can express fits an INTEGER.
   chainIdMode: ChainId.mode,
   chainMap: ChainMap.t<chain>,
+  // Derived from every chain's contracts, so an id means the same contract on
+  // every chain and on every restart.
+  contractMapping: ContractMapping.t,
   defaultChain: option<chain>,
   ecosystem: Ecosystem.t,
   enableRawEvents: bool,
@@ -562,6 +565,14 @@ let publicConfigSchema = S.schema(s =>
     "entities": s.matches(S.option(S.array(entityJsonSchema))),
   }
 )
+
+let contractMappingOf = (~chainConfigs: array<chain>): ContractMapping.t => {
+  let names = []
+  chainConfigs->Array.forEach(chain =>
+    chain.contracts->Array.forEach(contract => names->Array.push(contract.name)->ignore)
+  )
+  ContractMapping.make(~names)
+}
 
 let fromPublic = (publicConfigJson: JSON.t) => {
   let maxAddrInPartition = Env.maxAddrInPartition
@@ -1043,6 +1054,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     storage: globalStorage,
     chainIdMode: publicConfig["chainIdMode"]->Option.getOr(Int32),
     chainMap,
+    contractMapping: contractMappingOf(~chainConfigs=chains),
     defaultChain: chains->Array.get(0),
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
     ecosystem,
@@ -1127,17 +1139,6 @@ let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<Cha
       ->Option.flatMap(contract => contract.events->Array.find(e => e.name == eventName))
     }
   })
-}
-
-// The canonical contract ids: a name's position in this list is the id
-// `envio_contracts` stores and every address row references. Byte order, so the
-// ids never depend on the order contracts happen to be declared in.
-let canonicalContractNames = (~chainConfigs: array<chain>): array<string> => {
-  let names = []
-  chainConfigs->Array.forEach(chain =>
-    chain.contracts->Array.forEach(contract => names->Array.push(contract.name)->ignore)
-  )
-  Core.getAddon().canonicalContractNames(names)
 }
 
 let shouldSaveHistory = (config, ~isInReorgThreshold) =>

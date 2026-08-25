@@ -107,10 +107,9 @@ let make = (~ecosystem: Ecosystem.name, ~shouldChecksum: bool, ~contracts: array
 // never fetched.
 let contractsOf = (
   ~onEventRegistrations: array<Internal.onEventRegistration>,
-  // The canonical contract names, in id order. Every store of every chain holds
-  // the same contracts under the same ids, so a persisted `contract_id` means
-  // the same thing wherever it's read.
-  ~contractNames: array<string>,
+  // Every store of every chain holds the same contracts under the same ids, so
+  // a persisted `contract_id` means the same thing wherever it's read.
+  ~contractMapping: ContractMapping.t,
 ): array<contract> => {
   // Only ever holds a declared start block, so a missing key is unambiguous —
   // storing `None` in a dict would be indistinguishable from "not seen yet".
@@ -119,11 +118,9 @@ let contractsOf = (
   let addressDependent = Utils.Set.make()
   onEventRegistrations->Array.forEach(reg => {
     let name = reg.eventConfig.contractName
-    if !(contractNames->Array.includes(name)) {
-      JsError.throwWithMessage(
-        `Contract "${name}" has event registrations but is missing from the indexer's contract list.`,
-      )
-    }
+    contractMapping
+    ->ContractMapping.idOfOrThrow(name, ~context=" has event registrations but")
+    ->ignore
     if reg.dependsOnAddresses {
       addressDependent->Utils.Set.add(name)->ignore
     }
@@ -139,7 +136,9 @@ let contractsOf = (
       )
     }
   })
-  contractNames->Array.mapWithIndex((name, id) => {
+  contractMapping
+  ->ContractMapping.names
+  ->Array.mapWithIndex((name, id) => {
     id,
     name,
     startBlock: unrestricted->Utils.Set.has(name)

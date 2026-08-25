@@ -195,20 +195,19 @@ let buildChainsObject = (~config: Config.t) => {
             | None =>
               switch getInitialState() {
               | Some(initialState) =>
-                switch (
-                  initialState.chains->Array.find(c => c.id === chainConfig.id),
-                  initialState.contractNames->Array.indexOf(contract.name),
-                ) {
-                | (Some(chainState), contractId) if contractId >= 0 =>
+                switch initialState.chains->Array.find(c => c.id === chainConfig.id) {
+                | Some(chainState) =>
                   Core.getAddon().renderContractAddresses(
                     ~ecosystem=(config.ecosystem.name :> string),
                     ~shouldChecksum=!config.lowercaseAddresses,
                     ~bytes=chainState.addressRows.addresses,
                     ~lengths=chainState.addressRows.lengths,
                     ~contractIds=chainState.addressRows.contractIds,
-                    ~contractId,
+                    ~contractId=initialState.contractMapping->ContractMapping.idOfOrThrow(
+                      contract.name,
+                    ),
                   )
-                | _ => contract.addresses
+                | None => contract.addresses
                 }
               | None => contract.addresses
               }
@@ -589,6 +588,7 @@ let migrate = async (~reset) => {
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
+    ~contractMapping=config.contractMapping,
     ~envioInfo=getEnvioInfo(),
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
@@ -640,6 +640,7 @@ let start = async (
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
+    ~contractMapping=config.contractMapping,
     ~envioInfo=getEnvioInfo(),
     ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
     ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),

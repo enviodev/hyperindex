@@ -255,6 +255,7 @@ ORDER BY (id, envio_checkpoint_id)`,
     ~ecosystem=Evm,
     )
     let _ = await storage.initialize(
+      ~contractMapping=config.contractMapping,
       ~entities=config.userEntities,
       ~enums=config.allEnums->Array.concat([
         EntityHistory.RowAction.config->Table.fromGenericEnumConfig,

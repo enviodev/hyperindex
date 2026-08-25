@@ -59,9 +59,7 @@ let makeChainState = (resumedChainState, ~reorgCheckpoints=[]) =>
     ~isInReorgThreshold=false,
     ~isRealtime=false,
     ~config=TestConfig.default,
-    ~contractNames=Config.canonicalContractNames(
-      ~chainConfigs=TestConfig.default.chainMap->ChainMap.values,
-    ),
+    ~contractMapping=TestConfig.default.contractMapping,
     ~registrationsByChainId,
   )
 

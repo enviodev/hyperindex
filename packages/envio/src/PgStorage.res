@@ -1241,6 +1241,7 @@ let rec writeBatch = async (
             sql->InternalTable.Checkpoints.rollback(~pgSchema, ~rollbackTargetCheckpointId),
           )
           ->ignore
+
           // Addresses are insert-only, so undoing their registrations is a
           // delete rather than a history replay. It runs before the batch's own
           // inserts in the same transaction, so a re-registered address lands
@@ -1694,6 +1695,7 @@ let make = (
     ~chainConfigs=[],
     ~entities=[],
     ~enums=[],
+    ~contractMapping,
     ~envioInfo,
   ): Persistence.initialState => {
     // Per-entity storage routing: PG owns tables only for entities that
@@ -1747,18 +1749,9 @@ let make = (
     // Execute all queries within a single transaction for integrity.
     // The envio_info row is written in the same transaction so a successful
     // initialize is atomic — no schema can come up without the matching row.
-    let contractNames = Config.canonicalContractNames(~chainConfigs)
-    // Ids are 0-based positions in a smallint column, so 32768 contracts fit.
-    if contractNames->Array.length > 32768 {
-      JsError.throwWithMessage(
-        `The indexer declares ${contractNames
-          ->Array.length
-          ->Int.toString} contracts, more than the 32768 a smallint contract id can hold.`,
-      )
-    }
     let rowsByChain =
       chainConfigs->Array.map(chainConfig =>
-        chainConfig->ChainState.configStorageRows(~ecosystem, ~contractNames)
+        chainConfig->ChainState.configStorageRows(~ecosystem, ~contractMapping)
       )
     let configAddressRows = rowsByChain->Array.flat
 
@@ -1770,7 +1763,11 @@ let make = (
       // but it's just how it worked before.
       let _ = await Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
       await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
-      await InternalTable.EnvioContracts.insert(sql, ~pgSchema, ~contractNames)
+      await InternalTable.EnvioContracts.insert(
+        sql,
+        ~pgSchema,
+        ~contractNames=contractMapping->ContractMapping.names,
+      )
       if configAddressRows->Utils.Array.notEmpty {
         await InternalTable.EnvioAddresses.insert(
           sql,
@@ -1795,8 +1792,11 @@ let make = (
       cleanRun: true,
       cache,
       reorgCheckpoints: [],
-      contractNames,
-      chains: chainConfigs->Array.mapWithIndex((chainConfig, idx): Persistence.initialChainState => {
+      contractMapping,
+      chains: chainConfigs->Array.mapWithIndex((
+        chainConfig,
+        idx,
+      ): Persistence.initialChainState => {
         id: chainConfig.id,
         startBlock: chainConfig.startBlock,
         endBlock: chainConfig.endBlock,
@@ -2195,9 +2195,12 @@ let make = (
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints, contractNames) = await Promise.all5((
+    let (cache, chains, checkpointIdResult, reorgCheckpoints, contractMapping) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
-      InternalTable.Chains.getInitialState(sql, ~pgSchema)->Promise.thenResolve(rawInitialStates => {
+      InternalTable.Chains.getInitialState(
+        sql,
+        ~pgSchema,
+      )->Promise.thenResolve(rawInitialStates => {
         rawInitialStates->Array.map((rawInitialState): Persistence.initialChainState => {
           id: rawInitialState.id,
           startBlock: rawInitialState.startBlock,
@@ -2229,7 +2232,9 @@ let make = (
       InternalTable.EnvioContracts.read(sql, ~pgSchema)->Promise.thenResolve(stored =>
         // `readEnvioInfo` already refused the resume without this table, so a
         // missing one here means the gate was skipped, not an old schema.
-        stored->Option.getOrThrow(~message=`Resumed without a stored contract mapping.`)
+        stored
+        ->Option.getOrThrow(~message=`Resumed without a stored contract mapping.`)
+        ->ContractMapping.fromStoredNames
       ),
     ))
 
@@ -2257,7 +2262,7 @@ let make = (
       cache,
       chains,
       checkpointId,
-      contractNames,
+      contractMapping,
     }
   }
 

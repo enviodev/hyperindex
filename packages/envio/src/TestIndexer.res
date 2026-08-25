@@ -38,8 +38,7 @@ type testIndexerState = {
   entities: dict<dict<Internal.entity>>,
   entityConfigs: dict<Internal.entityConfig>,
   addresses: AddressRows.Table.t,
-  // The canonical contract mapping, a name's position being its id.
-  contractNames: array<string>,
+  contractMapping: ContractMapping.t,
   mutable processChanges: array<unknown>,
 }
 
@@ -124,7 +123,7 @@ let handleWriteBatch = (
       checkpointId->BigInt.toString,
       {
         "address": rendered->Array.getUnsafe(idx),
-        "contract": state.contractNames->Array.getUnsafe(row.contractId),
+        "contract": state.contractMapping->ContractMapping.nameOfOrThrow(row.contractId),
       },
     )
   })
@@ -245,7 +244,7 @@ let makeInitialState = (
   ~config: Config.t,
   ~processConfigChains: dict<chainConfig>,
   ~addressRowsByChain: dict<AddressRows.seedRows>,
-  ~contractNames: array<string>,
+  ~contractMapping: ContractMapping.t,
 ): Persistence.initialState => {
   let chainKeys = processConfigChains->Dict.keysToArray
   let chains = chainKeys->Array.map(chainIdStr => {
@@ -276,7 +275,7 @@ let makeInitialState = (
 
   {
     cleanRun: true,
-    contractNames,
+    contractMapping,
     cache: Dict.make(),
     chains,
     checkpointId: InternalTable.Checkpoints.initialCheckpointId,
@@ -573,7 +572,13 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   // The runner injects the config-derived initial state by setting
   // `persistence.storageStatus = Ready(...)` directly, bypassing `Persistence.init`,
   // so neither of these is reached.
-  initialize: async (~chainConfigs as _=?, ~entities as _=?, ~enums as _=?, ~envioInfo as _) =>
+  initialize: async (
+    ~chainConfigs as _=?,
+    ~entities as _=?,
+    ~enums as _=?,
+    ~contractMapping as _,
+    ~envioInfo as _,
+  ) =>
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called; the initial state is derived from config.",
     ),
@@ -684,12 +689,12 @@ let createTestIndexer = (): t<'processConfig> => {
 
   // Populate the config's addresses, mirroring PgStorage.initialize
   let chainConfigs = config.chainMap->ChainMap.values
-  let contractNames = Config.canonicalContractNames(~chainConfigs)
+  let contractMapping = config.contractMapping
   let ecosystem = config.ecosystem.name
   let addresses = AddressRows.Table.make()
   chainConfigs->Array.forEach(chainConfig =>
     addresses->AddressRows.Table.insertMany(
-      chainConfig->ChainState.configStorageRows(~ecosystem, ~contractNames),
+      chainConfig->ChainState.configStorageRows(~ecosystem, ~contractMapping),
     )
   )
 
@@ -699,7 +704,7 @@ let createTestIndexer = (): t<'processConfig> => {
     entities,
     entityConfigs,
     addresses,
-    contractNames,
+    contractMapping,
     processChanges: [],
   }
 
@@ -774,7 +779,7 @@ let createTestIndexer = (): t<'processConfig> => {
                 `Cannot access ${contract.name}.addresses while indexer.process() is running. ` ++ "Wait for process() to complete before reading contract addresses.",
               )
             }
-            let contractId = state.contractNames->Array.indexOf(contract.name)
+            let contractId = state.contractMapping->ContractMapping.idOfOrThrow(contract.name)
             state.addresses
             ->AddressRows.Table.rows
             ->Array.filter(row => row.chainId === chainConfig.id && row.contractId === contractId)
@@ -879,7 +884,7 @@ let createTestIndexer = (): t<'processConfig> => {
             ~config,
             ~processConfigChains=chains,
             ~addressRowsByChain=addressRowsByChain(state),
-            ~contractNames=state.contractNames,
+            ~contractMapping=state.contractMapping,
           )
 
           // No endBlock means auto-exit mode: process one block checkpoint at a
