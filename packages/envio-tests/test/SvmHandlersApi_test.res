@@ -241,8 +241,10 @@ expectType<SvmOnSlotFilter>(_empty);
     check(`
 import type {
   SvmAllAccountActivityFields,
+  SvmAllAccountLamportsFields,
   SvmAllAccountTokenActivityFields,
   SvmAllBlockFields,
+  SvmAllFieldsSelection,
   SvmAllLogFields,
   SvmBlockFieldName,
   SvmInstruction,
@@ -303,21 +305,15 @@ expectType<
       readonly transactionAccountIndex: number;
       readonly isSigner: boolean;
       readonly isWritable: boolean;
-      readonly lamports: { readonly pre: bigint; readonly post: bigint } | undefined;
-      readonly token: {
-        readonly mint: string;
-        readonly owner: string;
-        readonly decimals: number;
-        readonly preAmount: bigint | undefined;
-        readonly postAmount: bigint | undefined;
-      } | undefined;
+      readonly lamports: SvmAllAccountLamportsFields | undefined;
+      readonly token: SvmAllAccountTokenActivityFields | undefined;
     }
   >
 >(true);
 
 expectType<
   TypeEqual<
-    SvmInstructionAccount,
+    SvmInstructionAccount<SvmAllFieldsSelection>,
     {
       readonly address: string;
       readonly accountName: string;
@@ -556,6 +552,152 @@ type _bare = SvmInstruction;
 type _badProg = SvmInstruction<typeof fields, "Nope", "swap">;
 // @ts-expect-error - unknown instruction name
 type _badInstr = SvmInstruction<typeof fields, "Swapper", "nope">;
+`)
+  )
+
+  it("exposes payload types that match the inferred handler payload", _ =>
+    check(`
+import { indexer } from "envio";
+import type {
+  SvmAccountActivity,
+  SvmAccountLamports,
+  SvmAccountTokenActivity,
+  SvmAllAccountActivityFields,
+  SvmAllAccountLamportsFields,
+  SvmAllAccountTokenActivityFields,
+  SvmAllBlockFields,
+  SvmAllFieldsSelection,
+  SvmAllLogFields,
+  SvmBlock,
+  SvmFieldsSelection,
+  SvmInstruction,
+  SvmInstructionAccount,
+  SvmLog,
+  SvmTransaction,
+} from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+const fields = {
+  instruction: ["args", "accounts"],
+  transaction: ["signature"],
+  accountActivity: ["isSigner", "lamports.post", "token.mint"],
+  block: ["hash"],
+  log: ["message"],
+} as const satisfies SvmFieldsSelection;
+
+if (0) {
+  indexer.onInstruction(
+    { program: "Swapper", instruction: "swap", fields },
+    async ({ instruction }) => {
+      expectType<TypeEqual<typeof instruction, SvmInstruction<typeof fields, "Swapper", "swap">>>(true);
+      expectType<TypeEqual<typeof instruction.transaction, SvmTransaction<typeof fields>>>(true);
+      expectType<TypeEqual<typeof instruction.block, SvmBlock<typeof fields>>>(true);
+      expectType<TypeEqual<typeof instruction.logs[number], SvmLog<typeof fields>>>(true);
+      expectType<TypeEqual<typeof instruction.accounts.source, SvmInstructionAccount<typeof fields, "source">>>(true);
+      expectType<TypeEqual<typeof instruction.transaction.accountActivities[number], SvmAccountActivity<typeof fields>>>(true);
+      expectType<TypeEqual<typeof instruction.transaction.accountActivities[number]["lamports"], SvmAccountLamports<typeof fields>>>(true);
+      expectType<TypeEqual<typeof instruction.transaction.accountActivities[number]["token"], SvmAccountTokenActivity<typeof fields>>>(true);
+    },
+  );
+}
+
+// SvmAllFieldsSelection selects every field, so each narrowed view widens back
+// to its full record.
+expectType<TypeEqual<SvmAccountActivity<SvmAllFieldsSelection>, SvmAllAccountActivityFields>>(true);
+expectType<TypeEqual<SvmAccountLamports<SvmAllFieldsSelection>, SvmAllAccountLamportsFields | undefined>>(true);
+expectType<TypeEqual<SvmAccountTokenActivity<SvmAllFieldsSelection>, SvmAllAccountTokenActivityFields | undefined>>(true);
+expectType<TypeEqual<SvmBlock<SvmAllFieldsSelection>, SvmAllBlockFields>>(true);
+expectType<TypeEqual<SvmLog<SvmAllFieldsSelection>, SvmAllLogFields>>(true);
+expectType<TypeEqual<SvmTransaction<SvmAllFieldsSelection>["fee"], bigint>>(true);
+
+// lamports and token narrow the same way: a parent knob takes every subfield,
+// a dotted name takes just that one.
+expectType<TypeEqual<SvmAccountLamports<{ accountActivity: ["lamports"] }>, SvmAllAccountLamportsFields | undefined>>(true);
+expectType<TypeEqual<SvmAccountLamports<{ accountActivity: ["lamports.post"] }>, { readonly post: bigint } | undefined>>(true);
+expectType<TypeEqual<SvmAccountTokenActivity<{ accountActivity: ["token"] }>, SvmAllAccountTokenActivityFields | undefined>>(true);
+expectType<TypeEqual<SvmAccountTokenActivity<{ accountActivity: ["token.mint"] }>, { readonly mint: string } | undefined>>(true);
+
+// An account with no accountActivity selection still names its account.
+type BareAccount = SvmInstructionAccount<{ instruction: ["accounts"] }, "source">;
+expectType<TypeEqual<BareAccount["accountName"], "source">>(true);
+expectType<TypeEqual<BareAccount["address"], string>>(true);
+
+// @ts-expect-error - fields selection is required
+type _bareAccount = SvmInstructionAccount;
+// @ts-expect-error - fields selection is required
+type _bareLamports = SvmAccountLamports;
+`)
+  )
+
+  it("shapes the selection vocabulary and registration options", _ =>
+    check(`
+import type {
+  SvmAccountActivityFieldName,
+  SvmAllFieldsSelection,
+  SvmAllLogFields,
+  SvmFieldsSelection,
+  SvmInstructionFieldName,
+  SvmLogFieldName,
+  SvmLogKind,
+  SvmOnInstructionOptions,
+} from "envio";
+import { indexer } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+expectType<
+  TypeEqual<
+    SvmInstructionFieldName,
+    "args" | "accounts" | "accountArguments" | "programId" | "data" | "path" | "isInner"
+  >
+>(true);
+expectType<
+  TypeEqual<
+    SvmAccountActivityFieldName,
+    | "address"
+    | "transactionAccountIndex"
+    | "isSigner"
+    | "isWritable"
+    | "lamports"
+    | "lamports.pre"
+    | "lamports.post"
+    | "token"
+    | "token.mint"
+    | "token.owner"
+    | "token.decimals"
+    | "token.preAmount"
+    | "token.postAmount"
+  >
+>(true);
+expectType<TypeEqual<SvmLogFieldName, "kind" | "message">>(true);
+expectType<TypeEqual<SvmAllLogFields["kind"], SvmLogKind>>(true);
+
+const _opts: SvmOnInstructionOptions<"Swapper", "swap", { instruction: ["args"] }> = {
+  program: "Swapper",
+  instruction: "swap",
+  fields: { instruction: ["args"] },
+};
+expectType<SvmOnInstructionOptions<"Swapper", "swap", { instruction: ["args"] }>>(_opts);
+
+// SvmAllFieldsSelection is a type-level escape hatch: its knobs are field-name
+// arrays rather than literals, so it can't stand in for a fields value.
+declare const everyField: SvmAllFieldsSelection;
+if (0) {
+  indexer.onInstruction(
+    // @ts-expect-error - fields must be a literal, so the runtime knows what to fetch
+    { program: "Swapper", instruction: "swap", fields: everyField },
+    async () => {},
+  );
+}
+
+// A widened selection is rejected the same way.
+const widened: SvmFieldsSelection = { instruction: ["args"] };
+if (0) {
+  indexer.onInstruction(
+    // @ts-expect-error - not written as a literal
+    { program: "Swapper", instruction: "swap", fields: widened },
+    async () => {},
+  );
+}
 `)
   )
 

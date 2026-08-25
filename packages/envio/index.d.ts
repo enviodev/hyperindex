@@ -1174,6 +1174,11 @@ export type SvmAllLogFields = {
   readonly message: string;
 };
 
+export type SvmAllAccountLamportsFields = {
+  readonly pre: bigint;
+  readonly post: bigint;
+};
+
 export type SvmAllAccountTokenActivityFields = {
   readonly mint: string;
   readonly owner: string;
@@ -1187,18 +1192,8 @@ export type SvmAllAccountActivityFields = {
   readonly transactionAccountIndex: number;
   readonly isSigner: boolean;
   readonly isWritable: boolean;
-  readonly lamports: { readonly pre: bigint; readonly post: bigint } | undefined;
+  readonly lamports: SvmAllAccountLamportsFields | undefined;
   readonly token: SvmAllAccountTokenActivityFields | undefined;
-};
-
-export type SvmInstructionAccount<
-  Activity = SvmAllAccountActivityFields,
-  Name extends string = string,
-> = {
-  readonly address: string;
-  readonly accountName: Name;
-  readonly instructionAccountIndex: number;
-  readonly activity: Activity | undefined;
 };
 
 export type SvmAllBlockFields = {
@@ -1279,7 +1274,11 @@ export type SvmFieldsSelection = {
 };
 
 /** A {@link SvmFieldsSelection} with every field selected. Parent knobs only:
- * `lamports` and `token` imply their subfields. */
+ * `lamports` and `token` imply their subfields.
+ *
+ * Type-level only — its knobs are field-name arrays rather than literals, so it
+ * describes a payload (`SvmInstruction<SvmAllFieldsSelection>`) but can't be
+ * passed as a registration's `fields` value. */
 export type SvmAllFieldsSelection = {
   readonly instruction: readonly SvmInstructionFieldName[];
   readonly transaction: readonly SvmTransactionFieldName[];
@@ -1334,14 +1333,15 @@ type SvmActivityField<Fields, Name extends string, T> = SvmActivityHas<
   ? T
   : FieldNotSelected<`Field '${Name}' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>;
 
-type SvmSelectedLamports<Fields> =
-  SvmActivityHas<Fields, "lamports.pre"> extends true
-    ? SvmActivityHas<Fields, "lamports.post"> extends true
-      ? { readonly pre: bigint; readonly post: bigint } | undefined
-      : { readonly pre: bigint } | undefined
-    : SvmActivityHas<Fields, "lamports.post"> extends true
-      ? { readonly post: bigint } | undefined
-      : FieldNotSelected<`Field 'lamports' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>;
+type SvmSelectedLamports<Fields> = [
+  SvmActivityListed<Fields> & (`lamports` | `lamports.${string}`),
+] extends [never]
+  ? FieldNotSelected<`Field 'lamports' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>
+  : {
+      readonly [K in keyof SvmAllAccountLamportsFields as SvmActivityHas<Fields, `lamports.${K & string}`> extends true
+        ? K
+        : never]: SvmAllAccountLamportsFields[K];
+    } | undefined;
 
 type SvmSelectedToken<Fields> = [SvmActivityListed<Fields> & (`token` | `token.${string}`)] extends [never]
   ? FieldNotSelected<`Field 'token' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>
@@ -1365,16 +1365,22 @@ type SvmInstrField<Fields, Name extends SvmInstructionFieldName, T> = Name exten
   ? T
   : FieldNotSelected<`Field '${Name}' is not selected for this handler. Add it to fields.instruction in the registration options.`>;
 
+type SvmSelectedInstructionAccount<Fields, Name extends string> = {
+  readonly address: string;
+  readonly accountName: Name;
+  readonly instructionAccountIndex: number;
+  readonly activity:
+    | ([SvmActivityListed<Fields>] extends [never]
+        ? FieldNotSelected<`Field 'activity' is not selected for this handler. Add fields.accountActivity in the registration options.`>
+        : SvmSelectedAccountActivity<Fields>)
+    | undefined;
+};
+
 type SvmNamedAccounts<
   Acc extends Readonly<Record<string, unknown>>,
   Fields,
 > = {
-  readonly [K in keyof Acc & string]: SvmInstructionAccount<
-    [SvmActivityListed<Fields>] extends [never]
-      ? FieldNotSelected<`Field 'activity' is not selected for this handler. Add fields.accountActivity in the registration options.`>
-      : SvmSelectedAccountActivity<Fields> | undefined,
-    K
-  >;
+  readonly [K in keyof Acc & string]: SvmSelectedInstructionAccount<Fields, K>;
 };
 
 type SvmSelectedTransaction<Fields> = {
@@ -1480,6 +1486,18 @@ export type SvmAccountActivity<Fields extends SvmFieldsSelection> =
  * registration's fields selection. */
 export type SvmAccountTokenActivity<Fields extends SvmFieldsSelection> =
   SvmSelectedToken<Fields>;
+
+/** The pre/post lamport balances of a {@link SvmAccountActivity}, narrowed to
+ * the registration's fields selection. */
+export type SvmAccountLamports<Fields extends SvmFieldsSelection> =
+  SvmSelectedLamports<Fields>;
+
+/** A named account of a {@link SvmInstruction}. Its `activity` narrows to the
+ * registration's fields selection. */
+export type SvmInstructionAccount<
+  Fields extends SvmFieldsSelection,
+  Name extends string = string,
+> = SvmSelectedInstructionAccount<Fields, Name>;
 
 /** Arguments passed to handlers registered via `indexer.onInstruction`.
  * Takes the same type arguments as {@link SvmInstruction}. */
