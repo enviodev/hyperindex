@@ -34,7 +34,7 @@ fn are_contract_names_unique(contract_names: &[String]) -> bool {
 
 // Names from the config and the schema both become generated identifiers, so
 // they are held to the same list.
-fn check_reserved_words(words: &Vec<String>) -> Vec<String> {
+fn check_reserved_words(words: &[String]) -> Vec<String> {
     words
         .iter()
         .filter(|word| RESERVED_NAMES.contains(&word.as_str()))
@@ -67,7 +67,7 @@ fn is_valid_identifier(s: &str) -> bool {
 
 // Check if all names in the config file are valid.
 pub fn validate_names_valid_rescript(
-    names_from_config: &Vec<String>,
+    names_from_config: &[String],
     part_of_config: String,
 ) -> anyhow::Result<()> {
     let detected_reserved_words = check_reserved_words(names_from_config);

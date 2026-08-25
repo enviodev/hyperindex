@@ -2231,9 +2231,9 @@ impl Contract {
     ) -> Result<Self> {
         // Every ecosystem builds its contracts through here, unlike
         // `validate_deserialized_config_yaml`, which only sees EVM configs.
-        validate_names_valid_rescript(&vec![name.clone()], "contract".to_string())?;
+        validate_names_valid_rescript(std::slice::from_ref(&name), "contract".to_string())?;
         validate_names_valid_rescript(
-            &events.iter().map(|e| e.name.clone()).collect(),
+            &events.iter().map(|e| e.name.clone()).collect::<Vec<_>>(),
             "event".to_string(),
         )?;
 
