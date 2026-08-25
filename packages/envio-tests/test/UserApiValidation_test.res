@@ -1371,6 +1371,88 @@ chains:
       "A chain must define a data source: either an \`rpc\` endpoint or an \`experimental\` HyperSync config. Both are missing.",
     )
   })
+
+  it("derives the HyperSync endpoint from a known SVM cluster id", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: derived-svm-endpoint
+ecosystem: svm
+chains:
+  - id: solana
+    start_block: 0
+    experimental:
+      programs:
+        - name: Mainnet
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions: []
+  - id: solana-devnet
+    start_block: 0
+    experimental:
+      programs:
+        - name: Devnet
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions: []
+`,
+    )
+    t.expect(
+      config.chainMap
+      ->ChainMap.values
+      ->Array.map(chain => (
+        chain.id->ChainId.toString,
+        switch chain.sourceConfig {
+        | Config.SvmSourceConfig({hypersync}) => hypersync->Option.getOr("missing")
+        | _ => "unexpected source"
+        },
+      )),
+    ).toEqual([
+      ("7565164", "https://solana.hypersync.xyz"),
+      ("7565165", "https://solana-devnet.hypersync.xyz"),
+    ])
+  })
+
+  it("keeps an explicit HyperSync URL over the derived one", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: explicit-svm-endpoint
+ecosystem: svm
+chains:
+  - id: solana
+    start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://custom.hypersync.test
+      programs:
+        - name: Mainnet
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions: []
+`,
+    )
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    switch chain.sourceConfig {
+    | Config.SvmSourceConfig({hypersync: Some(url)}) =>
+      t.expect(url).toBe("https://custom.hypersync.test")
+    | _ => t.expect("unexpected source").toBe("SVM HyperSync source")
+    }
+  })
+
+  it("requires an explicit HyperSync URL for an unknown SVM cluster id", t => {
+    expectParseError(
+      t,
+      `
+name: unknown-svm-cluster
+ecosystem: svm
+chains:
+  - id: 42
+    start_block: 0
+    experimental:
+      programs:
+        - name: Program
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions: []
+`,
+      "Chain 42 has no default HyperSync endpoint. Set \`experimental.hypersync_config.url\` explicitly, or use the \`solana\` / \`solana-devnet\` chain id.",
+    )
+  })
 })
 
 describe("schema validation errors through config YAML", () => {
