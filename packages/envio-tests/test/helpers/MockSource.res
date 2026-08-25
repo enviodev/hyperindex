@@ -577,6 +577,23 @@ let make = (
   }
 }
 
+// Wait until the source takes a height call beyond the `since`th. A feed polls
+// and then sleeps out its interval, so a test that wants to answer the *next*
+// poll has to wait for it to be made: resolving while none is outstanding
+// settles nothing, silently, and leaves the height where it was.
+let waitHeightQuery = async (sourceMock: t, ~since) => {
+  let attempts = ref(0)
+  while sourceMock.getHeightOrThrowCalls->Array.length <= since && attempts.contents < 3000 {
+    attempts := attempts.contents + 1
+    await Utils.delay(1)
+  }
+  if sourceMock.getHeightOrThrowCalls->Array.length <= since {
+    JsError.throwWithMessage(
+      `Timed out waiting for a getHeightOrThrow call beyond ${since->Int.toString}`,
+    )
+  }
+}
+
 // Wait until the source has a pending getItemsOrThrow call. Queries are
 // serialized by the cross-chain budget waterfall, so a chain's query only
 // appears after the more-behind chains' responses release the budget.

@@ -197,12 +197,21 @@ describe("Resuming a backfill that never finalized", () => {
       // Catching up here flips the chain to realtime, which changes the source
       // waitForNewBlock parks on. Fetching started before processing did, so the
       // waiter in flight is bound to the pre-realtime source and has to be
-      // replaced rather than left to time out. Counts unresolved calls across both
-      // runs: 3 are parked without the handoff, the 4th is the re-parked waiter.
+      // replaced rather than left to time out. A re-parked waiter is one the next
+      // head still reaches, so answering the poll that follows the flip has to
+      // put the chain back to work on the range it opened up.
+      let heightCallsWhenReady = source.getHeightOrThrowCalls->Array.length
+      await MockSource.waitHeightQuery(source, ~since=heightCallsWhenReady)
+      source.resolveGetHeightOrThrow(200)
+      await MockSource.waitItemsQuery(source)
+
       t.expect(
-        source.getHeightOrThrowCalls->Array.length,
+        (
+          source.getItemsOrThrowCalls->Array.length,
+          source.getHeightOrThrowCalls->Array.length > heightCallsWhenReady,
+        ),
         ~message="Finalizing on resume re-parks the fetch waiter on the realtime source",
-      ).toEqual(4)
+      ).toEqual((1, true))
     },
   )
 
