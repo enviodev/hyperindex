@@ -468,9 +468,6 @@ describe("E2E rollback tests", () => {
         {value: "1", labels: Dict.make()},
       ])
 
-      // The stopped indexer's last query is still pending on the mock, and its
-      // payload is identical to the one the restarted indexer issues.
-      let beforeRestart = sourceMock1337.getItemsOrThrowCalls->Utils.Array.copy
       let restarted = await indexer.restart()
 
       sourceMock1337.getHeightOrThrowCalls->Utils.Array.clearInPlace
@@ -507,12 +504,7 @@ describe("E2E rollback tests", () => {
         }),
       )
 
-      sourceMock1337.resolveGetItemsOrThrow(
-        [],
-        ~filter=call => !(beforeRestart->Array.includes(call)),
-        ~latestFetchedBlockNumber=200,
-        ~knownHeight=320,
-      )
+      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200, ~knownHeight=320)
 
       await restarted.getBatchWritePromise()
 

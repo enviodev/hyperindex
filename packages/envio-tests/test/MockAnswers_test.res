@@ -49,9 +49,9 @@ describe("MockSource answers", () => {
       await indexer.getBatchWritePromise()
 
       t.expect(
-        (mock.unclaimedAnswers(), await indexer.metric("envio_progress_block")),
-        ~message="the item query took the parked answer and carried the chain to the head",
-      ).toEqual(([], [{value: "300", labels: Dict.fromArray([("chainId", "1")])}]))
+        await indexer.metric("envio_progress_block"),
+        ~message="the item query took the waiting answer and carried the chain to the head",
+      ).toEqual([{value: "300", labels: Dict.fromArray([("chainId", "1")])}])
     },
   )
 
@@ -89,7 +89,7 @@ describe("MockSource answers", () => {
 
       mock.resolveGetItemsOrThrow(
         [],
-        ~filter=call => call.payload["p"] === "1",
+        ~filter=query => query["p"] === "1",
         ~latestFetchedBlockNumber=300,
       )
       t.expect(
@@ -102,13 +102,45 @@ describe("MockSource answers", () => {
     },
   )
 
-  Async.it("fails the run when a parked answer is never claimed", async t => {
+  scenario->Scenario.it(
+    "voids the stopped indexer's in-flight query on restart",
+    ~sources,
+    async (~t, ~indexer, ~source) => {
+      let mock = source(1)
+      mock.resolveGetHeightOrThrow(300)
+      await Scenario.waitUntil(
+        () => mock.getItemsOrThrowCalls->Array.length > 0,
+        ~message="the first indexer queries for items",
+      )
+
+      // Left unanswered, so it is still in flight when the indexer stops.
+      let stale = mock.getItemsOrThrowCalls->Utils.Array.copy
+      let restarted = await indexer.restart()
+      mock.resolveGetHeightOrThrow(300)
+      await Scenario.waitUntil(
+        () => mock.getItemsOrThrowCalls->Array.some(call => !(stale->Array.includes(call))),
+        ~message="the restarted indexer issues a query of its own",
+      )
+
+      // Without the drop this is 2, and the payloads are identical — no filter
+      // could name the live one.
+      t.expect(
+        mock.getItemsOrThrowCalls->Array.length,
+        ~message="only the restarted indexer's query is pending",
+      ).toBe(1)
+
+      mock.drainItemsQueries(~latestFetchedBlockNumber=300)
+      await restarted.getBatchWritePromise()
+    },
+  )
+
+  Async.it("fails the run when a waiting answer is never claimed", async t => {
     let failure = try {
       await scenario->Scenario.run(~sources, async (~indexer, ~source) => {
         let mock = source(1)
         mock.resolveGetHeightOrThrow(300)
         // No query ever carries this partition id, so the answer sits parked.
-        mock.resolveGetItemsOrThrow([], ~filter=call => call.payload["p"] === "nonexistent")
+        mock.resolveGetItemsOrThrow([], ~filter=query => query["p"] === "nonexistent")
         await Scenario.waitUntil(
           () => mock.getItemsOrThrowCalls->Array.length > 0,
           ~message="the chain reaches its first item query",

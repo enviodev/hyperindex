@@ -182,8 +182,11 @@ type itemMock = {
   contractRegister?: mockSourceContractRegister,
 }
 
+// What a test can tell one pending item query from another by.
+type itemsQuery = {"fromBlock": int, "toBlock": option<int>, "retry": int, "p": string}
+
 type getItemsOrThrowCall = {
-  payload: {"fromBlock": int, "toBlock": option<int>, "retry": int, "p": string},
+  payload: itemsQuery,
   resolve: (
     array<itemMock>,
     ~latestFetchedBlockNumber: int=?,
@@ -219,7 +222,7 @@ type t = {
   // bug this arity check exists to surface.
   resolveGetItemsOrThrow: (
     array<itemMock>,
-    ~filter: getItemsOrThrowCall => bool=?,
+    ~filter: itemsQuery => bool=?,
     ~latestFetchedBlockNumber: int=?,
     ~latestFetchedBlockHash: string=?,
     ~knownHeight: int=?,
@@ -227,15 +230,16 @@ type t = {
   ) => unit,
   // Empty-response every matching pending query. A statement about queries that
   // already exist, so unlike `resolveGetItemsOrThrow` it never waits for one.
-  drainItemsQueries: (
-    ~filter: getItemsOrThrowCall => bool=?,
-    ~latestFetchedBlockNumber: int=?,
-  ) => unit,
+  drainItemsQueries: (~filter: itemsQuery => bool=?, ~latestFetchedBlockNumber: int=?) => unit,
   getBlockHashesCalls: array<array<int>>,
   resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
-  // Answers registered by a `resolve*` that ran before its call arrived and that
-  // no call has claimed since, described by call site for the end-of-run check.
-  unclaimedAnswers: unit => array<string>,
+  // Throws if a `resolve*` that ran before its call arrived is still waiting for
+  // one, naming the call sites. Run at the end of a passing scenario.
+  validateAnswersClaimed: unit => unit,
+  // Voids the queries the indexer has in flight. A restarted indexer re-issues
+  // its own, and answering a stopped indexer's leftovers instead is a bug the
+  // test can neither see nor mean.
+  dropPendingCalls: unit => unit,
   // Height subscription mocking
   heightSubscriptionCalls: array<bool>,
   triggerHeightSubscription: int => unit,
@@ -244,15 +248,15 @@ type t = {
 
 // The chain chunks a range into one query per partition slice, so a test that
 // answers with items at a given block names the slice that covers it.
-let coveringBlock = blockNumber => (call: getItemsOrThrowCall) =>
-  call.payload["fromBlock"] <= blockNumber &&
-    switch call.payload["toBlock"] {
+let coveringBlock = blockNumber => (query: itemsQuery) =>
+  query["fromBlock"] <= blockNumber &&
+    switch query["toBlock"] {
     | Some(toBlock) => blockNumber <= toBlock
     | None => true
     }
 
-let describeItemsQuery = (call: getItemsOrThrowCall) =>
-  `{p: ${call.payload["p"]}, fromBlock: ${call.payload["fromBlock"]->Int.toString}, toBlock: ${switch call.payload["toBlock"] {
+let describeItemsQuery = (query: itemsQuery) =>
+  `{p: ${query["p"]}, fromBlock: ${query["fromBlock"]->Int.toString}, toBlock: ${switch query["toBlock"] {
     | Some(toBlock) => toBlock->Int.toString
     | None => "-"
     }}}`
@@ -261,7 +265,9 @@ let ambiguousItemsQueries = calls =>
   `resolveGetItemsOrThrow matches ${calls
     ->Array.length
     ->Int.toString} pending queries, so which one it answers is a guess:\n` ++
-  calls->Array.map(call => `  ${call->describeItemsQuery}`)->Array.join("\n") ++
+  calls->Array.map((call: getItemsOrThrowCall) =>
+    `  ${call.payload->describeItemsQuery}`
+  )->Array.join("\n") ++
   "\nNarrow it with ~filter, or use drainItemsQueries to empty-response them all."
 
 let make = (
@@ -369,10 +375,11 @@ let make = (
           ~knownHeight?,
           ~prevRangeLastBlock?,
         )
-      let matches = switch filter {
-      | Some(filter) => filter
-      | None => _ => true
-      }
+      let matches = (call: getItemsOrThrowCall) =>
+        switch filter {
+        | Some(filter) => filter(call.payload)
+        | None => true
+        }
       switch getItemsOrThrowCalls->Array.filter(matches) {
       | [] =>
         deferredItemsAnswers
@@ -383,14 +390,14 @@ let make = (
       }
     },
     drainItemsQueries: (~filter=?, ~latestFetchedBlockNumber=?) => {
-      let matches = switch filter {
-      | Some(filter) => filter
-      | None => _ => true
-      }
+      let matches = (call: getItemsOrThrowCall) =>
+        switch filter {
+        | Some(filter) => filter(call.payload)
+        | None => true
+        }
       switch getItemsOrThrowCalls->Array.filter(matches) {
       | [] => JsError.throwWithMessage("drainItemsQueries has no pending query to drain")
-      | calls =>
-        calls->Array.forEach(call => call.resolve([], ~latestFetchedBlockNumber?))
+      | calls => calls->Array.forEach(call => call.resolve([], ~latestFetchedBlockNumber?))
       }
     },
     getBlockHashesCalls,
@@ -413,14 +420,28 @@ let make = (
         getBlockHashesResolveFns->Utils.Array.clearInPlace
       }
     },
-    unclaimedAnswers: () =>
-      Array.flat([
+    validateAnswersClaimed: () =>
+      switch Array.flat([
         deferredItemsAnswers->Array.map(answer => `resolveGetItemsOrThrow at ${answer["site"]}`),
         deferredHeightAnswers->Array.map(answer => `resolveGetHeightOrThrow at ${answer["site"]}`),
         deferredBlockHashesAnswers->Array.map(answer =>
           `resolveGetBlockHashes at ${answer["site"]}`
         ),
-      ]),
+      ]) {
+      | [] => ()
+      | unclaimed =>
+        JsError.throwWithMessage(
+          `Chain ${chainId->ChainId.toString} registered these mock answers before their call ` ++
+          "arrived, and no call ever claimed them:\n" ++
+          unclaimed->Array.map(entry => `  ${entry}`)->Array.join("\n"),
+        )
+      },
+    dropPendingCalls: () => {
+      getItemsOrThrowCalls->Utils.Array.clearInPlace
+      getHeightOrThrowResolveFns->Utils.Array.clearInPlace
+      getHeightOrThrowRejectFns->Utils.Array.clearInPlace
+      getBlockHashesResolveFns->Utils.Array.clearInPlace
+    },
     heightSubscriptionCalls,
     triggerHeightSubscription: height => {
       if !heightSubscriptionUnsubscribed.contents {

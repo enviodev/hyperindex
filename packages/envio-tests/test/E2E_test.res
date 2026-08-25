@@ -417,9 +417,6 @@ describe("E2E tests", () => {
       {"id": `"test-2"`, "output": %raw(`"test-2-output"`)},
     ])
 
-    // The stopped indexer's last query is still pending on the mock, and its
-    // payload is identical to the one the restarted indexer issues.
-    let beforeRestart = sourceMock.getItemsOrThrowCalls->Utils.Array.copy
     let restarted = await indexer.restart()
     await Utils.delay(0)
 
@@ -462,7 +459,6 @@ describe("E2E tests", () => {
 
     sourceMock.resolveGetHeightOrThrow(300)
     sourceMock.resolveGetItemsOrThrow(
-      ~filter=call => !(beforeRestart->Array.includes(call)),
       [
         {
           blockNumber: 101,

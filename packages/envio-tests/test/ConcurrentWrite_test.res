@@ -150,7 +150,7 @@ describe("Concurrent batch write and processing", () => {
         ],
         // The chain has already chunked the rest of the range into queries; this
         // answers the one that carries block 103.
-        ~filter=call => call.payload["fromBlock"] === 103,
+        ~filter=query => query["fromBlock"] === 103,
         ~latestFetchedBlockNumber=103,
       )
       await Scenario.waitUntil(
