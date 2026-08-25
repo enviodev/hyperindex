@@ -12,7 +12,7 @@ use super::{
             RpcSelection,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
-        HumanConfig,
+        svm, HumanConfig,
     },
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
@@ -1411,12 +1411,24 @@ impl SystemConfig {
             HumanConfig::Svm(ref svm_config) => {
                 validation::validate_deserialized_svm_config_yaml(svm_config)?;
                 for network in &svm_config.chains {
+                    let chain_id = network.id.to_u64();
+                    let hypersync_endpoint_url = network
+                        .experimental
+                        .as_ref()
+                        .map(|e| match &e.hypersync_config {
+                            Some(hypersync_config) => Ok(hypersync_config.url.clone()),
+                            None => svm::default_hypersync_endpoint(chain_id).ok_or_else(|| {
+                                anyhow!(
+                                    "Chain {chain_id} has no default HyperSync endpoint. Set \
+                                     `experimental.hypersync_config.url` explicitly, or use the \
+                                     `solana` / `solana-devnet` chain id."
+                                )
+                            }),
+                        })
+                        .transpose()?;
                     let sync_source = DataSource::Svm {
                         rpc: network.rpc.clone(),
-                        hypersync_endpoint_url: network
-                            .experimental
-                            .as_ref()
-                            .map(|e| e.hypersync_config.url.clone()),
+                        hypersync_endpoint_url,
                     };
 
                     let programs = network
@@ -1501,7 +1513,7 @@ impl SystemConfig {
                     }
 
                     let chain = Chain {
-                        id: network.id.to_u64(),
+                        id: chain_id,
                         skip: network.skip.unwrap_or(false),
                         start_block: network.start_block,
                         end_block: network.end_block,

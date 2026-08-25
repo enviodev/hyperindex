@@ -1013,8 +1013,9 @@ pub mod svm {
     #[serde(deny_unknown_fields)]
     pub struct HypersyncConfig {
         #[schemars(
-            description = "URL of the HyperSync endpoint (default: the public Solana HyperSync \
-                           endpoint at https://solana.hypersync.xyz)"
+            description = "URL of the HyperSync endpoint (defaults to the public endpoint of the \
+                           chain id: https://solana.hypersync.xyz for `solana`, \
+                           https://solana-devnet.hypersync.xyz for `solana-devnet`)"
         )]
         pub url: String,
     }
@@ -1053,6 +1054,16 @@ pub mod svm {
         }
     }
 
+    /// The public HyperSync endpoint for a cluster Envio knows by id, so
+    /// `hypersync_config` can be omitted for Solana mainnet and devnet.
+    pub fn default_hypersync_endpoint(chain_id: u64) -> Option<String> {
+        match chain_id {
+            SOLANA_MAINNET_CHAIN_ID => Some("https://solana.hypersync.xyz".to_string()),
+            SOLANA_DEVNET_CHAIN_ID => Some("https://solana-devnet.hypersync.xyz".to_string()),
+            _ => None,
+        }
+    }
+
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Chain {
@@ -1060,8 +1071,8 @@ pub mod svm {
             description = "Identifies the Svm cluster: the label \"solana\" (7565164) or \
                            \"solana-devnet\" (7565165), or an explicit number of your choosing \
                            for other clusters (up to Number.MAX_SAFE_INTEGER). Svm has no native \
-                           numeric chain id, so the label ids are assigned by Envio and match \
-                           the ids used for HyperSync usage attribution."
+                           numeric chain id, so the label ids are assigned by Envio and match the \
+                           ids used for HyperSync usage attribution."
         )]
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1101,10 +1112,13 @@ pub mod svm {
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Experimental {
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "HyperSync Config for fetching historical instructions on this chain."
+            description = "HyperSync Config for fetching historical instructions on this chain. \
+                           Optional for the `solana` and `solana-devnet` chain ids, which default \
+                           to their public HyperSync endpoints; required for any other chain id."
         )]
-        pub hypersync_config: HypersyncConfig,
+        pub hypersync_config: Option<HypersyncConfig>,
         #[schemars(description = "Solana programs to index on this chain.")]
         pub programs: Vec<Program>,
     }
@@ -1728,7 +1742,7 @@ chains:
             let chain = &cfg.chains[0];
             let experimental = chain.experimental.as_ref().unwrap();
             assert_eq!(
-                experimental.hypersync_config.url.as_str(),
+                experimental.hypersync_config.as_ref().unwrap().url.as_str(),
                 "https://solana.hypersync.xyz"
             );
             let programs = &experimental.programs;
