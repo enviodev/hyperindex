@@ -199,31 +199,70 @@ type t = {
   // Use array of bool instead of array of unit,
   // for better logging during debugging
   getHeightOrThrowCalls: array<bool>,
+  // Answers every height call in flight, or — with none in flight — the next one
+  // to arrive. A chain has one head, so unlike an item query there is nothing to
+  // choose between here.
   resolveGetHeightOrThrow: int => unit,
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
-  // Answer every height call with `height` from now on, instead of parking it
-  // for `resolveGetHeightOrThrow`. A restarted indexer learns the head on its
-  // own this way, before the test body gets a chance to resolve anything.
+  // Answer every height call with `height` from now on, one answer covering any
+  // number of polls. A restarted indexer learns the head on its own this way,
+  // before the test body gets a chance to resolve anything.
   setAutoHeight: int => unit,
   getItemsOrThrowCalls: array<getItemsOrThrowCall>,
   // How many times the source was told to drop orphaned-chain state.
   reorgCallCount: unit => int,
-  // TODO: Remove in favor of getItemsOrThrowCalls
+  // Answers exactly one query. With no query pending yet the answer waits for
+  // the next matching one, so a test never has to wait for the indexer to get
+  // around to asking. `~filter` is mandatory as soon as more than one pending
+  // query matches: item queries fan out one per fetch partition, and answering
+  // all of them because the test was written before the partition split is the
+  // bug this arity check exists to surface.
   resolveGetItemsOrThrow: (
     array<itemMock>,
-    ~resolveAt: [#first | #all | #last]=?,
+    ~filter: getItemsOrThrowCall => bool=?,
     ~latestFetchedBlockNumber: int=?,
     ~latestFetchedBlockHash: string=?,
     ~knownHeight: int=?,
     ~prevRangeLastBlock: ReorgDetection.blockData=?,
   ) => unit,
+  // Empty-response every matching pending query. A statement about queries that
+  // already exist, so unlike `resolveGetItemsOrThrow` it never waits for one.
+  drainItemsQueries: (
+    ~filter: getItemsOrThrowCall => bool=?,
+    ~latestFetchedBlockNumber: int=?,
+  ) => unit,
   getBlockHashesCalls: array<array<int>>,
   resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
+  // Answers registered by a `resolve*` that ran before its call arrived and that
+  // no call has claimed since, described by call site for the end-of-run check.
+  unclaimedAnswers: unit => array<string>,
   // Height subscription mocking
   heightSubscriptionCalls: array<bool>,
   triggerHeightSubscription: int => unit,
   unsubscribeHeightSubscription: unit => unit,
 }
+
+// The chain chunks a range into one query per partition slice, so a test that
+// answers with items at a given block names the slice that covers it.
+let coveringBlock = blockNumber => (call: getItemsOrThrowCall) =>
+  call.payload["fromBlock"] <= blockNumber &&
+    switch call.payload["toBlock"] {
+    | Some(toBlock) => blockNumber <= toBlock
+    | None => true
+    }
+
+let describeItemsQuery = (call: getItemsOrThrowCall) =>
+  `{p: ${call.payload["p"]}, fromBlock: ${call.payload["fromBlock"]->Int.toString}, toBlock: ${switch call.payload["toBlock"] {
+    | Some(toBlock) => toBlock->Int.toString
+    | None => "-"
+    }}}`
+
+let ambiguousItemsQueries = calls =>
+  `resolveGetItemsOrThrow matches ${calls
+    ->Array.length
+    ->Int.toString} pending queries, so which one it answers is a guess:\n` ++
+  calls->Array.map(call => `  ${call->describeItemsQuery}`)->Array.join("\n") ++
+  "\nNarrow it with ~filter, or use drainItemsQueries to empty-response them all."
 
 let make = (
   methods: array<method>,
@@ -255,6 +294,12 @@ let make = (
   let autoHeight = ref(None)
   let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
 
+  // Answers registered before their call arrived, consumed in order by the
+  // source methods below. `site` is only carried for the end-of-run report.
+  let deferredItemsAnswers: array<{"site": string, "match": getItemsOrThrowCall => bool, "respond": getItemsOrThrowCall => unit}> = []
+  let deferredHeightAnswers: array<{"site": string, "height": int}> = []
+  let deferredBlockHashesAnswers: array<{"site": string, "response": Source.getBlockHashesResponse}> = []
+
   // With the function we keep only the pending calls,
   // and remove the resolved ones automatically.
   let keepOnlyPendingCalls = (~array, ~fn) => {
@@ -285,14 +330,19 @@ let make = (
     getHeightOrThrowCalls,
     resolveGetHeightOrThrow: height => {
       if getHeightOrThrowResolveFns->Utils.Array.isEmpty {
-        JsError.throwWithMessage("getHeightOrThrowResolveFns is empty")
+        deferredHeightAnswers->Array.push({"site": UserModule.callSite(), "height": height})->ignore
+      } else {
+        getHeightOrThrowResolveFns->Array.forEach(resolve =>
+          resolve({Source.height, requestStats: []})
+        )
+        getHeightOrThrowResolveFns->Utils.Array.clearInPlace
+        getHeightOrThrowRejectFns->Utils.Array.clearInPlace
       }
-      getHeightOrThrowResolveFns->Array.forEach(resolve =>
-        resolve({Source.height, requestStats: []})
-      )
     },
     setAutoHeight: height => {
       autoHeight := Some(height)
+      // A standing answer supersedes one parked for a single call.
+      deferredHeightAnswers->Utils.Array.clearInPlace
       getHeightOrThrowResolveFns->Array.forEach(resolve =>
         resolve({Source.height, requestStats: []})
       )
@@ -305,37 +355,46 @@ let make = (
     reorgCallCount: () => reorgCalls.contents,
     resolveGetItemsOrThrow: (
       items,
-      ~resolveAt=#all,
+      ~filter=?,
       ~latestFetchedBlockNumber=?,
       ~latestFetchedBlockHash=?,
       ~knownHeight=?,
       ~prevRangeLastBlock=?,
     ) => {
-      let calls = switch resolveAt {
-      | #first => getItemsOrThrowCalls->Array.slice(~start=0, ~end=1)
-      | #all => getItemsOrThrowCalls->Utils.Array.copy
-      | #last => getItemsOrThrowCalls->Array.slice(~start=getItemsOrThrowCalls->Array.length - 1)
-      }
-
-      switch calls {
-      | [] => JsError.throwWithMessage("getItemsOrThrowCalls is empty")
-      | calls =>
-        calls->Array.forEach(call =>
-          call.resolve(
-            items,
-            ~latestFetchedBlockNumber?,
-            ~latestFetchedBlockHash?,
-            ~knownHeight?,
-            ~prevRangeLastBlock?,
-          )
+      let respond = (call: getItemsOrThrowCall) =>
+        call.resolve(
+          items,
+          ~latestFetchedBlockNumber?,
+          ~latestFetchedBlockHash?,
+          ~knownHeight?,
+          ~prevRangeLastBlock?,
         )
+      let matches = switch filter {
+      | Some(filter) => filter
+      | None => _ => true
+      }
+      switch getItemsOrThrowCalls->Array.filter(matches) {
+      | [] =>
+        deferredItemsAnswers
+        ->Array.push({"site": UserModule.callSite(), "match": matches, "respond": respond})
+        ->ignore
+      | [call] => respond(call)
+      | ambiguous => JsError.throwWithMessage(ambiguousItemsQueries(ambiguous))
+      }
+    },
+    drainItemsQueries: (~filter=?, ~latestFetchedBlockNumber=?) => {
+      let matches = switch filter {
+      | Some(filter) => filter
+      | None => _ => true
+      }
+      switch getItemsOrThrowCalls->Array.filter(matches) {
+      | [] => JsError.throwWithMessage("drainItemsQueries has no pending query to drain")
+      | calls =>
+        calls->Array.forEach(call => call.resolve([], ~latestFetchedBlockNumber?))
       }
     },
     getBlockHashesCalls,
     resolveGetBlockHashes: blockHashes => {
-      if getBlockHashesResolveFns->Utils.Array.isEmpty {
-        JsError.throwWithMessage("getBlockHashesResolveFns is empty")
-      }
       let blockStore = BlockStore.fromJs(
         blockHashes->Array.map((block): BlockStore.inputBlock => {
           ...block,
@@ -344,11 +403,24 @@ let make = (
         ~ecosystem=Evm,
         ~shouldChecksum=false,
       )
-      getBlockHashesResolveFns->Array.forEach(resolve =>
-        resolve({Source.result: Ok(blockStore), requestStats: []})
-      )
-      getBlockHashesResolveFns->Utils.Array.clearInPlace
+      let response = {Source.result: Ok(blockStore), requestStats: []}
+      if getBlockHashesResolveFns->Utils.Array.isEmpty {
+        deferredBlockHashesAnswers
+        ->Array.push({"site": UserModule.callSite(), "response": response})
+        ->ignore
+      } else {
+        getBlockHashesResolveFns->Array.forEach(resolve => resolve(response))
+        getBlockHashesResolveFns->Utils.Array.clearInPlace
+      }
     },
+    unclaimedAnswers: () =>
+      Array.flat([
+        deferredItemsAnswers->Array.map(answer => `resolveGetItemsOrThrow at ${answer["site"]}`),
+        deferredHeightAnswers->Array.map(answer => `resolveGetHeightOrThrow at ${answer["site"]}`),
+        deferredBlockHashesAnswers->Array.map(answer =>
+          `resolveGetBlockHashes at ${answer["site"]}`
+        ),
+      ]),
     heightSubscriptionCalls,
     triggerHeightSubscription: height => {
       if !heightSubscriptionUnsubscribed.contents {
@@ -368,19 +440,27 @@ let make = (
         pollingInterval,
         getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
           getBlockHashesCalls->Array.push(blockNumbers)->ignore
-          Promise.make((resolve, _reject) => {
-            getBlockHashesResolveFns->Array.push(resolve)->ignore
-          })
+          switch deferredBlockHashesAnswers->Array.shift {
+          | Some(answer) => Promise.resolve(answer["response"])
+          | None =>
+            Promise.make((resolve, _reject) => {
+              getBlockHashesResolveFns->Array.push(resolve)->ignore
+            })
+          }
         }),
         getHeightOrThrow: implement(#getHeightOrThrow, () => {
           getHeightOrThrowCalls->Array.push(true)->ignore
           switch autoHeight.contents {
           | Some(height) => Promise.resolve({Source.height, requestStats: []})
           | None =>
-            Promise.make((resolve, reject) => {
-              getHeightOrThrowResolveFns->Array.push(resolve)->ignore
-              getHeightOrThrowRejectFns->Array.push(reject)->ignore
-            })
+            switch deferredHeightAnswers->Array.shift {
+            | Some(answer) => Promise.resolve({Source.height: answer["height"], requestStats: []})
+            | None =>
+              Promise.make((resolve, reject) => {
+                getHeightOrThrowResolveFns->Array.push(resolve)->ignore
+                getHeightOrThrowRejectFns->Array.push(reject)->ignore
+              })
+            }
           }
         }),
         getItemsOrThrow: implement(#getItemsOrThrow, (
@@ -394,7 +474,7 @@ let make = (
           ~retry,
           ~logger as _,
         ) => {
-          keepOnlyPendingCalls(~array=getItemsOrThrowCalls, ~fn=(~resolve, ~reject) => {
+          let promise = keepOnlyPendingCalls(~array=getItemsOrThrowCalls, ~fn=(~resolve, ~reject) => {
             let payload = {
               "fromBlock": fromBlock,
               "toBlock": toBlock,
@@ -523,6 +603,18 @@ let make = (
               reject: reject->Utils.magic,
             }
           })
+          switch getItemsOrThrowCalls->Array.at(-1) {
+          | Some(call) =>
+            switch deferredItemsAnswers->Array.findIndex(answer => answer["match"](call)) {
+            | -1 => ()
+            | index =>
+              let answer = deferredItemsAnswers->Array.getUnsafe(index)
+              deferredItemsAnswers->Array.splice(~start=index, ~remove=1, ~insert=[])->ignore
+              answer["respond"](call)
+            }
+          | None => ()
+          }
+          promise
         }),
         onReorg: () => reorgCalls := reorgCalls.contents + 1,
         createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {

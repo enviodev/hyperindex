@@ -468,6 +468,9 @@ describe("E2E rollback tests", () => {
         {value: "1", labels: Dict.make()},
       ])
 
+      // The stopped indexer's last query is still pending on the mock, and its
+      // payload is identical to the one the restarted indexer issues.
+      let beforeRestart = sourceMock1337.getItemsOrThrowCalls->Utils.Array.copy
       let restarted = await indexer.restart()
 
       sourceMock1337.getHeightOrThrowCalls->Utils.Array.clearInPlace
@@ -504,7 +507,12 @@ describe("E2E rollback tests", () => {
         }),
       )
 
-      sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=200, ~knownHeight=320)
+      sourceMock1337.resolveGetItemsOrThrow(
+        [],
+        ~filter=call => !(beforeRestart->Array.includes(call)),
+        ~latestFetchedBlockNumber=200,
+        ~knownHeight=320,
+      )
 
       await restarted.getBatchWritePromise()
 
@@ -658,6 +666,7 @@ describe("E2E rollback tests", () => {
       // checkpoint) as the latest valid block.
       sourceMock.resolveGetItemsOrThrow(
         [],
+        ~filter=MockSource.coveringBlock(104),
         ~latestFetchedBlockNumber=104,
         ~prevRangeLastBlock={blockNumber: 103, blockHash: "0x0103ee"},
       )
@@ -685,6 +694,7 @@ describe("E2E rollback tests", () => {
       // Commit the rollback diff without recreating the entity on the canonical chain.
       sourceMock.resolveGetItemsOrThrow(
         [],
+        ~filter=MockSource.coveringBlock(103),
         ~latestFetchedBlockNumber=103,
         ~latestFetchedBlockHash="0x0103ee",
       )
@@ -1018,7 +1028,7 @@ describe("E2E rollback tests", () => {
             handler,
           },
         ],
-        ~resolveAt=#first,
+        ~filter=MockSource.coveringBlock(102),
         ~latestFetchedBlockNumber=102,
       )
       await indexer.getBatchWritePromise()
@@ -1057,7 +1067,11 @@ describe("E2E rollback tests", () => {
         },
       ])
 
-      sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=103)
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~filter=MockSource.coveringBlock(103),
+        ~latestFetchedBlockNumber=103,
+      )
       await indexer.getBatchWritePromise()
       t.expect(
         (await queryDynamicAddresses(indexer))->Array.length,
@@ -1067,7 +1081,7 @@ describe("E2E rollback tests", () => {
       // Should trigger rollback
       sourceMock.resolveGetItemsOrThrow(
         [],
-        ~resolveAt=#first,
+        ~filter=MockSource.coveringBlock(104),
         ~prevRangeLastBlock={
           blockNumber: 103,
           blockHash: "0x103a",
@@ -1087,7 +1101,7 @@ describe("E2E rollback tests", () => {
         {blockNumber: 102, blockHash: "0x0102", blockTimestamp: 102},
       ])
 
-      sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      sourceMock.drainItemsQueries()
 
       await indexer.getRollbackReadyPromise()
 
@@ -1120,11 +1134,8 @@ describe("E2E rollback tests", () => {
   This might be wrong after we start exposing a block hash for progress block.`,
       ).toEqual(2)
 
-      sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
-      sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#first, ~latestFetchedBlockNumber=104)
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
+      // Both the base and the dynamic-contract partition are waiting at 103.
+      sourceMock.drainItemsQueries(~latestFetchedBlockNumber=104)
 
       sourceMock.resolveGetItemsOrThrow(
         [
@@ -1134,7 +1145,6 @@ describe("E2E rollback tests", () => {
             handler,
           },
         ],
-        ~resolveAt=#first,
         ~latestFetchedBlockNumber=104,
       )
 
@@ -1206,7 +1216,6 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=103,
-        ~resolveAt=#first,
       )
       await MockSource.waitItemsQuery(sourceMock1337)
       sourceMock1337.resolveGetItemsOrThrow(
@@ -1223,7 +1232,6 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=103,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
       sourceMock1337.resolveGetItemsOrThrow(
@@ -1235,7 +1243,6 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=106,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
       sourceMock100.resolveGetItemsOrThrow(
@@ -1247,7 +1254,6 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=106,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
       sourceMock1337.resolveGetItemsOrThrow(
@@ -1258,7 +1264,7 @@ describe("E2E rollback tests", () => {
             handler,
           },
         ],
-        ~resolveAt=#first,
+        ~filter=MockSource.coveringBlock(107),
         ~latestFetchedBlockNumber=109,
       )
       await indexer.getBatchWritePromise()
@@ -1413,11 +1419,11 @@ describe("E2E rollback tests", () => {
       // Should trigger rollback
       sourceMock1337.resolveGetItemsOrThrow(
         [],
+        ~filter=MockSource.coveringBlock(110),
         ~prevRangeLastBlock={
           blockNumber: 106,
           blockHash: "0x106a",
         },
-        ~resolveAt=#first,
       )
       await Utils.delay(0)
       await Utils.delay(0)
@@ -1433,8 +1439,8 @@ describe("E2E rollback tests", () => {
       ])
 
       // Clean up pending calls from before rollback
-      sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
-      sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      sourceMock100.drainItemsQueries()
+      sourceMock1337.drainItemsQueries()
 
       await indexer.getRollbackReadyPromise()
 
@@ -1522,7 +1528,7 @@ describe("E2E rollback tests", () => {
             },
           },
         ],
-        ~resolveAt=#first,
+        ~filter=MockSource.coveringBlock(106),
       )
 
       await indexer.getBatchWritePromise()
@@ -1646,8 +1652,8 @@ describe("E2E rollback tests", () => {
             handler,
           },
         ],
+        ~filter=MockSource.coveringBlock(106),
         ~latestFetchedBlockNumber=103,
-        ~resolveAt=#first,
       )
       await MockSource.waitItemsQuery(sourceMock1337)
       sourceMock1337.resolveGetItemsOrThrow(
@@ -1664,7 +1670,6 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=103,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
       sourceMock1337.resolveGetItemsOrThrow(
@@ -1676,7 +1681,6 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=106,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
       sourceMock100.resolveGetItemsOrThrow(
@@ -1698,8 +1702,8 @@ describe("E2E rollback tests", () => {
             },
           },
         ],
+        ~filter=MockSource.coveringBlock(106),
         ~latestFetchedBlockNumber=106,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
       sourceMock1337.resolveGetItemsOrThrow(
@@ -1710,7 +1714,7 @@ describe("E2E rollback tests", () => {
             handler,
           },
         ],
-        ~resolveAt=#first,
+        ~filter=MockSource.coveringBlock(107),
         ~latestFetchedBlockNumber=109,
       )
       await indexer.getBatchWritePromise()
@@ -1850,11 +1854,11 @@ describe("E2E rollback tests", () => {
       // Should trigger rollback
       sourceMock1337.resolveGetItemsOrThrow(
         [],
+        ~filter=MockSource.coveringBlock(110),
         ~prevRangeLastBlock={
           blockNumber: 106,
           blockHash: "0x106a",
         },
-        ~resolveAt=#first,
       )
       await Utils.delay(0)
       await Utils.delay(0)
@@ -1870,8 +1874,8 @@ describe("E2E rollback tests", () => {
       ])
 
       // Clean up pending calls from before rollback
-      sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
-      sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      sourceMock100.drainItemsQueries()
+      sourceMock1337.drainItemsQueries()
 
       await indexer.getRollbackReadyPromise()
 
@@ -1925,7 +1929,7 @@ describe("E2E rollback tests", () => {
             },
           },
         ],
-        ~resolveAt=#first,
+        ~filter=MockSource.coveringBlock(106),
       )
 
       await indexer.getBatchWritePromise()
@@ -2072,6 +2076,7 @@ describe("E2E rollback tests", () => {
       // Trigger first reorg
       sourceMock.resolveGetItemsOrThrow(
         [],
+        ~filter=MockSource.coveringBlock(103),
         ~prevRangeLastBlock={
           blockNumber: 102,
           blockHash: "0x102a",
@@ -2102,6 +2107,7 @@ describe("E2E rollback tests", () => {
       // Detects second reorg
       sourceMock.resolveGetItemsOrThrow(
         [],
+        ~filter=MockSource.coveringBlock(102),
         ~prevRangeLastBlock={
           blockNumber: 101,
           blockHash: "0x101a",
@@ -2128,7 +2134,7 @@ describe("E2E rollback tests", () => {
       ).toEqual([{value: "0", labels: Dict.fromArray([("chainId", "1337")])}])
 
       // Process batch after rollback
-      sourceMock.resolveGetItemsOrThrow([])
+      sourceMock.drainItemsQueries()
       await indexer.getBatchWritePromise()
 
       t.expect(
@@ -2204,7 +2210,6 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=103,
-        ~resolveAt=#first,
       )
       // Chain 1337's query appears once the leader's (chain 100) response
       // releases the budget.
@@ -2221,7 +2226,6 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=103,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
 
@@ -2249,10 +2253,7 @@ describe("E2E rollback tests", () => {
           blockNumber: 103,
           blockHash: "0x103a",
         },
-        ~resolveAt=#first,
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // getBlockHashes called with [100, 102]: both are stored in the
       // threshold below 103. Block 100 still matches and 102 came back on
@@ -2263,7 +2264,7 @@ describe("E2E rollback tests", () => {
       ])
 
       // Clean up pending calls from before rollback
-      sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      sourceMock100.drainItemsQueries()
 
       await indexer.getRollbackReadyPromise()
 
@@ -2291,11 +2292,7 @@ describe("E2E rollback tests", () => {
       // No getBlockHashes call needed: getThresholdBlockNumbersBelowBlock(~blockNumber=100) = []
       // so getHighestBlockBelowThreshold = 300 - 200 = 100 is used directly.
       // Wait for the SetRollbackState tasks (NextQuery, ProcessEventBatch) to be scheduled
-      await Utils.delay(0)
 
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       sourceMock1337.resolveGetItemsOrThrow(
         [],
@@ -2303,7 +2300,6 @@ describe("E2E rollback tests", () => {
           blockNumber: 100,
           blockHash: "0x100a",
         },
-        ~resolveAt=#first,
       )
 
       // Allow microtask queue to process the fetch response callbacks,
@@ -2397,10 +2393,9 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=103,
-        ~resolveAt=#first,
       )
       await MockSource.waitItemsQuery(sourceMock100)
-      sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300, ~resolveAt=#first)
+      sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await MockSource.waitItemsQuery(sourceMock137)
       sourceMock137.resolveGetItemsOrThrow(
         [
@@ -2422,10 +2417,9 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=103,
-        ~resolveAt=#first,
       )
       await MockSource.waitItemsQuery(sourceMock137)
-      sourceMock137.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300, ~resolveAt=#first)
+      sourceMock137.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await MockSource.waitItemsQuery(sourceMock1337)
       sourceMock1337.resolveGetItemsOrThrow(
         [
@@ -2439,7 +2433,6 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=103,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
 
@@ -2471,10 +2464,7 @@ describe("E2E rollback tests", () => {
           blockNumber: 103,
           blockHash: "0x103a",
         },
-        ~resolveAt=#first,
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       sourceMock1337.resolveGetBlockHashes([
         {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
@@ -2514,7 +2504,6 @@ describe("E2E rollback tests", () => {
           blockNumber: 100,
           blockHash: "0x100a",
         },
-        ~resolveAt=#first,
       )
 
       await Utils.delay(0)
@@ -2608,11 +2597,11 @@ describe("E2E rollback tests", () => {
       // 8. Trigger rollback via reorg detection to block 116
       sourceMock.resolveGetItemsOrThrow(
         [],
+        ~filter=MockSource.coveringBlock(116),
         ~prevRangeLastBlock={
           blockNumber: 115,
           blockHash: "0x115a",
         },
-        ~resolveAt=#first,
       )
       await Utils.delay(0)
       await Utils.delay(0)
@@ -2633,7 +2622,7 @@ describe("E2E rollback tests", () => {
       ])
 
       // Clean up pending calls from before rollback
-      sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      sourceMock.drainItemsQueries()
 
       await indexer.getRollbackReadyPromise()
 
@@ -2753,7 +2742,7 @@ describe("E2E rollback tests", () => {
       ])
 
       // Clean up pending calls from before rollback
-      sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      sourceMock.drainItemsQueries()
 
       await indexer.getRollbackReadyPromise()
 
@@ -2812,13 +2801,12 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=101,
-        ~resolveAt=#first,
       )
       await MockSource.waitItemsQuery(sourceMock1)
 
       // Chain 1337 fetches block 101 with 0 events.
       // registerReorgGuard stores block hash "0x101" for block 101.
-      sourceMock1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101, ~resolveAt=#first)
+      sourceMock1.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=101)
 
       // Fetch response processing uses multiple layers of setTimeout(0):
       // 1. ValidatePartitionQueryResponse → dispatches ProcessPartitionQueryResponse task
@@ -2826,8 +2814,6 @@ describe("E2E rollback tests", () => {
       //    which dispatches NextQuery + ProcessEventBatch tasks
       // 3. NextQuery starts fetches, ProcessEventBatch creates batch
       // We need 3 delays to let all layers fire.
-      await Utils.delay(0)
-      await Utils.delay(0)
       // After this delay:
       // - NextQuery started a fetch for block 102 — but both chains are
       //   equally behind now, so only the leader (chain 100, tie broken by
@@ -2836,9 +2822,8 @@ describe("E2E rollback tests", () => {
       // - ProcessEventBatch created batch: with batchSize=1, chain 100's
       //   1 event fills the batch. Chain 1337 is SKIPPED — no checkpoint.
       //   The batch write is async and still in-flight.
-      await Utils.delay(0)
 
-      sourceMock2.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102, ~resolveAt=#first)
+      sourceMock2.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=102)
       await MockSource.waitItemsQuery(sourceMock1)
 
       // Chain 1337 now has a pending fetch from block 102 (started by NextQuery
@@ -2855,7 +2840,6 @@ describe("E2E rollback tests", () => {
           blockNumber: 101,
           blockHash: "0x101a",
         },
-        ~resolveAt=#first,
       )
       await Utils.delay(0)
       await Utils.delay(0)
@@ -2877,7 +2861,7 @@ describe("E2E rollback tests", () => {
       // Clean up chain 100's dangling pre-rollback query; its known density
       // caps the refetch reservation, so the budget reaches chain 1337 right
       // after.
-      sourceMock2.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      sourceMock2.drainItemsQueries()
       await MockSource.waitItemsQuery(sourceMock1)
 
       let actualPayloads = sourceMock1.getItemsOrThrowCalls->Array.map(c => c.payload)
@@ -2904,7 +2888,6 @@ describe("E2E rollback tests", () => {
         [],
         ~latestFetchedBlockNumber=101,
         ~latestFetchedBlockHash="0x101a",
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
 
@@ -3002,7 +2985,6 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=103,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
 
@@ -3021,7 +3003,6 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=103,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
 
@@ -3040,7 +3021,6 @@ describe("E2E rollback tests", () => {
           },
         ],
         ~latestFetchedBlockNumber=106,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
 
@@ -3063,8 +3043,8 @@ describe("E2E rollback tests", () => {
             },
           },
         ],
+        ~filter=MockSource.coveringBlock(106),
         ~latestFetchedBlockNumber=106,
-        ~resolveAt=#first,
       )
       // Wait until the batch is processed and its (stalled) write has started
       while writeBatchCalls.contents == writeBatchCallsBeforeStall {
@@ -3074,11 +3054,11 @@ describe("E2E rollback tests", () => {
       // Reorg on chain 1337 while chain 100's batch write is still in-flight
       sourceMock1337.resolveGetItemsOrThrow(
         [],
+        ~filter=MockSource.coveringBlock(107),
         ~prevRangeLastBlock={
           blockNumber: 106,
           blockHash: "0x106a",
         },
-        ~resolveAt=#first,
       )
       await Utils.delay(0)
       await Utils.delay(0)
@@ -3102,8 +3082,8 @@ describe("E2E rollback tests", () => {
       stallWriteBatch := None
 
       // Clean up pending calls from before rollback
-      sourceMock100.resolveGetItemsOrThrow([], ~resolveAt=#all)
-      sourceMock1337.resolveGetItemsOrThrow([], ~resolveAt=#all)
+      sourceMock100.drainItemsQueries()
+      sourceMock1337.drainItemsQueries()
 
       await indexer.getRollbackReadyPromise()
 
@@ -3154,8 +3134,8 @@ describe("E2E rollback tests", () => {
             },
           },
         ],
+        ~filter=MockSource.coveringBlock(106),
         ~latestFetchedBlockNumber=106,
-        ~resolveAt=#first,
       )
       await indexer.getBatchWritePromise()
 

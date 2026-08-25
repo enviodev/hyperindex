@@ -46,10 +46,6 @@ describe("E2E blockLag tests", () => {
       ).toEqual([{value: "1", labels: Dict.make()}])
 
       // Wait for the next query dispatch after entering reorg threshold
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // After entering reorg threshold, a new height poll fires.
       // Resolve it so the indexer can proceed.

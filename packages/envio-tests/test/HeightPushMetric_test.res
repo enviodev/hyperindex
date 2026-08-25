@@ -43,7 +43,6 @@ describe("Height subscription push metrics", () => {
     ~reducedPollingInterval=1,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       // Backfill to head so the indexer flips to realtime — the height
       // subscription is only created there.

@@ -135,12 +135,9 @@ describe("Per-chain entities against Postgres", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
 
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       source1.resolveGetItemsOrThrow([bump(1n)], ~latestFetchedBlockNumber=300)
       source137.resolveGetItemsOrThrow([bump(10n)], ~latestFetchedBlockNumber=300)
@@ -207,10 +204,9 @@ describe("Chain-scoped rollback", () => {
       // Block 102 comes back with a different hash.
       source1.resolveGetItemsOrThrow(
         [setEntities(~block=103, ~counter=99n)],
+        ~filter=MockSource.coveringBlock(103),
         ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       source1.resolveGetBlockHashes([
         {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
@@ -222,6 +218,7 @@ describe("Chain-scoped rollback", () => {
       // more (with nothing to index) to flush it.
       source1.resolveGetItemsOrThrow(
         [],
+        ~filter=MockSource.coveringBlock(102),
         ~latestFetchedBlockNumber=102,
         ~latestFetchedBlockHash="0x0102",
       )
@@ -249,12 +246,9 @@ describe("Chain-scoped reads and deletes", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
 
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // Chain 137 claims the id first and must survive everything chain 1 does.
       source137.resolveGetItemsOrThrow(
@@ -284,8 +278,6 @@ describe("Chain-scoped reads and deletes", () => {
         ~latestFetchedBlockNumber=100,
       )
       await indexer.getBatchWritePromise()
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       source1.resolveGetItemsOrThrow(
         [
@@ -376,10 +368,9 @@ describe("Per-chain history and removal", () => {
       // Chain 1 reorgs back to block 101, taking both the delete and the new id.
       source1.resolveGetItemsOrThrow(
         [setEntities(~block=103, ~counter=99n, ~id="ignored")],
+        ~filter=MockSource.coveringBlock(103),
         ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
       )
-      await Utils.delay(0)
-      await Utils.delay(0)
       source1.resolveGetBlockHashes([
         {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
         {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
@@ -387,6 +378,7 @@ describe("Per-chain history and removal", () => {
       await indexer.getRollbackReadyPromise()
       source1.resolveGetItemsOrThrow(
         [],
+        ~filter=MockSource.coveringBlock(102),
         ~latestFetchedBlockNumber=102,
         ~latestFetchedBlockHash="0x0102",
       )
@@ -426,12 +418,9 @@ describe("Per-chain entities with renamed columns", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
 
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       source137.resolveGetItemsOrThrow(
         [setEntities(~block=5, ~counter=137n)],
@@ -495,7 +484,6 @@ describe("Effect scope under the disabled default", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
 
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
@@ -554,7 +542,6 @@ describe("Per-chain history prune", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
       await Utils.delay(0)

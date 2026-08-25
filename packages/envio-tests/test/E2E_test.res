@@ -254,10 +254,7 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
       sourceMock.resolveGetItemsOrThrow([
         {
           blockNumber: 10,
@@ -365,8 +362,6 @@ describe("E2E tests", () => {
     ).toEqual([])
 
     sourceMock.resolveGetHeightOrThrow(300)
-    await Utils.delay(0)
-    await Utils.delay(0)
     sourceMock.resolveGetItemsOrThrow(
       [
         {
@@ -422,6 +417,9 @@ describe("E2E tests", () => {
       {"id": `"test-2"`, "output": %raw(`"test-2-output"`)},
     ])
 
+    // The stopped indexer's last query is still pending on the mock, and its
+    // payload is identical to the one the restarted indexer issues.
+    let beforeRestart = sourceMock.getItemsOrThrowCalls->Utils.Array.copy
     let restarted = await indexer.restart()
     await Utils.delay(0)
 
@@ -463,9 +461,8 @@ describe("E2E tests", () => {
     )
 
     sourceMock.resolveGetHeightOrThrow(300)
-    await Utils.delay(0)
-    await Utils.delay(0)
     sourceMock.resolveGetItemsOrThrow(
+      ~filter=call => !(beforeRestart->Array.includes(call)),
       [
         {
           blockNumber: 101,
@@ -799,8 +796,6 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
       sourceMock.resolveGetItemsOrThrow(
         [
           {
@@ -917,8 +912,6 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       // Single batch with 4 calls that will be rate limited
       sourceMock.resolveGetItemsOrThrow(
@@ -1041,8 +1034,6 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
       sourceMock.resolveGetItemsOrThrow(
         [
           {
@@ -1108,8 +1099,6 @@ describe("E2E tests", () => {
       )
 
       sourceMock.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
       sourceMock.resolveGetItemsOrThrow(
         [
           {
@@ -1245,7 +1234,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       // Step 1: Resolve height (blockLag=200 by default, headBlock=19800)
       sourceMock.resolveGetHeightOrThrow(20_000)
@@ -1356,7 +1344,6 @@ describe("E2E tests", () => {
     ~sources=[{chain: 1337, methods}],
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       // Setup: same preamble — get to 4 chunked queries
       sourceMock.resolveGetHeightOrThrow(10_000)
@@ -1491,7 +1478,6 @@ describe("E2E tests", () => {
         ->Array.find(c => c.payload["fromBlock"] === fromBlock)
         ->Option.getOrThrow
 
-      await Utils.delay(0)
       sourceMock.resolveGetHeightOrThrow(100_000)
       await Utils.delay(0)
       await Utils.delay(0)
@@ -1637,8 +1623,6 @@ describe("E2E tests", () => {
       // Chain 1337 catches up first
       t.expect(sourceMock1337.getHeightOrThrowCalls->Array.length).toEqual(1)
       sourceMock1337.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       sourceMock1337.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexer.getBatchWritePromise()
@@ -1659,8 +1643,6 @@ describe("E2E tests", () => {
       // Chain 100 catches up
       t.expect(sourceMock100.getHeightOrThrowCalls->Array.length).toEqual(1)
       sourceMock100.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       sourceMock100.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
       await indexer.getBatchWritePromise()
@@ -1694,14 +1676,11 @@ describe("E2E tests", () => {
     async (~t, ~indexer, ~source) => {
       let leaderSource = source(1337)
       let followerSource = source(100)
-      await Utils.delay(0)
 
       // Phase 1: both chains catch up to head (block 100) and become realtime.
       // A handful of events on each seeds a density signal.
       leaderSource.resolveGetHeightOrThrow(100)
       followerSource.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       leaderSource.resolveGetItemsOrThrow(
         [{blockNumber: 20, logIndex: 0}, {blockNumber: 60, logIndex: 0}],

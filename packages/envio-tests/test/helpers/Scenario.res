@@ -223,7 +223,20 @@ let run = async (
     ~onError?,
     ~onExit?,
     ~mapStorage?,
-    indexer => body(~indexer, ~source),
+    async indexer => {
+      await body(~indexer, ~source)
+      // Only after the body passed: a failing body has its own error to report,
+      // and answers it never got to were never going to be claimed anyway.
+      switch mocks->Array.flatMap(((_, mock)) => mock.unclaimedAnswers()) {
+      | [] => ()
+      | unclaimed =>
+        JsError.throwWithMessage(
+          "These mock answers were registered before their call arrived, and no call ever " ++
+          "claimed them:\n" ++
+          unclaimed->Array.map(entry => `  ${entry}`)->Array.join("\n"),
+        )
+      }
+    },
   )
 }
 

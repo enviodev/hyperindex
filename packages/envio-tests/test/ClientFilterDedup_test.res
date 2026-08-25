@@ -45,7 +45,6 @@ describe("Client-side address filtering item dedup", () => {
         (async _ => processed->Array.push((blockNumber, logIndex))->ignore)->Obj.magic
 
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       sourceMock.resolveGetHeightOrThrow(1000)
       await Utils.delay(0)
@@ -102,7 +101,6 @@ describe("Client-side address filtering item dedup", () => {
       // becomes processable. The re-delivered copy must be deduped.
       sourceMock.resolveGetItemsOrThrow(
         [{blockNumber: 10, logIndex: 0, handler: record(~blockNumber=10, ~logIndex=0)}],
-        ~resolveAt=#all,
         ~latestFetchedBlockNumber=200,
       )
       await indexer.getBatchWritePromise()

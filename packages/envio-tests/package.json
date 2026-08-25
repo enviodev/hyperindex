@@ -6,7 +6,8 @@
   "scripts": {
     "build": "rescript",
     "watch": "rescript watch",
-    "test": "rescript && vitest run",
+    "lint": "node scripts/lint-inputs.mjs",
+    "test": "node scripts/lint-inputs.mjs && rescript && vitest run",
     "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs"
   },
   "devDependencies": {
