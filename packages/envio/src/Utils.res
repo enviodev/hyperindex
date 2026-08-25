@@ -787,7 +787,17 @@ module BigInt = {
         | Some(bigInt) => bigInt
         | None => s.fail("The string is not valid BigInt")
         },
-      serializer: bigint => bigint->BigInt.toString,
+      // The batched Postgres writer (PgStorage's S.unnest path, used for every
+      // table insert/upsert that has no array field) can call this serializer
+      // directly on a `null`/`undefined` column value for a nullable BigInt
+      // field, and `.toString()` on that throws. Reproduced indexing a real
+      // subgraph's nullable BigInt entity fields via `envio dev` against
+      // HyperSync — see the linked PR description for the repro and the
+      // exact crash trace.
+      serializer: bigint =>
+        bigint === %raw(`null`) || bigint === %raw(`undefined`)
+          ? bigint->magic
+          : bigint->BigInt.toString,
     })
 }
 
