@@ -748,39 +748,3 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod tmp_probe {
-    use super::*;
-    use regex::Regex;
-    use std::collections::HashMap;
-
-    #[test]
-    fn probe() {
-        let old = Regex::new(r"'[^']*'|`[^`]*`|[A-Za-z_][A-Za-z0-9_]*").unwrap();
-        let mut columns: HashMap<&str, &str> = HashMap::new();
-        columns.insert("createdAt", "created_at");
-        columns.insert("kind", "kind");
-        let cases = [
-            r"replaceAll(name, '\\', '') = createdAt",
-            r"kind = 'a\\' AND createdAt > 0",
-            r"kind = 'C:\\path\\' AND createdAt > 0",
-            r"kind = 'a\'b' AND createdAt > 0",
-            r"kind = 'it''s' AND createdAt > 0",
-            "toYYYYMM(`createdAt`) + createdAt",
-            r"kind = 'x' /* don't */ AND createdAt > 0",
-            r"createdAt > 0 -- it's fine",
-            "position(kind, '\\') > 0 AND createdAt > 0",
-            r#"JSONExtractString(kind, "a\"b") AND createdAt > 0"#,
-            r"kind = 'a\\\'b' AND createdAt > 0",
-            "`a``b` + createdAt",
-        ];
-        for c in cases {
-            let newr = resolve_expression_columns(c, &columns);
-            let oldr = old.replace_all(c, |caps: &regex::Captures| {
-                let t = &caps[0];
-                match columns.get(t) { Some(col) => quoted(col), None => t.to_string() }
-            }).into_owned();
-            println!("IN : {c}\nOLD: {oldr}\nNEW: {newr}\n{}\n", if oldr==newr {"same"} else {"*** DIFF ***"});
-        }
-    }
-}

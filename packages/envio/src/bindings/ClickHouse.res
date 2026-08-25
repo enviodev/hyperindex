@@ -328,12 +328,15 @@ let stageCheckpointsOrThrow = (sink, ~registry, ~batch: Batch.t) => {
     Null.null
   } else {
     let table = sink->checkpointsTable(~registry)
-    // Keyed by name rather than by position, so the two lists stay independent
-    // of each other's order — pairing a column with its neighbour's values is
-    // something nothing downstream could catch, every array reaching the
-    // builders as `unknown`.
+    // Keyed by name rather than by position. The registered columns come from
+    // this same list, so the orders do match today; what the name buys is that
+    // a future divergence fails to find a column instead of pairing one with its
+    // neighbour's values, which nothing downstream could catch — every array
+    // reaches the builders as `unknown`.
     let values = Dict.make()
-    checkpointColumns()->Array.forEach(({name, valuesOf}) => values->Dict.set(name, valuesOf(batch)))
+    checkpointColumns()->Array.forEach(({name, valuesOf}) =>
+      values->Dict.set(name, valuesOf(batch))
+    )
     try {
       let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
       // A checkpoint id past what UInt64 holds is refused here rather than being
