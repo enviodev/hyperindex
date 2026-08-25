@@ -1,6 +1,5 @@
 use super::{
-    entity_parsing::{self, IndexFieldDirection},
-    field_types,
+    entity_parsing, field_types,
     human_config::{self, evm::For, ColumnNameFormat},
     system_config::{
         self, field_type_to_arg_type, named_field_to_arg_def, Abi, ChainIdMode, Ecosystem,
@@ -177,7 +176,12 @@ impl From<&entity_parsing::ClickHouseEntityStorage> for EntityClickHouseStorageJ
             entity_parsing::ClickHouseEntityStorage::Options(options) => {
                 Self::Options(EntityClickHouseOptionsJson {
                     partition_by: options.partition_by.clone(),
-                    order_by: options.order_by.clone(),
+                    order_by: options.order_by.as_ref().map(|columns| {
+                        columns
+                            .iter()
+                            .map(|column| column.field_name().to_string())
+                            .collect()
+                    }),
                     ttl: options.ttl.clone(),
                     skipping_indexes: options.skipping_indexes.as_ref().map(|indices| {
                         indices
@@ -837,11 +841,8 @@ impl SystemConfig {
                         fields
                             .iter()
                             .map(|f| CompositeIndexJson {
-                                field_name: f.name.clone(),
-                                direction: match f.direction {
-                                    IndexFieldDirection::Asc => "Asc".to_string(),
-                                    IndexFieldDirection::Desc => "Desc".to_string(),
-                                },
+                                field_name: f.column.field_name().to_string(),
+                                direction: f.direction.as_pascal_str().to_string(),
                             })
                             .collect()
                     })
@@ -877,11 +878,11 @@ impl SystemConfig {
 
                 Ok(EntityJson {
                     name: entity.name.clone(),
-                    cross_chain: Some(system_config::entity_is_cross_chain(
-                        entity,
-                        cfg.default_cross_chain,
-                    ))
-                    .filter(|cross_chain| *cross_chain != cfg.default_cross_chain),
+                    cross_chain: Some(entity.is_cross_chain(cfg.default_chain_scope)).filter(
+                        |cross_chain| {
+                            *cross_chain != cfg.default_chain_scope.is_cross_chain_by_default()
+                        },
+                    ),
                     storage,
                     internal: entity.internal,
                     properties,
@@ -903,7 +904,7 @@ impl SystemConfig {
             save_full_history: cfg.save_full_history,
             raw_events: cfg.enable_raw_events,
             chain_id_mode: cfg.chain_id_mode,
-            default_cross_chain: cfg.default_cross_chain,
+            default_cross_chain: cfg.default_chain_scope.is_cross_chain_by_default(),
             storage: (&cfg.storage).into(),
             evm,
             fuel,
