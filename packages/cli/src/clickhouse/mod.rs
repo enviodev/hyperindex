@@ -993,9 +993,13 @@ enum Retry {
 }
 
 /// Error codes where the batch is what the server could not take, so halving is
-/// the retry that changes the answer.
+/// the retry that changes the answer. The three timeout-shaped ones are here
+/// together: a body too large to read, encode or ship inside the deadline is a
+/// batch a smaller one gets past, whichever layer reports the deadline.
 const HALVED_ERROR_CODES: &[u32] = &[
-    159,  // TIMEOUT_EXCEEDED — the insert did not finish in the time allowed
+    159,  // TIMEOUT_EXCEEDED
+    209,  // SOCKET_TIMEOUT — the deadline tripped mid-body
+    210,  // NETWORK_ERROR — a peer that gave up on an oversized body
     241,  // MEMORY_LIMIT_EXCEEDED — the one the halving is actually for
     319,  // UNKNOWN_STATUS_OF_INSERT
     425,  // SYSTEM_ERROR
@@ -1005,12 +1009,11 @@ const HALVED_ERROR_CODES: &[u32] = &[
 /// Error codes for a server or cluster that briefly cannot take writes. The rows
 /// are not what it is objecting to, and for the crowding ones (202, 203, 252,
 /// which come of too many requests rather than too large a one) halving is worse
-/// than useless: waiting is the whole remedy.
+/// than useless: it answers an overloaded server by making two requests where
+/// one already failed. Waiting is the whole remedy.
 const SAME_ROWS_ERROR_CODES: &[u32] = &[
     202, // TOO_MANY_SIMULTANEOUS_QUERIES
     203, // NO_FREE_CONNECTION
-    209, // SOCKET_TIMEOUT
-    210, // NETWORK_ERROR
     236, // ABORTED — a replica on its way down or back up
     242, // TABLE_IS_READ_ONLY — a replicated table that has lost its Keeper session
     252, // TOO_MANY_PARTS
@@ -1038,9 +1041,13 @@ fn retry_for(status: reqwest::StatusCode, body: &str) -> Retry {
         // differently. Left unretried, a batch that outgrows the limit fails the
         // same way on every restart.
         reqwest::StatusCode::PAYLOAD_TOO_LARGE => Retry::Halved,
-        // Rate limiting counts requests, so halving spends the budget faster.
-        reqwest::StatusCode::TOO_MANY_REQUESTS => Retry::SameRows,
-        status if status.is_server_error() => Retry::Halved,
+        // Rate limiting counts requests, so halving spends the budget faster,
+        // and a 5xx from in front of ClickHouse is the same shape of answer — an
+        // overloaded proxy, a refused upstream. 413 above is the only status
+        // that names something a smaller batch could do anything about.
+        status if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() => {
+            Retry::SameRows
+        }
         // Any other 4xx is the deployment's own configuration — credentials, a
         // route — which no number of smaller batches talks it out of.
         _ => Retry::Never,
@@ -1324,6 +1331,35 @@ mod tests {
                     vec!["a".to_string(), "b".to_string()],
                     vec!["c".to_string(), "d".to_string()]
                 ],
+                3
+            )
+        );
+    }
+
+    // A proxy that is merely overloaded gets waited out, not fanned out to: the
+    // two requests halving would make are what it is already struggling with.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_proxy_that_is_overloaded_is_retried_whole() {
+        let server = mock_server::MockClickHouse::rejecting_with_status(
+            2,
+            503,
+            "<html>503 Service Temporarily Unavailable</html>",
+        )
+        .await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        write(&sink, handle).await.unwrap();
+
+        assert_eq!(
+            (server.accepted_batches(), server.inserts_seen()),
+            (
+                vec![vec![
+                    "a".to_string(),
+                    "b".to_string(),
+                    "c".to_string(),
+                    "d".to_string()
+                ]],
                 3
             )
         );

@@ -204,8 +204,13 @@ impl EntitySpec {
 /// backticks and double quotes for one), or a bare identifier. Every alternative
 /// but the last is there to be skipped: a token already quoted names its column
 /// as written, and rewriting inside one would produce a name nothing has.
+///
+/// Each quoted form spans `\`-escapes, which ClickHouse reads inside all three
+/// — and which `quoted` and `literal` emit. Stopping at an escaped quote would
+/// end the token early and leave the rest of the text open to rewriting.
 static EXPRESSION_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"'[^']*'|`[^`]*`|"[^"]*"|[A-Za-z_][A-Za-z0-9_]*"#).expect("expression token regex")
+    Regex::new(r#"'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|[A-Za-z_][A-Za-z0-9_]*"#)
+        .expect("expression token regex")
 });
 
 /// Rewrites any bare identifier naming an entity field to that field's
@@ -596,6 +601,9 @@ mod tests {
             // already names its column and must survive as written.
             "toYYYYMM(\"created_at\")",
             "kind = 'a' || \"createdAt\"",
+            // ClickHouse reads C-style escapes inside a literal, so a \' does
+            // not end one and nothing inside is a bare identifier.
+            r"kind = 'a\'createdAt b'",
         ]
         .map(|expression| resolve_expression_columns(expression, &columns));
         assert_eq!(
@@ -607,6 +615,7 @@ mod tests {
                 "toStartOfDay(`created_at`) + INTERVAL 7 DAY",
                 "toYYYYMM(\"created_at\")",
                 "`kind` = 'a' || \"createdAt\"",
+                r"`kind` = 'a\'createdAt b'",
             ]
         );
     }

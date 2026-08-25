@@ -10,6 +10,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::mock_http;
 
+#[derive(Default)]
 struct State {
     /// Bodies of the inserts the server accepted, in arrival order.
     accepted: Vec<Vec<u8>>,
@@ -27,20 +28,6 @@ struct State {
     queries: usize,
     /// Request line and headers of every request, in arrival order.
     heads: Vec<String>,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            accepted: Vec::new(),
-            reject_next: 0,
-            rejection: String::new(),
-            rejection_status: 500,
-            seen: 0,
-            queries: 0,
-            heads: Vec::new(),
-        }
-    }
 }
 
 pub struct MockClickHouse {

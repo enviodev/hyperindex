@@ -209,7 +209,7 @@ describe("ChainIdMode ClickHouse schema", () => {
         ~database="unused",
         ~chainIdMode=config.chainIdMode,
       )
-      let specs = ClickHouse.checkpointColumnSpecs
+      let specs = ClickHouse.checkpointColumnSpecs()
       let {kinds} = sink->ClickHouseSink.registerCheckpointsTable(specs)
       let column = specs->Array.findIndexOpt(({name}) => name === "chain_id")->Option.getOrThrow
       kinds->Array.getUnsafe(column)->ClickHouseSink.kindOfOrdinal
