@@ -21,6 +21,20 @@ describe("ContractMapping", () => {
     })
   })
 
+  // Ids are looked up by indexing a dict, and a plain JS object answers
+  // `__proto__` from its prototype instead of from what was stored — so this
+  // name would resolve to an object cast as an id, silently attributing every
+  // one of its addresses to a contract that doesn't exist. Config validation
+  // lets the name through: it's a valid identifier and isn't a reserved word.
+  it("resolves a contract named like an Object prototype key", t => {
+    let mapping = ContractMapping.make(~names=["__proto__", "constructor", "A"])
+    t.expect(
+      mapping
+      ->ContractMapping.names
+      ->Array.map(name => (name, mapping->ContractMapping.idOfOrThrow(name))),
+    ).toEqual([("A", 0), ("__proto__", 1), ("constructor", 2)])
+  })
+
   it("throws for a name no contract claims", t =>
     t->toThrowErrorEqual(
       () => ContractMapping.make(~names=["A"])->ContractMapping.idOfOrThrow("B"),

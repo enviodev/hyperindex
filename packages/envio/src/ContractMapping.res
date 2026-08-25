@@ -10,7 +10,11 @@ type t = {
 }
 
 let indexNames = (names: array<string>): t => {
-  let idByName = Dict.make()
+  // Prototype-free, because ids are looked up by indexing this: a plain object
+  // answers `__proto__` from its prototype rather than from what was stored,
+  // and a contract may legitimately be named that — it's a valid identifier and
+  // no reserved word rejects it.
+  let idByName: dict<int> = Utils.Object.createNullObject()
   names->Array.forEachWithIndex((name, id) => idByName->Dict.set(name, id))
   {names, idByName}
 }
