@@ -300,8 +300,6 @@ let markNull = (builder, ~row) => {
     }
 )
 
-// What both writers below read as "the row has no value here", kept in one place
-// so a SET row and a DELETE row cannot start disagreeing about it.
 %%private(let isAbsent = (value: unknown) => value === %raw(`undefined`) || value === %raw(`null`))
 
 // Writes one value of a row the handler set. `undefined`/`null` marks the row's

@@ -294,7 +294,8 @@ pub struct ClickHouseSinkOptions {
     pub username: String,
     pub password: String,
     pub database: String,
-    /// `"Int32"` or `"Int64"`, which every chain-scoped column follows.
+    /// `"int32"` or `"int64"` — the form the config serializes the mode in —
+    /// which every chain-scoped column follows.
     pub chain_id_mode: String,
     /// The column and table names the runtime's history format fixes.
     pub history: ddl::HistorySchema,
