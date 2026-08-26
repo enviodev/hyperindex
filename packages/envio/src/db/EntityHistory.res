@@ -51,8 +51,13 @@ type pgEntityHistory<'entity> = {
 }
 
 let historyTablePrefix = "envio_history_"
+// `$` can't occur in a GraphQL entity name, so it marks where a truncated name
+// stops and the index that keeps it unique begins. Without that boundary two
+// long names whose indexes differ in digit count can truncate onto the same
+// identifier, and `CREATE TABLE IF NOT EXISTS` would hand both entities one
+// history table.
 let historyTableName = (~entityName, ~entityIndex) =>
-  fitPgTableName(historyTablePrefix ++ entityName, ~uniqueSuffix=entityIndex->Int.toString)
+  fitPgTableName(historyTablePrefix ++ entityName, ~uniqueSuffix=`$${entityIndex->Int.toString}`)
 
 type safeReorgBlocks = {
   chainIds: array<ChainId.t>,
