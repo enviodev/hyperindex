@@ -496,7 +496,9 @@ describe("Automatic getWhere indexes", () => {
 
       // The automatic index is the indexer's own, so finalizing must leave it be.
       await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=1000)
+      // The backfill is chunked into a query per range; the chain only reaches
+      // the head once every one of them is answered.
+      source.drainItemsQueries(~latestFetchedBlockNumber=1000)
       await indexer.waitUntilReady()
 
       t.expect(

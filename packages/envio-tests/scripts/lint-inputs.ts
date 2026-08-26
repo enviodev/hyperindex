@@ -13,7 +13,7 @@ const testRoot = fileURLToPath(new URL("../test", import.meta.url));
 
 const delay = /^\s*(?:await\s+)?Utils\.delay\(0\)\s*$/;
 const resolveCall =
-  /^\s*(?:await\s+)?\S*\b(resolveGetItemsOrThrow|resolveGetHeightOrThrow|resolveGetBlockHashes|drainItemsQueries)\b/;
+  /^\s*(?:await\s+)?\S*\b(resolveGetItemsOrThrow|resolveGetHeightOrThrow|drainItemsQueries)\b/;
 
 const resFiles = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {

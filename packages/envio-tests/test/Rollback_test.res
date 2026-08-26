@@ -2246,6 +2246,8 @@ describe("E2E rollback tests", () => {
           blockHash: "0x103a",
         },
       )
+      await Utils.delay(0)
+      await Utils.delay(0)
 
       // getBlockHashes called with [100, 102]: both are stored in the
       // threshold below 103. Block 100 still matches and 102 came back on
@@ -2457,6 +2459,8 @@ describe("E2E rollback tests", () => {
           blockHash: "0x103a",
         },
       )
+      await Utils.delay(0)
+      await Utils.delay(0)
 
       sourceMock1337.resolveGetBlockHashes([
         {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},

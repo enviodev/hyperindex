@@ -208,6 +208,8 @@ describe("Chain-scoped rollback", () => {
         ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
       )
 
+      await Utils.delay(0)
+      await Utils.delay(0)
       source1.resolveGetBlockHashes([
         {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
         {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
@@ -371,6 +373,8 @@ describe("Per-chain history and removal", () => {
         ~filter=MockSource.coveringBlock(103),
         ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
       )
+      await Utils.delay(0)
+      await Utils.delay(0)
       source1.resolveGetBlockHashes([
         {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
         {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},

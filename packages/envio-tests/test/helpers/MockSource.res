@@ -232,6 +232,10 @@ type t = {
   // already exist, so unlike `resolveGetItemsOrThrow` it never waits for one.
   drainItemsQueries: (~filter: itemsQuery => bool=?, ~latestFetchedBlockNumber: int=?) => unit,
   getBlockHashesCalls: array<array<int>>,
+  // Answers every block-hash lookup in flight, and throws when there is none.
+  // Alone among the resolvers it never waits for its call: the rollback depth
+  // search issues several lookups over different block numbers, so an answer
+  // registered in advance would land on whichever asked first.
   resolveGetBlockHashes: array<BlockStore.inputBlock> => unit,
   // Throws if a `resolve*` that ran before its call arrived is still waiting for
   // one, naming the call sites. Run at the end of a passing scenario.
@@ -304,7 +308,6 @@ let make = (
   // source methods below. `site` is only carried for the end-of-run report.
   let deferredItemsAnswers: array<{"site": string, "match": getItemsOrThrowCall => bool, "respond": getItemsOrThrowCall => unit}> = []
   let deferredHeightAnswers: array<{"site": string, "height": int}> = []
-  let deferredBlockHashesAnswers: array<{"site": string, "response": Source.getBlockHashesResponse}> = []
 
   // With the function we keep only the pending calls,
   // and remove the resolved ones automatically.
@@ -410,23 +413,17 @@ let make = (
         ~ecosystem=Evm,
         ~shouldChecksum=false,
       )
-      let response = {Source.result: Ok(blockStore), requestStats: []}
       if getBlockHashesResolveFns->Utils.Array.isEmpty {
-        deferredBlockHashesAnswers
-        ->Array.push({"site": UserModule.callSite(), "response": response})
-        ->ignore
-      } else {
-        getBlockHashesResolveFns->Array.forEach(resolve => resolve(response))
-        getBlockHashesResolveFns->Utils.Array.clearInPlace
+        JsError.throwWithMessage("getBlockHashesResolveFns is empty")
       }
+      let response = {Source.result: Ok(blockStore), requestStats: []}
+      getBlockHashesResolveFns->Array.forEach(resolve => resolve(response))
+      getBlockHashesResolveFns->Utils.Array.clearInPlace
     },
     validateAnswersClaimed: () =>
       switch Array.flat([
         deferredItemsAnswers->Array.map(answer => `resolveGetItemsOrThrow at ${answer["site"]}`),
         deferredHeightAnswers->Array.map(answer => `resolveGetHeightOrThrow at ${answer["site"]}`),
-        deferredBlockHashesAnswers->Array.map(answer =>
-          `resolveGetBlockHashes at ${answer["site"]}`
-        ),
       ]) {
       | [] => ()
       | unclaimed =>
@@ -461,13 +458,9 @@ let make = (
         pollingInterval,
         getBlockHashes: implement(#getBlockHashes, (~blockNumbers, ~logger as _) => {
           getBlockHashesCalls->Array.push(blockNumbers)->ignore
-          switch deferredBlockHashesAnswers->Array.shift {
-          | Some(answer) => Promise.resolve(answer["response"])
-          | None =>
-            Promise.make((resolve, _reject) => {
-              getBlockHashesResolveFns->Array.push(resolve)->ignore
-            })
-          }
+          Promise.make((resolve, _reject) => {
+            getBlockHashesResolveFns->Array.push(resolve)->ignore
+          })
         }),
         getHeightOrThrow: implement(#getHeightOrThrow, () => {
           getHeightOrThrowCalls->Array.push(true)->ignore
