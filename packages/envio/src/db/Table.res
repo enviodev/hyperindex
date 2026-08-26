@@ -141,6 +141,20 @@ let getPgFieldName = fieldOrDerived =>
 
 let idFieldName = "id"
 
+let maxPgTableNameLength = 63
+
+// Postgres truncates identifiers past its limit on its own, which would collapse
+// two long names onto one. Cutting the readable half and keeping `uniqueSuffix`
+// whole makes every generated name distinct by construction, so the suffix has
+// to be something already unique to the table it names.
+let fitPgTableName = (fullName, ~uniqueSuffix) =>
+  if fullName->String.length > maxPgTableNameLength {
+    fullName->String.slice(~start=0, ~end=maxPgTableNameLength - uniqueSuffix->String.length) ++
+      uniqueSuffix
+  } else {
+    fullName
+  }
+
 let getPgFieldType = (
   ~fieldType: fieldType,
   ~pgSchema,
@@ -327,6 +341,9 @@ type queryField = {
   // Loads are served by Postgres only (ClickHouse is a write-only sink), so
   // no ClickHouse counterpart is needed here.
   pgDbFieldName: string,
+  // The chain-id column a per-chain entity's table is partitioned by, which a
+  // filter has to write into the SQL rather than bind. See `makeFilterCondition`.
+  isChainId: bool,
 }
 let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
   let dict = Dict.make()
@@ -339,6 +356,7 @@ let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
           fieldSchema: field.fieldSchema,
           arrayFieldSchema: S.array(field.fieldSchema)->S.toUnknown,
           pgDbFieldName: field->getPgDbFieldName,
+          isChainId: field.isChainId,
         },
       )
     | DerivedFrom(_) => ()
