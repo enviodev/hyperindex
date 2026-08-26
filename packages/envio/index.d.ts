@@ -1247,10 +1247,8 @@ export type SvmAccountActivityFieldName =
   | "transactionAccountIndex"
   | "isSigner"
   | "isWritable"
-  | "lamports"
   | "lamports.pre"
   | "lamports.post"
-  | "token"
   | "token.mint"
   | "token.owner"
   | "token.decimals"
@@ -1273,8 +1271,7 @@ export type SvmFieldsSelection = {
   readonly log?: readonly SvmLogFieldName[];
 };
 
-/** A {@link SvmFieldsSelection} with every field selected. Parent knobs only:
- * `lamports` and `token` imply their subfields.
+/** A {@link SvmFieldsSelection} with every field selected.
  *
  * Type-level only — its knobs are field-name arrays rather than literals, so it
  * describes a payload (`SvmInstruction<SvmAllFieldsSelection>`) but can't be
@@ -1282,10 +1279,7 @@ export type SvmFieldsSelection = {
 export type SvmAllFieldsSelection = {
   readonly instruction: readonly SvmInstructionFieldName[];
   readonly transaction: readonly SvmTransactionFieldName[];
-  readonly accountActivity: readonly Exclude<
-    SvmAccountActivityFieldName,
-    `lamports.${string}` | `token.${string}`
-  >[];
+  readonly accountActivity: readonly SvmAccountActivityFieldName[];
   readonly block: readonly SvmBlockFieldName[];
   readonly log: readonly SvmLogFieldName[];
 };
@@ -1316,15 +1310,7 @@ type SvmActivityHas<Fields, Name extends string> = [SvmActivityListed<Fields>] e
   ? false
   : Name extends SvmActivityListed<Fields>
     ? true
-    : Name extends `lamports.${string}`
-      ? "lamports" extends SvmActivityListed<Fields>
-        ? true
-        : false
-      : Name extends `token.${string}`
-        ? "token" extends SvmActivityListed<Fields>
-          ? true
-          : false
-        : false;
+    : false;
 
 type SvmActivityField<Fields, Name extends string, T> = SvmActivityHas<
   Fields,
@@ -1334,7 +1320,7 @@ type SvmActivityField<Fields, Name extends string, T> = SvmActivityHas<
   : FieldNotSelected<`Field '${Name}' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>;
 
 type SvmSelectedLamports<Fields> = [
-  SvmActivityListed<Fields> & (`lamports` | `lamports.${string}`),
+  SvmActivityListed<Fields> & `lamports.${string}`,
 ] extends [never]
   ? FieldNotSelected<`Field 'lamports' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>
   : {
@@ -1343,7 +1329,7 @@ type SvmSelectedLamports<Fields> = [
         : never]: SvmAllAccountLamportsFields[K];
     } | undefined;
 
-type SvmSelectedToken<Fields> = [SvmActivityListed<Fields> & (`token` | `token.${string}`)] extends [never]
+type SvmSelectedToken<Fields> = [SvmActivityListed<Fields> & `token.${string}`] extends [never]
   ? FieldNotSelected<`Field 'token' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>
   : {
       readonly [K in keyof SvmAllAccountTokenActivityFields as SvmActivityHas<Fields, `token.${K & string}`> extends true

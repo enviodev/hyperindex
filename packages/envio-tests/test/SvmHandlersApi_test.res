@@ -132,6 +132,21 @@ describe("SVM handler fields", () => {
     );
   });
 
+  it("rejects a parent name in place of its subfields", (t) => {
+    t.expect(() =>
+      indexer.onInstruction(
+        {
+          program: "Swapper",
+          instruction: "swap",
+          fields: { accountActivity: ["token" as never] },
+        },
+        async () => {},
+      ),
+    ).toThrowError(
+      \`Invalid "token" field in the fields.accountActivity option of the "swap" event registration on contract "Swapper". Valid accountActivity fields: "address", "transactionAccountIndex", "isSigner", "isWritable", "lamports.pre", "lamports.post", "token.mint", "token.owner", "token.decimals", "token.preAmount", "token.postAmount".\`,
+    );
+  });
+
   it("rejects an unknown instruction field", (t) => {
     t.expect(() =>
       indexer.onInstruction(
@@ -610,12 +625,19 @@ expectType<TypeEqual<SvmBlock<SvmAllFieldsSelection>, SvmAllBlockFields>>(true);
 expectType<TypeEqual<SvmLog<SvmAllFieldsSelection>, SvmAllLogFields>>(true);
 expectType<TypeEqual<SvmTransaction<SvmAllFieldsSelection>["fee"], bigint>>(true);
 
-// lamports and token narrow the same way: a parent knob takes every subfield,
-// a dotted name takes just that one.
-expectType<TypeEqual<SvmAccountLamports<{ accountActivity: ["lamports"] }>, SvmAllAccountLamportsFields | undefined>>(true);
+// lamports and token narrow the same way: each subfield is named in full, and
+// listing them all rebuilds the record.
 expectType<TypeEqual<SvmAccountLamports<{ accountActivity: ["lamports.post"] }>, { readonly post: bigint } | undefined>>(true);
-expectType<TypeEqual<SvmAccountTokenActivity<{ accountActivity: ["token"] }>, SvmAllAccountTokenActivityFields | undefined>>(true);
+expectType<TypeEqual<SvmAccountLamports<{ accountActivity: ["lamports.pre", "lamports.post"] }>, SvmAllAccountLamportsFields | undefined>>(true);
 expectType<TypeEqual<SvmAccountTokenActivity<{ accountActivity: ["token.mint"] }>, { readonly mint: string } | undefined>>(true);
+expectType<
+  TypeEqual<
+    SvmAccountTokenActivity<{
+      accountActivity: ["token.mint", "token.owner", "token.decimals", "token.preAmount", "token.postAmount"];
+    }>,
+    SvmAllAccountTokenActivityFields | undefined
+  >
+>(true);
 
 // An account with no accountActivity selection still names its account.
 type BareAccount = SvmInstructionAccount<{ instruction: ["accounts"] }, "source">;
@@ -657,10 +679,8 @@ expectType<
     | "transactionAccountIndex"
     | "isSigner"
     | "isWritable"
-    | "lamports"
     | "lamports.pre"
     | "lamports.post"
-    | "token"
     | "token.mint"
     | "token.owner"
     | "token.decimals"
@@ -685,6 +705,28 @@ if (0) {
   indexer.onInstruction(
     // @ts-expect-error - fields must be a literal, so the runtime knows what to fetch
     { program: "Swapper", instruction: "swap", fields: everyField },
+    async () => {},
+  );
+}
+
+// Sub-records are selected field by field; the parent name is not a field.
+if (0) {
+  indexer.onInstruction(
+    {
+      program: "Swapper",
+      instruction: "swap",
+      // @ts-expect-error - select token.mint / token.owner / ... explicitly
+      fields: { accountActivity: ["token"] },
+    },
+    async () => {},
+  );
+  indexer.onInstruction(
+    {
+      program: "Swapper",
+      instruction: "swap",
+      // @ts-expect-error - select lamports.pre / lamports.post explicitly
+      fields: { accountActivity: ["lamports"] },
+    },
     async () => {},
   );
 }
