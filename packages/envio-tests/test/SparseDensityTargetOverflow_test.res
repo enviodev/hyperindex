@@ -49,7 +49,6 @@ describe("Sparse-density target overflow", () => {
     ~reducedPollingInterval=1,
     async (~t, ~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       sourceMock.resolveGetHeightOrThrow(30_000)
       await Utils.delay(0)

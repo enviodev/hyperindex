@@ -34,11 +34,8 @@ describe("Load and save an entity with a Timestamp from DB", () => {
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await Utils.delay(0)
 
       source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
       source.resolveGetItemsOrThrow(
         [
           {

@@ -174,7 +174,6 @@ describe("PIN: multichain indexer enters the reorg threshold", () => {
     ~targetBufferSize=100,
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await Utils.delay(0)
 
       source.resolveGetHeightOrThrow(1000)
       await MockSource.waitItemsQuery(source)

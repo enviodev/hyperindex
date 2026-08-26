@@ -6,7 +6,8 @@
   "scripts": {
     "build": "rescript",
     "watch": "rescript watch",
-    "test": "rescript && vitest run",
+    "lint": "node scripts/lint-inputs.ts",
+    "test": "node scripts/lint-inputs.ts && rescript && vitest run",
     "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs"
   },
   "devDependencies": {
@@ -23,6 +24,6 @@
     "envio": "file:../envio"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.18.0"
   }
 }

@@ -79,10 +79,7 @@ describe("Scenario isolation", () => {
       ~sources=[{chain: 1337}],
       async (~indexer, ~source) => {
         let source = source(1337)
-        await Utils.delay(0)
         source.resolveGetHeightOrThrow(10)
-        await Utils.delay(0)
-        await Utils.delay(0)
 
         source.resolveGetItemsOrThrow(
           [
@@ -113,10 +110,7 @@ describe("Scenario isolation", () => {
       ~sources=[{chain: 4242}],
       async (~indexer, ~source) => {
         let source = source(4242)
-        await Utils.delay(0)
         source.resolveGetHeightOrThrow(10)
-        await Utils.delay(0)
-        await Utils.delay(0)
 
         source.resolveGetItemsOrThrow(
           [
