@@ -208,9 +208,8 @@ const POW10: [i128; 39] = {
 
 /// What the column accepts. RowBinary is just the raw integer, so nothing on the
 /// server side rejects an out-of-range value: it wraps into whatever the bytes
-/// happen to mean. The JSONEachRow path this replaced had ClickHouse do the
-/// check, so the encoder has to do it here or an `Int!` set to 3e9 lands as a
-/// negative number.
+/// happen to mean. Checking here is the only check there is — without it an
+/// `Int!` set to 3e9 lands as a negative number.
 fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
     Ok(match ch_type {
         ChType::Int32 => (i32::MIN as i128, i32::MAX as i128),
@@ -226,13 +225,10 @@ fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
                 .context("Decimal precision is wider than the value the encoder carries")?;
             (1 - limit, limit - 1)
         }
-        ChType::Enum { variants } => {
-            if ChType::enum_bytes(variants) == 1 {
-                (i8::MIN as i128, i8::MAX as i128)
-            } else {
-                (i16::MIN as i128, i16::MAX as i128)
-            }
-        }
+        // The variants the column declares, not the width they are stored in:
+        // ClickHouse fails a read of a discriminant no variant uses, so one
+        // that fits the byte is no more storable than one that does not.
+        ChType::Enum { variants } => (1, variants.len() as i128),
         other => bail!("{other:?} is not an integer column"),
     })
 }
@@ -316,10 +312,8 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
         }
         (ChType::String, Value::String(text)) => put_string(out, text),
         // A String column holds whatever text it is given, and a `[Json!]!`
-        // field's elements are arbitrary JSON. ClickHouse folded these into the
-        // column itself on the JSONEachRow path (its
-        // `input_format_json_read_*_as_strings` defaults), so rendering them
-        // here keeps a schema that used to index from failing to encode.
+        // field's elements are arbitrary JSON — an object or a number is a value
+        // the schema allows there, so it is rendered rather than refused.
         (ChType::String, _) => put_string(out, &value.to_string()),
         (ChType::Enum { .. } | ChType::Decimal { .. }, Value::String(text)) => {
             encode_text_scalar(out, ch_type, text)?
@@ -340,6 +334,13 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
                 None => decimal_to_i128(&number.to_string(), *scale)?,
             };
             put_int(out, scaled, ch_type)?
+        }
+        // An enum element names its variant. A bare number is the stored
+        // discriminant instead, which is not what any producer here sends and
+        // not something this can check the column's variants against — the
+        // arm below would take it for an integer column's value.
+        (ChType::Enum { .. }, _) => {
+            bail!("`{value}` is not a value a {ch_type:?} element can hold")
         }
         // The integer columns, whose elements JSON carries natively. Feeding the
         // number straight in keeps the encode loop off a render-to-text and
@@ -363,9 +364,9 @@ fn fixed_width(ch_type: &ChType) -> Result<usize> {
     })
 }
 
-/// Writes the type's zero value — what ClickHouse would substitute for a column
-/// omitted from a JSONEachRow row. A DELETE change carries only its id and
-/// checkpoint, so every other column takes this path.
+/// Writes the type's zero value, which is what a column the row leaves out
+/// stores. A DELETE change carries only its id and checkpoint, so every other
+/// column takes this path.
 fn put_default(out: &mut Vec<u8>, ch_type: &ChType) -> Result<()> {
     match ch_type {
         ChType::Nullable(_) => out.push(1),
@@ -401,7 +402,18 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
     }
 
     match (&column.values, ch_type) {
-        (ColumnValues::F64(v), ChType::Float64) => out.extend_from_slice(&v[row].to_le_bytes()),
+        (ColumnValues::F64(v), ChType::Float64) => {
+            let value = v[row];
+            // The one column whose bytes NaN and Infinity would go into
+            // unchanged. ClickHouse stores them, and from then on an aggregate
+            // over the column is NaN and a JSON-format read has no form to
+            // render it in — so the value a handler never meant to write would
+            // be the one nothing downstream can get rid of.
+            if !value.is_finite() {
+                bail!("{value} is not a value a Float64 column can hold");
+            }
+            out.extend_from_slice(&value.to_le_bytes())
+        }
         (ColumnValues::F64(v), other) => {
             let value = v[row];
             // A non-integral float would truncate silently; the column has no
@@ -468,8 +480,8 @@ pub fn encode(columns: &[Column], rows: usize) -> Result<EncodedRows> {
             );
         }
     }
-    // Two thirds of the JSONEachRow size is a good enough first guess; growing
-    // once beats re-allocating per row.
+    // A rough average cell width: overshooting wastes a little memory for the
+    // length of one batch, while undershooting re-allocates as rows are written.
     let mut body = Vec::with_capacity(rows * columns.len() * 12);
     let mut row_offsets = Vec::with_capacity(rows);
     for row in 0..rows {
@@ -647,6 +659,58 @@ mod tests {
         assert!(format!("{err:#}").contains("not a variant"));
     }
 
+    // An enum element names its variant, the same as a scalar enum does. A bare
+    // number is the stored discriminant instead, which nothing here can check
+    // against the variants the column declares — and RowBinary carries whatever
+    // it is given, so a number no variant uses would land in the column and
+    // fail every read of the table afterwards.
+    #[test]
+    fn rejects_an_enum_element_given_as_a_number() {
+        let err = encode(
+            &[text_column(
+                "kinds",
+                "Array(Enum8('SET' = 1, 'DELETE' = 2))",
+                &["[1]"],
+            )],
+            1,
+        )
+        .unwrap_err();
+        assert_eq!(
+            format!("{err:#}"),
+            "encoding column `kinds` row 0: `1` is not a value a Enum { variants: [\"SET\", \
+             \"DELETE\"] } element can hold"
+        );
+    }
+
+    #[test]
+    fn encodes_an_enum_element_that_names_its_variant() {
+        let encoded = encode(
+            &[text_column(
+                "kinds",
+                "Array(Enum8('SET' = 1, 'DELETE' = 2))",
+                &["[\"DELETE\",\"SET\"]"],
+            )],
+            1,
+        )
+        .unwrap();
+        assert_eq!(encoded.body, vec![2, 2, 1]);
+    }
+
+    // The bound an enum column accepts is the variants it declares, not the
+    // width they are stored in: ClickHouse rejects reads of a discriminant no
+    // variant uses, so 0 and 3 are as unstorable here as 300 is.
+    #[test]
+    fn rejects_a_discriminant_no_enum_variant_uses() {
+        let ch_type = ChType::Enum {
+            variants: vec!["SET".to_string(), "DELETE".to_string()],
+        };
+        let refused: Vec<bool> = [0i128, 1, 2, 3]
+            .into_iter()
+            .map(|value| put_int(&mut Vec::new(), value, &ch_type).is_err())
+            .collect();
+        assert_eq!(refused, vec![true, false, false, true]);
+    }
+
     #[test]
     fn encodes_nullable_with_a_leading_flag() {
         let mut column = text_column("s", "Nullable(String)", &["", "ab"]);
@@ -711,10 +775,42 @@ mod tests {
         );
     }
 
+    // A Float64 column is the one place the bytes for NaN and Infinity would go
+    // in unchanged, and ClickHouse stores them: an aggregate over the column is
+    // NaN from then on, and a JSON-format read has no form to render them in.
+    // The same value inside an `Array(Float64)` is refused, so the scalar column
+    // cannot be the one that quietly takes it.
+    #[test]
+    fn rejects_a_non_finite_float_for_a_float_column() {
+        let refused: Vec<String> = [f64::NAN, f64::INFINITY, f64::NEG_INFINITY]
+            .into_iter()
+            .map(|value| {
+                let err = encode(&[f64_column("latest", "Float64", &[value])], 1).unwrap_err();
+                format!("{err:#}")
+            })
+            .collect();
+        assert_eq!(
+            refused,
+            vec![
+                "encoding column `latest` row 0: NaN is not a value a Float64 column can hold"
+                    .to_string(),
+                "encoding column `latest` row 0: inf is not a value a Float64 column can hold"
+                    .to_string(),
+                "encoding column `latest` row 0: -inf is not a value a Float64 column can hold"
+                    .to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn encodes_a_finite_float() {
+        let encoded = encode(&[f64_column("latest", "Float64", &[1.5])], 1).unwrap();
+        assert_eq!(encoded.body, 1.5f64.to_le_bytes().to_vec());
+    }
+
     // A `[Json!]!` field maps to Array(String), and its elements are whatever
-    // the handler put there. The JSONEachRow path this replaced had ClickHouse
-    // fold a non-string element into the column's text, so a schema that
-    // indexed fine before must not start failing to encode.
+    // the handler put there — so a non-string element is a schema the encoder
+    // has to keep taking, not a mistake to refuse.
     #[test]
     fn a_json_element_of_a_string_array_is_stored_as_its_text() {
         let encoded = encode(
@@ -894,8 +990,7 @@ mod tests {
     }
 
     // RowBinary is the raw integer, so nothing downstream notices a value that
-    // does not fit — it silently becomes a different number. These are the cases
-    // ClickHouse itself used to reject on the JSONEachRow path.
+    // does not fit — it silently becomes a different number.
     #[test]
     fn rejects_an_integer_wider_than_its_column() {
         let too_big = encode(&[f64_column("n", "Int32", &[3e9])], 1).unwrap_err();

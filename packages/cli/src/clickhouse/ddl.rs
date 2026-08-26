@@ -12,8 +12,9 @@ use anyhow::{bail, Result};
 use napi_derive::napi;
 use regex::{Captures, Regex};
 
-use super::ch_type::{ChType, ChainIdMode, FieldSpec};
+use super::ch_type::{ChType, FieldSpec};
 use super::{literal, quoted};
+use crate::config_parsing::system_config::ChainIdMode;
 
 /// A column of an entity's history table: the name it goes by in ClickHouse,
 /// the schema field name that `@storage(clickhouse: {...})` expressions
@@ -460,6 +461,15 @@ pub(crate) mod test_support {
         }
     }
 
+    /// A replicated cluster on a plain database, where every statement carries
+    /// its own `ON CLUSTER` to reach the replicas.
+    pub fn replicated() -> Topology {
+        Topology {
+            replicated: true,
+            ddl_on_cluster: true,
+        }
+    }
+
     pub fn column(name: &str, field_type: &str) -> ColumnSpec {
         ColumnSpec {
             name: name.to_string(),
@@ -534,12 +544,8 @@ mod tests {
     #[test]
     fn a_replicated_table_carries_the_engine_cluster_and_dedup_settings() {
         let entity = entity("Account", vec![column("id", "String")]);
-        let topology = Topology {
-            replicated: true,
-            ddl_on_cluster: true,
-        };
         assert_eq!(
-            render(&entity, topology),
+            render(&entity, replicated()),
             "CREATE TABLE IF NOT EXISTS `test_db`.`envio_history_Account` ON CLUSTER '{cluster}' (\n  \
              `id` String,\n  \
              `envio_checkpoint_id` UInt64,\n  \
@@ -669,6 +675,23 @@ mod tests {
         );
     }
 
+    /// The checkpoints table is replicated on the same terms as the history
+    /// tables it covers: created on the connected node alone, a restart that
+    /// lands on another replica reads a checkpoint the rows there never had.
+    #[test]
+    fn a_replicated_checkpoints_table_carries_the_engine_cluster_and_dedup_settings() {
+        let columns = [column("id", "UInt64")];
+        assert_eq!(
+            create_checkpoints_table(&typed(&columns), "test_db", &history_schema(), replicated()),
+            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_checkpoints` ON CLUSTER '{cluster}' (\n  \
+             `id` UInt64\n\
+             )\n\
+             ENGINE = ReplicatedMergeTree\n\
+             ORDER BY (`id`)\n\
+             SETTINGS replicated_deduplication_window = 0"
+        );
+    }
+
     #[test]
     fn creates_a_view_over_the_history_table() {
         let entity = entity(
@@ -687,6 +710,19 @@ mod tests {
              LIMIT 1 BY `id`\n\
              )\n\
              WHERE `envio_change` = 'SET'"
+        );
+    }
+
+    /// A view is metadata, so a replica that never ran the statement has no way
+    /// to answer a read of the entity at all.
+    #[test]
+    fn a_replicated_view_is_created_on_the_cluster() {
+        let entity = entity("Account", vec![column("id", "String")]);
+        assert_eq!(
+            create_view(&entity, "test_db", &history_schema(), replicated())
+                .lines()
+                .next(),
+            Some("CREATE VIEW IF NOT EXISTS `test_db`.`Account` ON CLUSTER '{cluster}' AS")
         );
     }
 

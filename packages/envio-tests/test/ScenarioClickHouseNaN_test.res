@@ -46,22 +46,20 @@ type readings = {id: string, samples: array<float>, latest: float}
 type readingsOps = {set: readings => unit}
 type handlerContext = {@as("Readings") readings: readingsOps}
 
-let refusal: ref<option<ErrorHandling.t>> = ref(None)
-
-let rec awaitRefusal = async ticks =>
-  switch refusal.contents {
-  | Some(_) as seen => seen
-  | None if ticks > 0 =>
-    await Utils.delay(10)
-    await awaitRefusal(ticks - 1)
-  | None => None
-  }
+let storedReadings = async () => {
+  let database = TestClickHouse.currentDatabase()
+  let stored = await TestClickHouse.query(
+    `SELECT count() FROM \`${database}\`.\`Readings\` FORMAT TabSeparated`,
+  )
+  stored->String.trim
+}
 
 describe("ClickHouse refuses a float that has no JSON form", () => {
+  let refusal = Scenario.captureRefusal()
   scenario->Scenario.it(
     "names NaN rather than the null it serializes to",
     ~sources=[{chain: 1}],
-    ~onError=errHandler => refusal := Some(errHandler),
+    ~onError=refusal.onError,
     async (~t, ~indexer as _, ~source) => {
       let source = source(1)
       await Utils.delay(0)
@@ -83,24 +81,12 @@ describe("ClickHouse refuses a float that has no JSON form", () => {
         ~latestFetchedBlockNumber=10,
       )
 
-      let failure = switch await awaitRefusal(1000) {
-      | Some({exn: Persistence.StorageError({message, reason})}) =>
-        Some((
-          message,
-          (reason->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"],
-        ))
-      | _ => None
-      }
-
-      let database = TestClickHouse.currentDatabase()
-      let stored = await TestClickHouse.query(
-        `SELECT count() FROM \`${database}\`.\`Readings\` FORMAT TabSeparated`,
-      )
+      let failure = await refusal.awaitStorageError()
 
       t.expect((
         failure->Option.map(((message, _)) => message),
         failure->Option.map(((_, reason)) => reason),
-        stored->String.trim,
+        await storedReadings(),
       )).toEqual((
         Some("Failed to convert items for ClickHouse table \"envio_history_Readings\""),
         Some(
@@ -108,6 +94,51 @@ describe("ClickHouse refuses a float that has no JSON form", () => {
         ),
         "0",
       ))
+    },
+  )
+})
+
+// A Float64 column takes the raw bytes, so nothing on the way rejects the two
+// values the array path above refuses — ClickHouse stores them, and from then on
+// an aggregate over the column is NaN and a JSON read has no form for it.
+describe("ClickHouse refuses a non-finite float in a scalar column", () => {
+  let refusal = Scenario.captureRefusal()
+  scenario->Scenario.it(
+    "fails the write instead of storing a value no reader can render",
+    ~sources=[{chain: 1}],
+    ~onError=refusal.onError,
+    async (~t, ~indexer as _, ~source) => {
+      let source = source(1)
+      await Utils.delay(0)
+      source.resolveGetHeightOrThrow(10)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      source.resolveGetItemsOrThrow(
+        [
+          {
+            blockNumber: 5,
+            logIndex: 0,
+            handler: async args => {
+              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+              context.readings.set({id: "nan", samples: [1.5], latest: %raw(`Infinity`)})
+            },
+          },
+        ],
+        ~latestFetchedBlockNumber=10,
+      )
+
+      let failure = await refusal.awaitStorageError()
+
+      t.expect((
+        failure->Option.map(((message, _)) => message),
+        failure->Option.mapOr(false, ((_, reason)) => reason->String.includes("`latest`")),
+        failure->Option.mapOr(
+          false,
+          ((_, reason)) => reason->String.includes("not a value a Float64 column can hold"),
+        ),
+        await storedReadings(),
+      )).toEqual((Some("Failed to write a batch to ClickHouse"), true, true, "0"))
     },
   )
 })

@@ -5,12 +5,16 @@
 
 // Serialized keys are the db column names, while the entity values are keyed
 // by API field names (they only differ when column renaming is configured).
-let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
+// `skipColumn` names a column the row carries as a constant instead — the chain
+// id of a per-chain entity, which the scope knows and the entity never holds.
+let makeClickHouseEntitySchema = (table: Table.table, ~skipColumn: option<string>=?): S.t<
+  Internal.entity,
+> => {
   S.object(s => {
     let dict = Dict.make()
     table.fields->Array.forEach(field => {
       switch field {
-      | Field(f) => {
+      | Field(f) if Some(f->Table.getClickHouseDbFieldName) != skipColumn => {
           let fieldName = f->Table.getClickHouseDbFieldName
           let fieldSchema = switch f.fieldType {
           | Date => {
@@ -28,6 +32,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
           }
           dict->Dict.set(f->Table.getApiFieldName, s.field(fieldName, fieldSchema))
         }
+      | Field(_) => () // Tagged by the caller
       | DerivedFrom(_) => () // Skip derived fields
       }
     })
@@ -253,23 +258,37 @@ let makeConverters = (
   ~entityConfig: Internal.entityConfig,
   ~scope: Internal.chainScope,
 ): converters => {
-  let chainIdField = entityConfig.table->Table.getChainIdField
-  let scopeChainId = scope->Internal.chainScopeChainId
   let idSchema = entityConfig.table->Table.getIdSchema
+  // Every row a converter writes belongs to one chain, so the column is a
+  // constant of the schema rather than a value read off each row — which is why
+  // these are cached per scope. A cross-chain entity has no such column.
+  let chainIdTag = switch (
+    entityConfig.table->Table.getChainIdField,
+    scope->Internal.chainScopeChainId,
+  ) {
+  | (Some(field), Some(chainId)) => Some((field->Table.getClickHouseDbFieldName, chainId))
+  | _ => None
+  }
 
   {
     convertSetOrThrow: compileToColumnValues(
-      EntityHistory.makeSetUpdateSchema(~idSchema, makeClickHouseEntitySchema(entityConfig.table)),
+      EntityHistory.makeSetUpdateSchema(
+        ~idSchema,
+        ~chainIdTag?,
+        makeClickHouseEntitySchema(
+          entityConfig.table,
+          ~skipColumn=?chainIdTag->Option.map(((column, _)) => column),
+        ),
+      ),
     ),
-    // A delete row carries no entity to stamp, so the chain id is baked into
-    // the schema instead — which is why these are cached per scope. Every
-    // other column is absent and takes its ClickHouse default.
+    // A delete row carries only what identifies it; every other column is
+    // absent and takes its ClickHouse default.
     convertDeleteOrThrow: compileToColumnValues(
       S.object(s => {
         s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
-        switch (chainIdField, scopeChainId) {
-        | (Some(field), Some(chainId)) => s.tag(field->Table.getClickHouseDbFieldName, chainId)
-        | _ => ()
+        switch chainIdTag {
+        | Some((column, chainId)) => s.tag(column, chainId)
+        | None => ()
         }
         Change.Delete({
           entityId: s.field(Table.idFieldName, idSchema),
@@ -385,14 +404,6 @@ let stageUpdatesOrThrow = (
       cached
     }
 
-    let stampFieldName = switch (
-      entityConfig.table->Table.getChainIdField,
-      scope->Internal.chainScopeChainId,
-    ) {
-    | (Some(field), Some(chainId)) => Some((field.fieldName, chainId))
-    | _ => None
-    }
-
     try {
       let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
       let columns = builders->Array.length
@@ -404,16 +415,7 @@ let stageUpdatesOrThrow = (
         // leaves out are absent on purpose; on a SET row the same gap is a
         // field the handler never set, which the writer refuses.
         let (values, write) = switch change {
-        | Change.Set(set) =>
-          let change = switch stampFieldName {
-          | Some((fieldName, chainId)) =>
-            Change.Set({
-              ...set,
-              entity: set.entity->Internal.stampChainId(~fieldName, ~chainId),
-            })
-          | None => change
-          }
-          (convertSetOrThrow(change), ClickHouseSink.writeValue)
+        | Change.Set(_) => (convertSetOrThrow(change), ClickHouseSink.writeValue)
         | Delete(_) => (convertDeleteOrThrow(change), ClickHouseSink.writeDeletedValue)
         }
         for column in 0 to columns - 1 {

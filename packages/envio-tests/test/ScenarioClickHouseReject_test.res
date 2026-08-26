@@ -49,27 +49,14 @@ type bounded = {id: string, amount: bigint}
 type boundedOps = {set: bounded => unit}
 type handlerContext = {@as("Bounded") bounded: boundedOps}
 
-// The refusal reaches the loop's error boundary rather than the batch-write
-// promise, so it is read from there.
-let refusal: ref<option<ErrorHandling.t>> = ref(None)
-
-// Waits for the boundary to see it, so the assertion doesn't race the write.
-let rec awaitRefusal = async ticks =>
-  switch refusal.contents {
-  | Some(_) as seen => seen
-  | None if ticks > 0 =>
-    await Utils.delay(10)
-    await awaitRefusal(ticks - 1)
-  | None => None
-  }
-
 describe("ClickHouse refuses a value its column cannot hold", () => {
+  // Swallowed so it doesn't take the test worker down, and kept so the test can
+  // assert on what an operator would have been shown.
+  let refusal = Scenario.captureRefusal()
   scenario->Scenario.it(
     "fails the write instead of storing a different number",
     ~sources=[{chain: 1}],
-    // Swallowed so it doesn't take the test worker down, and kept so the test
-    // can assert on what an operator would have been shown.
-    ~onError=errHandler => refusal := Some(errHandler),
+    ~onError=refusal.onError,
     async (~t, ~indexer as _, ~source) => {
       let source = source(1)
       await Utils.delay(0)
@@ -90,16 +77,7 @@ describe("ClickHouse refuses a value its column cannot hold", () => {
         ],
         ~latestFetchedBlockNumber=10,
       )
-      // The sink wraps the encoder's refusal, so what an operator reads is the
-      // storage error's own message plus the reason underneath it.
-      let failure = switch await awaitRefusal(1000) {
-      | Some({exn: Persistence.StorageError({message, reason})}) =>
-        Some((
-          message,
-          (reason->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"],
-        ))
-      | _ => None
-      }
+      let failure = await refusal.awaitStorageError()
 
       let database = TestClickHouse.currentDatabase()
       let stored = await TestClickHouse.query(

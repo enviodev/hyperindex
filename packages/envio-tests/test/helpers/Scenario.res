@@ -322,3 +322,30 @@ let waitUntil = async (predicate, ~message, ~timeoutMs=5000.) => {
     await Utils.delay(1)
   }
 }
+
+// A refused write reaches the indexer's error boundary rather than a promise the
+// test could await, so `onError` captures it there. `awaitStorageError` answers
+// with what an operator would have been shown: the storage error's own message
+// and the reason underneath it.
+type refusal = {
+  onError: ErrorHandling.t => unit,
+  awaitStorageError: unit => promise<option<(string, string)>>,
+}
+
+let captureRefusal = () => {
+  let captured = ref(None)
+  {
+    onError: errHandler => captured := Some(errHandler),
+    awaitStorageError: async () => {
+      await waitUntil(() => captured.contents->Option.isSome, ~message="the write to be refused")
+      switch captured.contents {
+      | Some({exn: Persistence.StorageError({message, reason})}) =>
+        Some((
+          message,
+          (reason->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"],
+        ))
+      | _ => None
+      }
+    },
+  }
+}

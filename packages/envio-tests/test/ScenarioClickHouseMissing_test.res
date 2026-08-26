@@ -50,22 +50,12 @@ type counted = {id: string, amount?: int, label?: string}
 type countedOps = {set: counted => unit}
 type handlerContext = {@as("Counted") counted: countedOps}
 
-let refusal: ref<option<ErrorHandling.t>> = ref(None)
-
-let rec awaitRefusal = async ticks =>
-  switch refusal.contents {
-  | Some(_) as seen => seen
-  | None if ticks > 0 =>
-    await Utils.delay(10)
-    await awaitRefusal(ticks - 1)
-  | None => None
-  }
-
 describe("ClickHouse refuses a required column the handler left unset", () => {
+  let refusal = Scenario.captureRefusal()
   scenario->Scenario.it(
     "fails the write instead of storing the type's zero",
     ~sources=[{chain: 1}],
-    ~onError=errHandler => refusal := Some(errHandler),
+    ~onError=refusal.onError,
     async (~t, ~indexer as _, ~source) => {
       let source = source(1)
       await Utils.delay(0)
@@ -89,14 +79,7 @@ describe("ClickHouse refuses a required column the handler left unset", () => {
         ~latestFetchedBlockNumber=10,
       )
 
-      let failure = switch await awaitRefusal(1000) {
-      | Some({exn: Persistence.StorageError({message, reason})}) =>
-        Some((
-          message,
-          (reason->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"],
-        ))
-      | _ => None
-      }
+      let failure = await refusal.awaitStorageError()
 
       let database = TestClickHouse.currentDatabase()
       let stored = await TestClickHouse.query(

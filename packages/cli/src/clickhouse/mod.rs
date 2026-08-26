@@ -42,7 +42,8 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi::{Env, Status};
 use napi_derive::napi;
 
-use ch_type::{ChType, ChainIdMode, ColumnKind, FieldSpec};
+use crate::config_parsing::system_config::ChainIdMode;
+use ch_type::{ChType, ColumnKind, FieldSpec};
 use row_binary::{Column, ColumnValues, EncodedRows};
 
 /// Retries an insert this many times before giving up, as the JS client did.
@@ -625,16 +626,8 @@ impl ClickHouseSink {
 
         if let Some(engine_spec) = &database_engine {
             let expected = ddl::database_engine_name(engine_spec);
-            let existing = self
-                .post_statement(format!(
-                    "SELECT engine FROM system.databases WHERE name = {} \
-                     FORMAT TabSeparated",
-                    literal(&self.database)
-                ))
-                .await?;
-            match existing.trim() {
-                "" => {}
-                engine if engine != expected => bail!(
+            match self.existing_database_engine().await?.as_deref() {
+                Some(engine) if engine != expected => bail!(
                     "ClickHouse database \"{}\" exists with engine \"{engine}\" but \
                      ENVIO_CLICKHOUSE_DATABASE_ENGINE specifies \"{expected}\" (from \
                      \"{engine_spec}\"). Drop the database manually to change its engine.",
@@ -729,23 +722,39 @@ impl ClickHouseSink {
         Ok(())
     }
 
+    /// The engine of the storage database, or `None` when there is no such
+    /// database. A server that cannot be reached is neither: that fails.
+    async fn existing_database_engine(&self) -> Result<Option<String>> {
+        let answer = self
+            .post_statement(format!(
+                "SELECT engine FROM system.databases WHERE name = {} FORMAT TabSeparated",
+                literal(&self.database)
+            ))
+            .await?;
+        Ok(match answer.trim() {
+            "" => None,
+            engine => Some(engine.to_string()),
+        })
+    }
+
     async fn resume_inner(&self, checkpoint_id: &str) -> Result<()> {
         // Interpolated into every statement below, so it has to be the number it
         // claims to be rather than trusted for being internal.
         if checkpoint_id.is_empty() || !checkpoint_id.bytes().all(|b| b.is_ascii_digit()) {
             bail!("`{checkpoint_id}` is not a checkpoint id");
         }
-        let database_ident = quoted(&self.database);
-        self.post_statement(format!("USE {database_ident}"))
-            .await
-            .with_context(|| {
-                format!(
-                    "ClickHouse storage database \"{}\" not found. Please run \
-                     'envio start -r' to reinitialize the indexer (it'll also drop Postgres \
-                     database).",
-                    self.database
-                )
-            })?;
+        // Asked of `system.databases` rather than by running `USE`, whose
+        // failure is the same whether the database is gone or the server is
+        // briefly unreachable. Only the first is answered by reinitializing,
+        // and that answer drops the Postgres database with it.
+        if self.existing_database_engine().await?.is_none() {
+            bail!(
+                "ClickHouse storage database \"{}\" not found. Please run \
+                 'envio start -r' to reinitialize the indexer (it'll also drop Postgres \
+                 database).",
+                self.database
+            );
+        }
 
         // `startsWith` rather than `LIKE`: the prefix holds underscores, which
         // LIKE reads as single-character wildcards. TabSeparated answers one
@@ -879,8 +888,12 @@ impl ClickHouseSink {
         if encoded.rows() == 0 {
             return Ok(());
         }
+        // Named here rather than left to the server's message: a batch inserts
+        // every entity's table at once, and what comes back — a proxy's status,
+        // a timeout — need not mention the table it answered for.
         self.insert_with_retry(&schema.table, &schema.insert_query, &encoded)
             .await
+            .with_context(|| format!("Failed inserting into ClickHouse table `{}`", schema.table))
     }
 
     /// Sends the batch, retrying what fails. What goes back depends on the
@@ -1106,7 +1119,7 @@ mod tests {
             username: "default".to_string(),
             password: String::new(),
             database: "mock".to_string(),
-            chain_id_mode: "Int32".to_string(),
+            chain_id_mode: "int32".to_string(),
             history: ddl::HistorySchema {
                 id_column: "id".to_string(),
                 checkpoint_id_column: "envio_checkpoint_id".to_string(),
@@ -1167,6 +1180,133 @@ mod tests {
         assert_eq!(
             err.reason,
             "Column `t` of ClickHouse table `envio_checkpoints`: unsupported field type `Tuple`"
+        );
+    }
+
+    /// Answers the statements `resume` runs: the existence probe with `engine`
+    /// — empty for a database that is not there — and the table listing with
+    /// `tables`. Everything past those is a trim, which answers with nothing.
+    fn resume_answers(engine: &str, tables: &[&str]) -> Arc<mock_server::StatementFn> {
+        let engine = engine.to_string();
+        let tables = tables.join("\n");
+        Arc::new(move |statement: &str| {
+            if statement.contains("system.databases") {
+                (200, engine.clone())
+            } else if statement.contains("system.tables") {
+                (200, tables.clone())
+            } else {
+                (200, String::new())
+            }
+        })
+    }
+
+    /// A ClickHouse that cannot be reached is not a ClickHouse whose database is
+    /// gone. Only the second is answered by reinitializing, and that answer
+    /// drops the Postgres database with it — so an outage must not print it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_that_cannot_reach_the_server_does_not_report_a_missing_database() {
+        let unreachable = ClickHouseSink::build(
+            options("http://127.0.0.1:1".to_string()),
+            Tuning::default(),
+            Arc::new(|_: &str| {}),
+        )
+        .unwrap();
+
+        let err = unreachable.resume("42".to_string()).await.unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("start -r"),
+                err.reason.contains("ClickHouse request failed"),
+            ),
+            (false, true),
+            "got: {}",
+            err.reason
+        );
+    }
+
+    /// The same for a server that answers, but through something that is not
+    /// ClickHouse: a proxy's own error says nothing about the database.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_a_proxy_refuses_does_not_report_a_missing_database() {
+        let server = mock_server::MockClickHouse::answering_statements(Arc::new(|_: &str| {
+            (502, "upstream connect error".to_string())
+        }))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        let err = sink.resume("42".to_string()).await.unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("start -r"),
+                err.reason.contains("upstream connect error"),
+            ),
+            (false, true),
+            "got: {}",
+            err.reason
+        );
+    }
+
+    /// A database that really is gone is the one case the advice fits.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_against_a_database_that_is_gone_says_how_to_reinitialize() {
+        let server =
+            mock_server::MockClickHouse::answering_statements(resume_answers("", &[])).await;
+        let sink = sink_for(&server, 4);
+
+        let err = sink.resume("42".to_string()).await.unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("start -r"),
+                err.reason.contains("\"mock\" not found"),
+            ),
+            (true, true),
+            "got: {}",
+            err.reason
+        );
+    }
+
+    /// The trim itself: every history table the prefix matches, then the
+    /// checkpoints those rows belonged to.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_trims_every_history_table_and_then_the_checkpoints() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "Atomic",
+            &["envio_history_a", "envio_history_b"],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume("42".to_string()).await.unwrap();
+
+        let mut trims: Vec<String> = server
+            .statements_seen()
+            .into_iter()
+            .filter(|statement| statement.starts_with("ALTER") || statement.starts_with("DELETE"))
+            .collect();
+        // The history tables are trimmed concurrently, so only the checkpoints
+        // coming last is an ordering the test can hold to.
+        let checkpoints = trims.pop();
+        trims.sort();
+        assert_eq!(
+            (trims, checkpoints),
+            (
+                vec![
+                    "ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 42 \
+                     SETTINGS mutations_sync = 2"
+                        .to_string(),
+                    "ALTER TABLE `mock`.`envio_history_b` DELETE WHERE `envio_checkpoint_id` > 42 \
+                     SETTINGS mutations_sync = 2"
+                        .to_string(),
+                ],
+                Some(
+                    "DELETE FROM `mock`.`envio_checkpoints` WHERE `id` > 42 \
+                     SETTINGS mutations_sync = 2"
+                        .to_string()
+                )
+            )
         );
     }
 
@@ -1245,12 +1385,15 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(
-            err.reason.contains("Unknown staged ClickHouse batch"),
+        assert_eq!(
+            (
+                err.reason.contains("Unknown staged ClickHouse batch"),
+                sink.staged.lock().unwrap().len()
+            ),
+            (true, 0),
             "expected an unknown-handle error, got: {}",
             err.reason
         );
-        assert_eq!(sink.staged.lock().unwrap().len(), 0);
     }
 
     // A rejected insert is replaced by its two halves, so the rows in the half
@@ -1415,10 +1558,13 @@ mod tests {
         assert_eq!(
             (
                 err.reason.contains("mock rejection"),
+                // A batch writes every entity's table at once, so the server's
+                // message is only actionable beside the table it answered for.
+                err.reason.contains("envio_checkpoints"),
                 server.accepted_strings()
             ),
-            (true, Vec::<String>::new()),
-            "expected the server's message, got: {}",
+            (true, true, Vec::<String>::new()),
+            "expected the server's message and the table, got: {}",
             err.reason
         );
     }
