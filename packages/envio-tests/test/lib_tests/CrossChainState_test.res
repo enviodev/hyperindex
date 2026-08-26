@@ -159,6 +159,7 @@ let emptyBatch: Batch.t = {
   checkpointBlockNumbers: [],
   checkpointBlockHashes: [],
   checkpointEventsProcessed: [],
+  registeredAddresses: [],
 }
 
 let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~targetBufferSize=100) => {

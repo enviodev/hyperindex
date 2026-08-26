@@ -22,6 +22,7 @@ let emptyBatch = (~checkpointId): Batch.t => {
   checkpointBlockNumbers: [checkpointId->BigInt.toInt],
   checkpointBlockHashes: [`0x${checkpointId->BigInt.toString}`->Null.make],
   checkpointEventsProcessed: [0],
+  registeredAddresses: [],
 }
 
 // Records chain-metadata writes, split by path: idle upsert vs. folded batch write.

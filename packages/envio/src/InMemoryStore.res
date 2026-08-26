@@ -215,7 +215,7 @@ let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
         }
       }
 
-      state->IndexerState.stageRegisteredAddresses(
+      batch.registeredAddresses->Array.pushMany(
         chainState
         ->ChainState.drainAddressesForWrite(
           ~toBlockInclusive=progressedChain.progressBlockNumber,
@@ -230,7 +230,7 @@ let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
           },
           checkpointId: checkpointIds->Array.getUnsafe(dc.checkpointIdx),
         }),
-      )
+      )->ignore
     }
   })
 }

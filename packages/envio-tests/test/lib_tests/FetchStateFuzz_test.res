@@ -260,7 +260,7 @@ let runSeed = (~seed, ~ops) => {
       run.fetchState =
         (
           run.fetchState->FetchState.rollback(
-            ~addressStore=run.addressStore,
+            ~rolledBackAddressStore=run.addressStore,
             ~targetBlockNumber=target,
           )
         ).fetchState

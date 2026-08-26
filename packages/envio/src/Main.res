@@ -197,12 +197,9 @@ let buildChainsObject = (~config: Config.t) => {
               | Some(initialState) =>
                 switch initialState.chains->Array.find(c => c.id === chainConfig.id) {
                 | Some(chainState) =>
-                  Core.getAddon().renderContractAddresses(
+                  chainState.addressRows->AddressRows.renderOfContract(
                     ~ecosystem=(config.ecosystem.name :> string),
                     ~shouldChecksum=!config.lowercaseAddresses,
-                    ~bytes=chainState.addressRows.addresses,
-                    ~lengths=chainState.addressRows.lengths,
-                    ~contractIds=chainState.addressRows.contractIds,
                     ~contractId=initialState.contractMapping->ContractMapping.idOfOrThrow(
                       contract.name,
                     ),

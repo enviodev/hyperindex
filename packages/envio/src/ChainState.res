@@ -1222,7 +1222,10 @@ let rollback = (
 ): array<AddressRows.key> => {
   let rollbackTo = targetBlockNumber => {
     let {fetchState, rolledBackAddresses} =
-      cs.fetchState->FetchState.rollback(~addressStore=cs.addressStore, ~targetBlockNumber)
+      cs.fetchState->FetchState.rollback(
+        ~rolledBackAddressStore=cs.addressStore,
+        ~targetBlockNumber,
+      )
     cs.fetchState = fetchState
     rolledBackAddresses->Array.map(({address, contractId}): AddressRows.key => {
       chainId: cs.chainConfig.id,

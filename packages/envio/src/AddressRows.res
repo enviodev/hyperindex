@@ -17,15 +17,13 @@ type staged = {
 }
 
 type seedRows = {
-  addresses: NodeJs.Buffer.t,
-  lengths: array<int>,
+  addresses: array<NodeJs.Buffer.t>,
   contractIds: array<int>,
   registrationBlocks: array<int>,
 }
 
 let emptySeedRows = (): seedRows => {
-  addresses: NodeJs.Buffer.empty,
-  lengths: [],
+  addresses: [],
   contractIds: [],
   registrationBlocks: [],
 }
@@ -39,19 +37,23 @@ let keyOf = (row: row): key => {
   contractId: row.contractId,
 }
 
-let packKeys = (rows: array<row>) => (
-  NodeJs.Buffer.concat(rows->Array.map(row => row.address)),
-  rows->Array.map(row => row.address->NodeJs.Buffer.length),
+let packBuffers = (addresses: array<NodeJs.Buffer.t>) => (
+  NodeJs.Buffer.concat(addresses),
+  addresses->Array.map(address => address->NodeJs.Buffer.length),
 )
 
+let packKeys = (rows: array<row>) => packBuffers(rows->Array.map(row => row.address))
+
 let seedRowsOf = (rows: array<row>): seedRows => {
-  let (addresses, lengths) = rows->packKeys
-  {
-    addresses,
-    lengths,
-    contractIds: rows->Array.map(row => row.contractId),
-    registrationBlocks: rows->Array.map(row => row.registrationBlock),
-  }
+  let addresses = []
+  let contractIds = []
+  let registrationBlocks = []
+  rows->Array.forEach(row => {
+    addresses->Array.push(row.address)->ignore
+    contractIds->Array.push(row.contractId)->ignore
+    registrationBlocks->Array.push(row.registrationBlock)->ignore
+  })
+  {addresses, contractIds, registrationBlocks}
 }
 
 // Rows arrive clustered per chain. Normalizing a chain id is a schema parse.
@@ -99,4 +101,21 @@ module Table = {
 let render = (rows: array<row>, ~ecosystem: string, ~shouldChecksum: bool) => {
   let (bytes, lengths) = rows->packKeys
   Core.getAddon().renderAddresses(~ecosystem, ~shouldChecksum, ~bytes, ~lengths)
+}
+
+let renderOfContract = (
+  rows: seedRows,
+  ~ecosystem: string,
+  ~shouldChecksum: bool,
+  ~contractId: int,
+) => {
+  let (bytes, lengths) = packBuffers(rows.addresses)
+  Core.getAddon().renderContractAddresses(
+    ~ecosystem,
+    ~shouldChecksum,
+    ~bytes,
+    ~lengths,
+    ~contractIds=rows.contractIds,
+    ~contractId,
+  )
 }

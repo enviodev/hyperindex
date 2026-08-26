@@ -116,8 +116,10 @@ external seedRowsRaw: (
   array<int>,
 ) => array<rejectedRow> = "seedRows"
 
-let seedRows = (store: t, rows: AddressRows.seedRows) =>
-  store->seedRowsRaw(rows.addresses, rows.lengths, rows.contractIds, rows.registrationBlocks)
+let seedRows = (store: t, rows: AddressRows.seedRows) => {
+  let (bytes, lengths) = AddressRows.packBuffers(rows.addresses)
+  store->seedRowsRaw(bytes, lengths, rows.contractIds, rows.registrationBlocks)
+}
 
 // Throws with the queue untouched when a drained registration's block has no
 // checkpoint in the batch.

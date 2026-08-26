@@ -2753,7 +2753,7 @@ let make = (
   ) {
     JsError.throwWithMessage(
       `Invalid configuration: Nothing to fetch on chain ${chainId->ChainId.toString}. ` ++
-      `addresses=${addressRows.contractIds->Array.length->Int.toString}, ` ++
+      `addresses=${addressRows.addresses->Array.length->Int.toString}, ` ++
       `onEventRegistrations=${onEventRegistrations->Array.length->Int.toString}, ` ++
       `normalRegistrations=${normalRegistrations
         ->Array.length
@@ -2848,10 +2848,10 @@ Always recreates optimized partitions to avoid duplicate addresses:
 */
 let rollback = (
   fetchState: t,
-  ~addressStore: AddressStore.t,
+  ~rolledBackAddressStore: AddressStore.t,
   ~targetBlockNumber,
 ): rollbackResult => {
-  let rolledBackAddresses = addressStore->AddressStore.rollback(targetBlockNumber)
+  let rolledBackAddresses = rolledBackAddressStore->AddressStore.rollback(targetBlockNumber)
   let keptPartitions = []
   let nextKeptIdRef = ref(0)
   let registeringSetsByContract: dict<AddressSet.t> = Dict.make()
@@ -2930,7 +2930,7 @@ let rollback = (
 
   let optimizedPartitions = createPartitions(
     ~registeringSetsByContract,
-    ~addressStore,
+    ~addressStore=rolledBackAddressStore,
     ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
     ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
     ~normalSelection=fetchState.normalSelection,

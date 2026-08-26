@@ -120,7 +120,7 @@ let runOneWrite = async (state: IndexerState.t) => {
       }
     })
     let updatedEffectsCache = snapshotEffects(state, ~cache)
-    let registeredAddresses = state->IndexerState.snapshotRegisteredAddresses(~upToCheckpointId)
+    let registeredAddresses = batch.registeredAddresses
 
     let writtenEntityNames = Utils.Set.make()
     updatedEntities->Array.forEach(({entityConfig}) =>

@@ -138,11 +138,6 @@ let queueProcessedBatch: (t, ~batch: Batch.t) => unit
 let drainBatchRun: t => Batch.t
 let takeRollback: t => option<Persistence.rollback>
 let markCommitted: (t, ~upToCheckpointId: Internal.checkpointId) => unit
-let stageRegisteredAddresses: (t, array<AddressRows.staged>) => unit
-let snapshotRegisteredAddresses: (
-  t,
-  ~upToCheckpointId: Internal.checkpointId,
-) => array<AddressRows.staged>
 let beginRollbackDiff: (
   t,
   ~targetCheckpointId: Internal.checkpointId,

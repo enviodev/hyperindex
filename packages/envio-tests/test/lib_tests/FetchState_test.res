@@ -52,7 +52,12 @@ let getTimestamp = (~blockNumber) => blockNumber * 15
 let getBlockData = (~blockNumber): int => blockNumber
 
 let rollbackTo = (fetchState: FetchState.t, ~addressStore, ~targetBlockNumber) =>
-  (fetchState->FetchState.rollback(~addressStore, ~targetBlockNumber)).fetchState
+  (
+    fetchState->FetchState.rollback(
+      ~rolledBackAddressStore=addressStore,
+      ~targetBlockNumber,
+    )
+  ).fetchState
 
 let makeDynContractRegistration = (
   ~contractAddress,

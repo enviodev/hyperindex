@@ -50,9 +50,6 @@ type t = {
   effectCache: dict<dict<Internal.effectCacheItem>>,
   mutable envioInfo: option<JSON.t>,
   addresses: AddressRows.Table.t,
-  // The canonical contract mapping, assigned at initialize and read back on a
-  // resume just as the stored one is.
-  mutable contractMapping: ContractMapping.t,
   mutable isInitialized: bool,
 }
 
@@ -66,7 +63,6 @@ let make = (): t => {
   effectCache: Dict.make(),
   envioInfo: None,
   addresses: AddressRows.Table.make(),
-  contractMapping: ContractMapping.empty,
   isInitialized: false,
 }
 
@@ -133,7 +129,6 @@ let seedConfigAddresses = (
   // recreates one — so a re-initialize must not stack a second copy of the
   // config's addresses on what a previous one left behind.
   state.addresses->AddressRows.Table.clear
-  state.contractMapping = contractMapping
   state.addresses->ChainState.seedConfigAddresses(~chainConfigs, ~ecosystem, ~contractMapping)
 }
 
@@ -189,9 +184,9 @@ let reorgCheckpoints = (state: t): array<Internal.reorgCheckpoint> =>
     }
   )
 
-let toInitialState = (state: t, ~cleanRun): Persistence.initialState => {
+let toInitialState = (state: t, ~cleanRun, ~contractMapping): Persistence.initialState => {
   cleanRun,
-  contractMapping: state.contractMapping,
+  contractMapping,
   cache: state.cache,
   chains: state->toInitialChainStates,
   checkpointId: state->committedCheckpointId,
@@ -549,10 +544,11 @@ let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
     )
     state.envioInfo = Some(envioInfo)
     state.isInitialized = true
-    state->toInitialState(~cleanRun=true)
+    state->toInitialState(~cleanRun=true, ~contractMapping)
   },
   readEnvioInfo: async () => state.envioInfo,
-  resumeInitialState: async () => state->toInitialState(~cleanRun=false),
+  resumeInitialState: async () =>
+    state->toInitialState(~cleanRun=false, ~contractMapping=config.contractMapping),
   loadOrThrow: async (~filter, ~table: Table.table) =>
     state
     ->handleLoad(~tableName=table.tableName, ~filter)
@@ -577,7 +573,6 @@ let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
     state.cache->clear
     state.checkpoints = []
     state.addresses->AddressRows.Table.clear
-    state.contractMapping = ContractMapping.empty
     state.envioInfo = None
     state.isInitialized = false
   },
