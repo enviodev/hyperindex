@@ -24,6 +24,10 @@
 - To edit runtime code, edit templates under `packages/cli/templates/` or `packages/envio/`, not the codegen output under `<project>/.envio/`.
 - Prefer reading `.res` modules directly; ignore compiled `.js` artifacts.
 
+## Storage
+
+- No in-place migrations and no dynamic chain addition: on schema or config changes the user is expected to resync from scratch. Don't design or propose migration paths for existing deployments.
+
 ## Testing and Development
 
 Every change starts with a failing reproduction — bug fix, review finding, or new feature. Write it before touching the source, watch it fail, then fix. No change without one.
