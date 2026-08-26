@@ -1326,9 +1326,9 @@ export type SvmAccountLamports<Fields extends SvmFieldsSelection> = [
 ] extends [never]
   ? FieldNotSelected<`Field 'lamports' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>
   : {
-      readonly [K in keyof SvmAllAccountLamportsFields as SvmActivityHas<Fields, `lamports.${K & string}`> extends true
-        ? K
-        : never]: SvmAllAccountLamportsFields[K];
+      readonly [K in keyof SvmAllAccountLamportsFields]: SvmActivityHas<Fields, `lamports.${K & string}`> extends true
+        ? SvmAllAccountLamportsFields[K]
+        : FieldNotSelected<`Field 'lamports.${K & string}' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>;
     } | undefined;
 
 /** The token activity of a {@link SvmAccountActivity}, narrowed to the
@@ -1336,9 +1336,9 @@ export type SvmAccountLamports<Fields extends SvmFieldsSelection> = [
 export type SvmAccountTokenActivity<Fields extends SvmFieldsSelection> = [SvmActivityListed<Fields> & `token.${string}`] extends [never]
   ? FieldNotSelected<`Field 'token' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>
   : {
-      readonly [K in keyof SvmAllAccountTokenActivityFields as SvmActivityHas<Fields, `token.${K & string}`> extends true
-        ? K
-        : never]: SvmAllAccountTokenActivityFields[K];
+      readonly [K in keyof SvmAllAccountTokenActivityFields]: SvmActivityHas<Fields, `token.${K & string}`> extends true
+        ? SvmAllAccountTokenActivityFields[K]
+        : FieldNotSelected<`Field 'token.${K & string}' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>;
     } | undefined;
 
 /** An account activity of a {@link SvmTransaction}, narrowed to the
@@ -1467,16 +1467,22 @@ export type SvmInstruction<
   Instruction extends keyof SvmProgramsT[Program] & string = never,
 > = SvmSelectedInstruction<Fields, SvmConfiguredInstruction<Program, Instruction>>;
 
+type SvmOnInstructionArgsFor<Instr, Config extends IndexerConfigTypes> = {
+  readonly instruction: Instr;
+  readonly context: SvmOnSlotContext<Config>;
+};
+
+type SvmOnInstructionHandlerFor<Instr, Config extends IndexerConfigTypes> = (
+  args: SvmOnInstructionArgsFor<Instr, Config>,
+) => Promise<void>;
+
 /** Arguments passed to handlers registered via `indexer.onInstruction`.
  * Takes the same type arguments as {@link SvmInstruction}. */
 export type SvmOnInstructionHandlerArgs<
   Fields extends SvmFieldsSelection,
   Program extends keyof SvmProgramsT & string = never,
   Instruction extends keyof SvmProgramsT[Program] & string = never,
-> = {
-  readonly instruction: SvmInstruction<Fields, Program, Instruction>;
-  readonly context: SvmOnSlotContext<GlobalConfig>;
-};
+> = SvmOnInstructionArgsFor<SvmInstruction<Fields, Program, Instruction>, GlobalConfig>;
 
 /** Options for an SVM `indexer.onInstruction` registration. */
 export type SvmOnInstructionOptions<
@@ -1504,9 +1510,10 @@ export type SvmOnInstructionHandler<
   Fields extends SvmFieldsSelection,
   Program extends keyof SvmProgramsT & string = never,
   Instruction extends keyof SvmProgramsT[Program] & string = never,
-> = (
-  args: SvmOnInstructionHandlerArgs<Fields, Program, Instruction>,
-) => Promise<void>;
+> = SvmOnInstructionHandlerFor<
+  SvmInstruction<Fields, Program, Instruction>,
+  GlobalConfig
+>;
 
 // ============== Indexer Types ==============
 
@@ -1739,10 +1746,10 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                   const F extends SvmFieldsSelection = {},
                 >(
                   options: SvmOnInstructionOptions<P, I, F>,
-                  handler: (args: {
-                    readonly instruction: SvmSelectedInstruction<F, Programs[P][I]>;
-                    readonly context: SvmOnSlotContext<Config>;
-                  }) => Promise<void>,
+                  handler: SvmOnInstructionHandlerFor<
+                    SvmSelectedInstruction<F, Programs[P][I]>,
+                    Config
+                  >,
                 ) => void;
               }
             : {
