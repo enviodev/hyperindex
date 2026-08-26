@@ -90,7 +90,7 @@ describe("Cross-chain schema validation", () => {
   it("Rejects @crossChain when entities are already cross-chain by default", t => {
     t.expect(parseError(~schema, ~disableDefaultCrossChain=false)).toEqual(
       Some(
-        "Config parse error: @crossChain on `GlobalCounter` has no effect because entities are cross-chain by default. Set `disable_default_cross_chain: true` in config.yaml to make entities per-chain, or remove the directive.",
+        "@crossChain on `GlobalCounter` has no effect because entities are cross-chain by default. Set `disable_default_cross_chain: true` in config.yaml to make entities per-chain, or remove the directive.",
       ),
     )
   })
@@ -115,7 +115,7 @@ type Counter @crossChain {
       ),
     )).toEqual((
       Some(
-        "Config parse error: `Counter.chainId` is not allowed, since envio sets `chainId` on every per-chain entity for you. Either rename the field, or add `@crossChain` to `Counter` — its rows are then shared across chains and the field is yours to set.",
+        "`Counter.chainId` is not allowed, since envio sets `chainId` on every per-chain entity for you. Either rename the field, or add `@crossChain` to `Counter` — its rows are then shared across chains and the field is yours to set.",
       ),
       // Cross-chain entities have nothing appended, so the name is free.
       None,
@@ -193,7 +193,7 @@ type GlobalCounter @crossChain {
       ),
     ).toEqual(
       Some(
-        `Config parse error: Schema validation failed:
+        `Schema validation failed:
 
 Cross-chain entities referencing per-chain entities:
   - \`GlobalCounter\`.\`counter\` references \`Counter\`, which is per-chain.
@@ -327,7 +327,7 @@ describe("Per-chain rollback and delete SQL", () => {
           ~chainId=Some(137->ChainId.fromInt),
         ),
       ),
-    ).toBe(`DELETE FROM "public"."Counter" WHERE id = $1 AND "chainId" = $2;`)
+    ).toBe(`DELETE FROM "public"."Counter" WHERE id = $1 AND "chainId" = 137;`)
   })
 
   it("Leaves a cross-chain entity's delete unfiltered", t => {
@@ -358,7 +358,7 @@ describe("Per-chain rollback and delete SQL", () => {
         ~idPgType="TEXT",
         ~chainIdColumn=Some("chainId"),
         ~chainId=Some(1->ChainId.fromInt),
-      )->String.includes(`JOIN target_ids t ON e.id = t.id AND e."chainId" = $2`),
+      )->String.includes(`JOIN target_ids t ON e.id = t.id AND e."chainId" = 1`),
     ).toBe(true)
   })
 })
@@ -400,7 +400,7 @@ describe("Per-chain entities under snake_case columns", () => {
       )->String.includes(`SELECT DISTINCT "id", "chain_id"`),
     )).toEqual((
       `CREATE TABLE IF NOT EXISTS "public"."Counter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, "chain_id" INTEGER NOT NULL, PRIMARY KEY("id", "chain_id"));`,
-      ` AND "chain_id" = $2`,
+      ` AND "chain_id" = 137`,
       true,
     ))
   })

@@ -38,6 +38,10 @@ printf '{"name":"envio-linux-x64","version":"0.0.1-dev","main":"envio.node"}\n' 
 
 `Core.loadAddon` resolves the platform package by name, which is why the debug build is staged into `node_modules` rather than loaded from `target/`.
 
+## Storage
+
+- No in-place migrations and no dynamic chain addition: on schema or config changes the user is expected to resync from scratch. Don't design or propose migration paths for existing deployments.
+
 ## Testing and Development
 
 Every change starts with a failing reproduction — bug fix, review finding, or new feature. Write it before touching the source, watch it fail, then fix. No change without one.
