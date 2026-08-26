@@ -920,7 +920,9 @@ impl ClickHouseSink {
         while let Some((start, end, retries)) = pending.pop() {
             match self.post_rows(query, encoded.slice(start, end)).await {
                 Ok(()) => continue,
-                Err(failure) if retries == 0 || failure.retry == Retry::Never => {
+                Err(failure)
+                    if retries == 0 || matches!(failure.retry, Retry::Never | Retry::Ambiguous) =>
+                {
                     // Every attempt behind this one already left through `warn`
                     // as it happened; what the terminal error still owes the
                     // reader is how many there were.
@@ -974,11 +976,10 @@ impl ClickHouseSink {
             Err(err) => {
                 return Err(InsertFailure {
                     error: anyhow::Error::new(err).context("ClickHouse insert request failed"),
-                    // The request never reached a verdict, so nothing about the
-                    // rows has been decided. Halved rather than whole because a
-                    // batch big enough to outrun the client deadline is one of
-                    // the ways to get here, and it is the way a retry can fix.
-                    retry: Retry::Halved,
+                    // The body may already have landed. A timeout or reset after
+                    // the send is the same unknown as 319: another send would
+                    // double-write.
+                    retry: Retry::Ambiguous,
                 });
             }
         };
@@ -1015,20 +1016,25 @@ enum Retry {
     /// The rows in halves. The batch itself is what could not be taken, so a
     /// smaller one is the thing that might land.
     Halved,
+    /// The server may already have the rows. Another send would double-write,
+    /// so the batch fails and a restart trims back to the Postgres checkpoint.
+    Ambiguous,
 }
 
 /// Error codes where the batch is what the server could not take, so halving is
-/// the retry that changes the answer. The three timeout-shaped ones are here
-/// together: a body too large to read, encode or ship inside the deadline is a
-/// batch a smaller one gets past, whichever layer reports the deadline.
+/// the retry that changes the answer.
 const HALVED_ERROR_CODES: &[u32] = &[
-    159,  // TIMEOUT_EXCEEDED
-    209,  // SOCKET_TIMEOUT — the deadline tripped mid-body
-    210,  // NETWORK_ERROR — a peer that gave up on an oversized body
-    241,  // MEMORY_LIMIT_EXCEEDED — the one the halving is actually for
-    319,  // UNKNOWN_STATUS_OF_INSERT
-    425,  // SYSTEM_ERROR
-    1002, // UNKNOWN_EXCEPTION
+    241, // MEMORY_LIMIT_EXCEEDED
+];
+
+/// Error codes where ClickHouse may already have committed the block. Resending
+/// would double-write: `replicated_deduplication_window = 0` and default
+/// MergeTree has no insert dedup.
+const AMBIGUOUS_ERROR_CODES: &[u32] = &[
+    159, // TIMEOUT_EXCEEDED
+    209, // SOCKET_TIMEOUT
+    210, // NETWORK_ERROR
+    319, // UNKNOWN_STATUS_OF_INSERT
 ];
 
 /// Error codes for a server or cluster that briefly cannot take writes. The rows
@@ -1053,6 +1059,7 @@ fn retry_for(status: reqwest::StatusCode, body: &str) -> Retry {
     match clickhouse_error_code(body) {
         Some(code) if HALVED_ERROR_CODES.contains(&code) => Retry::Halved,
         Some(code) if SAME_ROWS_ERROR_CODES.contains(&code) => Retry::SameRows,
+        Some(code) if AMBIGUOUS_ERROR_CODES.contains(&code) => Retry::Ambiguous,
         Some(_) => Retry::Never,
         // Nothing in the body is ClickHouse's, so something in front of it
         // answered — a proxy or load balancer — and only its status says what.
@@ -1593,6 +1600,71 @@ mod tests {
             ),
             (true, 1, Vec::<String>::new()),
             "expected one attempt and the server's message, got: {}",
+            err.reason
+        );
+    }
+
+    // ClickHouse can commit the block and still answer 319. Resending would
+    // double-write: MergeTree has no insert dedup with
+    // `replicated_deduplication_window = 0`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_insert_whose_status_is_unknown_is_not_resent() {
+        let server = mock_server::MockClickHouse::accepting_then_erroring(
+            1,
+            "Code: 319. DB::Exception: Unknown status of insert",
+        )
+        .await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("319"),
+                server.inserts_seen(),
+                server.accepted_batches(),
+            ),
+            (
+                true,
+                1,
+                vec![vec![
+                    "a".to_string(),
+                    "b".to_string(),
+                    "c".to_string(),
+                    "d".to_string()
+                ]],
+            ),
+            "expected one accepted insert of the original four, got: {}",
+            err.reason
+        );
+    }
+
+    // A client-side timeout is the same unknown: the body may already have
+    // landed. Another send is a double-write, not a retry.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_request_that_never_reaches_a_verdict_is_not_resent() {
+        let server = mock_server::MockClickHouse::start_unresponsive().await;
+        let sink = sink_with(
+            &server,
+            Tuning {
+                attempts: 4,
+                max_retry_delay: Duration::ZERO,
+                request_timeout: Duration::from_millis(150),
+                statement_timeout: Duration::from_millis(150),
+            },
+        );
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("operation timed out"),
+                sink.warnings().len(),
+            ),
+            (true, 0),
+            "expected a single attempt, got: {}",
             err.reason
         );
     }

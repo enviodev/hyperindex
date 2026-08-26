@@ -26,6 +26,9 @@ struct State {
     statements_seen: Vec<String>,
     /// Inserts still to be rejected before the server starts accepting.
     reject_next: usize,
+    /// Inserts still to be accepted and then failed. The body is recorded as
+    /// landed — the server took the rows — but the client is told it did not.
+    accept_then_error: usize,
     /// The body a rejection carries, which is what tells the sink whether the
     /// rows are worth sending again.
     rejection: String,
@@ -67,6 +70,19 @@ impl MockClickHouse {
             reject_next,
             rejection: rejection.to_string(),
             rejection_status: status,
+            ..Default::default()
+        })
+        .await
+    }
+
+    /// Records the next `n` insert bodies as accepted, then answers them with
+    /// `rejection`. The case a timeout or unknown-status error is: the server
+    /// took the rows and the client was told it did not.
+    pub async fn accepting_then_erroring(n: usize, rejection: &str) -> Self {
+        Self::serving(State {
+            accept_then_error: n,
+            rejection: rejection.to_string(),
+            rejection_status: 500,
             ..Default::default()
         })
         .await
@@ -193,7 +209,7 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
         // The request target carries the query for an insert; a read query
         // arrives in the body instead.
         let (status, body) = if request.path.contains("INSERT") {
-            let rejection = {
+            let outcome = {
                 let mut state = state.lock().unwrap();
                 state.seen += 1;
                 if state.reject_next > 0 {
@@ -201,10 +217,15 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
                     Some((state.rejection_status, state.rejection.clone()))
                 } else {
                     state.accepted.push(request.body);
-                    None
+                    if state.accept_then_error > 0 {
+                        state.accept_then_error -= 1;
+                        Some((state.rejection_status, state.rejection.clone()))
+                    } else {
+                        None
+                    }
                 }
             };
-            rejection.unwrap_or((200, String::new()))
+            outcome.unwrap_or((200, String::new()))
         } else {
             let statement = String::from_utf8_lossy(&request.body).to_string();
             let answer = {

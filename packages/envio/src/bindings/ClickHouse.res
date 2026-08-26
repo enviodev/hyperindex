@@ -471,7 +471,12 @@ let initialize = async (sink, ~registry, ~entities: array<Internal.entityConfig>
   } catch {
   | exn => {
       Logging.errorWithExn(exn, "Failed to initialize ClickHouse storage")
-      JsError.throwWithMessage("ClickHouse initialization failed")
+      throw(
+        Persistence.StorageError({
+          message: "Failed to initialize ClickHouse storage",
+          reason: exn->Utils.prettifyExn,
+        }),
+      )
     }
   }
 }
@@ -480,10 +485,14 @@ let initialize = async (sink, ~registry, ~entities: array<Internal.entityConfig>
 // rows and checkpoints written past it.
 let resume = async (sink, ~checkpointId: Internal.checkpointId) => {
   try await sink->ClickHouseSink.resume(checkpointId->BigInt.toString) catch {
-  | Persistence.StorageError(_) as exn => throw(exn)
   | exn => {
       Logging.errorWithExn(exn, "Failed to resume ClickHouse storage")
-      JsError.throwWithMessage("ClickHouse resume failed")
+      throw(
+        Persistence.StorageError({
+          message: "Failed to resume ClickHouse storage",
+          reason: exn->Utils.prettifyExn,
+        }),
+      )
     }
   }
 }
