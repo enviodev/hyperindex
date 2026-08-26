@@ -424,6 +424,15 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     const accountId = account[0]?.[0];
     expect(accountId).toBeTruthy();
 
+    // A per-chain entity's table is partitioned by chain id and only the
+    // configured chains get a partition, so chain 999 needs one before a row
+    // can be routed to it. The name is this test's own — the indexer's
+    // partitions are named elsewhere, and nothing here should depend on how.
+    await runPgSql(
+      `CREATE TABLE "ChainTransfer_planted"
+       PARTITION OF "ChainTransfer" FOR VALUES IN (999)`
+    );
+
     await runPgSql(
       `INSERT INTO "ChainTransfer" ("id", "from", "value", "chain_id")
        VALUES ('planted-other-chain', '${accountId}', 1, 999)
@@ -441,10 +450,8 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     const transfers = result.data?.ChainAccount[0]?.transfers ?? [];
 
     // Removed before asserting so a failure doesn't leave the row for the
-    // tests that follow.
-    await runPgSql(
-      `DELETE FROM "ChainTransfer" WHERE "id" = 'planted-other-chain'`
-    );
+    // tests that follow. Dropping the partition takes its row with it.
+    await runPgSql(`DROP TABLE "ChainTransfer_planted"`);
 
     expect(transfers.length).toBeGreaterThan(0);
     expect({
