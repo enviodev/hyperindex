@@ -300,15 +300,15 @@ let markNull = (builder, ~row) => {
     }
 )
 
+// What both writers below read as "the row has no value here", kept in one place
+// so a SET row and a DELETE row cannot start disagreeing about it.
+%%private(let isAbsent = (value: unknown) => value === %raw(`undefined`) || value === %raw(`null`))
+
 // Writes one value of a row the handler set. `undefined`/`null` marks the row's
 // null bit, which a column that accepts NULL stores as such — and which one that
 // does not has no way to store: RowBinary carries no "absent", so the row would
 // land holding the type's zero, a value the handler never chose and that nothing
 // downstream could tell from one it did.
-// What both writers below read as "the row has no value here", kept in one place
-// so a SET row and a DELETE row cannot start disagreeing about it.
-%%private(let isAbsent = (value: unknown) => value === %raw(`undefined`) || value === %raw(`null`))
-
 let writeValue = (builder, ~row, value: unknown) =>
   if value->isAbsent {
     if builder.isNullable {

@@ -9,6 +9,15 @@ let scenario = Scenario.make(
   ~configYaml=`
 name: clickhouse-per-chain
 disable_default_cross_chain: true
+# The chain id column is renamed by the format, so the constant has to reach
+# the column the table actually declares rather than the field's own name.
+storage:
+  postgres:
+    default: true
+    column_name_format: original
+  clickhouse:
+    default: true
+    column_name_format: snake_case
 contracts:
   - name: Token
     events:
@@ -78,11 +87,11 @@ describe("Scenario ClickHouse per-chain entity", () => {
       // The history table rather than the view: the chain id is what the view
       // dedups on, not a column it selects.
       let rows = await TestClickHouse.query(
-        `SELECT id, count, chainId FROM \`${database}\`.\`envio_history_Counter\` ORDER BY chainId FORMAT JSONEachRow`,
+        `SELECT id, count, chain_id FROM \`${database}\`.\`envio_history_Counter\` ORDER BY chain_id FORMAT JSONEachRow`,
       )
       t.expect(
         rows->String.trim,
-      ).toEqual(`{"id":"total","count":"42","chainId":1}\n{"id":"total","count":"7","chainId":137}`)
+      ).toEqual(`{"id":"total","count":"42","chain_id":1}\n{"id":"total","count":"7","chain_id":137}`)
     },
   )
 })

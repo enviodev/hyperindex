@@ -337,7 +337,14 @@ let captureRefusal = () => {
   {
     onError: errHandler => captured := Some(errHandler),
     awaitStorageError: async () => {
-      await waitUntil(() => captured.contents->Option.isSome, ~message="the write to be refused")
+      // Generous: the refusal crosses a real ClickHouse round trip and the
+      // indexer's error boundary, and a slow runner missing it fails as a
+      // timeout rather than as the assertion the test is about.
+      await waitUntil(
+        () => captured.contents->Option.isSome,
+        ~message="the write to be refused",
+        ~timeoutMs=15000.,
+      )
       switch captured.contents {
       | Some({exn: Persistence.StorageError({message, reason})}) =>
         Some((
