@@ -123,8 +123,8 @@ let entity = {
   timestamp,
   optTimestamp: Some(timestamp),
   json: %raw(`{"nested": [1, 2]}`),
-  // The case a String element has to hold something that is not a string:
-  // ClickHouse folded these into the column itself on the JSONEachRow path.
+  // The case a String element has to hold something that is not a string,
+  // which the column takes as the element's JSON text.
   arrayOfJson: %raw(`[{"a": 1}, 2, true, "s"]`),
   enumField: "ADMIN",
   optEnumField: None,

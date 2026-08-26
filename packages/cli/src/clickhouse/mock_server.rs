@@ -10,10 +10,20 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::mock_http;
 
+/// Answers a statement — the SQL arrives in the request body — with the status
+/// and body to send back.
+pub type StatementFn = dyn Fn(&str) -> (u16, String) + Send + Sync;
+
 #[derive(Default)]
 struct State {
     /// Bodies of the inserts the server accepted, in arrival order.
     accepted: Vec<Vec<u8>>,
+    /// How a statement — anything that is not an insert — is answered. `None`
+    /// refuses it, which is what a sink taking its column types from the caller
+    /// should never provoke.
+    statements: Option<Arc<StatementFn>>,
+    /// Statements the server was asked, in arrival order.
+    statements_seen: Vec<String>,
     /// Inserts still to be rejected before the server starts accepting.
     reject_next: usize,
     /// The body a rejection carries, which is what tells the sink whether the
@@ -53,14 +63,29 @@ impl MockClickHouse {
     /// of ClickHouse: a body with no `Code:` in it leaves the status as the only
     /// thing the sink can read the verdict from.
     pub async fn rejecting_with_status(reject_next: usize, status: u16, rejection: &str) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let state = Arc::new(Mutex::new(State {
+        Self::serving(State {
             reject_next,
             rejection: rejection.to_string(),
             rejection_status: status,
             ..Default::default()
-        }));
+        })
+        .await
+    }
+
+    /// Answers statements with `statements` rather than refusing them, for the
+    /// schema and recovery paths, which are made of them. Inserts are accepted.
+    pub async fn answering_statements(statements: Arc<StatementFn>) -> Self {
+        Self::serving(State {
+            statements: Some(statements),
+            ..Default::default()
+        })
+        .await
+    }
+
+    async fn serving(state: State) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let state = Arc::new(Mutex::new(state));
 
         let accept_state = state.clone();
         tokio::spawn(async move {
@@ -115,6 +140,11 @@ impl MockClickHouse {
     /// from the caller should stay at zero.
     pub fn queries_seen(&self) -> usize {
         self.state.lock().unwrap().queries
+    }
+
+    /// The statements the server was asked, in arrival order.
+    pub fn statements_seen(&self) -> Vec<String> {
+        self.state.lock().unwrap().statements_seen.clone()
     }
 
     /// Request line and headers of every request the server handled.
@@ -176,11 +206,20 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
             };
             rejection.unwrap_or((200, String::new()))
         } else {
-            state.lock().unwrap().queries += 1;
-            (
-                400,
-                "the sink should not be querying the server".to_string(),
-            )
+            let statement = String::from_utf8_lossy(&request.body).to_string();
+            let answer = {
+                let mut state = state.lock().unwrap();
+                state.queries += 1;
+                state.statements_seen.push(statement.clone());
+                state.statements.clone()
+            };
+            match answer {
+                Some(answer) => answer(&statement),
+                None => (
+                    400,
+                    "the sink should not be querying the server".to_string(),
+                ),
+            }
         };
         mock_http::write_response(
             &mut stream,

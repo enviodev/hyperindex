@@ -304,7 +304,7 @@ pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
 /// maximum active chain id and carried through the public config, so a resume
 /// against a schema built for the other mode is rejected rather than silently
 /// truncating ids.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ChainIdMode {
     Int32,
@@ -333,6 +333,14 @@ impl ChainIdMode {
         } else {
             Self::Int64
         })
+    }
+
+    /// Reads the mode back out of the form it is serialized in, which is how it
+    /// reaches the ClickHouse sink: through the generated config and the JS
+    /// runtime, both of which carry it as that string.
+    pub fn parse(mode: &str) -> Result<Self> {
+        serde_json::from_value(serde_json::Value::String(mode.to_string()))
+            .with_context(|| format!("unknown chain id mode `{mode}`"))
     }
 }
 

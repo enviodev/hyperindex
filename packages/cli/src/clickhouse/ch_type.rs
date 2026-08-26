@@ -10,6 +10,8 @@ use std::fmt;
 
 use anyhow::{bail, Result};
 
+use crate::config_parsing::system_config::ChainIdMode;
+
 /// How wide an `Enum` column's variant list can get before it needs two bytes.
 /// ClickHouse's `Enum8` spans -128..=127, but envio numbers from 1, so 127 is
 /// what a one-byte column holds.
@@ -80,25 +82,6 @@ pub fn decimal_bytes(precision: u32) -> Result<usize> {
         10..=18 => Ok(8),
         19..=MAX_DECIMAL_PRECISION => Ok(16),
         other => bail!("unsupported Decimal precision {other}"),
-    }
-}
-
-/// Whether the chain id column is an `Int32` or a `UInt64`, which the config
-/// picks and every chain-scoped table follows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ChainIdMode {
-    #[default]
-    Int32,
-    Int64,
-}
-
-impl ChainIdMode {
-    pub fn parse(mode: &str) -> Result<Self> {
-        match mode {
-            "Int32" => Ok(ChainIdMode::Int32),
-            "Int64" => Ok(ChainIdMode::Int64),
-            other => bail!("unknown chain id mode `{other}`"),
-        }
     }
 }
 

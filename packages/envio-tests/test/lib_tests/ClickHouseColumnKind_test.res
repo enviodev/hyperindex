@@ -128,4 +128,18 @@ describe("ClickHouse column type contract", () => {
       Text,
     ])
   })
+
+  // A kind added on the Rust side reaches a build of this one that has never
+  // heard of it. Naming the mismatch is the whole of what this side can do about
+  // it; reading it as the last kind it knows would send the column's values as
+  // text and store them as something else.
+  it("refuses a wire kind it does not know", t => {
+    let message = try {
+      let _ = ClickHouseSink.kindOfOrdinal(4)
+      "decoded without complaint"
+    } catch {
+    | exn => (exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"]
+    }
+    t.expect(message).toBe("Unknown ClickHouse column kind 4")
+  })
 })

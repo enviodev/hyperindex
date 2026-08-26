@@ -105,10 +105,8 @@ external registerEntityTable: (t, entitySpec) => registeredTable = "registerEnti
 external registerCheckpointsTable: (t, array<columnSpec>) => registeredTable =
   "registerCheckpointsTable"
 
-// Creates the database, the history tables and the views over them.
 @send external initialize: (t, initializeInput) => promise<unit> = "initialize"
 
-// Drops everything written past the checkpoint Postgres committed.
 @send external resume: (t, string) => promise<unit> = "resume"
 
 @send
@@ -132,10 +130,9 @@ let make = (~url, ~username, ~password, ~database, ~chainIdMode: ChainId.mode, ~
       username,
       password,
       database,
-      chainIdMode: switch chainIdMode {
-      | Int32 => "Int32"
-      | Int64 => "Int64"
-      },
+      // Sent in the form it is already serialized in, which is the one Rust
+      // reads it back from.
+      chainIdMode: (chainIdMode :> string),
       history: {
         idColumn: Table.idFieldName,
         checkpointIdColumn: EntityHistory.checkpointIdFieldName,
@@ -156,7 +153,18 @@ type kind =
   | @as(2) I64
   | @as(3) Text
 
-external kindOfOrdinal: int => kind = "%identity"
+// The ordinals cross as bare integers, so a kind Rust added is a kind this side
+// has never heard of — and reading it as one of these would allocate the wrong
+// typed array and store the column's values as something else. Runs once per
+// column of a registered table.
+let kindOfOrdinal = ordinal =>
+  switch ordinal {
+  | 0 => F64
+  | 1 => U64
+  | 2 => I64
+  | 3 => Text
+  | unknown => JsError.throwWithMessage(`Unknown ClickHouse column kind ${unknown->Int.toString}`)
+  }
 
 // A registered table: the handle its batches quote, and its columns with the
 // wire kind Rust resolved for each.
@@ -203,14 +211,11 @@ external asString: unknown => string = "%identity"
 // A JSON-ready value straight out of the entity's ClickHouse schema. Anything
 // that isn't already a string — a `Json` field's object, an array column's
 // elements — becomes its JSON text, which is what the target column stores.
-let toText = (value: unknown, ~column) =>
+let toText = (value: unknown, ~replacer) =>
   switch value->typeof {
   | #string => value->asString
   | #bigint => value->stringOf
-  | _ =>
-    value
-    ->(Utils.magic: unknown => JSON.t)
-    ->JSON.stringify(~replacer=Replacer(jsonSafe(~column)))
+  | _ => value->(Utils.magic: unknown => JSON.t)->JSON.stringify(~replacer)
   }
 
 // One column's storage for one batch, sized to the batch's row count so the
@@ -224,6 +229,9 @@ type builder = {
   unsigned: BigUint64Array.t,
   signed: BigInt64Array.t,
   texts: array<string>,
+  // Built with the builder rather than per cell: the closure closes over the
+  // column name, which is fixed for the whole batch.
+  replacer: JSON.replacer,
   // Allocated on the first null; a column with none sends no mask at all.
   mutable nulls: option<Uint8Array.t>,
   rows: int,
@@ -243,6 +251,7 @@ let makeBuilder = ({name, kind, isNullable}: column, ~rows) => {
   unsigned: kind === U64 ? BigUint64Array.fromLength(rows) : noUnsigned,
   signed: kind === I64 ? BigInt64Array.fromLength(rows) : noSigned,
   texts: kind === Text ? Array.make(~length=rows, "") : [],
+  replacer: Replacer(jsonSafe(~column=name)),
   nulls: None,
   rows,
 }
@@ -287,9 +296,11 @@ let markNull = (builder, ~row) => {
         row,
         value->checkedBigInt(~builder, ~min=-9223372036854775808n, ~max=9223372036854775807n),
       )
-    | Text => builder.texts->Array.setUnsafe(row, value->toText(~column=builder.name))
+    | Text => builder.texts->Array.setUnsafe(row, value->toText(~replacer=builder.replacer))
     }
 )
+
+%%private(let isAbsent = (value: unknown) => value === %raw(`undefined`) || value === %raw(`null`))
 
 // Writes one value of a row the handler set. `undefined`/`null` marks the row's
 // null bit, which a column that accepts NULL stores as such — and which one that
@@ -297,7 +308,7 @@ let markNull = (builder, ~row) => {
 // land holding the type's zero, a value the handler never chose and that nothing
 // downstream could tell from one it did.
 let writeValue = (builder, ~row, value: unknown) =>
-  if value === %raw(`undefined`) || value === %raw(`null`) {
+  if value->isAbsent {
     if builder.isNullable {
       builder->markNull(~row)
     } else {
@@ -313,7 +324,7 @@ let writeValue = (builder, ~row, value: unknown) =>
 // what was deleted. The rest are deliberately absent and take the column's
 // default, so an unset one is not the mistake it would be on a row that set it.
 let writeDeletedValue = (builder, ~row, value: unknown) =>
-  if value === %raw(`undefined`) || value === %raw(`null`) {
+  if value->isAbsent {
     builder->markNull(~row)
   } else {
     builder->writePresent(~row, value)
