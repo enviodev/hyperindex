@@ -487,81 +487,6 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
         }
     }
 
-    // ClickHouse stores a BigInt whose precision is unset (or wider than a
-    // Decimal the encoder can carry) as a String, which sorts
-    // lexicographically — wrong for anything in the sorting key. The predicate
-    // is `clickhouse::ch_type`'s own, so this cannot disagree with the column
-    // the DDL declares.
-    //
-    // Which column that applies to depends on `@storage(clickhouse: {orderBy})`:
-    // without it the sorting key is `id`, with it the listed fields replace `id`.
-    // Unlike the parse-time
-    // `validate_clickhouse_order_by_fields`, the schema is available here, so a
-    // relation in the sorting key can be resolved to the id it actually stores.
-    let max_precision = crate::clickhouse::ch_type::MAX_DECIMAL_PRECISION;
-    let bigint_stored_as_string = |precision: Option<u32>| {
-        precision.is_none_or(|p| crate::clickhouse::ch_type::decimal_bytes(p).is_err())
-    };
-    for entity in &entities {
-        let uses_clickhouse = if entity.has_storage_directive() {
-            entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
-        } else {
-            clickhouse_default
-        };
-        if !uses_clickhouse {
-            continue;
-        }
-
-        let order_by = match entity.clickhouse.as_ref() {
-            Some(ClickHouseEntityStorage::Options(options)) => options.order_by.as_deref(),
-            _ => None,
-        };
-
-        match order_by {
-            Some(order_by_fields) => {
-                for field_name in order_by_fields {
-                    // Existence, nullability and array-ness are already rejected
-                    // at parse time; a miss here just means nothing to resolve.
-                    let Some(field) = entity.get_field(field_name) else {
-                        continue;
-                    };
-                    let stored =
-                        schema.resolve_stored_scalar(&field.field_type.get_underlying_scalar())?;
-                    if let GqlScalar::BigInt(precision) = stored {
-                        if bigint_stored_as_string(precision) {
-                            return Err(anyhow!(
-                                "Invalid storage for `{}`. `clickhouse.orderBy` sorts by \
-                                 `{field_name}`, which stores a BigInt that ClickHouse keeps as a \
-                                 String (sorted lexicographically, not numerically) unless a \
-                                 precision is set. Add `@config(precision: N)` with N <= \
-                                 {max_precision} to the BigInt it stores so it \
-                                 sorts as a numeric Decimal.",
-                                entity.name
-                            ));
-                        }
-                    }
-                }
-            }
-            // No custom orderBy, so `id` is the sorting key.
-            None => {
-                if let Ok(GqlScalar::BigInt(precision)) = entity.get_id_scalar() {
-                    if bigint_stored_as_string(precision) {
-                        return Err(anyhow!(
-                            "Invalid storage for `{}`. Its `id` is a BigInt, which ClickHouse \
-                             stores as a String (sorted lexicographically, not numerically) \
-                             unless a precision is set. Since `id` is ClickHouse's sorting key, \
-                             add `@config(precision: N)` with N <= \
-                             {max_precision} so the id stores as a numeric \
-                             Decimal, or set `@storage(clickhouse: {{orderBy: [...]}})` to sort \
-                             by other fields.",
-                            entity.name
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
     let unsupported: Vec<(&str, &'static str)> = entities
         .iter()
         .flat_map(|e| {
@@ -768,6 +693,8 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     }
     Ok(())
 }
+
+const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = crate::clickhouse::ch_type::MAX_DECIMAL_PRECISION;
 
 /// What to add to a field so ClickHouse stores it as a numeric Decimal. A
 /// BigDecimal needs both parameters — `@config(precision:)` alone is rejected
