@@ -90,6 +90,20 @@ let configStorageRows = (
   })
 }
 
+// Seeds an in-memory address table with every chain's config-declared
+// addresses, the twin of what `PgStorage.initialize` writes in one insert.
+let seedConfigAddresses = (
+  table: AddressRows.Table.t,
+  ~chainConfigs: array<Config.chain>,
+  ~ecosystem: Ecosystem.name,
+  ~contractMapping: ContractMapping.t,
+) =>
+  chainConfigs->Array.forEach(chainConfig =>
+    table->AddressRows.Table.insertMany(
+      chainConfig->configStorageRows(~ecosystem, ~contractMapping),
+    )
+  )
+
 let validateOnEventRegistrations = (
   ~chainId: ChainId.t,
   registrations: array<Internal.onEventRegistration>,

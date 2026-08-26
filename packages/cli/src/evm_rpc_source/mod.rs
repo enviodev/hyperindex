@@ -9,8 +9,8 @@ mod classify;
 mod client;
 mod interval;
 
-use crate::address_store::{AddressSet, AddressStore, SetCache};
-use crate::evm_hypersync_source::decode::{Decoder, LogAddress, SelectionDecoder};
+use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
+use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistrationInput, ParamValue,
@@ -514,10 +514,10 @@ impl EvmRpcClient {
                     .context("log.blockNumber")?
                     .try_into()
                     .context("log.blockNumber exceeds i64::MAX")?;
-                let log_address = LogAddress {
+                let log_address = Emitter {
                     key: &address_key,
                     owners: set_cache.owners_of(&address_key),
-                    block_number,
+                    block: block_number,
                 };
                 // Per-registration decode failures are dropped inside
                 // `route_and_decode`; only structurally malformed logs error,

@@ -134,11 +134,7 @@ let seedConfigAddresses = (
   // config's addresses on what a previous one left behind.
   state.addresses->AddressRows.Table.clear
   state.contractMapping = contractMapping
-  chainConfigs->Array.forEach(chainConfig =>
-    state.addresses->AddressRows.Table.insertMany(
-      chainConfig->ChainState.configStorageRows(~ecosystem, ~contractMapping),
-    )
-  )
+  state.addresses->ChainState.seedConfigAddresses(~chainConfigs, ~ecosystem, ~contractMapping)
 }
 
 let addressRowsByChain = (state: t) => state.addresses->AddressRows.Table.groupByChain
@@ -573,8 +569,7 @@ let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
     ),
   dumpEffectCache: async () => (),
   reset: async () => {
-    let clear = dict =>
-      dict->Dict.keysToArray->Array.forEach(key => dict->Utils.Dict.deleteInPlace(key))
+    let clear = Utils.Dict.clearInPlace
     state.entities->clear
     state.history->clear
     state.chains->clear

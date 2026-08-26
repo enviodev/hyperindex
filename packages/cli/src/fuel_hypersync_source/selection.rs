@@ -5,7 +5,7 @@ use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
 use napi_derive::napi;
 
-use crate::address_store::{AddressSet, Owners, StoreInner};
+use crate::address_store::{AddressSet, Emitter, StoreInner};
 
 // FuelVM receipt type codes (see FuelSDK.receiptType on the JS side).
 const RECEIPT_CALL: u8 = 0;
@@ -89,15 +89,6 @@ pub(crate) struct Registration {
     pub kind: RegistrationKind,
 }
 
-/// The emitter facts a receipt's owner gate reads: the root contract id's store
-/// key (its 32 raw bytes), the contracts this partition's set says own it, and
-/// the receipt's block height.
-pub(crate) struct ReceiptAddress<'a> {
-    pub key: &'a [u8],
-    pub owners: Owners<'a>,
-    pub block_height: i64,
-}
-
 impl Registration {
     /// Whether a receipt belongs to this registration: matching receipt type
     /// (and `rb` for LogData), at or after the registration's own start block,
@@ -111,7 +102,7 @@ impl Registration {
         &self,
         receipt_type: u8,
         rb: Option<u64>,
-        address: &ReceiptAddress,
+        address: &Emitter,
         force_wildcard: bool,
         store: &StoreInner,
     ) -> bool {
@@ -122,10 +113,13 @@ impl Registration {
             kind => kind.receipt_types().contains(&receipt_type),
         };
         kind_matches
-            && crate::registration_start_block::has_started(self.start_block, address.block_height)
-            && (self.is_wildcard
-                || ((force_wildcard || address.owners.contains(self.contract_idx))
-                    && store.is_indexed_at(address.key, self.contract_idx, address.block_height)))
+            && address.matches_registration(
+                store,
+                self.contract_idx,
+                self.is_wildcard,
+                self.start_block,
+                force_wildcard,
+            )
     }
 }
 
@@ -345,7 +339,7 @@ impl SelectionBuilder {
 mod tests {
     use super::*;
     use crate::address_store::test_support::{fuel_store, set_of};
-    use crate::address_store::AddressStore;
+    use crate::address_store::{AddressStore, Owners};
 
     const ADDR_1: &str = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde1";
     const ADDR_2: &str = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcde2";
@@ -384,21 +378,21 @@ mod tests {
     }
 
     /// A receipt emitter with the contracts the partition's set claims it for.
-    fn emitter<'a>(set: &'a AddressSet, key: &'a Hash) -> ReceiptAddress<'a> {
-        ReceiptAddress {
+    fn emitter<'a>(set: &'a AddressSet, key: &'a Hash) -> Emitter<'a> {
+        Emitter {
             key: &key[..],
             owners: set.cache().owners_of(&key[..]),
-            block_height: 0,
+            block: 0,
         }
     }
 
     /// An emitter no contract owns.
     const UNOWNED_KEY: [u8; 32] = [0xff; 32];
-    fn unowned() -> ReceiptAddress<'static> {
-        ReceiptAddress {
+    fn unowned() -> Emitter<'static> {
+        Emitter {
             key: &UNOWNED_KEY,
             owners: Owners::default(),
-            block_height: 0,
+            block: 0,
         }
     }
 
@@ -551,10 +545,10 @@ mod tests {
             c1_reg.matches(
                 RECEIPT_MINT,
                 None,
-                &ReceiptAddress {
+                &Emitter {
                     key: &key[..],
                     owners: Owners::default(),
-                    block_height: 0,
+                    block: 0,
                 },
                 true,
                 &address_store,
@@ -662,7 +656,7 @@ mod tests {
             .unwrap();
         let address_store = store.handle();
         let address_store = address_store.read().unwrap();
-        let route = |address: &ReceiptAddress| -> Vec<i64> {
+        let route = |address: &Emitter| -> Vec<i64> {
             built
                 .registrations
                 .iter()
@@ -682,7 +676,6 @@ mod tests {
         // Fuel gets the same temporal gate as EVM: a receipt from before the
         // contract's registration block never reaches its handler.
         let store = AddressStore::new_fuel(vec![crate::address_store::AddressStoreContract {
-            id: 0,
             name: "Owned".to_string(),
             start_block: None,
             depends_on_addresses: true,
@@ -703,10 +696,10 @@ mod tests {
         let address_store = store.handle();
         let address_store = address_store.read().unwrap();
         let owned_key = key_of(ADDR_1);
-        let at = |block_height| ReceiptAddress {
+        let at = |block| Emitter {
             key: &owned_key[..],
             owners: Owners::single(0),
-            block_height,
+            block,
         };
         let reg = &built.registrations[0];
         assert_eq!(
@@ -738,11 +731,11 @@ mod tests {
         let address_store = store.handle();
         let address_store = address_store.read().unwrap();
         let owned_key = key_of(ADDR_1);
-        let at = |block_height| {
-            let address = ReceiptAddress {
+        let at = |block| {
+            let address = Emitter {
                 key: &owned_key[..],
                 owners: Owners::single(0),
-                block_height,
+                block,
             };
             built
                 .registrations

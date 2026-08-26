@@ -395,12 +395,11 @@ let run = async (
             InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema),
           ))->(Utils.magic: unknown => array<AddressRows.row>)
         }
-        let addresses = Core.getAddon().renderAddresses(
-          ~ecosystem=(config.ecosystem.name :> string),
-          ~shouldChecksum=!config.lowercaseAddresses,
-          ~bytes=NodeJs.Buffer.concat(rows->Array.map(row => row.address)),
-          ~lengths=rows->Array.map(row => row.address->NodeJs.Buffer.length),
-        )
+        let addresses =
+          rows->AddressRows.render(
+            ~ecosystem=(config.ecosystem.name :> string),
+            ~shouldChecksum=!config.lowercaseAddresses,
+          )
         rows->Array.mapWithIndex((row, idx): addressRow => {
           chainId: row.chainId->ChainId.normalizeOrThrow,
           address: addresses->Array.getUnsafe(idx),

@@ -69,12 +69,20 @@ let seedRowsOf = (rows: array<row>): seedRows => {
   }
 }
 
-// Groups stored rows per chain, keyed by the normalized chain id string.
+// Groups stored rows per chain, keyed by the normalized chain id string. Rows
+// arrive clustered per chain, so each run of one chain's rows normalizes its id
+// once — normalizing is a schema parse, and a resume reads millions of rows.
 let group = (rows: array<row>): dict<seedRows> => {
   let rowsByChain: dict<array<row>> = Dict.make()
-  rows->Array.forEach(row =>
-    rowsByChain->Utils.Dict.push(row.chainId->ChainId.normalizeOrThrow->ChainId.toString, row)
-  )
+  let runChainId = ref(None)
+  let runKey = ref("")
+  rows->Array.forEach(row => {
+    if runChainId.contents !== Some(row.chainId) {
+      runChainId := Some(row.chainId)
+      runKey := row.chainId->ChainId.normalizeOrThrow->ChainId.toString
+    }
+    rowsByChain->Utils.Dict.push(runKey.contents, row)
+  })
   rowsByChain->Utils.Dict.mapValues(seedRowsOf)
 }
 
@@ -89,8 +97,7 @@ module Table = {
 
   let make = (): t => Dict.make()
 
-  let clear = (table: t) =>
-    table->Dict.keysToArray->Array.forEach(key => table->Utils.Dict.deleteInPlace(key))
+  let clear = (table: t) => table->Utils.Dict.clearInPlace
 
   // Keeps the row already stored under the key, exactly as the write path's
   // ON CONFLICT DO NOTHING does — a replayed insert must not restate the

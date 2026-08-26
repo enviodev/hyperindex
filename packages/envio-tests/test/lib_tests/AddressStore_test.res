@@ -155,24 +155,24 @@ describe("AddressStore", () => {
       ),
     }).toEqual({
       "noneThenSome": [
-        ({id: 0, name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
+        ({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
       ],
       "someThenNone": [
-        ({id: 0, name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
+        ({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
       ],
       "allRestricted": [
-        ({id: 0, name: "A", startBlock: Some(50), dependsOnAddresses: true}: AddressStore.contract),
+        ({name: "A", startBlock: Some(50), dependsOnAddresses: true}: AddressStore.contract),
       ],
       "perContract": [
-        ({id: 0, name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
-        ({id: 1, name: "B", startBlock: Some(50), dependsOnAddresses: true}: AddressStore.contract),
+        ({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
+        ({name: "B", startBlock: Some(50), dependsOnAddresses: true}: AddressStore.contract),
       ],
       "configOnly": [
-        ({id: 0, name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
-        ({id: 1, name: "NoEvents", startBlock: None, dependsOnAddresses: false}: AddressStore.contract),
+        ({name: "A", startBlock: None, dependsOnAddresses: true}: AddressStore.contract),
+        ({name: "NoEvents", startBlock: None, dependsOnAddresses: false}: AddressStore.contract),
       ],
       "wildcardOnly": [
-        ({id: 0, name: "A", startBlock: None, dependsOnAddresses: false}: AddressStore.contract),
+        ({name: "A", startBlock: None, dependsOnAddresses: false}: AddressStore.contract),
       ],
     })
   })

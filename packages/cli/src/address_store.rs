@@ -364,14 +364,12 @@ impl StoreInner {
 
 /// A contract an address may be registered for: every contract the config
 /// declares, on any chain, since `context.chain.<Contract>.add` validates
-/// against that whole set. Fixed at construction.
+/// against that whole set. Fixed at construction, in canonical id order — a
+/// contract's position is the `contract_idx` every entry and every persisted
+/// address row carries, so a stored id names the same contract whichever
+/// chain's store reads it.
 #[napi(object)]
 pub struct AddressStoreContract {
-    /// The contract's canonical id — its row in `envio_contracts`, and the
-    /// `contract_idx` every entry and every persisted address row carries. The
-    /// list must be ordered by it, so a stored id always names the same
-    /// contract whichever chain's store reads it.
-    pub id: u32,
     pub name: String,
     /// The minimum `startBlock` across the contract's registrations on this
     /// chain; absent means block 0, since partitions never query below the
@@ -866,20 +864,6 @@ impl AddressStore {
         let mut contract_idx_by_name = HashMap::with_capacity(contracts.len());
         let mut contract_depends_on_addresses = Vec::with_capacity(contracts.len());
         for contract in contracts {
-            // Structural, not incidental: a `contract_idx` is written into
-            // every persisted address row, so a list whose ids drifted from
-            // its positions would attribute stored addresses to the wrong
-            // contract on the next resume. An error rather than a panic — the
-            // indexer has to be able to report it, not abort the process.
-            if contract.id as usize != contract_names.len() {
-                return Err(napi::Error::from_reason(format!(
-                    "Address store contracts must be ordered by their canonical id: contract \
-                     \"{}\" carries id {} at position {}.",
-                    contract.name,
-                    contract.id,
-                    contract_names.len(),
-                )));
-            }
             if contract_idx_by_name.contains_key(&contract.name) {
                 return Err(napi::Error::from_reason(format!(
                     "Contract \"{}\" is listed twice in the address store's contract list.",
@@ -1120,6 +1104,36 @@ impl Owners<'_> {
 
     pub fn is_empty(&self) -> bool {
         self.first.is_none()
+    }
+}
+
+/// The emitter facts every ecosystem's address gate reads off an item: its
+/// store key, the contracts this partition's set says own that key (empty when
+/// the partition doesn't hold it), and the block the item fired at.
+pub struct Emitter<'a> {
+    pub key: &'a [u8],
+    pub owners: Owners<'a>,
+    pub block: i64,
+}
+
+impl Emitter<'_> {
+    /// Whether one registration accepts this emitter: the registration has
+    /// started, and — unless it is wildcard — this partition's set owns the
+    /// emitter for the registration's contract (or, when the contract is
+    /// client-filtered, the store alone vouches for it) and the store has it
+    /// indexed at the item's block.
+    pub fn matches_registration(
+        &self,
+        store: &StoreInner,
+        contract_idx: u32,
+        is_wildcard: bool,
+        start_block: Option<i64>,
+        force_wildcard: bool,
+    ) -> bool {
+        crate::registration_start_block::has_started(start_block, self.block)
+            && (is_wildcard
+                || ((force_wildcard || self.owners.contains(contract_idx))
+                    && store.is_indexed_at(self.key, contract_idx, self.block)))
     }
 }
 
@@ -1420,9 +1434,7 @@ pub(crate) mod test_support {
             ecosystem,
             entries
                 .iter()
-                .enumerate()
-                .map(|(idx, (name, _))| AddressStoreContract {
-                    id: idx as u32,
+                .map(|(name, _)| AddressStoreContract {
                     name: name.to_string(),
                     start_block: None,
                     depends_on_addresses: true,
@@ -1519,9 +1531,7 @@ mod tests {
     fn contracts(entries: &[(&str, Option<i64>)]) -> Vec<AddressStoreContract> {
         entries
             .iter()
-            .enumerate()
-            .map(|(idx, (name, start_block))| AddressStoreContract {
-                id: idx as u32,
+            .map(|(name, start_block)| AddressStoreContract {
                 name: name.to_string(),
                 start_block: *start_block,
                 depends_on_addresses: true,
@@ -1532,9 +1542,8 @@ mod tests {
     /// A contract nothing on this chain fetches by address — either it has no
     /// events here, or they're all wildcard. Registered and persisted like any
     /// other, never fetched.
-    fn address_independent_contract(id: u32, name: &str) -> AddressStoreContract {
+    fn address_independent_contract(name: &str) -> AddressStoreContract {
         AddressStoreContract {
-            id,
             name: name.to_string(),
             start_block: None,
             depends_on_addresses: false,
@@ -1760,7 +1769,7 @@ mod tests {
             false,
             vec![
                 contracts(&[("C", None)]).remove(0),
-                address_independent_contract(1, "D"),
+                address_independent_contract("D"),
             ],
         )
         .unwrap();

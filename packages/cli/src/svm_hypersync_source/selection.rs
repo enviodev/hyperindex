@@ -10,7 +10,7 @@ use napi_derive::napi;
 use super::fields;
 use super::mod_helpers::hex_to_bytes;
 use super::types::required;
-use crate::address_store::{Owners, StoreInner};
+use crate::address_store::{Emitter, StoreInner};
 
 /// One instruction call with the fields routing and item building read, lifted
 /// out of the client's all-`Option` row once per instruction: base58 is
@@ -226,15 +226,18 @@ impl Registration {
     fn matches_scope(
         &self,
         instr: &InstructionCall,
-        address: &InstructionAddress,
+        address: &Emitter,
         force_wildcard: bool,
         store: &StoreInner,
     ) -> bool {
         self.program_id == instr.executing_account
-            && crate::registration_start_block::has_started(self.start_block, address.slot)
-            && (self.is_wildcard
-                || ((force_wildcard || address.owners.contains(self.contract_idx))
-                    && store.is_indexed_at(address.key, self.contract_idx, address.slot)))
+            && address.matches_registration(
+                store,
+                self.contract_idx,
+                self.is_wildcard,
+                self.start_block,
+                force_wildcard,
+            )
             && self
                 .is_inner
                 .is_none_or(|is_inner| is_inner == instr.is_inner)
@@ -453,7 +456,7 @@ impl SelectionBuilder {
 pub(crate) fn route_instruction(
     registrations: &[Arc<Registration>],
     instr: &InstructionCall,
-    address: &InstructionAddress,
+    address: &Emitter,
     client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
     store: &StoreInner,
 ) -> Vec<Arc<Registration>> {
@@ -482,15 +485,6 @@ pub(crate) fn route_instruction(
         .filter(|reg| reg.discriminator.is_none() && scoped(reg))
         .cloned()
         .collect()
-}
-
-/// The emitter facts an instruction's owner gate reads: the program id's store
-/// key (its base58 bytes), the contracts this partition's set says own it, and
-/// the slot the instruction sits at.
-pub(crate) struct InstructionAddress<'a> {
-    pub key: &'a [u8],
-    pub owners: Owners<'a>,
-    pub slot: i64,
 }
 
 #[cfg(test)]
@@ -586,10 +580,10 @@ mod tests {
         let address_store = store.handle();
         let address_store = address_store.read().unwrap();
         let key = instr.executing_account.as_bytes();
-        let address = InstructionAddress {
+        let address = Emitter {
             key,
             owners: set.cache().owners_of(key),
-            slot: instr.slot as i64,
+            block: instr.slot as i64,
         };
         route_instruction(
             &built.registrations,
@@ -851,7 +845,6 @@ mod tests {
         let mut owned = reg(0, PROG_A, Some("0x21"), false);
         owned.contract_name = "Owned".to_string();
         let store = AddressStore::new_svm(vec![crate::address_store::AddressStoreContract {
-            id: 0,
             name: "Owned".to_string(),
             start_block: None,
             depends_on_addresses: true,

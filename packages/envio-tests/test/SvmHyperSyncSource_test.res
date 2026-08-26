@@ -97,7 +97,7 @@ let capturedRegistrationInputs: array<array<SvmHyperSyncClient.Registration.inpu
 let addressStore = AddressStore.make(
   ~ecosystem=Ecosystem.Svm,
   ~shouldChecksum=false,
-  ~contracts=[{id: 0, name: "TokenMetadata", startBlock: None, dependsOnAddresses: true}],
+  ~contracts=[{name: "TokenMetadata", startBlock: None, dependsOnAddresses: true}],
 )
 
 let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {

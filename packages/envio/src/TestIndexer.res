@@ -687,16 +687,11 @@ let createTestIndexer = (): t<'processConfig> => {
     entityConfigs->Dict.set(entityConfig.name, entityConfig)
   })
 
-  // Populate the config's addresses, mirroring PgStorage.initialize
   let chainConfigs = config.chainMap->ChainMap.values
   let contractMapping = config.contractMapping
   let ecosystem = config.ecosystem.name
   let addresses = AddressRows.Table.make()
-  chainConfigs->Array.forEach(chainConfig =>
-    addresses->AddressRows.Table.insertMany(
-      chainConfig->ChainState.configStorageRows(~ecosystem, ~contractMapping),
-    )
-  )
+  addresses->ChainState.seedConfigAddresses(~chainConfigs, ~ecosystem, ~contractMapping)
 
   let state = {
     processInProgress: false,

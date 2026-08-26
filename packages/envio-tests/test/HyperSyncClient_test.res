@@ -46,8 +46,8 @@ let addressStore = AddressStore.make(
   ~ecosystem=Ecosystem.Evm,
   ~shouldChecksum=false,
   ~contracts=[
-    {id: 0, name: "ERC20", startBlock: None, dependsOnAddresses: true},
-    {id: 1, name: "Unrelated", startBlock: None, dependsOnAddresses: true},
+    {name: "ERC20", startBlock: None, dependsOnAddresses: true},
+    {name: "Unrelated", startBlock: None, dependsOnAddresses: true},
   ],
 )
 let _ = addressStore->AddressStore.seedBatch([

@@ -85,12 +85,7 @@ let storedRows = async (~pgSchema) => {
   let rows: array<AddressRows.row> = await sql->Postgres.unsafe(
     InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema),
   )
-  let rendered = Core.getAddon().renderAddresses(
-    ~ecosystem="evm",
-    ~shouldChecksum=true,
-    ~bytes=NodeJs.Buffer.concat(rows->Array.map(row => row.address)),
-    ~lengths=rows->Array.map(row => row.address->NodeJs.Buffer.length),
-  )
+  let rendered = rows->AddressRows.render(~ecosystem="evm", ~shouldChecksum=true)
   rows->Array.mapWithIndex((row, idx) => (
     rendered->Array.getUnsafe(idx),
     contractMapping->ContractMapping.nameOfOrThrow(row.contractId),

@@ -2931,7 +2931,6 @@ let rollback = (
     }
   }
 
-  // Recreate partitions from deleted partition addresses
   let optimizedPartitions = createPartitions(
     ~registeringSetsByContract,
     ~addressStore,
@@ -2945,7 +2944,6 @@ let rollback = (
     ~knownHeight=fetchState.knownHeight,
   )
 
-  // Step 4: Update state
   let rolledBack = {
     ...fetchState,
     // TODO: Test this. Currently it's not tested.

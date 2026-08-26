@@ -13,10 +13,9 @@ type t
 // chain, since `context.chain.<Contract>.add` validates against that whole set
 // — a name outside it makes the store throw. `dependsOnAddresses` is whether
 // this chain fetches for the contract by address, which is what makes the store
-// able to answer `fetchable` on a verdict. `id` is the contract's canonical id,
-// and the list must be ordered by it: that id is what every persisted address
-// row names its contract by.
-type contract = {id: int, name: string, startBlock: option<int>, dependsOnAddresses: bool}
+// able to answer `fetchable` on a verdict. The list is in canonical id order: a
+// contract's position is what every persisted address row names it by.
+type contract = {name: string, startBlock: option<int>, dependsOnAddresses: bool}
 
 type registration = {
   address: Address.t,
@@ -138,8 +137,7 @@ let contractsOf = (
   })
   contractMapping
   ->ContractMapping.names
-  ->Array.mapWithIndex((name, id) => {
-    id,
+  ->Array.map(name => {
     name,
     startBlock: unrestricted->Utils.Set.has(name)
       ? None

@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use hypersync_client::{simple_types, RateLimitResponse};
 use napi_derive::napi;
 
-use crate::address_store::{AddressSet, AddressStore, SetCache};
+use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_store::BlockStore;
 use crate::request_stats::{rate_limited_err, RequestStat};
@@ -18,7 +18,7 @@ pub(crate) mod selection;
 pub(crate) mod types;
 
 use config::ClientConfig;
-use decode::{Decoder, LogAddress, SelectionDecoder};
+use decode::{Decoder, SelectionDecoder};
 use query::{BlockField, LogField, LogFilter, LogSelection, Query, TransactionField};
 use selection::{BuiltLogSelection, SelectionBuilder};
 use types::{encode_address, Block, OnEventRegistrationInput, ParamValue, RollbackGuard};
@@ -476,10 +476,10 @@ fn process_response(
             // and the effectiveStartBlock gate cost one hash lookup each — no
             // round-trip through the address string.
             let address_key = log.address.as_ref().context("log.address missing")?;
-            let address = LogAddress {
+            let address = Emitter {
                 key: address_key.as_slice(),
                 owners: set_cache.owners_of(address_key.as_slice()),
-                block_number: flat.block_number,
+                block: flat.block_number,
             };
             // Only structurally malformed logs (missing topic0, bad topic bytes)
             // surface here; per-registration decode failures are dropped inside
