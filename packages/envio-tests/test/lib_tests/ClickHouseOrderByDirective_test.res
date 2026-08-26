@@ -58,14 +58,14 @@ type Token @storage(clickhouse: {orderBy: ["id", "timestamp"]}) {
         ~database="db",
       ),
       ~message="id leads a sorting key that narrows further",
-    ).toBe(`CREATE TABLE IF NOT EXISTS db.\`envio_history_Token\` (
+    ).toBe(`CREATE TABLE IF NOT EXISTS \`db\`.\`envio_history_Token\` (
   \`id\` String,
   \`timestamp\` DateTime64(3, 'UTC'),
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
-ORDER BY (\`id\`, \`timestamp\`, envio_checkpoint_id)`)
+ORDER BY (\`id\`, \`timestamp\`, \`envio_checkpoint_id\`)`)
   })
 
   it("Rejects an empty list, which would sort by nothing at all", t => {
@@ -178,13 +178,13 @@ type Token @storage(clickhouse: {orderBy: ["amount"]}) {
         ~database="db",
       ),
       ~message="a bounded BigInt stores as a Decimal, which sorts numerically",
-    ).toBe(`CREATE TABLE IF NOT EXISTS db.\`envio_history_Token\` (
+    ).toBe(`CREATE TABLE IF NOT EXISTS \`db\`.\`envio_history_Token\` (
   \`id\` String,
   \`amount\` Decimal(38,0),
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
-ORDER BY (\`amount\`, envio_checkpoint_id)`)
+ORDER BY (\`amount\`, \`envio_checkpoint_id\`)`)
   })
 })

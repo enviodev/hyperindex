@@ -1,11 +1,3 @@
-//! ClickHouse column types, derived from the schema field the column stores.
-//!
-//! Both the `CREATE TABLE` text and the RowBinary layout come out of this one
-//! mapping: rendering the type is `Display`, encoding it is `row_binary`. That
-//! matters because RowBinary carries raw bytes with no column types on the
-//! wire, so a column created as one type and written as another produces no
-//! error anywhere — only wrong data.
-
 use std::fmt;
 
 use anyhow::{bail, Result};
@@ -32,8 +24,6 @@ pub enum ChType {
     /// read back off by a factor of ten per digit.
     DateTime64,
     Decimal {
-        /// Total digits the column accepts, which bounds the stored integer and
-        /// fixes the width of the backing one.
         precision: u32,
         scale: u32,
     },
@@ -51,8 +41,6 @@ pub enum ChType {
 pub const MAX_DECIMAL_PRECISION: u32 = 38;
 
 impl ChType {
-    /// The variant's numeric value as stored by ClickHouse: its 1-based
-    /// position, which is what the `CREATE TABLE` text numbers it with.
     pub fn enum_value(&self, name: &str) -> Option<i16> {
         match self {
             ChType::Enum { variants } => variants
@@ -63,7 +51,6 @@ impl ChType {
         }
     }
 
-    /// Bytes an `Enum` column occupies.
     pub fn enum_bytes(variants: &[String]) -> usize {
         if variants.len() <= MAX_ENUM8_VARIANTS {
             1
@@ -85,20 +72,13 @@ pub fn decimal_bytes(precision: u32) -> Result<usize> {
     }
 }
 
-/// A schema field as the column storing it: everything the type derivation
-/// needs, in the shape the JS side already has it.
 #[derive(Debug, Clone)]
 pub struct FieldSpec {
-    /// One of `Table.fieldType`'s tags.
     pub field_type: String,
     pub is_nullable: bool,
     pub is_array: bool,
-    /// A `BigInt`'s digit count or a `BigDecimal`'s precision. Absent for an
-    /// unbounded one, which has no Decimal wide enough and falls back to text.
     pub precision: Option<u32>,
-    /// A `BigDecimal`'s scale.
     pub scale: Option<u32>,
-    /// An `Enum`'s variants, in the order their numbering follows.
     pub enum_variants: Option<Vec<String>>,
 }
 
@@ -117,16 +97,11 @@ fn decimal_or_string(precision: Option<u32>, scale: u32) -> ChType {
 }
 
 impl FieldSpec {
-    /// The column type storing this field, wrapped in `Array`/`Nullable` the way
-    /// the field is declared.
     pub fn ch_type(&self, chain_id_mode: ChainIdMode) -> Result<ChType> {
         let base = match self.field_type.as_str() {
             "String" | "Json" => ChType::String,
             "Boolean" => ChType::Bool,
             "Uint32" => ChType::UInt32,
-            // A UInt52 is a JS number, which cannot hold what a UInt64 column
-            // can — but it is read back through a schema that parses the text
-            // ClickHouse renders, so the column is the wider one either way.
             "UInt52" | "UInt64" => ChType::UInt64,
             "Int32" | "Serial" => ChType::Int32,
             "BigSerial" => ChType::Int64,
@@ -136,14 +111,9 @@ impl FieldSpec {
                 ChainIdMode::Int32 => ChType::Int32,
                 ChainIdMode::Int64 => ChType::UInt64,
             },
-            // An unbounded BigInt has no scale to speak of; a bounded one is a
-            // whole number, so it is a Decimal that keeps no fractional digits.
             "BigInt" => decimal_or_string(self.precision, 0),
             "BigDecimal" => match (self.precision, self.scale) {
                 (Some(precision), Some(scale)) => decimal_or_string(Some(precision), scale),
-                // Configuring one of the pair without the other is a config the
-                // parser doesn't produce; falling back to text keeps a
-                // half-specified column storing the value in full.
                 _ => ChType::String,
             },
             "Enum" => {
@@ -180,9 +150,6 @@ impl FieldSpec {
     }
 }
 
-/// Renders the type as the `CREATE TABLE` text declaring it, which is also what
-/// the encoder was built from — so a column cannot be created as one type and
-/// written as another.
 impl fmt::Display for ChType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -219,21 +186,15 @@ impl fmt::Display for ChType {
     }
 }
 
-/// How the JS side hands a column's values across the napi boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnKind {
-    /// Float64Array, one element per row.
     F64 = 0,
-    /// BigUint64Array.
     U64 = 1,
-    /// BigInt64Array.
     I64 = 2,
-    /// One string per row. Also carries the JSON of an `Array` column.
     Text = 3,
 }
 
 impl ChType {
-    /// The wire kind JS must use for this column.
     pub fn column_kind(&self) -> ColumnKind {
         match self {
             ChType::Nullable(inner) => inner.column_kind(),
@@ -244,7 +205,6 @@ impl ChType {
             | ChType::DateTime64 => ColumnKind::F64,
             ChType::UInt64 => ColumnKind::U64,
             ChType::Int64 => ColumnKind::I64,
-            // An array arrives as the JSON of its elements.
             ChType::String | ChType::Decimal { .. } | ChType::Enum { .. } | ChType::Array(_) => {
                 ColumnKind::Text
             }
@@ -256,8 +216,6 @@ impl ChType {
 pub(crate) mod test_support {
     use super::*;
 
-    /// A field spec with everything optional left out, for tests that only care
-    /// about one of the knobs.
     pub fn field(field_type: &str) -> FieldSpec {
         FieldSpec {
             field_type: field_type.to_string(),
@@ -269,16 +227,10 @@ pub(crate) mod test_support {
         }
     }
 
-    /// The type text a field renders to, which is what the DDL declares.
     pub fn rendered(spec: &FieldSpec) -> String {
         spec.ch_type(ChainIdMode::Int32).unwrap().to_string()
     }
 
-    /// Builds a [`ChType`] from the `CREATE TABLE` text declaring it — the
-    /// inverse of its [`fmt::Display`], and here beside it so the two stay one
-    /// grammar. The encoder's contract is "given this column type, write these
-    /// bytes", so its tests name the type rather than the field behind it.
-    /// Panics on anything the DDL does not emit.
     pub fn parse_type(text: &str) -> ChType {
         let text = text.trim();
         let Some((name, args)) = text.split_once('(').map(|(name, rest)| {
@@ -317,9 +269,6 @@ pub(crate) mod test_support {
         }
     }
 
-    /// Reads the variant names out of an `Enum8`/`Enum16` argument list, undoing
-    /// the escaping [`super::super::literal`] applied. Scanning for the quotes
-    /// rather than splitting on commas is what lets a variant name hold one.
     fn parse_enum_variants(args: &str) -> Vec<String> {
         let mut variants = Vec::new();
         let mut chars = args.chars().peekable();
@@ -351,9 +300,6 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    /// The whole field-type mapping in one place: this is the table the DDL is
-    /// written from and the encoder reads, so a change to any row of it changes
-    /// both at once.
     #[test]
     fn every_field_type_renders_its_column_type() {
         let rendered_types = [
@@ -388,8 +334,6 @@ mod tests {
         );
     }
 
-    /// JS measures time in milliseconds, so the column has to be the precision
-    /// that means — a `DateTime64(6)` would read back a thousand times early.
     #[test]
     fn a_date_column_is_always_millisecond_precision() {
         assert_eq!(rendered(&field("Date")), "DateTime64(3, 'UTC')");
@@ -402,9 +346,6 @@ mod tests {
         assert_eq!(modes, ["Int32", "UInt64"]);
     }
 
-    /// `Nullable(Array(...))` is a type ClickHouse rejects, so the derivation
-    /// has to say so by name rather than let `CREATE TABLE` fail with the
-    /// server's own wording and no field to point at.
     #[test]
     fn rejects_a_nullable_list() {
         let error = FieldSpec {
@@ -430,10 +371,6 @@ mod tests {
         assert_eq!(rendered(&spec), "Array(String)");
     }
 
-    /// A bounded numeric is a real Decimal column; past what an `i128` carries
-    /// there is no Decimal to put it in, so the value is stored as text. A
-    /// precision of zero has no width either, so it takes the same fallback
-    /// rather than declaring a `Decimal(0,0)` the encoder could not write.
     #[test]
     fn numeric_precision_decides_decimal_or_string() {
         let rendered_types = [
@@ -460,7 +397,6 @@ mod tests {
                 scale: Some(2),
                 ..field("BigDecimal")
             },
-            // ClickHouse requires S <= P, so this pair has no Decimal either.
             FieldSpec {
                 precision: Some(10),
                 scale: Some(11),
@@ -484,8 +420,6 @@ mod tests {
         );
     }
 
-    /// The number in the DDL and the number the encoder writes are the same
-    /// expression, which is the point of deriving both from the variant list.
     #[test]
     fn enum_numbering_matches_between_ddl_and_encoder() {
         let ch_type = FieldSpec {
@@ -510,7 +444,6 @@ mod tests {
         );
     }
 
-    /// Numbering from 1 is what puts the boundary at 127 rather than 128.
     #[test]
     fn a_variant_list_past_enum8_widens_to_enum16() {
         let widths = [127, 128].map(|count| {
@@ -528,9 +461,6 @@ mod tests {
         assert_eq!(widths, [(1, false), (2, true)]);
     }
 
-    /// A quote would otherwise close the literal early and turn the rest of the
-    /// list into DDL of its own; a backslash would be read as starting an
-    /// escape and change the variant's name.
     #[test]
     fn escapes_a_quote_or_backslash_in_a_variant_name() {
         let ch_type = FieldSpec {
@@ -562,8 +492,6 @@ mod tests {
         assert_eq!(error.to_string(), "unsupported field type `Tuple`");
     }
 
-    /// The precision alone fixes the width, which is why the type does not carry
-    /// it: a pair that disagreed would shift every following column on the wire.
     #[test]
     fn precision_fixes_the_backing_width() {
         let widths = [9u32, 10, 18, 19, 38].map(|precision| decimal_bytes(precision).unwrap());

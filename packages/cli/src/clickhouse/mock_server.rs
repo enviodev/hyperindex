@@ -1,8 +1,3 @@
-//! A stand-in ClickHouse over HTTP, for testing the parts of the sink that only
-//! show up when the server misbehaves. It records every insert body it accepts,
-//! and can be told to reject the first N inserts so the retry path runs for
-//! real. Anything that is not an insert is counted and refused, because a sink
-//! that takes its column types from the caller has no reason to ask.
 
 use std::sync::{Arc, Mutex};
 
@@ -10,36 +5,21 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::mock_http;
 
-/// Answers a statement — the SQL arrives in the request body — with the status
-/// and body to send back.
 pub type StatementFn = dyn Fn(&str) -> (u16, String) + Send + Sync;
 
 #[derive(Default)]
 struct State {
-    /// Bodies of the inserts the server accepted, in arrival order.
     accepted: Vec<Vec<u8>>,
-    /// How a statement — anything that is not an insert — is answered. `None`
-    /// refuses it, which is what a sink taking its column types from the caller
-    /// should never provoke.
     statements: Option<Arc<StatementFn>>,
-    /// Statements the server was asked, in arrival order.
     statements_seen: Vec<String>,
-    /// Inserts still to be rejected before the server starts accepting.
     reject_next: usize,
     /// Inserts still to be accepted and then failed. The body is recorded as
     /// landed — the server took the rows — but the client is told it did not.
     accept_then_error: usize,
-    /// The body a rejection carries, which is what tells the sink whether the
-    /// rows are worth sending again.
     rejection: String,
-    /// The status a rejection carries. Only what a proxy in front of ClickHouse
-    /// answered is read from this; a body naming a code speaks for itself.
     rejection_status: u16,
-    /// Total inserts seen, accepted or not.
     seen: usize,
-    /// Total read queries seen.
     queries: usize,
-    /// Request line and headers of every request, in arrival order.
     heads: Vec<String>,
 }
 
@@ -49,22 +29,14 @@ pub struct MockClickHouse {
 }
 
 impl MockClickHouse {
-    /// Serves until dropped. `reject_next` inserts fail with a 500 before the
-    /// server starts accepting, carrying a memory limit — the error a batch is
-    /// itself to blame for, so the sink retries it in halves.
     pub async fn start(reject_next: usize) -> Self {
         Self::rejecting_with(reject_next, "Code: 241. DB::Exception: mock rejection").await
     }
 
-    /// Rejects with `rejection` as the body, for a test that turns on how the
-    /// sink reads the server's verdict.
     pub async fn rejecting_with(reject_next: usize, rejection: &str) -> Self {
         Self::rejecting_with_status(reject_next, 500, rejection).await
     }
 
-    /// Rejects with `status` and `rejection`, for a test about a proxy in front
-    /// of ClickHouse: a body with no `Code:` in it leaves the status as the only
-    /// thing the sink can read the verdict from.
     pub async fn rejecting_with_status(reject_next: usize, status: u16, rejection: &str) -> Self {
         Self::serving(State {
             reject_next,
@@ -88,8 +60,6 @@ impl MockClickHouse {
         .await
     }
 
-    /// Answers statements with `statements` rather than refusing them, for the
-    /// schema and recovery paths, which are made of them. Inserts are accepted.
     pub async fn answering_statements(statements: Arc<StatementFn>) -> Self {
         Self::serving(State {
             statements: Some(statements),
@@ -111,8 +81,6 @@ impl MockClickHouse {
                 };
                 let state = accept_state.clone();
                 tokio::spawn(async move {
-                    // The sink pools connections, so one socket carries many
-                    // requests; serve until the peer closes it.
                     let _ = serve(stream, state).await;
                 });
             }
@@ -133,8 +101,6 @@ impl MockClickHouse {
                 let Ok((stream, _)) = listener.accept().await else {
                     return;
                 };
-                // Holding the stream keeps the connection open rather than
-                // closing it, which the client would see as a failure.
                 held.push(stream);
             }
         });
@@ -152,26 +118,18 @@ impl MockClickHouse {
         self.state.lock().unwrap().seen
     }
 
-    /// Read queries the server was asked, which for a sink that takes its types
-    /// from the caller should stay at zero.
     pub fn queries_seen(&self) -> usize {
         self.state.lock().unwrap().queries
     }
 
-    /// The statements the server was asked, in arrival order.
     pub fn statements_seen(&self) -> Vec<String> {
         self.state.lock().unwrap().statements_seen.clone()
     }
 
-    /// Request line and headers of every request the server handled.
     pub fn heads(&self) -> Vec<String> {
         self.state.lock().unwrap().heads.clone()
     }
 
-    /// Decodes every accepted body as rows of one `String` column, one entry per
-    /// insert — enough to tell not just which rows landed but how the retry
-    /// split them. A body that is not that shape is a bug in the encoder under
-    /// test, so it fails here rather than being reported as missing rows.
     pub fn accepted_batches(&self) -> Vec<Vec<String>> {
         self.accepted()
             .iter()
@@ -195,7 +153,6 @@ impl MockClickHouse {
             .collect()
     }
 
-    /// Every row that landed, flattened across inserts in arrival order.
     pub fn accepted_strings(&self) -> Vec<String> {
         self.accepted_batches().into_iter().flatten().collect()
     }
@@ -206,8 +163,6 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
     while let Some(request) = mock_http::read_request(&mut stream, &mut buffered).await? {
         state.lock().unwrap().heads.push(request.head);
 
-        // The request target carries the query for an insert; a read query
-        // arrives in the body instead.
         let (status, body) = if request.path.contains("INSERT") {
             let outcome = {
                 let mut state = state.lock().unwrap();
@@ -250,6 +205,5 @@ async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Resu
         )
         .await?;
     }
-    // Peer closed between requests.
     Ok(())
 }

@@ -1,9 +1,3 @@
-//! The statements that create and trim envio's ClickHouse tables.
-//!
-//! Everything here is a pure string. The orchestration that runs these against
-//! a server is in the parent module, which keeps the ordering rules the DDL
-//! depends on next to the requests that could reorder them.
-
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::LazyLock;
@@ -16,70 +10,46 @@ use super::ch_type::{ChType, FieldSpec};
 use super::{literal, quoted};
 use crate::config_parsing::system_config::ChainIdMode;
 
-/// A column of an entity's history table: the name it goes by in ClickHouse,
-/// the schema field name that `@storage(clickhouse: {...})` expressions
-/// reference, and the field it stores.
 #[derive(Debug, Clone)]
 pub struct ColumnSpec {
     pub name: String,
-    /// The schema field name. Differs from `name` when a column rename is
-    /// configured, and is what a user-written expression names the column by.
     pub field_name: String,
     pub field: FieldSpec,
 }
 
-/// A data-skipping index declared inside the table's column list. Crosses the
-/// napi boundary as this same struct: no field needs converting to reach the
-/// renderer, which is not to say the renderer emits them as given —
-/// [`create_history_table`] quotes `name` and resolves the field names in `expr`.
 #[napi(object)]
 #[derive(Debug, Clone)]
 pub struct SkippingIndexSpec {
     pub name: String,
     pub expr: String,
     pub index_type: String,
-    /// Omitted leaves ClickHouse's own default of 1.
     pub granularity: Option<u32>,
 }
 
-/// One entity's history table and the view reading current state out of it.
 #[derive(Debug, Clone)]
 pub struct EntitySpec {
-    /// The entity's name, which the current-state view is created as.
     pub name: String,
     pub history_table: String,
-    /// The entity's own columns, in the order the table declares them. The
-    /// checkpoint id and change columns are appended by the renderer.
     pub columns: Vec<ColumnSpec>,
-    /// The chain id column, when the entity is per-chain: current state is only
-    /// comparable within a chain, so the view's dedup key includes it.
     pub chain_id_column: Option<String>,
     pub partition_by: Option<String>,
-    /// Schema field names, resolved to columns here.
     pub order_by: Option<Vec<String>>,
     pub ttl: Option<String>,
     pub skipping_indexes: Vec<SkippingIndexSpec>,
 }
 
-/// Names the runtime's history format fixes. Crosses the napi boundary as this
-/// same struct: every field is already a type the boundary carries, so there is
-/// nothing for a conversion to do.
 #[napi(object)]
 #[derive(Debug, Clone)]
 pub struct HistorySchema {
     pub id_column: String,
     pub checkpoint_id_column: String,
     pub change_column: String,
-    /// The change enum's variants, in numbering order. The first is the one a
-    /// row omitting the column takes.
     pub change_variants: Vec<String>,
-    /// The variant marking a row that set the entity, which the view keeps.
     pub set_variant: String,
     pub checkpoints_table: String,
     pub history_table_prefix: String,
 }
 
-/// Whether tables replicate, and how DDL reaches every replica.
 #[derive(Debug, Clone, Copy)]
 pub struct Topology {
     pub replicated: bool,
@@ -133,9 +103,6 @@ pub fn on_cluster_clause(on_cluster: bool) -> &'static str {
     }
 }
 
-/// Strips both engine arguments `(...)` and a trailing `SETTINGS ...` clause to
-/// get the bare engine name, e.g. `Replicated('/p','{shard}','{replica}')
-/// SETTINGS x=1` and `Replicated SETTINGS x=1` both yield `Replicated`.
 pub fn database_engine_name(engine_spec: &str) -> &str {
     engine_spec
         .trim()
@@ -149,7 +116,6 @@ pub fn database_engine_name(engine_spec: &str) -> &str {
 }
 
 impl HistorySchema {
-    /// The two columns every history table carries beyond the entity's own.
     fn trailing_columns(&self) -> Vec<(String, ChType)> {
         vec![
             (self.checkpoint_id_column.clone(), ChType::UInt64),
@@ -164,8 +130,6 @@ impl HistorySchema {
 }
 
 impl ColumnSpec {
-    /// The column as the table declares it. `context` names what the column
-    /// belongs to, so a field the derivation refuses says which one it was.
     pub fn typed(&self, chain_id_mode: ChainIdMode, context: &str) -> Result<(String, ChType)> {
         let ch_type = self
             .field
@@ -176,8 +140,6 @@ impl ColumnSpec {
 }
 
 impl EntitySpec {
-    /// Every column the history table declares, in DDL order, paired with the
-    /// type it is created as. The insert path registers this same list.
     pub fn history_columns(
         &self,
         history: &HistorySchema,
@@ -193,9 +155,6 @@ impl EntitySpec {
         Ok(columns)
     }
 
-    /// Schema field name to ClickHouse column name, so `@storage(clickhouse:
-    /// {...})` options can reference fields the way they are written in the
-    /// schema and get renames and linked-entity `_id` suffixes resolved here.
     fn column_by_field_name(&self) -> HashMap<&str, &str> {
         self.columns
             .iter()
@@ -204,23 +163,11 @@ impl EntitySpec {
     }
 }
 
-/// Matches a quoted string, a quoted identifier (ClickHouse accepts both
-/// backticks and double quotes for one), or a bare identifier. Every alternative
-/// but the last is there to be skipped: a token already quoted names its column
-/// as written, and rewriting inside one would produce a name nothing has.
-///
-/// Each quoted form spans `\`-escapes, which ClickHouse reads inside all three
-/// — and which `quoted` and `literal` emit. Stopping at an escaped quote would
-/// end the token early and leave the rest of the text open to rewriting.
 static EXPRESSION_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|[A-Za-z_][A-Za-z0-9_]*"#)
         .expect("expression token regex")
 });
 
-/// Rewrites any bare identifier naming an entity field to that field's
-/// ClickHouse column, leaving functions, keywords, numbers and anything already
-/// quoted untouched — string literals, and identifiers in either the backtick or
-/// the double-quote form ClickHouse accepts.
 fn resolve_expression_columns(expression: &str, columns: &HashMap<&str, &str>) -> String {
     EXPRESSION_TOKEN
         .replace_all(expression, |captures: &Captures| {
@@ -233,7 +180,6 @@ fn resolve_expression_columns(expression: &str, columns: &HashMap<&str, &str>) -
         .into_owned()
 }
 
-/// `CREATE TABLE` for one entity's history table.
 pub fn create_history_table(
     entity: &EntitySpec,
     database: &str,
@@ -250,17 +196,11 @@ pub fn create_history_table(
     let by_field_name = entity.column_by_field_name();
 
     let order_by = match &entity.order_by {
-        // The checkpoint id stays appended so the sorting key keeps a
-        // deterministic tie-break and the view's checkpoint dedup gets a clean
-        // ascending run per prefix. `id` is dropped: ClickHouse entities are
-        // read-only, so nothing looks history rows up by id.
         Some(field_names) => {
             let mut resolved = Vec::with_capacity(field_names.len());
             for field_name in field_names {
                 match by_field_name.get(field_name.as_str()) {
                     Some(column) => resolved.push(quoted(column)),
-                    // Validated at codegen, so a miss means the schema and the
-                    // persisted config diverged.
                     None => bail!(
                         "ClickHouse orderBy field \"{field_name}\" is not defined on entity \"{}\"",
                         entity.name
@@ -295,7 +235,6 @@ pub fn create_history_table(
         None => String::new(),
     };
 
-    // Data skipping indexes live inside the column list, after the last column.
     let mut indexes = String::new();
     for index in &entity.skipping_indexes {
         let granularity = match index.granularity {
@@ -323,8 +262,6 @@ pub fn create_history_table(
     ))
 }
 
-/// `CREATE TABLE` for the checkpoints table, whose columns the runtime supplies
-/// the same way an entity's are supplied.
 pub fn create_checkpoints_table(
     columns: &[(String, ChType)],
     database: &str,
@@ -347,17 +284,12 @@ pub fn create_checkpoints_table(
     )
 }
 
-/// `CREATE VIEW` reading each entity's current state out of its history table:
-/// the newest row per key up to the last committed checkpoint, minus the keys
-/// whose newest row was a delete.
 pub fn create_view(
     entity: &EntitySpec,
     database: &str,
     history: &HistorySchema,
     topology: Topology,
 ) -> String {
-    // A per-chain entity's rows are only comparable within a chain, so the
-    // current-state dedup keys on (id, chain id).
     let mut dedup_key = vec![quoted(&history.id_column)];
     if let Some(chain_id_column) = &entity.chain_id_column {
         dedup_key.push(quoted(chain_id_column));
@@ -387,10 +319,6 @@ pub fn create_view(
     )
 }
 
-/// The `INSERT` a registered table's batches are sent with. Naming every column
-/// makes the table's own column order stop mattering, and leaves anything envio
-/// does not write — a column a user added, a DEFAULT or MATERIALIZED expression
-/// — for the server to fill.
 pub fn insert_query(
     database: &str,
     table: &str,
@@ -426,8 +354,6 @@ pub fn trim_history_table(
     )
 }
 
-/// Drops the checkpoints the trimmed rows belonged to. A lightweight delete is
-/// a mutation too, so it waits the same way.
 pub fn trim_checkpoints(database: &str, history: &HistorySchema, checkpoint_id: &str) -> String {
     format!(
         "DELETE FROM {}.{} WHERE {} > {checkpoint_id} SETTINGS mutations_sync = 2",
@@ -461,8 +387,6 @@ pub(crate) mod test_support {
         }
     }
 
-    /// A replicated cluster on a plain database, where every statement carries
-    /// its own `ON CLUSTER` to reach the replicas.
     pub fn replicated() -> Topology {
         Topology {
             replicated: true,
@@ -499,7 +423,6 @@ mod tests {
     use crate::clickhouse::ch_type::test_support::field;
     use pretty_assertions::assert_eq;
 
-    /// Column specs as the sink types them before rendering.
     fn typed(columns: &[ColumnSpec]) -> Vec<(String, ChType)> {
         columns
             .iter()
@@ -557,8 +480,6 @@ mod tests {
         );
     }
 
-    /// The options name schema fields; the table names columns. A rename has to
-    /// be resolved or the DDL references a column that does not exist.
     #[test]
     fn table_options_resolve_field_names_to_columns() {
         let mut entity = entity(
@@ -597,8 +518,6 @@ mod tests {
         );
     }
 
-    /// A function name, a keyword and a quoted literal all match the identifier
-    /// pattern's neighbours; only a bare token naming a field is a column.
     #[test]
     fn expression_rewriting_leaves_everything_that_is_not_a_field_alone() {
         let columns = HashMap::from([("createdAt", "created_at"), ("kind", "kind")]);
@@ -607,8 +526,6 @@ mod tests {
             "kind = 'createdAt'",
             "`createdAt` + 1",
             "toStartOfDay(createdAt) + INTERVAL 7 DAY",
-            // ClickHouse reads a double-quoted token as an identifier, so one
-            // already names its column and must survive as written.
             "toYYYYMM(\"created_at\")",
             "kind = 'a' || \"createdAt\"",
             // ClickHouse reads C-style escapes inside a literal, so a \' does
@@ -675,9 +592,6 @@ mod tests {
         );
     }
 
-    /// The checkpoints table is replicated on the same terms as the history
-    /// tables it covers: created on the connected node alone, a restart that
-    /// lands on another replica reads a checkpoint the rows there never had.
     #[test]
     fn a_replicated_checkpoints_table_carries_the_engine_cluster_and_dedup_settings() {
         let columns = [column("id", "UInt64")];
@@ -713,8 +627,6 @@ mod tests {
         );
     }
 
-    /// A view is metadata, so a replica that never ran the statement has no way
-    /// to answer a read of the entity at all.
     #[test]
     fn a_replicated_view_is_created_on_the_cluster() {
         let entity = entity("Account", vec![column("id", "String")]);
@@ -726,8 +638,6 @@ mod tests {
         );
     }
 
-    /// Rows of a per-chain entity are only comparable within a chain, so two
-    /// chains writing the same id must not collapse into one current-state row.
     #[test]
     fn a_per_chain_entity_dedups_on_id_and_chain() {
         let mut entity = entity(
@@ -751,10 +661,6 @@ mod tests {
     }
 
     #[test]
-    /// A backtick would end the identifier early and leave the rest to be read
-    /// as SQL; a backslash would be taken as starting an escape and change the
-    /// name. Neither can come out of a GraphQL schema, but the quoting is what
-    /// makes that a fact about the schema rather than about this function.
     fn names_every_column_the_insert_sends_and_escapes_them() {
         assert_eq!(
             insert_query(

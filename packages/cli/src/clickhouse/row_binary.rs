@@ -1,9 +1,3 @@
-//! RowBinary encoding of columnar input.
-//!
-//! RowBinary is row-major, so the encoder walks the columns once per row. Values
-//! arrive columnar because that is what crosses the napi boundary cheaply: one
-//! typed array or one string array per column, instead of a JS object per row.
-
 use std::borrow::Cow;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -12,10 +6,6 @@ use bytes::Bytes;
 use super::ch_type::ChType;
 use super::ch_type::ColumnKind;
 
-/// One column's values as they arrive from JS. Text crosses as one JS string per
-/// value: napi converts each to UTF-8 as it reads it, which is the same work a
-/// single concatenated string would pay for, minus the concatenation itself and
-/// the ceiling V8 puts on how long one string may be.
 #[derive(Debug)]
 pub enum ColumnValues {
     F64(Vec<f64>),
@@ -25,8 +15,6 @@ pub enum ColumnValues {
 }
 
 impl ColumnValues {
-    /// The wire kind these values arrived as, for checking against the column's
-    /// ClickHouse type.
     pub fn kind(&self) -> ColumnKind {
         match self {
             ColumnValues::F64(_) => ColumnKind::F64,
@@ -46,16 +34,11 @@ impl ColumnValues {
     }
 }
 
-/// Borrowed from the registered table's schema, which outlives the encode: a
-/// column's name and type are fixed at registration, so a batch has no reason to
-/// copy them — and an `Enum`'s variant list is the whole table's worth of
-/// strings.
 #[derive(Debug)]
 pub struct Column<'a> {
     pub name: Cow<'a, str>,
     pub ch_type: Cow<'a, ChType>,
     pub values: ColumnValues,
-    /// `1` marks a NULL. Empty when the column has none.
     pub nulls: Vec<u8>,
 }
 
@@ -79,8 +62,6 @@ fn put_varint(out: &mut Vec<u8>, mut value: u64) {
     }
 }
 
-/// Reads a varint back, returning its value and the bytes consumed. Only the
-/// tests decode one, but it lives beside `put_varint` so the pair cannot drift.
 #[cfg(test)]
 pub fn read_varint(bytes: &[u8]) -> Result<(u64, usize)> {
     let mut value = 0u64;
@@ -102,8 +83,6 @@ fn put_string(out: &mut Vec<u8>, value: &str) {
     out.extend_from_slice(value.as_bytes());
 }
 
-/// Parses a decimal literal (`-12.34`, `1e3`) into the scaled integer ClickHouse
-/// stores for `Decimal(P, S)`.
 fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
     let text = text.trim();
     if text.is_empty() {
@@ -122,15 +101,8 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
         Some((i, f)) => (i, f),
         None => (mantissa, ""),
     };
-    // Fractional digits past the point `scale` keeps are truncated anyway, and
-    // folding them in first would overflow the accumulator on a value that fits
-    // once truncated. Dropping them here is that truncation: it shortens
-    // `frac_part` by exactly what the shift below would divide away.
     let kept_frac =
         (i64::from(scale) + i64::from(exponent)).clamp(0, frac_part.len() as i64) as usize;
-    // Folded straight into the accumulator: the digits are the whole value, so
-    // joining them into a string first would allocate once per cell in the hot
-    // encode loop only to parse the same bytes back out.
     let mut magnitude = 0u128;
     let mut digits = 0usize;
     for (part, kept) in [(int_part, int_part.len()), (frac_part, kept_frac)] {
@@ -151,9 +123,6 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
     if digits == 0 {
         bail!("`{text}` is not a decimal");
     }
-    // Exponent shifts the point; `scale` then fixes how many fractional digits
-    // the stored integer keeps. Widened to i64 because `exponent` is an
-    // unconstrained i32 and the subtraction would otherwise be able to overflow.
     let shift = i64::from(scale) + i64::from(exponent) - kept_frac as i64;
     // Parsed unsigned: i128::MIN's magnitude is one past i128::MAX, so parsing
     // the digits as i128 and negating afterwards would reject a legal value.
@@ -162,8 +131,6 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
         false if magnitude <= i128::MAX as u128 => magnitude as i128,
         _ => bail!("decimal `{text}` overflows Int128"),
     };
-    // Each step past zero is a no-op, so the guard also bounds the loops: an
-    // exponent may be any i32, but 39 iterations settle every reachable value.
     match shift.cmp(&0) {
         std::cmp::Ordering::Greater => {
             for _ in 0..shift {
@@ -193,9 +160,6 @@ fn put_int_raw(out: &mut Vec<u8>, value: i128, bytes: usize) {
     out.extend_from_slice(&value.to_le_bytes()[..bytes]);
 }
 
-/// `10^i` for every precision a `Decimal` column can declare — 38 digits being
-/// where envio falls back to `String`. Tabulated because the bound is worked out
-/// again for every value the column carries.
 const POW10: [i128; 39] = {
     let mut table = [1i128; 39];
     let mut i = 1;
@@ -218,18 +182,12 @@ fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
         ChType::UInt32 => (0, u32::MAX as i128),
         ChType::UInt64 => (0, u64::MAX as i128),
         ChType::DateTime64 => (i64::MIN as i128, i64::MAX as i128),
-        // A Decimal's precision, not its byte width, is what it accepts.
         ChType::Decimal { precision, .. } => {
             let limit = POW10
                 .get(*precision as usize)
                 .context("Decimal precision is wider than the value the encoder carries")?;
             (1 - limit, limit - 1)
         }
-        // The variants the column declares, not the width they are stored in:
-        // ClickHouse fails a read of a discriminant no variant uses, so one
-        // that fits the byte is no more storable than one that does not. The
-        // width still caps it — an enum with more variants than its widest
-        // discriminant can hold has no column that could store them all.
         ChType::Enum { variants } => {
             let width_max = if ChType::enum_bytes(variants) == 1 {
                 i8::MAX as i128
@@ -251,9 +209,6 @@ fn put_int(out: &mut Vec<u8>, value: i128, ch_type: &ChType) -> Result<()> {
     Ok(())
 }
 
-/// Encodes a scalar whose value arrives as text. Every value from JS is text
-/// unless its column has a typed array, so the column path and an array's
-/// stringly elements land here together and cannot drift apart.
 fn encode_text_scalar(out: &mut Vec<u8>, ch_type: &ChType, text: &str) -> Result<()> {
     match ch_type {
         ChType::String => put_string(out, text),
@@ -269,8 +224,6 @@ fn encode_text_scalar(out: &mut Vec<u8>, ch_type: &ChType, text: &str) -> Result
     Ok(())
 }
 
-/// A JSON number as the integer its column stores. A fractional value is
-/// rejected rather than truncated: the column has no fractional part for it.
 fn json_integer(number: &serde_json::Number, ch_type: &ChType) -> Result<i128> {
     if let Some(value) = number.as_i64() {
         return Ok(i128::from(value));
@@ -287,8 +240,6 @@ fn json_integer(number: &serde_json::Number, ch_type: &ChType) -> Result<i128> {
     Ok(float as i128)
 }
 
-/// Encodes one element of an `Array` column, whose values arrive as JSON rather
-/// than in a typed array.
 fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Value) -> Result<()> {
     use serde_json::Value;
     match (ch_type, value) {
@@ -320,17 +271,11 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
             out.extend_from_slice(&float.to_le_bytes())
         }
         (ChType::String, Value::String(text)) => put_string(out, text),
-        // A String column holds whatever text it is given, and a `[Json!]!`
-        // field's elements are arbitrary JSON — an object or a number is a value
-        // the schema allows there, so it is rendered rather than refused.
         (ChType::String, _) => put_string(out, &value.to_string()),
         (ChType::Enum { .. } | ChType::Decimal { .. }, Value::String(text)) => {
             encode_text_scalar(out, ch_type, text)?
         }
         (ChType::Decimal { scale, .. }, Value::Number(number)) => {
-            // A JSON integer is already the digits the column stores, short of
-            // the scale; rendering it back to text to re-parse would allocate
-            // once per element. Only a fractional literal needs the parser.
             let scaled = match number
                 .as_i64()
                 .map(i128::from)
@@ -344,23 +289,15 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
             };
             put_int(out, scaled, ch_type)?
         }
-        // An enum element names its variant. A bare number is the stored
-        // discriminant instead, which is not what any producer here sends and
-        // not something this can check the column's variants against — the
-        // arm below would take it for an integer column's value.
         (ChType::Enum { .. }, _) => {
             bail!("`{value}` is not a value a {ch_type:?} element can hold")
         }
-        // The integer columns, whose elements JSON carries natively. Feeding the
-        // number straight in keeps the encode loop off a render-to-text and
-        // parse-back round trip per element.
         (_, Value::Number(number)) => put_int(out, json_integer(number, ch_type)?, ch_type)?,
         _ => bail!("`{value}` is not a value a {ch_type:?} element can hold"),
     }
     Ok(())
 }
 
-/// Byte width of a fixed-size integer-ish type.
 fn fixed_width(ch_type: &ChType) -> Result<usize> {
     Ok(match ch_type {
         ChType::Bool => 1,
@@ -373,9 +310,6 @@ fn fixed_width(ch_type: &ChType) -> Result<usize> {
     })
 }
 
-/// Writes the type's zero value, which is what a column the row leaves out
-/// stores. A DELETE change carries only its id and checkpoint, so every other
-/// column takes this path.
 fn put_default(out: &mut Vec<u8>, ch_type: &ChType) -> Result<()> {
     match ch_type {
         ChType::Nullable(_) => out.push(1),
@@ -402,10 +336,6 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
         }
         other => (other, false),
     };
-    // A null marker on a column that cannot hold NULL is a column the row left
-    // out, which only a DELETE row does — `ClickHouseSink.writeValue` refuses
-    // the same gap on a row that set the entity, so what reaches here is the
-    // deliberate omission and not a field the handler forgot.
     if !is_nullable && column.is_null(row) {
         return put_default(out, ch_type);
     }
@@ -413,11 +343,6 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
     match (&column.values, ch_type) {
         (ColumnValues::F64(v), ChType::Float64) => {
             let value = v[row];
-            // The one column whose bytes NaN and Infinity would go into
-            // unchanged. ClickHouse stores them, and from then on an aggregate
-            // over the column is NaN and a JSON-format read has no form to
-            // render it in — so the value a handler never meant to write would
-            // be the one nothing downstream can get rid of.
             if !value.is_finite() {
                 bail!(
                     "{value} is not a value a Float64 column can hold. Store a finite number, \
@@ -428,8 +353,6 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
         }
         (ColumnValues::F64(v), other) => {
             let value = v[row];
-            // A non-integral float would truncate silently; the column has no
-            // fractional part to put it in.
             if value.fract() != 0.0 || !value.is_finite() {
                 bail!("{value} is not an integer, which a {other:?} column requires");
             }
@@ -438,9 +361,6 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
         (ColumnValues::U64(v), ChType::Float64) => {
             out.extend_from_slice(&(v[row] as f64).to_le_bytes())
         }
-        // Straight through: the column's range is the wire type's own, so the
-        // bounds check below could only ever pass. Every history row carries a
-        // UInt64 checkpoint id, which makes this the most travelled arm here.
         (ColumnValues::U64(v), ChType::UInt64) => out.extend_from_slice(&v[row].to_le_bytes()),
         (ColumnValues::I64(v), ChType::Int64) => out.extend_from_slice(&v[row].to_le_bytes()),
         (ColumnValues::U64(v), other) => put_int(out, v[row] as i128, other)?,
@@ -455,12 +375,8 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
     Ok(())
 }
 
-/// A batch encoded as a RowBinary body, with the byte offset of every row start
-/// so a failed insert can be split at a row boundary and retried in halves.
 #[derive(Debug)]
 pub struct EncodedRows {
-    /// Reference-counted so a retry can take a range without copying the batch,
-    /// which for the usual single successful send is the whole body.
     pub body: Bytes,
     pub row_offsets: Vec<usize>,
 }
@@ -470,7 +386,6 @@ impl EncodedRows {
         self.row_offsets.len()
     }
 
-    /// The bytes of rows `start..end`.
     pub fn slice(&self, start: usize, end: usize) -> Bytes {
         let from = self.row_offsets[start];
         let to = match self.row_offsets.get(end) {
@@ -481,7 +396,6 @@ impl EncodedRows {
     }
 }
 
-/// Encodes `columns` (in target-table order) into a RowBinary body.
 pub fn encode(columns: &[Column], rows: usize) -> Result<EncodedRows> {
     for column in columns {
         if column.values.len() != rows {
@@ -492,8 +406,6 @@ pub fn encode(columns: &[Column], rows: usize) -> Result<EncodedRows> {
             );
         }
     }
-    // A rough average cell width: overshooting wastes a little memory for the
-    // length of one batch, while undershooting re-allocates as rows are written.
     let mut body = Vec::with_capacity(rows * columns.len() * 12);
     let mut row_offsets = Vec::with_capacity(rows);
     for row in 0..rows {
@@ -536,8 +448,6 @@ mod tests {
         owned_column(name, ty, ColumnValues::F64(values.to_vec()))
     }
 
-    // The varint length prefix counts UTF-8 bytes, which is not the length JS
-    // reports for anything outside Latin-1.
     #[test]
     fn encodes_multi_byte_characters_by_their_utf8_length() {
         let encoded = encode(&[text_column("id", "String", &["é😀"])], 1).unwrap();
@@ -576,8 +486,6 @@ mod tests {
         assert_eq!(decoded, vec![0, 1, 127, 128, 300, u64::MAX]);
     }
 
-    /// A truncated body is a bug in whatever produced it, so the reader has to
-    /// say so rather than walk off the end of the buffer.
     #[test]
     fn a_truncated_varint_is_an_error_not_a_panic() {
         assert_eq!(
@@ -631,10 +539,6 @@ mod tests {
         assert_eq!(encoded.body, 15_000_000i64.to_le_bytes().to_vec());
     }
 
-    /// An exponent is an unconstrained `i32`, so a literal like `1e-1000000000`
-    /// names a shift of a billion steps. Each step past zero is a no-op, which
-    /// is what bounds the loop — without that the encoder would sit on one cell
-    /// for the length of the exponent while the batch behind it waits.
     #[test]
     fn an_absurd_exponent_settles_instead_of_running_out_the_shift() {
         let tiny = encode(&[text_column("a", "Decimal(18, 4)", &["1e-1000000000"])], 1).unwrap();
@@ -671,11 +575,6 @@ mod tests {
         assert!(format!("{err:#}").contains("not a variant"));
     }
 
-    // An enum element names its variant, the same as a scalar enum does. A bare
-    // number is the stored discriminant instead, which nothing here can check
-    // against the variants the column declares — and RowBinary carries whatever
-    // it is given, so a number no variant uses would land in the column and
-    // fail every read of the table afterwards.
     #[test]
     fn rejects_an_enum_element_given_as_a_number() {
         let err = encode(
@@ -708,9 +607,6 @@ mod tests {
         assert_eq!(encoded.body, vec![2, 2, 1]);
     }
 
-    // The bound an enum column accepts is the variants it declares, not the
-    // width they are stored in: ClickHouse rejects reads of a discriminant no
-    // variant uses, so 0 and 3 are as unstorable here as 300 is.
     #[test]
     fn rejects_a_discriminant_no_enum_variant_uses() {
         let ch_type = ChType::Enum {
@@ -723,9 +619,6 @@ mod tests {
         assert_eq!(refused, vec![true, false, false, true]);
     }
 
-    // Nothing caps how many variants an enum column is declared with, and past
-    // the widest discriminant its storage holds there is no column that could
-    // keep them apart — writing one would truncate to a different variant.
     #[test]
     fn rejects_an_enum_discriminant_wider_than_its_storage() {
         let ch_type = ChType::Enum {
@@ -758,9 +651,6 @@ mod tests {
         assert_eq!(encoded.body, expected);
     }
 
-    // ClickHouse stores a Bool as one byte and reads any non-zero as true, but
-    // the type holds a bit: a number that is neither 0 nor 1 is a value the
-    // column cannot represent, not one to round off.
     #[test]
     fn rejects_a_number_a_bool_column_cannot_hold() {
         let err = encode(&[text_column("flags", "Array(Bool)", &["[7]"])], 1).unwrap_err();
@@ -770,8 +660,6 @@ mod tests {
         );
     }
 
-    // The same policy as the array element above: a scalar Bool has no more room
-    // for a 7 than one inside an `Array(Bool)` does.
     #[test]
     fn rejects_a_scalar_number_a_bool_column_cannot_hold() {
         let err = encode(&[f64_column("flag", "Bool", &[7.0])], 1).unwrap_err();
@@ -781,8 +669,6 @@ mod tests {
         );
     }
 
-    // Every other non-numeric text is refused, so an empty one must be too —
-    // storing 0 for it would silently invent a value the handler never wrote.
     #[test]
     fn rejects_an_empty_decimal_string() {
         let err = encode(&[text_column("d", "Decimal(38, 0)", &[""])], 1).unwrap_err();
@@ -792,9 +678,6 @@ mod tests {
         );
     }
 
-    // The builder reaches Number() on a value the schema never checked, so NaN
-    // can arrive here. Every other float-to-integer path refuses a non-finite
-    // value; a Bool must not be the one that folds it to true.
     #[test]
     fn rejects_a_non_finite_float_for_a_bool_column() {
         let err = encode(&[f64_column("flag", "Bool", &[f64::NAN])], 1).unwrap_err();
@@ -804,11 +687,6 @@ mod tests {
         );
     }
 
-    // A Float64 column is the one place the bytes for NaN and Infinity would go
-    // in unchanged, and ClickHouse stores them: an aggregate over the column is
-    // NaN from then on, and a JSON-format read has no form to render them in.
-    // The same value inside an `Array(Float64)` is refused, so the scalar column
-    // cannot be the one that quietly takes it.
     #[test]
     fn rejects_a_non_finite_float_for_a_float_column() {
         let refused: Vec<String> = [f64::NAN, f64::INFINITY, f64::NEG_INFINITY]
@@ -835,9 +713,6 @@ mod tests {
         assert_eq!(encoded.body, 1.5f64.to_le_bytes().to_vec());
     }
 
-    // A `[Json!]!` field maps to Array(String), and its elements are whatever
-    // the handler put there — so a non-string element is a schema the encoder
-    // has to keep taking, not a mistake to refuse.
     #[test]
     fn a_json_element_of_a_string_array_is_stored_as_its_text() {
         let encoded = encode(
@@ -857,9 +732,6 @@ mod tests {
         assert_eq!(encoded.body, expected);
     }
 
-    /// A `Decimal` element can arrive as a JSON number rather than a string,
-    /// which takes a different arm of the encoder — one that scales the integer
-    /// directly instead of parsing a literal.
     #[test]
     fn encodes_decimal_array_elements_given_as_json_numbers() {
         let encoded = encode(
@@ -874,9 +746,6 @@ mod tests {
         assert_eq!(encoded.body, expected);
     }
 
-    /// The scaling can carry a value past what the column accepts, which has to
-    /// be an error rather than a wrapped integer: RowBinary has no room to
-    /// report one.
     #[test]
     fn rejects_a_decimal_array_element_the_column_cannot_hold() {
         let encoded = encode(
@@ -922,9 +791,6 @@ mod tests {
         assert_eq!(encoded.body, expected);
     }
 
-    // The scalar path rejects a fractional value for an integer column, and an
-    // array's elements have to agree: truncating one silently stores a number
-    // the handler never wrote.
     #[test]
     fn rejects_a_fractional_array_element_for_an_integer_column() {
         let err = encode(&[text_column("xs", "Array(Int32)", &["[1.5]"])], 1).unwrap_err();
@@ -965,8 +831,6 @@ mod tests {
         assert_eq!(encoded.body, expected);
     }
 
-    // An element the column's type has no room for is refused rather than
-    // coerced: a bool is not a Float64, and an object is not a String.
     #[test]
     fn rejects_an_element_of_the_wrong_json_shape() {
         let err = encode(&[text_column("xs", "Array(Float64)", &["[true]"])], 1).unwrap_err();
@@ -1016,8 +880,6 @@ mod tests {
         );
     }
 
-    // RowBinary is the raw integer, so nothing downstream notices a value that
-    // does not fit — it silently becomes a different number.
     #[test]
     fn rejects_an_integer_wider_than_its_column() {
         let too_big = encode(&[f64_column("n", "Int32", &[3e9])], 1).unwrap_err();
@@ -1031,8 +893,6 @@ mod tests {
         );
     }
 
-    // The same bound applies to an array's elements, which reach `put_int` by a
-    // different route.
     #[test]
     fn rejects_an_array_element_wider_than_its_column() {
         let err = encode(&[text_column("xs", "Array(Int32)", &["[3000000000]"])], 1).unwrap_err();
@@ -1058,8 +918,6 @@ mod tests {
         assert_eq!(encoded.body, expected);
     }
 
-    // A Decimal's precision bounds it, not the width of its backing integer:
-    // Decimal(10, 8) is 8 bytes but only accepts 10 digits.
     #[test]
     fn rejects_a_decimal_past_the_columns_precision() {
         let err = encode(&[text_column("d", "Decimal(10, 8)", &["1e11"])], 1).unwrap_err();
@@ -1075,8 +933,6 @@ mod tests {
         assert_eq!(encoded.body, 9_999_999_999i64.to_le_bytes().to_vec());
     }
 
-    // Past the range check too: scaling the literal overflows the 128 bits the
-    // encoder carries before there is anything to compare against a bound.
     #[test]
     fn rejects_a_decimal_that_overflows_while_scaling() {
         let err = encode(&[text_column("d", "Decimal(38, 8)", &["1e40"])], 1).unwrap_err();
@@ -1086,8 +942,6 @@ mod tests {
         );
     }
 
-    // Leading zeros carry no magnitude, so a literal padded past 39 digits is
-    // still the value it spells rather than an overflow.
     #[test]
     fn a_decimal_padded_with_leading_zeros_keeps_its_value() {
         let padded = format!("{}42", "0".repeat(60));
@@ -1095,8 +949,6 @@ mod tests {
         assert_eq!(encoded.body, 42i128.to_le_bytes().to_vec());
     }
 
-    // The digits past the column's scale are truncated, so a literal spelling
-    // more of them than the accumulator can hold is still the value it stores.
     #[test]
     fn a_decimal_with_more_fractional_digits_than_the_scale_keeps_its_value() {
         let value = format!("1.{}", "9".repeat(60));

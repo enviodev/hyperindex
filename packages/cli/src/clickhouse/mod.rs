@@ -1,28 +1,3 @@
-//! The ClickHouse write path.
-//!
-//! Everything the runtime sends ClickHouse goes through here: the DDL and the
-//! reorg cleanup as plain statements, and the batch inserts as RowBinary. The
-//! hot path never touches the Node main thread — column values cross the
-//! boundary columnar, get encoded in Rust, and are sent from a tokio task.
-//!
-//! A table is registered once, before any batch. Registration derives each
-//! column's type from the schema field it stores and builds the insert
-//! statement, so a batch carries nothing but values and a handle.
-//!
-//! Splitting `stage` from `write_batch` is what makes the second half
-//! off-thread work: a JS value can only be read while holding the isolate, so
-//! `stage` copies the batch into owned Rust memory on the JS thread and
-//! `write_batch` does the encoding and the HTTP round trips on the tokio pool.
-//!
-//! The runtime hands over the schema rather than ClickHouse types; `ch_type`
-//! turns it into both the DDL and the encoder's layout.
-//!
-//! The encoding and transport are the crate's own rather than the `clickhouse`
-//! crate's, because both ends of this path are shapes its row-oriented serde API
-//! has no room for: values arrive as one array per column with a separate null
-//! mask, and a body has to stay sliceable at row boundaries afterwards so a
-//! failed insert can be retried in halves.
-
 pub mod ch_type;
 pub mod ddl;
 #[cfg(test)]
@@ -46,8 +21,6 @@ use crate::config_parsing::system_config::ChainIdMode;
 use ch_type::{ChType, ColumnKind, FieldSpec};
 use row_binary::{Column, ColumnValues, EncodedRows};
 
-/// Retries an insert this many times before giving up, as the JS client did.
-/// What each retry sends is [`retry_for`]'s to decide.
 const MAX_RETRIES: u32 = 8;
 
 /// `@clickhouse/client`'s `request_timeout` default, which the JS insert path
@@ -71,19 +44,12 @@ const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
 /// `connection closed before message completed`. `@clickhouse/client` set its
 /// `idle_socket_ttl` to 2.5s for the same reason.
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_millis(2_500);
-/// The longest a retry waits, which the delay ramps up to.
 const MAX_RETRY_DELAY: Duration = Duration::from_millis(1_000);
 
-/// Knobs the tests turn down so a run takes milliseconds: the retry waits and
-/// the request timeout a hanging server has to trip.
 #[derive(Debug, Clone, Copy)]
 struct Tuning {
     attempts: u32,
-    /// Deadline for a schema or maintenance statement, which is not the insert
-    /// deadline: these run as long as the data takes.
     statement_timeout: Duration,
-    /// Ceiling on the retry backoff. Tests pass `ZERO` to skip the waits, which
-    /// are the policy's concern rather than the encoder's.
     max_retry_delay: Duration,
     request_timeout: Duration,
 }
@@ -100,8 +66,6 @@ impl Default for Tuning {
 }
 
 impl Tuning {
-    /// Grows from a tenth of the ceiling up to it as the remaining retries run
-    /// down.
     fn delay(&self, retries_left: u32) -> Duration {
         if self.attempts < 2 {
             return Duration::ZERO;
@@ -116,24 +80,17 @@ impl Tuning {
     }
 }
 
-/// A column of a table the caller is registering: the name it goes by, the
-/// schema field name a user-written table expression references it by, and the
-/// field it stores.
 #[napi(object)]
 pub struct ColumnSpecInput {
     pub name: String,
     /// Omitted when it matches `name`, which it does unless a column rename is
     /// configured.
     pub field_name: Option<String>,
-    /// One of `Table.fieldType`'s tags.
     pub field_type: String,
     pub is_nullable: Option<bool>,
     pub is_array: Option<bool>,
-    /// A `BigInt`'s digit count or a `BigDecimal`'s precision.
     pub precision: Option<u32>,
-    /// A `BigDecimal`'s scale.
     pub scale: Option<u32>,
-    /// An `Enum`'s variants, in the order their numbering follows.
     pub enum_variants: Option<Vec<String>>,
 }
 
@@ -164,14 +121,11 @@ impl From<ColumnSpecInput> for ddl::ColumnSpec {
     }
 }
 
-/// One entity as the sink needs it: the table its history goes to, the columns
-/// it declares, and the layout options its `@storage` directive asked for.
 #[napi(object)]
 pub struct EntitySpecInput {
     pub name: String,
     pub history_table: String,
     pub columns: Vec<ColumnSpecInput>,
-    /// Set when the entity is per-chain, which the current-state view dedups on.
     pub chain_id_column: Option<String>,
     pub partition_by: Option<String>,
     pub order_by: Option<Vec<String>>,
@@ -194,68 +148,44 @@ impl From<EntitySpecInput> for ddl::EntitySpec {
     }
 }
 
-/// Everything `initialize` creates, in one crossing.
 #[napi(object)]
 pub struct InitializeInput {
     pub entities: Vec<EntitySpecInput>,
     pub checkpoint_columns: Vec<ColumnSpecInput>,
-    /// `ENVIO_CLICKHOUSE_REPLICATED`.
     pub replicated: bool,
-    /// `ENVIO_CLICKHOUSE_DATABASE_ENGINE`.
     pub database_engine: Option<String>,
 }
 
-/// What a caller needs back to feed a registered table: the handle every batch
-/// quotes, and the wire kind each column must be sent as.
 #[napi(object)]
 #[derive(Debug)]
 pub struct RegisteredTable {
     pub handle: u32,
-    /// Every column the table declares, in the order a batch must send them.
-    /// A history table carries the checkpoint id and change columns this side
-    /// appends, so the list runs past the entity's own.
     pub names: Vec<String>,
     pub kinds: Vec<u8>,
-    /// Whether each column accepts NULL. A batch that has no value for a column
-    /// that does not is refused rather than stored as the type's zero.
     pub nullable: Vec<bool>,
 }
 
-/// One column's values as they cross the napi boundary. Exactly one of the
-/// value fields is set, and which one is settled by the registered type rather
-/// than sent alongside every batch.
 #[napi(object)]
 pub struct ColumnValuesInput {
-    /// Int32, UInt32, Float64, Bool (0/1), DateTime64 (ticks).
     pub numbers: Option<Float64Array>,
-    /// UInt64, which loses precision as an f64.
     pub unsigned64: Option<BigUint64Array>,
-    /// Int64.
     pub signed64: Option<BigInt64Array>,
-    /// String, Decimal, Enum, and the JSON of an Array column.
     pub texts: Option<Vec<String>>,
-    /// `1` marks a NULL. Omitted when the column has none.
     pub nulls: Option<Uint8Array>,
 }
 
-/// A registered column: the parsed type, plus the kind a batch must send it as.
 struct ColumnSchema {
     name: String,
     ch_type: ChType,
     kind: ColumnKind,
 }
 
-/// A table's shape, parsed once at registration. The insert statement is built
-/// here too — the column list never changes, so a batch pays for neither the
-/// parse nor the statement.
 struct TableSchema {
     table: String,
     columns: Vec<ColumnSchema>,
     insert_query: String,
 }
 
-/// One column's staged values, owned by Rust so they can leave the JS thread.
-/// The name and type live in the table's schema rather than being re-sent.
 struct StagedColumnValues {
     values: ColumnValues,
     nulls: Vec<u8>,
@@ -283,9 +213,6 @@ pub struct ClickHouseSink {
     history: ddl::HistorySchema,
 }
 
-/// Where a degradation notice goes. Retries happen while a `flush` is still in
-/// flight, so handing them back at the end would leave an operator staring at
-/// silence for the whole episode — they have to leave Rust as they occur.
 type WarningSink = Arc<dyn Fn(&str) + Send + Sync>;
 
 #[napi(object)]
@@ -294,10 +221,7 @@ pub struct ClickHouseSinkOptions {
     pub username: String,
     pub password: String,
     pub database: String,
-    /// `"int32"` or `"int64"` — the form the config serializes the mode in —
-    /// which every chain-scoped column follows.
     pub chain_id_mode: String,
-    /// The column and table names the runtime's history format fixes.
     pub history: ddl::HistorySchema,
 }
 
@@ -351,8 +275,6 @@ impl ClickHouseSink {
         warn: WarningSink,
     ) -> napi::Result<Self> {
         let client = reqwest::Client::builder()
-            // The sink writes continuously; keeping sockets warm avoids a TLS
-            // handshake per batch against a remote cluster.
             .pool_idle_timeout(POOL_IDLE_TIMEOUT)
             .pool_max_idle_per_host(8)
             .timeout(tuning.request_timeout)
@@ -382,12 +304,6 @@ impl ClickHouseSink {
         })
     }
 
-    /// Registers an entity's history table and keeps its columns under a
-    /// handle, which every batch quotes instead of re-sending the shape.
-    ///
-    /// Separate from `initialize` because an indexer resuming an existing
-    /// storage never runs it, so the write path registers on demand instead of
-    /// depending on that.
     #[napi]
     pub fn register_entity_table(&self, entity: EntitySpecInput) -> napi::Result<RegisteredTable> {
         let entity: ddl::EntitySpec = entity.into();
@@ -397,8 +313,28 @@ impl ClickHouseSink {
         self.register(entity.history_table.clone(), columns)
     }
 
-    /// Registers the checkpoints table, whose columns the runtime supplies the
-    /// same way an entity's are supplied.
+    #[napi]
+    pub fn render_create_history_table(
+        entity: EntitySpecInput,
+        database: String,
+        chain_id_mode: String,
+        history: ddl::HistorySchema,
+    ) -> napi::Result<String> {
+        let entity: ddl::EntitySpec = entity.into();
+        let chain_id_mode = ChainIdMode::parse(&chain_id_mode).map_err(to_napi)?;
+        ddl::create_history_table(
+            &entity,
+            &database,
+            &history,
+            ddl::Topology {
+                replicated: false,
+                ddl_on_cluster: false,
+            },
+            chain_id_mode,
+        )
+        .map_err(to_napi)
+    }
+
     #[napi]
     pub fn register_checkpoints_table(
         &self,
@@ -410,15 +346,11 @@ impl ClickHouseSink {
         self.register(self.history.checkpoints_table.clone(), columns)
     }
 
-    /// Creates the database, every entity's history table, and the current-state
-    /// views over them.
     #[napi]
     pub async fn initialize(&self, input: InitializeInput) -> napi::Result<()> {
         self.initialize_inner(input).await.map_err(to_napi)
     }
 
-    /// Drops everything written past `checkpoint_id`, which is how a restart
-    /// rewinds ClickHouse to the checkpoint Postgres committed.
     #[napi]
     pub async fn resume(&self, checkpoint_id: String) -> napi::Result<()> {
         self.resume_inner(&checkpoint_id).await.map_err(to_napi)
@@ -489,15 +421,6 @@ impl ClickHouseSink {
         Ok(handle)
     }
 
-    /// Inserts every staged batch, then the checkpoints that cover them.
-    ///
-    /// The order is the visibility rule the current-state views depend on: they
-    /// read up to `max(id)` of the checkpoints table, so a checkpoint landing
-    /// before the rows it covers would expose a half-written batch. Keeping it
-    /// here rather than in the caller means the one thing that must not be
-    /// reordered sits next to the code that could reorder it.
-    ///
-    /// Every handle is consumed, so a failed write never leaves a batch behind.
     #[napi]
     pub async fn write_batch(
         &self,
@@ -518,9 +441,6 @@ impl ClickHouseSink {
         Ok(())
     }
 
-    /// Drops staged batches without sending them, for a caller that fails to
-    /// stage the rest of a write: nothing else consumes those handles, so they
-    /// would sit in the staging map for the life of the process.
     #[napi]
     pub fn discard(&self, handles: Vec<u32>) {
         let mut staged = self.staged.lock().unwrap();
@@ -531,8 +451,6 @@ impl ClickHouseSink {
 }
 
 impl ClickHouseSink {
-    /// Keeps a table's columns under a fresh handle and builds the insert its
-    /// batches are sent with.
     fn register(
         &self,
         table: String,
@@ -579,8 +497,6 @@ impl ClickHouseSink {
         })
     }
 
-    /// The checkpoints table's columns as the DDL declares them and the encoder
-    /// writes them — one derivation feeding both.
     fn checkpoint_column_types(
         &self,
         columns: Vec<ddl::ColumnSpec>,
@@ -621,8 +537,6 @@ impl ClickHouseSink {
             // ON CLUSTER on top of it.
             ddl_on_cluster: replicated && !has_replicated_engine,
         };
-        // The `ddl` helpers quote the database name themselves, so they take
-        // `self.database` and only the statements written inline take this.
         let database_ident = quoted(&self.database);
 
         if let Some(engine_spec) = &database_engine {
@@ -638,9 +552,6 @@ impl ClickHouseSink {
             }
         }
 
-        // Rendered before anything destructive runs: deriving a column type is
-        // where a field this encoder cannot hold is refused, and the database
-        // must not already be gone when that happens.
         let history_tables = entities
             .iter()
             .map(|entity| {
@@ -723,8 +634,6 @@ impl ClickHouseSink {
         Ok(())
     }
 
-    /// The engine of the storage database, or `None` when there is no such
-    /// database. A server that cannot be reached is neither: that fails.
     async fn existing_database_engine(&self) -> Result<Option<String>> {
         let answer = self
             .post_statement(format!(
@@ -739,15 +648,9 @@ impl ClickHouseSink {
     }
 
     async fn resume_inner(&self, checkpoint_id: &str) -> Result<()> {
-        // Interpolated into every statement below, so it has to be the number it
-        // claims to be rather than trusted for being internal.
         if checkpoint_id.is_empty() || !checkpoint_id.bytes().all(|b| b.is_ascii_digit()) {
             bail!("`{checkpoint_id}` is not a checkpoint id");
         }
-        // Asked of `system.databases` rather than by running `USE`, whose
-        // failure is the same whether the database is gone or the server is
-        // briefly unreachable. Only the first is answered by reinitializing,
-        // and that answer drops the Postgres database with it.
         if self.existing_database_engine().await?.is_none() {
             bail!(
                 "ClickHouse storage database \"{}\" not found. Please run \
@@ -802,10 +705,6 @@ impl ClickHouseSink {
             .with_context(|| format!("Unknown ClickHouse table handle {handle}"))
     }
 
-    /// Removes every handle from the staging map before any of them is sent, so
-    /// an unknown handle cannot leave the batches beside it stranded there. The
-    /// checkpoints come back separately because they are sent separately —
-    /// after the rows they cover.
     fn take_staged(
         &self,
         entities: &[u32],
@@ -832,10 +731,6 @@ impl ClickHouseSink {
         ))
     }
 
-    /// Statements go in the body rather than the query string: DDL runs long and
-    /// a URL has a length limit. No `database` parameter — `initialize` creates
-    /// the database, so scoping to it would fail before it exists, and every
-    /// statement names its database anyway.
     async fn post_statement(&self, query: String) -> Result<String> {
         let response = self
             .client
@@ -860,9 +755,6 @@ impl ClickHouseSink {
             rows,
             columns,
         } = staged;
-        // On the blocking pool rather than in place: `write_batch` drives every
-        // table's insert from one task, and blocking that task would serialize
-        // the encodes and stall the round trips already in flight beside them.
         let encode_schema = schema.clone();
         let encoded = tokio::task::spawn_blocking(move || {
             let columns: Vec<Column> = encode_schema
@@ -889,24 +781,11 @@ impl ClickHouseSink {
         if encoded.rows() == 0 {
             return Ok(());
         }
-        // Named here rather than left to the server's message: a batch inserts
-        // every entity's table at once, and what comes back — a proxy's status,
-        // a timeout — need not mention the table it answered for.
         self.insert_with_retry(&schema.table, &schema.insert_query, &encoded)
             .await
             .with_context(|| format!("Failed inserting into ClickHouse table `{}`", schema.table))
     }
 
-    /// Sends the batch, retrying what fails. What goes back depends on the
-    /// failure ([`retry_for`]): a batch the server could not take is replaced by
-    /// its two halves, down to a single row, while a server or cluster that
-    /// briefly cannot take writes gets the same rows again after the wait. The
-    /// delay grows from 100ms to 1s as retries run down.
-    ///
-    /// Only a failure another attempt could answer differently is retried at
-    /// all. A server that read the rows and rejected them gives the same verdict
-    /// however few of them come back, so retrying one costs a batch's worth of
-    /// doomed requests and every backoff between them before the error surfaces.
     async fn insert_with_retry(
         &self,
         table: &str,
@@ -914,7 +793,6 @@ impl ClickHouseSink {
         encoded: &EncodedRows,
     ) -> Result<()> {
         let mut failures = 0usize;
-        // Most recent range first, so a Halved failure retries its left half next.
         let mut pending = vec![(0usize, encoded.rows(), self.tuning.attempts)];
         while let Some((start, end, retries)) = pending.pop() {
             match self.post_rows(query, encoded.slice(start, end)).await {
@@ -922,9 +800,6 @@ impl ClickHouseSink {
                 Err(failure)
                     if retries == 0 || matches!(failure.retry, Retry::Never | Retry::Ambiguous) =>
                 {
-                    // Every attempt behind this one already left through `warn`
-                    // as it happened; what the terminal error still owes the
-                    // reader is how many there were.
                     return Err(match failures {
                         0 => failure.error,
                         n => failure
@@ -948,8 +823,6 @@ impl ClickHouseSink {
                             pending.push((mid, end, retries - 1));
                             pending.push((start, mid, retries - 1));
                         }
-                        // Either the rows are not what failed, or halving has
-                        // bottomed out at a single row and only the wait is left.
                         _ => pending.push((start, end, retries - 1)),
                     }
                 }
@@ -994,34 +867,21 @@ impl ClickHouseSink {
     }
 }
 
-/// A failed insert, and what another attempt could do about it.
 struct InsertFailure {
     error: anyhow::Error,
     retry: Retry,
 }
 
-/// What a retry should send after a failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Retry {
-    /// Nothing. Either the rows were read and rejected — the same verdict
-    /// however few of them come back — or the answer came from in front of
-    /// ClickHouse and names something no batch of any size changes, like a
-    /// credential or a route.
     Never,
-    /// The same rows. The condition belongs to the server or the cluster rather
-    /// than to the batch, so a smaller batch meets it identically — and the two
-    /// requests halving makes would only lean harder on whatever is struggling.
     SameRows,
-    /// The rows in halves. The batch itself is what could not be taken, so a
-    /// smaller one is the thing that might land.
     Halved,
     /// The server may already have the rows. Another send would double-write,
     /// so the batch fails and a restart trims back to the Postgres checkpoint.
     Ambiguous,
 }
 
-/// Error codes where the batch is what the server could not take, so halving is
-/// the retry that changes the answer.
 const HALVED_ERROR_CODES: &[u32] = &[
     241, // MEMORY_LIMIT_EXCEEDED
 ];
@@ -1036,11 +896,6 @@ const AMBIGUOUS_ERROR_CODES: &[u32] = &[
     319, // UNKNOWN_STATUS_OF_INSERT
 ];
 
-/// Error codes for a server or cluster that briefly cannot take writes. The rows
-/// are not what it is objecting to, and for the crowding ones (202, 203, 252,
-/// which come of too many requests rather than too large a one) halving is worse
-/// than useless: it answers an overloaded server by making two requests where
-/// one already failed. Waiting is the whole remedy.
 const SAME_ROWS_ERROR_CODES: &[u32] = &[
     202, // TOO_MANY_SIMULTANEOUS_QUERIES
     203, // NO_FREE_CONNECTION
@@ -1079,8 +934,6 @@ fn retry_for(status: reqwest::StatusCode, body: &str) -> Retry {
     }
 }
 
-/// The `N` of the `Code: N. DB::Exception: ...` a ClickHouse error body opens
-/// with.
 fn clickhouse_error_code(body: &str) -> Option<u32> {
     let digits: String = body
         .split_once("Code: ")?
@@ -1106,7 +959,6 @@ mod tests {
         }
     }
 
-    /// A column spec with everything optional left out.
     fn spec(name: &str, field_type: &str) -> ColumnSpecInput {
         ColumnSpecInput {
             name: name.to_string(),
@@ -1139,9 +991,6 @@ mod tests {
         }
     }
 
-    /// Every one of these round-trips back to the input through ClickHouse's own
-    /// parser. A trailing backslash is the case that matters: unescaped, it
-    /// escapes the closing quote and the rest of the statement becomes SQL.
     #[test]
     fn a_literal_survives_whatever_it_is_given() {
         let escaped = [
@@ -1168,9 +1017,6 @@ mod tests {
         );
     }
 
-    /// A field type the derivation does not cover is refused when the table is
-    /// registered — at startup, against no rows — rather than when a live batch
-    /// first reaches the column.
     #[test]
     fn registering_rejects_a_field_type_it_cannot_encode() {
         let server_less = ClickHouseSink::build(
@@ -1190,9 +1036,6 @@ mod tests {
         );
     }
 
-    /// Answers the statements `resume` runs: the existence probe with `engine`
-    /// — empty for a database that is not there — and the table listing with
-    /// `tables`. Everything past those is a trim, which answers with nothing.
     fn resume_answers(engine: &str, tables: &[&str]) -> Arc<mock_server::StatementFn> {
         let engine = engine.to_string();
         let tables = tables.join("\n");
@@ -1207,9 +1050,6 @@ mod tests {
         })
     }
 
-    /// A ClickHouse that cannot be reached is not a ClickHouse whose database is
-    /// gone. Only the second is answered by reinitializing, and that answer
-    /// drops the Postgres database with it — so an outage must not print it.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_that_cannot_reach_the_server_does_not_report_a_missing_database() {
         let unreachable = ClickHouseSink::build(
@@ -1232,8 +1072,6 @@ mod tests {
         );
     }
 
-    /// The same for a server that answers, but through something that is not
-    /// ClickHouse: a proxy's own error says nothing about the database.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_a_proxy_refuses_does_not_report_a_missing_database() {
         let server = mock_server::MockClickHouse::answering_statements(Arc::new(|_: &str| {
@@ -1255,7 +1093,6 @@ mod tests {
         );
     }
 
-    /// A database that really is gone is the one case the advice fits.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_against_a_database_that_is_gone_says_how_to_reinitialize() {
         let server =
@@ -1275,8 +1112,6 @@ mod tests {
         );
     }
 
-    /// The trim itself: every history table the prefix matches, then the
-    /// checkpoints those rows belonged to.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_trims_every_history_table_and_then_the_checkpoints() {
         let server = mock_server::MockClickHouse::answering_statements(resume_answers(
@@ -1293,8 +1128,6 @@ mod tests {
             .into_iter()
             .filter(|statement| statement.starts_with("ALTER") || statement.starts_with("DELETE"))
             .collect();
-        // The history tables are trimmed concurrently, so only the checkpoints
-        // coming last is an ordering the test can hold to.
         let checkpoints = trims.pop();
         trims.sort();
         assert_eq!(
@@ -1317,8 +1150,6 @@ mod tests {
         );
     }
 
-    /// A sink pointed at `server`, holding on to the warnings it emitted so a
-    /// test can assert on what an operator would have seen.
     struct TestSink {
         sink: ClickHouseSink,
         warnings: Arc<Mutex<Vec<String>>>,
@@ -1354,16 +1185,12 @@ mod tests {
             server,
             Tuning {
                 attempts,
-                // The waits are the policy's, not the encoder's; skipping them
-                // keeps the test at milliseconds.
                 max_retry_delay: Duration::ZERO,
                 ..Tuning::default()
             },
         )
     }
 
-    /// Stages `values` as a single `String` column named `id`, registering the
-    /// table it belongs to.
     fn stage_ids(sink: &ClickHouseSink, values: &[&str]) -> u32 {
         let table = sink
             .register_checkpoints_table(vec![spec("id", "String")])
@@ -1372,13 +1199,10 @@ mod tests {
             .unwrap()
     }
 
-    /// Sends one staged batch, which is what a write with no checkpoints does.
     async fn write(sink: &ClickHouseSink, handle: u32) -> napi::Result<()> {
         sink.write_batch(vec![handle], None).await
     }
 
-    // An unknown handle fails the write, and every batch named beside it is
-    // freed rather than left staged for the life of the process.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_write_naming_an_unknown_handle_frees_the_batches_beside_it() {
         let server = mock_server::MockClickHouse::start(0).await;
@@ -1403,8 +1227,6 @@ mod tests {
         );
     }
 
-    // A rejected insert is replaced by its two halves, so the rows in the half
-    // that already landed must not be sent again.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_rejected_insert_is_retried_as_halves_and_every_row_lands_once() {
         let server = mock_server::MockClickHouse::start(1).await;
@@ -1419,7 +1241,6 @@ mod tests {
                 server.inserts_seen(),
                 sink.warnings().len()
             ),
-            // One rejection, then the two halves; four rows, each exactly once.
             (
                 vec![
                     "a".to_string(),
@@ -1433,9 +1254,6 @@ mod tests {
         );
     }
 
-    // A cluster that is briefly unable to take writes — a Keeper session lost,
-    // a replica restarting — is not a verdict on the batch, and halving it makes
-    // two requests where one already failed. The rows go back whole.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_condition_the_batch_is_not_to_blame_for_is_retried_whole() {
         let server = mock_server::MockClickHouse::rejecting_with(
@@ -1450,7 +1268,6 @@ mod tests {
 
         assert_eq!(
             (server.accepted_batches(), server.inserts_seen()),
-            // Two rejections, then all four rows in one insert — never split.
             (
                 vec![vec![
                     "a".to_string(),
@@ -1463,9 +1280,6 @@ mod tests {
         );
     }
 
-    // A proxy's body-size limit is the one verdict from in front of ClickHouse
-    // that a smaller batch meets differently, so this is the case halving is for
-    // even though nothing in the body names a ClickHouse code.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_batch_too_large_for_a_proxy_is_retried_in_halves() {
         let server = mock_server::MockClickHouse::rejecting_with_status(
@@ -1491,8 +1305,6 @@ mod tests {
         );
     }
 
-    // A proxy that is merely overloaded gets waited out, not fanned out to: the
-    // two requests halving would make are what it is already struggling with.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_proxy_that_is_overloaded_is_retried_whole() {
         let server = mock_server::MockClickHouse::rejecting_with_status(
@@ -1520,8 +1332,6 @@ mod tests {
         );
     }
 
-    // Anything else a proxy answers is a deployment's own misconfiguration —
-    // credentials, a route — which no number of smaller batches talks it out of.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_proxy_rejection_a_smaller_batch_cannot_answer_is_not_retried() {
         let server =
@@ -1539,7 +1349,6 @@ mod tests {
         );
     }
 
-    // Halving bottoms out at a single row, which is then retried whole.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_single_row_is_retried_in_place_until_it_lands() {
         let server = mock_server::MockClickHouse::start(2).await;
@@ -1565,8 +1374,6 @@ mod tests {
         assert_eq!(
             (
                 err.reason.contains("mock rejection"),
-                // A batch writes every entity's table at once, so the server's
-                // message is only actionable beside the table it answered for.
                 err.reason.contains("envio_checkpoints"),
                 server.accepted_strings()
             ),
@@ -1576,9 +1383,6 @@ mod tests {
         );
     }
 
-    // Halving a batch is for a server that could not take the rows, not for one
-    // that read them and said no: a verdict on the rows themselves is the same
-    // verdict however few of them are sent again.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_rejection_the_rows_are_to_blame_for_is_not_retried() {
         let server = mock_server::MockClickHouse::rejecting_with(
@@ -1663,9 +1467,6 @@ mod tests {
         );
     }
 
-    // A peer that accepts the connection and then goes silent sends nothing to
-    // react to, so only a client-side deadline ends the request. Without one the
-    // flush — and the write batch behind it — never resolves at all.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_server_that_never_answers_times_out_rather_than_hanging() {
         let server = mock_server::MockClickHouse::start_unresponsive().await;
@@ -1690,8 +1491,6 @@ mod tests {
         );
     }
 
-    // Types come from the caller, so an insert is the only request the sink ever
-    // makes — no `system.columns` round trip in front of a table it has not seen.
     #[tokio::test(flavor = "multi_thread")]
     async fn the_sink_asks_the_server_for_nothing_but_the_insert() {
         let server = mock_server::MockClickHouse::start(0).await;
@@ -1727,9 +1526,6 @@ mod tests {
         );
     }
 
-    // A header value may only carry visible ASCII, so credentials sent as
-    // X-ClickHouse-User/Key fail to build the request at all for a password no
-    // stricter than a deployment is free to choose.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_non_ascii_password_still_authenticates() {
         let server = mock_server::MockClickHouse::start(0).await;
@@ -1748,7 +1544,6 @@ mod tests {
         write(&sink, handle).await.unwrap();
 
         let head = server.heads().first().cloned().unwrap_or_default();
-        // base64("défaut:pässwörd"), which is what a Basic credential carries.
         assert_eq!(
             (
                 head.to_lowercase().contains(

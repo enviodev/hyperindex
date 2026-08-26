@@ -15,9 +15,6 @@ let makeClickHouse = (
   ~password,
   ~chainIdMode: ChainId.mode=Int32,
 ): t => {
-  // Everything the sink sends ClickHouse goes through here: the DDL and the
-  // reorg cleanup as statements, the batches as RowBinary encoded off the Node
-  // main thread.
   let sink = ClickHouse.makeSink(~host, ~username, ~password, ~database, ~chainIdMode)
   let registry = ClickHouse.makeRegistry()
 
@@ -43,8 +40,6 @@ let makeClickHouse = (
         )
         ClickHouse.stageCheckpointsOrThrow(sink, ~registry, ~batch)
       } catch {
-      // Whatever staged before the failure is never written, so it is handed
-      // back rather than left in the sink.
       | exn =>
         sink->ClickHouseSink.discard(entities)
         throw(exn)

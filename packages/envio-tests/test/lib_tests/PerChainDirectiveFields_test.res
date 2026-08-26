@@ -54,15 +54,15 @@ type Transfer @storage(clickhouse: {orderBy: ["chainId", "timestamp"]}) {
         ~database="db",
       ),
       ~message="chain column leads the sorting key",
-    ).toBe(`CREATE TABLE IF NOT EXISTS db.\`envio_history_Transfer\` (
+    ).toBe(`CREATE TABLE IF NOT EXISTS \`db\`.\`envio_history_Transfer\` (
   \`id\` String,
   \`timestamp\` DateTime64(3, 'UTC'),
   \`chain_id\` Int32,
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
-ORDER BY (\`chain_id\`, \`timestamp\`, envio_checkpoint_id)`)
+ORDER BY (\`chain_id\`, \`timestamp\`, \`envio_checkpoint_id\`)`)
   })
 
   it("Sorts by the chain column alone, overriding the default id sorting key", t => {
@@ -83,15 +83,15 @@ type Transfer @storage(clickhouse: {orderBy: ["chainId"]}) {
         ~database="db",
       ),
       ~message="a lone chain column replaces the default id prefix",
-    ).toBe(`CREATE TABLE IF NOT EXISTS db.\`envio_history_Transfer\` (
+    ).toBe(`CREATE TABLE IF NOT EXISTS \`db\`.\`envio_history_Transfer\` (
   \`id\` String,
   \`timestamp\` DateTime64(3, 'UTC'),
   \`chain_id\` Int32,
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
-ORDER BY (\`chain_id\`, envio_checkpoint_id)`)
+ORDER BY (\`chain_id\`, \`envio_checkpoint_id\`)`)
   })
 
   it("Keeps the listed position, so a trailing chain column stays trailing", t => {
@@ -112,15 +112,15 @@ type Transfer @storage(clickhouse: {orderBy: ["timestamp", "chainId"]}) {
         ~database="db",
       ),
       ~message="chain column stays where the schema put it",
-    ).toBe(`CREATE TABLE IF NOT EXISTS db.\`envio_history_Transfer\` (
+    ).toBe(`CREATE TABLE IF NOT EXISTS \`db\`.\`envio_history_Transfer\` (
   \`id\` String,
   \`timestamp\` DateTime64(3, 'UTC'),
   \`chain_id\` Int32,
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
-ORDER BY (\`timestamp\`, \`chain_id\`, envio_checkpoint_id)`)
+ORDER BY (\`timestamp\`, \`chain_id\`, \`envio_checkpoint_id\`)`)
   })
 
   it("Points at the schema spelling when the storage column name is used", t => {
@@ -203,15 +203,15 @@ type Transfer @crossChain @storage(clickhouse: {orderBy: ["chainId", "timestamp"
         ~database="db",
       ),
       ~message="the user's own chainId field sorts like any other",
-    ).toBe(`CREATE TABLE IF NOT EXISTS db.\`envio_history_Transfer\` (
+    ).toBe(`CREATE TABLE IF NOT EXISTS \`db\`.\`envio_history_Transfer\` (
   \`id\` String,
   \`chain_id\` Int32,
   \`timestamp\` DateTime64(3, 'UTC'),
   \`envio_checkpoint_id\` UInt64,
-  \`envio_change\` Enum8('SET', 'DELETE')
+  \`envio_change\` Enum8('SET' = 1, 'DELETE' = 2)
 )
 ENGINE = MergeTree()
-ORDER BY (\`chain_id\`, \`timestamp\`, envio_checkpoint_id)`)
+ORDER BY (\`chain_id\`, \`timestamp\`, \`envio_checkpoint_id\`)`)
   })
 
   it("Lists the columns available when the name is nothing at all", t => {

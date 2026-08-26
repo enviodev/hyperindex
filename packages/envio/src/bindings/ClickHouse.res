@@ -1,12 +1,4 @@
-// What the ClickHouse sink is handed and what comes back out of it. The schema
-// crosses to Rust as schema; what stays here is what only JS can do — reading
-// entity values out of the isolate into the columnar builders a batch is
-// staged from.
 
-// Serialized keys are the db column names, while the entity values are keyed
-// by API field names (they only differ when column renaming is configured).
-// `skipColumn` names a column the row carries as a constant instead — the chain
-// id of a per-chain entity, which the scope knows and the entity never holds.
 let makeClickHouseEntitySchema = (table: Table.table, ~skipColumn: option<string>=?): S.t<
   Internal.entity,
 > => {
@@ -32,8 +24,8 @@ let makeClickHouseEntitySchema = (table: Table.table, ~skipColumn: option<string
           }
           dict->Dict.set(f->Table.getApiFieldName, s.field(fieldName, fieldSchema))
         }
-      | Field(_) => () // Tagged by the caller
-      | DerivedFrom(_) => () // Skip derived fields
+      | Field(_) => ()
+      | DerivedFrom(_) => ()
       }
     })
     dict->(Utils.magic: dict<unknown> => Internal.entity)
@@ -42,14 +34,11 @@ let makeClickHouseEntitySchema = (table: Table.table, ~skipColumn: option<string
 
 let logger = Logging.createChild(~params={"context": "ClickHouse"})
 
-// Warnings reach the logger as they happen: a retry storm runs inside a single
-// write, so anything handed back at the end would only be read once it is over.
 let makeSink = (~host, ~username, ~password, ~database, ~chainIdMode) =>
   ClickHouseSink.make(~url=host, ~username, ~password, ~database, ~chainIdMode, ~onWarning=msg =>
     logger->Logging.childWarn({"msg": msg})
   )
 
-// The schema field a column stores, in the shape the sink reads it.
 let makeColumnSpec = (
   ~name,
   ~fieldName=name,
@@ -101,22 +90,8 @@ type checkpointColumn = {
   valuesOf: Batch.t => array<unknown>,
 }
 
-// The checkpoints table as ClickHouse holds it. The field types and order come
-// from the internal table itself, so a column added there cannot be silently
-// missing here; only the value accessor and the one type that differs are
-// stated. `events_processed` is widened because ClickHouse counts them in a
-// UInt64 where Postgres stores an Int32.
-//
-// Keyed by name and not by a switch on `Checkpoints.field`: `mkField` takes a
-// plain string, so nothing forces a new column through the variant, and
-// ReScript compiles a closed-variant match to an if/else chain whose last arm
-// is the bare `else` — a name the variant does not know would take the last
-// branch and be written from the wrong batch array rather than being refused.
 %%private(let checkpointColumnsCache: ref<option<array<checkpointColumn>>> = ref(None))
 
-// Built on first use rather than at module load: it throws when a column has no
-// value accessor, which at load time would take down an indexer that never
-// writes to ClickHouse at all.
 let checkpointColumns = () =>
   switch checkpointColumnsCache.contents {
   | Some(columns) => columns
@@ -179,9 +154,6 @@ let checkpointColumnSpecs = () =>
     makeColumnSpec(~name, ~fieldType, ~isNullable)
   )
 
-// One entity as the sink needs it: the history table it writes, the columns it
-// declares, and the layout its `@storage(clickhouse: {...})` directive asked
-// for. Rust turns this into both the `CREATE TABLE` and the encoder's schema.
 let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySpec => {
   let options = entityConfig.storage.clickhouseOptions
   {
@@ -228,15 +200,23 @@ let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySp
   }
 }
 
-// The compiled serializers for one entity and chain scope. Only these vary with
-// the scope; the column set does not, so the registered table is shared.
+let makeCreateHistoryTableQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~database,
+  ~chainIdMode: ChainId.mode=Int32,
+) =>
+  Core.getAddon().clickHouseSink->ClickHouseSink.renderCreateHistoryTable(
+    entitySpec(~entityConfig),
+    ~database,
+    ~chainIdMode=(chainIdMode :> string),
+    ~history=ClickHouseSink.historySchema(),
+  )
+
 type converters = {
   convertSetOrThrow: Change.t<Internal.entity> => dict<unknown>,
   convertDeleteOrThrow: Change.t<Internal.entity> => dict<unknown>,
 }
 
-// What a sink needs to write: the tables it has registered, and the serializers
-// it has compiled.
 type registry = {
   entities: dict<ClickHouseSink.table>,
   mutable checkpoints: option<ClickHouseSink.table>,
@@ -259,9 +239,6 @@ let makeConverters = (
   ~scope: Internal.chainScope,
 ): converters => {
   let idSchema = entityConfig.table->Table.getIdSchema
-  // Every row a converter writes belongs to one chain, so the column is a
-  // constant of the schema rather than a value read off each row — which is why
-  // these are cached per scope. A cross-chain entity has no such column.
   let chainIdTag = switch (
     entityConfig.table->Table.getChainIdField,
     scope->Internal.chainScopeChainId,
@@ -281,8 +258,6 @@ let makeConverters = (
         ),
       ),
     ),
-    // A delete row carries only what identifies it; every other column is
-    // absent and takes its ClickHouse default.
     convertDeleteOrThrow: compileToColumnValues(
       S.object(s => {
         s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
@@ -302,10 +277,6 @@ let makeConverters = (
   }
 }
 
-// Registering derives the column types, which is where a field this encoder
-// cannot hold is refused. `initialize` warms every table so that lands at
-// startup, but an indexer resuming an existing storage never runs it — so the
-// write path registers on demand rather than depending on that.
 let entityTable = (sink, ~registry, ~entityConfig: Internal.entityConfig) =>
   switch registry.entities->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) {
   | Some(table) => table
@@ -331,9 +302,6 @@ let checkpointsTable = (sink, ~registry) =>
     table
   }
 
-// Copies the batch into the sink and returns the handle to write. Splitting
-// staging from the write is what lets the values be read on the JS thread while
-// the encode and the round trip happen off it.
 let stageBuilders = (sink, ~table: ClickHouseSink.table, ~builders, ~rows) =>
   sink->ClickHouseSink.stage(
     ~table=table.handle,
@@ -347,19 +315,12 @@ let stageCheckpointsOrThrow = (sink, ~registry, ~batch: Batch.t) => {
     Null.null
   } else {
     let table = sink->checkpointsTable(~registry)
-    // Keyed by name rather than by position. The registered columns come from
-    // this same list, so the orders do match today; what the name buys is that
-    // a future divergence fails to find a column instead of pairing one with its
-    // neighbour's values, which nothing downstream could catch — every array
-    // reaches the builders as `unknown`.
     let values = Dict.make()
     checkpointColumns()->Array.forEach(({name, valuesOf}) =>
       values->Dict.set(name, valuesOf(batch))
     )
     try {
       let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
-      // A checkpoint id past what UInt64 holds is refused here rather than being
-      // reduced to a different id by the typed array it would land in.
       builders->Array.forEach(builder => {
         let columnValues = values->Dict.getUnsafe(builder.name)
         for row in 0 to rows - 1 {
@@ -409,11 +370,6 @@ let stageUpdatesOrThrow = (
       let columns = builders->Array.length
       for row in 0 to rows - 1 {
         let change = changes->Array.getUnsafe(row)
-        // The entity history table is the source of truth for ClickHouse, so
-        // every intermediate change must be persisted, not only the current value.
-        // A DELETE row carries only what identifies it, so the columns it
-        // leaves out are absent on purpose; on a SET row the same gap is a
-        // field the handler never set, which the writer refuses.
         let (values, write) = switch change {
         | Change.Set(_) => (convertSetOrThrow(change), ClickHouseSink.writeValue)
         | Delete(_) => (convertDeleteOrThrow(change), ClickHouseSink.writeDeletedValue)
@@ -436,10 +392,6 @@ let stageUpdatesOrThrow = (
   }
 }
 
-// Sends every staged batch, then the checkpoints that cover them. The ordering
-// is Rust's to keep: the current-state views read up to `max(id)` of the
-// checkpoints table, so a checkpoint visible before its rows would expose a
-// partial batch.
 let writeStagedOrThrow = async (sink, ~entities, ~checkpoints) =>
   try await sink->ClickHouseSink.writeBatch(~entities, ~checkpoints) catch {
   | exn =>
@@ -451,8 +403,6 @@ let writeStagedOrThrow = async (sink, ~entities, ~checkpoints) =>
     )
   }
 
-// Creates the database, the history tables and the views. Rust renders every
-// statement from the specs below and runs them in the order the views depend on.
 let initialize = async (sink, ~registry, ~entities: array<Internal.entityConfig>) => {
   try {
     await sink->ClickHouseSink.initialize({
@@ -462,8 +412,6 @@ let initialize = async (sink, ~registry, ~entities: array<Internal.entityConfig>
       databaseEngine: ?Env.ClickHouse.databaseEngine(),
     })
 
-    // Registered here rather than on first use, so a column this encoder cannot
-    // hold stops the indexer at startup, with nothing written.
     let _ = sink->checkpointsTable(~registry)
     entities->Array.forEach(entityConfig => ignore(sink->entityTable(~registry, ~entityConfig)))
 
@@ -481,8 +429,6 @@ let initialize = async (sink, ~registry, ~entities: array<Internal.entityConfig>
   }
 }
 
-// Rewinds ClickHouse to the checkpoint Postgres committed, dropping the history
-// rows and checkpoints written past it.
 let resume = async (sink, ~checkpointId: Internal.checkpointId) => {
   try await sink->ClickHouseSink.resume(checkpointId->BigInt.toString) catch {
   | exn => {
