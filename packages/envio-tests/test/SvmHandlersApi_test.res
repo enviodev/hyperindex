@@ -428,11 +428,16 @@ if (0) {
   it("narrows selected handler fields to the spec shapes", _ =>
     check(`
 import { indexer } from "envio";
+import type { FieldNotSelected } from "envio";
 import { expectType, type TypeEqual } from "ts-expect";
 
 type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
   ? true
   : false;
+
+type NotSelectedActivity<Name extends string> = FieldNotSelected<
+  \`Field '\${Name}' is not selected for this handler. Add it to fields.accountActivity in the registration options.\`
+>;
 
 if (0) {
   indexer.onInstruction(
@@ -463,11 +468,25 @@ if (0) {
       expectType<TypeEqual<typeof instruction.transaction.accountActivities[number]["address"], string>>(true);
       expectType<TypeEqual<typeof instruction.transaction.accountActivities[number]["transactionAccountIndex"], number>>(true);
       expectType<IsNotSelected<typeof instruction.transaction.accountActivities[number]["isSigner"]>>(true);
-      expectType<TypeEqual<NonNullable<typeof instruction.transaction.accountActivities[number]["lamports"]>["post"], bigint>>(true);
-      expectType<IsNotSelected<NonNullable<typeof instruction.transaction.accountActivities[number]["lamports"]>["pre"]>>(true);
+      expectType<
+        TypeEqual<
+          typeof instruction.transaction.accountActivities[number]["lamports"],
+          { readonly pre: NotSelectedActivity<"lamports.pre">; readonly post: bigint } | undefined
+        >
+      >(true);
       expectType<TypeEqual<typeof instruction.accounts.source.activity, typeof instruction.transaction.accountActivities[number] | undefined>>(true);
-      expectType<TypeEqual<NonNullable<typeof instruction.transaction.accountActivities[number]["token"]>["mint"], string>>(true);
-      expectType<IsNotSelected<NonNullable<typeof instruction.transaction.accountActivities[number]["token"]>["owner"]>>(true);
+      expectType<
+        TypeEqual<
+          typeof instruction.transaction.accountActivities[number]["token"],
+          {
+            readonly mint: string;
+            readonly owner: NotSelectedActivity<"token.owner">;
+            readonly decimals: NotSelectedActivity<"token.decimals">;
+            readonly preAmount: NotSelectedActivity<"token.preAmount">;
+            readonly postAmount: NotSelectedActivity<"token.postAmount">;
+          } | undefined
+        >
+      >(true);
       expectType<IsNotSelected<typeof instruction.transaction.feePayer>>(true);
       expectType<TypeEqual<typeof instruction.logs[number]["kind"], "invoke" | "success" | "failed" | "consumed" | "log" | "data" | (string & {})>>(true);
       expectType<TypeEqual<typeof instruction.logs[number]["message"], string>>(true);
@@ -587,6 +606,7 @@ import type {
   SvmAllLogFields,
   SvmBlock,
   SvmFieldsSelection,
+  FieldNotSelected,
   SvmInstruction,
   SvmInstructionAccount,
   SvmLog,
@@ -602,9 +622,9 @@ const fields = {
   log: ["message"],
 } as const satisfies SvmFieldsSelection;
 
-type IsNotSelected<T> = T extends { readonly __fieldNotSelected: string }
-  ? true
-  : false;
+type NotSelectedActivity<Name extends string> = FieldNotSelected<
+  \`Field '\${Name}' is not selected for this handler. Add it to fields.accountActivity in the registration options.\`
+>;
 
 if (0) {
   indexer.onInstruction(
@@ -631,25 +651,26 @@ expectType<TypeEqual<SvmBlock<SvmAllFieldsSelection>, SvmAllBlockFields>>(true);
 expectType<TypeEqual<SvmLog<SvmAllFieldsSelection>, SvmAllLogFields>>(true);
 expectType<TypeEqual<SvmTransaction<SvmAllFieldsSelection>["fee"], bigint>>(true);
 
-// lamports and token narrow the same way: each subfield is named in full, and
-// listing them all rebuilds the record.
-expectType<TypeEqual<NonNullable<SvmAccountLamports<{ accountActivity: ["lamports.post"] }>>["post"], bigint>>(true);
-expectType<IsNotSelected<NonNullable<SvmAccountLamports<{ accountActivity: ["lamports.post"] }>>["pre"]>>(true);
-expectType<TypeEqual<SvmAccountLamports<{ accountActivity: ["lamports.pre", "lamports.post"] }>, SvmAllAccountLamportsFields | undefined>>(true);
-expectType<TypeEqual<NonNullable<SvmAccountTokenActivity<{ accountActivity: ["token.mint"] }>>["mint"], string>>(true);
-expectType<IsNotSelected<NonNullable<SvmAccountTokenActivity<{ accountActivity: ["token.mint"] }>>["decimals"]>>(true);
-
-// The brand names the dotted field, so the message points at what to add.
+// lamports and token narrow the same way: each subfield is named in full,
+// unlisted ones carry the brand naming them, and listing them all rebuilds the
+// record.
 expectType<
   TypeEqual<
-    NonNullable<SvmAccountLamports<{ accountActivity: ["lamports.post"] }>>["pre"]["__fieldNotSelected"],
-    "Field 'lamports.pre' is not selected for this handler. Add it to fields.accountActivity in the registration options."
+    SvmAccountLamports<{ accountActivity: ["lamports.post"] }>,
+    { readonly pre: NotSelectedActivity<"lamports.pre">; readonly post: bigint } | undefined
   >
 >(true);
+expectType<TypeEqual<SvmAccountLamports<{ accountActivity: ["lamports.pre", "lamports.post"] }>, SvmAllAccountLamportsFields | undefined>>(true);
 expectType<
   TypeEqual<
-    NonNullable<SvmAccountTokenActivity<{ accountActivity: ["token.mint"] }>>["decimals"]["__fieldNotSelected"],
-    "Field 'token.decimals' is not selected for this handler. Add it to fields.accountActivity in the registration options."
+    SvmAccountTokenActivity<{ accountActivity: ["token.mint"] }>,
+    {
+      readonly mint: string;
+      readonly owner: NotSelectedActivity<"token.owner">;
+      readonly decimals: NotSelectedActivity<"token.decimals">;
+      readonly preAmount: NotSelectedActivity<"token.preAmount">;
+      readonly postAmount: NotSelectedActivity<"token.postAmount">;
+    } | undefined
   >
 >(true);
 expectType<
@@ -662,9 +683,19 @@ expectType<
 >(true);
 
 // An account with no accountActivity selection still names its account.
-type BareAccount = SvmInstructionAccount<{ instruction: ["accounts"] }, "source">;
-expectType<TypeEqual<BareAccount["accountName"], "source">>(true);
-expectType<TypeEqual<BareAccount["address"], string>>(true);
+expectType<
+  TypeEqual<
+    SvmInstructionAccount<{ instruction: ["accounts"] }, "source">,
+    {
+      readonly address: string;
+      readonly accountName: "source";
+      readonly instructionAccountIndex: number;
+      readonly activity:
+        | FieldNotSelected<"Field 'activity' is not selected for this handler. Add fields.accountActivity in the registration options.">
+        | undefined;
+    }
+  >
+>(true);
 
 // @ts-expect-error - fields selection is required
 type _bareAccount = SvmInstructionAccount;
