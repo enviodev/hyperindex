@@ -276,6 +276,7 @@ let makeInitialState = (
   {
     cleanRun: true,
     contractMapping,
+    envioInfo: Some(Config.getPublicConfigJson()->Config.stripSensitiveData),
     cache: Dict.make(),
     chains,
     checkpointId: InternalTable.Checkpoints.initialCheckpointId,
@@ -588,7 +589,6 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called; the initial state is derived from config.",
     ),
-  readEnvioInfo: async () => Some(Config.getPublicConfigJson()->Config.stripSensitiveData),
   resumeInitialState: async () =>
     JsError.throwWithMessage(
       "TestIndexer: resumeInitialState should not be called; the initial state is derived from config.",

@@ -187,6 +187,7 @@ let reorgCheckpoints = (state: t): array<Internal.reorgCheckpoint> =>
 let toInitialState = (state: t, ~cleanRun, ~contractMapping): Persistence.initialState => {
   cleanRun,
   contractMapping,
+  envioInfo: state.envioInfo,
   cache: state.cache,
   chains: state->toInitialChainStates,
   checkpointId: state->committedCheckpointId,
@@ -546,7 +547,6 @@ let toStorage = (state: t, ~config: Config.t): Persistence.storage => {
     state.isInitialized = true
     state->toInitialState(~cleanRun=true, ~contractMapping)
   },
-  readEnvioInfo: async () => state.envioInfo,
   resumeInitialState: async () =>
     state->toInitialState(~cleanRun=false, ~contractMapping=config.contractMapping),
   loadOrThrow: async (~filter, ~table: Table.table) =>

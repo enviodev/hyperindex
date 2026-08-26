@@ -29,6 +29,7 @@ let readyPersistence = (~config=config, ~storage) => {
   storageStatus: Persistence.Ready({
     cleanRun: false,
     contractMapping: config.contractMapping,
+    envioInfo: Some(Config.getPublicConfigJson()->Config.stripSensitiveData),
     cache: Dict.make(),
     chains: [],
     reorgCheckpoints: [],

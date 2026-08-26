@@ -38,6 +38,9 @@ type initialState = {
   // On a resume this is what the database holds, not what the config would
   // derive — the ids must never reshuffle under stored rows.
   contractMapping: ContractMapping.t,
+  // Public config snapshot, restored with the address rows. None when
+  // envio_info or envio_contracts is missing.
+  envioInfo: option<JSON.t>,
   cache: dict<effectCacheRecord>,
   chains: array<initialChainState>,
   checkpointId: Internal.checkpointId,
@@ -98,11 +101,6 @@ type storage = {
     ~contractMapping: ContractMapping.t,
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
-  // The public config snapshot stored by the last successful initialize, for
-  // `init`'s compat check. None when the schema pre-dates `envio_info` or the
-  // row was wiped. Read before anything else on a resume: an incompatible
-  // schema must be reported as such rather than as a missing column.
-  readEnvioInfo: unit => promise<option<JSON.t>>,
   resumeInitialState: unit => promise<initialState>,
   // Returns rows matching the filter.
   // Field values are serialized and rows parsed with the table's field schemas.
@@ -264,18 +262,11 @@ let init = {
           }
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
-          // Compat-check the running config against what was stored on the
-          // last successful initialize, before reading anything the stored
-          // schema may not have. None means the schema pre-dates envio_info
-          // (or the row was wiped out-of-band) and we can't compare — treat it
-          // as a version mismatch.
-          let changedPaths = switch await persistence.storage.readEnvioInfo() {
+          let initialState = await persistence.storage.resumeInitialState()
+          let changedPaths = switch initialState.envioInfo {
           | None => ["storage was initialized by an older envio version"]
           | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
           }
-          // `storage.clickhouse` is serialized as a plain bool by the
-          // public config (see Rust `StorageConfig`), so probe for
-          // `Boolean(true)`, not an object.
           let hasClickhouse = switch envioInfo {
           | Object(d) =>
             switch d->Dict.get("storage") {
@@ -289,12 +280,6 @@ let init = {
           | _ => false
           }
           Config.throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
-          let initialState = await persistence.storage.resumeInitialState()
-
-          // Belt and braces on top of the config diff: every stored address row
-          // names its contract by the id this mapping assigns, so a mapping
-          // that no longer matches the config would silently attribute
-          // addresses to the wrong contract.
           if !(initialState.contractMapping->ContractMapping.isEqual(contractMapping)) {
             Config.throwIfIncompatible(["contracts"], ~resetCommand, ~runCommand, ~hasClickhouse)
           }

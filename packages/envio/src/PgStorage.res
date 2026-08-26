@@ -1869,6 +1869,7 @@ let make = (
       cache,
       reorgCheckpoints: [],
       contractMapping,
+      envioInfo: Some(envioInfo),
       chains: chainConfigs->Array.mapWithIndex((
         chainConfig,
         idx,
@@ -2271,7 +2272,7 @@ let make = (
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints, contractMapping) = await Promise.all5((
+    let (cache, chains, checkpointIdResult, reorgCheckpoints, (envioInfo, contractMapping)) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
@@ -2305,12 +2306,17 @@ let make = (
           }>,
         >
       ),
-      InternalTable.EnvioContracts.read(sql, ~pgSchema)->Promise.thenResolve(stored =>
-        // `readEnvioInfo` already refused the resume without this table, so a
-        // missing one here means the gate was skipped, not an old schema.
-        stored
-        ->Option.getOrThrow(~message=`Resumed without a stored contract mapping.`)
-        ->ContractMapping.fromStoredNames
+      Promise.all2((
+        InternalTable.EnvioInfo.read(sql, ~pgSchema),
+        InternalTable.EnvioContracts.read(sql, ~pgSchema),
+      ))->Promise.thenResolve(((info, names)) =>
+        // Both tables join the schema in one transaction. A missing mapping
+        // means an older envio wrote this schema, so treat the snapshot as
+        // unreadable rather than decoding address rows against ids nothing assigned.
+        switch (info, names) {
+        | (Some(info), Some(names)) => (Some(info), ContractMapping.fromStoredNames(names))
+        | _ => (None, ContractMapping.empty)
+        }
       ),
     ))
 
@@ -2339,6 +2345,7 @@ let make = (
       chains,
       checkpointId,
       contractMapping,
+      envioInfo,
     }
   }
 
@@ -2492,19 +2499,6 @@ let make = (
     name: storageName,
     isInitialized,
     initialize,
-    readEnvioInfo: async () => {
-      let (envioInfo, contractNames) = await Promise.all2((
-        InternalTable.EnvioInfo.read(sql, ~pgSchema),
-        InternalTable.EnvioContracts.read(sql, ~pgSchema),
-      ))
-      // Both tables joined the schema together, so an envio_info row without
-      // the contract mapping is an older envio's schema — report it as such
-      // rather than resuming address rows nothing can decode.
-      switch (envioInfo, contractNames) {
-      | (Some(envioInfo), Some(_)) => Some(envioInfo)
-      | _ => None
-      }
-    },
     resumeInitialState,
     loadOrThrow,
     ensureQueryIndexes,

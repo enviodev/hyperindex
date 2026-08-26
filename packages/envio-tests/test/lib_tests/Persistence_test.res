@@ -74,6 +74,7 @@ describe("Test Persistence layer init", () => {
     let initialState: Persistence.initialState = {
       cleanRun: true,
       contractMapping: ContractMapping.empty,
+      envioInfo: Some(envioInfo),
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
@@ -132,10 +133,7 @@ describe("Test Persistence layer init", () => {
   Async.it("Should skip initialization when storage is already initialized", async t => {
     let envioInfo = JSON.Encode.object(Dict.make())
     // The stored snapshot matches the running one, so the compat gate no-ops.
-    let storageMock = MockStorage.make(
-      [#isInitialized, #resumeInitialState],
-      ~storedEnvioInfo=Some(envioInfo),
-    )
+    let storageMock = MockStorage.make([#isInitialized, #resumeInitialState])
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
@@ -148,13 +146,13 @@ describe("Test Persistence layer init", () => {
       persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
 
     storageMock.resolveIsInitialized(true)
-    // The compat gate reads the stored config snapshot before resuming, so the
-    // resume call isn't waiting yet after a single microtask.
+    // Let resumeInitialState register its resolver.
     await Utils.delay(0)
 
     let initialState: Persistence.initialState = {
       cleanRun: false,
       contractMapping: ContractMapping.empty,
+      envioInfo: Some(envioInfo),
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
@@ -177,22 +175,18 @@ Although it should load effect caches metadata.`,
     ).toEqual((1, 0, 1))
   })
 
-  // Drive a single resume against a mock that returns `~storedEnvioInfo` from
-  // resumeInitialState, then capture whatever Persistence.init throws.
+  // Drive a single resume whose payload carries `~storedEnvioInfo`, then
+  // capture whatever Persistence.init throws.
   let resumeWith = async (
     ~storedEnvioInfo: option<JSON.t>,
     ~current: JSON.t,
     ~resetCommand=resetCmd,
     ~runCommand=runCmd,
   ) => {
-    let storageMock = MockStorage.make(
-      [#isInitialized, #resumeInitialState],
-      ~storedEnvioInfo,
-    )
+    let storageMock = MockStorage.make([#isInitialized, #resumeInitialState])
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
-    // The rejection is captured as init runs, not awaited afterwards: the
-    // compat gate throws before the mock's resume call is ever made, and an
-    // unattached rejection would surface as an unhandled one.
+    // Attach before resolving the mock: throwIfIncompatible rejects this
+    // promise, and an unattached rejection would surface as unhandled.
     let settled = (
       async () =>
         switch await persistence->Persistence.init(
@@ -211,6 +205,7 @@ Although it should load effect caches metadata.`,
     let initialState: Persistence.initialState = {
       cleanRun: false,
       contractMapping: ContractMapping.empty,
+      envioInfo: storedEnvioInfo,
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
