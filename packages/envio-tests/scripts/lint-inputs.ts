@@ -15,6 +15,41 @@ const delay = /^\s*(?:await\s+)?Utils\.delay\(0\)\s*$/;
 const resolveCall =
   /^\s*(?:await\s+)?\S*\b(resolveGetItemsOrThrow|resolveGetHeightOrThrow|drainItemsQueries)\b/;
 
+// The scan has to reach the resolver past whatever sits between it and the
+// delay. A comment that hid a violation would make the lint quietly useless.
+const nextCodeLine = (lines: string[], start: number): string | null => {
+  let inBlockComment = false;
+  for (let index = start; index < lines.length; index++) {
+    let rest = lines[index];
+    let code = "";
+    if (inBlockComment) {
+      const close = rest.indexOf("*/");
+      if (close === -1) continue;
+      rest = rest.slice(close + 2);
+      inBlockComment = false;
+    }
+    for (;;) {
+      const open = rest.indexOf("/*");
+      if (open === -1) {
+        code += rest;
+        break;
+      }
+      const close = rest.indexOf("*/", open + 2);
+      if (close === -1) {
+        code += rest.slice(0, open);
+        inBlockComment = true;
+        break;
+      }
+      code += rest.slice(0, open);
+      rest = rest.slice(close + 2);
+    }
+    const trimmed = code.trim();
+    if (trimmed === "" || trimmed.startsWith("//")) continue;
+    return code;
+  }
+  return null;
+};
+
 const resFiles = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
@@ -27,9 +62,7 @@ for (const path of resFiles(testRoot)) {
   const lines = readFileSync(path, "utf8").split("\n");
   lines.forEach((line, index) => {
     if (!delay.test(line)) return;
-    let next = index + 1;
-    while (next < lines.length && (lines[next].trim() === "" || lines[next].trim().startsWith("//"))) next++;
-    const match = next < lines.length ? lines[next].match(resolveCall) : null;
+    const match = nextCodeLine(lines, index + 1)?.match(resolveCall) ?? null;
     if (match) violations.push(`${relative(process.cwd(), path)}:${index + 1}: before ${match[1]}`);
   });
 }
