@@ -18,16 +18,15 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>
       ~url=`${hyperSyncUrl}/height/sse`,
       ~options={
         fetch: (url, ~args) => {
-          EventSource.Fetch.fetch(
-            url,
-            ~args={
-              ...args,
-              headers: Dict.fromArray([
-                ("Authorization", `Bearer ${apiToken}`),
-                ("User-Agent", userAgent),
-              ]),
-            },
-          )
+          let headers = Dict.make()
+          switch args.headers {
+          | Some(existing) =>
+            existing->Dict.toArray->Array.forEach(((key, value)) => headers->Dict.set(key, value))
+          | None => ()
+          }
+          headers->Dict.set("Authorization", `Bearer ${apiToken}`)
+          headers->Dict.set("User-Agent", userAgent)
+          EventSource.Fetch.fetch(url, ~args={...args, headers: headers})
         },
       },
     )

@@ -1,7 +1,13 @@
 type t
 
 module Fetch = {
-  type args = {body?: unknown, headers?: dict<string>, method?: string, path?: string}
+  type args = {
+    body?: unknown,
+    headers?: dict<string>,
+    method?: string,
+    path?: string,
+    signal?: unknown,
+  }
   type t = (string, ~args: args) => promise<unknown>
   // NOTE: don't try make the type t. Rescript 11 will curry the args which breaks
   // keet the type inline. This is a workaround for now.

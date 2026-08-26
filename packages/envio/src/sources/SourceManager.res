@@ -676,13 +676,8 @@ let retryInconsistentResponse = async (
 // Polls for a block height greater than the given block number to ensure a new block is available for indexing.
 /*
 Resolves at the first height above `knownHeight` that any eligible source
-reports. The one place this module still speaks promises: the indexer loop
-awaits it, while everything below is callbacks, so this is where the two meet.
-
-A waiter is registered per source and the first one to fire wins — cancelling
-the rest, which is the whole reason the layer below is not promise-based. A
-losing arm of a race cannot be taken back, so a promise design has to outlive
-its losers and clean up after them; here they are simply removed.
+reports. A waiter is registered per source and the first one to fire wins,
+cancelling the rest.
 */
 let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPolling) => {
   let {sourcesState} = sourceManager

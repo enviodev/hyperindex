@@ -3,10 +3,7 @@ The current height of one source, however it arrives: pushed by a height stream
 while one is connected, polled while one isn't. Callers register interest and get
 called back; they never learn which path answered.
 
-Callbacks rather than promises because this is subscription lifecycle. A waiter
-that loses a race has to be *removed*, and a promise reaction cannot be. The
-transports and the HeightStream driver underneath are already callback-based;
-the promise boundary is one level up, in SourceManager.waitForNewBlock.
+A waiter that loses a race has to be removed, and a promise reaction cannot be.
 */
 
 type waiter = {
@@ -318,6 +315,8 @@ let catchUp = async (feed: t, ~generation) =>
         "msg": `Height stream catch-up from ${feed.source.name} source did not answer within ${(pollTimeoutMillis /
             1000)->Int.toString}s. Polling continues until the stream delivers.`,
       })
+      feed->wake
+      feed->startPolling
     | Some(res) => feed->recordAnswer(~generation, res)
     }
   } catch {
@@ -325,11 +324,15 @@ let catchUp = async (feed: t, ~generation) =>
     // Deliberately leaves the stream unproven, and deliberately does not advance
     // the poll ramp: nothing else is fetching the height, so the loop has to
     // keep covering it, and it is running alongside this against the same
-    // endpoint. Two failures in one round is still one round.
+    // endpoint. Two failures in one round is still one round. Wake a loop that
+    // is sleeping off that ramp, otherwise the remainder of the backoff is a
+    // coverage gap the catch-up was meant to close.
     feed.logger->Logging.childTrace({
       "msg": `Height stream catch-up from ${feed.source.name} source failed. Polling continues until the stream delivers.`,
       "err": exn->Utils.prettifyExn,
     })
+    feed->wake
+    feed->startPolling
   }
 
 let handlePushedHeight = (feed: t, height) => {
@@ -342,6 +345,7 @@ let handlePushedHeight = (feed: t, height) => {
   // not is the head a stream re-emits on reconnect, which its catch-up is
   // already fetching — but either way it is the stream delivering, which is all
   // the silence behind a poke ever claimed otherwise.
+  feed.pollRetry = 0
   if advances {
     feed.connectionUnproven = false
   }
@@ -386,6 +390,7 @@ let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
       feed.streamLive = true
       feed.connectionGeneration = feed.connectionGeneration + 1
       feed.connects = feed.connects + 1
+      feed.pollRetry = 0
 
       // Live is a claim, not a delivery: polling keeps covering the source until
       // the catch-up lands or a height arrives.

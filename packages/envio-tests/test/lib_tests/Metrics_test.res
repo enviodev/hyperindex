@@ -516,7 +516,7 @@ envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLog
 # TYPE envio_source_height_stream_connects_total counter
 envio_source_height_stream_connects_total{source="HyperSync",chainId="1"} 3
 
-# HELP envio_source_height_stream_disconnects_total The number of times a source's height subscription lost a connection, by reason. Failed retries are not counted, so this is outages rather than their length. A rotated disconnect is routine; every other reason ended a connection early.
+# HELP envio_source_height_stream_disconnects_total The number of times a source's height subscription lost a connection, by reason. Failed retries are not counted, so this is outages rather than their length. A rotated disconnect is a connection that served its time; unsubscribed is the source being benched; every other reason ended a connection early.
 # TYPE envio_source_height_stream_disconnects_total counter
 envio_source_height_stream_disconnects_total{source="HyperSync",chainId="1",reason="rotated"} 4
 envio_source_height_stream_disconnects_total{source="HyperSync",chainId="1",reason="401"} 1

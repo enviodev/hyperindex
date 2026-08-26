@@ -2959,7 +2959,7 @@ describe("SourceManager height subscription", () => {
   )
 
   Async.it(
-    "Falls back to REST polling when subscription goes quiet for half the stall timeout",
+    "Falls back to REST polling when a live subscription stays quiet for the stall timeout",
     async t => {
       let stallTimeout = 20
       let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription])
@@ -2990,7 +2990,8 @@ describe("SourceManager height subscription", () => {
           ~reducedPolling=false,
         )
 
-      // Wait past the jittered fallback trigger (< stallTimeout)
+      // First stall is unjittered: the operator is promised a warning at
+      // exactly newBlockStallTimeoutRealtime. Repeats after that are jittered.
       await Utils.delay(stallTimeout + 30)
 
       t.expect(

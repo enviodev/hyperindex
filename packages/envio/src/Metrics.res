@@ -522,7 +522,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   if heightStreamDisconnects->Array.length > 0 {
     b->series(
       ~name="envio_source_height_stream_disconnects_total",
-      ~help="The number of times a source's height subscription lost a connection, by reason. Failed retries are not counted, so this is outages rather than their length. A rotated disconnect is routine; every other reason ended a connection early.",
+      ~help="The number of times a source's height subscription lost a connection, by reason. Failed retries are not counted, so this is outages rather than their length. A rotated disconnect is a connection that served its time; unsubscribed is the source being benched; every other reason ended a connection early.",
       ~kind="counter",
       ~entries=heightStreamDisconnects,
       ~value=count => count->Int.toFloat,

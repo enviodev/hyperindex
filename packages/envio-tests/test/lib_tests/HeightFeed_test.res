@@ -675,4 +675,69 @@ describe("HeightFeed poll failures", () => {
 
     t.expect((pollsAfterFailure, heights)).toStrictEqual((2, [101]))
   })
+
+  Async.it("Resets the poll ramp when a push recovers the stream after failed polls", async t => {
+    Vi.useFakeTimers()
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let retries = []
+    let (feed, _stats) = makeFeed(
+      mock,
+      ~getHeightRetryInterval=(~retry) => {
+        retries->Array.push(retry)->ignore
+        10_000
+      },
+    )
+    feed->HeightFeed.enableStream
+    let (_heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+
+    mock.rejectGetHeightOrThrow(JsError.make("no"))
+    await Vi.advanceTimersByTimeAsync(1)
+    mock.rejectGetHeightOrThrow(JsError.make("no again"))
+    await Vi.advanceTimersByTimeAsync(1)
+
+    // Loop is sleeping off the 10s ramp, so the only in-flight request after
+    // Live is the catch-up. A push answers the waiter; a failed catch-up must
+    // not leave that ramp for the next outage.
+    mock.setHeightSubscriptionStatus(Live)
+    await Vi.advanceTimersByTimeAsync(1)
+    mock.triggerHeightSubscription(101)
+    await Vi.advanceTimersByTimeAsync(1)
+    mock.rejectGetHeightOrThrow(JsError.make("catch-up failed"))
+    await Vi.advanceTimersByTimeAsync(1)
+    subscription.unsubscribe()
+
+    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    let retriesAfterRecovery = retries->Array.length
+    let (_later, _laterSubscription) = feed->watch(~knownHeight=101, ~interval=() => 10_000)
+    mock.rejectGetHeightOrThrow(JsError.make("dropped again"))
+    await Vi.advanceTimersByTimeAsync(1)
+    Vi.useRealTimers()
+
+    t.expect(retries->Array.getUnsafe(retriesAfterRecovery)).toEqual(0)
+  })
+
+  Async.it("Wakes a backoff sleep when a reconnect's catch-up fails", async t => {
+    Vi.useFakeTimers()
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let (feed, _stats) = makeFeed(mock, ~getHeightRetryInterval=(~retry as _) => 10_000)
+    feed->HeightFeed.enableStream
+    let (_heights, _subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+
+    mock.rejectGetHeightOrThrow(JsError.make("no"))
+    await Vi.advanceTimersByTimeAsync(1)
+    mock.setHeightSubscriptionStatus(Live)
+    await Vi.advanceTimersByTimeAsync(1)
+    mock.rejectGetHeightOrThrow(JsError.make("catch-up failed"))
+    await Vi.advanceTimersByTimeAsync(1)
+    let pollsAfterFailedCatchUp = mock.getHeightOrThrowCalls->Array.length
+    Vi.useRealTimers()
+
+    t.expect(pollsAfterFailedCatchUp).toBeGreaterThanOrEqual(3)
+  })
 })
