@@ -223,7 +223,13 @@ let run = async (
     ~onError?,
     ~onExit?,
     ~mapStorage?,
-    indexer => body(~indexer, ~source),
+    ~onIndexerStopped=() => mocks->Array.forEach(((_, mock)) => mock.dropPendingCalls()),
+    async indexer => {
+      await body(~indexer, ~source)
+      // Only after the body passed: a failing body has its own error to report,
+      // and answers it never got to were never going to be claimed anyway.
+      mocks->Array.forEach(((_, mock)) => mock.validateAnswersClaimed())
+    },
   )
 }
 

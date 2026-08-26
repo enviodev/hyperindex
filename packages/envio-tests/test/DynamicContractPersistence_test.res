@@ -78,7 +78,6 @@ let withIndexer = body =>
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
     async (~indexer, ~source) => {
       let sourceMock = source(1337)
-      await Utils.delay(0)
 
       sourceMock.resolveGetHeightOrThrow(1000)
       await Utils.delay(0)
@@ -105,13 +104,12 @@ describe("Dynamic contract persistence", () => {
               ~register=context => context.chain["Gravatar"].add(dcAddress),
             ),
           ],
-          ~resolveAt=#all,
           ~latestFetchedBlockNumber=200,
         )
         await indexer.getBatchWritePromise()
         // Registering spawns a partition for the new address, and the chain can't
         // progress past the registering block until it has fetched.
-        sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all, ~latestFetchedBlockNumber=200)
+        sourceMock.drainItemsQueries(~latestFetchedBlockNumber=200)
         await indexer.getBatchWritePromise()
 
         t.expect(
@@ -138,13 +136,12 @@ describe("Dynamic contract persistence", () => {
               ~register=context => context.chain["NftFactory"].add(dcAddress),
             ),
           ],
-          ~resolveAt=#all,
           ~latestFetchedBlockNumber=200,
         )
         await indexer.getBatchWritePromise()
         // Registering spawns a partition for the new address, and the chain can't
         // progress past the registering block until it has fetched.
-        sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all, ~latestFetchedBlockNumber=200)
+        sourceMock.drainItemsQueries(~latestFetchedBlockNumber=200)
         await indexer.getBatchWritePromise()
 
         t.expect(
@@ -173,7 +170,6 @@ describe("Dynamic contract persistence", () => {
               ~register=context => context.chain["Gravatar"].add(lateDcAddress),
             ),
           ],
-          ~resolveAt=#all,
           ~latestFetchedBlockNumber=200,
         )
         await indexer.getBatchWritePromise()
@@ -184,11 +180,11 @@ describe("Dynamic contract persistence", () => {
         // Let the new partition fetch only to block 50. Progress lands between the
         // two registration blocks, so the drain has to split the queue: block 10 is
         // covered, block 150 stays pending.
-        sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all, ~latestFetchedBlockNumber=50)
+        sourceMock.drainItemsQueries(~latestFetchedBlockNumber=50)
         await indexer.getBatchWritePromise()
         let afterPartialDrain = await queryAddresses(indexer)
 
-        sourceMock.resolveGetItemsOrThrow([], ~resolveAt=#all, ~latestFetchedBlockNumber=200)
+        sourceMock.drainItemsQueries(~latestFetchedBlockNumber=200)
         await indexer.getBatchWritePromise()
 
         t.expect(

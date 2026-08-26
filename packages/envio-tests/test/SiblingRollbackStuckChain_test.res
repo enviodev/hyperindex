@@ -94,7 +94,6 @@ describe("Sibling-chain rollback with an in-flight query", () => {
     async (~t, ~indexer, ~source) => {
       let victim = source(1)
       let sibling = source(137)
-      await Utils.delay(0)
       victim.resolveGetHeightOrThrow(300)
       sibling.resolveGetHeightOrThrow(300)
       await Utils.delay(0)
@@ -108,7 +107,11 @@ describe("Sibling-chain rollback with an in-flight query", () => {
           attempts := attempts.contents + 1
           await Utils.delay(0)
         }
-        source.resolveGetItemsOrThrow(items, ~latestFetchedBlockNumber=latest)
+        // Both partitions get the same response, the way the incident chain saw
+        // the same factory events through every address partition.
+        source.getItemsOrThrowCalls
+        ->Utils.Array.copy
+        ->Array.forEach(call => call.resolve(items, ~latestFetchedBlockNumber=latest))
         await Utils.delay(0)
         await Utils.delay(0)
       }
@@ -132,7 +135,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       while attempts.contents < 200 {
         attempts := attempts.contents + 1
         if victim.getItemsOrThrowCalls->Array.length > 0 {
-          victim.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=300)
+          victim.drainItemsQueries(~latestFetchedBlockNumber=300)
         }
         await Utils.delay(0)
       }
@@ -143,13 +146,12 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       // response lands, which schedules the tick that sends the second
       // partition's query — that one stays in flight through the rollback,
       // like partition 7 in the incident.
-      victim.resolveGetHeightOrThrow(301)
+      // The chain re-polls at its own cadence through the rollback, so give it a
+      // standing answer rather than one answer per poll.
+      victim.setAutoHeight(301)
       let attempts = ref(0)
       while victim.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 1000 {
         attempts := attempts.contents + 1
-        try victim.resolveGetHeightOrThrow(301) catch {
-        | _ => ()
-        }
         await Utils.delay(0)
       }
       victim.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=301)
@@ -164,15 +166,10 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       ).toEqual(1)
 
       // Reorg on the sibling chain: block 300 comes back with a different hash.
-      try sibling.resolveGetHeightOrThrow(301) catch {
-      | _ => ()
-      }
+      sibling.setAutoHeight(301)
       let attempts = ref(0)
       while sibling.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 1000 {
         attempts := attempts.contents + 1
-        try sibling.resolveGetHeightOrThrow(301) catch {
-        | _ => ()
-        }
         await Utils.delay(0)
       }
       sibling.resolveGetItemsOrThrow(
@@ -185,7 +182,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       // after the reorg was detected but before the rollback applied.
       switch victim.getItemsOrThrowCalls->Array.length {
       | 0 => ()
-      | _ => victim.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=301)
+      | _ => victim.drainItemsQueries(~latestFetchedBlockNumber=301)
       }
       // The rollback target usually comes from the recorded safe checkpoints;
       // serve getBlockHashes only if the depth search asks for it.
@@ -206,7 +203,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       // response arrives now, carrying the old epoch, and is discarded.
       switch victim.getItemsOrThrowCalls->Array.length {
       | 0 => ()
-      | _ => victim.resolveGetItemsOrThrow([], ~resolveAt=#last, ~latestFetchedBlockNumber=301)
+      | _ => victim.drainItemsQueries(~latestFetchedBlockNumber=301)
       }
       await Utils.delay(0)
       await Utils.delay(0)
@@ -215,6 +212,8 @@ describe("Sibling-chain rollback with an in-flight query", () => {
       // rolled-back ranges — including re-registering the pruned dynamic
       // address when block 250 is re-delivered. The victim chain is wedged if
       // it never catches back up to the head.
+      victim.setAutoHeight(302)
+      sibling.setAutoHeight(302)
       let victimMaxFromBlock = ref(0)
       let attempts = ref(0)
       while victimMaxFromBlock.contents < 302 && attempts.contents < 3000 {
@@ -236,13 +235,7 @@ describe("Sibling-chain rollback with an in-flight query", () => {
           },
         )
         if sibling.getItemsOrThrowCalls->Array.length > 0 {
-          sibling.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=302)
-        }
-        try victim.resolveGetHeightOrThrow(302) catch {
-        | _ => ()
-        }
-        try sibling.resolveGetHeightOrThrow(302) catch {
-        | _ => ()
+          sibling.drainItemsQueries(~latestFetchedBlockNumber=302)
         }
         await Utils.delay(1)
       }
