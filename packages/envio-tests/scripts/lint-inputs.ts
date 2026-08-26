@@ -12,8 +12,11 @@ import { fileURLToPath } from "node:url";
 const testRoot = fileURLToPath(new URL("../test", import.meta.url));
 
 const delay = /^\s*(?:await\s+)?Utils\.delay\(0\)\s*$/;
+// Anywhere on the line, not just at its head: a resolver is as often reached
+// through a callback (`chains->Array.forEach(c => source(c).resolve...)`) as
+// called directly, and anchoring the match to the start walks past those.
 const resolveCall =
-  /^\s*(?:await\s+)?\S*\b(resolveGetItemsOrThrow|resolveGetHeightOrThrow|drainItemsQueries)\b/;
+  /\b(resolveGetItemsOrThrow|resolveGetHeightOrThrow|drainItemsQueries)\b/;
 
 // The scan has to reach the resolver past whatever sits between it and the
 // delay. A comment that hid a violation would make the lint quietly useless.
@@ -29,9 +32,12 @@ const nextCodeLine = (lines: string[], start: number): string | null => {
       inBlockComment = false;
     }
     for (;;) {
+      const lineComment = rest.indexOf("//");
       const open = rest.indexOf("/*");
-      if (open === -1) {
-        code += rest;
+      // Whichever marker comes first decides. A `/*` inside a line comment is
+      // prose, and letting it open block state would swallow the code below it.
+      if (open === -1 || (lineComment !== -1 && lineComment < open)) {
+        code += lineComment === -1 ? rest : rest.slice(0, lineComment);
         break;
       }
       const close = rest.indexOf("*/", open + 2);
@@ -43,8 +49,7 @@ const nextCodeLine = (lines: string[], start: number): string | null => {
       code += rest.slice(0, open);
       rest = rest.slice(close + 2);
     }
-    const trimmed = code.trim();
-    if (trimmed === "" || trimmed.startsWith("//")) continue;
+    if (code.trim() === "") continue;
     return code;
   }
   return null;

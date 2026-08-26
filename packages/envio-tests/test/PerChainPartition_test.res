@@ -305,7 +305,6 @@ describe("Reused chain-scoped statements stay pruned", () => {
     "Hold the same locks however often the plan cache reuses them",
     ~sources=manyChains->Array.map((chain): Scenario.sourceMock => {chain, methods}),
     async (~t, ~indexer, ~source) => {
-      await Utils.delay(0)
       manyChains->Array.forEach(chain => source(chain).resolveGetHeightOrThrow(300))
       await Utils.delay(0)
       await indexer.stop()
