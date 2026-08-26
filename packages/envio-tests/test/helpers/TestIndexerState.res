@@ -28,11 +28,11 @@ let readyPersistence = (~config=config, ~storage) => {
   ...PgStorage.makePersistenceFromConfig(~config, ~storage),
   storageStatus: Persistence.Ready({
     cleanRun: false,
+    contractMapping: config.contractMapping,
     cache: Dict.make(),
     chains: [],
     reorgCheckpoints: [],
     checkpointId: 0n,
-    envioInfo: None,
   }),
 }
 

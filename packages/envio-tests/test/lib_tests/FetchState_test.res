@@ -51,6 +51,9 @@ let mockFactoryAddress = Envio.TestHelpers.Addresses.mockAddresses[7]->Option.ge
 let getTimestamp = (~blockNumber) => blockNumber * 15
 let getBlockData = (~blockNumber): int => blockNumber
 
+let rollbackTo = (fetchState: FetchState.t, ~addressStore, ~targetBlockNumber) =>
+  (fetchState->FetchState.rollback(~addressStore, ~targetBlockNumber)).fetchState
+
 let makeDynContractRegistration = (
   ~contractAddress,
   ~blockNumber,
@@ -133,16 +136,17 @@ let makeInitial = (
       registrationBlock: -1,
     },
   ]
-  let addressStore = TestAddresses.makeStore(
-    ~onEventRegistrations,
-    ~addresses,
-    // Config contracts this chain has no events for.
-    ~configContractNames=["UnknownContract", "AnotherUnknownContract"],
-  )
+  // Config contracts this chain has no events for.
+  let configContractNames = ["UnknownContract", "AnotherUnknownContract"]
+  let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~configContractNames)
   let fetchState = FetchState.make(
     ~onEventRegistrations,
     ~addressStore,
-    ~addresses,
+    ~addressRows=TestAddresses.addressRows(
+      ~addresses,
+      ~onEventRegistrations,
+      ~configContractNames,
+    ),
     ~startBlock,
     ~endBlock=None,
     ~maxAddrInPartition,
@@ -183,11 +187,15 @@ let makeFs = (
   ~clientFilterAddressThreshold=?,
   ~configContractNames=?,
 ) => {
-  let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~addresses, ~configContractNames?)
+  let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~configContractNames?)
   let fetchState = FetchState.make(
     ~onEventRegistrations,
     ~addressStore,
-    ~addresses,
+    ~addressRows=TestAddresses.addressRows(
+      ~addresses,
+      ~onEventRegistrations,
+      ~configContractNames?,
+    ),
     ~startBlock,
     ~endBlock,
     ~maxAddrInPartition,
@@ -327,8 +335,7 @@ describe("FetchState.make", () => {
       t.expect(
         (
           addressStore->AddressStore.size,
-          addressStore->AddressStore.get(mockAddress1)
-          ->Option.map(ia => ia.contractName),
+          addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
           // No partition is created for the contract without events
           fetchState.optimizedPartitions.entities
           ->Dict.valuesToArray
@@ -340,7 +347,7 @@ describe("FetchState.make", () => {
         ~message=`numAddresses counts both addresses,
           the no-events address is tracked under its contract name,
           and no partition is created for the contract without events`,
-      ).toEqual((2, Some("NftFactory"), true))
+      ).toEqual((2, ["NftFactory"], true))
     },
   )
 
@@ -868,8 +875,7 @@ describe("FetchState.registerDynamicContracts", () => {
         (
           // tracked on addressStore so later conflicting registrations
           // are detected, and so numAddresses reflects it
-          addressStore->AddressStore.get(mockAddress1)
-          ->Option.map(ia => ia.contractName),
+          addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
           // still written to the db, so a config that later adds events for
           // the contract picks the address up on restart
           addressStore
@@ -883,7 +889,7 @@ describe("FetchState.registerDynamicContracts", () => {
           stays pending persistence,
           and partitions are left untouched`,
       ).toEqual((
-        Some("UnknownContract"),
+        ["UnknownContract"],
         [mockAddress1],
         true,
         fetchState.optimizedPartitions.entities,
@@ -892,7 +898,7 @@ describe("FetchState.registerDynamicContracts", () => {
   )
 
   it(
-    "Deduplicates a second registration for the same no-events address and warns on contract-name conflict",
+    "Registers a no-events address for each contract that claims it, once per contract",
     t => {
       let (fetchState, addressStore) = makeInitial()
 
@@ -907,8 +913,7 @@ describe("FetchState.registerDynamicContracts", () => {
         fetchState->FetchState.registerDynamicContracts(~addressStore, [dc1->dcToRegistration])
 
       // Register the SAME address for a DIFFERENT contract name that also has
-      // no events. Already tracked, so it's rejected with a contract-name
-      // conflict warning.
+      // no events: a registration of its own, stored and persisted separately.
       let dc2 = makeDynContractRegistration(
         ~blockNumber=11,
         ~contractAddress=mockAddress1,
@@ -929,20 +934,26 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(
         (
-          // Only the first registration is ever written.
+          // One row per contract; the repeat of an existing pair writes nothing.
           addressStore
           ->AddressStore.pendingEntries
           ->Array.map(ia => (ia.address, ia.contractName, ia.registrationBlock)),
-          // First registration is the tracked one (first wins).
-          addressStore->AddressStore.get(mockAddress1)
-          ->Option.map(ia => ia.contractName),
+          // Set order: the earlier registration's start block comes first.
+          addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
           // No new partition created across any of the registrations.
           afterThird.optimizedPartitions.entities === fetchState.optimizedPartitions.entities,
         ),
-        ~message=`first dc kept, subsequent same-address dcs rejected,
-          fetchState still tracks the first contract name,
+        ~message=`each contract's registration is kept once,
+          the repeated one is dropped,
           and partitions are never affected`,
-      ).toEqual(([(mockAddress1, "UnknownContract", 10)], Some("UnknownContract"), true))
+      ).toEqual((
+        [
+          (mockAddress1, "UnknownContract", 10),
+          (mockAddress1, "AnotherUnknownContract", 11),
+        ],
+        ["UnknownContract", "AnotherUnknownContract"],
+        true,
+      ))
     },
   )
 
@@ -970,10 +981,8 @@ describe("FetchState.registerDynamicContracts", () => {
 
       t.expect(
         (
-          addressStore->AddressStore.get(mockAddress2)
-          ->Option.map(ia => ia.contractName),
-          addressStore->AddressStore.get(mockAddress1)
-          ->Option.map(ia => ia.contractName),
+          addressStore->AddressStore.getAll(mockAddress2)->Array.map(ia => ia.contractName),
+          addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
           // Only the Gravatar address lands in a partition.
           updatedFetchState.optimizedPartitions.entities
           ->Dict.valuesToArray
@@ -994,20 +1003,17 @@ describe("FetchState.registerDynamicContracts", () => {
         ~message=`no-events dc tracked on addressStore,
           has-events dc creates a partition as usual,
           and the no-events contract never enters any partition`,
-      ).toEqual((Some("UnknownContract"), Some("Gravatar"), true, true))
+      ).toEqual((["UnknownContract"], ["Gravatar"], true, true))
     },
   )
 
+  // https://github.com/enviodev/hyperindex/issues/1187
   it(
-    "Warns and skips a no-events dc when the address is already registered under a different contract name",
+    "Registers an address already held by another contract, for a contract with no events here",
     t => {
-      // makeInitial puts mockAddress0 in addressStore under contractName
-      // "Gravatar" (which has events). Now try to register the same address
-      // for a contract without events and a different name - should trigger
-      // warnDifferentContractType via the None-branch conflict path.
       let (fetchState, addressStore) = makeInitial()
 
-      let conflictingDc = makeDynContractRegistration(
+      let secondDc = makeDynContractRegistration(
         ~blockNumber=10,
         ~contractAddress=mockAddress0,
         ~contractName="UnknownContract",
@@ -1016,28 +1022,30 @@ describe("FetchState.registerDynamicContracts", () => {
       let updatedFetchState =
         fetchState->FetchState.registerDynamicContracts(
           ~addressStore,
-          [conflictingDc->dcToRegistration],
+          [secondDc->dcToRegistration],
         )
 
       t.expect(
         (
-          // rejected, so it never reaches the db and can't overwrite the
-          // existing Gravatar entry
-          addressStore->AddressStore.pendingEntries,
-          // addressStore still has the original contract name
-          addressStore->AddressStore.get(mockAddress0)
-          ->Option.map(ia => ia.contractName),
-          // fetchState unchanged - nothing new registered
+          addressStore
+          ->AddressStore.pendingEntries
+          ->Array.map(ia => (ia.address, ia.contractName)),
+          addressStore->AddressStore.getAll(mockAddress0)->Array.map(ia => ia.contractName),
           updatedFetchState === fetchState,
         ),
-        ~message=`conflicting no-events dc is rejected,
-          original Gravatar registration preserved,
-          and fetchState is unchanged`,
-      ).toEqual(([], Some("Gravatar"), true))
+        ~message=`the second contract's registration is stored and persisted,
+          the first one is untouched,
+          and no partition is built for a contract without events`,
+      ).toEqual((
+        [(mockAddress0, "UnknownContract")],
+        ["Gravatar", "UnknownContract"],
+        true,
+      ))
     },
   )
 
-  it("Warns and skips when two contracts register the same address within one batch", t => {
+  // https://github.com/enviodev/hyperindex/issues/1187
+  it("Registers one address for two contracts within one batch", t => {
     let (fetchState, addressStore) = makeInitial()
 
     let dc1 = makeDynContractRegistration(
@@ -1056,114 +1064,81 @@ describe("FetchState.registerDynamicContracts", () => {
         [dc1->dcToRegistration, dc2->dcToRegistration],
       )
 
+    let inPartitionsOf = contractName =>
+      updatedFetchState.optimizedPartitions.entities
+      ->Dict.valuesToArray
+      ->Array.some(
+        p =>
+          p.addresses
+          ->AddressSet.filterByContracts([contractName])
+          ->AddressSet.addresses
+          ->Array.includes(mockAddress1),
+      )
+
     t.expect(
       (
-        addressStore->AddressStore.get(mockAddress1)
-        ->Option.map(ia => ia.contractName),
-        // the rejected dc is never persisted to envio_addresses
+        addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
+        addressStore
+        ->AddressStore.pendingEntries
+        ->Array.map(ia => (ia.address, ia.contractName)),
+        inPartitionsOf("Gravatar"),
+        inPartitionsOf("NftFactory"),
+      ),
+      ~message=`both registrations land,
+          both are persisted,
+          and the address is fetched under each contract`,
+    ).toEqual((
+      ["Gravatar", "NftFactory"],
+      [(mockAddress1, "Gravatar"), (mockAddress1, "NftFactory")],
+      true,
+      true,
+    ))
+  })
+
+  // https://github.com/enviodev/hyperindex/issues/1187
+  it("Registers an events dc for an address a no-events dc claimed first", t => {
+    let (fetchState, addressStore) = makeInitial()
+
+    let noEventsDc = makeDynContractRegistration(
+      ~blockNumber=10,
+      ~contractAddress=mockAddress1,
+      ~contractName="UnknownContract",
+    )
+    let eventsDc = makeDynContractRegistration(
+      ~blockNumber=10,
+      ~contractAddress=mockAddress1,
+      ~contractName="Gravatar",
+    )
+    let updatedFetchState =
+      fetchState->FetchState.registerDynamicContracts(
+        ~addressStore,
+        [noEventsDc->dcToRegistration, eventsDc->dcToRegistration],
+      )
+
+    t.expect(
+      (
+        addressStore->AddressStore.getAll(mockAddress1)->Array.map(ia => ia.contractName),
         addressStore
         ->AddressStore.pendingEntries
         ->Array.map(ia => (ia.address, ia.contractName)),
         updatedFetchState.optimizedPartitions.entities
         ->Dict.valuesToArray
-        ->Array.every(
+        ->Array.some(
           p =>
-            !(
-              p.addresses
-              ->AddressSet.filterByContracts(["NftFactory"])
-              ->AddressSet.addresses
-              ->Array.includes(mockAddress1)
-            ),
+            p.addresses
+            ->AddressSet.filterByContracts(["Gravatar"])
+            ->AddressSet.addresses
+            ->Array.includes(mockAddress1),
         ),
       ),
-      ~message=`first registration wins,
-          the conflicting dc is rejected,
-          and the address never enters the second contract's partitions`,
-    ).toEqual((Some("Gravatar"), [(mockAddress1, "Gravatar")], true))
+      ~message=`both registrations land whichever order they arrive in,
+          and the address enters the partitions of the contract that has events`,
+    ).toEqual((
+      ["Gravatar", "UnknownContract"],
+      [(mockAddress1, "UnknownContract"), (mockAddress1, "Gravatar")],
+      true,
+    ))
   })
-
-  it(
-    "Warns and skips a conflicting no-events dc registered after an events dc in the same batch",
-    t => {
-      let (fetchState, addressStore) = makeInitial()
-
-      let eventsDc = makeDynContractRegistration(
-        ~blockNumber=10,
-        ~contractAddress=mockAddress1,
-        ~contractName="Gravatar",
-      )
-      let noEventsDc = makeDynContractRegistration(
-        ~blockNumber=10,
-        ~contractAddress=mockAddress1,
-        ~contractName="UnknownContract",
-      )
-      let _updatedFetchState =
-        fetchState->FetchState.registerDynamicContracts(
-          ~addressStore,
-          [eventsDc->dcToRegistration, noEventsDc->dcToRegistration],
-        )
-
-      t.expect(
-        (
-          addressStore->AddressStore.get(mockAddress1)
-          ->Option.map(ia => ia.contractName),
-          // one row for the address, under the contract that claimed it first
-          addressStore
-          ->AddressStore.pendingEntries
-          ->Array.map(ia => (ia.address, ia.contractName)),
-        ),
-        ~message=`the events registration is preserved on addressStore
-          and the conflicting no-events dc is rejected`,
-      ).toEqual((Some("Gravatar"), [(mockAddress1, "Gravatar")]))
-    },
-  )
-
-  it(
-    "Warns and skips a conflicting events dc registered after a no-events dc in the same batch",
-    t => {
-      let (fetchState, addressStore) = makeInitial()
-
-      let noEventsDc = makeDynContractRegistration(
-        ~blockNumber=10,
-        ~contractAddress=mockAddress1,
-        ~contractName="UnknownContract",
-      )
-      let eventsDc = makeDynContractRegistration(
-        ~blockNumber=10,
-        ~contractAddress=mockAddress1,
-        ~contractName="Gravatar",
-      )
-      let updatedFetchState =
-        fetchState->FetchState.registerDynamicContracts(
-          ~addressStore,
-          [noEventsDc->dcToRegistration, eventsDc->dcToRegistration],
-        )
-
-      t.expect(
-        (
-          addressStore->AddressStore.get(mockAddress1)
-          ->Option.map(ia => ia.contractName),
-          addressStore
-          ->AddressStore.pendingEntries
-          ->Array.map(ia => (ia.address, ia.contractName)),
-          updatedFetchState.optimizedPartitions.entities
-          ->Dict.valuesToArray
-          ->Array.every(
-            p =>
-              !(
-                p.addresses
-                ->AddressSet.filterByContracts(["Gravatar"])
-                ->AddressSet.addresses
-                ->Array.includes(mockAddress1)
-              ),
-          ),
-        ),
-        ~message=`the no-events registration wins,
-          the conflicting events dc is rejected,
-          and the address never enters Gravatar partitions`,
-      ).toEqual((Some("UnknownContract"), [(mockAddress1, "UnknownContract")], true))
-    },
-  )
 
   it("Correctly registers all valid contracts even when some are skipped in the middle", t => {
     let (fetchState, addressStore) = makeInitial()
@@ -1183,9 +1158,9 @@ describe("FetchState.registerDynamicContracts", () => {
 
     // Verify that both DC2 and DC3 were registered correctly
     let hasAddress1 =
-      addressStore->AddressStore.get(mockAddress1)->Option.isSome
+      addressStore->AddressStore.getAll(mockAddress1)->Utils.Array.notEmpty
     let hasAddress2 =
-      addressStore->AddressStore.get(mockAddress2)->Option.isSome
+      addressStore->AddressStore.getAll(mockAddress2)->Utils.Array.notEmpty
 
     t.expect(hasAddress1, ~message="Address1 should be registered").toBe(true)
     t.expect(
@@ -1467,14 +1442,14 @@ describe("FetchState.registerDynamicContracts", () => {
     t.expect(
       (
         addressStore->AddressStore.size,
-        addressStore->AddressStore.get(mockAddress0),
-        addressStore->AddressStore.get(mockAddress1),
+        addressStore->AddressStore.getAll(mockAddress0),
+        addressStore->AddressStore.getAll(mockAddress1),
       ),
       ~message="Should choose the earliest dc from the batch",
     ).toEqual((
       expected->Utils.Dict.size,
-      expected->Dict.get(mockAddress0->Address.toString),
-      expected->Dict.get(mockAddress1->Address.toString),
+      expected->Dict.get(mockAddress0->Address.toString)->Option.mapOr([], entry => [entry]),
+      expected->Dict.get(mockAddress1->Address.toString)->Option.mapOr([], entry => [entry]),
     ))
     t.expect((updatedFetchState.optimizedPartitions.entities->Dict.valuesToArray)->Array.map(TestAddresses.partition),
       ~message="Adds dc and optimizes partitions",
@@ -2470,7 +2445,7 @@ describe("FetchState.getNextQuery & integration", () => {
     // Rollback to block 2: both DCs survive (regBlock <= 2)
     // Partition "0" (lfb=10 > 2) -> DELETED, addresses recreated as partition "1"
     // Partition "2" (lfb=2 <= 2) -> KEPT as partition "0" (IDs reset)
-    let fetchStateAfterRollback1 = fetchState->FetchState.rollback(~addressStore, ~targetBlockNumber=2)
+    let fetchStateAfterRollback1 = fetchState->rollbackTo(~addressStore, ~targetBlockNumber=2)
     t.expect((fetchStateAfterRollback1)->TestAddresses.fetchState,
       ~message=`Rollbacks partitions: kept "0", recreated "1" from deleted`,
     ).toEqual(({
@@ -2514,7 +2489,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     // Rollback to block 1: dc2 and dc3 removed (regBlock=2 > 1)
     // Both partitions deleted (lfb > 1), surviving addresses [addr0, addr1] recreated
-    let fetchStateAfterRollback2 = fetchState->FetchState.rollback(~addressStore, ~targetBlockNumber=1)
+    let fetchStateAfterRollback2 = fetchState->rollbackTo(~addressStore, ~targetBlockNumber=1)
     t.expect((fetchStateAfterRollback2)->TestAddresses.fetchState,
       ~message=`Both partitions deleted, surviving addresses recreated as partition "0"`,
     ).toEqual(({
@@ -2548,7 +2523,7 @@ describe("FetchState.getNextQuery & integration", () => {
     })->TestAddresses.fetchState)
 
     // Rollback to block -1: all DCs removed, only static addr0 survives
-    let fetchStateAfterRollback3 = fetchState->FetchState.rollback(~addressStore, ~targetBlockNumber=-1)
+    let fetchStateAfterRollback3 = fetchState->rollbackTo(~addressStore, ~targetBlockNumber=-1)
     t.expect((fetchStateAfterRollback3)->TestAddresses.fetchState,
       ~message=`All DCs removed, only static addr0 recreated as partition "0"`,
     ).toEqual(({
@@ -2631,7 +2606,7 @@ describe("FetchState.getNextQuery & integration", () => {
 
     // resetPendingQueries must be called before rollback (removes in-flight queries)
     let fetchStateReset = fetchState->FetchState.resetPendingQueries
-    let fetchStateAfterRollback = fetchStateReset->FetchState.rollback(~addressStore, ~targetBlockNumber=1)
+    let fetchStateAfterRollback = fetchStateReset->rollbackTo(~addressStore, ~targetBlockNumber=1)
 
     t.expect((fetchStateAfterRollback)->TestAddresses.fetchState,
       ~message=`Should keep Wildcard partition even if it's empty`,
@@ -3575,14 +3550,13 @@ describe("Dynamic contracts with start blocks", () => {
 
     // The contract should be registered in addressStore
     t.expect(
-      addressStore->AddressStore.get(mockAddress1)->Option.isSome,
+      addressStore->AddressStore.getAll(mockAddress1)->Utils.Array.notEmpty,
       ~message="Dynamic contract should be registered in addressStore",
     ).toBeTruthy()
 
     // Verify the startBlock is set correctly
     let registeredContract =
-      addressStore->AddressStore.get(mockAddress1)
-      ->Option.getOrThrow
+      addressStore->AddressStore.getAll(mockAddress1)->Array.getUnsafe(0)
 
     t.expect(
       registeredContract.effectiveStartBlock,
@@ -3612,12 +3586,10 @@ describe("Dynamic contracts with start blocks", () => {
 
     // Verify both contracts are registered with correct startBlocks
     let contract1Registered =
-      addressStore->AddressStore.get(mockAddress1)
-      ->Option.getOrThrow
+      addressStore->AddressStore.getAll(mockAddress1)->Array.getUnsafe(0)
 
     let contract2Registered =
-      addressStore->AddressStore.get(mockAddress2)
-      ->Option.getOrThrow
+      addressStore->AddressStore.getAll(mockAddress2)->Array.getUnsafe(0)
 
     t.expect(
       contract1Registered.effectiveStartBlock,
@@ -5539,7 +5511,7 @@ describe("FetchState client-side address filtering", () => {
         makeDynContractRegistration(~blockNumber=3, ~contractAddress=mockAddress1)->dcToRegistration,
         makeDynContractRegistration(~blockNumber=4, ~contractAddress=mockAddress2)->dcToRegistration,
       ])
-    let rolledBack = collapsed->FetchState.rollback(~addressStore, ~targetBlockNumber=3)
+    let rolledBack = collapsed->rollbackTo(~addressStore, ~targetBlockNumber=3)
     t.expect(
       (
         rolledBack.optimizedPartitions.clientFilteredContracts->Utils.Set.toArray,
@@ -5892,7 +5864,7 @@ describe("FetchState client-side address filtering", () => {
     // Rolling back to 40 keeps the address (registered at 20) and puts every
     // partition on the same frontier — nothing is left for a catch-up to cover,
     // so the address-free partition stands alone again.
-    let rolledBack = advancedCatchUp->FetchState.rollback(~addressStore, ~targetBlockNumber=40)
+    let rolledBack = advancedCatchUp->rollbackTo(~addressStore, ~targetBlockNumber=40)
     t.expect(
       (advancedCatchUp->frontierShape, rolledBack->frontierShape),
       ~message="catch-up merges into the address-free partition instead of surviving the rollback",
@@ -5907,7 +5879,7 @@ describe("FetchState client-side address filtering", () => {
       ])
     // The catch-up is still at 19 after the rollback to 30, so it keeps its
     // range — now bounded by where the address-free partition was rolled back to.
-    let rolledBack = afterReg->FetchState.rollback(~addressStore, ~targetBlockNumber=30)
+    let rolledBack = afterReg->rollbackTo(~addressStore, ~targetBlockNumber=30)
     t.expect(
       rolledBack->frontierShape,
       ~message="catch-up survives with its merge block capped at the rollback target",

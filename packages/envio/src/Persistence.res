@@ -27,22 +27,22 @@ type initialChainState = {
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  indexingAddresses: array<Internal.indexingAddress>,
+  // Every address the chain indexes, columnar — config-declared and dynamically
+  // registered alike. The chain's address store seeds straight from it.
+  addressRows: AddressRows.seedRows,
   sourceBlockNumber: int,
 }
 
 type initialState = {
   cleanRun: bool,
+  // On a resume this is what the database holds, not what the config would
+  // derive — the ids must never reshuffle under stored rows.
+  contractMapping: ContractMapping.t,
   cache: dict<effectCacheRecord>,
   chains: array<initialChainState>,
   checkpointId: Internal.checkpointId,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
-  // Public config snapshot read from envio_info, used by `Persistence.init`
-  // to compat-check a resume against the running config. None when the
-  // schema pre-dates envio_info or the row is missing — `init` treats that
-  // as a version mismatch.
-  envioInfo: option<JSON.t>,
 }
 
 // Carries the already-resolved cache address (`table`) rather than an effect +
@@ -58,6 +58,9 @@ type updatedEffectCache = {
 type rollback = {
   targetCheckpointId: Internal.checkpointId,
   diffCheckpointId: Internal.checkpointId,
+  // The address registrations the rollback dropped, as the chains' address
+  // stores resolved them. Deleted by primary key in the same transaction.
+  rolledBackAddresses: array<AddressRows.key>,
   // Last valid block per chain affected by the rollback. Read by
   // `RollbackCommit.fire` once the diff is durably written.
   progressBlockNumberByChainId: dict<int>,
@@ -92,8 +95,14 @@ type storage = {
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Table.enumConfig<Table.enum>>=?,
+    ~contractMapping: ContractMapping.t,
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
+  // The public config snapshot stored by the last successful initialize, for
+  // `init`'s compat check. None when the schema pre-dates `envio_info` or the
+  // row was wiped. Read before anything else on a resume: an incompatible
+  // schema must be reported as such rather than as a missing column.
+  readEnvioInfo: unit => promise<option<JSON.t>>,
   resumeInitialState: unit => promise<initialState>,
   // Returns rows matching the filter.
   // Field values are serialized and rows parsed with the table's field schemas.
@@ -163,6 +172,8 @@ type storage = {
     ~allEntities: array<Internal.entityConfig>,
     ~updatedEffectsCache: array<updatedEffectCache>,
     ~updatedEntities: array<updatedEntity>,
+    // Addresses this batch registered, with the checkpoint that covers them.
+    ~registeredAddresses: array<AddressRows.staged>,
     // Chain metadata stale since the last write, persisted in the same
     // transaction so it never races the batch write.
     ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
@@ -196,7 +207,7 @@ let make = (
   ~allEnums,
   ~storage,
 ) => {
-  let allEntities = userEntities->Array.concat([InternalTable.EnvioAddresses.entityConfig])
+  let allEntities = userEntities
   let allEnums =
     allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
@@ -209,7 +220,15 @@ let make = (
 }
 
 let init = {
-  async (persistence, ~chainConfigs, ~envioInfo, ~resetCommand, ~runCommand, ~reset=false) => {
+  async (
+    persistence,
+    ~chainConfigs,
+    ~contractMapping,
+    ~envioInfo,
+    ~resetCommand,
+    ~runCommand,
+    ~reset=false,
+  ) => {
     try {
       let shouldRun = switch persistence.storageStatus {
       | Unknown => true
@@ -231,6 +250,7 @@ let init = {
             ~entities=persistence.allEntities,
             ~enums=persistence.allEnums,
             ~chainConfigs,
+            ~contractMapping,
             ~envioInfo,
           )
           Logging.info(`The indexer storage is ready. Starting indexing!`)
@@ -244,13 +264,13 @@ let init = {
           }
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
-          let initialState = await persistence.storage.resumeInitialState()
           // Compat-check the running config against what was stored on the
-          // last successful initialize. None means the schema pre-dates
-          // envio_info (or the row was wiped out-of-band) and we can't
-          // compare — treat it as a version mismatch.
-          let changedPaths = switch initialState.envioInfo {
-          | None => ["envio info is missing — storage initialized by an older envio"]
+          // last successful initialize, before reading anything the stored
+          // schema may not have. None means the schema pre-dates envio_info
+          // (or the row was wiped out-of-band) and we can't compare — treat it
+          // as a version mismatch.
+          let changedPaths = switch await persistence.storage.readEnvioInfo() {
+          | None => ["storage was initialized by an older envio version"]
           | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
           }
           // `storage.clickhouse` is serialized as a plain bool by the
@@ -269,6 +289,15 @@ let init = {
           | _ => false
           }
           Config.throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
+          let initialState = await persistence.storage.resumeInitialState()
+
+          // Belt and braces on top of the config diff: every stored address row
+          // names its contract by the id this mapping assigns, so a mapping
+          // that no longer matches the config would silently attribute
+          // addresses to the wrong contract.
+          if !(initialState.contractMapping->ContractMapping.isEqual(contractMapping)) {
+            Config.throwIfIncompatible(["contracts"], ~resetCommand, ~runCommand, ~hasClickhouse)
+          }
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {

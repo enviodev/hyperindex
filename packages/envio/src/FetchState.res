@@ -1469,7 +1469,6 @@ let warnAddressRegistration = (
 
 // A rejected registration is simply absent from every partition, so without a
 // warning the user sees a contract that never indexes and nothing saying why.
-// Shared by config-time registration in `make` and by dynamic registration.
 let warnRejectedRegistration = (
   verdict: AddressStore.verdict,
   ~chainId: ChainId.t,
@@ -1477,20 +1476,7 @@ let warnRejectedRegistration = (
   ~contractName: string,
 ) =>
   switch verdict {
-  | Conflict({existingContractName}) =>
-    warnAddressRegistration(
-      ~chainId,
-      ~contractAddress,
-      ~params={
-        "existingContractType": existingContractName,
-        "newContractType": contractName,
-      },
-      `Skipping contract registration: Contract address is already registered for one contract and cannot be registered for another contract.`,
-    )
   | Duplicate({effectiveStartBlock, existingEffectiveStartBlock}) =>
-    // FIXME: Instead of filtering out duplicates, we should check the block
-    // number first. If a new registration has an earlier block number we
-    // should register it for the missing block range.
     if existingEffectiveStartBlock > effectiveStartBlock {
       warnAddressRegistration(
         ~chainId,
@@ -1499,7 +1485,7 @@ let warnRejectedRegistration = (
           "existingBlockNumber": existingEffectiveStartBlock,
           "newBlockNumber": effectiveStartBlock,
         },
-        `Skipping contract registration: Contract address is already registered at a later block number. Currently registration of the same contract address is not supported by Envio. Reach out to us if it's a problem for you.`,
+        `Skipping same-contract re-registration: the address is already registered for this contract. The start block does not move earlier.`,
       )
     }
   | Invalid =>
@@ -1723,9 +1709,10 @@ let registerDynamicContracts = (
   // exactly what this batch adds.
   let idCursor = addressStore->AddressStore.nextId
   // The store resolves each address against both what it already holds and the
-  // batch's own earlier entries, so two contracts claiming one address inside a
-  // single batch conflict the same way as across batches. It also decides which
-  // additions this chain fetches for, since it's what holds the contract list.
+  // batch's own earlier entries, so the same address registered twice for one
+  // contract inside a single batch is a duplicate just as it is across batches.
+  // It also decides which additions this chain fetches for, since it's what
+  // holds the contract list.
   let verdicts = addressStore->AddressStore.registerBatch(registrations)
 
   let registeringContractNames = []
@@ -1741,7 +1728,7 @@ let registerDynamicContracts = (
     // no partition to build. The address is still stored and persisted, so a
     // config that later adds address-dependent events picks it up on restart.
     | Added({fetchable: false}) => ()
-    | Conflict(_) | Duplicate(_) | Invalid =>
+    | Duplicate(_) | Invalid =>
       verdict->warnRejectedRegistration(
         ~chainId=fetchState.chainId,
         ~contractAddress=registration.address,
@@ -2627,7 +2614,7 @@ let make = (
   ~endBlock,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
   ~addressStore: AddressStore.t,
-  ~addresses: array<Internal.indexingAddress>,
+  ~addressRows: AddressRows.seedRows,
   ~maxAddrInPartition,
   ~chainId: ChainId.t,
   ~maxOnBlockBufferSize,
@@ -2681,27 +2668,24 @@ let make = (
   )
 
   // Every address the chain indexes goes into the store — including ones whose
-  // contract has no address-dependent events, so a later registration of the
-  // same address still conflicts and the address is still persisted.
+  // contract has no address-dependent events, so the address is still persisted
+  // and a config that later adds events picks it up.
+  //
+  // These rows come from the config or from a resume, so they're already stored
+  // and must never be drained back into a write. Only the rows the store
+  // refuses come back: a resume seeds millions of them.
   addressStore
-  // These come from the config or from a resume, so they're already stored and
-  // must never be drained back into a write.
-  ->AddressStore.seedBatch(
-    addresses->Array.map((contract): AddressStore.registration => {
-      address: contract.address,
-      contractName: contract.contractName,
-      registrationBlock: contract.registrationBlock,
-    }),
-  )
-  // Verdicts are in the batch's order, so they line up with `addresses`. A
-  // config address the store rejects is dropped exactly like a dynamic one, and
-  // needs the same warning — restored dynamic addresses come through here too.
-  ->Array.forEachWithIndex((verdict, idx) => {
-    let contract = addresses->Array.getUnsafe(idx)
-    verdict->warnRejectedRegistration(
+  ->AddressStore.seedRows(addressRows)
+  ->Array.forEach(rejected => {
+    warnAddressRegistration(
       ~chainId,
-      ~contractAddress=contract.address,
-      ~contractName=contract.contractName,
+      ~contractAddress=rejected.address,
+      ~params={
+        "contractName": rejected.contractName,
+        "existingBlockNumber": rejected.existingEffectiveStartBlock,
+        "newBlockNumber": rejected.effectiveStartBlock,
+      },
+      `Skipping a stored address: it is already registered for this contract.`,
     )
   })
 
@@ -2709,23 +2693,24 @@ let make = (
   let clientFilteredContracts = Utils.Set.make()
   let registeringSetsByContract = Dict.make()
 
-  addresses->Array.forEach(contract => {
-    let contractName = contract.contractName
-
-    // Only addresses whose contract has events that depend on addresses get
-    // registered for active fetching via partitions.
+  // What each contract needs a partition for is read back off the store rather
+  // than re-derived from the seeded columns: the store is what resolved the
+  // rows, including the ones it refused.
+  contractNamesWithNormalEvents
+  ->Utils.Set.toArray
+  ->Array.forEach(contractName => {
+    if addressStore->AddressStore.contractCount(contractName) > 0 {
+      registeringSetsByContract->Dict.set(
+        contractName,
+        addressStore->AddressStore.makeSet(~contractName),
+      )
+    }
+  })
+  addressStore
+  ->AddressStore.dynamicContractNames
+  ->Array.forEach(contractName => {
     if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
-      if !(registeringSetsByContract->Dict.has(contractName)) {
-        registeringSetsByContract->Dict.set(
-          contractName,
-          addressStore->AddressStore.makeSet(~contractName),
-        )
-      }
-
-      // Detect dynamic contracts by registrationBlock
-      if contract.registrationBlock !== -1 {
-        dynamicContracts->Utils.Set.add(contractName)->ignore
-      }
+      dynamicContracts->Utils.Set.add(contractName)->ignore
     }
   })
 
@@ -2768,7 +2753,7 @@ let make = (
   ) {
     JsError.throwWithMessage(
       `Invalid configuration: Nothing to fetch on chain ${chainId->ChainId.toString}. ` ++
-      `addresses=${addresses->Array.length->Int.toString}, ` ++
+      `addresses=${addressRows.contractIds->Array.length->Int.toString}, ` ++
       `onEventRegistrations=${onEventRegistrations->Array.length->Int.toString}, ` ++
       `normalRegistrations=${normalRegistrations
         ->Array.length
@@ -2845,20 +2830,28 @@ let rollbackPendingQueries = (mutPendingQueries: array<pendingQuery>, ~targetBlo
   adjusted
 }
 
+type rollbackResult = {
+  fetchState: t,
+  // The registrations the prune dropped, for the storage that deletes their rows.
+  rolledBackAddresses: array<AddressStore.rolledBackAddress>,
+}
+
 /**
 Rolls back fetch state to the given valid block.
+Prunes the store first, then rebuilds partitions from it: an address survives iff
+`filterByRegistrationBlock` keeps it, so the partitions and the rows the caller
+goes on to delete can't disagree about which registrations died.
 Always recreates optimized partitions to avoid duplicate addresses:
 - Wildcard: only rollback latestFetchedBlock
 - Non-wildcard with lfb <= target: keep, adjust pending queries and mergeBlock
 - Non-wildcard with lfb > target: delete, track addresses for recreation
 */
-let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber) => {
-  // Step 1: Prune addresses registered after the target block. The pruned store
-  // is then the source of truth for partition cleanup below — an address
-  // survives iff `filterByRegistrationBlock` keeps it.
-  addressStore->AddressStore.rollback(targetBlockNumber)->ignore
-
-  // Step 2: Categorize partitions
+let rollback = (
+  fetchState: t,
+  ~addressStore: AddressStore.t,
+  ~targetBlockNumber,
+): rollbackResult => {
+  let rolledBackAddresses = addressStore->AddressStore.rollback(targetBlockNumber)
   let keptPartitions = []
   let nextKeptIdRef = ref(0)
   let registeringSetsByContract: dict<AddressSet.t> = Dict.make()
@@ -2935,7 +2928,6 @@ let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber
     }
   }
 
-  // Step 3: Recreate partitions from deleted partition addresses
   let optimizedPartitions = createPartitions(
     ~registeringSetsByContract,
     ~addressStore,
@@ -2949,8 +2941,7 @@ let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber
     ~knownHeight=fetchState.knownHeight,
   )
 
-  // Step 4: Update state
-  {
+  let rolledBack = {
     ...fetchState,
     // TODO: Test this. Currently it's not tested.
     latestOnBlockBlockNumber: Pervasives.min(
@@ -2969,6 +2960,7 @@ let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber
       targetBlockNumber
     ),
   )
+  {fetchState: rolledBack, rolledBackAddresses}
 }
 
 // Reset pending queries by removing in-flight queries (ones without fetchedBlock).

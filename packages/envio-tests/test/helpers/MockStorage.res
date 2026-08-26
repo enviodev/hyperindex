@@ -29,7 +29,9 @@ type t = {
   storage: Persistence.storage,
 }
 
-let make = (methods: array<method>, ~dbEntities=[]) => {
+// `storedEnvioInfo` is what a resume's compat gate reads back, before any of
+// the mocked methods are called.
+let make = (methods: array<method>, ~dbEntities=[], ~storedEnvioInfo=None) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
       fn
@@ -86,6 +88,7 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
         ~chainConfigs=[],
         ~entities=[],
         ~enums=[],
+        ~contractMapping as _,
         ~envioInfo,
       ) => {
         initializeCalls
@@ -100,6 +103,7 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
           initializeResolveFns->Array.push(resolve)->ignore
         })
       }),
+      readEnvioInfo: () => Promise.resolve(storedEnvioInfo),
       resumeInitialState: implement(#resumeInitialState, () => {
         resumeInitialStateCalls->Array.push(true)->ignore
         Promise.make((resolve, _reject) => {
@@ -175,6 +179,7 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
         ~allEntities as _,
         ~updatedEffectsCache as _,
         ~updatedEntities as _,
+        ~registeredAddresses as _,
         ~chainMetaData as _,
         ~onWrite as _,
       ) => JsError.throwWithMessage("Not implemented"),
@@ -188,11 +193,11 @@ let toPersistence = (storageMock: t, ~config: Config.t) => {
     ...PgStorage.makePersistenceFromConfig(~config, ~storage=storageMock.storage),
     storageStatus: Ready({
       cleanRun: false,
+      contractMapping: config.contractMapping,
       cache: Dict.make(),
       chains: [],
       reorgCheckpoints: [],
       checkpointId: 0n,
-      envioInfo: None,
     }),
   }
 }

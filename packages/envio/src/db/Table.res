@@ -21,6 +21,10 @@ type fieldType =
   | Boolean
   | Uint32
   | UInt52
+  | SmallInt
+  // Raw bytes. Only the internal tables use it — the one column that stores an
+  // address in the binary form the Rust address store keys on.
+  | Bytea
   | UInt64
   | Int32
   // Resolved to Int32 or UInt64 storage from the config's `ChainId.mode`, so
@@ -160,6 +164,8 @@ let getPgFieldType = (
     }
   | Uint32 => (Postgres.BigInt :> string)
   | UInt52 => (Postgres.BigInt :> string)
+  | SmallInt => (Postgres.SmallInt :> string)
+  | Bytea => (Postgres.Bytea :> string)
   | UInt64 => (Postgres.BigInt :> string)
   | Number => (Postgres.DoublePrecision :> string)
   | BigInt({?precision}) =>

@@ -210,12 +210,12 @@ let runSeed = (~seed, ~ops) => {
       registrationBlock: -1,
     },
   ]
-  let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~addresses)
+  let addressStore = TestAddresses.makeStore(~onEventRegistrations)
   let run = {
     fetchState: FetchState.make(
       ~onEventRegistrations,
       ~addressStore,
-      ~addresses,
+      ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=2,
@@ -258,10 +258,12 @@ let runSeed = (~seed, ~ops) => {
       let upper = Pervasives.max(run->minFrontier, 1)
       let target = (rng() *. upper->Int.toFloat)->Float.toInt
       run.fetchState =
-        run.fetchState->FetchState.rollback(
-          ~addressStore=run.addressStore,
-          ~targetBlockNumber=target,
-        )
+        (
+          run.fetchState->FetchState.rollback(
+            ~addressStore=run.addressStore,
+            ~targetBlockNumber=target,
+          )
+        ).fetchState
       run->log(`rollback->${target->Int.toString}`)
     }
     run->checkInvariants(~seed, ~rng)

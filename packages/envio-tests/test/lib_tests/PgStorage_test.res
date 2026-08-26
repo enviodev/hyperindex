@@ -206,6 +206,8 @@ CREATE TYPE "test_schema".AccountType AS ENUM('ADMIN', 'USER');
 CREATE TYPE "test_schema".GravatarSize AS ENUM('SMALL', 'MEDIUM', 'LARGE');
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE TABLE IF NOT EXISTS "test_schema"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
@@ -282,6 +284,8 @@ GRANT ALL ON SCHEMA "test_schema" TO "postgres";
 GRANT ALL ON SCHEMA "test_schema" TO public;
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE VIEW "test_schema"."_meta" AS 
@@ -346,6 +350,8 @@ GRANT ALL ON SCHEMA "public" TO "postgres";
 GRANT ALL ON SCHEMA "public" TO public;
 CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "public"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
+CREATE TABLE IF NOT EXISTS "public"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("id" BIGINT NOT NULL, "chain_id" INTEGER NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE TABLE IF NOT EXISTS "public"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
@@ -906,15 +912,15 @@ FROM "test_schema"."envio_chains";`
     )
   })
 
-  describe("InternalTable.Chains.makeGetIndexingAddressesQuery", () => {
+  describe("InternalTable.EnvioAddresses.makeGetRowsQuery", () => {
     Async.it(
       "Should create correct SQL for indexing addresses query",
       async t => {
-        let query = InternalTable.Chains.makeGetIndexingAddressesQuery(~pgSchema="test_schema")
+        let query = InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema="test_schema")
 
         let expectedQuery = `SELECT "chain_id" as "chainId",
-SUBSTRING("id" FROM POSITION('-' IN "id") + 1) as "address",
-"contract_name" as "contractName",
+"address" as "address",
+"contract_id" as "contractId",
 "registration_block" as "registrationBlock"
 FROM "test_schema"."envio_addresses";`
 

@@ -43,6 +43,7 @@ let makeStore = () => {
       ~allEntities as _,
       ~updatedEffectsCache as _,
       ~updatedEntities as _,
+      ~registeredAddresses as _,
       ~chainMetaData,
       ~onWrite as _,
     ) => {

@@ -28,13 +28,13 @@ let makeChainState = (
   ~onEventRegistrations=[],
 ) => {
   let addresses = []
-  let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~addresses)
+  let addressStore = TestAddresses.makeStore(~onEventRegistrations)
   let base = FetchState.make(
     // An onBlock config (no address partition) satisfies "something to fetch"
     // while keeping bufferBlockNumber tied to latestOnBlockBlockNumber.
     ~onEventRegistrations,
     ~addressStore,
-    ~addresses,
+    ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
     ~onBlockRegistrations=[
       {
         Internal.index: 0,

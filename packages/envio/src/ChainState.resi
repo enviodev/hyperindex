@@ -3,7 +3,18 @@
 
 type t
 
-let configAddresses: Config.chain => array<Internal.indexingAddress>
+let configStorageRows: (
+  Config.chain,
+  ~ecosystem: Ecosystem.name,
+  ~contractMapping: ContractMapping.t,
+) => array<AddressRows.row>
+
+let seedConfigAddresses: (
+  AddressRows.Table.t,
+  ~chainConfigs: array<Config.chain>,
+  ~ecosystem: Ecosystem.name,
+  ~contractMapping: ContractMapping.t,
+) => unit
 
 let make: (
   ~chainConfig: Config.chain,
@@ -26,13 +37,6 @@ let make: (
   ~logger: Pino.t,
 ) => t
 
-let makeFromConfig: (
-  Config.chain,
-  ~config: Config.t,
-  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
-  ~knownHeight: int,
-) => t
-
 let makeFromDbState: (
   Config.chain,
   ~resumedChainState: Persistence.initialChainState,
@@ -40,6 +44,7 @@ let makeFromDbState: (
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~config: Config.t,
+  ~contractMapping: ContractMapping.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~reducedPollingInterval: int=?,
 ) => t
@@ -158,4 +163,4 @@ let rollback: (
   ~eventsProcessedDiff: option<float>,
   ~rollbackTargetBlockNumber: int,
   ~isReorgChain: bool,
-) => unit
+) => array<AddressRows.key>
