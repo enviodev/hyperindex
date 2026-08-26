@@ -32,8 +32,7 @@ pub struct FromUserApiResult {
 }
 
 fn serialize_config_result(config: anyhow::Result<SystemConfig>) -> napi::Result<String> {
-    let system_config =
-        config.map_err(|e| napi::Error::from_reason(format!("Config parse error: {e:#}")))?;
+    let system_config = config.map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
     system_config
         .to_public_config_json(false)
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))
@@ -69,7 +68,7 @@ pub fn from_user_api(
     let env = options.env.unwrap_or_default();
     let files = options.files.unwrap_or_default();
     let config = SystemConfig::parse_yaml(&yaml, options.schema.as_deref(), &env, &files, false)
-        .map_err(|e| napi::Error::from_reason(format!("Config parse error: {e:#}")))?;
+        .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
     let config_json = config
         .to_public_config_json(false)

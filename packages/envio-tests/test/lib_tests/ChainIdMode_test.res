@@ -83,7 +83,7 @@ describe("ChainIdMode resolution", () => {
   it("rejects a chain id above Number.MAX_SAFE_INTEGER", t => {
     t->toThrowErrorEqual(
       () => parse(~name="too-big", ~chains=evmChain(~id="9007199254740992"))->ignore,
-      "Config parse error: Chain id 9007199254740992 is above the maximum supported chain id 9007199254740991 (Number.MAX_SAFE_INTEGER).",
+      "Chain id 9007199254740992 is above the maximum supported chain id 9007199254740991 (Number.MAX_SAFE_INTEGER).",
     )
   })
 
@@ -108,7 +108,7 @@ describe("ChainIdMode resolution", () => {
     start_block: 0`
     t->toThrowErrorEqual(
       () => parse(~name="skipped-too-big", ~chains=skippedTooBig)->ignore,
-      "Config parse error: Chain id 9007199254740992 is above the maximum supported chain id 9007199254740991 (Number.MAX_SAFE_INTEGER).",
+      "Chain id 9007199254740992 is above the maximum supported chain id 9007199254740991 (Number.MAX_SAFE_INTEGER).",
     )
   })
 

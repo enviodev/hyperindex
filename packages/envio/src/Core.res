@@ -87,6 +87,10 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   var path = Nodepath;
   var fs = Nodefs;
 
+  // Vitest test.env points workers at the addon globalSetup already built.
+  var preBuilt = process.env.ENVIO_DEV_ADDON;
+  if (preBuilt && fs.existsSync(preBuilt)) return req(preBuilt);
+
   var repoRoot = null;
   var dir = path.resolve(envioDir);
   for (var i = 0; i < 10; i++) {

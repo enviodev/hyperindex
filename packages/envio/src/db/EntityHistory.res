@@ -59,18 +59,14 @@ type pgEntityHistory<'entity> = {
   setChangeSchemaRows: S.t<array<Change.t<'entity>>>,
 }
 
-let maxPgTableNameLength = 63
 let historyTablePrefix = "envio_history_"
-let historyTableName = (~entityName, ~entityIndex) => {
-  let fullName = historyTablePrefix ++ entityName
-  if fullName->String.length > maxPgTableNameLength {
-    let entityIndexStr = entityIndex->Int.toString
-    fullName->Js.String.slice(~from=0, ~to_=maxPgTableNameLength - entityIndexStr->String.length) ++
-      entityIndexStr
-  } else {
-    fullName
-  }
-}
+// `$` can't occur in a GraphQL entity name, so it marks where a truncated name
+// stops and the index that keeps it unique begins. Without that boundary two
+// long names whose indexes differ in digit count can truncate onto the same
+// identifier, and `CREATE TABLE IF NOT EXISTS` would hand both entities one
+// history table.
+let historyTableName = (~entityName, ~entityIndex) =>
+  fitPgTableName(historyTablePrefix ++ entityName, ~uniqueSuffix=`$${entityIndex->Int.toString}`)
 
 type safeReorgBlocks = {
   chainIds: array<ChainId.t>,
@@ -145,7 +141,7 @@ let pruneStaleEntityHistory = (
 // If an entity doesn't have a history before the update
 // we create it automatically with envio_checkpoint_id 0
 // The ids belong to a single chain (the flush group's scope), so the chain is
-// bound once as $2 rather than unnested alongside them.
+// named once in the query rather than unnested alongside them.
 let makeBackfillHistoryQuery = (
   ~pgSchema,
   ~entityName,
@@ -155,8 +151,11 @@ let makeBackfillHistoryQuery = (
   ~chainId: option<ChainId.t>,
 ) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
+  // Written into the SQL rather than bound: this scans the entity table, which
+  // is partitioned by the chain-id column, and Postgres can only prune a plan
+  // it caches when that column is a constant.
   let chainFilter = switch (chainIdColumn, chainId) {
-  | (Some(column), Some(_)) => ` AND e."${column}" = $2`
+  | (Some(column), Some(chainId)) => ` AND e."${column}" = ${chainId->ChainId.toString}`
   | _ => ""
   }
   `WITH target_ids AS (
@@ -185,11 +184,6 @@ let backfillHistory = (
   let idPgType = table->Table.getIdPgFieldType(~pgSchema)
   let chainIdColumn = table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
   let params = [table->Table.encodeIdsToJson(ids)->(Utils.magic: JSON.t => unknown)]
-  switch (chainIdColumn, chainId) {
-  | (Some(_), Some(chainId)) =>
-    params->Array.push(chainId->(Utils.magic: ChainId.t => unknown))->ignore
-  | _ => ()
-  }
   sql
   ->Postgres.preparedUnsafe(
     makeBackfillHistoryQuery(

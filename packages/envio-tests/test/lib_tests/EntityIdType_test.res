@@ -233,7 +233,7 @@ chains:
 
   // The full error a rejected parse throws. `toThrowErrorEqual` asserts the
   // whole message (not a substring). The entity is named "Thing" in every case.
-  let expectedError = "Config parse error: Invalid storage for `Thing`. Its `id` is a BigInt, which ClickHouse stores as a String (sorted lexicographically, not numerically) unless a precision is set. Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with N <= 38 so the id stores as a numeric Decimal, or set `@storage(clickhouse: {orderBy: [...]})` to sort by other fields."
+  let expectedError = "Invalid storage for `Thing`. Its `id` is a BigInt, which ClickHouse stores as a String (sorted lexicographically, not numerically) unless a precision is set. Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with N <= 38 so the id stores as a numeric Decimal, or set `@storage(clickhouse: {orderBy: [...]})` to sort by other fields."
 
   it("rejects an unbounded BigInt id on a clickhouse entity", t => {
     t->toThrowErrorEqual(
@@ -438,7 +438,7 @@ type Thing @storage(clickhouse: {orderBy: ["parent"]}) {
   parent: Parent!
 }
 `)->ignore,
-      "Config parse error: Invalid storage for `Thing`. `clickhouse.orderBy` sorts by `parent`, which stores a BigInt that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N)` with N <= 38 to the BigInt it stores so it sorts as a numeric Decimal.",
+      "Invalid storage for `Thing`. `clickhouse.orderBy` sorts by `parent`, which stores a BigInt that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N)` with N <= 38 to the BigInt it stores so it sorts as a numeric Decimal.",
     )
   })
 

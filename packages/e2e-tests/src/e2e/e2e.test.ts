@@ -424,27 +424,39 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     const accountId = account[0]?.[0];
     expect(accountId).toBeTruthy();
 
+    // A per-chain entity's table is partitioned by chain id and only the
+    // configured chains get a partition, so chain 999 needs one before a row
+    // can be routed to it. The name is this test's own — the indexer's
+    // partitions are named elsewhere, and nothing here should depend on how.
     await runPgSql(
-      `INSERT INTO "ChainTransfer" ("id", "from", "value", "chain_id")
-       VALUES ('planted-other-chain', '${accountId}', 1, 999)
-       ON CONFLICT DO NOTHING`
+      `CREATE TABLE "ChainTransfer_planted"
+       PARTITION OF "ChainTransfer" FOR VALUES IN (999)`
     );
 
-    const result = await graphql.query<{
-      ChainAccount: Array<{
-        id: string;
-        transfers: Array<{ id: string; chainId: number }>;
-      }>;
-    }>(
-      `{ ChainAccount(where: {id: {_eq: "${accountId}"}}) { id transfers { id chainId } } }`
-    );
-    const transfers = result.data?.ChainAccount[0]?.transfers ?? [];
+    // Dropped before asserting, and in a `finally` so that a query throwing
+    // doesn't leave the partition behind either — the tests that follow count
+    // rows in this table, and a leftover partition would also collide with the
+    // `CREATE` above on the next run. Dropping it takes its row with it.
+    let transfers: Array<{ id: string; chainId: number }>;
+    try {
+      await runPgSql(
+        `INSERT INTO "ChainTransfer" ("id", "from", "value", "chain_id")
+         VALUES ('planted-other-chain', '${accountId}', 1, 999)
+         ON CONFLICT DO NOTHING`
+      );
 
-    // Removed before asserting so a failure doesn't leave the row for the
-    // tests that follow.
-    await runPgSql(
-      `DELETE FROM "ChainTransfer" WHERE "id" = 'planted-other-chain'`
-    );
+      const result = await graphql.query<{
+        ChainAccount: Array<{
+          id: string;
+          transfers: Array<{ id: string; chainId: number }>;
+        }>;
+      }>(
+        `{ ChainAccount(where: {id: {_eq: "${accountId}"}}) { id transfers { id chainId } } }`
+      );
+      transfers = result.data?.ChainAccount[0]?.transfers ?? [];
+    } finally {
+      await runPgSql(`DROP TABLE "ChainTransfer_planted"`);
+    }
 
     expect(transfers.length).toBeGreaterThan(0);
     expect({
