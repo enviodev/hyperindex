@@ -327,7 +327,7 @@ describe("Per-chain rollback and delete SQL", () => {
           ~chainId=Some(137->ChainId.fromInt),
         ),
       ),
-    ).toBe(`DELETE FROM "public"."Counter" WHERE id = $1 AND "chainId" = $2;`)
+    ).toBe(`DELETE FROM "public"."Counter" WHERE id = $1 AND "chainId" = 137;`)
   })
 
   it("Leaves a cross-chain entity's delete unfiltered", t => {
@@ -358,7 +358,7 @@ describe("Per-chain rollback and delete SQL", () => {
         ~idPgType="TEXT",
         ~chainIdColumn=Some("chainId"),
         ~chainId=Some(1->ChainId.fromInt),
-      )->String.includes(`JOIN target_ids t ON e.id = t.id AND e."chainId" = $2`),
+      )->String.includes(`JOIN target_ids t ON e.id = t.id AND e."chainId" = 1`),
     ).toBe(true)
   })
 })
@@ -400,7 +400,7 @@ describe("Per-chain entities under snake_case columns", () => {
       )->String.includes(`SELECT DISTINCT "id", "chain_id"`),
     )).toEqual((
       `CREATE TABLE IF NOT EXISTS "public"."Counter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, "chain_id" INTEGER NOT NULL, PRIMARY KEY("id", "chain_id"));`,
-      ` AND "chain_id" = $2`,
+      ` AND "chain_id" = 137`,
       true,
     ))
   })

@@ -112,27 +112,12 @@ pub const ACCOUNT_ACTIVITY: &[HandlerField] = &[
         columns: &["is_writable"],
     },
     HandlerField {
-        js_name: "lamports",
-        columns: &["pre_balance", "post_balance"],
-    },
-    HandlerField {
         js_name: "lamports.pre",
         columns: &["pre_balance"],
     },
     HandlerField {
         js_name: "lamports.post",
         columns: &["post_balance"],
-    },
-    HandlerField {
-        js_name: "token",
-        columns: &[
-            "mint",
-            "pre_owner",
-            "post_owner",
-            "token_decimals",
-            "pre_token_balance",
-            "post_token_balance",
-        ],
     },
     HandlerField {
         js_name: "token.mint",
