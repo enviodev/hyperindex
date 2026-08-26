@@ -2053,7 +2053,6 @@ describe("E2E rollback tests", () => {
       // has fetched the block that registered it.
       sourceMock.resolveGetItemsOrThrow(
         [{blockNumber: 102, logIndex: 1, handler: async _ => ()}],
-        ~resolveAt=#first,
         ~latestFetchedBlockNumber=102,
       )
       await indexer.getBatchWritePromise()

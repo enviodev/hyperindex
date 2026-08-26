@@ -1773,21 +1773,21 @@ type User { id: ID! }
       `
 type constructor { id: ID! }
 `,
-      "Failed converting schema doc to schema struct: Schema contains the following reserved keywords: constructor",
+      "Schema contains the following reserved keywords: constructor",
     ),
     (
       "rejects an entity named toString",
       `
 type toString { id: ID! }
 `,
-      "Failed converting schema doc to schema struct: Schema contains the following reserved keywords: toString",
+      "Schema contains the following reserved keywords: toString",
     ),
     (
       "rejects an entity named hasOwnProperty",
       `
 type hasOwnProperty { id: ID! }
 `,
-      "Failed converting schema doc to schema struct: Schema contains the following reserved keywords: hasOwnProperty",
+      "Schema contains the following reserved keywords: hasOwnProperty",
     ),
     (
       // `Enum` is already exported by the `envio` module, and every entity is
@@ -1796,7 +1796,7 @@ type hasOwnProperty { id: ID! }
       `
 type enum { id: ID! }
 `,
-      "Failed converting schema doc to schema struct: Schema contains the following reserved keywords: enum",
+      "Schema contains the following reserved keywords: enum",
     ),
   ]->Array.forEach(((name, schema, message)) => {
     it(name, t => expectParseError(t, ~schema, baseYaml, message))

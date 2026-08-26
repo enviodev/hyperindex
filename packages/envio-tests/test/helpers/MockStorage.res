@@ -191,7 +191,7 @@ let toPersistence = (storageMock: t, ~config: Config.t) => {
     storageStatus: Ready({
       cleanRun: false,
       contractMapping: config.contractMapping,
-      envioInfo: Some(Config.getPublicConfigJson()->Config.stripSensitiveData),
+      envioInfo: Some(JSON.Encode.object(Dict.make())),
       cache: Dict.make(),
       chains: [],
       reorgCheckpoints: [],

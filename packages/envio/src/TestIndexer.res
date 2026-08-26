@@ -276,7 +276,7 @@ let makeInitialState = (
   {
     cleanRun: true,
     contractMapping,
-    envioInfo: Some(Config.getPublicConfigJson()->Config.stripSensitiveData),
+    envioInfo: Some(JSON.Encode.object(Dict.make())),
     cache: Dict.make(),
     chains,
     checkpointId: InternalTable.Checkpoints.initialCheckpointId,
