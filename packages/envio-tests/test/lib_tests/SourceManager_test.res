@@ -3687,6 +3687,12 @@ describe("SourceManager height subscription", () => {
     fallback.resolveGetHeightOrThrow(105)
     let firstHeight = await first
 
+    // The fake clock is process-wide, and the poll loops other tests in this file
+    // start outlive the waits that made them. Clearing here scopes the count
+    // below to the wait under test: everything it goes on to arm is armed after
+    // this point.
+    Vi.clearAllTimers()
+
     // The fallback already knows a height past this one, so recruiting it
     // answers the wait inside the stall callback that recruited it. Anything the
     // callback goes on to do belongs to a wait that is over — and a timer armed
@@ -3700,9 +3706,9 @@ describe("SourceManager height subscription", () => {
     await Vi.advanceTimersByTimeAsync(stallTimeout)
     let secondHeight = await second
 
-    // Let the poll sync still had out come back, so its loop retires and takes
-    // that poll's deadline with it. What is left pending after that is only what
-    // the wait itself armed.
+    // Let the poll sync still had out come back, so its loop retires rather than
+    // sitting on the answer. What is pending after that is only what the wait
+    // itself armed.
     sync.resolveGetHeightOrThrow(100)
     await Vi.advanceTimersByTimeAsync(0)
     let timersLeftBehind = Vi.getTimerCount()

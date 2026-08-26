@@ -30,7 +30,7 @@ describe("HeightFeed answers a waiter", () => {
     mock.resolveGetHeightOrThrow(101)
     await Utils.delay(0)
 
-    t.expect((pollsBeforeAnswer, heights, (feed->HeightFeed.sample).knownHeight)).toStrictEqual((
+    t.expect((pollsBeforeAnswer, heights, feed->HeightFeed.knownHeight)).toStrictEqual((
       1,
       [101],
       101,
@@ -65,7 +65,7 @@ describe("HeightFeed answers a waiter", () => {
     feed->HeightFeed.recordHeight(105)
     await Utils.delay(0)
 
-    t.expect((heights, (feed->HeightFeed.sample).knownHeight)).toStrictEqual(([105], 105))
+    t.expect((heights, feed->HeightFeed.knownHeight)).toStrictEqual(([105], 105))
   })
 
   Async.it("Immediately when it already knows a higher height", async t => {
@@ -139,7 +139,7 @@ describe("HeightFeed polls only for someone", () => {
     t.expect((
       catchUpPolls,
       mock.getHeightOrThrowCalls->Array.length,
-      (feed->HeightFeed.sample).knownHeight,
+      feed->HeightFeed.knownHeight,
     )).toStrictEqual((1, 1, 105))
   })
 
@@ -415,7 +415,7 @@ describe("HeightFeed stream state", () => {
       subscriptions,
       mock.heightSubscriptionCalls->Array.length,
       mock.heightSubscriptionCloseCalls->Array.length,
-      (feed->HeightFeed.sample).stream,
+      feed->HeightFeed.sample,
     )).toStrictEqual((
       1,
       1,
@@ -446,6 +446,57 @@ describe("HeightFeed stream state", () => {
     // Being benched is a capability verdict, not an outage: the source can still
     // answer a height poll, and until another source answers it is what there is.
     t.expect((pollsWhileLive, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((2, 3))
+  })
+
+  Async.it("Polls straight away when a live connection drops mid-interval", async t => {
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let (feed, _stats) = makeFeed(mock)
+    feed->HeightFeed.enableStream
+    let (_heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+
+    mock.setHeightSubscriptionStatus(Live)
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+
+    // Poked, so a loop runs beside the live stream. Its poll answers below the
+    // floor and it settles in for an interval chosen while that connection was
+    // still the thing covering this source.
+    subscription.poke()
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+    let pollsWhileSleeping = mock.getHeightOrThrowCalls->Array.length
+
+    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    await Utils.delay(0)
+
+    t.expect((pollsWhileSleeping, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((3, 4))
+  })
+
+  Async.it("Sits out the backoff when the stream drops while polls are failing", async t => {
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let (feed, _stats) = makeFeed(mock, ~getHeightRetryInterval=(~retry as _) => 10_000)
+    feed->HeightFeed.enableStream
+    let (_heights, _unsubscribe) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+
+    mock.setHeightSubscriptionStatus(Live)
+    // Both the catch-up and the loop's poll fail, so the loop is sleeping off
+    // the backoff the endpoint earned rather than a polling interval.
+    mock.rejectGetHeightOrThrow(JsError.make("down"))
+    await Utils.delay(0)
+    let pollsWhileBackingOff = mock.getHeightOrThrowCalls->Array.length
+
+    // The stream dropping is usually the same endpoint's doing, so it is no
+    // reason to ask again ahead of schedule.
+    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    await Utils.delay(0)
+
+    t.expect((pollsWhileBackingOff, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((2, 2))
   })
 
   Async.it("Keeps polling when a replaced connection's catch-up lands late", async t => {
@@ -492,7 +543,7 @@ describe("HeightFeed stream state", () => {
     mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
     mock.setHeightSubscriptionStatus(Down({reason: "connect-failed"}))
 
-    t.expect((whileNeverConnected.stream, (feed->HeightFeed.sample).stream)).toStrictEqual((
+    t.expect((whileNeverConnected, feed->HeightFeed.sample)).toStrictEqual((
       Some({HeightFeed.connectCount: 0, disconnects: []}),
       Some({HeightFeed.connectCount: 1, disconnects: [("closed", 1)]}),
     ))
@@ -505,7 +556,7 @@ describe("HeightFeed stream state", () => {
 
     t.expect((
       mock.heightSubscriptionCalls->Array.length,
-      (feed->HeightFeed.sample).stream,
+      feed->HeightFeed.sample,
     )).toStrictEqual((0, None))
   })
 })

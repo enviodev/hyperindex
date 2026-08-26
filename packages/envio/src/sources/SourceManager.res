@@ -142,7 +142,7 @@ type heightStreamSample = {
 let getHeightStreamSamples = (sourceManager: t): array<heightStreamSample> => {
   let samples = []
   sourceManager.sourcesState->Array.forEach(sourceState =>
-    switch (sourceState.feed->HeightFeed.sample).stream {
+    switch sourceState.feed->HeightFeed.sample {
     | Some({connectCount, disconnects}) =>
       samples->Array.push({
         sourceName: sourceState.source.name,
@@ -540,7 +540,7 @@ let maxRetryBackoffMillis = 60_000
 // 100ms doubling up to the cap. `backoffBeforeRetry` still applies the caller's
 // floor and the cap on top.
 let retryBackoffMillis = retry =>
-  Pervasives.min(100. *. 2. ** retry->Int.toFloat, maxRetryBackoffMillis->Int.toFloat)->Float.toInt
+  Utils.expBackoff(~base=100, ~exp=retry, ~maxMillis=maxRetryBackoffMillis)
 
 // Floor for the retries driven by a condition the source reported itself
 // (behind the head, inconsistent response). Unlike a caller-supplied backoff of

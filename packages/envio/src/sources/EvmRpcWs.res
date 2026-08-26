@@ -1,19 +1,19 @@
-/*
-WebSocket-based implementation for real-time block height tracking.
-Uses eth_subscribe("newHeads") for low-latency block detection.
-*/
-
 // newHeads carries no keep-alive, so this has to tolerate slow chains rather
 // than the seconds an SSE ping allows.
 let staleTimeout = 60_000
 
+// The id of the one request this stream ever sends, which is what tells an error
+// meant for it apart from one about anything else sharing the socket.
+let subscribeRequestId = 1
+
 type wsMessage =
   | NewHead(int)
-  | SubscriptionConfirmed(string)
-  | ErrorResponse
+  | SubscriptionConfirmed
+  // An error frame, carrying the id of the request it answers when it names one.
+  | ErrorResponse(option<int>)
 
 let subscribeRequestJson =
-  {"jsonrpc": "2.0", "id": 1, "method": "eth_subscribe", "params": ["newHeads"]}
+  {"jsonrpc": "2.0", "id": subscribeRequestId, "method": "eth_subscribe", "params": ["newHeads"]}
   ->(Utils.magic: {
     "jsonrpc": string,
     "id": int,
@@ -42,11 +42,19 @@ let wsMessageSchema = S.union([
     )
   }),
   S.object(s => {
-    SubscriptionConfirmed(s.field("result", S.string))
+    let _ = s.field("result", S.string)
+    SubscriptionConfirmed
   }),
   S.object(s => {
-    let _ = s.field("error", S.unknown)
-    ErrorResponse
+    // Nullable, not merely optional: JSON-RPC answers a request whose id it
+    // could not read with an explicit null, and that is still an error frame.
+    let id = s.field("id", S.nullable(S.int))
+    // The error member as JSON-RPC defines it, rather than `S.unknown`: a
+    // missing field parses as `undefined`, which `S.unknown` accepts, and this
+    // arm would then match every frame the ones above turned down — including
+    // one nobody can read.
+    let _ = s.field("error", S.object(s => s.field("code", S.int)))
+    ErrorResponse(id)
   }),
 ])
 
@@ -65,8 +73,13 @@ let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
       switch message {
       | Some(NewHead(blockNumber)) => driver.onHeight(blockNumber)
       // An open socket isn't usable until the node accepts the subscription.
-      | Some(SubscriptionConfirmed(_)) => driver.onConnected()
-      | Some(ErrorResponse) => driver.onFailure(~reason="subscribe-rejected", ~detail=event.data)
+      | Some(SubscriptionConfirmed) => driver.onConnected()
+      | Some(ErrorResponse(Some(id))) if id === subscribeRequestId =>
+        driver.onFailure(~reason="subscribe-rejected", ~detail=event.data)
+      // A provider reporting trouble with something other than the subscription
+      // this socket asked for — a rate limit, a request nobody here made. Read
+      // fine, so not unreadable, and not this stream's to tear itself down over.
+      | Some(ErrorResponse(_)) => ()
       | None => driver.onUnreadable(~detail=event.data)
       }
     })

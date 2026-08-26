@@ -481,24 +481,6 @@ describe("HeightStream reconnect driver", () => {
   })
 })
 
-module NodeHttp = {
-  type incomingMessage
-  type serverResponse
-  type t
-  type address = {port: int}
-
-  @module("node:http")
-  external createServer: ((incomingMessage, serverResponse) => unit) => t = "createServer"
-
-  @send external listen: (t, int, string, unit => unit) => unit = "listen"
-  @send external close: (t, unit => unit) => unit = "close"
-  @send external address: t => address = "address"
-  @send external writeHead: (serverResponse, int, dict<string>) => unit = "writeHead"
-  @send external write: (serverResponse, string) => unit = "write"
-  @send external endWith: (serverResponse, string) => unit = "end"
-  @send external end: (serverResponse, unit) => unit = "end"
-}
-
 module WsServer = {
   type socket
   type t
@@ -514,25 +496,11 @@ module WsServer = {
   @send external toString: 'data => string = "toString"
 }
 
-let waitUntil = async (predicate: unit => bool) => {
-  let deadline = Performance.now() +. 5_000.
-  let rec loop = async () =>
-    if predicate() {
-      ()
-    } else if Performance.now() > deadline {
-      JsError.throwWithMessage("Timed out waiting for the height stream")
-    } else {
-      await Utils.delay(5)
-      await loop()
-    }
-  await loop()
-}
-
 let listenHttp = handler => {
-  let server = NodeHttp.createServer(handler)
+  let server = MockRpcServer.createServer(handler)
   Promise.make((resolve, _reject) =>
-    server->NodeHttp.listen(0, "127.0.0.1", () =>
-      resolve((server, `http://127.0.0.1:${(server->NodeHttp.address).port->Int.toString}`))
+    server->MockRpcServer.listenOnHost(0, "127.0.0.1", () =>
+      resolve((server, `http://127.0.0.1:${(server->MockRpcServer.address).port->Int.toString}`))
     )
   )
 }
@@ -550,8 +518,8 @@ let listenWs = onConnection => {
 describe("HyperSyncSSE", () => {
   Async.it("Reports the HTTP status as the failure reason", async t => {
     let (server, url) = await listenHttp((_request, response) => {
-      response->NodeHttp.writeHead(401, Dict.fromArray([("Content-Type", "text/plain")]))
-      response->NodeHttp.endWith("unauthorized")
+      response->MockRpcServer.writeHead(401, Dict.fromArray([("Content-Type", "text/plain")]))
+      response->MockRpcServer.end_("unauthorized")
     })
     let statuses = []
     // The status alone can't tell an operator which of a provider's many 401s
@@ -570,23 +538,23 @@ describe("HyperSyncSSE", () => {
       },
     )
 
-    await waitUntil(() => statuses->Array.length > 0)
+    await Scenario.waitUntil(() => statuses->Array.length > 0, ~message="the height stream")
     unsubscribe()
-    await Promise.make((resolve, _reject) => server->NodeHttp.close(() => resolve()))
+    await Promise.make((resolve, _reject) => server->MockRpcServer.close(() => resolve()))
 
     t.expect((statuses, detailed)).toStrictEqual((["down:401"], [true]))
   })
 
   Async.it("Delivers heights and reports a clean stream end as closed", async t => {
     let (server, url) = await listenHttp((_request, response) => {
-      response->NodeHttp.writeHead(
+      response->MockRpcServer.writeHead(
         200,
         Dict.fromArray([("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache")]),
       )
-      response->NodeHttp.write("event: height\ndata: 123\n\n")
+      response->MockRpcServer.write("event: height\ndata: 123\n\n")
       // Ending the response drops the stream without an HTTP error, which is
       // how a load balancer rotating connections shows up.
-      response->NodeHttp.end()
+      response->MockRpcServer.endStream()
     })
     let statuses = []
     let heights = []
@@ -597,9 +565,12 @@ describe("HyperSyncSSE", () => {
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
     )
 
-    await waitUntil(() => statuses->Array.includes("down:closed"))
+    await Scenario.waitUntil(
+      () => statuses->Array.includes("down:closed"),
+      ~message="the height stream",
+    )
     unsubscribe()
-    await Promise.make((resolve, _reject) => server->NodeHttp.close(() => resolve()))
+    await Promise.make((resolve, _reject) => server->MockRpcServer.close(() => resolve()))
 
     t.expect((statuses, heights)).toStrictEqual((["live", "down:closed"], [123]))
   })
@@ -625,7 +596,7 @@ describe("EvmRpcWs", () => {
       ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
     )
 
-    await waitUntil(() => heights->Array.length > 0)
+    await Scenario.waitUntil(() => heights->Array.length > 0, ~message="the height stream")
     unsubscribe()
     await Promise.make((resolve, _reject) => server->WsServer.close(() => resolve()))
 
@@ -652,6 +623,59 @@ describe("EvmRpcWs", () => {
     t.expect(statuses).toStrictEqual([])
   })
 
+  Async.it("Treats a frame it cannot make sense of as unreadable, not as a rejection", async t => {
+    // Valid JSON, but none of the shapes this stream knows. Reporting it as a
+    // rejected subscription would name a cause the provider never gave.
+    let (server, url) = await listenWs(socket =>
+      socket->WsServer.onMessage(_data =>
+        socket->WsServer.send(`{"jsonrpc":"2.0","hello":"world"}`)
+      )
+    )
+    let statuses = []
+    let unsubscribe = EvmRpcWs.subscribe(
+      ~wsUrl=url,
+      ~onHeight=_ => (),
+      ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
+    )
+
+    await Utils.delay(200)
+    unsubscribe()
+    await Promise.make((resolve, _reject) => server->WsServer.close(() => resolve()))
+
+    t.expect(statuses).toStrictEqual([])
+  })
+
+  Async.it("Keeps a delivering connection through an error meant for something else", async t => {
+    let (server, url) = await listenWs(socket =>
+      socket->WsServer.onMessage(data =>
+        if data->WsServer.toString->String.includes("eth_subscribe") {
+          socket->WsServer.send(`{"jsonrpc":"2.0","id":1,"result":"0xsub"}`)
+          // Nothing to do with the subscription this stream asked for: a
+          // provider talking about some other request, or about itself.
+          socket->WsServer.send(
+            `{"jsonrpc":"2.0","id":7,"error":{"code":-32005,"message":"rate limited"}}`,
+          )
+          socket->WsServer.send(
+            `{"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"0xsub","result":{"number":"0x2a"}}}`,
+          )
+        }
+      )
+    )
+    let statuses = []
+    let heights = []
+    let unsubscribe = EvmRpcWs.subscribe(
+      ~wsUrl=url,
+      ~onHeight=height => heights->Array.push(height)->ignore,
+      ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
+    )
+
+    await Scenario.waitUntil(() => heights->Array.length > 0, ~message="the height stream")
+    unsubscribe()
+    await Promise.make((resolve, _reject) => server->WsServer.close(() => resolve()))
+
+    t.expect((statuses, heights)).toStrictEqual((["live"], [42]))
+  })
+
   Async.it("Reports a rejected eth_subscribe without giving up", async t => {
     let (server, url) = await listenWs(socket =>
       socket->WsServer.onMessage(_data =>
@@ -668,7 +692,7 @@ describe("EvmRpcWs", () => {
     )
 
     // Long enough for the first retry to reconnect and be rejected again.
-    await waitUntil(() => statuses->Array.length > 1)
+    await Scenario.waitUntil(() => statuses->Array.length > 1, ~message="the height stream")
     unsubscribe()
     await Promise.make((resolve, _reject) => server->WsServer.close(() => resolve()))
 
