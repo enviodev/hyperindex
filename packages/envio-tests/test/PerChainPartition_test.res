@@ -338,6 +338,7 @@ describe("Reused chain-scoped statements stay pruned", () => {
           ~pgDatabase="",
           ~pgPassword="",
           ~isHasuraEnabled=false,
+          ~ecosystem=Evm,
         )
         let counts = []
         for _ in 1 to 8 {
