@@ -2069,19 +2069,27 @@ impl UserDefinedFieldType {
         }
     }
 
-    /// Returns the name of the entity when @derivedFrom derivtive is used
-    /// Returns None in the case that it does not conform to the correct
-    /// structure of a derived entity
-    fn get_name_of_derived_from_entity(&self) -> Option<String> {
+    fn strip_non_null(&self) -> &Self {
         match self {
-            Self::NonNullType(f) => match f.as_ref() {
-                Self::ListType(f) => match f.as_ref() {
-                    Self::NonNullType(f) => match f.as_ref() {
-                        Self::Single(GqlScalar::Custom(name)) => Some(name.clone()),
-                        _ => None,
-                    },
-                    _ => None,
-                },
+            Self::NonNullType(inner) => inner.as_ref(),
+            other => other,
+        }
+    }
+
+    /// Returns the name of the entity a @derivedFrom field looks up, or None
+    /// when the field isn't shaped like one.
+    ///
+    /// The nullability the field is written with carries no meaning: the lookup
+    /// is computed from the other side of the relation, so `[Child!]!`,
+    /// `[Child!]`, `[Child]!` and `[Child]` all name the same one-to-many
+    /// relation and are all generated as `[Child!]!`. The list itself does carry
+    /// meaning — a derived field is exposed as a list everywhere it surfaces, so
+    /// the one-to-one `Child @derivedFrom(...)` is refused rather than quietly
+    /// answered with an array.
+    fn get_name_of_derived_from_entity(&self) -> Option<String> {
+        match self.strip_non_null() {
+            Self::ListType(item) => match item.strip_non_null() {
+                Self::Single(GqlScalar::Custom(name)) => Some(name.clone()),
                 _ => None,
             },
             _ => None,
@@ -2210,15 +2218,14 @@ impl FieldType {
             Some(derived_from_field) => match field_type.get_name_of_derived_from_entity() {
                 None => {
                     let example_str = Self::DerivedFromField {
-                        entity_name: "<ENTITY_FIELD_NAME>".to_string(),
+                        entity_name: "<ENTITY_NAME>".to_string(),
                         derived_from_field,
                     }
                     .to_string();
 
                     Err(anyhow!(
                         "Field marked with @derivedFrom directive does not meet the required \
-                         structure. Field should contain a non nullable list of non nullable \
-                         entities for example: {example_str}"
+                         structure. Field should be a list of entities, for example: {example_str}"
                     ))
                 }
                 Some(entity_name) => Ok(Self::DerivedFromField {
@@ -2275,9 +2282,11 @@ impl FieldType {
 
     fn to_string_internal(&self) -> String {
         match self {
-            Self::DerivedFromField { entity_name, .. } => {
+            Self::DerivedFromField {
+                derived_from_field, ..
+            } => {
                 let field_str = self.to_user_defined_field_type().to_string();
-                format!("{field_str} @derivedFrom(field: \"{entity_name}\")")
+                format!("{field_str} @derivedFrom(field: \"{derived_from_field}\")")
             }
             Self::RegularField { field_type: t, .. } => t.to_string(),
         }
@@ -2330,6 +2339,7 @@ pub enum GqlScalar {
     Bytes,
     #[subenum(AdditionalGqlScalar)]
     Json,
+    #[strum(to_string = "{0}")]
     Custom(String),
 }
 
