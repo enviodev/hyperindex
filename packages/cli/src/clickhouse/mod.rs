@@ -914,8 +914,7 @@ impl ClickHouseSink {
         encoded: &EncodedRows,
     ) -> Result<()> {
         let mut failures = 0usize;
-        // Ranges still to send, most recent first; a failed range is replaced by
-        // its two halves so the retry never re-sends rows that already landed.
+        // Most recent range first, so a Halved failure retries its left half next.
         let mut pending = vec![(0usize, encoded.rows(), self.tuning.attempts)];
         while let Some((start, end, retries)) = pending.pop() {
             match self.post_rows(query, encoded.slice(start, end)).await {
@@ -1604,9 +1603,6 @@ mod tests {
         );
     }
 
-    // ClickHouse can commit the block and still answer 319. Resending would
-    // double-write: MergeTree has no insert dedup with
-    // `replicated_deduplication_window = 0`.
     #[tokio::test(flavor = "multi_thread")]
     async fn an_insert_whose_status_is_unknown_is_not_resent() {
         let server = mock_server::MockClickHouse::accepting_then_erroring(
@@ -1640,8 +1636,6 @@ mod tests {
         );
     }
 
-    // A client-side timeout is the same unknown: the body may already have
-    // landed. Another send is a double-write, not a retry.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_request_that_never_reaches_a_verdict_is_not_resent() {
         let server = mock_server::MockClickHouse::start_unresponsive().await;
