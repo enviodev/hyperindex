@@ -227,8 +227,17 @@ fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
         }
         // The variants the column declares, not the width they are stored in:
         // ClickHouse fails a read of a discriminant no variant uses, so one
-        // that fits the byte is no more storable than one that does not.
-        ChType::Enum { variants } => (1, variants.len() as i128),
+        // that fits the byte is no more storable than one that does not. The
+        // width still caps it — an enum with more variants than its widest
+        // discriminant can hold has no column that could store them all.
+        ChType::Enum { variants } => {
+            let width_max = if ChType::enum_bytes(variants) == 1 {
+                i8::MAX as i128
+            } else {
+                i16::MAX as i128
+            };
+            (1, (variants.len() as i128).min(width_max))
+        }
         other => bail!("{other:?} is not an integer column"),
     })
 }
@@ -410,7 +419,10 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
             // render it in — so the value a handler never meant to write would
             // be the one nothing downstream can get rid of.
             if !value.is_finite() {
-                bail!("{value} is not a value a Float64 column can hold");
+                bail!(
+                    "{value} is not a value a Float64 column can hold. Store a finite number, \
+                     or keep it out of the entity."
+                );
             }
             out.extend_from_slice(&value.to_le_bytes())
         }
@@ -711,6 +723,23 @@ mod tests {
         assert_eq!(refused, vec![true, false, false, true]);
     }
 
+    // Nothing caps how many variants an enum column is declared with, and past
+    // the widest discriminant its storage holds there is no column that could
+    // keep them apart — writing one would truncate to a different variant.
+    #[test]
+    fn rejects_an_enum_discriminant_wider_than_its_storage() {
+        let ch_type = ChType::Enum {
+            variants: (0..=i16::MAX as usize + 1)
+                .map(|index| index.to_string())
+                .collect(),
+        };
+        let refused: Vec<bool> = [1i128, i16::MAX as i128, i16::MAX as i128 + 1]
+            .into_iter()
+            .map(|value| put_int(&mut Vec::new(), value, &ch_type).is_err())
+            .collect();
+        assert_eq!(refused, vec![false, false, true]);
+    }
+
     #[test]
     fn encodes_nullable_with_a_leading_flag() {
         let mut column = text_column("s", "Nullable(String)", &["", "ab"]);
@@ -791,14 +820,12 @@ mod tests {
             .collect();
         assert_eq!(
             refused,
-            vec![
-                "encoding column `latest` row 0: NaN is not a value a Float64 column can hold"
-                    .to_string(),
-                "encoding column `latest` row 0: inf is not a value a Float64 column can hold"
-                    .to_string(),
-                "encoding column `latest` row 0: -inf is not a value a Float64 column can hold"
-                    .to_string(),
-            ]
+            ["NaN", "inf", "-inf"]
+                .map(|value| format!(
+                    "encoding column `latest` row 0: {value} is not a value a Float64 column can \
+                     hold. Store a finite number, or keep it out of the entity."
+                ))
+                .to_vec()
         );
     }
 
