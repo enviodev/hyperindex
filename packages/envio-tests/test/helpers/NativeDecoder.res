@@ -13,31 +13,46 @@ let decodeLogs = async (
   // Contract that owns `mockAddress`, if any. Without one the emitter is
   // unregistered and only wildcard registrations route.
   ~ownedBy: option<string>=?,
-): array<EvmRpcClient.rpcEventItem> => {
+): array<EvmRpcClient.eventItem> => {
   // logIndex must be unique per log within the block — the client dedups a
   // page's items by (blockNumber, logIndex).
-  let logJsons = logs->Array.mapWithIndex(((topics, data), i) =>
-    JSON.Object(
+  let logJsons =
+    logs->Array.mapWithIndex(((topics, data), i) => JSON.Object(
       Dict.fromArray([
         ("address", JSON.String(mockAddress)),
         ("topics", JSON.Array(topics->Array.map(t => JSON.String(t)))),
         ("data", JSON.String(data)),
         ("blockNumber", JSON.String("0x1")),
-        ("transactionHash", JSON.String("0xabc")),
+        (
+          "transactionHash",
+          JSON.String("0x0000000000000000000000000000000000000000000000000000000000000abc"),
+        ),
         ("transactionIndex", JSON.String("0x0")),
-        ("blockHash", JSON.String("0xb01")),
+        (
+          "blockHash",
+          JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b01"),
+        ),
         ("logIndex", JSON.String(`0x${i->Int.toString(~radix=16)}`)),
         ("removed", JSON.Boolean(false)),
       ]),
-    )
+    ))
+  // The page always fetches its `toBlock` block for the reorg-guard hash.
+  let toBlockJson = JSON.Object(
+    Dict.fromArray([
+      ("number", JSON.String("0x0")),
+      ("timestamp", JSON.String("0x1")),
+      ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b00")),
+      (
+        "parentHash",
+        JSON.String("0x0000000000000000000000000000000000000000000000000000000000000aff"),
+      ),
+    ]),
   )
   await MockRpcServer.withScenario(
     ~name="native decoder logs",
     ~calls=[
-      MockRpcServer.expectCall(
-        ~method="eth_getLogs",
-        ~reply=RpcResult(JSON.Array(logJsons)),
-      ),
+      MockRpcServer.expectCall(~method="eth_getLogs", ~reply=RpcResult(JSON.Array(logJsons))),
+      MockRpcServer.expectCall(~method="eth_getBlockByNumber", ~reply=RpcResult(toBlockJson)),
     ],
     async mock => {
       let addressStore = AddressStore.make(
@@ -68,7 +83,7 @@ let decodeLogs = async (
         ~eventRegistrations,
         ~addressStore,
       )
-      let {items} = await client.getNextPage(
+      let (page, _, _) = await client.getNextPage(
         {
           fromBlock: 0,
           toBlockCeiling: 0,
@@ -78,7 +93,7 @@ let decodeLogs = async (
         },
         addressSet,
       )
-      items
+      page.items
     },
   )
 }

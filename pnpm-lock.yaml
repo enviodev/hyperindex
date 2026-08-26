@@ -93,9 +93,6 @@ importers:
       ink-spinner:
         specifier: 5.0.0
         version: 5.0.0(ink@6.8.0(react@19.2.5))(react@19.2.5)
-      js-sdsl:
-        specifier: 4.4.2
-        version: 4.4.2
       pino:
         specifier: 10.3.1
         version: 10.3.1
@@ -1990,9 +1987,6 @@ packages:
   joycon@3.1.1:
     resolution: {integrity: sha512-34wB/Y7MW7bzjKRjUKTa46I2Z7eV62Rkhva+KkopW7Qvv/OSWBqvkSY7vusOPrNuZcUG3tApvdVgNB8POj3SPw==}
     engines: {node: '>=10'}
-
-  js-sdsl@4.4.2:
-    resolution: {integrity: sha512-dwXFwByc/ajSV6m5bcKAPwe4yDDF6D614pxmIi5odytzxRlwqF6nwoiCek80Ixc7Cvma5awClxrzFtxCQvcM8w==}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -4853,8 +4847,6 @@ snapshots:
       - utf-8-validate
 
   joycon@3.1.1: {}
-
-  js-sdsl@4.4.2: {}
 
   js-tokens@4.0.0: {}
 

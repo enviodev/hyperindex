@@ -69,6 +69,37 @@ let unpackNativeRequestFailure = (exn: exn): nativeRequestFailure => {
   }
 }
 
+// Store rows a fetch response failed to load: the backing node answered null
+// (a load-balanced provider drifting behind the head) or a request failed.
+// The payload is echoed back to the source's `fetchItemsStoreData` verbatim,
+// so it carries everything the targeted refetch needs; SourceManager reads
+// only the keys (for logging) and emptiness.
+type missingBlockData = {blockNumber: int}
+type missingTransactionData = {blockNumber: int, transactionIndex: int}
+type missingStoreData = {
+  blocks: array<missingBlockData>,
+  transactions: array<missingTransactionData>,
+  // The last fetch error observed, for the retry log. Null when every missing
+  // key was a clean null response.
+  sampleError: Null.t<string>,
+}
+
+let missingStoreDataIsEmpty = (missing: missingStoreData) =>
+  missing.blocks->Array.length == 0 && missing.transactions->Array.length == 0
+
+// The block number the retry log points at: the first missing key's block.
+let missingStoreDataBlockNumber = (missing: missingStoreData) =>
+  switch (missing.blocks->Array.get(0), missing.transactions->Array.get(0)) {
+  | (Some({blockNumber}), _) => blockNumber
+  | (None, Some({blockNumber})) => blockNumber
+  | (None, None) => 0
+  }
+
+type fillStoreDataResponse = {
+  stillMissing: option<missingStoreData>,
+  requestStats: array<RequestStat.t>,
+}
+
 /**
 Thes response returned from a block range fetch
 */
@@ -77,17 +108,22 @@ type blockRangeFetchResponse = {
   parsedQueueItems: array<Internal.item>,
   // Page of transactions for this response's items, keyed by (blockNumber,
   // transactionIndex); merged into the chain's store on apply. `None` for
-  // sources that keep the transaction inline on the payload (RPC/Fuel/Simulate).
+  // sources that keep the transaction inline on the payload (Fuel/Simulate).
   transactionStore: option<TransactionStore.t>,
   // Page of blocks observed while fetching this range, keyed by block number;
   // merged into the chain's store on apply, where its hashes drive reorg
-  // detection. Sources that keep the block inline on the payload (RPC/Simulate)
+  // detection. Sources that keep the block inline on the payload (Simulate)
   // contribute hash-only rows built from the block hashes they saw.
   blockStore: BlockStore.t,
   fromBlockQueried: int,
   latestFetchedBlockNumber: int,
   stats: blockRangeFetchStats,
   requestStats: array<requestStat>,
+  // Store rows this response still needs (the provider answered null for
+  // them). SourceManager keeps calling the source's `fetchItemsStoreData`
+  // until the response is complete, before the response is applied. Absent
+  // for sources whose responses always arrive complete.
+  missingStoreData?: missingStoreData,
 }
 
 type getHeightResponse = {height: int, requestStats: array<requestStat>}
@@ -160,6 +196,15 @@ type t = {
     ~retry: int,
     ~logger: Pino.t,
   ) => promise<blockRangeFetchResponse>,
+  // Targeted refetch of the store rows a `getItemsOrThrow` response reported
+  // missing (see `blockRangeFetchResponse.missingStoreData`). Fetched rows are
+  // merged into the passed response stores; whatever the provider still can't
+  // serve comes back for SourceManager's next retry.
+  fetchItemsStoreData?: (
+    ~missing: missingStoreData,
+    ~transactionStore: option<TransactionStore.t>,
+    ~blockStore: BlockStore.t,
+  ) => promise<fillStoreDataResponse>,
   createHeightSubscription?: (~onHeight: int => unit) => unit => unit,
   // Invoked when a reorg or internally inconsistent response means local state
   // may point at an orphaned chain (e.g. the RPC block cache): drop all of it.

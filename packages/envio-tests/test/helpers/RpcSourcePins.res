@@ -23,6 +23,11 @@ type pinnedPage = {
   events: array<pinnedEvent>,
   blockHashes: array<ReorgDetection.blockData>,
   requestCounts: dict<int>,
+  // Store rows the response reported missing (a null answer from the
+  // provider), as stable key projections. SourceManager fills these through
+  // fetchItemsStoreData before a response is applied.
+  missingBlocks: array<int>,
+  missingTransactions: array<(int, int)>,
 }
 
 type pinnedRetry =
@@ -32,11 +37,7 @@ type pinnedRetry =
 
 type pinnedError =
   | UnsupportedSelection(string)
-  | FailedGettingItems({
-      attemptedToBlock: int,
-      providerMessage: option<string>,
-      retry: pinnedRetry,
-    })
+  | FailedGettingItems({attemptedToBlock: int, providerMessage: option<string>, retry: pinnedRetry})
   | FailedGettingFieldSelection({
       blockNumber: int,
       logIndex: int,
@@ -93,13 +94,30 @@ let storedBlockHashes = (blockStore: BlockStore.t): array<ReorgDetection.blockDa
     }
   )
 
-let normalizePage = (response: Source.blockRangeFetchResponse): pinnedPage => {
-  knownHeight: response.knownHeight,
-  fromBlockQueried: response.fromBlockQueried,
-  latestFetchedBlockNumber: response.latestFetchedBlockNumber,
-  events: response.parsedQueueItems->Array.map(normalizeEvent),
-  blockHashes: response.blockStore->storedBlockHashes,
-  requestCounts: response.requestStats->countRequests,
+let normalizePage = async (response: Source.blockRangeFetchResponse): pinnedPage => {
+  // The payloads' block/transaction come from the response's store pages, the
+  // way batch prep materialises them in production.
+  await ChainState.materializePageItems(
+    ~items=response.parsedQueueItems,
+    ~transactionStore=response.transactionStore,
+    ~blockStore=response.blockStore,
+  )
+  {
+    knownHeight: response.knownHeight,
+    fromBlockQueried: response.fromBlockQueried,
+    latestFetchedBlockNumber: response.latestFetchedBlockNumber,
+    events: response.parsedQueueItems->Array.map(normalizeEvent),
+    blockHashes: response.blockStore->storedBlockHashes,
+    requestCounts: response.requestStats->countRequests,
+    missingBlocks: switch response.missingStoreData {
+    | Some(missing) => missing.blocks->Array.map(b => b.blockNumber)
+    | None => []
+    },
+    missingTransactions: switch response.missingStoreData {
+    | Some(missing) => missing.transactions->Array.map(m => (m.blockNumber, m.transactionIndex))
+    | None => []
+    },
+  }
 }
 
 let jsExnMessage = exn =>
@@ -143,6 +161,6 @@ let normalizeError = error =>
   }
 
 let capture = async getPage =>
-  try Ok((await getPage())->normalizePage) catch {
+  try Ok(await (await getPage())->normalizePage) catch {
   | Source.GetItemsError(error) => Error(error->normalizeError)
   }

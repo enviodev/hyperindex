@@ -8,18 +8,27 @@ use std::time::{Duration, Instant};
 mod classify;
 mod client;
 mod interval;
+mod store_fetch;
 
 use crate::address_store::{AddressSet, AddressStore, SetCache};
+use crate::block_store::BlockStore;
 use crate::evm_hypersync_source::decode::{Decoder, LogAddress, SelectionDecoder};
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistrationInput, ParamValue,
 };
-use crate::request_stats::RequestStat;
+use crate::evm_hypersync_source::EventItem;
+use crate::request_stats::{error_with_request_stats, source_behind_head_err, RequestStat};
+use crate::transaction_store::TransactionStore;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
 use hypersync_client::format::Hex;
 use interval::{IntervalState, SyncConfig};
+pub use store_fetch::MissingStoreData;
+use store_fetch::{
+    field_selection_error_to_napi, log_derived_tx_row, log_observed_block_row, missing_to_needs,
+    registration_needs, RegistrationNeeds, StoreFetchPlan,
+};
 
 #[napi(object)]
 pub struct EvmRpcClientConfig {
@@ -38,30 +47,26 @@ pub struct EvmRpcClientConfig {
 }
 
 /// A log returned from `eth_getLogs`, with hex quantities decoded to integers.
-/// Field names cross the napi boundary as camelCase, matching the ReScript
-/// `Rpc.GetLogs.log` record.
-// Only the fields the ReScript side reads cross the boundary. `data` is consumed
-// by the decoder on the Rust side (see `to_decoder_log`) and `removed` is unused,
-// so neither is carried here.
-#[napi(object)]
+/// Internal to the client: only the flattened `EventItem` fields cross the
+/// napi boundary; the hashes feed the page's block/transaction stores.
 #[derive(Clone)]
-pub struct RpcLog {
-    pub address: String,
-    pub topics: Vec<String>,
-    pub block_number: i64,
-    pub transaction_hash: String,
-    pub transaction_index: i64,
-    pub block_hash: String,
-    pub log_index: i64,
+struct RpcLog {
+    address: String,
+    block_number: i64,
+    transaction_hash: String,
+    transaction_index: i64,
+    block_hash: String,
+    log_index: i64,
 }
 
-#[napi(object)]
-pub struct RpcEventItem {
-    pub log: RpcLog,
+/// A routed log with its decoded params, before the store keys are split off
+/// into the napi `EventItem`.
+struct RpcEventItem {
+    log: RpcLog,
     /// The registration this log routed to, as passed to the client
     /// constructor. Logs that route nowhere are dropped before the boundary.
-    pub on_event_registration_index: i64,
-    pub params: ParamValue,
+    on_event_registration_index: i64,
+    params: ParamValue,
 }
 
 /// Raw `eth_getLogs` entry as the provider serialises it: integer fields are
@@ -93,7 +98,6 @@ impl RawLog {
             transaction_index: to_i64(&self.transaction_index).context("log.transactionIndex")?,
             log_index: to_i64(&self.log_index).context("log.logIndex")?,
             address,
-            topics: self.topics,
             transaction_hash: self.transaction_hash,
             block_hash: self.block_hash,
         })
@@ -139,8 +143,20 @@ pub struct NextPageParams {
 
 #[napi(object)]
 pub struct NextPageResponse {
-    pub items: Vec<RpcEventItem>,
+    pub items: Vec<EventItem>,
     pub to_block: i64,
+    pub request_stats: Vec<RequestStat>,
+    /// Store rows the provider couldn't serve yet (`null` responses or
+    /// transient fetch failures). SourceManager loads them through
+    /// `fetch_store_data` before the response is processed.
+    pub missing: MissingStoreData,
+}
+
+/// The still-missing remainder of a `fetch_store_data` call, with the timings
+/// of the requests it made.
+#[napi(object)]
+pub struct FetchStoreDataResponse {
+    pub missing: MissingStoreData,
     pub request_stats: Vec<RequestStat>,
 }
 
@@ -151,6 +167,10 @@ pub struct EvmRpcClient {
     selection_builder: SelectionBuilder,
     sync_config: SyncConfig,
     intervals: IntervalState,
+    checksum_addresses: bool,
+    /// Per-registration data needs, keyed by the chain-scoped registration
+    /// index, resolved from the field selections at construction.
+    registration_needs: HashMap<i64, RegistrationNeeds>,
 }
 
 #[napi]
@@ -209,12 +229,18 @@ impl EvmRpcClient {
                 .context("queryTimeoutMillis must be non-negative")
                 .map_err(map_err)?,
         };
+        let needs = event_registrations
+            .iter()
+            .map(|reg| (reg.index, registration_needs(reg)))
+            .collect();
         Ok(EvmRpcClient {
             inner,
             decoder,
             selection_builder,
             sync_config,
             intervals: IntervalState::new(),
+            checksum_addresses,
+            registration_needs: needs,
         })
     }
 
@@ -239,7 +265,7 @@ impl EvmRpcClient {
         &self,
         params: NextPageParams,
         address_set: &AddressSet,
-    ) -> napi::Result<NextPageResponse> {
+    ) -> napi::Result<(NextPageResponse, TransactionStore, BlockStore)> {
         if params.from_block < 0 || params.to_block_ceiling < 0 {
             return Err(map_err(anyhow::anyhow!(
                 "block bounds must be non-negative, got from_block={}, to_block_ceiling={}",
@@ -295,7 +321,7 @@ impl EvmRpcClient {
         .await;
 
         match page_result {
-            Ok(Ok((items, request_stats))) => {
+            Ok(Ok((items, mut request_stats))) => {
                 let executed_interval = to_block - from_block + 1;
                 // Grow this partition's interval only when the full suggested range
                 // was actually applied (not clamped by a hard toBlock ceiling). The
@@ -309,11 +335,34 @@ impl EvmRpcClient {
                         source_max,
                     );
                 }
-                Ok(NextPageResponse {
-                    items,
-                    to_block: to_block as i64,
-                    request_stats,
-                })
+
+                let (missing, transaction_store, block_store, store_stats) = self
+                    .load_page_store_data(&items, from_block, to_block)
+                    .await?;
+                request_stats.extend(store_stats);
+
+                let items = items
+                    .into_iter()
+                    .map(|item| EventItem {
+                        log_index: item.log.log_index,
+                        src_address: item.log.address,
+                        block_number: item.log.block_number,
+                        transaction_index: item.log.transaction_index,
+                        on_event_registration_index: item.on_event_registration_index,
+                        params: item.params,
+                    })
+                    .collect();
+
+                Ok((
+                    NextPageResponse {
+                        items,
+                        to_block: to_block as i64,
+                        request_stats,
+                        missing,
+                    },
+                    transaction_store,
+                    block_store,
+                ))
             }
             Ok(Err((rpc_err, request_stats))) => {
                 let message = match &rpc_err {
@@ -340,6 +389,186 @@ impl EvmRpcClient {
                     self.sync_config.query_timeout_millis
                 )),
                 Vec::new(),
+            )),
+        }
+    }
+
+    /// Load block/transaction store rows a previous response reported missing
+    /// (see `NextPageResponse::missing`). Returns the fetched rows as page
+    /// stores for the caller to merge into the response's, plus whatever is
+    /// still missing — the provider answered `null` again, or a request failed.
+    #[napi]
+    pub async fn fetch_store_data(
+        &self,
+        missing: MissingStoreData,
+    ) -> napi::Result<(FetchStoreDataResponse, TransactionStore, BlockStore)> {
+        let (block_needs, tx_needs) = missing_to_needs(missing).map_err(map_err)?;
+        let transaction_store = TransactionStore::new_evm(self.checksum_addresses);
+        let block_store = BlockStore::new_evm(self.checksum_addresses);
+        match store_fetch::fetch_store_data(
+            &self.inner,
+            block_needs,
+            tx_needs,
+            &transaction_store,
+            &block_store,
+        )
+        .await
+        {
+            Ok(mut outcome) => {
+                let request_stats = std::mem::take(&mut outcome.request_stats);
+                Ok((
+                    FetchStoreDataResponse {
+                        missing: outcome.into_missing(),
+                        request_stats,
+                    },
+                    transaction_store,
+                    block_store,
+                ))
+            }
+            Err((error, stats)) => Err(error_with_request_stats(
+                field_selection_error_to_napi(error),
+                &stats,
+            )),
+        }
+    }
+
+    /// Fetch the given block numbers (hash, timestamp, and each parent's hash)
+    /// into one response store. A block the provider answers `null` for hasn't
+    /// reached the serving node yet, so it surfaces as the behind-head marker
+    /// SourceManager knows how to retry.
+    #[napi]
+    pub async fn get_block_hashes(
+        &self,
+        block_numbers: Vec<i64>,
+    ) -> napi::Result<(BlockStore, Vec<RequestStat>)> {
+        let mut plan = StoreFetchPlan::default();
+        for number in block_numbers {
+            let number = u64::try_from(number)
+                .map_err(|_| map_err(anyhow::anyhow!("block number must be non-negative")))?;
+            plan.add_block(number, &[]);
+        }
+        let (block_needs, _) = plan.into_needs();
+        let transaction_store = TransactionStore::new_evm(self.checksum_addresses);
+        let block_store = BlockStore::new_evm(self.checksum_addresses);
+        match store_fetch::fetch_store_data(
+            &self.inner,
+            block_needs,
+            Vec::new(),
+            &transaction_store,
+            &block_store,
+        )
+        .await
+        {
+            Ok(outcome) => {
+                if let Some(message) = &outcome.sample_error {
+                    return Err(error_with_request_stats(
+                        napi::Error::from_reason(message.clone()),
+                        &outcome.request_stats,
+                    ));
+                }
+                if let Some(need) = outcome.missing_blocks.first() {
+                    return Err(error_with_request_stats(
+                        source_behind_head_err(need.number as i64),
+                        &outcome.request_stats,
+                    ));
+                }
+                Ok((block_store, outcome.request_stats))
+            }
+            Err((error, stats)) => Err(error_with_request_stats(
+                field_selection_error_to_napi(error),
+                &stats,
+            )),
+        }
+    }
+
+    /// Build the page's block/transaction stores: hash observations off the
+    /// logs themselves, plus a concurrent bulk fetch of every block and
+    /// transaction the routed items' field selections need. The range's own
+    /// endpoint blocks are always fetched — the `toBlock` hash anchors reorg
+    /// detection for the scanned range, and the seam block (`fromBlock - 1`)
+    /// is covered by reading `fromBlock`, which no earlier range touched, and
+    /// taking the seam's hash from its `parentHash`.
+    async fn load_page_store_data(
+        &self,
+        items: &[RpcEventItem],
+        from_block: u64,
+        to_block: u64,
+    ) -> napi::Result<(
+        MissingStoreData,
+        TransactionStore,
+        BlockStore,
+        Vec<RequestStat>,
+    )> {
+        let transaction_store = TransactionStore::new_evm(self.checksum_addresses);
+        let block_store = BlockStore::new_evm(self.checksum_addresses);
+
+        let mut plan = StoreFetchPlan::default();
+        // Every log carries its block's hash, so each one yields a confirmed
+        // (number, hash) observation for reorg detection at no extra cost.
+        // Rows are inserted per item, not per block, so a response mixing two
+        // forks of the same block is caught as a response conflict.
+        let mut log_block_rows = Vec::new();
+        let mut log_tx_rows = Vec::new();
+        let mut tx_row_keys: HashSet<(u64, u32)> = HashSet::new();
+        for item in items {
+            let needs = self
+                .registration_needs
+                .get(&item.on_event_registration_index)
+                .ok_or_else(|| {
+                    map_err(anyhow::anyhow!(
+                        "no registration with index {} was passed to the client",
+                        item.on_event_registration_index
+                    ))
+                })?;
+            let block_number = u64::try_from(item.log.block_number)
+                .map_err(|_| map_err(anyhow::anyhow!("log.blockNumber must be non-negative")))?;
+            let transaction_index = u32::try_from(item.log.transaction_index)
+                .map_err(|_| map_err(anyhow::anyhow!("log.transactionIndex exceeds u32 bounds")))?;
+            plan.add_item(
+                needs,
+                block_number,
+                transaction_index,
+                &item.log.transaction_hash,
+            );
+            log_block_rows
+                .push(log_observed_block_row(block_number, &item.log.block_hash).map_err(map_err)?);
+            if needs.has_tx_row && tx_row_keys.insert((block_number, transaction_index)) {
+                log_tx_rows.push(
+                    log_derived_tx_row(block_number, transaction_index, &item.log.transaction_hash)
+                        .map_err(map_err)?,
+                );
+            }
+        }
+        if from_block > 0 {
+            plan.add_block(from_block, &[]);
+        }
+        plan.add_block(to_block, &[]);
+
+        block_store.insert_evm_blocks(log_block_rows);
+        transaction_store.insert_evm_txs(log_tx_rows);
+
+        let (block_needs, tx_needs) = plan.into_needs();
+        match store_fetch::fetch_store_data(
+            &self.inner,
+            block_needs,
+            tx_needs,
+            &transaction_store,
+            &block_store,
+        )
+        .await
+        {
+            Ok(mut outcome) => {
+                let stats = std::mem::take(&mut outcome.request_stats);
+                Ok((
+                    outcome.into_missing(),
+                    transaction_store,
+                    block_store,
+                    stats,
+                ))
+            }
+            Err((error, stats)) => Err(error_with_request_stats(
+                field_selection_error_to_napi(error),
+                &stats,
             )),
         }
     }

@@ -315,38 +315,42 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
       })
     })
 
-    Async.it("pins onReorg cache invalidation without resetting paging state", async t => {
-      let requestCounts = await MockRpcServer.withScenario(
-        ~name=`${name}: onReorg cache invalidation`,
+    // The source holds no block/transaction cache between pages - every page's
+    // stores are built from fresh responses - so there is nothing for a reorg
+    // to invalidate and no `onReorg` hook to expose.
+    Async.it("pins per-page refetching with no cross-page cache to invalidate", async t => {
+      let (onReorg, requestCounts) = await MockRpcServer.withScenario(
+        ~name=`${name}: per-page refetch`,
         ~calls=successfulCalls(~times=2, ~logs=[log(~logIndex="0x2")]),
         async mock => {
           let registration = makeRegistration()
           let source = makeSource(~factory, ~url=mock.url, ~registration)
           let _ = await source->invoke(~registration)
-          let onReorg = source.onReorg->Option.getOrThrow(
-            ~message="RPC source must expose onReorg for cache invalidation",
-          )
-          onReorg()
           let _ = await source->invoke(~registration)
-          mock.transcript()
-          ->Array.reduce(Dict.make(), (counts, entry) => {
-            let method = entry.request.method
-            counts->Dict.set(method, counts->Dict.get(method)->Option.getOr(0) + 1)
-            counts
-          })
+          let counts =
+            mock.transcript()
+            ->Array.reduce(Dict.make(), (counts, entry) => {
+              let method = entry.request.method
+              counts->Dict.set(method, counts->Dict.get(method)->Option.getOr(0) + 1)
+              counts
+            })
+          (source.onReorg, counts)
         },
       )
 
-      t.expect(requestCounts).toEqual(Dict.fromArray([
-        ("eth_getLogs", 2),
-        ("eth_getBlockByNumber", 2),
-        ("eth_getTransactionByHash", 2),
-        ("eth_getTransactionReceipt", 2),
-      ]))
+      t.expect((onReorg->Option.isSome, requestCounts)).toEqual((
+        false,
+        Dict.fromArray([
+          ("eth_getLogs", 2),
+          ("eth_getBlockByNumber", 2),
+          ("eth_getTransactionByHash", 2),
+          ("eth_getTransactionReceipt", 2),
+        ]),
+      ))
     })
 
-    Async.it("pins missing receipt data as a retryable source error", async t => {
-      let error = await MockRpcServer.withScenario(
+    Async.it("pins missing receipt data as missing store rows for a targeted refetch", async t => {
+      let page = await MockRpcServer.withScenario(
         ~name=`${name}: missing receipt`,
         ~calls=[
           MockRpcServer.expectCall(
@@ -359,6 +363,9 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             ~params=blockParams("0x64"),
             ~reply=RpcResult(block100),
           ),
+          // A load-balanced node that hasn't caught up answers null; the page
+          // still succeeds, reporting the row for SourceManager to load
+          // through fetchItemsStoreData before the response is applied.
           MockRpcServer.expectCall(
             ~method="eth_getTransactionReceipt",
             ~params=JSON.Array([JSON.String(transactionHash)]),
@@ -369,22 +376,21 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
           let registration = makeRegistration(~receiptOnly=true)
           let source = makeSource(~factory, ~url=mock.url, ~registration)
           switch await RpcSourcePins.capture(() => source->invoke(~registration, ~retry=2)) {
-          | Error(error) => error
-          | Ok(_) => JsError.throwWithMessage("Expected missing receipt data to be retryable")
+          | Ok(page) => page
+          | Error(_) => JsError.throwWithMessage("Expected the page to succeed with missing rows")
           }
         },
       )
 
-      t.expect(error).toEqual(
-        RpcSourcePins.FailedGettingItems({
-          attemptedToBlock: 100,
-          providerMessage: None,
-          retry: Backoff({
-            message: `Transaction receipt not found for hash: ${transactionHash}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in 1000ms.`,
-            backoffMillis: 1_000,
-          }),
-        }),
-      )
+      t.expect({
+        "events": page.events->Array.length,
+        "missingBlocks": page.missingBlocks,
+        "missingTransactions": page.missingTransactions,
+      }).toEqual({
+        "events": 1,
+        "missingBlocks": [],
+        "missingTransactions": [(100, 1)],
+      })
     })
 
     Async.it("pins consecutive response-too-large interval shrinking", async t => {

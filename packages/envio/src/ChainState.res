@@ -777,7 +777,7 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
       let {blockNumber} = eventItem
 
       switch eventItem.payload->Internal.getPayloadTransaction->Nullable.toOption {
-      | Some(_) => () // RPC/simulate/Fuel carry the transaction inline.
+      | Some(_) => () // Simulate/Fuel carry the transaction inline.
       | None =>
         let {transactionIndex} = eventItem
         let mask = eventItem.onEventRegistration.fieldSelection.transactionMask
@@ -804,7 +804,7 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
       }
 
       switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
-      | Some(_) => () // RPC/simulate carry the block inline.
+      | Some(_) => () // Simulate carries the block inline.
       | None =>
         let mask = eventItem.onEventRegistration.fieldSelection.blockMask
         let last = blockItemGroups->Array.length - 1

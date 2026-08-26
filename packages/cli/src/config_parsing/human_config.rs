@@ -523,9 +523,10 @@ pub mod evm {
 
     // `RpcTransactionField` is the subset an RPC-synced chain can deliver:
     // every field `eth_getTransactionByHash` or `eth_getTransactionReceipt`
-    // returns, which is all of them except the two array-shaped ones that have
-    // no parser in the runtime's field registry (`RpcSource.res`). Kept in step
-    // with that registry by `RpcFieldSelection_test.res`.
+    // returns, which is all of them except the two array-shaped ones the
+    // source's fetch classification skips (`rpc_tx_field_source` in
+    // `evm_rpc_source/store_fetch.rs`). Kept in step with that classification
+    // by `RpcFieldSelection_test.res`.
     #[subenum(RpcTransactionField)]
     #[derive(
         Debug,

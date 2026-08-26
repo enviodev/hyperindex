@@ -11,9 +11,13 @@ type cfg = {
 }
 
 // Only logs that resolved to a registration cross the boundary, each carrying
-// its registration's chain-scoped index.
-type rpcEventItem = {
-  log: Rpc.GetLogs.log,
+// its registration's chain-scoped index. Block and transaction data stay in
+// the Rust-built store pages returned alongside the items.
+type eventItem = {
+  logIndex: int,
+  srcAddress: Address.t,
+  blockNumber: int,
+  transactionIndex: int,
   onEventRegistrationIndex: int,
   params: Internal.eventParams,
 }
@@ -33,15 +37,31 @@ type nextPageParams = {
 }
 
 type nextPageResponse = {
-  items: array<rpcEventItem>,
+  items: array<eventItem>,
   toBlock: int,
+  requestStats: array<Source.requestStat>,
+  missing: Source.missingStoreData,
+}
+
+type fetchStoreDataResponse = {
+  missing: Source.missingStoreData,
   requestStats: array<Source.requestStat>,
 }
 
-// The caller provides a range; Rust decides the actual `toBlock` and returns it.
+// The caller provides a range; Rust decides the actual `toBlock` and returns
+// it, together with the page's transaction and block store pages.
 type t = {
   getHeight: unit => promise<int>,
-  getNextPage: (nextPageParams, AddressSet.t) => promise<nextPageResponse>,
+  getNextPage: (
+    nextPageParams,
+    AddressSet.t,
+  ) => promise<(nextPageResponse, TransactionStore.t, BlockStore.t)>,
+  fetchStoreData: Source.missingStoreData => promise<(
+    fetchStoreDataResponse,
+    TransactionStore.t,
+    BlockStore.t,
+  )>,
+  getBlockHashes: array<int> => promise<(BlockStore.t, array<Source.requestStat>)>,
 }
 
 @send
@@ -111,5 +131,7 @@ let make = (
     getHeight: () => client.getHeight()->Promise.catch(coerceErrorOrThrow),
     getNextPage: (params, addressSet) =>
       client.getNextPage(params, addressSet)->Promise.catch(coerceErrorOrThrow),
+    fetchStoreData: missing => client.fetchStoreData(missing)->Promise.catch(coerceErrorOrThrow),
+    getBlockHashes: blockNumbers => client.getBlockHashes(blockNumbers),
   }
 }

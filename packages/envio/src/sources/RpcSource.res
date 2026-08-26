@@ -1,77 +1,5 @@
 open Source
 
-// eth_getTransactionByHash/eth_getTransactionReceipt returning null is usually
-// transient: a load-balanced provider can route the lookup to a node that
-// hasn't caught up with the one that served eth_getLogs. Must stay retryable,
-// unlike other field-selection failures which disable the source.
-exception TransactionDataNotFound({message: string})
-
-// Minimal block data needed for infrastructure (reorg guard, timestamps, etc.)
-type blockInfo = {
-  number: int,
-  timestamp: int,
-  hash: string,
-  parentHash: string,
-}
-
-let getKnownRawBlock = async (~client, ~blockNumber) =>
-  switch await Rpc.getRawBlock(~client, ~blockNumber) {
-  | Some(json) => json
-  | None =>
-    JsError.throwWithMessage(`RPC returned null for blockNumber ${blockNumber->Int.toString}`)
-  }
-
-// Extract infrastructure fields (number, timestamp, hash) from raw block JSON
-let parseBlockInfo = (json: JSON.t): blockInfo => {
-  let jsonDict = json->(Utils.magic: JSON.t => dict<JSON.t>)
-  {
-    number: jsonDict
-    ->Dict.getUnsafe("number")
-    ->S.parseOrThrow(Rpc.hexIntSchema),
-    timestamp: jsonDict
-    ->Dict.getUnsafe("timestamp")
-    ->S.parseOrThrow(Rpc.hexIntSchema),
-    hash: jsonDict
-    ->Dict.getUnsafe("hash")
-    ->S.parseOrThrow(S.string),
-    parentHash: jsonDict
-    ->Dict.getUnsafe("parentHash")
-    ->S.parseOrThrow(S.string),
-  }
-}
-
-let getKnownRawBlockWithBackoff = async (
-  ~client,
-  ~sourceName,
-  ~chainId,
-  ~blockNumber,
-  ~backoffMsOnFailure,
-  ~recordRequest: (~method: string, ~seconds: float) => unit,
-) => {
-  let currentBackoff = ref(backoffMsOnFailure)
-  let result = ref(None)
-
-  while result.contents->Option.isNone {
-    let timerRef = Performance.now()
-    switch await getKnownRawBlock(~client, ~blockNumber) {
-    | exception err =>
-      recordRequest(~method="eth_getBlockByNumber", ~seconds=timerRef->Performance.secondsSince)
-      Logging.warn({
-        "err": err->Utils.prettifyExn,
-        "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Int.toString}ms and try again.`,
-        "source": sourceName,
-        "chainId": chainId,
-        "type": "EXPONENTIAL_BACKOFF",
-      })
-      await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
-      currentBackoff := currentBackoff.contents * 2
-    | json =>
-      recordRequest(~method="eth_getBlockByNumber", ~seconds=timerRef->Performance.secondsSince)
-      result := Some(json)
-    }
-  }
-  result.contents->Option.getOrThrow
-}
 // Pulls the underlying provider error message back out of a caught exn, for
 // logging/debugging. Provider JSON-RPC errors surface as `Rpc.JsonRpcError`;
 // the paging retry decision (see `parseGetNextPageRetryError` below) surfaces
@@ -156,529 +84,37 @@ let parseGetNextPageRetryError = (exn: exn): option<(
   | _ => None
   }
 
-// Type-erase a schema for storage in the field registry
-external toFieldSchema: S.t<'a> => S.t<JSON.t> = "%identity"
-
-let lowercaseAddressSchema: S.t<JSON.t> =
-  S.string
-  ->S.transform(_ => {
-    parser: str => str->String.toLowerCase->Address.unsafeFromString,
-  })
-  ->toFieldSchema
-
-let checksumAddressSchema: S.t<JSON.t> =
-  S.string
-  ->S.transform(_ => {
-    parser: str => str->Address.Evm.fromStringOrThrow,
-  })
-  ->toFieldSchema
-
-// Block field definition for per-field parsing
-type blockFieldDef = {
-  location: Internal.evmBlockField,
-  jsonKey: string,
-  schema: S.t<JSON.t>, // Type-erased schema
-}
-
-// Block field registry: maps field location (= JS property name) to parsing info.
-let makeBlockFieldRegistry = (addressSchema: S.t<JSON.t>): Utils.Record.t<
-  Internal.evmBlockField,
-  blockFieldDef,
-> =>
-  [
-    {location: Number, jsonKey: "number", schema: Rpc.hexIntSchema->toFieldSchema},
-    {location: Timestamp, jsonKey: "timestamp", schema: Rpc.hexIntSchema->toFieldSchema},
-    {location: Hash, jsonKey: "hash", schema: S.string->toFieldSchema},
-    {location: ParentHash, jsonKey: "parentHash", schema: S.string->toFieldSchema},
-    {location: Nonce, jsonKey: "nonce", schema: Rpc.hexBigintSchema->toFieldSchema},
-    {location: Sha3Uncles, jsonKey: "sha3Uncles", schema: S.string->toFieldSchema},
-    {location: LogsBloom, jsonKey: "logsBloom", schema: S.string->toFieldSchema},
-    {location: TransactionsRoot, jsonKey: "transactionsRoot", schema: S.string->toFieldSchema},
-    {location: StateRoot, jsonKey: "stateRoot", schema: S.string->toFieldSchema},
-    {location: ReceiptsRoot, jsonKey: "receiptsRoot", schema: S.string->toFieldSchema},
-    {location: Miner, jsonKey: "miner", schema: addressSchema},
-    {location: Difficulty, jsonKey: "difficulty", schema: Rpc.hexBigintSchema->toFieldSchema},
-    {
-      location: TotalDifficulty,
-      jsonKey: "totalDifficulty",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-    },
-    {location: ExtraData, jsonKey: "extraData", schema: S.string->toFieldSchema},
-    {location: Size, jsonKey: "size", schema: Rpc.hexBigintSchema->toFieldSchema},
-    {location: GasLimit, jsonKey: "gasLimit", schema: Rpc.hexBigintSchema->toFieldSchema},
-    {location: GasUsed, jsonKey: "gasUsed", schema: Rpc.hexBigintSchema->toFieldSchema},
-    {location: Uncles, jsonKey: "uncles", schema: S.array(S.string)->toFieldSchema},
-    {location: BaseFeePerGas, jsonKey: "baseFeePerGas", schema: Rpc.hexBigintSchema->toFieldSchema},
-    {location: BlobGasUsed, jsonKey: "blobGasUsed", schema: Rpc.hexBigintSchema->toFieldSchema},
-    {location: ExcessBlobGas, jsonKey: "excessBlobGas", schema: Rpc.hexBigintSchema->toFieldSchema},
-    {
-      location: ParentBeaconBlockRoot,
-      jsonKey: "parentBeaconBlockRoot",
-      schema: S.string->toFieldSchema,
-    },
-    {location: WithdrawalsRoot, jsonKey: "withdrawalsRoot", schema: S.string->toFieldSchema},
-    {location: L1BlockNumber, jsonKey: "l1BlockNumber", schema: Rpc.hexIntSchema->toFieldSchema},
-    {location: SendCount, jsonKey: "sendCount", schema: S.string->toFieldSchema},
-    {location: SendRoot, jsonKey: "sendRoot", schema: S.string->toFieldSchema},
-    {location: MixHash, jsonKey: "mixHash", schema: S.string->toFieldSchema},
-  ]
-  ->Array.map(def => (
-    def.location,
-    if Internal.evmNullableBlockFields->Utils.Set.has(def.location) {
-      {...def, schema: S.nullable(def.schema)->toFieldSchema}
-    } else {
-      def
-    },
-  ))
-  ->Utils.Record.fromArray
-
-let blockFieldRegistryLowercase = makeBlockFieldRegistry(lowercaseAddressSchema)
-let blockFieldRegistryChecksum = makeBlockFieldRegistry(checksumAddressSchema)
-
-// Parse block fields from raw JSON, similar to parseFieldsFromJson for transactions
-let parseBlockFieldsFromJson = (
-  mutBlockAcc: dict<JSON.t>,
-  fields: array<blockFieldDef>,
-  json: JSON.t,
-) => {
-  let jsonDict = json->(Utils.magic: JSON.t => dict<JSON.t>)
-  fields->Array.forEach(def => {
-    let raw = jsonDict->Dict.getUnsafe(def.jsonKey)
-    try {
-      let parsed = raw->S.parseOrThrow(def.schema)
-      mutBlockAcc->Dict.set((def.location :> string), parsed)
-    } catch {
-    | S.Raised(error) =>
-      JsError.throwWithMessage(
-        `Invalid block field "${(def.location :> string)}" found in the RPC response. Error: ${error->S.Error.reason}`,
-      )
-    }
-  })
-}
-
-let makeThrowingGetEventBlock = (
-  ~getBlockJson: int => promise<JSON.t>,
-  ~lowercaseAddresses: bool,
-) => {
-  let blockFieldRegistry = if lowercaseAddresses {
-    blockFieldRegistryLowercase
-  } else {
-    blockFieldRegistryChecksum
-  }
-  let fnsCache = Utils.WeakMap.make()
-  (log: Rpc.GetLogs.log, ~selectedBlockFields: Utils.Set.t<Internal.evmBlockField>) => {
-    (
-      switch fnsCache->Utils.WeakMap.get(selectedBlockFields) {
-      | Some(fn) => fn
-      // Build per-field parser on first call, then cache in WeakMap
-      | None => {
-          let fields: array<blockFieldDef> = []
-          selectedBlockFields->Utils.Set.forEach(fieldName => {
-            fields->Array.push(blockFieldRegistry->Utils.Record.getUnsafe(fieldName))->ignore
-          })
-
-          let fn = if selectedBlockFields->Utils.Set.size == 0 {
-            _ => %raw(`{}`)->(Utils.magic: 'a => Internal.eventBlock)->Promise.resolve
-          } else {
-            (log: Rpc.GetLogs.log) => {
-              getBlockJson(log.blockNumber)->Promise.thenResolve(json => {
-                let mutBlockAcc = Dict.make()
-                parseBlockFieldsFromJson(mutBlockAcc, fields, json)
-                mutBlockAcc->(Utils.magic: dict<JSON.t> => Internal.eventBlock)
-              })
-            }
-          }
-          let _ = fnsCache->Utils.WeakMap.set(selectedBlockFields, fn)
-          fn
-        }
+// A store-data fetch that can never satisfy the field selection (a required
+// field absent from the provider's response) surfaces from Rust as a
+// `{"kind":"FieldSelectionError","blockNumber":int,"message":string}` payload,
+// wrapped in the native-failure envelope that carries the request timings.
+let parseFieldSelectionError = (failure: Source.nativeRequestFailure): option<(int, string)> =>
+  switch failure.message {
+  | Some(msg) =>
+    switch msg->JSON.parseOrThrow->JSON.Decode.object {
+    | exception _ => None
+    | None => None
+    | Some(obj) =>
+      switch (obj->Dict.get("kind"), obj->Dict.get("blockNumber"), obj->Dict.get("message")) {
+      | (Some(String("FieldSelectionError")), Some(Number(blockNumber)), Some(String(message))) =>
+        Some((blockNumber->Float.toInt, message))
+      | _ => None
       }
-    )(log)
+    }
+  | None => None
   }
-}
 
-// `number` is always part of the selected block fields, so it can be read
-// from the assembled block for the item's own `blockNumber`.
-@get external getBlockNumber: Internal.eventBlock => int = "number"
-
-// Field source classification for RPC calls
-type fieldSource = TransactionOnly | ReceiptOnly | Both
-
-type fieldDef = {
-  location: Internal.evmTransactionField,
-  jsonKey: string,
-  schema: S.t<JSON.t>, // Type-erased schema (S.nullable for optional fields)
-  source: fieldSource,
-}
-
-// Field registry: maps field location (= JS property name) to parsing info.
-// Only includes fields that require an RPC call. Log-derived fields (hash, transactionIndex) are special-cased.
-// Nullable fields are wrapped with S.nullable during registry construction based on Internal.evmNullableTransactionFields
-let makeFieldRegistry = (addressSchema: S.t<JSON.t>): Utils.Record.t<
-  Internal.evmTransactionField,
-  fieldDef,
-> =>
-  [
-    // TransactionOnly fields (only in eth_getTransactionByHash)
-    {
-      location: Gas,
-      jsonKey: "gas",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: TransactionOnly,
-    },
-    {
-      location: GasPrice,
-      jsonKey: "gasPrice",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: TransactionOnly,
-    },
-    {location: Input, jsonKey: "input", schema: S.string->toFieldSchema, source: TransactionOnly},
-    {
-      location: Nonce,
-      jsonKey: "nonce",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: TransactionOnly,
-    },
-    {
-      location: Value,
-      jsonKey: "value",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: TransactionOnly,
-    },
-    {location: V, jsonKey: "v", schema: S.string->toFieldSchema, source: TransactionOnly},
-    {location: R, jsonKey: "r", schema: S.string->toFieldSchema, source: TransactionOnly},
-    {location: S, jsonKey: "s", schema: S.string->toFieldSchema, source: TransactionOnly},
-    {
-      location: YParity,
-      jsonKey: "yParity",
-      schema: S.string->toFieldSchema,
-      source: TransactionOnly,
-    },
-    {
-      location: MaxPriorityFeePerGas,
-      jsonKey: "maxPriorityFeePerGas",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: TransactionOnly,
-    },
-    {
-      location: MaxFeePerGas,
-      jsonKey: "maxFeePerGas",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: TransactionOnly,
-    },
-    {
-      location: MaxFeePerBlobGas,
-      jsonKey: "maxFeePerBlobGas",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: TransactionOnly,
-    },
-    {
-      location: BlobVersionedHashes,
-      jsonKey: "blobVersionedHashes",
-      schema: S.array(S.string)->toFieldSchema,
-      source: TransactionOnly,
-    },
-    // ReceiptOnly fields (only in eth_getTransactionReceipt)
-    {
-      location: GasUsed,
-      jsonKey: "gasUsed",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: ReceiptOnly,
-    },
-    {
-      location: CumulativeGasUsed,
-      jsonKey: "cumulativeGasUsed",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: ReceiptOnly,
-    },
-    {
-      location: EffectiveGasPrice,
-      jsonKey: "effectiveGasPrice",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: ReceiptOnly,
-    },
-    {
-      location: ContractAddress,
-      jsonKey: "contractAddress",
-      schema: addressSchema,
-      source: ReceiptOnly,
-    },
-    {
-      location: LogsBloom,
-      jsonKey: "logsBloom",
-      schema: S.string->toFieldSchema,
-      source: ReceiptOnly,
-    },
-    {location: Root, jsonKey: "root", schema: S.string->toFieldSchema, source: ReceiptOnly},
-    {
-      location: Status,
-      jsonKey: "status",
-      schema: Rpc.hexIntSchema->toFieldSchema,
-      source: ReceiptOnly,
-    },
-    {
-      location: L1Fee,
-      jsonKey: "l1Fee",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: ReceiptOnly,
-    },
-    {
-      location: L1GasPrice,
-      jsonKey: "l1GasPrice",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: ReceiptOnly,
-    },
-    {
-      location: L1GasUsed,
-      jsonKey: "l1GasUsed",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: ReceiptOnly,
-    },
-    {
-      location: L1FeeScalar,
-      jsonKey: "l1FeeScalar",
-      schema: Rpc.decimalFloatSchema->toFieldSchema,
-      source: ReceiptOnly,
-    },
-    {
-      location: GasUsedForL1,
-      jsonKey: "gasUsedForL1",
-      schema: Rpc.hexBigintSchema->toFieldSchema,
-      source: ReceiptOnly,
-    },
-    // Both fields (available in both eth_getTransactionByHash and eth_getTransactionReceipt)
-    {location: From, jsonKey: "from", schema: addressSchema, source: Both},
-    {location: To, jsonKey: "to", schema: addressSchema, source: Both},
-    {location: Type, jsonKey: "type", schema: Rpc.hexIntSchema->toFieldSchema, source: Both},
-  ]
-  ->Array.map(def => (
-    def.location,
-    if Internal.evmNullableTransactionFields->Utils.Set.has(def.location) {
-      {...def, schema: S.nullable(def.schema)->toFieldSchema}
-    } else {
-      def
-    },
-  ))
-  ->Utils.Record.fromArray
-
-let fieldRegistryLowercase = makeFieldRegistry(lowercaseAddressSchema)
-let fieldRegistryChecksum = makeFieldRegistry(checksumAddressSchema)
-
-// Whether an RPC source can populate a transaction field. The getter skips a
-// field it can't parse, so this is what separates "absent because the chain has
-// none" from "absent because RPC never provides it". `hash` and
-// `transactionIndex` come off the log itself, so they have no registry entry.
-// Blocks need no equivalent: `eth_getBlockByNumber` carries every block field,
-// which `RpcFieldSelection_test.res` holds the registry to.
+// Whether an RPC source can populate a transaction field. `hash` and
+// `transactionIndex` come off the log itself; the rest map onto
+// `eth_getTransactionByHash`/`eth_getTransactionReceipt`. Kept in step with
+// the `RpcTransactionField` subenum in `human_config.rs` and the Rust
+// `rpc_tx_field_source` classification (`store_fetch.rs`);
+// `RpcFieldSelection_test.res` pins the sets together.
 let isRpcTransactionField = (name: string) =>
   switch name {
-  | "transactionIndex" | "hash" => true
-  | _ =>
-    fieldRegistryChecksum
-    ->Utils.Record.get(name->(Utils.magic: string => Internal.evmTransactionField))
-    ->Option.isSome
+  | "accessList" | "authorizationList" => false
+  | _ => Evm.transactionFields->Array.includes(name)
   }
-
-type fetchStrategy = NoRpc | TransactionOnly | ReceiptOnly | TransactionAndReceipt
-
-// Parse fields from a raw JSON object into a result dict.
-// Uses unsafeGet so nullable schemas (S.nullable) handle both null and undefined.
-let parseFieldsFromJson = (
-  mutTransactionAcc: dict<JSON.t>,
-  fields: array<fieldDef>,
-  json: JSON.t,
-) => {
-  let jsonDict = json->(Utils.magic: JSON.t => dict<JSON.t>)
-  fields->Array.forEach(def => {
-    let raw = jsonDict->Dict.getUnsafe(def.jsonKey)
-    try {
-      let parsed = raw->S.parseOrThrow(def.schema)
-      mutTransactionAcc->Dict.set((def.location :> string), parsed)
-    } catch {
-    | S.Raised(error) =>
-      JsError.throwWithMessage(
-        `Invalid transaction field "${(def.location :> string)}" found in the RPC response. Error: ${error->S.Error.reason}`,
-      )
-    }
-  })
-}
-
-let effectiveGasPriceKey = (Internal.EffectiveGasPrice: Internal.evmTransactionField :> string)
-
-// Pre-EIP-1559 receipts carry no `effectiveGasPrice` — every Optimism block
-// below the Bedrock migration at 105235063, for one. Those chains price every
-// transaction the legacy way, so the transaction's `gasPrice` is the effective
-// price, which is the same substitution HyperSync serves for those blocks.
-// Reads `gasPrice` but stores under `effectiveGasPrice`.
-let effectiveGasPriceFallbackDef = {
-  location: EffectiveGasPrice,
-  jsonKey: "gasPrice",
-  schema: Rpc.hexBigintSchema->toFieldSchema,
-  source: TransactionOnly,
-}
-
-let fillEffectiveGasPriceOrThrow = (mutTransactionAcc: dict<JSON.t>, txJson: JSON.t) => {
-  let gasPrice =
-    txJson->(Utils.magic: JSON.t => dict<JSON.t>)->Utils.Dict.dangerouslyGetNonOption("gasPrice")
-  switch gasPrice {
-  | None =>
-    JsError.throwWithMessage(`Neither "effectiveGasPrice" nor "gasPrice" is present in the RPC response for the transaction. Remove "effectiveGasPrice" from the field selection, or index this chain via HyperSync.`)
-  | Some(_) => parseFieldsFromJson(mutTransactionAcc, [effectiveGasPriceFallbackDef], txJson)
-  }
-}
-
-let makeThrowingGetEventTransaction = (
-  ~getTransactionJson: string => promise<JSON.t>,
-  ~getReceiptJson: string => promise<JSON.t>,
-  ~lowercaseAddresses: bool,
-) => {
-  let fieldRegistry = if lowercaseAddresses {
-    fieldRegistryLowercase
-  } else {
-    fieldRegistryChecksum
-  }
-  let fnsCache = Utils.WeakMap.make()
-  (log, ~selectedTransactionFields: Utils.Set.t<Internal.evmTransactionField>) => {
-    (
-      switch fnsCache->Utils.WeakMap.get(selectedTransactionFields) {
-      | Some(fn) => fn
-      // Build per-field parser on first call, then cache in WeakMap
-      | None => {
-          // Classify fields: log-derived vs RPC fields
-          let hasTransactionIndex = ref(false)
-          let hasHash = ref(false)
-          let hasEffectiveGasPrice = ref(false)
-          let txFields: array<fieldDef> = []
-          let receiptFields: array<fieldDef> = []
-          let bothFields: array<fieldDef> = []
-
-          selectedTransactionFields->Utils.Set.forEach(fieldName => {
-            switch fieldName {
-            | TransactionIndex => hasTransactionIndex := true
-            | Hash => hasHash := true
-            | _ =>
-              switch fieldRegistry->Utils.Record.get(fieldName) {
-              | Some(def) =>
-                // Absent from the receipt means fall back to the transaction's
-                // `gasPrice`, so this one field parses leniently rather than
-                // throwing on a receipt that omits it.
-                let def = if fieldName === EffectiveGasPrice {
-                  hasEffectiveGasPrice := true
-                  {...def, schema: S.nullable(def.schema)->toFieldSchema}
-                } else {
-                  def
-                }
-                switch def.source {
-                | TransactionOnly => txFields->Array.push(def)->ignore
-                | ReceiptOnly => receiptFields->Array.push(def)->ignore
-                | Both => bothFields->Array.push(def)->ignore
-                }
-              | None => () // Unknown field — skip silently
-              }
-            }
-          })
-
-          // Determine fetch strategy
-          let strategy = switch (txFields->Array.length > 0, receiptFields->Array.length > 0) {
-          | (true, true) => TransactionAndReceipt
-          | (true, false) => TransactionOnly
-          | (false, true) => ReceiptOnly
-          | (false, false) if bothFields->Array.length > 0 => TransactionOnly
-          | (false, false) => NoRpc
-          }
-
-          // Assign Both fields to whichever source is already being fetched; default to transaction
-          let targetForBoth = strategy == ReceiptOnly ? receiptFields : txFields
-          bothFields->Array.forEach(f => targetForBoth->Array.push(f)->ignore)
-
-          // Set log-derived fields on the mutable accumulator
-          let setLogFields = (mutTransactionAcc: dict<JSON.t>, log: Rpc.GetLogs.log) => {
-            if hasTransactionIndex.contents {
-              mutTransactionAcc->Dict.set(
-                "transactionIndex",
-                log.transactionIndex->(Utils.magic: int => JSON.t),
-              )
-            }
-            if hasHash.contents {
-              mutTransactionAcc->Dict.set(
-                "hash",
-                log.transactionHash->(Utils.magic: string => JSON.t),
-              )
-            }
-          }
-
-          let fn = if selectedTransactionFields->Utils.Set.size == 0 {
-            _ => %raw(`{}`)->Promise.resolve
-          } else {
-            switch strategy {
-            | NoRpc =>
-              (log: Rpc.GetLogs.log) => {
-                let mutTransactionAcc = Dict.make()
-                setLogFields(mutTransactionAcc, log)
-                mutTransactionAcc->(Utils.magic: dict<JSON.t> => 'a)->Promise.resolve
-              }
-            | _ =>
-              (log: Rpc.GetLogs.log) => {
-                let txJsonPromise = switch strategy {
-                | TransactionOnly | TransactionAndReceipt =>
-                  getTransactionJson(log.transactionHash)->Promise.thenResolve(v => Some(v))
-                | _ => Promise.resolve(None)
-                }
-                let receiptJsonPromise = switch strategy {
-                | ReceiptOnly | TransactionAndReceipt =>
-                  getReceiptJson(log.transactionHash)->Promise.thenResolve(v => Some(v))
-                | _ => Promise.resolve(None)
-                }
-
-                Promise.all2((txJsonPromise, receiptJsonPromise))
-                ->Promise.then(((txJson, receiptJson)) => {
-                  let mutTransactionAcc = Dict.make()
-                  setLogFields(mutTransactionAcc, log)
-
-                  switch txJson {
-                  | Some(json) => parseFieldsFromJson(mutTransactionAcc, txFields, json)
-                  | None => ()
-                  }
-                  switch receiptJson {
-                  | Some(json) => parseFieldsFromJson(mutTransactionAcc, receiptFields, json)
-                  | None => ()
-                  }
-
-                  // Only the chains that omit it pay for the extra request, and
-                  // only when the receipt has already come back without it.
-                  if (
-                    hasEffectiveGasPrice.contents &&
-                    mutTransactionAcc
-                    ->Utils.Dict.dangerouslyGetNonOption(effectiveGasPriceKey)
-                    ->Option.isNone
-                  ) {
-                    switch txJson {
-                    | Some(json) => {
-                        fillEffectiveGasPriceOrThrow(mutTransactionAcc, json)
-                        Promise.resolve(mutTransactionAcc)
-                      }
-                    | None =>
-                      getTransactionJson(log.transactionHash)->Promise.thenResolve(json => {
-                        fillEffectiveGasPriceOrThrow(mutTransactionAcc, json)
-                        mutTransactionAcc
-                      })
-                    }
-                  } else {
-                    Promise.resolve(mutTransactionAcc)
-                  }
-                })
-                ->Promise.thenResolve(mutTransactionAcc => {
-                  mutTransactionAcc->(Utils.magic: dict<JSON.t> => 'a)
-                })
-              }
-            }
-          }
-          let _ = fnsCache->Utils.WeakMap.set(selectedTransactionFields, fn)
-          fn
-        }
-      }
-    )(log)
-  }
-}
 
 type options = {
   sourceFor: Source.sourceFor,
@@ -716,7 +152,6 @@ let make = (
   }
   let name = `RPC (${urlHost})`
 
-  let client = Rpc.makeClient(url, ~headers?)
   let rpcClient = EvmRpcClient.make(
     ~url,
     ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
@@ -726,152 +161,41 @@ let make = (
     ~addressStore,
   )
 
-  // Requests are made from shared, memoized loaders, so they can't be
-  // attributed to a single getItemsOrThrow/getHeightOrThrow/getBlockHashes
-  // call at its call site. Every actual request (cache/dedup hits never reach
-  // recordRequest) pushes here; each method drains whatever is pending when it
-  // returns. Since a push always lands in exactly one drain, per-source totals
-  // stay exact even with concurrent in-flight calls — which call happens to
-  // drain a given entry doesn't matter, since SourceManager aggregates by
-  // (source, method) regardless of which call returned it.
+  // Timings of requests a failed operation still made (delivered on its error
+  // payload) are held here and drained into the next successful response, so
+  // per-source totals stay exact across retries.
   let pendingRequestStats: array<Source.requestStat> = []
-  let recordRequest = (~method, ~seconds) => {
-    pendingRequestStats->Array.push({Source.method, seconds})->ignore
+  let recordRequest = (stats: array<Source.requestStat>) => {
+    stats->Array.forEach(stat => pendingRequestStats->Array.push(stat)->ignore)
   }
-  let drainRequestStats = () => {
-    let stats = pendingRequestStats->Utils.Array.copy
+  let drainRequestStats = (stats: array<Source.requestStat>) => {
+    let all = pendingRequestStats->Utils.Array.copy->Array.concat(stats)
     pendingRequestStats->Utils.Array.clearInPlace
-    stats
+    all
   }
 
-  let makeTransactionLoader = () =>
-    LazyLoader.make(
-      ~loaderFn=transactionHash => {
-        let timerRef = Performance.now()
-        Rpc.GetTransactionByHash.rawRoute
-        ->Rest.fetch(transactionHash, ~client)
-        ->Promise.thenResolve(res => {
-          recordRequest(
-            ~method="eth_getTransactionByHash",
-            ~seconds=timerRef->Performance.secondsSince,
-          )
-          res
-        })
-      },
-      ~onError=(am, ~exn) => {
-        Logging.error({
-          "err": exn->Utils.prettifyExn,
-          "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
-              ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
-          "source": name,
-          "chainId": chainId,
-          "metadata": {
-            {
-              "asyncTaskName": "transactionLoader: fetching transaction data - `getTransaction` rpc call",
-              "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
-            }
-          },
-        })
-      },
-    )
-
-  let makeBlockLoader = () =>
-    LazyLoader.make(
-      ~loaderFn=blockNumber => {
-        getKnownRawBlockWithBackoff(
-          ~client,
-          ~sourceName=name,
-          ~chainId,
-          ~backoffMsOnFailure=1000,
-          ~blockNumber,
-          ~recordRequest,
-        )
-      },
-      ~onError=(am, ~exn) => {
-        Logging.error({
-          "err": exn->Utils.prettifyExn,
-          "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
-              ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
-          "source": name,
-          "chainId": chainId,
-          "metadata": {
-            {
-              "asyncTaskName": "blockLoader: fetching block data - `getBlock` rpc call",
-              "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
-            }
-          },
-        })
-      },
-    )
-
-  let makeReceiptLoader = () =>
-    LazyLoader.make(
-      ~loaderFn=transactionHash => {
-        let timerRef = Performance.now()
-        Rpc.GetTransactionReceipt.rawRoute
-        ->Rest.fetch(transactionHash, ~client)
-        ->Promise.thenResolve(res => {
-          recordRequest(
-            ~method="eth_getTransactionReceipt",
-            ~seconds=timerRef->Performance.secondsSince,
-          )
-          res
-        })
-      },
-      ~onError=(am, ~exn) => {
-        Logging.error({
-          "err": exn->Utils.prettifyExn,
-          "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
-              ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
-          "source": name,
-          "chainId": chainId,
-          "metadata": {
-            {
-              "asyncTaskName": "receiptLoader: fetching transaction receipt - `getTransactionReceipt` rpc call",
-              "suggestedFix": "This likely means the RPC url you are using is not responding correctly. Please try another RPC endipoint.",
-            }
-          },
-        })
-      },
-    )
-
-  let blockLoader = ref(makeBlockLoader())
-  let transactionLoader = ref(makeTransactionLoader())
-  let receiptLoader = ref(makeReceiptLoader())
-
-  let resetCachedLoaders = () => {
-    blockLoader := makeBlockLoader()
-    transactionLoader := makeTransactionLoader()
-    receiptLoader := makeReceiptLoader()
+  let makeEventBatchQueueItem = (
+    item: EvmRpcClient.eventItem,
+    ~onEventRegistration: Internal.evmOnEventRegistration,
+  ): Internal.item => {
+    Internal.Event({
+      onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+      chainId,
+      blockNumber: item.blockNumber,
+      logIndex: item.logIndex,
+      transactionIndex: item.transactionIndex,
+      // `block` and `transaction` are omitted; they're materialised from the
+      // per-chain stores onto the payload at batch prep.
+      payload: {
+        contractName: onEventRegistration.eventConfig.contractName,
+        eventName: onEventRegistration.eventConfig.name,
+        chainId,
+        params: item.params,
+        srcAddress: item.srcAddress,
+        logIndex: item.logIndex,
+      }->Evm.fromPayload,
+    })
   }
-
-  let getEventBlockOrThrow = makeThrowingGetEventBlock(
-    ~getBlockJson=blockNumber => blockLoader.contents->LazyLoader.get(blockNumber),
-    ~lowercaseAddresses,
-  )
-  let getEventTransactionOrThrow = makeThrowingGetEventTransaction(
-    ~getTransactionJson=async transactionHash => {
-      switch await transactionLoader.contents->LazyLoader.get(transactionHash) {
-      | Some(json) => json
-      | None =>
-        throw(
-          TransactionDataNotFound({message: `Transaction not found for hash: ${transactionHash}`}),
-        )
-      }
-    },
-    ~getReceiptJson=async transactionHash => {
-      switch await receiptLoader.contents->LazyLoader.get(transactionHash) {
-      | Some(json) => json
-      | None =>
-        throw(
-          TransactionDataNotFound({
-            message: `Transaction receipt not found for hash: ${transactionHash}`,
-          }),
-        )
-      }
-    },
-    ~lowercaseAddresses,
-  )
 
   let getItemsOrThrow = async (
     ~fromBlock,
@@ -892,19 +216,6 @@ let make = (
     | None => knownHeight
     }
 
-    // The seam block (`fromBlock - 1`) is the only block this range shares with
-    // what the store already scanned, so it is where a reorg at the boundary
-    // shows up. Reading it directly would answer from the block cache — it was
-    // the previous range's `toBlock`, so it is always cached, and always on the
-    // chain that range saw. Read `fromBlock` instead, which no earlier range
-    // touched, and take the seam's hash from its `parentHash`.
-    let firstBlockPromise =
-      fromBlock > 0 && fromBlock <= toBlock
-        ? blockLoader.contents
-          ->LazyLoader.get(fromBlock)
-          ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
-        : Promise.resolve(None)
-
     if selection.onEventRegistrations->Utils.Array.isEmpty {
       throw(
         Source.GetItemsError(
@@ -915,7 +226,7 @@ let make = (
       )
     }
 
-    let {items, toBlock: queriedToBlock, requestStats} = try await rpcClient.getNextPage(
+    let (page, transactionStore, blockStore) = try await rpcClient.getNextPage(
       {
         fromBlock,
         toBlockCeiling: toBlock,
@@ -928,204 +239,108 @@ let make = (
     | exn =>
       switch exn->parseGetNextPageRetryError {
       | Some((attemptedToBlock, retry, requestStats)) =>
-        requestStats->Array.forEach(stat =>
-          recordRequest(~method=stat.method, ~seconds=stat.seconds)
-        )
+        recordRequest(requestStats)
         throw(Source.GetItemsError(FailedGettingItems({exn, attemptedToBlock, retry})))
       | None =>
-        throw(
-          Source.GetItemsError(
-            FailedGettingItems({
-              exn,
-              attemptedToBlock: toBlock,
-              retry: WithBackoff({
-                message: "Unexpected issue while fetching events from the RPC client. Attempt a retry.",
-                backoffMillis: switch retry {
-                | 0 => 500
-                | _ => 1000 * retry
-                },
+        let failure = exn->Source.unpackNativeRequestFailure
+        recordRequest(failure.requestStats)
+        switch failure->parseFieldSelectionError {
+        | Some((blockNumber, message)) =>
+          throw(
+            Source.GetItemsError(
+              FailedGettingFieldSelection({
+                message,
+                exn: failure.cause,
+                blockNumber,
+                logIndex: 0,
               }),
-            }),
-          ),
-        )
+            ),
+          )
+        | None =>
+          throw(
+            Source.GetItemsError(
+              FailedGettingItems({
+                exn,
+                attemptedToBlock: toBlock,
+                retry: WithBackoff({
+                  message: "Unexpected issue while fetching events from the RPC client. Attempt a retry.",
+                  backoffMillis: switch retry {
+                  | 0 => 500
+                  | _ => 1000 * retry
+                  },
+                }),
+              }),
+            ),
+          )
+        }
       }
     }
-    requestStats->Array.forEach(stat => recordRequest(~method=stat.method, ~seconds=stat.seconds))
 
-    let latestFetchedBlockInfo = await blockLoader.contents
-    ->LazyLoader.get(queriedToBlock)
-    ->Promise.thenResolve(parseBlockInfo)
-
-    let parsedQueueItems = await items
-    ->Array.map(({log, onEventRegistrationIndex, params: decoded}: EvmRpcClient.rpcEventItem) => {
-      // `log.address` comes back already normalized to the client's casing.
-      let onEventRegistration = onEventRegistrations->Array.getUnsafe(onEventRegistrationIndex)
-      let eventConfig =
-        onEventRegistration.eventConfig->(
-          Utils.magic: Internal.eventConfig => Internal.evmEventConfig
-        )
-
-      (
-        async () => {
-          let (block, transaction) = try await Promise.all2((
-            log->getEventBlockOrThrow(
-              ~selectedBlockFields=onEventRegistration.fieldSelection.blockFields->(
-                Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmBlockField>
-              ),
-            ),
-            log->getEventTransactionOrThrow(
-              ~selectedTransactionFields=onEventRegistration.fieldSelection.transactionFields->(
-                Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
-              ),
-            ),
-          )) catch {
-          | TransactionDataNotFound({message}) =>
-            let backoffMillis = switch retry {
-            | 0 => 100
-            | _ => 500 * retry
-            }
-            throw(
-              Source.GetItemsError(
-                FailedGettingItems({
-                  exn: %raw(`null`),
-                  attemptedToBlock: toBlock,
-                  retry: WithBackoff({
-                    message: `${message}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
-                    backoffMillis,
-                  }),
-                }),
-              ),
-            )
-          | exn =>
-            throw(
-              Source.GetItemsError(
-                FailedGettingFieldSelection({
-                  message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
-                  exn,
-                  blockNumber: log.blockNumber,
-                  logIndex: log.logIndex,
-                }),
-              ),
-            )
-          }
-
-          Internal.Event({
-            onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
-            blockNumber: block->getBlockNumber,
-            chainId,
-            logIndex: log.logIndex,
-            transactionIndex: log.transactionIndex,
-            payload: {
-              contractName: eventConfig.contractName,
-              eventName: eventConfig.name,
-              chainId,
-              params: decoded,
-              block,
-              transaction,
-              srcAddress: log.address,
-              logIndex: log.logIndex,
-            }->Evm.fromPayload,
-          })
-        }
-      )()
+    let parsedQueueItems = page.items->Array.map(item => {
+      let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
+      makeEventBatchQueueItem(item, ~onEventRegistration)
     })
-    ->Promise.all
-
-    let optFirstBlock = await firstBlockPromise
 
     let totalTimeElapsed = startFetchingBatchTimeRef->Performance.secondsSince
 
-    // Every fetched block carries `hash` and `parentHash`, so each one yields
-    // two confirmed (number, hash) pairs for reorg detection at no extra cost.
-    // Both these blocks and the logs' own `blockHash` come from this range's
-    // responses, never from the block cache's older view of the chain. They go
-    // into a hash-only page store merged into the chain store, where hash
-    // comparison happens. The block data itself stays inline on the payload.
-    let observedBlocks: array<BlockStore.inputBlock> = []
-    let pushBlockInfo = (b: blockInfo) => {
-      observedBlocks
-      ->Array.push({
-        BlockStore.blockNumber: b.number,
-        blockHash: b.hash,
-        blockTimestamp: b.timestamp,
-      })
-      ->ignore
-      if b.number > 0 {
-        observedBlocks
-        ->Array.push({BlockStore.blockNumber: b.number - 1, blockHash: b.parentHash})
-        ->ignore
-      }
-    }
-    pushBlockInfo(latestFetchedBlockInfo)
-    switch optFirstBlock {
-    | Some(b) => pushBlockInfo(b)
-    | None => ()
-    }
-    items->Array.forEach(({log}) =>
-      observedBlocks
-      ->Array.push({BlockStore.blockNumber: log.blockNumber, blockHash: log.blockHash})
-      ->ignore
-    )
-
     {
-      latestFetchedBlockNumber: latestFetchedBlockInfo.number,
+      latestFetchedBlockNumber: page.toBlock,
       parsedQueueItems,
-      // RPC keeps the transaction and block inline on the payload; no
-      // transaction page, and the block page carries only observed hashes.
-      transactionStore: None,
-      blockStore: BlockStore.fromJs(
-        observedBlocks,
-        ~ecosystem=Evm,
-        ~shouldChecksum=!lowercaseAddresses,
-      ),
+      transactionStore: Some(transactionStore),
+      // The page store carries full rows for the blocks the field selections
+      // need, hash observations for every log's block, and the range-endpoint
+      // blocks that anchor reorg detection - all inserted on the Rust side.
+      blockStore,
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },
       knownHeight,
       fromBlockQueried: fromBlock,
-      requestStats: drainRequestStats(),
+      requestStats: drainRequestStats(page.requestStats),
+      missingStoreData: ?(page.missing->Source.missingStoreDataIsEmpty ? None : Some(page.missing)),
     }
   }
 
-  let onReorg = () => {
-    // Drop cached block/transaction/receipt data — after a reorg or an
-    // internally inconsistent response these may refer to orphaned-chain values.
-    resetCachedLoaders()
+  // Targeted refetch of the rows a response reported missing; fetched rows
+  // merge into the response's own page stores, so SourceManager can hand the
+  // completed response to processing without refetching the logs.
+  let fetchItemsStoreData = async (
+    ~missing: Source.missingStoreData,
+    ~transactionStore: option<TransactionStore.t>,
+    ~blockStore: BlockStore.t,
+  ) => {
+    let (res, txPage, blockPage) = try await rpcClient.fetchStoreData(missing) catch {
+    | exn =>
+      let failure = exn->Source.unpackNativeRequestFailure
+      switch failure->parseFieldSelectionError {
+      | Some((blockNumber, message)) =>
+        throw(
+          Source.GetItemsError(
+            FailedGettingFieldSelection({
+              message,
+              exn: failure.cause,
+              blockNumber,
+              logIndex: 0,
+            }),
+          ),
+        )
+      | None => throw(exn)
+      }
+    }
+    switch transactionStore {
+    | Some(store) => store->TransactionStore.merge(txPage)
+    | None => ()
+    }
+    blockStore->BlockStore.appendPage(blockPage)
+    {
+      Source.stillMissing: res.missing->Source.missingStoreDataIsEmpty ? None : Some(res.missing),
+      requestStats: res.requestStats,
+    }
   }
 
-  let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
-    blockNumbers
-    ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
-    ->Promise.all
-    ->Promise.thenResolve(rawBlocks => {
-      // Each block is fetched in its own request, so responses can mix forks.
-      // The parent hash becomes a minimal extra row: when consecutive blocks
-      // are requested, the page's own hash-collision check cross-validates the
-      // separately fetched responses.
-      let observedBlocks: array<BlockStore.inputBlock> = []
-      rawBlocks->Array.forEach(json => {
-        let b = parseBlockInfo(json)
-        observedBlocks
-        ->Array.push({
-          BlockStore.blockNumber: b.number,
-          blockHash: b.hash,
-          blockTimestamp: b.timestamp,
-        })
-        ->ignore
-        if b.number > 0 {
-          observedBlocks
-          ->Array.push({BlockStore.blockNumber: b.number - 1, blockHash: b.parentHash})
-          ->ignore
-        }
-      })
-      let blockStore =
-        observedBlocks->BlockStore.fromJs(~ecosystem=Evm, ~shouldChecksum=!lowercaseAddresses)
-      {Source.result: Ok(blockStore), requestStats: drainRequestStats()}
-    })
-    ->Promise.catch(exn =>
-      {Source.result: Error(exn), requestStats: drainRequestStats()}->Promise.resolve
-    )
-  }
+  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=(~blockNumbers) =>
+    rpcClient.getBlockHashes(blockNumbers)
+  )
 
   let createHeightSubscription =
     ws->Option.map(wsUrl =>
@@ -1139,20 +354,26 @@ let make = (
     poweredByHyperSync: false,
     pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,
-    onReorg,
     getHeightOrThrow: async () => {
       let timerRef = Performance.now()
       let height = try {
         await rpcClient.getHeight()
       } catch {
       | exn =>
-        recordRequest(~method="eth_blockNumber", ~seconds=timerRef->Performance.secondsSince)
+        recordRequest([
+          {Source.method: "eth_blockNumber", seconds: timerRef->Performance.secondsSince},
+        ])
         exn->throw
       }
-      recordRequest(~method="eth_blockNumber", ~seconds=timerRef->Performance.secondsSince)
-      {height, requestStats: drainRequestStats()}
+      {
+        height,
+        requestStats: drainRequestStats([
+          {Source.method: "eth_blockNumber", seconds: timerRef->Performance.secondsSince},
+        ]),
+      }
     },
     getItemsOrThrow,
+    fetchItemsStoreData,
     ?createHeightSubscription,
   }
 }

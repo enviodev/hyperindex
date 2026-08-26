@@ -943,6 +943,79 @@ let executeQuery = async (
       )
       sourceState->recordRequestStats(response.requestStats)
       validateResponseBlockStore(~method="getItems", ~blockStore=response.blockStore)
+
+      // The response may still be short of the block/transaction rows its
+      // items' field selections need - a load-balanced provider can route a
+      // lookup to a node that hasn't caught up with the one that served the
+      // logs. Keep asking the source for the remainder, with the behind-head
+      // backoff, until the response's stores are complete; only then can the
+      // response be applied. A source without `fetchItemsStoreData` never
+      // reports missing data.
+      switch (response.missingStoreData, source.fetchItemsStoreData) {
+      | (Some(missing), Some(fetchItemsStoreData)) =>
+        let missingRef = ref(Some(missing))
+        let fillRetryRef = ref(0)
+        while missingRef.contents->Option.isSome {
+          let missing = missingRef.contents->Option.getUnsafe
+
+          // A node that still can't serve the rows after this many targeted
+          // attempts isn't merely drifting behind the head (a pruned node,
+          // say), so restart the whole query - the backoff below has already
+          // demoted this source, letting the restart land on another one when
+          // the chain has an alternative.
+          if fillRetryRef.contents >= 5 {
+            throw(
+              Source.GetItemsError(
+                FailedGettingItems({
+                  exn: JsError.make(
+                    switch missing.sampleError->Null.toOption {
+                    | Some(message) => message
+                    | None => "The provider returned null for the requested block/transaction data"
+                    },
+                  )->(Utils.magic: JsError.t => exn),
+                  attemptedToBlock: response.latestFetchedBlockNumber,
+                  retry: WithBackoff({
+                    message: `The source repeatedly failed to provide the block/transaction data needed by block #${missing
+                      ->Source.missingStoreDataBlockNumber
+                      ->Int.toString}'s events. Refetching the whole range.`,
+                    backoffMillis: retryBackoffMillis(retry),
+                  }),
+                }),
+              ),
+            )
+          }
+          // The response itself was the first attempt, so wait before every
+          // targeted refetch.
+          await sourceManager->retryBehindHead(
+            sourceState,
+            ~retry=fillRetryRef.contents,
+            ~isRealtime,
+            ~logger,
+            ~blockNumber=missing->Source.missingStoreDataBlockNumber,
+            ~method="fetchStoreData",
+            ~err=JsError.make(
+              switch missing.sampleError->Null.toOption {
+              | Some(message) => message
+              | None => "The RPC provider returned null for the requested block/transaction data"
+              },
+            )->(Utils.magic: JsError.t => exn),
+            ~excludedSources=?excludedSourcesRef.contents,
+          )
+          let res = await fetchItemsStoreData(
+            ~missing,
+            ~transactionStore=response.transactionStore,
+            ~blockStore=response.blockStore,
+          )
+          sourceState->recordRequestStats(res.requestStats)
+          missingRef := res.stillMissing
+          fillRetryRef := fillRetryRef.contents + 1
+        }
+        // The refetched rows merged into the response's stores, so re-check
+        // that they didn't contradict what the response already carried.
+        validateResponseBlockStore(~method="getItems", ~blockStore=response.blockStore)
+      | _ => ()
+      }
+
       sourceState.lastFailedAt = None
 
       // The response carries a fresh height for exactly this source, so during a

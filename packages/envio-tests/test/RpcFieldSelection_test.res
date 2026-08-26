@@ -1,32 +1,30 @@
 open Vitest
 
 // `field_selection` on an RPC-synced chain is validated at config parse, while
-// the fields an RPC source can actually deliver are decided by the parsers in
-// `RpcSource`. This pins the two together: every field the source can parse
-// must be accepted by the config, and every field it can't must be rejected.
+// the fields an RPC source can actually deliver are decided by
+// `RpcSource.isRpcTransactionField` (mirroring the Rust `rpc_tx_field_source`
+// classification in `store_fetch.rs`). This pins the two together: every field
+// the source can serve must be accepted by the config, and every field it
+// can't must be rejected.
 
 // `number`/`timestamp`/`hash` are always on the block, so they aren't
-// selectable through `block_fields` — the config enum has no variant for them,
-// and the RPC block registry has no parser for them either.
-let selectableBlockFields =
-  Evm.blockFields->Array.filter(name =>
-    switch name {
-    | "number" | "timestamp" | "hash" => false
-    | _ => true
-    }
-  )
-
-let hasRpcBlockParser = (name: string) =>
-  RpcSource.blockFieldRegistryChecksum
-  ->Utils.Record.get(name->(Utils.magic: string => Internal.evmBlockField))
-  ->Option.isSome
+// selectable through `block_fields` — the config enum has no variant for them.
+// Every selectable block field is served by `eth_getBlockByNumber`, so the
+// block half of the selection has no RPC-specific restriction.
+let selectableBlockFields = Evm.blockFields->Array.filter(name =>
+  switch name {
+  | "number" | "timestamp" | "hash" => false
+  | _ => true
+  }
+)
 
 let selectableTransactionFields =
   Internal.allEvmTransactionFields->(
     Utils.magic: array<Internal.evmTransactionField> => array<string>
   )
 
-let rpcChainConfig = (~blockFields=[], ~transactionFields=[]) => `
+let rpcChainConfig = (~blockFields=[], ~transactionFields=[]) =>
+  `
 name: rpc-field-selection
 field_selection:
   block_fields: [${blockFields->Array.joinUnsafe(", ")}]
@@ -53,10 +51,7 @@ describe("RPC field_selection validation", () => {
       ~blockFields=selectableBlockFields,
       ~transactionFields=selectableTransactionFields->Array.filter(RpcSource.isRpcTransactionField),
     )
-    t.expect((
-      selectableBlockFields->Array.filter(f => !hasRpcBlockParser(f)),
-      parseError(yaml),
-    )).toEqual(([], None))
+    t.expect(parseError(yaml)).toEqual(None)
   })
 
   it("rejects every field the RPC source can't parse", t => {
