@@ -92,6 +92,9 @@ let run = async (
   ~onError=?,
   ~onExit=?,
   ~mapStorage: Persistence.storage => Persistence.storage=storage => storage,
+  // Runs after `restart` has stopped the previous indexer and before the next
+  // one starts, so mocked sources can void what the stopped one left in flight.
+  ~onIndexerStopped: unit => unit=() => (),
   body: t => promise<unit>,
 ) => {
   // Postgres resources this run owns: one schema, plus every client and
@@ -488,6 +491,7 @@ let run = async (
         // The previous run has to be quiet before the resumed one takes over the
         // shared persistence, else the two race against the same db.
         await stop()
+        onIndexerStopped()
         await make(~reset=false)
       },
     }
