@@ -110,6 +110,9 @@ type t = {
   name: string,
   description: option<string>,
   handlers: string,
+  // Relative path to the module declaring custom GraphQL resolvers, when the
+  // project ships them. None means entity fields only.
+  resolvers: option<string>,
   contractHandlers: array<contractHandler>,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
@@ -604,6 +607,7 @@ let publicConfigSchema = S.schema(s =>
     "name": s.matches(S.string),
     "description": s.matches(S.option(S.string)),
     "handlers": s.matches(S.option(S.string)),
+    "resolvers": s.matches(S.option(S.string)),
     "isDev": s.matches(S.option(S.bool)),
     "isolatedChains": s.matches(S.option(S.array(ChainId.schema))),
     "projectFlags": s.matches(S.option(S.string)),
@@ -1160,6 +1164,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     name: publicConfig["name"],
     description: publicConfig["description"],
     handlers: publicConfig["handlers"]->Option.getOr("src/handlers"),
+    resolvers: publicConfig["resolvers"],
     contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
