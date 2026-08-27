@@ -18,6 +18,7 @@
 
 import postgres from "postgres";
 import { Db as DbEnv, Resolvers as ResolversEnv } from "../Env.res.mjs";
+import { ResolverError } from "./errors.js";
 import { warn as logWarn } from "../Logging.res.mjs";
 import {
   decodeChainHeights,
@@ -34,11 +35,22 @@ const DEFAULT_POOL_SIZE = 25;
 
 const DEFAULT_POOL_WAIT_TIMEOUT_MS = 10_000;
 
-export class ResolverDbError extends Error {
-  constructor(message, code) {
-    super(message);
+/**
+ * A failure of the resolver's own database access — the pool being saturated,
+ * a query hitting its statement_timeout, an entity that isn't in the schema.
+ *
+ * A `ResolverError`, so its code reaches the client: §7.4 asks for pool
+ * exhaustion to surface as "a clean per-field error", and a caller that cannot
+ * tell saturation from a bug cannot back off and retry. None of these carry
+ * driver internals; a raw Postgres error still has its message withheld.
+ */
+export class ResolverDbError extends ResolverError {
+  constructor(message, code, options = {}) {
+    super(message, { code, httpStatus: options.httpStatus ?? 503 });
     this.name = "ResolverDbError";
-    this.code = code;
+    // The driver's own error, kept so a handler that wants the SQLSTATE can
+    // still reach it. It is not put on the wire.
+    if (options.cause !== undefined) this.cause = options.cause;
   }
 }
 
@@ -220,6 +232,22 @@ export function createResolverPool(options) {
         );
       }
       try {
+        return await runInTransaction();
+      } catch (error) {
+        if (error?.code === "57014") {
+          throw new ResolverDbError(
+            `Query exceeded resolver '${name}'s ${timeoutMs}ms statement_timeout`,
+            "STATEMENT_TIMEOUT",
+            { cause: error }
+          );
+        }
+        throw error;
+      } finally {
+        inFlight--;
+        gate.release();
+      }
+
+      async function runInTransaction() {
         return await sql.begin(async (tx) => {
           // `SET LOCAL` rather than a startup option so the bound is this
           // resolver's own, and so it cannot outlive the transaction onto the
@@ -227,9 +255,6 @@ export function createResolverPool(options) {
           await tx.unsafe(`SET LOCAL statement_timeout = ${timeoutMs}`);
           return await work(tx);
         });
-      } finally {
-        inFlight--;
-        gate.release();
       }
     };
 
