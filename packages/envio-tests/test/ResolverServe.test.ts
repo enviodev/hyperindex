@@ -9,6 +9,7 @@ import {
 import {
   createResolverPool,
   createResolverPoolFromEnv,
+  ResolverDbError,
 } from "../../envio/src/resolvers/db.js";
 import { startResolverServer } from "../../envio/src/resolvers/server.js";
 
@@ -59,6 +60,40 @@ createResolver({
   timeoutMs: 5_000,
   // @ts-expect-error -- deliberately returning something the output schema rejects
   handler: async () => [{ id: "p1" }],
+});
+
+// A resolver that may legitimately have no answer. `undefined` has no JSON
+// form, so this is the shape that has to be handled rather than converted.
+createResolver({
+  name: "maybeRow",
+  args: { found: S.boolean },
+  output: S.optional(Row),
+  timeoutMs: 5_000,
+  handler: async ({ args }) => (args.found ? { id: "p1", size: 250n } : undefined),
+});
+
+// The two operational failures a caller should be able to tell apart from a
+// bug: the pool being saturated, and a query hitting its statement_timeout.
+createResolver({
+  name: "saturated",
+  output: S.string,
+  timeoutMs: 5_000,
+  handler: async () => {
+    throw new ResolverDbError(
+      "Timed out after 250ms waiting for one of the resolver pool's 8 connections.",
+      "POOL_WAIT_TIMEOUT"
+    );
+  },
+});
+
+createResolver({
+  name: "slowQuery",
+  output: S.string,
+  timeoutMs: 150,
+  handler: async ({ db }) => {
+    await db.sql.unsafe("SELECT pg_sleep(5);");
+    return "never";
+  },
 });
 
 createResolver({
@@ -231,6 +266,58 @@ describe("resolver /resolve", () => {
         ],
       },
     });
+  });
+
+  it("answers null for a nullable result, and the value when there is one", async () => {
+    const [absent, present] = await Promise.all([
+      resolve({
+        field: "maybeRow",
+        args: { found: false },
+        selection: { id: {} },
+        role: "public",
+        requestId: "req-n1",
+      }),
+      resolve({
+        field: "maybeRow",
+        args: { found: true },
+        selection: { id: {}, size: {} },
+        role: "public",
+        requestId: "req-n2",
+      }),
+    ]);
+    expect([absent, present]).toEqual([
+      { status: 200, body: { data: null } },
+      { status: 200, body: { data: { id: "p1", size: "250" } } },
+    ]);
+  });
+
+  it("tells an operational failure apart from a bug", async () => {
+    // §7.4 wants pool exhaustion to surface as a clean per-field error. Both
+    // of these are the resolver's own capacity, not a leaked internal, so
+    // their codes reach the client where a driver error's message would not.
+    const [saturated, slow] = await Promise.all([
+      resolve({
+        field: "saturated",
+        args: {},
+        selection: {},
+        role: "public",
+        requestId: "req-s1",
+      }),
+      resolve({
+        field: "slowQuery",
+        args: {},
+        selection: {},
+        role: "public",
+        requestId: "req-s2",
+      }),
+    ]);
+    expect([
+      saturated.body.errors[0].extensions,
+      slow.body.errors[0].extensions,
+    ]).toEqual([
+      { code: "POOL_WAIT_TIMEOUT", http: { status: 503 } },
+      { code: "STATEMENT_TIMEOUT", http: { status: 503 } },
+    ]);
   });
 
   it("rejects a body that isn't a resolve request", async () => {

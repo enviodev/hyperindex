@@ -43,7 +43,7 @@ let perChainConfig = InternalTestIndexer.fromUserApi(
 let pgSchema = TestPgSchema.make()
 let sql = PgStorage.makeClient()
 
-type jsError = {message: string, code?: string}
+type jsError = {message: string, code?: string, cause?: ResolverDb.causedError}
 
 let asError = (exn: exn): option<jsError> =>
   switch exn {
@@ -167,7 +167,11 @@ describe("Resolver db handle", () => {
     await pool->ResolverDb.endPool
     // 57014 is Postgres' query_canceled: the backend was cancelled, not merely
     // a client that gave up — the distinction the 2026-08-18 incident turned on.
-    t.expect((caught->Option.flatMap(e => e.code), elapsed < 5000.)).toEqual((Some("57014"), true))
+    t.expect((
+      caught->Option.flatMap(e => e.code),
+      caught->Option.flatMap(e => e.cause)->Option.flatMap(cause => cause.code),
+      elapsed < 5000.,
+    )).toEqual((Some("STATEMENT_TIMEOUT"), Some("57014"), true))
   })
 
   Async.it("refuses to hand out a handle with no timeout", async t => {
