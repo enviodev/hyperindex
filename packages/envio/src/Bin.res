@@ -80,7 +80,8 @@ let run = async args => {
         // Serving keeps the event loop alive on its own, so returning here
         // leaves the process running rather than exiting.
         | _ =>
-          let _ = await ResolverProcess.serve(~config=Config.load(), ~projectRoot=cwd)
+          let running = await ResolverProcess.serve(~config=Config.load(), ~projectRoot=cwd)
+          running->ResolverProcess.handleSignals
         }
       }
     }

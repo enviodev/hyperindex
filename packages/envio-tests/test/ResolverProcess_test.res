@@ -174,15 +174,25 @@ extend type Query {
     ))
   })
 
-  Async.it("serves the declarations it just imported", async t => {
-    let {server, pool} = await ResolverProcess.serve(~config, ~projectRoot, ~port=0)
-    let answer = await postJson(
-      `http://127.0.0.1:${server.port->Int.toString}/resolve`,
-      `{"field":"ping","args":{},"selection":{},"role":"public","requestId":"r"}`,
-    )
-    await server.close()
-    await pool->ResolverProcess.endPool
-    t.expect(answer).toEqual(%raw(`{ data: "pong" }`))
+  Async.it("serves the declarations it just imported, and drains on shutdown", async t => {
+    let running = await ResolverProcess.serve(~config, ~projectRoot, ~port=0)
+    let url = `http://127.0.0.1:${running.server.port->Int.toString}/resolve`
+    let body = `{"field":"ping","args":{},"selection":{},"role":"public","requestId":"r"}`
+
+    let answer = await postJson(url, body)
+
+    // What SIGTERM runs. Idempotent, because a rolling update can send it
+    // twice, and after it the socket is gone rather than half-open.
+    await running.shutdown()
+    await running.shutdown()
+    let afterShutdown = try {
+      let _ = await postJson(url, body)
+      "answered"
+    } catch {
+    | _ => "refused"
+    }
+
+    t.expect((answer, afterShutdown)).toEqual((%raw(`{ data: "pong" }`), "refused"))
   })
 
   Async.it("says which file it couldn't load rather than starting empty", async t => {
