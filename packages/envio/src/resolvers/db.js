@@ -17,6 +17,7 @@
 // are driven by those table definitions.
 
 import postgres from "postgres";
+import { Db as DbEnv, Resolvers as ResolversEnv } from "../Env.res.mjs";
 import { warn as logWarn } from "../Logging.res.mjs";
 import {
   decodeChainHeights,
@@ -300,4 +301,29 @@ export function createResolverPool(options) {
     }),
     end: () => sql.end(),
   };
+}
+
+/**
+ * The pool for the running resolver process: the indexer's ENVIO_PG_* target
+ * (pointed at the read service in a deployment) with the resolver process's
+ * own sizing.
+ */
+export function createResolverPoolFromEnv(options) {
+  return createResolverPool({
+    connection: {
+      host: DbEnv.host,
+      port: DbEnv.port,
+      username: DbEnv.user,
+      password: DbEnv.password,
+      database: DbEnv.database,
+      ssl: DbEnv.ssl,
+    },
+    pgSchema: options?.pgSchema ?? DbEnv.publicSchema,
+    entities: options?.entities ?? {},
+    poolSize: options?.poolSize ?? ResolversEnv.poolSize(),
+    poolWaitTimeoutMs:
+      options?.poolWaitTimeoutMs ?? ResolversEnv.poolWaitTimeoutMs(),
+    poolerBacked: options?.poolerBacked ?? ResolversEnv.poolerBacked(),
+    onWarn: options?.onWarn,
+  });
 }

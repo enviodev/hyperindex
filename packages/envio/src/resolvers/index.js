@@ -8,6 +8,8 @@
 
 import { buildManifest, toSDL } from "./manifest.js";
 
+export { ResolverError } from "./errors.js";
+
 export {
   buildManifest,
   defineEnum,
