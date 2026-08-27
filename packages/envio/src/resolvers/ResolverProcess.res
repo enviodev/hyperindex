@@ -14,6 +14,18 @@ external buildRegisteredManifest: unit => manifestBundle = "buildRegisteredManif
 @module("./index.js")
 external getRegisteredResolvers: unit => array<unknown> = "getRegisteredResolvers"
 
+type schemaNames = {entities: array<string>, enums: array<string>}
+
+@module("./collisions.js")
+external checkCollisions: (JSON.t, schemaNames) => unit = "checkCollisions"
+
+// Only the entities and enums serve builds its schema from, which is what
+// decides whether a custom name is already taken.
+let schemaNamesOf = (config: Config.t) => {
+  entities: config->Config.getPgUserEntities->Array.map(entity => entity.name),
+  enums: config.allEnums->Array.map(enumConfig => enumConfig.name),
+}
+
 type pool
 
 type poolOptions = {
@@ -75,7 +87,9 @@ let writeManifest = async (~config: Config.t, ~projectRoot) => {
   | None => {manifest: emptyManifest, sdl: ""}
   | Some(relativePath) =>
     await loadOrThrow(~projectRoot, ~relativePath)
-    buildRegisteredManifest()
+    let bundle = buildRegisteredManifest()
+    checkCollisions(bundle.manifest, schemaNamesOf(config))
+    bundle
   }
 
   let dir = NodeJs.Path.resolve([projectRoot, ".envio"])
@@ -92,7 +106,14 @@ let writeManifest = async (~config: Config.t, ~projectRoot) => {
   )
 }
 
-type running = {server: server, pool: pool}
+@val @scope("process") external onSignal: (string, unit => unit) => unit = "on"
+
+// Node closes the server but leaves keep-alive connections to time out on
+// their own, and serve holds those open by design. Bounded so a rolling
+// update can't be held up by an idle socket.
+let closeGracePeriodMs = 5000
+
+type running = {server: server, pool: pool, shutdown: unit => promise<unit>}
 
 let serve = async (~config: Config.t, ~projectRoot, ~port=?, ~exposeErrors=false) => {
   let relativePath = switch config.resolvers {
@@ -103,6 +124,10 @@ let serve = async (~config: Config.t, ~projectRoot, ~port=?, ~exposeErrors=false
     )
   }
   await loadOrThrow(~projectRoot, ~relativePath)
+
+  // Checked here too, not only at manifest time: `envio dev` never writes the
+  // artefacts, and a collision it doesn't catch becomes a schema serve refuses.
+  checkCollisions(buildRegisteredManifest().manifest, schemaNamesOf(config))
 
   let resolvers = getRegisteredResolvers()
   if resolvers->Utils.Array.isEmpty {
@@ -124,5 +149,45 @@ let serve = async (~config: Config.t, ~projectRoot, ~port=?, ~exposeErrors=false
       ->Array.length
       ->Int.toString} custom resolvers on port ${server.port->Int.toString}`,
   )
-  {server, pool}
+
+  let stopped = ref(None)
+  let shutdown = () =>
+    switch stopped.contents {
+    | Some(promise) => promise
+    | None =>
+      let promise = (
+        async () => {
+          // In-flight requests finish; the grace period only bounds how long
+          // an idle connection can delay the exit.
+          switch await Promise.race([server.close(), Utils.delay(closeGracePeriodMs)]) {
+          | () => ()
+          | exception _ => ()
+          }
+          switch await pool->endPool {
+          | () => ()
+          | exception _ => ()
+          }
+        }
+      )()
+      stopped := Some(promise)
+      promise
+    }
+
+  {server, pool, shutdown}
 }
+
+/// Wires SIGTERM/SIGINT to `shutdown`, so a rolling update drains rather than
+/// severs. Separate from `serve` because a caller embedding it -- a test, or
+/// `envio dev` -- owns the process's signals itself.
+let handleSignals = (running: running) =>
+  ["SIGTERM", "SIGINT"]->Array.forEach(signal =>
+    onSignal(signal, () => {
+      Logging.info(`Received ${signal}, draining custom resolvers...`)
+      let _ = (
+        async () => {
+          await running.shutdown()
+          NodeJs.process->NodeJs.exitWithCode(Success)
+        }
+      )()
+    })
+  )
