@@ -282,9 +282,9 @@ export function createResolverPool(options) {
       sql: tagged,
 
       /**
-       * Several queries on one connection, under one timeout — and the only
-       * way to use postgres.js query fragments, which have to come from the
-       * same client instance they are run on.
+       * Several queries on one connection, under one timeout. The `sql` handed
+       * to the callback is postgres.js's own, so a fragment built from it can
+       * be used in a later query of the same block.
        */
       transaction: (work) => run(work),
     };
