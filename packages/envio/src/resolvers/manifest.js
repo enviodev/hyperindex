@@ -103,6 +103,25 @@ export function defineScalar(name, schema) {
   return tagged(schema, { name, scalar: true });
 }
 
+/**
+ * A root-level optional, unwrapped.
+ *
+ * `undefined` has no JSON form, so Sury refuses to convert an `S.optional(x)`
+ * at the root at all — not just when the value is absent. A resolver
+ * declaring a nullable result is the ordinary case (nothing found, or a
+ * failure that shouldn't take the rest of the operation down), so the absent
+ * value becomes `null` on the wire and a present one converts through the
+ * inner schema. Optionals *inside* an object are untouched: Sury omits those
+ * fields, which is what GraphQL wants.
+ */
+export function unwrapNullableOutput(schema) {
+  const tag = tagOf(schema);
+  if (tag.kind === "option" || tag.kind === "null") {
+    return { inner: tag.node._0, nullable: true };
+  }
+  return { inner: schema, nullable: false };
+}
+
 function tagOf(schema) {
   const t = schema.t;
   if (typeof t === "string") return { kind: t };
