@@ -2451,6 +2451,38 @@ export function createResolver<
   readonly handler: (args: ResolverHandlerArgs<A>) => Promise<R>;
 }): Resolver<A, O>;
 
+/**
+ * Thrown by a resolver to put a specific error on the client's response.
+ *
+ * Anything else a handler throws is reported as an internal failure with its
+ * message withheld — a driver error can carry a connection string, and the
+ * caller is the public internet — so this is how a resolver says more than
+ * that. envio-serve carries the extensions through unchanged.
+ *
+ * ```ts
+ * throw new ResolverError("Service is syncing", {
+ *   code: "SERVICE_UNAVAILABLE",
+ *   httpStatus: 503,
+ * });
+ * ```
+ */
+export declare class ResolverError extends Error {
+  constructor(
+    message: string,
+    options?: {
+      /** Becomes `extensions.code`. Defaults to `"INTERNAL_SERVER_ERROR"`. */
+      readonly code?: string;
+      /** Becomes `extensions.http.status`. */
+      readonly httpStatus?: number;
+      /** Merged into `extensions` alongside `code`. */
+      readonly extensions?: Record<string, unknown>;
+    }
+  );
+  readonly code: string;
+  readonly httpStatus?: number;
+  readonly extensions?: Record<string, unknown>;
+}
+
 /** Names a schema so it can appear in the GraphQL schema as an object type. */
 export function defineType<F extends Record<string, unknown>>(
   name: string,
