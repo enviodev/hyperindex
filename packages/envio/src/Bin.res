@@ -18,11 +18,13 @@ type startCmd = {
 }
 type migrateCmd = {reset: bool, config: JSON.t}
 type dropSchemaCmd = {config: JSON.t}
+type resolversCmd = {mode: string, cwd: string, env: dict<JSON.t>, config: JSON.t}
 
 type command =
   | Start(startCmd)
   | Migrate(migrateCmd)
   | DropSchema(dropSchemaCmd)
+  | Resolvers(resolversCmd)
 
 let decodeCommand = (json: JSON.t): command => {
   let obj = switch json->JSON.Decode.object {
@@ -37,6 +39,7 @@ let decodeCommand = (json: JSON.t): command => {
   | "start" => Start(json->(Utils.magic: JSON.t => startCmd))
   | "migrate" => Migrate(json->(Utils.magic: JSON.t => migrateCmd))
   | "drop-schema" => DropSchema(json->(Utils.magic: JSON.t => dropSchemaCmd))
+  | "resolvers" => Resolvers(json->(Utils.magic: JSON.t => resolversCmd))
   | other => JsError.throwWithMessage(`Unknown command kind: ${other}`)
   }
 }
@@ -68,6 +71,17 @@ let run = async args => {
       | DropSchema({config}) =>
         Config.prime(config)
         await Main.dropSchema()
+      | Resolvers({mode, cwd, env, config}) =>
+        Config.prime(config)
+        processChdir(cwd)
+        applyEnv(env)
+        switch mode {
+        | "manifest" => await ResolverProcess.writeManifest(~config=Config.load(), ~projectRoot=cwd)
+        // Serving keeps the event loop alive on its own, so returning here
+        // leaves the process running rather than exiting.
+        | _ =>
+          let _ = await ResolverProcess.serve(~config=Config.load(), ~projectRoot=cwd)
+        }
       }
     }
   } catch {
