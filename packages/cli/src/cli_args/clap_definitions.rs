@@ -74,9 +74,27 @@ pub enum CommandType {
     #[command(subcommand)]
     Config(ConfigSubcommand),
 
+    ///Run the custom GraphQL resolvers declared by `resolvers:` in config.yaml.
+    ///With no subcommand, serves them for envio-serve to dispatch to.
+    Resolvers(ResolversArgs),
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),
+}
+
+#[derive(Args, Debug)]
+pub struct ResolversArgs {
+    #[clap(subcommand)]
+    pub subcommand: Option<ResolversSubcommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ResolversSubcommand {
+    ///Write `.envio/resolvers.json` and `.envio/resolvers.graphql`, then exit
+    Manifest,
+    ///Answer envio-serve's /resolve over HTTP until stopped (the default)
+    Serve,
 }
 
 #[derive(Debug, Subcommand)]

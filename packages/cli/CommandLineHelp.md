@@ -37,6 +37,9 @@ This document contains the help content for the `envio` command-line program.
 * [`envio tools fetch-docs`↴](#envio-tools-fetch-docs)
 * [`envio config`↴](#envio-config)
 * [`envio config view`↴](#envio-config-view)
+* [`envio resolvers`↴](#envio-resolvers)
+* [`envio resolvers manifest`↴](#envio-resolvers-manifest)
+* [`envio resolvers serve`↴](#envio-resolvers-serve)
 
 ## `envio`
 
@@ -54,6 +57,7 @@ This document contains the help content for the `envio` command-line program.
 * `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
 * `tools` — Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
 * `config` — Inspect the indexer config
+* `resolvers` — Run the custom GraphQL resolvers declared by `resolvers:` in config.yaml. With no subcommand, serves them for envio-serve to dispatch to
 
 ###### **Options:**
 
@@ -475,6 +479,35 @@ Inspect the indexer config
 Print the resolved indexer config as JSON
 
 **Usage:** `envio config view`
+
+
+
+## `envio resolvers`
+
+Run the custom GraphQL resolvers declared by `resolvers:` in config.yaml. With no subcommand, serves them for envio-serve to dispatch to
+
+**Usage:** `envio resolvers [COMMAND]`
+
+###### **Subcommands:**
+
+* `manifest` — Write `.envio/resolvers.json` and `.envio/resolvers.graphql`, then exit
+* `serve` — Answer envio-serve's /resolve over HTTP until stopped (the default)
+
+
+
+## `envio resolvers manifest`
+
+Write `.envio/resolvers.json` and `.envio/resolvers.graphql`, then exit
+
+**Usage:** `envio resolvers manifest`
+
+
+
+## `envio resolvers serve`
+
+Answer envio-serve's /resolve over HTTP until stopped (the default)
+
+**Usage:** `envio resolvers serve`
 
 
 
