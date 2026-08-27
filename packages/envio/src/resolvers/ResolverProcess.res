@@ -68,8 +68,11 @@ let loadOrThrow = async (~projectRoot, ~relativePath) =>
   switch await Utils.importPath(toImportUrl(~projectRoot, ~relativePath)) {
   | _ => ()
   | exception exn =>
-    let cause = switch exn->Utils.prettifyExn {
-    | JsExn(e) => e->JsExn.message->Option.getOr("unknown error")
+    // `anyToExnInternal`, not `prettifyExn`: the latter hands back the raw JS
+    // error cast to `exn`, so matching `JsExn(_)` on it never fires and every
+    // cause reads "unknown error".
+    let cause = switch exn->JsExn.anyToExnInternal {
+    | JsExn(e) => e->JsExn.message->Option.getOr("no message")
     | _ => "unknown error"
     }
     JsError.throwWithMessage(
