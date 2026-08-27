@@ -207,8 +207,14 @@ extend type Query {
     | JsExn(e) => e->JsExn.message
     | _ => None
     }
+    // Both halves matter: the path so the user knows which file, and a real
+    // cause so they know why. A swallowed cause reads "unknown error" and
+    // sends them looking in the wrong place.
     t.expect(
-      caught->Option.map(message => message->String.includes("src/NotThere.ts")),
-    ).toEqual(Some(true))
+      caught->Option.map(message => (
+        message->String.includes("src/NotThere.ts"),
+        message->String.includes("Cannot find module"),
+      )),
+    ).toEqual(Some((true, true)))
   })
 })
