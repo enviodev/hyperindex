@@ -172,3 +172,65 @@ describe("resolver manifest", () => {
     `);
   });
 });
+
+describe("createResolver", () => {
+  // Declaring registers, the same way importing a handler module registers
+  // its handlers -- so there is no second export list to keep in sync.
+  it("registers declarations and builds their manifest", async () => {
+    const { createResolver, getRegisteredResolvers, buildRegisteredManifest, resetResolvers } =
+      await import("../../envio/src/resolvers/index.js");
+    resetResolvers();
+
+    const Stat = defineType("Stat2", { pnl: S.string });
+    createResolver({
+      name: "statsA",
+      args: { account: S.string },
+      output: S.array(Stat),
+      timeoutMs: 1000,
+      handler: async () => [],
+    });
+    createResolver({
+      name: "statsB",
+      output: S.int32,
+      timeoutMs: 2000,
+      admin: true,
+      handler: async () => 1,
+    });
+
+    const { manifest } = buildRegisteredManifest();
+    expect([
+      getRegisteredResolvers().map((r) => r.name),
+      manifest.resolvers.map((r) => [r.name, r.type, r.admin, r.timeoutMs]),
+    ]).toEqual([
+      ["statsA", "statsB"],
+      [
+        ["statsA", "[Stat2!]!", false, 1000],
+        ["statsB", "Int!", true, 2000],
+      ],
+    ]);
+    resetResolvers();
+  });
+
+  // Errors are raised at the declaration so the stack still says which file
+  // the bad resolver came from.
+  it("validates at declaration time", async () => {
+    const { createResolver, resetResolvers } = await import(
+      "../../envio/src/resolvers/index.js"
+    );
+    resetResolvers();
+    const base = { name: "x", output: S.string, timeoutMs: 1, handler: async () => "" };
+
+    expect(() => createResolver({ ...base, name: "" })).toThrow(/non-empty `name`/);
+    expect(() => createResolver({ ...base, output: undefined })).toThrow(/`output` schema/);
+    expect(() => createResolver({ ...base, handler: undefined })).toThrow(/`handler` function/);
+    expect(() => createResolver({ ...base, timeoutMs: 0 })).toThrow(/positive `timeoutMs`/);
+    // An unrepresentable schema fails here, not at the end of codegen.
+    expect(() =>
+      createResolver({ ...base, output: S.schema({ a: S.string }) })
+    ).toThrow(/must be named/);
+
+    createResolver(base);
+    expect(() => createResolver(base)).toThrow(/declared more than once/);
+    resetResolvers();
+  });
+});
