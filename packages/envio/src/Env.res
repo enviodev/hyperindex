@@ -163,6 +163,58 @@ module ClickHouse = {
   let databaseEngine = () => read("ENVIO_CLICKHOUSE_DATABASE_ENGINE")
 }
 
+// The resolver process runs in a pod of its own, so its database connection
+// comes from the same ENVIO_PG_* vars the indexer's does -- the controller
+// points them at the CNPG `-r` service instead of the primary. Only what
+// genuinely differs from the indexer's shape gets a var of its own.
+//
+// Read at call time rather than module load, for the same reason ClickHouse's
+// are: `envio dev` injects them after this module has been evaluated.
+module Resolvers = {
+  %%private(
+    let read: string => option<string> = %raw(`(k) => {
+      const v = process.env[k];
+      return v === undefined || v === "" ? undefined : v;
+    }`)
+
+    let readInt = (key, ~fallback) =>
+      switch read(key) {
+      | None => fallback
+      | Some(raw) =>
+        switch raw->Int.fromString {
+        | Some(value) if value > 0 => value
+        | _ =>
+          JsError.throwWithMessage(
+            `Invalid ${key} value: "${raw}". Expected a positive whole number.`,
+          )
+        }
+      }
+  )
+
+  let port = () => readInt("ENVIO_RESOLVERS_PORT", ~fallback=9900)
+
+  // Sized as concurrent heavy requests x per-request fan-out, not as the
+  // indexer's two long-lived connections: one resolver request can hold four
+  // at once.
+  let poolSize = () => readInt("ENVIO_RESOLVERS_POOL_SIZE", ~fallback=25)
+
+  let poolWaitTimeoutMs = () => readInt("ENVIO_RESOLVERS_POOL_WAIT_TIMEOUT_MS", ~fallback=10_000)
+
+  // Set where the `-r` service isn't reachable and the pooler is the only way
+  // in. Transaction-mode PgBouncer rejects named prepared statements, so this
+  // gives up plan reuse.
+  let poolerBacked = () =>
+    switch read("ENVIO_RESOLVERS_POOLER_BACKED") {
+    | None
+    | Some("false") => false
+    | Some("true") => true
+    | Some(other) =>
+      JsError.throwWithMessage(
+        `Invalid ENVIO_RESOLVERS_POOLER_BACKED value: "${other}". Expected "true" or "false".`,
+      )
+    }
+}
+
 module Hasura = {
   // Disable it on HS indexer run, since we don't have Hasura credentials anyways
   // Also, it might be useful for some users who don't care about Hasura

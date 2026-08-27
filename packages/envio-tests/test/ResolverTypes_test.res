@@ -189,6 +189,30 @@ createResolver({
 `)
   )
 
+  it("gives a resolver a way to name its own client-facing error", _ =>
+    check(`
+import { createResolver, ResolverError, S } from "envio";
+
+createResolver({
+  name: "guarded",
+  output: S.string,
+  timeoutMs: 5_000,
+  handler: async ({ db }) => {
+    const heights = await db.chainHeights();
+    if (!heights["1337"]?.isReady) {
+      throw new ResolverError("Service is syncing", {
+        code: "SERVICE_UNAVAILABLE",
+        httpStatus: 503,
+      });
+    }
+    // @ts-expect-error - httpStatus is a number
+    new ResolverError("x", { httpStatus: "503" });
+    return "ready";
+  },
+});
+`)
+  )
+
   it("carries the request's own metadata and the freshness watermark", _ =>
     check(`
 import { createResolver, S } from "envio";
