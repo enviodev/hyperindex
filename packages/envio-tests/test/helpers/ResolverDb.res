@@ -70,6 +70,8 @@ type chainHeight = {
 
 @send external chainHeights: db => promise<dict<chainHeight>> = "chainHeights"
 
+type causedError = {code?: string}
+
 type poolStats = {poolSize: int, inUse: int, peakInUse: int, waiting: int}
 
 @send external stats: pool => poolStats = "stats"
