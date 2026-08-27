@@ -338,6 +338,7 @@ pub struct SystemConfig {
     pub human_config: HumanConfig,
     pub lowercase_addresses: bool,
     pub handlers: Option<String>,
+    pub resolvers: Option<String>,
     // Project uses ReScript when a rescript.json sits at the project root —
     // file existence is the source of truth; no explicit flag in config.yaml.
     pub is_rescript: bool,
@@ -1194,6 +1195,7 @@ impl SystemConfig {
                         Some(super::human_config::evm::AddressFormat::Lowercase)
                     ),
                     handlers: base_config.handlers.clone(),
+                    resolvers: base_config.resolvers.clone(),
                     human_config,
                     is_rescript,
                 })
@@ -1343,6 +1345,7 @@ impl SystemConfig {
                     storage,
                     lowercase_addresses: false,
                     handlers: base_config.handlers.clone(),
+                    resolvers: base_config.resolvers.clone(),
                     human_config,
                     is_rescript,
                 })
@@ -1457,6 +1460,7 @@ impl SystemConfig {
                     storage,
                     lowercase_addresses: false,
                     handlers: svm_config.base.handlers.clone(),
+                    resolvers: None,
                     human_config,
                     is_rescript,
                 })
