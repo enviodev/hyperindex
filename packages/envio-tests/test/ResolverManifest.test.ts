@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as S from "rescript-schema";
+import { S as EnvioS } from "envio";
 import {
   buildManifest,
   defineEnum,
@@ -32,6 +33,51 @@ const resolver = (over: Record<string, unknown> = {}) => ({
   timeoutMs: 30_000,
   cacheTtlMs: 60_000,
   ...over,
+});
+
+describe("envio's own scalars", () => {
+  // `S.bigint` and `S.bigDecimal` are how a handler already spells these, and
+  // resolvers share that vocabulary. Both cross the wire as strings, which is
+  // what a 30-digit PnL figure needs.
+  it("maps them onto named GraphQL scalars without a defineScalar call", () => {
+    const manifest = buildManifest([
+      {
+        name: "pnl",
+        args: { minSize: EnvioS.bigint },
+        output: EnvioS.bigDecimal,
+        timeoutMs: 1000,
+      },
+    ]);
+    expect(manifest).toEqual({
+      schemaVersion: 1,
+      resolvers: [
+        {
+          name: "pnl",
+          args: [{ name: "minSize", type: "BigInt!" }],
+          type: "BigDecimal!",
+          admin: false,
+          cacheTtlMs: 0,
+          timeoutMs: 1000,
+        },
+      ],
+      types: [
+        { kind: "scalar", name: "BigDecimal" },
+        { kind: "scalar", name: "BigInt" },
+      ],
+    });
+  });
+
+  it("keeps them nullable when the declaration is optional", () => {
+    const manifest = buildManifest([
+      {
+        name: "pnl",
+        args: {},
+        output: S.optional(EnvioS.bigint),
+        timeoutMs: 1000,
+      },
+    ]);
+    expect(manifest.resolvers[0]!.type).toEqual("BigInt");
+  });
 });
 
 describe("resolver manifest", () => {

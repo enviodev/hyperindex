@@ -10,6 +10,8 @@
 // SCHEMA_VERSION must be bumped in both places together.
 
 import * as S from "rescript-schema";
+import { $$BigInt as UtilsBigInt } from "../Utils.res.mjs";
+import { schema as bigDecimalSchema } from "../bindings/BigDecimal.res.mjs";
 
 export const SCHEMA_VERSION = 1;
 
@@ -26,6 +28,15 @@ const BUILTIN_SCALARS = {
 };
 
 const NAMED = Symbol.for("envio.resolvers.graphqlType");
+
+// `S.bigint` and `S.bigDecimal` are transformed strings, so the tag walk below
+// would call them String -- turning a 30-digit PnL figure into an untyped one
+// in the published schema. They are the vocabulary handlers already write in,
+// so they get their scalars without the user naming them again.
+const ENVIO_SCALARS = new Map([
+  [UtilsBigInt.schema, "BigInt"],
+  [bigDecimalSchema, "BigDecimal"],
+]);
 
 // Tagging is never applied to the caller's schema object. `S.string` and
 // friends are shared singletons, so `defineScalar("BigInt", S.string)` would
@@ -129,6 +140,12 @@ export function toGraphQLType(schema, types, path) {
     if (innerNamed) {
       register(inner, innerNamed, types, path);
       return innerNamed.name;
+    }
+    // After the explicit name, so `defineScalar` on a clone still wins.
+    const envioScalar = ENVIO_SCALARS.get(inner);
+    if (envioScalar !== undefined) {
+      register(inner, { name: envioScalar, scalar: true }, types, path);
+      return envioScalar;
     }
     if (innerTag.kind === "array") {
       return `[${toGraphQLType(innerTag.node._0, types, `${path}[]`)}]`;
