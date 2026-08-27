@@ -35,6 +35,12 @@ pub(crate) struct PublicConfigJson<'a> {
     description: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     handlers: Option<&'a str>,
+    // Omitted when unset. This JSON is persisted in `envio_info` and
+    // validated against on resume, so emitting a `"resolvers": null` key for
+    // every project that ships none would change the persisted config
+    // fleet-wide and force resyncs that nothing asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolvers: Option<&'a str>,
     #[serde(skip_serializing_if = "is_false")]
     is_dev: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -871,6 +877,7 @@ impl SystemConfig {
             name: &cfg.name,
             description: cfg.human_config.get_base_config().description.as_deref(),
             handlers: cfg.handlers.as_deref(),
+            resolvers: cfg.resolvers.as_deref(),
             is_dev,
             full_batch_size: cfg.human_config.get_base_config().full_batch_size,
             rollback_on_reorg: cfg.rollback_on_reorg,
