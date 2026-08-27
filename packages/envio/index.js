@@ -16,6 +16,7 @@ export {
   defineScalar,
   getRegisteredResolvers,
   buildRegisteredManifest,
+  ResolverError,
 } from "./src/resolvers/index.js";
 export { default as BigDecimal } from "bignumber.js";
 
