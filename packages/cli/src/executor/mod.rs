@@ -120,10 +120,7 @@ async fn execute_command(
             Ok(None)
         }
 
-        CommandType::Codegen => {
-            codegen::run_codegen(&parsed_project_paths).await?;
-            Ok(None)
-        }
+        CommandType::Codegen => Ok(Some(codegen::run_codegen(&parsed_project_paths).await?)),
 
         CommandType::Dev(dev_args) => Ok(Some(
             dev::run_dev(parsed_project_paths, dev_args.restart).await?,
