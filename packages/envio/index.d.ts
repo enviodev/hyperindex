@@ -2384,6 +2384,9 @@ export type ResolverDb<Config extends IndexerConfigTypes = GlobalConfig> = {
   ) => Promise<ConfigEntities<Config>[Name] | null>;
   /** Raw SQL, for what the loaders don't express. */
   readonly sql: ResolverSql;
+  /** The Postgres schema the indexer's tables live in. Raw SQL has to qualify
+   *  table names with it — it is not `"public"` on a hosted deployment. */
+  readonly pgSchema: string;
   /** Several queries on one connection, under one timeout. */
   readonly transaction: <T>(work: (sql: ResolverSql) => Promise<T>) => Promise<T>;
   /** How far each chain has been indexed, keyed by chain id. */

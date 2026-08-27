@@ -283,6 +283,13 @@ export function createResolverPool(options) {
       sql: tagged,
 
       /**
+       * The Postgres schema the indexer's tables live in. Raw SQL has to
+       * qualify table names with it, and it is not "public" on a hosted
+       * deployment.
+       */
+      pgSchema,
+
+      /**
        * Several queries on one connection, under one timeout. The `sql` handed
        * to the callback is postgres.js's own, so a fragment built from it can
        * be used in a later query of the same block.

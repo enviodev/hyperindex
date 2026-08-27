@@ -15,12 +15,14 @@
 // over-fetching resolver cannot leak through even before serve projects.
 
 import * as S from "rescript-schema";
+import { unwrapNullableOutput } from "./manifest.js";
 import { ResolverError } from "./errors.js";
 
 // Built once per resolver, from a copy: `S.schema` replaces the schema values
 // in the object it is handed, which would gut the declaration the manifest is
 // derived from.
 const argsSchemas = new WeakMap();
+const outputSchemas = new WeakMap();
 
 function argsSchemaOf(resolver) {
   let schema = argsSchemas.get(resolver);
@@ -29,6 +31,15 @@ function argsSchemaOf(resolver) {
     argsSchemas.set(resolver, schema);
   }
   return schema;
+}
+
+function outputSchemaOf(resolver) {
+  let unwrapped = outputSchemas.get(resolver);
+  if (unwrapped === undefined) {
+    unwrapped = unwrapNullableOutput(resolver.output);
+    outputSchemas.set(resolver, unwrapped);
+  }
+  return unwrapped;
 }
 
 function errorBody(message, code, extra) {
@@ -135,7 +146,11 @@ export function createDispatcher({ resolvers, pool, exposeErrors = false, onErro
     }
 
     try {
-      return { data: S.reverseConvertToJsonOrThrow(result, resolver.output) };
+      const { inner, nullable } = outputSchemaOf(resolver);
+      if (nullable && (result === undefined || result === null)) {
+        return { data: null };
+      }
+      return { data: S.reverseConvertToJsonOrThrow(result, inner) };
     } catch (error) {
       // Reported rather than nulled: serve's projection would make a missing
       // field read as absent, which in a dashboard is a wrong number with no
