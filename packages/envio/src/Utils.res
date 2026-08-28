@@ -199,6 +199,13 @@ module Dict = {
     }
   `)
 
+  let clearInPlace: dict<'a> => unit = %raw(`(dict) => {
+      for (const key in dict) {
+        delete dict[key];
+      }
+    }
+  `)
+
   let unsafeDeleteUndefinedFieldsInPlace: 'a => unit = %raw(`(dict) => {
       for (var key in dict) {
         if (dict[key] === undefined) {

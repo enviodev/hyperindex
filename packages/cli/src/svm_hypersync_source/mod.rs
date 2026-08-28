@@ -24,7 +24,7 @@ use hypersync_client_solana::RateLimitInfo;
 use hypersync_solana_net_types::field_selection::SolanaFieldSelection;
 use hypersync_solana_net_types::query::SolanaQuery;
 
-use crate::address_store::{AddressSet, AddressStore, SetCache, StoreInner};
+use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_store::BlockStore;
 use crate::config_parsing::human_config::svm::{ArgDef, ArgType};
@@ -589,10 +589,10 @@ fn build_event_items(
         }
         let slot = i64::try_from(instr.slot).context("instruction.slot overflow")?;
         let program_key = instr.executing_account.as_bytes();
-        let address = selection::InstructionAddress {
+        let address = Emitter {
             key: program_key,
-            contract_name: set_cache.owner_of(program_key),
-            slot,
+            owners: set_cache.owners_of(program_key),
+            block: slot,
         };
         let routed = route_instruction(
             &built.registrations,

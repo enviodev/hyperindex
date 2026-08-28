@@ -60,6 +60,12 @@ let getClickHouseFieldType = (
     }
   | Uint32 => "UInt32"
   | UInt52 => "UInt64"
+  // Internal-only column types, never on an entity the sink mirrors.
+  | SmallInt
+  | Bytea =>
+    JsError.throwWithMessage(
+      "ClickHouse doesn't support the internal SmallInt and Bytea column types",
+    )
   | UInt64 => "UInt64"
   | Serial => "Int32"
   | BigSerial => "Int64"

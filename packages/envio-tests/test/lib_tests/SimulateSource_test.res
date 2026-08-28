@@ -101,13 +101,13 @@ describe("SimulateSource routing", () => {
     let first = await getItems(
       ~items,
       ~store,
-      ~addressSet=store->AddressStore.makeSetOf([addr(0)]),
+      ~addressSet=TestAddresses.setOf(~store, [addr(0)]),
       ~selection,
     )
     let second = await getItems(
       ~items,
       ~store,
-      ~addressSet=store->AddressStore.makeSetOf([addr(1)]),
+      ~addressSet=TestAddresses.setOf(~store, [addr(1)]),
       ~selection,
     )
 
@@ -134,7 +134,7 @@ describe("SimulateSource routing", () => {
         item(~registration=regA, ~blockNumber=49, ~srcAddress=addr(0)),
         item(~registration=regA, ~blockNumber=50, ~srcAddress=addr(0)),
       ],
-      ~addressSet=store->AddressStore.makeSetOf([addr(0)]),
+      ~addressSet=TestAddresses.setOf(~store, [addr(0)]),
       ~selection,
     )
 
@@ -217,13 +217,13 @@ describe("SimulateSource routing", () => {
     let partitionScoped = await getItems(
       ~items,
       ~store,
-      ~addressSet=store->AddressStore.makeSetOf([addr(0)]),
+      ~addressSet=TestAddresses.setOf(~store, [addr(0)]),
       ~selection,
     )
     let clientFiltered = await getItems(
       ~items,
       ~store,
-      ~addressSet=store->AddressStore.makeSetOf([addr(0)]),
+      ~addressSet=TestAddresses.setOf(~store, [addr(0)]),
       ~selection={...selection, clientFilteredContracts: ["A"]},
     )
 
@@ -253,7 +253,7 @@ describe("SimulateSource routing", () => {
         item(~registration=regOpen, ~blockNumber=100, ~srcAddress=addr(0)),
         item(~registration=regRestricted, ~blockNumber=100, ~srcAddress=addr(0)),
       ],
-      ~addressSet=store->AddressStore.makeSetOf([addr(0)]),
+      ~addressSet=TestAddresses.setOf(~store, [addr(0)]),
       ~selection={dependsOnAddresses: true, onEventRegistrations: [regOpen, regRestricted]},
     )
 
@@ -269,7 +269,7 @@ describe("SimulateSource routing", () => {
       ~onEventRegistrations=[regFirst, regSecond],
       ~addresses=[contract(~address=addr(0), ~contractName="A")],
     )
-    let addressSet = store->AddressStore.makeSetOf([addr(0)])
+    let addressSet = TestAddresses.setOf(~store, [addr(0)])
     let items = [
       item(~registration=regFirst, ~blockNumber=10, ~srcAddress=addr(0)),
       item(~registration=regSecond, ~blockNumber=10, ~srcAddress=addr(0)),

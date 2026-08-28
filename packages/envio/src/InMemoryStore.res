@@ -130,11 +130,13 @@ let prepareRollbackDiff = async (
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
   ~progressBlockNumberByChainId,
+  ~rolledBackAddresses,
 ) => {
   state->IndexerState.beginRollbackDiff(
     ~targetCheckpointId=rollbackTargetCheckpointId,
     ~diffCheckpointId=rollbackDiffCheckpointId,
     ~progressBlockNumberByChainId,
+    ~rolledBackAddresses,
   )
   let persistence = state->IndexerState.persistence
   let committedCheckpointId = state->IndexerState.committedCheckpointId
@@ -194,12 +196,6 @@ let prepareRollbackDiff = async (
 // registered them: the store is where they already live, and it knows which
 // ones the database hasn't seen yet.
 let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
-  let inMemTable = state->getInMemTable(
-    ~entityConfig=InternalTable.EnvioAddresses.entityConfig,
-    ~scope=CrossChain,
-  )
-  let committedCheckpointId = state->IndexerState.committedCheckpointId
-
   batch.progressedChainsById->Utils.Dict.forEach(progressedChain => {
     let chainId = progressedChain.fetchState.chainId
     let chainState = state->IndexerState.getChainState(~chainId)
@@ -219,31 +215,22 @@ let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
         }
       }
 
-      chainState
-      ->ChainState.drainAddressesForWrite(
-        ~toBlockInclusive=progressedChain.progressBlockNumber,
-        ~checkpointBlockNumbers,
-      )
-      ->Array.forEach(dc => {
-        let entity: InternalTable.EnvioAddresses.t = {
-          id: InternalTable.EnvioAddresses.makeId(~chainId, ~address=dc.address),
-          chainId,
-          contractName: dc.contractName,
-          registrationBlock: dc.registrationBlock,
-          // Only ever written, never read back. Kept on the table so the column
-          // doesn't need a migration.
-          registrationLogIndex: -1,
-        }
-
-        inMemTable->InMemoryTable.Entity.set(
-          ~committedCheckpointId,
-          Set({
-            entityId: entity.id->EntityId.unsafeOfString,
-            checkpointId: checkpointIds->Array.getUnsafe(dc.checkpointIdx),
-            entity: entity->InternalTable.EnvioAddresses.castToInternal,
-          }),
+      batch.registeredAddresses->Array.pushMany(
+        chainState
+        ->ChainState.drainAddressesForWrite(
+          ~toBlockInclusive=progressedChain.progressBlockNumber,
+          ~checkpointBlockNumbers,
         )
-      })
+        ->Array.map((dc): AddressRows.staged => {
+          row: {
+            chainId,
+            address: dc.address,
+            contractId: dc.contractId,
+            registrationBlock: dc.registrationBlock,
+          },
+          checkpointId: checkpointIds->Array.getUnsafe(dc.checkpointIdx),
+        }),
+      )->ignore
     }
   })
 }

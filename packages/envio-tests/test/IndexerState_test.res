@@ -40,13 +40,13 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ) :> Internal.onEventRegistration),
     ]
     let addresses = []
-    let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~addresses)
+    let addressStore = TestAddresses.makeStore(~onEventRegistrations)
     let fetcherStateInit: FetchState.t = FetchState.make(
       ~maxAddrInPartition=Env.maxAddrInPartition,
       ~endBlock=None,
       ~onEventRegistrations,
       ~addressStore,
-      ~addresses,
+      ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
       ~startBlock=0,
       ~maxOnBlockBufferSize=5000,
       ~chainId=1->ChainId.fromInt,
@@ -252,14 +252,14 @@ describe("IndexerState", () => {
 
         let makeFetchState = (~chainId, ~eventBlocks) => {
           let addresses = []
-          let addressStore = TestAddresses.makeStore(~onEventRegistrations, ~addresses)
+          let addressStore = TestAddresses.makeStore(~onEventRegistrations)
           let fetchState = ref(
             FetchState.make(
               ~maxAddrInPartition=Env.maxAddrInPartition,
               ~endBlock=None,
               ~onEventRegistrations,
               ~addressStore,
-              ~addresses,
+              ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
               ~startBlock=0,
               ~maxOnBlockBufferSize=5000,
               ~chainId,

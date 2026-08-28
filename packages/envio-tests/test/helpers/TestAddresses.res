@@ -2,13 +2,52 @@
 // `ChainState.makeInternal` does in production: one store per chain, built from
 // that chain's registrations, holding every address the chain indexes.
 
+// The contract mapping a chain's store is built from — every contract the
+// config declares, under the ids their names canonicalize to.
+let contractMapping = (
+  ~onEventRegistrations: array<Internal.onEventRegistration>=[],
+  // Config contracts the chain has no events for. Registering an address for a
+  // name outside the store's contracts throws, so a test exercising the
+  // no-events path declares it here.
+  ~configContractNames: array<string>=[],
+) =>
+  ContractMapping.make(
+    ~names=onEventRegistrations
+    ->Array.map(reg => reg.eventConfig.contractName)
+    ->Array.concat(configContractNames),
+  )
+
+// Plain registrations in the columnar form `FetchState.make` seeds from,
+// resolved against the same contract list `makeStore` builds its store from.
+let addressRows = (
+  ~addresses: array<Internal.indexingAddress>,
+  ~onEventRegistrations: array<Internal.onEventRegistration>=[],
+  ~configContractNames: array<string>=[],
+  ~ecosystem: Ecosystem.name=Evm,
+): AddressRows.seedRows => {
+  let contractMapping = contractMapping(~onEventRegistrations, ~configContractNames)
+  let keys = Core.getAddon().encodeAddresses(
+    ~ecosystem=(ecosystem :> string),
+    ~addresses=addresses->Array.map(a => a.address),
+  )
+  addresses
+  ->Array.mapWithIndex((a, idx): AddressRows.row => {
+    // The seed form is per-chain, so any chain id serves — `seedRowsOf` drops it.
+    chainId: ChainId.fromInt(0),
+    address: keys->Array.getUnsafe(idx),
+    contractId: contractMapping->ContractMapping.idOfOrThrow(
+      a.contractName,
+      ~context=" registered by a test address",
+    ),
+    registrationBlock: a.registrationBlock,
+  })
+  ->AddressRows.seedRowsOf
+}
+
 let makeStore = (
   ~onEventRegistrations: array<Internal.onEventRegistration>=[],
   ~addresses: array<Internal.indexingAddress>=[],
   ~ecosystem: Ecosystem.name=Evm,
-  // Config contracts the chain has no events for. Registering an address for a
-  // name outside the store's contracts throws, so a test exercising the
-  // no-events path declares it here.
   ~configContractNames: array<string>=[],
   // Matches the common `lowercaseAddresses: false`, so entries render like the
   // checksummed mock addresses the tests use.
@@ -17,17 +56,18 @@ let makeStore = (
   let store = AddressStore.make(
     ~ecosystem,
     ~shouldChecksum,
-    ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~configContractNames),
+    ~contracts=AddressStore.contractsOf(
+      ~onEventRegistrations,
+      ~contractMapping=contractMapping(~onEventRegistrations, ~configContractNames),
+    ),
   )
   // Config addresses, like `FetchState.make` seeds them: already stored, so
-  // they never drain back into a write.
-  let _ = store->AddressStore.seedBatch(
-    addresses->Array.map((contract): AddressStore.registration => {
-      address: contract.address,
-      contractName: contract.contractName,
-      registrationBlock: contract.registrationBlock,
-    }),
-  )
+  // they never drain back into a write. A test that builds a fetch state over
+  // the store leaves this empty and lets `FetchState.make` do the seeding.
+  let _ =
+    store->AddressStore.seedRows(
+      addressRows(~addresses, ~onEventRegistrations, ~configContractNames, ~ecosystem),
+    )
   store
 }
 
@@ -55,9 +95,29 @@ function (contractName, addresses) {
   );
 }`)
 
+// A real set over exactly these addresses, composed from the operations
+// production narrows a set with: the chain's contract sets merged, then sliced
+// down to the addresses asked for. An address several contracts index appears
+// once per owner, as it does in a partition that holds all of them.
+let realSetOf = (store: AddressStore.t, addresses: array<Address.t>) => {
+  let all =
+    store
+    ->AddressStore.contractCounts
+    ->Array.reduce(store->AddressStore.emptySet, (acc, {contractName}) =>
+      acc->AddressSet.merge(store->AddressStore.makeSet(~contractName))
+    )
+  all
+  ->AddressSet.addresses
+  ->Array.reduceWithIndex(store->AddressStore.emptySet, (acc, address, idx) =>
+    addresses->Array.includes(address)
+      ? acc->AddressSet.merge(all->AddressSet.slice(~offset=idx, ~limit=Some(1)))
+      : acc
+  )
+}
+
 let setOf = (~store: option<AddressStore.t>=?, ~contractName=?, addresses) =>
   switch store {
-  | Some(store) => store->AddressStore.makeSetOf(addresses)
+  | Some(store) => store->realSetOf(addresses)
   | None => fakeSetOf(~contractName?, addresses)
   }
 

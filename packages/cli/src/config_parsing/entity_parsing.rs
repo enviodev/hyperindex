@@ -1,9 +1,6 @@
 use super::{
     field_types::{Field as PGField, Primitive as PGPrimitive},
-    validation::{
-        check_enums_for_internal_reserved_words, check_names_from_schema_for_reserved_words,
-        is_valid_postgres_db_name,
-    },
+    validation::{check_names_from_schema_for_reserved_words, is_valid_postgres_db_name},
 };
 use crate::{
     constants::project_paths::DEFAULT_SCHEMA_PATH,
@@ -163,8 +160,7 @@ impl Schema {
     }
 
     fn validate(self) -> anyhow::Result<Self> {
-        self.check_enum_type_defs()?
-            .check_schema_for_reserved_words()?
+        self.check_schema_for_reserved_words()?
             .check_duplicate_naming_between_enums_and_entities()?
             .check_capitalized_entity_name_collisions()?
             .check_related_type_defs_exist()?
@@ -179,16 +175,6 @@ impl Schema {
     }
     fn get_all_entity_type_names(&self) -> Vec<String> {
         self.entities.keys().cloned().collect()
-    }
-
-    fn check_enum_type_defs(self) -> anyhow::Result<Self> {
-        match check_enums_for_internal_reserved_words(self.get_all_enum_type_names()) {
-            reserved_enum_types_used if reserved_enum_types_used.is_empty() => Ok(self),
-            reserved_enum_types_used => Err(anyhow!(
-                "Schema contains the following reserved enum names: {}",
-                reserved_enum_types_used.join(", ")
-            )),
-        }
     }
 
     fn check_schema_for_reserved_words(self) -> anyhow::Result<Self> {
