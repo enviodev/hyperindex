@@ -116,6 +116,16 @@ let writeManifest = async (~config: Config.t, ~projectRoot) => {
 // update can't be held up by an idle socket.
 let closeGracePeriodMs = 5000
 
+@module("node:fs") external copyFileSync: (string, string) => unit = "copyFileSync"
+@module("node:fs") external existsSync: string => bool = "existsSync"
+
+type spawnOptions = {env: dict<string>, stdio: string, detached: bool}
+type child
+@module("node:child_process")
+external spawn: (string, array<string>, spawnOptions) => child = "spawn"
+@send external unref: child => unit = "unref"
+@val external processEnv: dict<string> = "process.env"
+
 type running = {server: server, pool: pool, shutdown: unit => promise<unit>}
 
 let serve = async (~config: Config.t, ~projectRoot, ~port=?, ~exposeErrors=false) => {
@@ -194,3 +204,69 @@ let handleSignals = (running: running) =>
       )()
     })
   )
+
+// `envio dev` only.
+//
+// Locally the resolver server runs inside the `envio dev` process rather than
+// as a child: there is one machine, one lifetime, and nothing to supervise.
+// A deployment is the opposite -- §3.2 requires resolvers to be their own
+// Deployment, because a crossDC standby fences the indexer to zero replicas
+// and the resolvers have to stay warm with serve. Nothing here is on that
+// path; `envio start` never calls it.
+//
+// Hasura cannot serve custom fields, so the endpoint has to be envio-serve.
+// Until it ships as an image, `ENVIO_SERVE_BIN` points at a local build and
+// this starts it; without it, everything else still runs and the hint says
+// what is missing.
+let startForDev = async (~config: Config.t, ~projectRoot) => {
+  switch config.resolvers {
+  | None => None
+  | Some(_) =>
+    let running = await serve(~config, ~projectRoot, ~exposeErrors=true)
+
+    let serveDir = NodeJs.Path.resolve([projectRoot, ".envio", "serve-project"])
+    await NodeJs.Fs.Promises.mkdir(~path=serveDir, ~options={recursive: true})
+    let envioDir = NodeJs.Path.resolve([projectRoot, ".envio"])->NodeJs.Path.toString
+    let root = NodeJs.Path.resolve([projectRoot])->NodeJs.Path.toString
+    let configFile = processEnv->Dict.get("ENVIO_CONFIG")->Option.getOr("config.yaml")
+    [
+      (NodeJs.Path.resolve([root, configFile])->NodeJs.Path.toString, "config.yaml"),
+      (NodeJs.Path.resolve([root, "schema.graphql"])->NodeJs.Path.toString, "schema.graphql"),
+      (`${envioDir}/resolvers.json`, "resolvers.json"),
+    ]->Array.forEach(((from, to_)) =>
+      if existsSync(from) {
+        copyFileSync(from, `${serveDir->NodeJs.Path.toString}/${to_}`)
+      }
+    )
+
+    switch processEnv->Dict.get("ENVIO_SERVE_BIN") {
+    | Some(bin) if existsSync(bin) =>
+      let port = processEnv->Dict.get("ENVIO_SERVE_PORT")->Option.getOr("8080")
+      let childEnv = Dict.copy(processEnv)
+      childEnv->Dict.set(
+        "ENVIO_SERVE_RESOLVERS_URL",
+        `http://127.0.0.1:${running.server.port->Int.toString}`,
+      )
+      let child = spawn(
+        bin,
+        [
+          "--directory",
+          serveDir->NodeJs.Path.toString,
+          "--config",
+          "config.yaml",
+          "--port",
+          port,
+        ],
+        {env: childEnv, stdio: "inherit", detached: false},
+      )
+      child->unref
+      Logging.info(`Custom resolvers ready — GraphQL with custom fields on port ${port}`)
+    | _ =>
+      Logging.warn(
+        `Resolvers are declared but ENVIO_SERVE_BIN is not set, so no GraphQL server was started for them. ` ++
+        `Hasura cannot serve custom fields. Point ENVIO_SERVE_BIN at an envio-serve binary, or run it yourself against ${serveDir->NodeJs.Path.toString}.`,
+      )
+    }
+    Some(running)
+  }
+}
