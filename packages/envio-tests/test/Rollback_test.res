@@ -2053,6 +2053,7 @@ describe("E2E rollback tests", () => {
       // has fetched the block that registered it.
       sourceMock.resolveGetItemsOrThrow(
         [{blockNumber: 102, logIndex: 1, handler: async _ => ()}],
+        ~filter=MockSource.coveringBlock(102),
         ~latestFetchedBlockNumber=102,
       )
       await indexer.getBatchWritePromise()
@@ -2065,6 +2066,7 @@ describe("E2E rollback tests", () => {
       // registration and hands its row over for deletion.
       sourceMock.resolveGetItemsOrThrow(
         [],
+        ~filter=query => query["p"] === "1",
         ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
       )
       await Utils.delay(0)
@@ -2079,6 +2081,7 @@ describe("E2E rollback tests", () => {
       // tombstoned the registration, so it reports nothing this time round.
       sourceMock.resolveGetItemsOrThrow(
         [],
+        ~filter=MockSource.coveringBlock(102),
         ~prevRangeLastBlock={blockNumber: 101, blockHash: "0x101a"},
       )
       await Utils.delay(0)
@@ -2088,7 +2091,7 @@ describe("E2E rollback tests", () => {
       ])
       await indexer.getRollbackReadyPromise()
 
-      sourceMock.resolveGetItemsOrThrow([])
+      sourceMock.resolveGetItemsOrThrow([], ~filter=MockSource.coveringBlock(101))
       await indexer.getBatchWritePromise()
 
       t.expect(
