@@ -16,6 +16,14 @@ type response
 type fetchArgs = {method: string, headers: dict<string>, body: string}
 @val external fetch: (string, fetchArgs) => promise<response> = "fetch"
 @send external json: response => promise<JSON.t> = "json"
+@get external status: response => int = "status"
+
+type getArgs = {method: string}
+@val external fetchGet: (string, getArgs) => promise<response> = "fetch"
+@val external processEnv: dict<string> = "process.env"
+@val @scope("process") external currentPid: int = "pid"
+
+let getStatus = async url => (await fetchGet(url, {method: "GET"}))->status
 
 let postJson = async (url, body) => {
   let response = await fetch(
@@ -98,6 +106,10 @@ let configWithoutResolvers =
 beforeAll(() => {
   mkdirSync(pathJoin([projectRoot, "src"]), {"recursive": true})
   writeFileSync(pathJoin([projectRoot, "src", "Resolvers.ts"]), resolverSource)
+  // `envio resolvers` is spawned as a real child below, and the Rust CLI reads
+  // these off disk rather than from the primed config.
+  writeFileSync(pathJoin([projectRoot, "config.yaml"]), configYaml)
+  writeFileSync(pathJoin([projectRoot, "schema.graphql"]), schema)
 })
 
 describe("envio resolvers", () => {
@@ -216,5 +228,35 @@ extend type Query {
         message->String.includes("Cannot find module"),
       )),
     ).toEqual(Some((true, true)))
+  })
+
+  // `envio dev` must not host the resolver server itself. On the hosted service
+  // the resolvers are their own Deployment running `envio resolvers` from the
+  // same image, and dev only exercises that seam -- the HTTP hop, the pool of
+  // its own, the drain -- if it spawns the same command here. It is also what
+  // lets a resolver edit be a restart of that process alone, with the indexer
+  // keeping its place.
+  Async.it("spawns `envio resolvers` as its own process rather than serving in-process", async t => {
+    processEnv->Dict.set("ENVIO_RESOLVERS_PORT", "9917")
+    let dev = (await ResolverProcess.startForDev(~config, ~projectRoot))->Option.getOrThrow
+
+    let answeredWhileRunning = await getStatus("http://127.0.0.1:9917/healthz")
+
+    // Stopping the resolvers is what a local edit does; nothing about the
+    // parent process goes with it.
+    await dev.stop()
+    let afterStop = try {
+      let _ = await getStatus("http://127.0.0.1:9917/healthz")
+      "answered"
+    } catch {
+    | _ => "refused"
+    }
+
+    t.expect((
+      dev.pid->Option.isSome,
+      dev.pid == Some(currentPid),
+      answeredWhileRunning,
+      afterStop,
+    )).toEqual((true, false, 200, "refused"))
   })
 })
