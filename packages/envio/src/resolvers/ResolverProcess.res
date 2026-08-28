@@ -126,6 +126,14 @@ external spawn: (string, array<string>, spawnOptions) => child = "spawn"
 @send external unref: child => unit = "unref"
 @val external processEnv: dict<string> = "process.env"
 
+type dbHandle
+type sqlFn
+type resolverRef = {name: string, timeoutMs: int}
+@send external forResolver: (pool, resolverRef) => dbHandle = "forResolver"
+@get external sqlOf: dbHandle => sqlFn = "sql"
+@send
+external unsafe: (sqlFn, string, array<JSON.t>) => promise<array<{"n": int}>> = "unsafe"
+
 type running = {server: server, pool: pool, shutdown: unit => promise<unit>}
 
 let serve = async (~config: Config.t, ~projectRoot, ~port=?, ~exposeErrors=false) => {
@@ -221,6 +229,13 @@ let handleSignals = (running: running) =>
 let startForDev = async (~config: Config.t, ~projectRoot) => {
   switch config.resolvers {
   | None => None
+  // Set when you want to run `envio resolvers` yourself, so editing a resolver
+  // means restarting that process alone and the indexer keeps its place.
+  | Some(_) if processEnv->Dict.get("ENVIO_RESOLVERS_EXTERNAL") == Some("true") =>
+    Logging.info(
+      "ENVIO_RESOLVERS_EXTERNAL=true — not starting resolvers here. Run `envio resolvers` in another terminal, and envio-serve against .envio/serve-project.",
+    )
+    None
   | Some(_) =>
     let running = await serve(~config, ~projectRoot, ~exposeErrors=true)
 
@@ -242,25 +257,49 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
     switch processEnv->Dict.get("ENVIO_SERVE_BIN") {
     | Some(bin) if existsSync(bin) =>
       let port = processEnv->Dict.get("ENVIO_SERVE_PORT")->Option.getOr("8080")
-      let childEnv = Dict.copy(processEnv)
-      childEnv->Dict.set(
-        "ENVIO_SERVE_RESOLVERS_URL",
-        `http://127.0.0.1:${running.server.port->Int.toString}`,
-      )
-      let child = spawn(
-        bin,
-        [
-          "--directory",
-          serveDir->NodeJs.Path.toString,
-          "--config",
-          "config.yaml",
-          "--port",
-          port,
-        ],
-        {env: childEnv, stdio: "inherit", detached: false},
-      )
-      child->unref
-      Logging.info(`Custom resolvers ready — GraphQL with custom fields on port ${port}`)
+      let sql = (running.pool->forResolver({name: "dev-wait", timeoutMs: 5000}))->sqlOf
+
+      let startServe = () => {
+        let childEnv = Dict.copy(processEnv)
+        childEnv->Dict.set(
+          "ENVIO_SERVE_RESOLVERS_URL",
+          `http://127.0.0.1:${running.server.port->Int.toString}`,
+        )
+        let child = spawn(
+          bin,
+          ["--directory", serveDir->NodeJs.Path.toString, "--config", "config.yaml", "--port", port],
+          {env: childEnv, stdio: "inherit", detached: false},
+        )
+        child->unref
+        Logging.info(`Custom resolvers ready — GraphQL with custom fields on port ${port}`)
+      }
+
+      // Serve refuses to boot against a database with no tables, and the
+      // indexer is what creates them — but the indexer only starts once this
+      // function returns. So the wait runs detached: awaiting it here would
+      // block the very thing it is waiting for.
+      let rec waitForTables = async attempt =>
+        if attempt >= 120 {
+          Logging.warn(
+            "Timed out waiting for the indexer's tables; starting envio-serve anyway.",
+          )
+          startServe()
+        } else {
+          let count = switch await sql->unsafe(
+            "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1;",
+            [JSON.Encode.string(Env.Db.publicSchema)],
+          ) {
+          | rows => rows->Array.get(0)->Option.mapOr(0, row => row["n"])
+          | exception _ => 0
+          }
+          if count > 0 {
+            startServe()
+          } else {
+            await Utils.delay(1000)
+            await waitForTables(attempt + 1)
+          }
+        }
+      let _ = waitForTables(0)
     | _ =>
       Logging.warn(
         `Resolvers are declared but ENVIO_SERVE_BIN is not set, so no GraphQL server was started for them. ` ++
