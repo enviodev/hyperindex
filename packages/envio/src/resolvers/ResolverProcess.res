@@ -428,16 +428,25 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
       }
       await stopChild(resolverChild)
     }
-    // Ctrl-C reaches the child through the process group, but a bare SIGTERM
-    // to `envio dev` does not — without this the resolver process outlives it
-    // and the next run cannot bind the port.
-    ["SIGTERM", "SIGINT", "exit"]->Array.forEach(signal =>
+    // Ctrl-C reaches the children through the process group, but a bare
+    // SIGTERM to `envio dev` does not — without this the resolver process
+    // outlives it and the next run cannot bind the port.
+    let killChildren = () => {
+      switch serveChild.contents {
+      | Some(child) => ignore(child->killChild("SIGTERM"))
+      | None => ()
+      }
+      ignore(resolverChild->killChild("SIGTERM"))
+    }
+    onSignal("exit", killChildren)
+    // Registering a signal listener replaces Node's default handler, which is
+    // what terminates the process — so having taken the signal, this has to
+    // finish the job the default would have done. Nothing else in the indexer
+    // handles these.
+    ["SIGTERM", "SIGINT"]->Array.forEach(signal =>
       onSignal(signal, () => {
-        switch serveChild.contents {
-        | Some(child) => ignore(child->killChild("SIGTERM"))
-        | None => ()
-        }
-        ignore(resolverChild->killChild("SIGTERM"))
+        killChildren()
+        NodeJs.process->NodeJs.exitWithCode(Success)
       })
     )
 
