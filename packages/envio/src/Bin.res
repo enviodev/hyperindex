@@ -64,6 +64,12 @@ let run = async args => {
         Config.prime(config)
         processChdir(cwd)
         applyEnv(env)
+        // `envio dev` only — see ResolverProcess.startForDev. A deployment
+        // runs the resolvers as their own Deployment, never from here.
+        let loaded = Config.load()
+        if loaded.isDev {
+          let _ = await ResolverProcess.startForDev(~config=loaded, ~projectRoot=cwd)
+        }
         await Main.start(~reset)
       | Migrate({reset, config}) =>
         Config.prime(config)
