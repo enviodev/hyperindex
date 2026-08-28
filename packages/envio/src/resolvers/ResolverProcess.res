@@ -119,12 +119,37 @@ let closeGracePeriodMs = 5000
 @module("node:fs") external copyFileSync: (string, string) => unit = "copyFileSync"
 @module("node:fs") external existsSync: string => bool = "existsSync"
 
-type spawnOptions = {env: dict<string>, stdio: string, detached: bool}
+type spawnOptions = {env: dict<string>, stdio: string, detached: bool, cwd?: string}
 type child
 @module("node:child_process")
 external spawn: (string, array<string>, spawnOptions) => child = "spawn"
 @send external unref: child => unit = "unref"
+@get external childPid: child => option<int> = "pid"
+@send external killChild: (child, string) => bool = "kill"
+@send external onChildExit: (child, string, (Nullable.t<int>, Nullable.t<string>) => unit) => unit = "on"
 @val external processEnv: dict<string> = "process.env"
+
+@module("node:url") external fileURLToPath: string => string = "fileURLToPath"
+@module("node:path") external pathDirname: string => string = "dirname"
+
+type httpResponse
+type fetchInit = {method: string}
+@val external fetchUrl: (string, fetchInit) => promise<httpResponse> = "fetch"
+@get external responseOk: httpResponse => bool = "ok"
+
+// The resolver process is started by re-invoking this package's own `bin.mjs`,
+// resolved from this module rather than from `process.argv` -- dev is not
+// always what argv names (a test runner isn't), and `node_modules/.bin/envio`
+// is a shim into whichever version is published rather than this one.
+let cliEntry = () =>
+  NodeJs.Path.resolve([
+    pathDirname(fileURLToPath(NodeJs.ImportMeta.url)),
+    "..",
+    "..",
+    "bin.mjs",
+  ])->NodeJs.Path.toString
+
+@val @scope("process") external execPath: string = "execPath"
 
 type dbHandle
 type sqlFn
@@ -136,7 +161,8 @@ external unsafe: (sqlFn, string, array<JSON.t>) => promise<array<{"n": int}>> = 
 
 type running = {server: server, pool: pool, shutdown: unit => promise<unit>}
 
-let serve = async (~config: Config.t, ~projectRoot, ~port=?, ~exposeErrors=false) => {
+let serve = async (~config: Config.t, ~projectRoot, ~port=?, ~exposeErrors=?) => {
+  let exposeErrors = exposeErrors->Option.getOr(Env.Resolvers.exposeErrors())
   let relativePath = switch config.resolvers {
   | Some(relativePath) => relativePath
   | None =>
@@ -213,37 +239,116 @@ let handleSignals = (running: running) =>
     })
   )
 
-// `envio dev` only.
+// `envio dev` only. `envio start` never calls it — a deployment runs the
+// resolvers as their own Deployment.
 //
-// Locally the resolver server runs inside the `envio dev` process rather than
-// as a child: there is one machine, one lifetime, and nothing to supervise.
-// A deployment is the opposite -- §3.2 requires resolvers to be their own
-// Deployment, because a crossDC standby fences the indexer to zero replicas
-// and the resolvers have to stay warm with serve. Nothing here is on that
-// path; `envio start` never calls it.
+// Dev spawns `envio resolvers` as a child rather than serving in-process, so
+// local and hosted run the same command over the same HTTP seam, with a pool
+// and a lifetime of their own. It also makes a resolver edit a restart of that
+// process alone: the indexer keeps its place, and a resolver that crashes
+// takes nothing with it.
 //
 // Hasura cannot serve custom fields, so the endpoint has to be envio-serve.
 // Until it ships as an image, `ENVIO_SERVE_BIN` points at a local build and
 // this starts it; without it, everything else still runs and the hint says
 // what is missing.
+type devResolvers = {port: int, pid: option<int>, stop: unit => promise<unit>}
+
+// Bounded: a resolver module that throws on import never binds the port, and
+// waiting forever would leave `envio dev` looking hung rather than saying so.
+let healthzTimeoutMs = 20_000
+
+let waitForHealthz = async (~port) => {
+  let deadline = Date.now() +. healthzTimeoutMs->Int.toFloat
+  let rec attempt = async () => {
+    let answered = switch await fetchUrl(
+      `http://127.0.0.1:${port->Int.toString}/healthz`,
+      {method: "GET"},
+    ) {
+    | response => response->responseOk
+    | exception _ => false
+    }
+    if answered {
+      true
+    } else if Date.now() > deadline {
+      false
+    } else {
+      await Utils.delay(200)
+      await attempt()
+    }
+  }
+  await attempt()
+}
+
+let stopChild = (child): promise<unit> =>
+  Promise.make((resolve, _) => {
+    switch child->childPid {
+    | None => resolve()
+    | Some(_) =>
+      child->onChildExit("exit", (_, _) => resolve())
+      let _ = child->killChild("SIGTERM")
+      // SIGTERM runs the child's drain; the race only bounds how long an idle
+      // connection can hold the exit up.
+      let _ = (
+        async () => {
+          await Utils.delay(closeGracePeriodMs)
+          resolve()
+        }
+      )()
+    }
+  })
+
 let startForDev = async (~config: Config.t, ~projectRoot) => {
   switch config.resolvers {
   | None => None
-  // Set when you want to run `envio resolvers` yourself, so editing a resolver
-  // means restarting that process alone and the indexer keeps its place.
+  // Set when you are running `envio resolvers` and envio-serve yourself —
+  // under a debugger, or with env of your own.
   | Some(_) if processEnv->Dict.get("ENVIO_RESOLVERS_EXTERNAL") == Some("true") =>
     Logging.info(
       "ENVIO_RESOLVERS_EXTERNAL=true — not starting resolvers here. Run `envio resolvers` in another terminal, and envio-serve against .envio/serve-project.",
     )
     None
   | Some(_) =>
-    let running = await serve(~config, ~projectRoot, ~exposeErrors=true)
+    let configFile = processEnv->Dict.get("ENVIO_CONFIG")->Option.getOr("config.yaml")
+    let port = Env.Resolvers.port()
+
+    let childEnv = Dict.copy(processEnv)
+    childEnv->Dict.set("ENVIO_RESOLVERS_PORT", port->Int.toString)
+    // Locally the caller is the person who wrote the resolver, so an
+    // unexpected error's own message is what they need to see.
+    childEnv->Dict.set("ENVIO_RESOLVERS_EXPOSE_ERRORS", "true")
+    childEnv->Dict.set("ENVIO_CONFIG", configFile)
+
+    let resolverChild = spawn(
+      execPath,
+      [cliEntry(), "resolvers"],
+      {env: childEnv, stdio: "inherit", detached: false, cwd: projectRoot},
+    )
+    // The indexer owns this process's lifetime; a resolver exiting is reported,
+    // never fatal.
+    resolverChild->onChildExit("exit", (code, signal) =>
+      switch (code->Nullable.toOption, signal->Nullable.toOption) {
+      | (Some(0), _) => ()
+      | (_, Some(s)) => Logging.info(`Custom resolvers stopped (${s}).`)
+      | (Some(c), _) =>
+        Logging.error(
+          `The custom resolvers process exited with code ${c->Int.toString}. The indexer keeps running; fix the resolver and run \`envio dev\` again.`,
+        )
+      | _ => Logging.info("Custom resolvers stopped.")
+      }
+    )
+
+    if !(await waitForHealthz(~port)) {
+      Logging.warn(
+        `The custom resolvers process did not answer /healthz on port ${port->Int.toString} within ${(healthzTimeoutMs / 1000)
+            ->Int.toString}s. Its own output above says why.`,
+      )
+    }
 
     let serveDir = NodeJs.Path.resolve([projectRoot, ".envio", "serve-project"])
     await NodeJs.Fs.Promises.mkdir(~path=serveDir, ~options={recursive: true})
     let envioDir = NodeJs.Path.resolve([projectRoot, ".envio"])->NodeJs.Path.toString
     let root = NodeJs.Path.resolve([projectRoot])->NodeJs.Path.toString
-    let configFile = processEnv->Dict.get("ENVIO_CONFIG")->Option.getOr("config.yaml")
     [
       (NodeJs.Path.resolve([root, configFile])->NodeJs.Path.toString, "config.yaml"),
       (NodeJs.Path.resolve([root, "schema.graphql"])->NodeJs.Path.toString, "schema.graphql"),
@@ -254,36 +359,44 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
       }
     )
 
+    let serveChild = ref(None)
     switch processEnv->Dict.get("ENVIO_SERVE_BIN") {
     | Some(bin) if existsSync(bin) =>
-      let port = processEnv->Dict.get("ENVIO_SERVE_PORT")->Option.getOr("8080")
-      let sql = (running.pool->forResolver({name: "dev-wait", timeoutMs: 5000}))->sqlOf
-
+      let servePort = processEnv->Dict.get("ENVIO_SERVE_PORT")->Option.getOr("8080")
       let startServe = () => {
-        let childEnv = Dict.copy(processEnv)
-        childEnv->Dict.set(
-          "ENVIO_SERVE_RESOLVERS_URL",
-          `http://127.0.0.1:${running.server.port->Int.toString}`,
-        )
+        let serveEnv = Dict.copy(processEnv)
+        serveEnv->Dict.set("ENVIO_SERVE_RESOLVERS_URL", `http://127.0.0.1:${port->Int.toString}`)
         let child = spawn(
           bin,
-          ["--directory", serveDir->NodeJs.Path.toString, "--config", "config.yaml", "--port", port],
-          {env: childEnv, stdio: "inherit", detached: false},
+          [
+            "--directory",
+            serveDir->NodeJs.Path.toString,
+            "--config",
+            "config.yaml",
+            "--port",
+            servePort,
+          ],
+          {env: serveEnv, stdio: "inherit", detached: false},
         )
         child->unref
-        Logging.info(`Custom resolvers ready — GraphQL with custom fields on port ${port}`)
+        serveChild := Some(child)
+        Logging.info(`Custom resolvers ready — GraphQL with custom fields on port ${servePort}`)
       }
 
       // Serve refuses to boot against a database with no tables, and the
       // indexer is what creates them — but the indexer only starts once this
       // function returns. So the wait runs detached: awaiting it here would
       // block the very thing it is waiting for.
+      let pool = createResolverPoolFromEnv({
+        entities: Dict.make(),
+        pgSchema: Env.Db.publicSchema,
+      })
+      let sql = (pool->forResolver({name: "dev-wait", timeoutMs: 5000}))->sqlOf
       let rec waitForTables = async attempt =>
         if attempt >= 120 {
-          Logging.warn(
-            "Timed out waiting for the indexer's tables; starting envio-serve anyway.",
-          )
+          Logging.warn("Timed out waiting for the indexer's tables; starting envio-serve anyway.")
           startServe()
+          await pool->endPool
         } else {
           let count = switch await sql->unsafe(
             "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = $1;",
@@ -294,6 +407,7 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
           }
           if count > 0 {
             startServe()
+            await pool->endPool
           } else {
             await Utils.delay(1000)
             await waitForTables(attempt + 1)
@@ -306,6 +420,27 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
         `Hasura cannot serve custom fields. Point ENVIO_SERVE_BIN at an envio-serve binary, or run it yourself against ${serveDir->NodeJs.Path.toString}.`,
       )
     }
-    Some(running)
+
+    let stop = async () => {
+      switch serveChild.contents {
+      | Some(child) => await stopChild(child)
+      | None => ()
+      }
+      await stopChild(resolverChild)
+    }
+    // Ctrl-C reaches the child through the process group, but a bare SIGTERM
+    // to `envio dev` does not — without this the resolver process outlives it
+    // and the next run cannot bind the port.
+    ["SIGTERM", "SIGINT", "exit"]->Array.forEach(signal =>
+      onSignal(signal, () => {
+        switch serveChild.contents {
+        | Some(child) => ignore(child->killChild("SIGTERM"))
+        | None => ()
+        }
+        ignore(resolverChild->killChild("SIGTERM"))
+      })
+    )
+
+    Some({port, pid: resolverChild->childPid, stop})
   }
 }
