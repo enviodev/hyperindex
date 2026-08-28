@@ -200,6 +200,16 @@ module Resolvers = {
 
   let poolWaitTimeoutMs = () => readInt("ENVIO_RESOLVERS_POOL_WAIT_TIMEOUT_MS", ~fallback=10_000)
 
+  // `envio dev` sets this on the resolver process it spawns: locally the
+  // caller is the person who wrote the resolver, so an unexpected error's own
+  // message is what they need. In a deployment the caller is the public
+  // internet and the message can carry a connection string.
+  let exposeErrors = () =>
+    switch read("ENVIO_RESOLVERS_EXPOSE_ERRORS") {
+    | Some("true") => true
+    | _ => false
+    }
+
   // Set where the `-r` service isn't reachable and the pooler is the only way
   // in. Transaction-mode PgBouncer rejects named prepared statements, so this
   // gives up plan reuse.
