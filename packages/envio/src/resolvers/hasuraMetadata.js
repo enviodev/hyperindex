@@ -71,6 +71,9 @@ export function buildHasuraMetadata(manifest, { handlerUrl, publicRole = "public
 
   for (const resolver of manifest.resolvers ?? []) {
     const definition = {
+      // An action is a mutation unless it says otherwise, and a resolver is a
+      // read: the manifest's own SDL says `extend type Query`.
+      type: "query",
       kind: "synchronous",
       handler: handlerUrl,
       arguments: resolver.args ?? [],
