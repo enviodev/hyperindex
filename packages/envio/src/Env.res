@@ -210,6 +210,32 @@ module Resolvers = {
     | _ => false
     }
 
+  // The URL *Hasura* posts to, which is not the address this process binds:
+  // it is baked into every action, so Hasura has no other way to reach the
+  // resolvers.
+  let publicUrl = () => read("ENVIO_RESOLVERS_PUBLIC_URL")
+
+  // How often the metadata is re-asserted. 0 disables it, for a deployment
+  // where something else owns Hasura's metadata.
+  let metadataIntervalMs = () =>
+    switch read("ENVIO_RESOLVERS_METADATA_INTERVAL_MS") {
+    | None => 60_000
+    | Some(raw) =>
+      switch raw->Int.fromString {
+      | Some(value) if value >= 0 => value
+      | _ =>
+        JsError.throwWithMessage(
+          `Invalid ENVIO_RESOLVERS_METADATA_INTERVAL_MS value: "${raw}". Expected a whole number of milliseconds, or 0 to disable.`,
+        )
+      }
+    }
+
+  // Read raw rather than through `Env.Hasura`, whose dev fallbacks would have
+  // this process apply metadata to a localhost Hasura nobody asked for. Only
+  // an endpoint someone set means "there is a Hasura to register with".
+  let hasuraEndpoint = () => read("HASURA_GRAPHQL_ENDPOINT")
+  let hasuraAdminSecret = () => read("HASURA_GRAPHQL_ADMIN_SECRET")
+
   // Set where the `-r` service isn't reachable and the pooler is the only way
   // in. Transaction-mode PgBouncer rejects named prepared statements, so this
   // gives up plan reuse.
