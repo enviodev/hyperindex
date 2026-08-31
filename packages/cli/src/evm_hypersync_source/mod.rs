@@ -13,7 +13,7 @@ use crate::transaction_store::TransactionStore;
 
 mod config;
 pub(crate) mod decode;
-mod query;
+pub(crate) mod query;
 pub(crate) mod selection;
 pub(crate) mod types;
 
@@ -697,7 +697,7 @@ fn convert_error_to_napi(err: ConvertError) -> napi::Error {
 
 /// Returns `Some(camelCaseFieldName)` if the user requested this field but the
 /// server's response omits it AND the field isn't inherently nullable per-row.
-fn block_field_missing(
+pub(crate) fn block_field_missing(
     block: &hypersync_client::simple_types::Block,
     field: BlockField,
 ) -> Option<&'static str> {
@@ -740,7 +740,7 @@ fn block_field_missing(
     }
 }
 
-fn transaction_field_missing(
+pub(crate) fn transaction_field_missing(
     tx: &hypersync_client::simple_types::Transaction,
     field: TransactionField,
 ) -> Option<&'static str> {

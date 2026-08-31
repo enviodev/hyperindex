@@ -842,7 +842,11 @@ impl TransactionStore {
             .iter()
             .map(|&f| svm_tx_col(f, &txs))
             .collect();
-        self.inner.lock().unwrap().txs.merge_batch(keys, cols, Known::All(0));
+        self.inner
+            .lock()
+            .unwrap()
+            .txs
+            .merge_batch(keys, cols, Known::All(0));
     }
 
     /// Merge one response's SVM account activity into the companion table,

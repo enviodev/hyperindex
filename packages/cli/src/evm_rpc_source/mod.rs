@@ -7,7 +7,10 @@ use std::time::{Duration, Instant};
 
 mod classify;
 mod client;
+mod fields;
+mod inflight;
 mod interval;
+mod responses;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
 use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
