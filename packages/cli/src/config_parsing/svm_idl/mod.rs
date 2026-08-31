@@ -444,16 +444,18 @@ fn collect_named<T>(
     Ok((out, unusable))
 }
 
-/// An `accounts` list. Absent means an instruction that takes none; present but
-/// not an array is a defect, since reading it as empty would drop its slots and
-/// shift every later account's name.
-fn account_array(node: Option<&Value>) -> Result<&[Value]> {
+/// A declared list of nodes. Absent means the file declares none; present but
+/// not an array is a defect, not an empty list — read as empty, whatever it
+/// held disappears silently, and what disappears is a slot whose name every
+/// later account inherits, or a field the decoder then reads past. Callers add
+/// the key's name as context.
+fn declared_array(node: Option<&Value>) -> Result<&[Value]> {
     match node {
         None => Ok(&[]),
         Some(node) => node
             .as_array()
             .map(Vec::as_slice)
-            .ok_or_else(|| anyhow!("expected an array of accounts, got {node}")),
+            .ok_or_else(|| anyhow!("expected an array, got {node}")),
     }
 }
 

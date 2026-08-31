@@ -12,7 +12,7 @@ use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 
 use super::{
-    account_array, account_slot, collect_instructions, collect_named, required_str, IdlAccount,
+    account_slot, collect_instructions, collect_named, declared_array, required_str, IdlAccount,
     Instructions, IxIdl, ProgramIdl, Unusable,
 };
 
@@ -50,9 +50,7 @@ fn codama_program(root: &Map<String, Value>) -> Result<&Map<String, Value>> {
 fn parse_defined_types(
     program: &Map<String, Value>,
 ) -> Result<(BTreeMap<String, FieldType>, Unusable)> {
-    let Some(arr) = program.get("definedTypes").and_then(Value::as_array) else {
-        return Ok(Default::default());
-    };
+    let arr = declared_array(program.get("definedTypes")).context("definedTypes")?;
     collect_named(arr, "type", "definedTypes[].name", |name, t| {
         let node = t
             .get("type")
@@ -222,7 +220,7 @@ fn number_bytes(value: &Value, ty: &Value) -> Result<Vec<u8>> {
 }
 
 fn parse_accounts(node: Option<&Value>) -> Result<Vec<IdlAccount>> {
-    account_array(node)?.iter().map(account_slot).collect()
+    declared_array(node)?.iter().map(account_slot).collect()
 }
 
 /// `optionalAccountStrategy` decides what an absent optional account leaves
@@ -253,12 +251,7 @@ fn reject_ambiguous_optional_accounts(ix: &Value, accounts: &[IdlAccount]) -> Re
 }
 
 fn parse_arguments(node: Option<&Value>, encoded_arg_names: &[String]) -> Result<Vec<NamedField>> {
-    let arr = match node {
-        None => return Ok(Vec::new()),
-        Some(node) => node
-            .as_array()
-            .ok_or_else(|| anyhow!("expected an array of arguments, got {node}"))?,
-    };
+    let arr = declared_array(node).context("arguments")?;
     // Codama encodes arguments in declaration order, so the ones a field
     // discriminator consumes have to be the leading ones, in the order their
     // offsets put them. Otherwise the offsets and the declaration disagree and

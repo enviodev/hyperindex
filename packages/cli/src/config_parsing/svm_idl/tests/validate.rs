@@ -217,6 +217,26 @@ fn separates_file_level_defects_from_instruction_level_ones() {
                  "discriminators": [{ "kind": "constantDiscriminatorNode", "offset": 0,
                    "constant": { "value": { "kind": "bytesValueNode", "data": "03" } } }] }] } }"#,
         ),
+        (
+            // An absent `variants` is a legitimate empty enum; a present one
+            // that is not an array is a defect. Read as empty, the enum's tag
+            // resolves to no variant at all.
+            "anchor enum whose 'variants' is not an array",
+            r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
+                 "args": [{ "name": "side", "type": { "defined": "Side" } }] }],
+                 "types": [{ "name": "Side",
+                   "type": { "kind": "enum", "variants": null } }] }"#,
+        ),
+        (
+            "anchor 'types' that is not an array",
+            r#"{ "instructions": [{ "name": "swap", "discriminator": [1] }],
+                 "types": null }"#,
+        ),
+        (
+            "codama 'definedTypes' that is not an array",
+            r#"{ "kind": "rootNode", "program": { "instructions": [],
+                 "definedTypes": null } }"#,
+        ),
     ];
 
     let reported: Vec<String> = cases
@@ -264,10 +284,13 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "duplicate account name: swap set aside: IDL declares account 'vault' more than once",
             "codama argument reusing a discriminator name: swap set aside: IDL declares argument 'tag' more than once",
             "codama discriminator offset that is not a byte position: swap set aside: discriminators: expected a non-negative integer 'offset', got -1",
-            "anchor composite group whose 'accounts' is not an array: swap set aside: accounts: expected an array of accounts, got null",
+            "anchor composite group whose 'accounts' is not an array: swap set aside: accounts: expected an array, got null",
             "codama account with an unreadable isOptional: swap set aside: accounts: 'isOptional' must be a boolean, got \"yes\"",
-            "anchor instruction whose 'args' is not an array: swap set aside: args: expected an array of arguments, got null",
-            "codama instruction whose 'arguments' is not an array: swap set aside: expected an array of arguments, got null",
+            "anchor instruction whose 'args' is not an array: swap set aside: args: expected an array, got null",
+            "codama instruction whose 'arguments' is not an array: swap set aside: arguments: expected an array, got null",
+            "anchor enum whose 'variants' is not an array: swap set aside: it reaches type 'Side', which cannot be decoded: type 'Side' variants: expected an array, got null",
+            "anchor 'types' that is not an array: fatal: types: expected an array, got null",
+            "codama 'definedTypes' that is not an array: fatal: definedTypes: expected an array, got null",
         ]
     );
 }

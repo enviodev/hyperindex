@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 use crate::config_parsing::field_types::to_snake_case;
 
 use super::{
-    account_array, account_slot, collect_instructions, collect_named, required_str, IdlAccount,
+    account_slot, collect_instructions, collect_named, declared_array, required_str, IdlAccount,
     Instructions, IxIdl, ProgramIdl, Unusable,
 };
 
@@ -55,9 +55,7 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
 fn parse_defined_types(
     root: &Map<String, Value>,
 ) -> Result<(BTreeMap<String, FieldType>, Unusable)> {
-    let Some(arr) = root.get("types").and_then(Value::as_array) else {
-        return Ok(Default::default());
-    };
+    let arr = declared_array(root.get("types")).context("types")?;
     collect_named(arr, "type", "types[].name", |name, t| {
         let node = t
             .get("type")
@@ -145,7 +143,7 @@ fn parse_byte_array(node: &Value) -> Result<Vec<u8>> {
 /// Composite account groups (`{ name, accounts: [...] }`) flatten into the
 /// parent's list — Anchor inlines them at the call site.
 fn parse_accounts(node: Option<&Value>) -> Result<Vec<IdlAccount>> {
-    let arr = account_array(node)?;
+    let arr = declared_array(node)?;
     let mut out = Vec::with_capacity(arr.len());
     for a in arr {
         match a.get("accounts") {
@@ -160,13 +158,11 @@ fn parse_accounts(node: Option<&Value>) -> Result<Vec<IdlAccount>> {
 /// instruction would decode as taking no data and report an empty payload for
 /// every call.
 fn parse_named_fields(node: Option<&Value>, path: &str) -> Result<Vec<NamedField>> {
-    let arr = match node {
-        None => return Ok(Vec::new()),
-        Some(node) => node
-            .as_array()
-            .ok_or_else(|| anyhow!("{path}: expected an array of arguments, got {node}"))?,
-    };
-    arr.iter().map(|f| parse_named_field(f, path)).collect()
+    declared_array(node)
+        .with_context(|| path.to_string())?
+        .iter()
+        .map(|f| parse_named_field(f, path))
+        .collect()
 }
 
 fn parse_named_field(f: &Value, path: &str) -> Result<NamedField> {
@@ -259,19 +255,16 @@ fn parse_type_def(name: &str, node: &Value) -> Result<FieldType> {
             node.get("fields").filter(|fields| !fields.is_null()),
             &format!("type '{name}'"),
         )?)),
-        "enum" => {
-            let variants = node
-                .get("variants")
-                .and_then(Value::as_array)
-                .map(|arr| {
-                    arr.iter()
-                        .map(|v| parse_enum_variant(v, name))
-                        .collect::<Result<Vec<_>>>()
-                })
-                .transpose()?
-                .unwrap_or_default();
-            Ok(FieldType::Enum(variants))
-        }
+        // An absent `variants` is a legitimate empty enum; one that is present
+        // and not an array is a defect, since reading it as empty leaves the
+        // enum's tag resolving to no variant at all.
+        "enum" => Ok(FieldType::Enum(
+            declared_array(node.get("variants"))
+                .with_context(|| format!("type '{name}' variants"))?
+                .iter()
+                .map(|v| parse_enum_variant(v, name))
+                .collect::<Result<Vec<_>>>()?,
+        )),
         // Aliases (`pub type Foo = Pubkey`) resolve inline rather than adding
         // an indirection the Borsh runtime would have to chase.
         "type" => {
