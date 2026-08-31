@@ -14,6 +14,9 @@ chains:
       - name: SimpleNft
         events:
           - event: Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+      - name: OtherNft
+        events:
+          - event: Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
 `,
   ~schema=`
 type Probe {
@@ -52,10 +55,19 @@ indexer.contractRegister({ contract: "Gravatar", event: "FactoryEvent" }, async 
     case "checksumsAddress":
       context.chain.SimpleNft.add(event.params.contract);
       return;
+    case "registersTwice":
+      context.chain.SimpleNft.add(event.params.contract);
+      context.chain.SimpleNft.add(event.params.contract);
+      return;
+    case "registersForTwoContracts":
+      context.chain.SimpleNft.add(event.params.contract);
+      context.chain.OtherNft.add(event.params.contract);
+      return;
   }
 });
 
 indexer.onEvent({ contract: "SimpleNft", event: "Transfer" }, async () => {});
+indexer.onEvent({ contract: "OtherNft", event: "Transfer" }, async () => {});
 `,
   ~test=`
 import { describe, it } from "vitest";
@@ -123,6 +135,30 @@ describe("contractRegister address handling", () => {
     t.expect(result.changes[0]?.addresses).toEqual({
       sets: [
         { address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", contract: "SimpleNft" },
+      ],
+    });
+  });
+
+  it("keeps the same address registered twice for one contract a single registration", async (t) => {
+    const indexer = createTestIndexer();
+    const result = await run(indexer, { contract: dcAddress, testCase: "registersTwice" });
+
+    t.expect(result.changes[0]?.addresses).toEqual({
+      sets: [{ address: dcAddress, contract: "SimpleNft" }],
+    });
+  });
+
+  it("registers one address once per contract that claims it", async (t) => {
+    const indexer = createTestIndexer();
+    const result = await run(indexer, {
+      contract: dcAddress,
+      testCase: "registersForTwoContracts",
+    });
+
+    t.expect(result.changes[0]?.addresses).toEqual({
+      sets: [
+        { address: dcAddress, contract: "SimpleNft" },
+        { address: dcAddress, contract: "OtherNft" },
       ],
     });
   });

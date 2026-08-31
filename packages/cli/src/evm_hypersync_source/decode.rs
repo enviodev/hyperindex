@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use hypersync_client::format::{Data, Hex, LogArgument};
 use hypersync_client::simple_types;
 
-use crate::address_store::{AddressStore, SetCache, StoreInner};
+use crate::address_store::{AddressStore, Emitter, SetCache, StoreInner};
 use crate::evm_hypersync_source::selection::TopicSelectionInput;
 use crate::evm_hypersync_source::types::{
     sol_value_to_param, Log, OnEventRegistrationInput, ParamMeta, ParamValue,
@@ -27,15 +27,6 @@ enum TopicConstraint {
     /// here. The store answers only the temporal half, dropping a value
     /// registered after the log's block that a merged partition over-fetched.
     ContractAddresses,
-}
-
-/// The emitter facts every address gate reads off a log: its binary address,
-/// the contract this partition's set says owns that address (`None` when the
-/// partition doesn't hold it), and the log's block.
-pub(crate) struct LogAddress<'a> {
-    pub key: &'a [u8],
-    pub contract_name: Option<&'a str>,
-    pub block_number: i64,
 }
 
 /// The 20 address bytes of a padded indexed topic, or `None` when the topic's
@@ -98,7 +89,6 @@ impl TopicFilters {
     fn matches(
         &self,
         topics: &[Option<LogArgument>],
-        contract_name: &str,
         contract_idx: u32,
         block_number: i64,
         force_wildcard: bool,
@@ -123,7 +113,7 @@ impl TopicFilters {
                         TopicConstraint::Values(values) => values.iter().any(|v| v == &***topic),
                         TopicConstraint::ContractAddresses => {
                             topic_address(topic).is_some_and(|key| {
-                                (force_wildcard || cache.owner_of(key) == Some(contract_name))
+                                (force_wildcard || cache.owns(key, contract_idx))
                                     && store.is_indexed_at(key, contract_idx, block_number)
                             })
                         }
@@ -190,7 +180,7 @@ impl OnEventRegistration {
     ///
     /// Emitter rules. A wildcard registration accepts any address. A
     /// contract-bound one accepts only an address this partition's set holds for
-    /// its own contract (`address.contract_name`), registered at or before the
+    /// its own contract (`address.owners`), registered at or before the
     /// log's block — the temporal half matters even when the partition fetched
     /// the address server-side, because a merged partition's addresses don't all
     /// start at the same block. A client-filtered contract has none of its
@@ -201,22 +191,24 @@ impl OnEventRegistration {
         topic0: &[u8; 32],
         topic_count: u8,
         topics: &[Option<LogArgument>],
-        address: &LogAddress,
+        address: &Emitter,
         force_wildcard: bool,
         cache: &SetCache,
         store: &StoreInner,
     ) -> bool {
         self.sighash == *topic0
             && self.topic_count == topic_count
-            && crate::registration_start_block::has_started(self.start_block, address.block_number)
-            && (self.is_wildcard
-                || ((force_wildcard || address.contract_name == Some(self.contract_name.as_str()))
-                    && store.is_indexed_at(address.key, self.contract_idx, address.block_number)))
+            && address.matches_registration(
+                store,
+                self.contract_idx,
+                self.is_wildcard,
+                self.start_block,
+                force_wildcard,
+            )
             && self.topic_filters.matches(
                 topics,
-                &self.contract_name,
                 self.contract_idx,
-                address.block_number,
+                address.block,
                 force_wildcard,
                 cache,
                 store,
@@ -342,7 +334,7 @@ impl SelectionDecoder {
     pub(crate) fn route_and_decode_napi(
         &self,
         log: &Log,
-        address: &LogAddress,
+        address: &Emitter,
         store: &StoreInner,
     ) -> Result<Vec<RoutedEvent>> {
         let topics: Vec<Option<LogArgument>> = log
@@ -363,7 +355,7 @@ impl SelectionDecoder {
     pub(crate) fn route_and_decode_simple(
         &self,
         log: &simple_types::Log,
-        address: &LogAddress,
+        address: &Emitter,
         store: &StoreInner,
     ) -> Result<Vec<RoutedEvent>> {
         let data = log.data.as_ref().context("get log.data")?;
@@ -387,7 +379,7 @@ impl SelectionDecoder {
         &self,
         topics: &[Option<LogArgument>],
         data: &Data,
-        address: &LogAddress,
+        address: &Emitter,
         store: &StoreInner,
     ) -> Result<Vec<RoutedEvent>> {
         let topic0 = topics
@@ -492,6 +484,7 @@ fn build_event_decoder(sighash: [u8; 32], params: &[ParamMeta]) -> Result<DynSol
 mod tests {
     use super::*;
     use crate::address_store::test_support::evm_store;
+    use crate::address_store::Owners;
 
     const VALID_SIGHASH: &str =
         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
@@ -525,22 +518,23 @@ mod tests {
         )
     }
 
-    /// The registered emitter, owned by `contract_name` per the partition's set.
-    fn owned(contract_name: &str) -> LogAddress<'_> {
-        LogAddress {
+    /// The registered emitter, owned per the partition's set by the contract
+    /// at `contract_idx` — its position in the store's contract list.
+    fn owned(contract_idx: u32) -> Emitter<'static> {
+        Emitter {
             key: &EMITTER_KEY,
-            contract_name: Some(contract_name),
-            block_number: 0,
+            owners: Owners::single(contract_idx),
+            block: 0,
         }
     }
 
     /// An emitter the partition's set doesn't hold. Contract-bound
     /// registrations reject it; wildcards still see it.
-    fn unowned() -> LogAddress<'static> {
-        LogAddress {
+    fn unowned() -> Emitter<'static> {
+        Emitter {
             key: &FOREIGN_KEY,
-            contract_name: None,
-            block_number: 0,
+            owners: Owners::default(),
+            block: 0,
         }
     }
 
@@ -620,7 +614,7 @@ mod tests {
     }
 
     /// Route one log, holding the store read lock the way a response does.
-    fn route(decoder: &SelectionDecoder, log: &Log, address: &LogAddress) -> Vec<RoutedEvent> {
+    fn route(decoder: &SelectionDecoder, log: &Log, address: &Emitter) -> Vec<RoutedEvent> {
         let store = decoder.lock_store();
         decoder
             .route_and_decode_napi(log, address, &store)
@@ -725,7 +719,7 @@ mod tests {
         };
 
         let decoder = selection_of(&core, &[7], &Default::default()).unwrap();
-        let mut routed = route(&decoder, &log, &owned("TestContract"));
+        let mut routed = route(&decoder, &log, &owned(0));
         assert_eq!(routed.len(), 1);
         let routed = routed
             .pop()
@@ -764,7 +758,7 @@ mod tests {
         assert_eq!(
             (
                 // Owned address: the contract's registration plus every wildcard.
-                routed_indexes(&route(&decoder, &log, &owned("Owned"))),
+                routed_indexes(&route(&decoder, &log, &owned(0))),
                 // Unowned address: wildcards only — no fallback into
                 // contract-bound registrations.
                 routed_indexes(&route(&decoder, &log, &unowned())),
@@ -788,10 +782,10 @@ mod tests {
         .unwrap();
         let decoder = selection_of(&core, &[0, 1], &Default::default()).unwrap();
         let log = value_log(VALID_SIGHASH);
-        let at = |block_number| LogAddress {
+        let at = |block| Emitter {
             key: &EMITTER_KEY,
-            contract_name: Some("Owned"),
-            block_number,
+            owners: Owners::single(0),
+            block,
         };
 
         assert_eq!(
@@ -822,10 +816,10 @@ mod tests {
                 "Owned".to_string()
             ]);
         let decoder = selection_of(&core, &[0, 1], &client_filtered).unwrap();
-        let registered = LogAddress {
+        let registered = Emitter {
             key: &EMITTER_KEY,
-            contract_name: None,
-            block_number: 0,
+            owners: Owners::default(),
+            block: 0,
         };
         let log = value_log(VALID_SIGHASH);
         assert_eq!(
@@ -854,7 +848,8 @@ mod tests {
                 start_block: None,
                 depends_on_addresses: true,
             }],
-        );
+        )
+        .unwrap();
         address_store.register_seed(vec![crate::address_store::AddressRegistration {
             address: EMITTER.to_string(),
             contract_name: "Owned".to_string(),
@@ -868,10 +863,10 @@ mod tests {
         .unwrap();
         let decoder = selection_of(&core, &[0], &Default::default()).unwrap();
         let log = value_log(VALID_SIGHASH);
-        let at = |block_number| LogAddress {
+        let at = |block| Emitter {
             key: &EMITTER_KEY,
-            contract_name: Some("Owned"),
-            block_number,
+            owners: Owners::single(0),
+            block,
         };
         assert_eq!(
             (
@@ -895,10 +890,7 @@ mod tests {
         .unwrap();
         let log = value_log(VALID_SIGHASH);
         let decoder = selection_of(&core, &[0], &Default::default()).unwrap();
-        assert_eq!(
-            routed_indexes(&route(&decoder, &log, &owned("Owned"))),
-            vec![0]
-        );
+        assert_eq!(routed_indexes(&route(&decoder, &log, &owned(0))), vec![0]);
     }
 
     #[test]
@@ -1047,13 +1039,13 @@ mod tests {
         }
     }
 
-    /// An emitter no contract owns, at `block_number` — for wildcard marker
+    /// An emitter no contract owns, at `block` — for wildcard marker
     /// registrations, where only the log's block feeds the gate.
-    fn at_block(block_number: i64) -> LogAddress<'static> {
-        LogAddress {
+    fn at_block(block: i64) -> Emitter<'static> {
+        Emitter {
             key: &FOREIGN_KEY,
-            contract_name: None,
-            block_number,
+            owners: Owners::default(),
+            block,
         }
     }
 
@@ -1069,7 +1061,8 @@ mod tests {
                 start_block: None,
                 depends_on_addresses: true,
             }],
-        );
+        )
+        .unwrap();
         address_store.register_seed(vec![crate::address_store::AddressRegistration {
             address: EMITTER.to_string(),
             contract_name: "C".to_string(),

@@ -238,9 +238,11 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
       ~pgDatabase=Env.Db.database,
       ~pgPassword=Env.Db.password,
       ~isHasuraEnabled=false,
+    ~ecosystem=Evm,
     )
     let _ = await storage.initialize(
-      ~entities=config.allEntities,
+      ~contractMapping=config.contractMapping,
+      ~entities=config.userEntities,
       ~enums=config.allEnums->Array.concat([
         EntityHistory.RowAction.config->Table.fromGenericEnumConfig,
       ]),

@@ -50,6 +50,22 @@ type addon = {
   clickHouseSink: clickHouseSinkCtor,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
+  encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
+  renderAddresses: (
+    ~ecosystem: string,
+    ~shouldChecksum: bool,
+    ~bytes: NodeJs.Buffer.t,
+    ~lengths: array<int>,
+  ) => array<Address.t>,
+  renderContractAddresses: (
+    ~ecosystem: string,
+    ~shouldChecksum: bool,
+    ~bytes: NodeJs.Buffer.t,
+    ~lengths: array<int>,
+    ~contractIds: array<int>,
+    ~contractId: int,
+  ) => array<Address.t>,
+  canonicalContractNames: array<string> => array<string>,
   // Ordered transaction-field names exposed for the field-code contract test
   // (the ReScript `transactionFields` arrays must match the Rust ordinals).
   evmTransactionFieldNames: unit => array<string>,

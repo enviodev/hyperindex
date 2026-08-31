@@ -104,16 +104,10 @@ let asRegisterContext = (context: Internal.contractRegisterContext) =>
 
 describe("E2E tests", () => {
   let getChainAddresses = async (indexer: IndexerRunner.t, ~chainId) => {
-    let addresses: array<InternalTable.EnvioAddresses.t> = await indexer.queryRaw(
-      InternalTable.EnvioAddresses.entityConfig,
-    )
+    let addresses = await indexer.queryAddresses()
     addresses
     ->Array.filter(a => a.chainId === chainId)
-    ->Array.map(a => (
-      a->Config.EnvioAddresses.getAddress->Address.toString,
-      a.contractName,
-      a.registrationBlock,
-    ))
+    ->Array.map(a => (a.address->Address.toString, a.contractName, a.registrationBlock))
   }
 
   scenario->Scenario.it(

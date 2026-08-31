@@ -62,10 +62,7 @@ describe("ClickHouse refuses a float that has no JSON form", () => {
     ~onError=refusal.onError,
     async (~t, ~indexer as _, ~source) => {
       let source = source(1)
-      await Utils.delay(0)
       source.resolveGetHeightOrThrow(10)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       source.resolveGetItemsOrThrow(
         [
@@ -109,10 +106,7 @@ describe("ClickHouse refuses a non-finite float in a scalar column", () => {
     ~onError=refusal.onError,
     async (~t, ~indexer as _, ~source) => {
       let source = source(1)
-      await Utils.delay(0)
       source.resolveGetHeightOrThrow(10)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       source.resolveGetItemsOrThrow(
         [

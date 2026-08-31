@@ -57,10 +57,7 @@ describe("ClickHouse sink resuming past its own rows", () => {
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       let source = source(1)
-      await Utils.delay(0)
       source.resolveGetHeightOrThrow(10)
-      await Utils.delay(0)
-      await Utils.delay(0)
       source.resolveGetItemsOrThrow(
         [{blockNumber: 5, logIndex: 0, handler: setCounter(~count=42n)}],
         ~latestFetchedBlockNumber=10,

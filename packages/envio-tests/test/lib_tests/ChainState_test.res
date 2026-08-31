@@ -47,7 +47,7 @@ let makeResumedChainState = (
   numEventsProcessed,
   firstEventBlockNumber,
   timestampCaughtUpToHeadOrEndblock: None,
-  indexingAddresses: [],
+  addressRows: AddressRows.emptySeedRows(),
   sourceBlockNumber: 1000,
 }
 
@@ -59,6 +59,7 @@ let makeChainState = (resumedChainState, ~reorgCheckpoints=[]) =>
     ~isInReorgThreshold=false,
     ~isRealtime=false,
     ~config=TestConfig.default,
+    ~contractMapping=TestConfig.default.contractMapping,
     ~registrationsByChainId,
   )
 
@@ -106,7 +107,7 @@ describe("ChainState chain density EMA (per batch)", () => {
     FetchState.make(
       ~onEventRegistrations=[],
       ~addressStore=TestAddresses.makeStore(),
-      ~addresses=[],
+      ~addressRows=AddressRows.emptySeedRows(),
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=1,
@@ -152,6 +153,7 @@ describe("ChainState chain density EMA (per batch)", () => {
     checkpointBlockNumbers: [],
     checkpointBlockHashes: [],
     checkpointEventsProcessed: [],
+    registeredAddresses: [],
   }
 
   it("seeds density from the first batch's own events/block (no prior density to blend)", t => {

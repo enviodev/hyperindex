@@ -58,10 +58,7 @@ describe("ClickHouse refuses a required column the handler left unset", () => {
     ~onError=refusal.onError,
     async (~t, ~indexer as _, ~source) => {
       let source = source(1)
-      await Utils.delay(0)
       source.resolveGetHeightOrThrow(10)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       source.resolveGetItemsOrThrow(
         [

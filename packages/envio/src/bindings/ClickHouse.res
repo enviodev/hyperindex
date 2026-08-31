@@ -53,6 +53,11 @@ let makeColumnSpec = (
   | Boolean => "Boolean"
   | Uint32 => "Uint32"
   | UInt52 => "UInt52"
+  | SmallInt
+  | Bytea =>
+    JsError.throwWithMessage(
+      "ClickHouse doesn't support the internal SmallInt and Bytea column types",
+    )
   | UInt64 => "UInt64"
   | Int32 => "Int32"
   | ChainId => "ChainId"

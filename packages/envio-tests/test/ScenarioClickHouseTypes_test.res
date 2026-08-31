@@ -136,10 +136,7 @@ describe("ClickHouse stores every schema type", () => {
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
       let source = source(1)
-      await Utils.delay(0)
       source.resolveGetHeightOrThrow(10)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       source.resolveGetItemsOrThrow(
         [
