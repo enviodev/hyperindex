@@ -64,21 +64,89 @@ let toImportUrl = (~projectRoot, ~relativePath) =>
     NodeJs.Path.resolve([projectRoot, relativePath])->NodeJs.Path.toString,
   )->NodeJs.Url.toString
 
-let loadOrThrow = async (~projectRoot, ~relativePath) =>
-  switch await Utils.importPath(toImportUrl(~projectRoot, ~relativePath)) {
-  | _ => ()
-  | exception exn =>
-    // `anyToExnInternal`, not `prettifyExn`: the latter hands back the raw JS
-    // error cast to `exn`, so matching `JsExn(_)` on it never fires and every
-    // cause reads "unknown error".
-    let cause = switch exn->JsExn.anyToExnInternal {
-    | JsExn(e) => e->JsExn.message->Option.getOr("no message")
-    | _ => "unknown error"
-    }
+type stats
+@module("node:fs") external statSync: string => stats = "statSync"
+@send external isDirectory: stats => bool = "isDirectory"
+
+type globOptions = {cwd: string}
+@module("node:fs/promises")
+external globIn: (string, globOptions) => Utils.asyncIterator<string> = "glob"
+
+// `resolvers:` may name a directory as well as a file, because the reference
+// implementation keeps its resolvers as `resolvers/<name>/index.ts` -- a
+// parent of subdirectories -- and `handlers:` has auto-loaded exactly that
+// shape since before this feature existed. Same glob, same exclusions, so the
+// two config fields do not need separate explanations.
+let sourceFilesIn = async (~absoluteDir, ~relativePath) => {
+  let files = try {
+    let iterator = globIn("**/*.{js,mjs,ts}", {cwd: absoluteDir})
+    await iterator->Utils.Array.fromAsyncIterator
+  } catch {
+  | exn =>
     JsError.throwWithMessage(
-      `Failed to load the resolvers module '${relativePath}' named by \`resolvers:\` in config.yaml. Cause: ${cause}`,
+      `Failed to read the resolvers directory '${relativePath}'. Node 22 or newer is required for directory auto-loading. Cause: ${exn
+        ->Utils.prettifyExn
+        ->Obj.magic}`,
     )
   }
+  files
+  // Specs live beside the code they cover in the reference layout, and
+  // importing one runs `describe` outside a test runner. Same exclusions as
+  // `handlers:`, plus declaration files, which have nothing to execute.
+  ->Array.filter(file =>
+    !(
+      file->String.includes(".test.") ||
+      file->String.includes(".spec.") ||
+      file->String.includes("_test.") ||
+      file->String.endsWith(".d.ts")
+    )
+  )
+  // Sorted, so the manifest and the SDL derived from it are the same on every
+  // machine rather than following whatever order the filesystem returns.
+  ->Array.toSorted(String.compare)
+}
+
+let loadOrThrow = async (~projectRoot, ~relativePath) => {
+  let absolute = NodeJs.Path.resolve([projectRoot, relativePath])->NodeJs.Path.toString
+  // A missing path deliberately falls through to the single-module import, so
+  // the error still names the file and says what Node made of it.
+  let isDir = switch statSync(absolute) {
+  | stats => stats->isDirectory
+  | exception _ => false
+  }
+
+  let relativePaths = if isDir {
+    let files = await sourceFilesIn(~absoluteDir=absolute, ~relativePath)
+    if files->Utils.Array.isEmpty {
+      Logging.warn(
+        `'${relativePath}' is a directory with no .js, .mjs or .ts files in it, so no resolvers were loaded.`,
+      )
+    }
+    // Kept relative, so a load failure names the path the user wrote in
+    // config.yaml plus the file under it, not an absolute machine path.
+    files->Array.map(file => `${relativePath}/${file}`)
+  } else {
+    [relativePath]
+  }
+
+  for index in 0 to relativePaths->Array.length - 1 {
+    let path = relativePaths->Array.getUnsafe(index)
+    switch await Utils.importPath(toImportUrl(~projectRoot, ~relativePath=path)) {
+    | _ => ()
+    | exception exn =>
+      // `anyToExnInternal`, not `prettifyExn`: the latter hands back the raw JS
+      // error cast to `exn`, so matching `JsExn(_)` on it never fires and every
+      // cause reads "unknown error".
+      let cause = switch exn->JsExn.anyToExnInternal {
+      | JsExn(e) => e->JsExn.message->Option.getOr("no message")
+      | _ => "unknown error"
+      }
+      JsError.throwWithMessage(
+        `Failed to load the resolvers module '${path}' named by \`resolvers:\` in config.yaml. Cause: ${cause}`,
+      )
+    }
+  }
+}
 
 // Emitted whether or not the project declares any, so nothing downstream needs
 // a "file missing" branch. An empty manifest is still a manifest serve can
