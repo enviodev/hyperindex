@@ -133,7 +133,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
           | Date => {
               let dateSchema = Utils.Schema.clickHouseDate->S.toUnknown
               if f.isNullable {
-                S.null(dateSchema)->S.toUnknown
+                Utils.Schema.nullTolerant(dateSchema)->S.toUnknown
               } else if f.isArray {
                 S.array(dateSchema)->S.toUnknown
               } else {
@@ -152,7 +152,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
                 )
                 ->S.toUnknown
               if f.isNullable {
-                S.null(uint52Schema)->S.toUnknown
+                Utils.Schema.nullTolerant(uint52Schema)->S.toUnknown
               } else if f.isArray {
                 S.array(uint52Schema)->S.toUnknown
               } else {

@@ -38,13 +38,6 @@ contracts:
       - event: "TestEvent()"
 `
 
-let unsupported = [
-  {
-    Scenario.backend: #memory,
-    reason: "asserts on the Postgres index catalog",
-  },
-]
-
 let scenario = Scenario.make(
   ~configYaml=`
 name: schema-indexes${contractsYaml}chains:${chainYaml(
@@ -52,7 +45,6 @@ name: schema-indexes${contractsYaml}chains:${chainYaml(
       "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3",
     )}`,
   ~schema,
-  ~unsupported,
 )
 
 let multichainScenario = Scenario.make(
@@ -62,7 +54,6 @@ name: schema-indexes-multichain${contractsYaml}chains:${chainYaml(
       "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3",
     )}${chainYaml(1337, "0x3B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")}`,
   ~schema,
-  ~unsupported,
 )
 
 let loadCatalog = async (~sql, ~pgSchema) => {
@@ -151,7 +142,7 @@ describe("Deferred schema indexes", () => {
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       await Utils.delay(0)
 
       t.expect(
@@ -211,7 +202,7 @@ describe("Deferred schema indexes", () => {
     async (~t, ~indexer, ~source) => {
       let gate = gate.contents
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       source.resolveGetHeightOrThrow(100)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
@@ -323,7 +314,7 @@ describe("Deferred schema indexes", () => {
       let finalizeCalls = multichainFinalizeCalls
       let chainA = source(100)
       let chainB = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       chainA.resolveGetHeightOrThrow(100)
       chainB.resolveGetHeightOrThrow(100)
@@ -376,7 +367,7 @@ describe("Deferred schema indexes", () => {
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       // The height is unresolved, so the tables exist but the backfill is stalled
       // and no schema index has been created yet.
       await Utils.delay(0)
@@ -416,7 +407,7 @@ describe("Automatic getWhere indexes", () => {
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       let matched = ref([])
       let optionalColumn = "optionalStringToTestLinkedEntities"
 
