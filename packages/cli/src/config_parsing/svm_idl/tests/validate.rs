@@ -347,21 +347,16 @@ fn mutated_fixtures_never_panic() {
         state.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
-    /// Replace the `target`-th node of `value` in traversal order with
-    /// something of a different shape.
-    fn mutate(value: &mut Value, target: &mut i64, replacement: u64) {
+    /// Replace the `target`-th node of `value` in traversal order, handing back
+    /// what was there. The nodes traversed before `target` do not depend on
+    /// that node's own shape, so passing the same target again with the saved
+    /// value puts the fixture back as it was.
+    fn replace_nth(value: &mut Value, target: &mut i64, new: &Value, replaced: &mut Option<Value>) {
         if *target < 0 {
             return;
         }
         if *target == 0 {
-            *value = match replacement % 6 {
-                0 => Value::Null,
-                1 => Value::Bool(true),
-                2 => Value::from(replacement),
-                3 => Value::from(-1i64),
-                4 => Value::String("\u{1F600}".into()),
-                _ => Value::Array(vec![]),
-            };
+            *replaced = Some(std::mem::replace(value, new.clone()));
             *target = -1;
             return;
         }
@@ -369,32 +364,51 @@ fn mutated_fixtures_never_panic() {
         match value {
             Value::Object(map) => map
                 .values_mut()
-                .for_each(|child| mutate(child, target, replacement)),
+                .for_each(|child| replace_nth(child, target, new, replaced)),
             Value::Array(items) => items
                 .iter_mut()
-                .for_each(|child| mutate(child, target, replacement)),
+                .for_each(|child| replace_nth(child, target, new, replaced)),
             _ => {}
         }
     }
 
     let mut state = 0x005E_ED1D_u64;
     for stem in ["jupiter", "kamino"] {
-        let original: Value = serde_json::from_str(&read_fixture(stem)).expect("fixture is JSON");
+        let source = read_fixture(stem);
+        let mut fixture: Value = serde_json::from_str(&source).expect("fixture is JSON");
         for _ in 0..150 {
             let seed = state;
             let replacement = next(&mut state);
-            let mut mutated = original.clone();
-            let mut target = (next(&mut state) % 4000) as i64;
-            mutate(&mut mutated, &mut target, replacement);
-            let json = mutated.to_string();
+            let replacement = match replacement % 6 {
+                0 => Value::Null,
+                1 => Value::Bool(true),
+                2 => Value::from(replacement),
+                3 => Value::from(-1i64),
+                4 => Value::String("\u{1F600}".into()),
+                _ => Value::Array(vec![]),
+            };
+            let target = (next(&mut state) % 4000) as i64;
+
+            let mut replaced = None;
+            replace_nth(&mut fixture, &mut { target }, &replacement, &mut replaced);
+            let json = fixture.to_string();
             // `parse_idl` must decide, not panic. A panic here fails the test
             // with the seed in the message so it can be replayed.
             let outcome = std::panic::catch_unwind(|| parse_idl(&json, "Fuzzed").is_ok());
+            if let Some(original) = replaced {
+                replace_nth(&mut fixture, &mut { target }, &original, &mut None);
+            }
             assert!(
                 outcome.is_ok(),
                 "parse_idl panicked on a mutation of {stem}.json (seed 0x{seed:x})"
             );
         }
+        // Restoring in place is what keeps every iteration a single-node
+        // mutation of the real IDL rather than of the previous mutation.
+        assert_eq!(
+            fixture,
+            serde_json::from_str::<Value>(&source).expect("fixture is JSON")
+        );
     }
 }
 
@@ -434,6 +448,49 @@ fn resolves_shared_type_graphs_without_blowing_up() {
             started.elapsed() < std::time::Duration::from_secs(5)
         ),
         (vec![&"swap".to_string()], true)
+    );
+}
+
+/// A type that cannot be resolved condemns every type reaching it, and a long
+/// dependency chain reaches a long way. Settling one name per pass — re-walking
+/// every remaining type from scratch each time — is cubic in the number of
+/// types, which surfaces as a codegen that never returns rather than as a wrong
+/// answer.
+#[test]
+fn settles_a_long_chain_of_unresolvable_types_in_one_pass() {
+    let depth = 400;
+    let types: Vec<String> = (0..depth)
+        .map(|i| {
+            let next = if i + 1 == depth {
+                "Missing".to_string()
+            } else {
+                format!("T{:04}", i + 1)
+            };
+            format!(
+                r#"{{ "name": "T{i:04}", "type": {{ "kind": "struct", "fields": [
+                     {{ "name": "next", "type": {{ "defined": "{next}" }} }}] }} }}"#
+            )
+        })
+        .collect();
+    let json = format!(
+        r#"{{ "instructions": [{{ "name": "walk", "discriminator": [1],
+             "args": [{{ "name": "head", "type": {{ "defined": "T0000" }} }}] }}],
+             "types": [{}] }}"#,
+        types.join(",")
+    );
+
+    // Bounded, because settling one name per pass would not fail an assertion
+    // on the outcome — it would surface as a CI timeout pointing nowhere.
+    let started = std::time::Instant::now();
+    let idl = parse_idl(&json, "Chain").expect("parse");
+    assert_eq!(
+        (
+            idl.unusable_types.len(),
+            idl.defined_types.is_empty(),
+            idl.unusable.keys().map(String::as_str).collect::<Vec<_>>(),
+            started.elapsed() < std::time::Duration::from_secs(2),
+        ),
+        (depth, true, vec!["walk"], true)
     );
 }
 

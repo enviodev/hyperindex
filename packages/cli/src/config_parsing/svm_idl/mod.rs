@@ -10,7 +10,7 @@ mod codama;
 #[cfg(test)]
 mod tests;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::{FieldType, NamedField};
@@ -232,45 +232,102 @@ fn numeric_field_type(format: &str) -> Option<FieldType> {
 
 fn unresolvable_types(idl: &ProgramIdl) -> Unusable {
     let mut bad = idl.unusable_types.clone();
-    loop {
-        let mut changed = false;
-        for (name, ty) in &idl.defined_types {
-            if bad.contains_key(name) {
+    // `unbounded_recursion` reads the type graph alone, so one memo serves
+    // every type: a subtree proven to terminate stays proven.
+    let mut terminates = HashSet::new();
+    let mut referenced_by: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (name, ty) in &idl.defined_types {
+        if bad.contains_key(name) {
+            continue;
+        }
+        let mut references = BTreeSet::new();
+        collect_defined_names(ty, &mut references);
+        let reason = unbounded_recursion(ty, idl, &mut vec![name], false, &mut terminates)
+            .err()
+            .or_else(|| {
+                references
+                    .iter()
+                    .find_map(|r| unresolved_reason(idl, &bad, r))
+            });
+        match reason {
+            Some(reason) => {
+                bad.insert(name.clone(), reason);
+            }
+            None => {
+                for reference in references {
+                    referenced_by.entry(reference).or_default().push(name);
+                }
+            }
+        }
+    }
+
+    // Badness only travels from a type to the ones naming it, so each type is
+    // revisited exactly when one of its references turns bad.
+    let mut queue: Vec<String> = bad.keys().cloned().collect();
+    while let Some(broken) = queue.pop() {
+        let Some(referrers) = referenced_by.get(broken.as_str()) else {
+            continue;
+        };
+        for referrer in referrers {
+            if bad.contains_key(*referrer) {
                 continue;
             }
-            let reason = unbounded_recursion(
-                ty,
-                idl,
-                &mut vec![name.clone()],
-                false,
-                &mut std::collections::HashSet::new(),
-            )
-            .err()
-            .or_else(|| references_resolve(ty, idl, &bad).err());
-            if let Some(reason) = reason {
-                bad.insert(name.clone(), reason);
-                changed = true;
-            }
+            let reason = format!(
+                "it reaches type '{broken}', which cannot be decoded: {}",
+                bad[broken.as_str()]
+            );
+            bad.insert(referrer.to_string(), reason);
+            queue.push(referrer.to_string());
         }
-        if !changed {
-            return bad;
+    }
+    bad
+}
+
+fn unresolved_reason(idl: &ProgramIdl, bad: &Unusable, name: &str) -> Option<String> {
+    if let Some(reason) = bad.get(name) {
+        Some(format!(
+            "it reaches type '{name}', which cannot be decoded: {reason}"
+        ))
+    } else if !idl.defined_types.contains_key(name) {
+        Some(format!("it references undefined type '{name}'"))
+    } else {
+        None
+    }
+}
+
+fn collect_defined_names<'a>(ty: &'a FieldType, out: &mut BTreeSet<&'a str>) {
+    match ty {
+        FieldType::Defined(name) => {
+            out.insert(name);
         }
+        FieldType::Option(inner) | FieldType::Vec(inner) | FieldType::Array { ty: inner, .. } => {
+            collect_defined_names(inner, out)
+        }
+        FieldType::Struct(fields) => fields
+            .iter()
+            .for_each(|f| collect_defined_names(&f.ty, out)),
+        FieldType::Enum(variants) => variants
+            .iter()
+            .flat_map(|v| v.fields.iter().flatten())
+            .for_each(|f| collect_defined_names(&f.ty, out)),
+        _ => {}
     }
 }
 
 /// `Option`/`Vec` carry a tag or length, so a type may name itself behind
 /// them. A `Defined` cycle with no such terminator would recurse in
 /// `decode_field` until the stack overflows.
-fn unbounded_recursion(
-    ty: &FieldType,
-    idl: &ProgramIdl,
-    stack: &mut Vec<String>,
+fn unbounded_recursion<'a>(
+    ty: &'a FieldType,
+    idl: &'a ProgramIdl,
+    stack: &mut Vec<&'a str>,
     through_var_len: bool,
-    seen: &mut std::collections::HashSet<(String, bool)>,
+    terminates: &mut HashSet<(&'a str, bool)>,
 ) -> Result<(), String> {
     match ty {
         FieldType::Defined(name) => {
-            if stack.iter().any(|n| n == name) {
+            let name = name.as_str();
+            if stack.contains(&name) {
                 if through_var_len {
                     Ok(())
                 } else {
@@ -280,16 +337,18 @@ fn unbounded_recursion(
                             .to_string(),
                     )
                 }
-            } else if seen.contains(&(name.clone(), through_var_len))
-                || seen.contains(&(name.clone(), false))
+            // A subtree proven to terminate in strict mode terminates behind a
+            // var-len edge too, so the strict memo answers both.
+            } else if terminates.contains(&(name, through_var_len))
+                || terminates.contains(&(name, false))
             {
                 Ok(())
             } else if let Some(inner) = idl.defined_types.get(name) {
-                stack.push(name.clone());
-                let result = unbounded_recursion(inner, idl, stack, through_var_len, seen);
+                stack.push(name);
+                let result = unbounded_recursion(inner, idl, stack, through_var_len, terminates);
                 stack.pop();
                 if result.is_ok() {
-                    seen.insert((name.clone(), through_var_len));
+                    terminates.insert((name, through_var_len));
                 }
                 result
             } else {
@@ -297,18 +356,18 @@ fn unbounded_recursion(
             }
         }
         FieldType::Option(inner) | FieldType::Vec(inner) => {
-            unbounded_recursion(inner, idl, stack, true, seen)
+            unbounded_recursion(inner, idl, stack, true, terminates)
         }
         FieldType::Array { ty: inner, .. } => {
-            unbounded_recursion(inner, idl, stack, through_var_len, seen)
+            unbounded_recursion(inner, idl, stack, through_var_len, terminates)
         }
         FieldType::Struct(fields) => fields
             .iter()
-            .try_for_each(|f| unbounded_recursion(&f.ty, idl, stack, through_var_len, seen)),
+            .try_for_each(|f| unbounded_recursion(&f.ty, idl, stack, through_var_len, terminates)),
         FieldType::Enum(variants) => variants
             .iter()
             .flat_map(|v| v.fields.iter().flatten())
-            .try_for_each(|f| unbounded_recursion(&f.ty, idl, stack, through_var_len, seen)),
+            .try_for_each(|f| unbounded_recursion(&f.ty, idl, stack, through_var_len, terminates)),
         _ => Ok(()),
     }
 }
@@ -446,7 +505,7 @@ pub(super) fn account_slot(node: &Value) -> Result<IdlAccount> {
 }
 
 fn reject_duplicate_account_names(accounts: &[IdlAccount]) -> Result<()> {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     for account in accounts {
         if !seen.insert(account.name.as_str()) {
             bail!("IDL declares account '{}' more than once", account.name);
