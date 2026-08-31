@@ -154,6 +154,7 @@ let buildOnEventRegistrationWith = (
       ~isWildcard,
       ~handler,
       ~contractRegister,
+      ~where,
       ~fieldSelection?,
       ~startBlock?,
     ) :> Internal.onEventRegistration)

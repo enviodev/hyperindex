@@ -56,8 +56,8 @@ module Registration = {
         isWildcard: reg.isWildcard,
         startBlock: reg.startBlock,
         discriminator: ?eventConfig.discriminator,
-        isInner: ?eventConfig.isInner,
-        accountFilters: eventConfig.accountFilters->Array.map(group =>
+        isInner: ?reg.isInner,
+        accountFilters: reg.accountFilters->Array.map(group =>
           group->Array.map(
             (filter): accountFilter => {
               position: filter.position,

@@ -1419,26 +1419,6 @@ impl SystemConfig {
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,
-                                    account_filters: instr
-                                        .account_filters
-                                        .as_ref()
-                                        .map(|filters| {
-                                            filters
-                                                .groups()
-                                                .into_iter()
-                                                .map(|group| {
-                                                    group
-                                                        .iter()
-                                                        .map(|af| SvmAccountFilter {
-                                                            position: af.position,
-                                                            values: af.values.clone(),
-                                                        })
-                                                        .collect()
-                                                })
-                                                .collect()
-                                        })
-                                        .unwrap_or_default(),
-                                    is_inner: instr.is_inner,
                                     accounts,
                                     args,
                                 };
@@ -2299,12 +2279,6 @@ pub enum FuelEventKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SvmAccountFilter {
-    pub position: u8,
-    pub values: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
     /// instruction in the program.
@@ -2313,11 +2287,6 @@ pub struct SvmEventKind {
     /// router precomputes a per-program ordering on this so dispatch tries
     /// longest first.
     pub discriminator_byte_len: u8,
-    /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
-    /// AND across positions. An empty outer list means "no account filter".
-    pub account_filters: Vec<Vec<SvmAccountFilter>>,
-    /// `None` matches both outer and inner (CPI-invoked) instructions.
-    pub is_inner: Option<bool>,
     /// Positional account names. Empty when the user supplied no schema and
     /// no bundled/IDL schema applies; in that case `decoded.accounts` is `{}`.
     pub accounts: Vec<String>,
@@ -3854,7 +3823,6 @@ type Foo {
                         e.name.as_str(),
                         k.discriminator.as_deref(),
                         k.discriminator_byte_len,
-                        k.account_filters.len(),
                     ),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
                 })
@@ -3862,8 +3830,8 @@ type Foo {
             assert_eq!(
                 kinds,
                 vec![
-                    ("CreateMetadataAccountV3", Some("0x21"), 1, 0),
-                    ("UpdateMetadataAccountV2", Some("0x0f"), 1, 1),
+                    ("CreateMetadataAccountV3", Some("0x21"), 1),
+                    ("UpdateMetadataAccountV2", Some("0x0f"), 1),
                 ],
             );
 

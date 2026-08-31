@@ -42,20 +42,19 @@ let makeEventConfig = (
       ~blockMaskFn=Svm.eventBlockFieldMask,
       ~transactionMaskFn=Svm.eventTransactionFieldMask,
     ),
-    accountFilters: [],
-    isInner: None,
     accounts: [],
     args: JSON.Null,
     definedTypes: JSON.Null,
   }
 }
 
-let makeReg = (~eventConfig=makeEventConfig(), ~index=0) => {
+let makeReg = (~eventConfig=makeEventConfig(), ~where=None, ~index=0) => {
   let reg = EventConfigBuilder.buildSvmOnEventRegistration(
     ~eventConfig,
     ~isWildcard=false,
     ~handler=None,
     ~contractRegister=None,
+    ~where,
   )
   {...reg, Internal.index: index}
 }
@@ -182,7 +181,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         ~partitionId="0",
         ~itemsTarget=Some(5000),
         ~selection={
-          onEventRegistrations: [reg],
+          onEventRegistrations: [(reg :> Internal.onEventRegistration)],
           dependsOnAddresses: true,
         },
         ~retry=0,
@@ -282,15 +281,6 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       ...eventConfig,
       accounts: ["metadata", "mint"],
       args: %raw(`[{"name": "amount", "type": "u64"}]`),
-      isInner: Some(false),
-      accountFilters: [
-        [
-          {
-            Internal.position: 1,
-            values: [metaplexProgramId->SvmTypes.Pubkey.fromStringUnsafe],
-          },
-        ],
-      ],
       fieldSelection: Internal.makeFieldSelection(
         ~blockFields=eventConfig.fieldSelection.blockFields,
         ~transactionFields=eventConfig.fieldSelection.transactionFields,
@@ -299,7 +289,10 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
         ~transactionMaskFn=Svm.eventTransactionFieldMask,
       ),
     }
-    let _ = makeSource(~onEventRegistrations=[makeReg(~eventConfig)])
+    let where = Some(
+      {"isInner": false, "accounts": {"mint": [metaplexProgramId]}}->(Utils.magic: 'a => JSON.t),
+    )
+    let _ = makeSource(~onEventRegistrations=[makeReg(~eventConfig, ~where)])
     let inputs =
       capturedRegistrationInputs->Array.getUnsafe(capturedRegistrationInputs->Array.length - 1)
     let input = inputs->Array.getUnsafe(0)
