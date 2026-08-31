@@ -78,9 +78,11 @@ pub struct BaseConfig {
     pub handlers: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Optional relative path to the module declaring custom GraphQL resolvers, \
-                       e.g. 'src/Resolvers.ts'. When set, the resolvers it exports are served as \
-                       additional root fields on the indexer's GraphQL endpoint."
+        description = "Optional relative path to the custom GraphQL resolvers, either a single \
+                       module (e.g. 'src/Resolvers.ts') or a directory (e.g. 'src/resolvers'), in \
+                       which case every .js/.mjs/.ts file beneath it is loaded, tests excluded. \
+                       The resolvers they export are served as additional root fields on the \
+                       indexer's GraphQL endpoint."
     )]
     pub resolvers: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
