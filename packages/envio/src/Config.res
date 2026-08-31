@@ -688,8 +688,12 @@ let withProjectFlags = (command, ~config: t) =>
 
 let ecosystemFields = ["evm", "fuel", "svm"]
 
-// What `envio_info` records: the public config without the command's fields
-// or its chains. A chain is recorded by its own `envio_chains` row and its
+// Where the custom GraphQL resolvers live. Nothing about what is indexed or
+// how it is stored, so adopting resolvers must not read as a config change.
+let servingFields = ["resolvers"]
+
+// What `envio_info` records: the public config without the command's fields,
+// the serving fields, or its chains. A chain is recorded by its own `envio_chains` row and its
 // config's `envio_addresses` rows instead, so adding one never rewrites this
 // record. The rest of a chain's config — its sources, its block lag, a
 // contract's start block — is read from config.yaml on every start.
@@ -698,6 +702,7 @@ let toEnvioInfo = (publicConfigJson: JSON.t): JSON.t => {
   switch envioInfo {
   | Object(obj) => {
       commandFields->Array.forEach(field => obj->Utils.Dict.deleteInPlace(field))
+      servingFields->Array.forEach(field => obj->Utils.Dict.deleteInPlace(field))
       ecosystemFields->Array.forEach(ecosystem =>
         switch obj->Dict.get(ecosystem) {
         | Some(Object(ecosystemDict)) => ecosystemDict->Utils.Dict.deleteInPlace("chains")
