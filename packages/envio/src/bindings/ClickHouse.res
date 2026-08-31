@@ -1,4 +1,3 @@
-
 let makeClickHouseEntitySchema = (table: Table.table, ~skipColumn: option<string>=?): S.t<
   Internal.entity,
 > => {
@@ -20,6 +19,10 @@ let makeClickHouseEntitySchema = (table: Table.table, ~skipColumn: option<string
               }
             }
           | ChainId => ChainId.schema->S.toUnknown
+          // Not wrapped in `S.null` even when the field is nullable: the column
+          // is a String either way, and both ways of saying nothing travel as
+          // the text of JSON null.
+          | Json if !f.isArray => Utils.Schema.clickHouseJson->S.toUnknown
           | _ => f.fieldSchema
           }
           dict->Dict.set(f->Table.getApiFieldName, s.field(fieldName, fieldSchema))

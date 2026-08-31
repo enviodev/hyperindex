@@ -54,6 +54,8 @@ type EveryType {
   timestamp: Timestamp!
   optTimestamp: Timestamp
   json: Json!
+  optJson: Json
+  optJsonNull: Json
   arrayOfJson: [Json!]!
   enumField: AccountType!
   optEnumField: AccountType
@@ -88,6 +90,8 @@ type everyType = {
   timestamp: Date.t,
   optTimestamp: option<Date.t>,
   json: JSON.t,
+  optJson: option<JSON.t>,
+  optJsonNull: option<JSON.t>,
   arrayOfJson: array<JSON.t>,
   enumField: string,
   optEnumField: option<string>,
@@ -123,6 +127,8 @@ let entity = {
   timestamp,
   optTimestamp: Some(timestamp),
   json: %raw(`{"nested": [1, 2]}`),
+  optJson: None,
+  optJsonNull: Some(%raw(`null`)),
   // The case a String element has to hold something that is not a string,
   // which the column takes as the element's JSON text.
   arrayOfJson: %raw(`[{"a": 1}, 2, true, "s"]`),
@@ -131,38 +137,39 @@ let entity = {
 }
 
 describe("ClickHouse stores every schema type", () => {
-  scenario->Scenario.it(
-    "reads back each column as it was written",
-    ~sources=[{chain: 1}],
-    async (~t, ~indexer, ~source) => {
-      let source = source(1)
-      await Utils.delay(0)
-      source.resolveGetHeightOrThrow(10)
-      await Utils.delay(0)
-      await Utils.delay(0)
+  scenario->Scenario.it("reads back each column as it was written", ~sources=[{chain: 1}], async (
+    ~t,
+    ~indexer,
+    ~source,
+  ) => {
+    let source = source(1)
+    await Utils.delay(0)
+    source.resolveGetHeightOrThrow(10)
+    await Utils.delay(0)
+    await Utils.delay(0)
 
-      source.resolveGetItemsOrThrow(
-        [
-          {
-            blockNumber: 5,
-            logIndex: 0,
-            handler: async args => {
-              let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
-              context.everyType.set(entity)
-            },
+    source.resolveGetItemsOrThrow(
+      [
+        {
+          blockNumber: 5,
+          logIndex: 0,
+          handler: async args => {
+            let context = args.context->(Utils.magic: Internal.handlerContext => handlerContext)
+            context.everyType.set(entity)
           },
-        ],
-        ~latestFetchedBlockNumber=10,
-      )
-      await indexer.getBatchWritePromise()
+        },
+      ],
+      ~latestFetchedBlockNumber=10,
+    )
+    await indexer.getBatchWritePromise()
 
-      let database = TestClickHouse.currentDatabase()
-      let rows = await TestClickHouse.query(
-        `SELECT * FROM \`${database}\`.\`EveryType\` FORMAT JSONEachRow`,
-      )
+    let database = TestClickHouse.currentDatabase()
+    let rows = await TestClickHouse.query(
+      `SELECT * FROM \`${database}\`.\`EveryType\` FORMAT JSONEachRow`,
+    )
 
-      t.expect(rows->String.trim->JSON.parseOrThrow).toStrictEqual(
-        %raw(`{
+    t.expect(rows->String.trim->JSON.parseOrThrow).toStrictEqual(
+      %raw(`{
           id: "every-1",
           string: "héllo 😀",
           optString: null,
@@ -188,12 +195,16 @@ describe("ClickHouse stores every schema type", () => {
           timestamp: "2009-02-13 23:31:30.123",
           optTimestamp: "2009-02-13 23:31:30.123",
           json: '{"nested":[1,2]}',
+          // A Json column is a String holding the document's text whether or
+          // not the field is nullable, so both ways of holding no document read
+          // back as the text of JSON null rather than as an absent value.
+          optJson: "null",
+          optJsonNull: "null",
           // A String element holds whatever text it is given.
           arrayOfJson: ['{"a":1}', "2", "true", "s"],
           enumField: "ADMIN",
           optEnumField: null,
         }`),
-      )
-    },
-  )
+    )
+  })
 })

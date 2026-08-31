@@ -142,7 +142,10 @@ impl FieldSpec {
             }
             return Ok(ChType::Array(Box::new(base)));
         }
-        Ok(if self.is_nullable {
+        // A Json column holds the document's text, and JSON carries a `null` of
+        // its own — so a nullable one would give the field two ways to say
+        // nothing, only one of which reads back as a document.
+        Ok(if self.is_nullable && self.field_type != "Json" {
             ChType::Nullable(Box::new(base))
         } else {
             base
@@ -360,6 +363,17 @@ mod tests {
             "a nullable list has no ClickHouse type: `Nullable(Array(...))` is not a type \
              ClickHouse accepts. Make the field a non-null list (`[T!]!`) to store it here"
         );
+    }
+
+    #[test]
+    fn a_nullable_json_column_still_holds_the_documents_text() {
+        let types = ["Json", "String"].map(|field_type| {
+            rendered(&FieldSpec {
+                is_nullable: true,
+                ..field(field_type)
+            })
+        });
+        assert_eq!(types, ["String", "Nullable(String)"]);
     }
 
     #[test]
