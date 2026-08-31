@@ -443,16 +443,54 @@ module Checkpoints = {
 
   let initialCheckpointId = 0n
 
-  let table = mkTable(
-    "envio_checkpoints",
-    ~fields=[
-      mkField((#id: field :> string), UInt64, ~fieldSchema=S.bigint, ~isPrimaryKey),
-      mkField((#chain_id: field :> string), ChainId, ~fieldSchema=ChainId.schema),
-      mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
-      mkField((#block_hash: field :> string), String, ~fieldSchema=S.null(S.string), ~isNullable),
-      mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
-    ],
-  )
+  // One definition per column, carrying what each storage needs: the field
+  // itself, the type ClickHouse gives it where that differs from Postgres, and
+  // where a batch keeps the column's values.
+  type column = {
+    field: fieldOrDerived,
+    clickHouseFieldType: fieldType,
+    valuesOf: Batch.t => array<unknown>,
+  }
+
+  let columns: array<column> = [
+    {
+      field: mkField((#id: field :> string), UInt64, ~fieldSchema=S.bigint, ~isPrimaryKey),
+      clickHouseFieldType: UInt64,
+      valuesOf: batch => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
+    },
+    {
+      field: mkField((#chain_id: field :> string), ChainId, ~fieldSchema=ChainId.schema),
+      clickHouseFieldType: ChainId,
+      valuesOf: batch =>
+        batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
+    },
+    {
+      field: mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
+      clickHouseFieldType: Int32,
+      valuesOf: batch => batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
+    },
+    {
+      field: mkField(
+        (#block_hash: field :> string),
+        String,
+        ~fieldSchema=S.null(S.string),
+        ~isNullable,
+      ),
+      clickHouseFieldType: String,
+      valuesOf: batch =>
+        batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
+    },
+    {
+      field: mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
+      // A count of every event a chain has processed outgrows an Int32 where
+      // Postgres keeps one, and ClickHouse has the id's width to spare.
+      clickHouseFieldType: UInt64,
+      valuesOf: batch =>
+        batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
+    },
+  ]
+
+  let table = mkTable("envio_checkpoints", ~fields=columns->Array.map(({field}) => field))
 
   let makeGetReorgCheckpointsQuery = (~pgSchema): string => {
     // Use CTE to pre-filter chains and compute safe_block once per chain

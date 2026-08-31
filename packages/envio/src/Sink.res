@@ -1,6 +1,6 @@
 type t = {
   name: string,
-  initialize: (~entities: array<Internal.entityConfig>=?) => promise<unit>,
+  initialize: (~entities: array<Internal.entityConfig>) => promise<unit>,
   resume: (
     ~checkpointId: Internal.checkpointId,
     ~chains: array<Persistence.initialChainState>,
@@ -23,8 +23,8 @@ let makeClickHouse = (
 
   {
     name: "clickhouse",
-    initialize: (~entities=[]) => {
-      ClickHouse.initialize(sink, ~registry, ~entities)
+    initialize: (~entities) => {
+      ClickHouse.initialize(sink, ~entities)
     },
     resume: (~checkpointId, ~chains) => {
       ClickHouse.resume(sink, ~checkpointId, ~chains)

@@ -86,75 +86,13 @@ let makeColumnSpec = (
   },
 }
 
-type checkpointColumn = {
-  name: string,
-  fieldType: Table.fieldType,
-  isNullable: bool,
-  valuesOf: Batch.t => array<unknown>,
-}
-
-%%private(let checkpointColumnsCache: ref<option<array<checkpointColumn>>> = ref(None))
-
-let checkpointColumns = () =>
-  switch checkpointColumnsCache.contents {
-  | Some(columns) => columns
-  | None =>
-    let columns = {
-      let valuesOf: dict<Batch.t => array<unknown>> = Dict.fromArray([
-        (
-          (#id: InternalTable.Checkpoints.field :> string),
-          (batch: Batch.t) => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
-        ),
-        (
-          (#chain_id: InternalTable.Checkpoints.field :> string),
-          (batch: Batch.t) =>
-            batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
-        ),
-        (
-          (#block_number: InternalTable.Checkpoints.field :> string),
-          (batch: Batch.t) =>
-            batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
-        ),
-        (
-          (#block_hash: InternalTable.Checkpoints.field :> string),
-          (batch: Batch.t) =>
-            batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
-        ),
-        (
-          (#events_processed: InternalTable.Checkpoints.field :> string),
-          (batch: Batch.t) =>
-            batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
-        ),
-      ])
-      InternalTable.Checkpoints.table.fields->Array.filterMap(field =>
-        switch field {
-        | Table.Field(f) =>
-          let name = f.fieldName
-          Some({
-            name,
-            fieldType: name === (#events_processed: InternalTable.Checkpoints.field :> string)
-              ? Table.UInt64
-              : f.fieldType,
-            isNullable: f.isNullable,
-            valuesOf: switch valuesOf->Dict.get(name) {
-            | Some(valuesOf) => valuesOf
-            | None =>
-              JsError.throwWithMessage(
-                `The ClickHouse checkpoints table has no values for the "${name}" column`,
-              )
-            },
-          })
-        | DerivedFrom(_) => None
-        }
-      )
-    }
-    checkpointColumnsCache := Some(columns)
-    columns
-  }
-
 let checkpointColumnSpecs = () =>
-  checkpointColumns()->Array.map(({name, fieldType, isNullable}) =>
-    makeColumnSpec(~name, ~fieldType, ~isNullable)
+  InternalTable.Checkpoints.columns->Array.filterMap(({field, clickHouseFieldType}) =>
+    switch field {
+    | Table.Field({fieldName, isNullable}) =>
+      Some(makeColumnSpec(~name=fieldName, ~fieldType=clickHouseFieldType, ~isNullable))
+    | DerivedFrom(_) => None
+    }
   )
 
 let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySpec => {
@@ -318,14 +256,13 @@ let stageCheckpointsOrThrow = (sink, ~registry, ~batch: Batch.t) => {
     Null.null
   } else {
     let table = sink->checkpointsTable(~registry)
-    let values = Dict.make()
-    checkpointColumns()->Array.forEach(({name, valuesOf}) =>
-      values->Dict.set(name, valuesOf(batch))
-    )
     try {
+      // The table was registered from the same column list, in this order.
       let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
-      builders->Array.forEach(builder => {
-        let columnValues = values->Dict.getUnsafe(builder.name)
+      builders->Array.forEachWithIndex((builder, index) => {
+        let columnValues = (InternalTable.Checkpoints.columns->Array.getUnsafe(index)).valuesOf(
+          batch,
+        )
         for row in 0 to rows - 1 {
           builder->ClickHouseSink.writeValue(~row, columnValues->Array.getUnsafe(row))
         }
@@ -406,7 +343,9 @@ let writeStagedOrThrow = async (sink, ~entities, ~checkpoints) =>
     )
   }
 
-let initialize = async (sink, ~registry, ~entities: array<Internal.entityConfig>) => {
+// Tables are not registered here: an indexer that finds an existing storage
+// never runs this, so the write path registers them on first use either way.
+let initialize = async (sink, ~entities: array<Internal.entityConfig>) => {
   try {
     await sink->ClickHouseSink.initialize({
       entities: entities->Array.map(entityConfig => entitySpec(~entityConfig)),
@@ -414,9 +353,6 @@ let initialize = async (sink, ~registry, ~entities: array<Internal.entityConfig>
       replicated: Env.ClickHouse.replicated(),
       databaseEngine: ?Env.ClickHouse.databaseEngine(),
     })
-
-    let _ = sink->checkpointsTable(~registry)
-    entities->Array.forEach(entityConfig => ignore(sink->entityTable(~registry, ~entityConfig)))
 
     Logging.trace("ClickHouse storage initialization completed successfully")
   } catch {

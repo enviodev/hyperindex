@@ -1048,7 +1048,7 @@ let withoutClickHouseEnv = fn => {
     "ENVIO_CLICKHOUSE_PASSWORD",
     "ENVIO_CLICKHOUSE_DATABASE",
   ]
-  let env = %raw(`process.env`)
+  let env = NodeJs.Process.process.env
   let saved = names->Array.map(name => (name, env->Utils.Dict.dangerouslyGetNonOption(name)))
   names->Array.forEach(name => env->Dict.delete(name))
   let result = try Ok(fn()) catch {
@@ -1081,17 +1081,18 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
           }: Config.storage
         ),
       }
-      let message = withoutClickHouseEnv(() =>
-        switch try {
-          let _ = PgStorage.makeStorageFromEnv(~config)
-          None
-        } catch {
-        | JsExn(e) => Some(e->JsExn.message->Option.getOr(""))
-        | _ => None
-        } {
-        | Some(m) => m
-        | None => ""
-        }
+      let message = withoutClickHouseEnv(
+        () =>
+          switch try {
+            let _ = PgStorage.makeStorageFromEnv(~config)
+            None
+          } catch {
+          | JsExn(e) => Some(e->JsExn.message->Option.getOr(""))
+          | _ => None
+          } {
+          | Some(m) => m
+          | None => ""
+          },
       )
       t.expect(
         message,

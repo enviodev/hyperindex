@@ -150,15 +150,19 @@ describe("Test makeClickHouseEntitySchema", () => {
   })
 })
 
-
-// The ClickHouse checkpoints columns are declared separately from the Postgres
-// ones, so a column added to `InternalTable.Checkpoints` reaches Postgres
-// automatically and ClickHouse not at all — with both sides self-consistent,
-// nothing else would report the omission.
+// The staging path writes each column by its position in this list, so what
+// crosses to Rust is pinned whole rather than column by column.
 describe("ClickHouse checkpoints columns", () => {
-  Async.it("cover every column the checkpoints table declares, in its order", async t => {
-    let declared = InternalTable.Checkpoints.table.fields->Array.map(Table.getUserDefinedFieldName)
-    t.expect(ClickHouse.checkpointColumns()->Array.map(({name}) => name)).toEqual(declared)
+  Async.it("register in the order a batch's values are written", async t => {
+    t.expect(
+      ClickHouse.checkpointColumnSpecs()->Array.map(({name, fieldType}) => (name, fieldType)),
+    ).toEqual([
+      ("id", "UInt64"),
+      ("chain_id", "ChainId"),
+      ("block_number", "Int32"),
+      ("block_hash", "String"),
+      // Wider than the Int32 Postgres keeps the count in.
+      ("events_processed", "UInt64"),
+    ])
   })
 })
-
