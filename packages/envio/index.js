@@ -12,6 +12,7 @@ export { indexer, createTestIndexer } from "./src/Api.res.mjs";
 export {
   createResolver,
   defineType,
+  defineInput,
   defineEnum,
   defineScalar,
   getRegisteredResolvers,

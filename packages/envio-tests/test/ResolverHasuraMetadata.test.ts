@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { S } from "envio";
 import {
   buildRegisteredManifest,
   createResolver,
   defineEnum,
   defineInput,
   defineType,
-} from "../../envio/src/resolvers/index.js";
+  S,
+} from "envio";
 import { buildHasuraMetadata } from "../../envio/src/resolvers/hasuraMetadata.js";
 
 // The manifest `envio codegen` writes, turned into the metadata Hasura needs to
