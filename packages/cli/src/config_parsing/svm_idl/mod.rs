@@ -134,16 +134,22 @@ fn validate(idl: &mut ProgramIdl) {
         }
     }
 
+    // `unresolvable_types` has already settled every name, so an instruction
+    // only has to be checked against its own arguments' references.
     let bad_types = unresolvable_types(idl);
     for (name, ix) in &idl.instructions {
         if demoted.contains_key(name) {
             continue;
         }
+        let mut references = BTreeSet::new();
         for arg in &ix.args {
-            if let Err(reason) = references_resolve(&arg.ty, idl, &bad_types) {
-                demoted.insert(name.clone(), reason);
-                break;
-            }
+            collect_defined_names(&arg.ty, &mut references);
+        }
+        if let Some(reason) = references
+            .iter()
+            .find_map(|r| unresolved_reason(idl, &bad_types, r))
+        {
+            demoted.insert(name.clone(), reason);
         }
     }
 
@@ -368,34 +374,6 @@ fn unbounded_recursion<'a>(
             .iter()
             .flat_map(|v| v.fields.iter().flatten())
             .try_for_each(|f| unbounded_recursion(&f.ty, idl, stack, through_var_len, terminates)),
-        _ => Ok(()),
-    }
-}
-
-/// Walks `ty`'s own shape only. `unresolvable_types` already settled each name.
-fn references_resolve(ty: &FieldType, idl: &ProgramIdl, bad: &Unusable) -> Result<(), String> {
-    match ty {
-        FieldType::Defined(name) => {
-            if let Some(reason) = bad.get(name) {
-                Err(format!(
-                    "it reaches type '{name}', which cannot be decoded: {reason}"
-                ))
-            } else if !idl.defined_types.contains_key(name) {
-                Err(format!("it references undefined type '{name}'"))
-            } else {
-                Ok(())
-            }
-        }
-        FieldType::Option(inner) | FieldType::Vec(inner) | FieldType::Array { ty: inner, .. } => {
-            references_resolve(inner, idl, bad)
-        }
-        FieldType::Struct(fields) => fields
-            .iter()
-            .try_for_each(|f| references_resolve(&f.ty, idl, bad)),
-        FieldType::Enum(variants) => variants
-            .iter()
-            .flat_map(|v| v.fields.iter().flatten())
-            .try_for_each(|f| references_resolve(&f.ty, idl, bad)),
         _ => Ok(()),
     }
 }
