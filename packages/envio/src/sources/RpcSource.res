@@ -185,9 +185,6 @@ let make = (
     poweredByHyperSync: false,
     pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,
-    // An in-flight read may describe the fork the rollback just disproved, so
-    // nothing issued afterwards may join one. The stores are rolled back
-    // separately, which is what retires the data already merged from it.
     onReorg: () => rpcClient.onReorg(),
     getHeightOrThrow: async () => {
       let timerRef = Performance.now()

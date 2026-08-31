@@ -469,9 +469,9 @@ let getSourceNewHeight = async (
             sourceState->recordRequestStats(res.requestStats)
             h := res.height
           } catch {
-          // A failed poll still made a request; count it, like every other
-          // failure path does.
-          | exn => sourceState->recordRequestStats((exn->Source.unpackNativeRequestFailure).requestStats)
+          | exn =>
+            let failure = exn->Source.unpackNativeRequestFailure
+            sourceState->recordRequestStats(failure.requestStats)
           }
           if h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
             await Utils.delay(source.pollingInterval)
@@ -530,13 +530,15 @@ let getSourceNewHeight = async (
       } catch {
       | exn =>
         // A failed poll still made a request; count it, like every other
-        // failure path does.
-        sourceState->recordRequestStats((exn->Source.unpackNativeRequestFailure).requestStats)
+        // failure path does. The provider's own message is inside the envelope,
+        // so log the unpacked cause rather than the envelope itself.
+        let failure = exn->Source.unpackNativeRequestFailure
+        sourceState->recordRequestStats(failure.requestStats)
         let retryInterval = sourceManager.getHeightRetryInterval(~retry=retry.contents)
         logger->Logging.childTrace({
           "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
           "source": source.name,
-          "err": exn->Utils.prettifyExn,
+          "err": failure.cause->Utils.prettifyExn,
         })
         retry := retry.contents + 1
         await Utils.delay(retryInterval)

@@ -319,7 +319,11 @@ describe("RpcSource - field selection end to end", () => {
     t.expect(caught).toEqual(Some((true, 100)))
   })
 
-  Async.it("Reports a field value it cannot decode", async t => {
+  // A garbled value and a response for the wrong block are both one node
+  // answering badly, not a selection the chain cannot serve. Reporting them as
+  // a field-selection failure disables the source for good — on a chain with a
+  // single RPC the indexer then stops — so they have to stay retryable.
+  Async.it("Retries rather than disabling the source on a value it cannot decode", async t => {
     let mock = await startProvider(
       ~transaction=JSON.parseOrThrow(`{"hash":"${txHash}","gas":"not-hex"}`),
     )
@@ -327,10 +331,30 @@ describe("RpcSource - field selection end to end", () => {
       let _ = await fetchPayloads(~mock, ~transactionFieldNames=[Gas])
       None
     } catch {
-    | Source.GetItemsError(FailedGettingFieldSelection({message})) => Some(message)
+    | Source.GetItemsError(FailedGettingItems({retry: WithBackoff({message})})) => Some(message)
     }
     mock.close()
     t.expect(caught->Option.map(m => m->String.includes("gas"))).toEqual(Some(true))
+  })
+
+  Async.it("Retries rather than disabling the source on a wrong-block response", async t => {
+    // A load-balanced provider can answer eth_getBlockByNumber from a node that
+    // has drifted, returning the neighbouring block.
+    let mock = await startProvider(
+      ~block=JSON.parseOrThrow(
+        `{"number":"0x65","timestamp":"0x5f5e100","hash":"${blockHash}","parentHash":"${parentHash}"}`,
+      ),
+    )
+    let caught = try {
+      let _ = await fetchPayloads(~mock, ~blockFieldNames=[Timestamp])
+      None
+    } catch {
+    | Source.GetItemsError(FailedGettingItems({retry: WithBackoff({message})})) => Some(message)
+    }
+    mock.close()
+    t.expect(
+      caught->Option.map(m => m->String.includes("block 100") && m->String.includes("block 101")),
+    ).toEqual(Some(true))
   })
 
   Async.it("Reads selected block fields, keeping a nullable one absent", async t => {

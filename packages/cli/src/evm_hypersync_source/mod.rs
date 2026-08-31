@@ -748,7 +748,10 @@ pub(crate) fn transaction_field_missing(
     match field {
         // Absent by the shape of the transaction rather than by a gap in the
         // response: a legacy transaction has no access list, and only an
-        // EIP-7702 one has an authorization list.
+        // EIP-7702 one has an authorization list. Both source paths share this
+        // rule, so HyperSync stops flagging the two lists as well — telling
+        // "the transaction has none" from "the response dropped it" would need
+        // the transaction `type`, which a selection need not include.
         GasPrice | V | R | S | YParity | MaxPriorityFeePerGas | MaxFeePerGas | MaxFeePerBlobGas
         | BlobVersionedHashes | ContractAddress | Root | Status | L1Fee | L1GasPrice
         | L1GasUsed | L1FeeScalar | GasUsedForL1 | From | To | Type | AccessList

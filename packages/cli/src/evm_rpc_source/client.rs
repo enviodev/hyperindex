@@ -14,17 +14,11 @@ pub enum RpcError {
     Other(anyhow::Error),
 }
 
-impl Clone for RpcError {
-    /// Waiters on a shared request each need the failure. A JSON-RPC error
-    /// keeps its code and message — callers classify range limits from them —
-    /// while `anyhow`'s chain, which nothing matches on, flattens to its text.
-    fn clone(&self) -> Self {
+impl std::fmt::Display for RpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RpcError::JsonRpc { code, message } => RpcError::JsonRpc {
-                code: *code,
-                message: message.clone(),
-            },
-            RpcError::Other(err) => RpcError::Other(anyhow::anyhow!("{err:#}")),
+            RpcError::JsonRpc { code, message } => write!(f, "JSON-RPC error {code}: {message}"),
+            RpcError::Other(err) => write!(f, "{err:#}"),
         }
     }
 }

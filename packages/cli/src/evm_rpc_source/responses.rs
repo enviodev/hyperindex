@@ -7,7 +7,7 @@
 //! against — one source of truth for which fields a chain may legitimately not
 //! have.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context};
 use hypersync_client::format;
 use hypersync_client::simple_types::{Block, Transaction};
 use serde_json::Value as Json;
@@ -19,6 +19,33 @@ use crate::evm_hypersync_source::query::{BlockField, TransactionField};
 use crate::evm_hypersync_source::{block_field_missing, transaction_field_missing};
 use crate::transaction_store::EvmTxField;
 
+/// Why a response could not be turned into a row. The two are handled very
+/// differently — one stops the source, the other only delays it — so they are
+/// separated here rather than guessed at from a message.
+#[derive(Debug)]
+pub(crate) enum ResponseError {
+    /// The chain or the provider does not serve a selected field. Every later
+    /// attempt asks the same question of the same provider, so the caller stops
+    /// rather than retrying.
+    Unservable(anyhow::Error),
+    /// The response is not a valid answer to the question that was asked: a
+    /// different block, a value that will not decode. Providers load-balance
+    /// across nodes, so one bad answer says nothing about the next.
+    Malformed(anyhow::Error),
+}
+
+impl std::fmt::Display for ResponseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResponseError::Unservable(error) | ResponseError::Malformed(error) => {
+                write!(f, "{error:#}")
+            }
+        }
+    }
+}
+
+type Result<T> = std::result::Result<T, ResponseError>;
+
 /// A response value that is present and not null. JSON-RPC omits some fields
 /// and nulls others for the same "this chain has none" meaning, so both read
 /// the same way here and the nullability rules decide whether that is allowed.
@@ -26,8 +53,10 @@ fn present<'a>(response: &'a Json, key: &str) -> Option<&'a Json> {
     response.get(key).filter(|value| !value.is_null())
 }
 
-fn unsupported(kind: &str, field: impl std::fmt::Debug) -> anyhow::Error {
-    anyhow!("the RPC source cannot supply the {kind} field {field:?}")
+fn unsupported(kind: &str, field: impl std::fmt::Debug) -> ResponseError {
+    ResponseError::Unservable(anyhow!(
+        "the RPC source cannot supply the {kind} field {field:?}"
+    ))
 }
 
 /// Build a block row from an `eth_getBlockByNumber` response. `number` is
@@ -42,25 +71,26 @@ pub(crate) fn build_block(
 ) -> Result<Block> {
     let mut block = Block::default();
     let number = present(response, "number")
-        .ok_or_else(|| anyhow!("block response carries no \"number\""))?;
+        .ok_or_else(|| ResponseError::Malformed(anyhow!("block response carries no \"number\"")))?;
     set_block_field(
         &mut block,
         crate::block_store::EvmBlockField::Number,
         number,
-    )?;
+    )
+    .map_err(ResponseError::Malformed)?;
     if block.number != Some(requested) {
-        return Err(anyhow!(
+        return Err(ResponseError::Malformed(anyhow!(
             "asked the RPC for block {requested} and it answered with block {}",
             block
                 .number
                 .map_or_else(|| "none".to_string(), |n| n.to_string()),
-        ));
+        )));
     }
 
     for &requested in selection {
         let field = block_field_column(requested).ok_or_else(|| unsupported("block", requested))?;
         if let Some(raw) = present(response, field.name()) {
-            set_block_field(&mut block, field, raw)?;
+            set_block_field(&mut block, field, raw).map_err(ResponseError::Malformed)?;
         }
     }
 
@@ -104,7 +134,7 @@ pub(crate) fn build_transaction(
             Carrier::Either => transaction.or(receipt),
         };
         if let Some(raw) = source.and_then(|response| present(response, field.name())) {
-            set_tx_field(&mut tx, field, raw)?;
+            set_tx_field(&mut tx, field, raw).map_err(ResponseError::Malformed)?;
         }
     }
     Ok(tx)
@@ -122,14 +152,15 @@ pub(crate) fn needs_effective_gas_price(tx: &Transaction, selection: &[Transacti
 
 pub(crate) fn fill_effective_gas_price(tx: &mut Transaction, transaction: &Json) -> Result<()> {
     let gas_price = present(transaction, EvmTxField::GasPrice.name()).ok_or_else(|| {
-        anyhow!(
+        ResponseError::Unservable(anyhow!(
             "neither \"effectiveGasPrice\" nor \"gasPrice\" is present in the RPC response for \
              the transaction. Remove \"effectiveGasPrice\" from the field selection, or index \
              this chain via HyperSync."
-        )
+        ))
     })?;
     set_tx_field(tx, EvmTxField::EffectiveGasPrice, gas_price)
         .context("filling effectiveGasPrice from gasPrice")
+        .map_err(ResponseError::Malformed)
 }
 
 /// Report the selected transaction fields the responses did not supply, judged
@@ -146,8 +177,8 @@ pub(crate) fn check_transaction(tx: &Transaction, selection: &[TransactionField]
     }
 }
 
-fn missing_error(kind: &str, missing: &[&str]) -> anyhow::Error {
-    anyhow!(
+fn missing_error(kind: &str, missing: &[&str]) -> ResponseError {
+    ResponseError::Unservable(anyhow!(
         "the RPC response is missing the selected {kind} {}: {}. Please double-check your RPC \
          provider returns correct data.",
         if missing.len() == 1 {
@@ -156,7 +187,7 @@ fn missing_error(kind: &str, missing: &[&str]) -> anyhow::Error {
             "fields"
         },
         missing.join(", "),
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -167,6 +198,17 @@ mod tests {
 
     fn hash(byte: u8) -> format::Hash {
         format::Hash::from([byte; 32])
+    }
+
+    /// Which of the two an error is, alongside its text. The distinction is
+    /// what decides between disabling the source and waiting to try again, so
+    /// every rejection below pins it rather than only its wording.
+    fn classify(error: ResponseError) -> (&'static str, String) {
+        let text = error.to_string();
+        match error {
+            ResponseError::Unservable(_) => ("unservable", text),
+            ResponseError::Malformed(_) => ("malformed", text),
+        }
     }
 
     #[test]
@@ -194,10 +236,13 @@ mod tests {
         // The provider answered, but not with what the selection needs; serving
         // undefined for it would surface as a silently empty handler field.
         let response = json!({ "number": "0x10" });
-        let err = build_block(&response, 16, &[BlockField::Timestamp])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("timestamp"), "{err}");
+        let (kind, message) =
+            classify(build_block(&response, 16, &[BlockField::Timestamp]).unwrap_err());
+        assert_eq!(
+            (kind, message.contains("timestamp")),
+            ("unservable", true),
+            "{message}"
+        );
     }
 
     #[test]
@@ -210,17 +255,57 @@ mod tests {
     }
 
     #[test]
-    fn a_block_response_for_another_number_is_rejected() {
+    fn a_block_response_for_another_number_is_rejected_as_retryable() {
         // A node answering with a different block would key the row elsewhere,
         // leaving the requested block absent from the page while the range
-        // still advanced past it.
+        // still advanced past it. It is the drifting-node symptom, not a
+        // selection this provider cannot serve, so the next attempt is worth
+        // making — classifying it the other way would disable the source on one
+        // bad answer.
         let response = json!({ "number": "0x11", "timestamp": "0x20" });
-        let err = build_block(&response, 16, &[BlockField::Timestamp])
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("block 16") && err.contains("block 17"),
-            "{err}"
+        let (kind, message) =
+            classify(build_block(&response, 16, &[BlockField::Timestamp]).unwrap_err());
+        assert_eq!(
+            (
+                kind,
+                message.contains("block 16") && message.contains("block 17")
+            ),
+            ("malformed", true),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_block_response_without_a_number_is_rejected_as_retryable() {
+        let (kind, message) =
+            classify(build_block(&json!({}), 16, &[BlockField::Timestamp]).unwrap_err());
+        assert_eq!(
+            (kind, message.contains("number")),
+            ("malformed", true),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_value_that_will_not_decode_is_rejected_as_retryable() {
+        // A garbled quantity from one node says nothing about what the next
+        // answers, so it waits rather than stopping the source for good.
+        let transaction = json!({ "gas": "not-hex" });
+        let (kind, message) = classify(
+            build_transaction(
+                1,
+                0,
+                &hash(1),
+                Some(&transaction),
+                None,
+                &[TransactionField::Gas],
+            )
+            .unwrap_err(),
+        );
+        assert_eq!(
+            (kind, message.contains("gas")),
+            ("malformed", true),
+            "{message}"
         );
     }
 

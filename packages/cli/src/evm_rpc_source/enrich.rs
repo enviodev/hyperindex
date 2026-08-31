@@ -20,7 +20,6 @@
 //! reports a reorg before any event is materialised.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -35,19 +34,24 @@ use super::fields::{
     TX_LOG_MASK,
 };
 use super::inflight::Inflight;
-use super::responses;
+use super::responses::{self, ResponseError};
 use crate::block_store::BlockStore;
 use crate::evm_hypersync_source::query::{BlockField, TransactionField};
-use crate::request_stats::RequestStat;
-use crate::transaction_store::TransactionStore;
+use crate::request_stats::Stats;
+use crate::transaction_store::{EvmTxField, TransactionStore};
+use strum::VariantArray;
 
-/// What a shared read hands to every waiter: the response, how long the
-/// request took, and a claim flag so exactly one waiter records that timing —
-/// a waiter that is by definition still running, unlike the call that happened
-/// to create the request.
-type Fetched = (Arc<Json>, f64, Arc<AtomicBool>);
+/// What a shared read hands to every waiter: the outcome, and its timing until
+/// a waiter takes it. Taking it hands the timing to exactly one waiter — one
+/// still running, unlike the call that happened to create the request. The
+/// failure rides inside the value so that it, too, is recorded as the request
+/// it was.
+type Fetched = (
+    std::result::Result<Arc<Json>, Arc<RpcError>>,
+    Arc<Mutex<Option<f64>>>,
+);
 
-pub(crate) type FetchCache = Inflight<FetchKey, Fetched, RpcError>;
+pub(crate) type Fetches = Inflight<FetchKey, Fetched>;
 
 /// A transaction's place in its block, which is how both stores key it.
 pub(crate) type TxKey = (u64, u32);
@@ -97,54 +101,51 @@ impl FetchKey {
 }
 
 pub(crate) enum EnrichError {
-    /// A row the provider should have is absent. Providers load-balance across
-    /// nodes that drift from each other near the head, so a lookup routed to a
-    /// node that has not caught up answers null for data that does exist.
-    /// Transient by nature, so the caller retries rather than failing the sync.
-    NotFound(String),
-    /// Transport or JSON-RPC failure.
-    Rpc(RpcError),
-    /// The provider answered, but not with the fields the selection needs.
-    /// Retrying cannot fix a chain or provider that does not serve them, so
-    /// the block it happened on is the one thing that makes it diagnosable.
+    /// The provider's answer is unusable, but the next one may not be: a null
+    /// row for something the chain has, a response for a block other than the
+    /// one asked for, a value that will not decode. Providers load-balance
+    /// across nodes that drift from each other near the head, and a node can
+    /// answer badly once without answering badly again, so the caller waits and
+    /// retries rather than failing the sync.
+    Transient(String),
+    /// Transport or JSON-RPC failure. Shared, because every waiter on one
+    /// request receives it.
+    Rpc(Arc<RpcError>),
+    /// The provider answered, but cannot serve the fields the selection needs.
+    /// Retrying asks the same question of the same chain, so the block it
+    /// happened on is the one thing that makes it diagnosable.
     FieldSelection {
         block_number: Option<u64>,
         error: anyhow::Error,
     },
 }
 
-impl EnrichError {
-    fn field_selection(block_number: u64, error: anyhow::Error) -> Self {
-        EnrichError::FieldSelection {
-            block_number: Some(block_number),
-            error,
+impl std::fmt::Display for EnrichError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EnrichError::Transient(message) => write!(f, "{message}"),
+            EnrichError::FieldSelection { error, .. } => write!(f, "{error:#}"),
+            EnrichError::Rpc(err) => write!(f, "{err}"),
         }
     }
 }
 
-/// Per-request timings. One request contributes exactly one entry, recorded by
-/// whichever call is first to observe the finished read — a call still running,
-/// so the timing always lands in a collector someone will drain. A page that
-/// only joined requests others issued therefore reports none of its own.
-#[derive(Clone, Default)]
-pub(crate) struct Stats(Arc<Mutex<Vec<RequestStat>>>);
-
-impl Stats {
-    fn record(&self, method: &str, seconds: f64) {
-        self.0.lock().unwrap().push(RequestStat {
-            method: method.to_string(),
-            seconds,
-        });
-    }
-
-    /// The page's own `eth_getLogs` calls, which are issued directly rather
-    /// than through the deduplication map: each selection is a distinct query.
-    pub(crate) fn record_log_query(&self, seconds: f64) {
-        self.record("eth_getLogs", seconds);
-    }
-
-    pub(crate) fn take(&self) -> Vec<RequestStat> {
-        std::mem::take(&mut *self.0.lock().unwrap())
+impl EnrichError {
+    /// Carry a rejected response's own verdict on whether trying again is worth
+    /// anything, rather than treating every unreadable response as a selection
+    /// the provider cannot serve.
+    fn from_response(block_number: u64, error: ResponseError) -> Self {
+        match error {
+            ResponseError::Unservable(error) => EnrichError::FieldSelection {
+                block_number: Some(block_number),
+                error,
+            },
+            ResponseError::Malformed(error) => EnrichError::Transient(format!(
+                "The RPC gave an unusable answer while reading block {block_number}: {error:#}. \
+                 The provider may be load-balanced between nodes that answer inconsistently; \
+                 indexing continues correctly once the query is retried."
+            )),
+        }
     }
 }
 
@@ -228,12 +229,12 @@ pub(crate) struct EnrichedPage {
 /// it", which the caller decides how to treat.
 async fn read(
     client: &Arc<JsonRpcClient>,
-    cache: &FetchCache,
+    inflight: &Fetches,
     stats: &Stats,
     key: FetchKey,
 ) -> Result<Option<Arc<Json>>, EnrichError> {
     let method = key.method();
-    let (value, seconds, unclaimed) = cache
+    let (result, timing) = inflight
         .get(key, || {
             let client = client.clone();
             let params = key.params();
@@ -241,31 +242,33 @@ async fn read(
                 let started = Instant::now();
                 let result = client.request::<Json>(method, params).await;
                 let seconds = started.elapsed().as_secs_f64();
-                result.map(|value| (Arc::new(value), seconds, Arc::new(AtomicBool::new(false))))
+                (
+                    result.map(Arc::new).map_err(Arc::new),
+                    Arc::new(Mutex::new(Some(seconds))),
+                )
             }
         })
-        .await
-        .map_err(|err| EnrichError::Rpc((*err).clone()))?;
+        .await;
 
-    // One request, one timing, recorded by whichever waiter gets there first.
-    if !unclaimed.swap(true, Ordering::SeqCst) {
+    if let Some(seconds) = timing.lock().unwrap().take() {
         stats.record(method, seconds);
     }
+    let value = result.map_err(EnrichError::Rpc)?;
     Ok((!value.is_null()).then_some(value))
 }
 
 /// Read something the chain must have. A null answer is the load-balancing
-/// symptom `EnrichError::NotFound` describes, so it is reported the same way
+/// symptom `EnrichError::Transient` describes, so it is reported the same way
 /// for a block, a transaction and a receipt alike.
 async fn require(
     client: &Arc<JsonRpcClient>,
-    cache: &FetchCache,
+    inflight: &Fetches,
     stats: &Stats,
     key: FetchKey,
 ) -> Result<Arc<Json>, EnrichError> {
     let description = key.describe();
-    read(client, cache, stats, key).await?.ok_or_else(|| {
-        EnrichError::NotFound(format!(
+    read(client, inflight, stats, key).await?.ok_or_else(|| {
+        EnrichError::Transient(format!(
             "The RPC returned null for {description}. The provider may be load-balanced between \
              nodes that drift from the head independently; indexing continues correctly once the \
              query is retried."
@@ -287,10 +290,10 @@ impl TxReads {
         let mut transaction = false;
         let mut receipt = false;
         let mut either = false;
-        for field in tx_fields_in(mask) {
-            let Some(column) = super::fields::tx_field_column(field) else {
+        for &column in EvmTxField::VARIANTS {
+            if mask & (1u64 << (column as u32)) == 0 {
                 continue;
-            };
+            }
             match tx_carrier(column) {
                 Carrier::Log => {}
                 Carrier::Transaction => transaction = true,
@@ -298,12 +301,9 @@ impl TxReads {
                 Carrier::Either => either = true,
             }
         }
-        // A selection of only shared fields is served by the transaction.
-        if either && !receipt {
-            transaction = true;
-        }
         TxReads {
-            transaction,
+            // A selection of only shared fields is served by the transaction.
+            transaction: transaction || (either && !receipt),
             receipt,
         }
     }
@@ -315,7 +315,7 @@ impl TxReads {
 
 pub(crate) async fn enrich(
     client: &Arc<JsonRpcClient>,
-    cache: &FetchCache,
+    inflight: &Fetches,
     stats: &Stats,
     request: EnrichRequest<'_>,
 ) -> Result<EnrichedPage, EnrichError> {
@@ -331,20 +331,21 @@ pub(crate) async fn enrich(
     let block_plan = plan_blocks(&refs, from_block, to_block, known_blocks);
     let tx_plan = plan_transactions(&refs, known_transactions);
 
-    let (blocks, transactions) = futures_util::future::try_join(
-        fetch_blocks(client, cache, stats, &block_plan),
-        fetch_transactions(client, cache, stats, &tx_plan),
+    // Both halves are awaited to completion rather than raced fail-fast, so a
+    // failure on one side still leaves the other's timings to be recorded.
+    let (blocks, transactions) = futures_util::future::join(
+        fetch_blocks(client, inflight, stats, &block_plan),
+        fetch_transactions(client, inflight, stats, &tx_plan),
     )
-    .await?;
+    .await;
+    let (blocks, transactions) = (blocks?, transactions?);
 
     let page_blocks = BlockStore::new_evm(should_checksum);
     let page_transactions = TransactionStore::new_evm(should_checksum);
 
-    // Hash-only rows for what the logs themselves observed, and for the parent
-    // of every fetched block. Both are this response's view of the chain, so
-    // together with the fetched hashes they cross-validate each other and the
-    // stored chain.
-    let mut observations: Vec<Block> = refs
+    // What the logs themselves observed of each block, which the fetched blocks
+    // and the stored chain are then cross-validated against.
+    let log_observations: Vec<Block> = refs
         .blocks
         .iter()
         .flat_map(|(&number, block_ref)| {
@@ -355,24 +356,7 @@ pub(crate) async fn enrich(
             })
         })
         .collect();
-    observations.extend(
-        blocks
-            .iter()
-            .flat_map(|(_, blocks)| blocks)
-            .filter_map(|block| {
-                let number = block.number.filter(|&number| number > 0)?;
-                Some(Block {
-                    number: Some(number - 1),
-                    hash: Some(block.parent_hash.clone()?),
-                    ..Default::default()
-                })
-            }),
-    );
-    page_blocks.insert_evm_blocks(observations);
-
-    for (covering, blocks) in blocks {
-        page_blocks.insert_evm_blocks_covering(blocks, covering);
-    }
+    fill_block_page(&page_blocks, log_observations, blocks);
 
     // Every referenced transaction gets its log-derived row even when nothing
     // was fetched for it, so `hash` and `transactionIndex` resolve from the
@@ -399,13 +383,42 @@ pub(crate) async fn enrich(
     })
 }
 
+/// Merge a plan's results into a page: the hash-only observations first, since
+/// they claim no field coverage, then each group under the fields it was read
+/// for. Every fetched block contributes its parent as one more observation —
+/// this response's own view of the block below, which cross-validates against
+/// the stored chain at no extra request.
+fn fill_block_page(
+    page: &BlockStore,
+    mut observations: Vec<Block>,
+    fetched: Vec<(u64, Vec<Block>)>,
+) {
+    observations.extend(
+        fetched
+            .iter()
+            .flat_map(|(_, blocks)| blocks)
+            .filter_map(|block| {
+                let number = block.number.filter(|&number| number > 0)?;
+                Some(Block {
+                    number: Some(number - 1),
+                    hash: Some(block.parent_hash.clone()?),
+                    ..Default::default()
+                })
+            }),
+    );
+    page.insert_evm_blocks(observations);
+    for (covering, blocks) in fetched {
+        page.insert_evm_blocks_covering(blocks, covering);
+    }
+}
+
 /// The range's own boundary blocks, which are read fresh however much the
 /// store already holds. `from_block` stands in for the seam below it: reading
 /// the seam directly would be answered from the previous range's view of it,
 /// whereas `from_block`'s parent hash is this response's.
 fn boundary_blocks(from_block: u64, to_block: u64) -> Vec<u64> {
     let mut blocks = vec![to_block];
-    if from_block > 0 && from_block <= to_block && from_block != to_block {
+    if from_block > 0 && from_block < to_block {
         blocks.push(from_block);
     }
     blocks
@@ -510,7 +523,7 @@ fn plan_transactions(refs: &PageRefs, known: &TransactionStore) -> Vec<TxGroup> 
 /// hash-conflict check.
 pub(crate) async fn fetch_block_hashes(
     client: &Arc<JsonRpcClient>,
-    cache: &FetchCache,
+    inflight: &Fetches,
     stats: &Stats,
     block_numbers: &[u64],
     should_checksum: bool,
@@ -520,25 +533,10 @@ pub(crate) async fn fetch_block_hashes(
         fields: block_fields_in(BLOCK_OBSERVATION_MASK),
         numbers: block_numbers.to_vec(),
     }];
-    let blocks = fetch_blocks(client, cache, stats, &groups).await?;
+    let blocks = fetch_blocks(client, inflight, stats, &groups).await?;
 
     let page = BlockStore::new_evm(should_checksum);
-    let parents: Vec<Block> = blocks
-        .iter()
-        .flat_map(|(_, blocks)| blocks)
-        .filter_map(|block| {
-            let number = block.number.filter(|&number| number > 0)?;
-            Some(Block {
-                number: Some(number - 1),
-                hash: Some(block.parent_hash.clone()?),
-                ..Default::default()
-            })
-        })
-        .collect();
-    page.insert_evm_blocks(parents);
-    for (covering, blocks) in blocks {
-        page.insert_evm_blocks_covering(blocks, covering);
-    }
+    fill_block_page(&page, Vec::new(), blocks);
     Ok(page)
 }
 
@@ -546,15 +544,15 @@ pub(crate) async fn fetch_block_hashes(
 /// concurrently, keeping each group's rows together for a single insert.
 async fn fetch_blocks(
     client: &Arc<JsonRpcClient>,
-    cache: &FetchCache,
+    inflight: &Fetches,
     stats: &Stats,
     groups: &[BlockGroup],
 ) -> Result<Vec<(u64, Vec<Block>)>, EnrichError> {
     let fetches = groups.iter().map(|group| async move {
         let blocks = join_all(group.numbers.iter().map(|&number| async move {
-            let response = require(client, cache, stats, FetchKey::Block(number)).await?;
+            let response = require(client, inflight, stats, FetchKey::Block(number)).await?;
             responses::build_block(&response, number, &group.fields)
-                .map_err(|error| EnrichError::field_selection(number, error))
+                .map_err(|error| EnrichError::from_response(number, error))
         }))
         .await
         .into_iter()
@@ -566,7 +564,7 @@ async fn fetch_blocks(
 
 async fn fetch_transactions(
     client: &Arc<JsonRpcClient>,
-    cache: &FetchCache,
+    inflight: &Fetches,
     stats: &Stats,
     groups: &[TxGroup],
 ) -> Result<Vec<(u64, Vec<Transaction>)>, EnrichError> {
@@ -575,15 +573,24 @@ async fn fetch_transactions(
             |((block_number, transaction_index), hash)| {
                 let key = ***hash;
                 async move {
-                    let (transaction, receipt) = futures_util::future::try_join(
-                        read_if(group.reads.transaction, client, cache, stats, || {
-                            FetchKey::Transaction(key)
-                        }),
-                        read_if(group.reads.receipt, client, cache, stats, || {
-                            FetchKey::Receipt(key)
-                        }),
+                    // Awaited to completion rather than raced fail-fast, so one
+                    // side failing still leaves the other's timing to record.
+                    let (transaction, receipt) = futures_util::future::join(
+                        read_opt(
+                            client,
+                            inflight,
+                            stats,
+                            group.reads.transaction.then(|| FetchKey::Transaction(key)),
+                        ),
+                        read_opt(
+                            client,
+                            inflight,
+                            stats,
+                            group.reads.receipt.then(|| FetchKey::Receipt(key)),
+                        ),
                     )
-                    .await?;
+                    .await;
+                    let (transaction, receipt) = (transaction?, receipt?);
 
                     let mut tx = responses::build_transaction(
                         *block_number,
@@ -593,7 +600,7 @@ async fn fetch_transactions(
                         receipt.as_deref(),
                         &group.fields,
                     )
-                    .map_err(|error| EnrichError::field_selection(*block_number, error))?;
+                    .map_err(|error| EnrichError::from_response(*block_number, error))?;
 
                     if responses::needs_effective_gas_price(&tx, &group.fields) {
                         // The receipt came back without it, so this chain predates
@@ -603,15 +610,15 @@ async fn fetch_transactions(
                         let transaction = match transaction {
                             Some(transaction) => transaction,
                             None => {
-                                require(client, cache, stats, FetchKey::Transaction(key)).await?
+                                require(client, inflight, stats, FetchKey::Transaction(key)).await?
                             }
                         };
                         responses::fill_effective_gas_price(&mut tx, &transaction)
-                            .map_err(|error| EnrichError::field_selection(*block_number, error))?;
+                            .map_err(|error| EnrichError::from_response(*block_number, error))?;
                     }
 
                     responses::check_transaction(&tx, &group.fields)
-                        .map_err(|error| EnrichError::field_selection(*block_number, error))?;
+                        .map_err(|error| EnrichError::from_response(*block_number, error))?;
                     Ok(tx)
                 }
             },
@@ -624,17 +631,17 @@ async fn fetch_transactions(
     join_all(fetches).await.into_iter().collect()
 }
 
-async fn read_if(
-    wanted: bool,
+/// Read a response only if the selection needs one.
+async fn read_opt(
     client: &Arc<JsonRpcClient>,
-    cache: &FetchCache,
+    inflight: &Fetches,
     stats: &Stats,
-    key: impl FnOnce() -> FetchKey,
+    key: Option<FetchKey>,
 ) -> Result<Option<Arc<Json>>, EnrichError> {
-    if !wanted {
-        return Ok(None);
+    match key {
+        None => Ok(None),
+        Some(key) => require(client, inflight, stats, key).await.map(Some),
     }
-    require(client, cache, stats, key()).await.map(Some)
 }
 
 #[cfg(test)]

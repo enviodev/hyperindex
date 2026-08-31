@@ -22,11 +22,11 @@ use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistrationInput, ParamValue,
 };
 use crate::evm_hypersync_source::EventItem;
-use crate::request_stats::RequestStat;
+use crate::request_stats::{RequestStat, Stats};
 use crate::transaction_store::TransactionStore;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
-use enrich::{EnrichError, EnrichRequest, FetchCache, ItemFields, PageRefs, Stats};
+use enrich::{EnrichError, EnrichRequest, Fetches, ItemFields, PageRefs};
 use hypersync_client::format::{self, Hex};
 use interval::{IntervalState, SyncConfig};
 
@@ -174,12 +174,32 @@ pub struct NextPageResult {
     pub retry: Option<RetryDecision>,
 }
 
+/// The outcomes `NextPageResult::kind` discriminates. Napi has no enum to send
+/// them as, so they cross as strings — but only from here, and the ReScript
+/// side rejects any string it does not know.
+#[derive(Clone, Copy)]
+enum Kind {
+    Ok,
+    Retry,
+    FieldSelection,
+}
+
+impl Kind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Kind::Ok => "ok",
+            Kind::Retry => "retry",
+            Kind::FieldSelection => "fieldSelection",
+        }
+    }
+}
+
 impl NextPageResult {
     /// The shape every outcome shares: no items, nothing to say, nothing to
     /// retry. Each arm fills in what its own kind means.
-    fn new(kind: &str, to_block: u64, request_stats: Vec<RequestStat>) -> Self {
+    fn new(kind: Kind, to_block: u64, request_stats: Vec<RequestStat>) -> Self {
         NextPageResult {
-            kind: kind.to_string(),
+            kind: kind.as_str().to_string(),
             request_stats,
             to_block: to_block as i64,
             items: Vec::new(),
@@ -231,7 +251,7 @@ pub struct EvmRpcClient {
     /// Coalesces block, transaction and receipt reads that overlap in time,
     /// including across the partitions of one chain, which scan the same blocks
     /// at the head.
-    fetches: FetchCache,
+    fetches: Fetches,
     /// The fields each registration selected, as store masks. An item's block
     /// and transaction are fetched for the union of the masks of the items that
     /// reference them, so an event selecting nothing costs no request.
@@ -239,11 +259,16 @@ pub struct EvmRpcClient {
     should_checksum: bool,
 }
 
-/// Everything one page read works from: the range, the queries to run over it,
-/// and the stores whose contents decide what still has to be fetched.
+/// Everything one page read works from: the range it covers, the queries to run
+/// over it, the stores whose contents decide what still has to be fetched, and
+/// what a retry decision about it would need.
 struct PageQuery<'a> {
+    partition_id: &'a str,
     from_block: u64,
     to_block: u64,
+    /// The structural cap on this source's range, which a provider's own
+    /// "limited to N blocks" may only tighten.
+    source_max: u64,
     selections: &'a [BuiltLogSelection],
     set_cache: &'a Arc<SetCache>,
     decoder: &'a Arc<SelectionDecoder>,
@@ -252,20 +277,10 @@ struct PageQuery<'a> {
     should_checksum: bool,
 }
 
-/// The attempt a retry decision is about.
-struct Attempt<'a> {
-    partition_id: &'a str,
-    from_block: u64,
-    to_block: u64,
-    /// The structural cap on this source's range, which a provider's own
-    /// "limited to N blocks" may only tighten.
-    source_max: u64,
-}
-
 /// Why a page could not be read.
 enum PageError {
-    Rpc(RpcError),
-    NotFound(String),
+    Rpc(Arc<RpcError>),
+    Transient(String),
     FieldSelection {
         block_number: Option<u64>,
         error: anyhow::Error,
@@ -276,7 +291,7 @@ impl From<EnrichError> for PageError {
     fn from(err: EnrichError) -> Self {
         match err {
             EnrichError::Rpc(err) => PageError::Rpc(err),
-            EnrichError::NotFound(message) => PageError::NotFound(message),
+            EnrichError::Transient(message) => PageError::Transient(message),
             EnrichError::FieldSelection {
                 block_number,
                 error,
@@ -285,21 +300,6 @@ impl From<EnrichError> for PageError {
                 error,
             },
         }
-    }
-}
-
-fn describe_rpc_error(err: &RpcError) -> String {
-    match err {
-        RpcError::JsonRpc { code, message } => format!("JSON-RPC error {code}: {message}"),
-        RpcError::Other(err) => format!("{err:#}"),
-    }
-}
-
-fn describe(err: &EnrichError) -> String {
-    match err {
-        EnrichError::NotFound(message) => message.clone(),
-        EnrichError::FieldSelection { error, .. } => format!("{error:#}"),
-        EnrichError::Rpc(err) => describe_rpc_error(err),
     }
 }
 
@@ -377,7 +377,7 @@ impl EvmRpcClient {
             selection_builder,
             sync_config,
             intervals: IntervalState::new(),
-            fetches: FetchCache::default(),
+            fetches: Fetches::default(),
             registration_fields,
             should_checksum: checksum_addresses,
         })
@@ -430,7 +430,7 @@ impl EvmRpcClient {
             // instead; a store is cheap enough not to be worth an optional.
             Err(err) => Ok((
                 BlockHashResult {
-                    message: Some(describe(&err)),
+                    message: Some(err.to_string()),
                     request_stats: stats.take(),
                 },
                 BlockStore::new_evm(should_checksum),
@@ -517,20 +517,16 @@ impl EvmRpcClient {
         );
 
         let query = PageQuery {
+            partition_id: &params.partition_id,
             from_block,
             to_block,
+            source_max,
             selections: &built.log_selections,
             set_cache: &set_cache,
             decoder: &selection_decoder,
             known_blocks,
             known_transactions,
             should_checksum,
-        };
-        let attempt = Attempt {
-            partition_id: &params.partition_id,
-            from_block,
-            to_block,
-            source_max,
         };
         let stats = Stats::default();
         let timeout = Duration::from_millis(self.sync_config.query_timeout_millis);
@@ -556,14 +552,14 @@ impl EvmRpcClient {
                 (
                     NextPageResult {
                         items,
-                        ..NextPageResult::new("ok", to_block, stats.take())
+                        ..NextPageResult::new(Kind::Ok, to_block, stats.take())
                     },
                     Some(page),
                 )
             }
-            // The provider answered, but not with the selected fields. Retrying
-            // asks the same question of the same chain, so the caller is told to
-            // stop rather than to wait.
+            // The provider answered, but cannot serve the selected fields.
+            // Retrying asks the same question of the same chain, so the caller
+            // is told to stop rather than to wait.
             Ok(Err(PageError::FieldSelection {
                 block_number,
                 error,
@@ -571,13 +567,14 @@ impl EvmRpcClient {
                 NextPageResult {
                     message: Some(format!("{error:#}")),
                     block_number: block_number.map(|number| number as i64),
-                    ..NextPageResult::new("fieldSelection", to_block, stats.take())
+                    ..NextPageResult::new(Kind::FieldSelection, to_block, stats.take())
                 },
                 None,
             ),
-            // A row that should exist was not there. The range is fine, so the
-            // interval is left alone and only the wait grows with the attempt.
-            Ok(Err(PageError::NotFound(message))) => (
+            // The answer was unusable but the next one may not be. The range is
+            // fine, so the interval is left alone and only the wait grows with
+            // the attempt.
+            Ok(Err(PageError::Transient(message))) => (
                 NextPageResult {
                     message: Some(message.clone()),
                     error_message: Some(message.clone()),
@@ -587,20 +584,18 @@ impl EvmRpcClient {
                         message,
                         params.retry.saturating_mul(500).max(100),
                     )),
-                    ..NextPageResult::new("retry", to_block, stats.take())
+                    ..NextPageResult::new(Kind::Retry, to_block, stats.take())
                 },
                 None,
             ),
             Ok(Err(PageError::Rpc(err))) => {
-                let provider_message = match &err {
+                let provider_message = match &*err {
                     RpcError::JsonRpc { message, .. } => Some(message.clone()),
                     RpcError::Other(_) => None,
                 };
-                let message = provider_message
-                    .clone()
-                    .unwrap_or_else(|| describe_rpc_error(&err));
+                let message = provider_message.clone().unwrap_or_else(|| err.to_string());
                 (
-                    self.retry_result(&attempt, provider_message.as_deref(), message, stats.take()),
+                    self.retry_result(&query, provider_message.as_deref(), message, stats.take()),
                     None,
                 )
             }
@@ -611,7 +606,7 @@ impl EvmRpcClient {
                     self.sync_config.query_timeout_millis
                 );
                 (
-                    self.retry_result(&attempt, Some(&message), message.clone(), stats.take()),
+                    self.retry_result(&query, Some(&message), message.clone(), stats.take()),
                     None,
                 )
             }
@@ -636,7 +631,7 @@ impl EvmRpcClient {
         let decoded = self
             .fetch_page(query, stats)
             .await
-            .map_err(PageError::Rpc)?;
+            .map_err(|err| PageError::Rpc(Arc::new(err)))?;
 
         let mut refs = PageRefs::default();
         let mut items = Vec::with_capacity(decoded.len());
@@ -686,17 +681,18 @@ impl EvmRpcClient {
     /// the AIMD state as a side effect.
     fn retry_result(
         &self,
-        attempt: &Attempt<'_>,
+        query: &PageQuery<'_>,
         provider_message: Option<&str>,
         error_message: String,
         request_stats: Vec<RequestStat>,
     ) -> NextPageResult {
-        let Attempt {
+        let PageQuery {
             partition_id,
             from_block,
             to_block,
             source_max,
-        } = *attempt;
+            ..
+        } = *query;
         let executed_interval = to_block - from_block + 1;
         let shrunk_interval =
             interval::shrink(executed_interval, self.sync_config.backoff_multiplicative);
@@ -738,7 +734,7 @@ impl EvmRpcClient {
             message: retry.message.clone(),
             error_message: Some(error_message),
             retry: Some(retry),
-            ..NextPageResult::new("retry", to_block, request_stats)
+            ..NextPageResult::new(Kind::Retry, to_block, request_stats)
         }
     }
 
@@ -771,7 +767,7 @@ impl EvmRpcClient {
                         query.decoder.clone(),
                     )
                     .await;
-                stats.record_log_query(started.elapsed().as_secs_f64());
+                stats.record("eth_getLogs", started.elapsed().as_secs_f64());
                 result
             }))
             .await;
@@ -899,13 +895,9 @@ impl EvmRpcClient {
 /// text rather than a separate channel: nothing recovers from it
 /// programmatically, and one readable message beats a payload every reader has
 /// to decode first.
+#[allow(clippy::needless_pass_by_value)]
 fn rpc_error_to_napi(e: RpcError) -> napi::Error {
-    match e {
-        RpcError::JsonRpc { code, message } => {
-            napi::Error::from_reason(format!("JSON-RPC error {code}: {message}"))
-        }
-        RpcError::Other(e) => map_err(e),
-    }
+    napi::Error::from_reason(e.to_string())
 }
 
 fn map_err(e: anyhow::Error) -> napi::Error {

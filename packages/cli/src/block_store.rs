@@ -20,7 +20,7 @@ use crate::evm_hypersync_source::types::{encode_address, map_bigint, map_i64};
 use crate::field_columns::{build_columns, bytes, field_names, Column, Columns, Ecosystem};
 use crate::field_table::{
     bytes_cells, fixed_from, hash_list_cells, hash_list_from, hex_full, hex_quantity, i64_cells,
-    i64_from, str_cells, str_from, u64_cells, u64_from, var_from, AnyCol, Known, Table,
+    i64_from, str_cells, str_from, u64_cells, u64_from, var_from, AnyCol, Coverage, Table,
 };
 
 /// EVM block field codes shared with ReScript by ordinal value. The order is the
@@ -940,11 +940,7 @@ impl BlockStore {
     /// Whether this block was already fetched for every field in `mask` — the
     /// check that lets one partition skip a block another already read.
     pub(crate) fn covers(&self, block_number: u64, mask: u64) -> bool {
-        self.inner
-            .lock()
-            .unwrap()
-            .table
-            .covered(&block_number, mask)
+        self.inner.lock().unwrap().table.covers(&block_number, mask)
     }
 
     /// Merge blocks fetched for a known field selection. `covering` marks every
@@ -978,7 +974,7 @@ impl BlockStore {
         let conflict = inner
             .table
             .detect_field_conflict(&keys, cols[field].as_ref(), field);
-        inner.table.merge_batch(keys, cols, Known::All(covering));
+        inner.table.merge_batch(keys, cols, Coverage::All(covering));
         if let Some((key, stored, received)) = conflict {
             record_conflict(
                 &mut inner.page.conflict,

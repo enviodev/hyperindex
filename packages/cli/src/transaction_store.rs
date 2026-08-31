@@ -29,7 +29,7 @@ use crate::field_table::{
     access_lists_cells, access_lists_from, auth_lists_cells, auth_lists_from, bool_cells,
     bool_from, bytes_cells, f64_cells, f64_from, fixed_from, hash_list_cells, hash_list_from,
     hex_full, hex_quantity, str_list_cells, str_list_from, u64_cells, u64_from, utf8, var_from,
-    AnyCol, Known, Table,
+    AnyCol, Coverage, Table,
 };
 use crate::svm_hypersync_source::types::bigint_u64;
 
@@ -800,7 +800,7 @@ impl TransactionStore {
     /// the check that lets one partition skip a transaction another already
     /// read.
     pub(crate) fn covers(&self, key: (u64, u32), mask: u64) -> bool {
-        self.inner.lock().unwrap().txs.covered(&key, mask)
+        self.inner.lock().unwrap().txs.covers(&key, mask)
     }
 
     /// Merge transactions fetched for a known field selection. `covering` marks
@@ -831,7 +831,7 @@ impl TransactionStore {
             .lock()
             .unwrap()
             .txs
-            .merge_batch(keys, cols, Known::All(covering));
+            .merge_batch(keys, cols, Coverage::All(covering));
     }
 
     /// Merge one response's SVM transactions into the table, keyed by
@@ -861,7 +861,7 @@ impl TransactionStore {
             .lock()
             .unwrap()
             .txs
-            .merge_batch(keys, cols, Known::All(0));
+            .merge_batch(keys, cols, Coverage::All(0));
     }
 
     /// Merge one response's SVM account activity into the companion table,
@@ -916,7 +916,7 @@ impl TransactionStore {
             .lock()
             .unwrap()
             .account_activity
-            .merge_batch(keys, cols, Known::All(0));
+            .merge_batch(keys, cols, Coverage::All(0));
     }
 }
 

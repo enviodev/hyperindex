@@ -315,9 +315,7 @@ pub(crate) fn set_tx_field(tx: &mut Transaction, field: EvmTxField, raw: &Json) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field_columns::Columns;
     use serde_json::json;
-    use std::collections::HashMap;
     use strum::VariantArray;
 
     #[test]

@@ -1,7 +1,8 @@
 //! Coalesces concurrent requests for the same key onto one in-flight future.
 //!
-//! This is deduplication, not caching: an entry lives exactly as long as its
-//! request is in flight, so a key requested again afterwards is fetched again.
+//! This is deduplication, not caching: an entry lives exactly as long as some
+//! caller is waiting on its request, so a key requested again afterwards is
+//! fetched again.
 //! What a response is worth keeping is decided by the block and transaction
 //! stores, which already own the merge, prune and rollback lifecycle that
 //! decides when data stops being valid — a second cache here would have to
@@ -15,20 +16,27 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use futures_util::future::{BoxFuture, FutureExt, Shared};
-use futures_util::TryFutureExt;
 
-/// Waiters share one result, so a failure reaches all of them; `Arc` because
-/// the error type itself need not be cloneable.
-type SharedFetch<V, E> = Shared<BoxFuture<'static, Result<V, Arc<E>>>>;
+/// Waiters share one outcome, so whatever the request produced — including a
+/// failure — reaches all of them.
+type SharedFetch<V> = Shared<BoxFuture<'static, V>>;
 
-pub(crate) struct Inflight<K, V, E> {
-    pending: Mutex<HashMap<K, SharedFetch<V, E>>>,
+struct Entry<V> {
+    fetch: SharedFetch<V>,
+    /// How many callers are awaiting `fetch` right now. The entry is retired
+    /// when the last of them leaves, so what stays joinable is exactly what
+    /// someone is still driving.
+    waiters: usize,
 }
 
-impl<K, V, E> Default for Inflight<K, V, E> {
+pub(crate) struct Inflight<K, V> {
+    pending: Mutex<HashMap<K, Entry<V>>>,
+}
+
+impl<K, V> Default for Inflight<K, V> {
     fn default() -> Self {
         Self {
             pending: Mutex::new(HashMap::new()),
@@ -36,34 +44,29 @@ impl<K, V, E> Default for Inflight<K, V, E> {
     }
 }
 
-impl<K: Eq + Hash + Clone, V: Clone, E> Inflight<K, V, E> {
+impl<K: Eq + Hash + Clone, V: Clone> Inflight<K, V> {
     /// Resolve `key`, running `make` only if no request for it is already in
     /// flight. Every caller that arrives while one is gets that request's
-    /// result — value or error alike.
-    pub(crate) async fn get<F, Fut>(&self, key: K, make: F) -> Result<V, Arc<E>>
+    /// outcome.
+    pub(crate) async fn get<F, Fut>(&self, key: K, make: F) -> V
     where
         F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<V, E>> + Send + 'static,
+        Fut: Future<Output = V> + Send + 'static,
         V: Send + 'static,
-        E: Send + Sync + 'static,
     {
         let shared = {
             let mut pending = self.pending.lock().unwrap();
-            match pending.get(&key) {
-                Some(existing) => existing.clone(),
-                None => {
-                    let fetch = make().map_err(Arc::new).boxed().shared();
-                    pending.insert(key.clone(), fetch.clone());
-                    fetch
-                }
-            }
+            let entry = pending.entry(key.clone()).or_insert_with(|| Entry {
+                fetch: make().boxed().shared(),
+                waiters: 0,
+            });
+            entry.waiters += 1;
+            entry.fetch.clone()
         };
 
-        // Retire on the way out, whichever way that is. Cancellation is routine
-        // — the whole page races a timeout, and one failed read drops its
-        // siblings — and an entry left behind would be joined by the next
-        // request and answered with the cancelled attempt's response, which is
-        // a cache, and one nothing invalidates.
+        // A drop guard rather than cleanup after the await: cancellation is
+        // routine here — the whole page races a timeout, and one failed read
+        // drops its siblings — so the claim has to be released on every way out.
         let _retire = Retire {
             pending: &self.pending,
             key: &key,
@@ -81,24 +84,28 @@ impl<K: Eq + Hash + Clone, V: Clone, E> Inflight<K, V, E> {
     }
 }
 
-/// Removes an entry once the call that installed it stops waiting on it,
-/// whether it finished or was cancelled.
-struct Retire<'a, K: Eq + Hash, V: Clone, E> {
-    pending: &'a Mutex<HashMap<K, SharedFetch<V, E>>>,
+/// Drops one caller's claim on an entry, and the entry itself once no caller
+/// is left to drive it.
+struct Retire<'a, K: Eq + Hash, V> {
+    pending: &'a Mutex<HashMap<K, Entry<V>>>,
     key: &'a K,
-    shared: &'a SharedFetch<V, E>,
+    shared: &'a SharedFetch<V>,
 }
 
-impl<K: Eq + Hash, V: Clone, E> Drop for Retire<'_, K, V, E> {
+impl<K: Eq + Hash, V> Drop for Retire<'_, K, V> {
     fn drop(&mut self) {
         let mut pending = self.pending.lock().unwrap();
-        // Only this call's own entry. A later request may already have
-        // installed its own future for the key, and removing by key alone
-        // would drop that one and let a third request start a duplicate.
-        if pending
-            .get(self.key)
-            .is_some_and(|current| current.ptr_eq(self.shared))
-        {
+        let Some(entry) = pending.get_mut(self.key) else {
+            return;
+        };
+        // Only the entry this call is actually waiting on. `clear` may have
+        // dropped it and a later request installed its own, which this call
+        // has no claim on and must not disturb.
+        if !entry.fetch.ptr_eq(self.shared) {
+            return;
+        }
+        entry.waiters -= 1;
+        if entry.waiters == 0 {
             pending.remove(self.key);
         }
     }
@@ -108,9 +115,10 @@ impl<K: Eq + Hash, V: Clone, E> Drop for Retire<'_, K, V, E> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
 
-    type TestInflight = Inflight<u8, u32, String>;
+    type TestInflight = Inflight<u8, Result<u32, String>>;
 
     /// A loader that counts its calls and takes long enough that a second
     /// request arrives while it is still running.
@@ -239,6 +247,35 @@ mod tests {
                 calls.load(Ordering::SeqCst),
             ),
             (true, 0, 99, 2)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_cancelled_waiter_leaves_the_request_for_the_others_to_join() {
+        // Partitions are address slices, so several of them read the same head
+        // block at once. One page timing out retires only its own claim: the
+        // request is still being driven by the others, and a page arriving
+        // afterwards must join it rather than ask the provider again.
+        let inflight = TestInflight::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let cancelled = tokio::time::timeout(
+            Duration::from_millis(1),
+            inflight.get(1, counting(&calls, 7)),
+        );
+        let staying = inflight.get(1, counting(&calls, 7));
+        let joining = async {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            inflight.get(1, counting(&calls, 7)).await
+        };
+        let (cancelled, staying, joining) = tokio::join!(cancelled, staying, joining);
+        assert_eq!(
+            (
+                cancelled.is_err(),
+                staying.unwrap(),
+                joining.unwrap(),
+                calls.load(Ordering::SeqCst),
+            ),
+            (true, 7, 7, 1)
         );
     }
 
