@@ -144,7 +144,7 @@ let beginRollbackDiff: (
   ~targetCheckpointId: Internal.checkpointId,
   ~diffCheckpointId: Internal.checkpointId,
   ~scope: RollbackScope.t,
-  ~progressBlockNumberByChainId: dict<int>,
+  ~progressedChains: array<InternalTable.Chains.progressedChain>,
   ~rolledBackAddresses: array<AddressRows.key>,
 ) => unit
 let recordWriteFailure: (t, exn) => unit

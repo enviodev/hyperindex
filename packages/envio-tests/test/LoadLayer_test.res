@@ -1082,7 +1082,7 @@ describe("LoadLayer effect scope isolation", () => {
       ~targetCheckpointId=0n,
       ~diffCheckpointId=0n,
       ~scope=Global,
-      ~progressBlockNumberByChainId=Dict.make(),
+      ~progressedChains=[],
       ~rolledBackAddresses=[],
     )
 

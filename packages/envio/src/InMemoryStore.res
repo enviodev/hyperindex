@@ -130,14 +130,14 @@ let prepareRollbackDiff = async (
   ~scope,
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
-  ~progressBlockNumberByChainId,
+  ~progressedChains,
   ~rolledBackAddresses,
 ) => {
   state->IndexerState.beginRollbackDiff(
     ~targetCheckpointId=rollbackTargetCheckpointId,
     ~diffCheckpointId=rollbackDiffCheckpointId,
     ~scope,
-    ~progressBlockNumberByChainId,
+    ~progressedChains,
     ~rolledBackAddresses,
   )
   let persistence = state->IndexerState.persistence

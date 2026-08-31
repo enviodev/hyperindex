@@ -194,6 +194,113 @@ let reindexBlock102 = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~
 let blockHash = blockNumber => Js.Null.Value(MockSource.evmBlockHash(`0x0${blockNumber}`))
 
 describe("Isolated multichain rollback", () => {
+  // The diff rides on the next batch whatever produced it, and a sibling that
+  // never stopped indexing produces one long before the reorg chain has
+  // re-fetched anything. That batch has no progress of its own for the reorg
+  // chain, so the rollback has to carry it: otherwise the chain's stored
+  // progress outlives the checkpoints backing it, and a restart resumes past
+  // blocks it never re-indexed.
+  scenario->Scenario.it(
+    "Persists the rolled-back progress when a sibling's batch carries the diff",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
+
+      // Only chain 100 progresses, so its batch is what carries the diff.
+      source100.resolveGetItemsOrThrow(
+        [],
+        ~filter=MockSource.coveringBlock(103),
+        ~latestFetchedBlockNumber=104,
+      )
+      await indexer.getBatchWritePromise()
+
+      source100.setAutoHeight(300)
+      source1337.setAutoHeight(300)
+      let restarted = await indexer.restart()
+      await Utils.delay(0)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      t.expect(
+        (
+          await Promise.all2((counters(restarted), progressByChain(restarted))),
+          source1337.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+          source100.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+        ),
+        ~message="Chain 1337 resumes at the block the rollback took it back to",
+      ).toEqual((
+        (
+          [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 1337n, chainId: 1337}],
+          [
+            {value: "104", labels: Dict.fromArray([("chainId", "100")])},
+            {value: "101", labels: Dict.fromArray([("chainId", "1337")])},
+          ],
+        ),
+        [102],
+        [105],
+      ))
+    },
+  )
+
+  // Same write, with the reorg chain's sibling rolled back too: it is in the
+  // rollback's progress rows *and* in the batch's, so the batch's later value
+  // has to be the one that stands.
+  crossChainScenario->Scenario.it(
+    "Lets a batch's own progress win over the rollback's for the same chain",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveBothChainsToBlock102(
+        ~t,
+        ~indexer,
+        ~source100,
+        ~source1337,
+        ~item=setCounterAndTotal,
+      )
+      await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
+
+      // The global rollback took chain 100 back to 101 as well; it re-fetches
+      // past that before chain 1337 gets anywhere, and carries the diff.
+      source100.resolveGetItemsOrThrow(
+        [],
+        ~filter=MockSource.coveringBlock(102),
+        ~latestFetchedBlockNumber=104,
+      )
+      await indexer.getBatchWritePromise()
+
+      source100.setAutoHeight(300)
+      source1337.setAutoHeight(300)
+      let restarted = await indexer.restart()
+      await Utils.delay(0)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      t.expect(
+        (
+          await progressByChain(restarted),
+          source1337.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+          source100.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+        ),
+        ~message="Chain 100 resumes from what its batch reached, chain 1337 from where the rollback left it",
+      ).toEqual((
+        [
+          {value: "104", labels: Dict.fromArray([("chainId", "100")])},
+          {value: "101", labels: Dict.fromArray([("chainId", "1337")])},
+        ],
+        [102],
+        [105],
+      ))
+    },
+  )
+
   scenario->Scenario.it(
     "Rolls back the reorg chain alone and leaves its sibling untouched",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],

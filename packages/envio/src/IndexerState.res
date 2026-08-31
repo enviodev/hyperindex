@@ -818,7 +818,7 @@ let beginRollbackDiff = (
   ~targetCheckpointId,
   ~diffCheckpointId,
   ~scope,
-  ~progressBlockNumberByChainId,
+  ~progressedChains,
   ~rolledBackAddresses,
 ) => {
   let perChainEntities = state.allEntities->EntityTables.perChain
@@ -837,7 +837,7 @@ let beginRollbackDiff = (
     targetCheckpointId,
     diffCheckpointId,
     scope,
-    progressBlockNumberByChainId,
+    progressedChains,
     rolledBackAddresses,
   })
 }

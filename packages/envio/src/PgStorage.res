@@ -1301,7 +1301,12 @@ let rec writeBatch = async (
     //valid event identifier, where all rows created after this eventIdentifier should
     //be deleted
     let rollbackTables = switch rollback {
-    | Some({targetCheckpointId: rollbackTargetCheckpointId, scope, rolledBackAddresses}) =>
+    | Some({
+        targetCheckpointId: rollbackTargetCheckpointId,
+        scope,
+        rolledBackAddresses,
+        progressedChains,
+      }) =>
       Some(
         sql => {
           // Postgres owns history tables only for Postgres-backed entities;
@@ -1324,6 +1329,16 @@ let rec writeBatch = async (
             sql->InternalTable.Checkpoints.rollback(~pgSchema, ~scope, ~rollbackTargetCheckpointId),
           )
           ->ignore
+
+          // Runs before the batch's own progress write below, so a chain the
+          // batch also progressed keeps the batch's later value.
+          if progressedChains->Utils.Array.notEmpty {
+            promises
+            ->Array.push(
+              sql->InternalTable.Chains.setProgressedChains(~pgSchema, ~progressedChains),
+            )
+            ->ignore
+          }
 
           // Addresses are insert-only, so undoing their registrations is a
           // delete rather than a history replay. It runs before the batch's own

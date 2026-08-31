@@ -133,8 +133,9 @@ and executeRollback = async (
   // different chains only meet at Global. The flush above leaves a diff pending
   // only when no batch has come along to carry it.
   let (scope, rollbackTargetCheckpointId) = {
-    let scope: RollbackScope.t =
-      (state->IndexerState.config).isIsolatedMultichain ? Isolated(reorgChain) : Global
+    let scope: RollbackScope.t = (state->IndexerState.config).isIsolatedMultichain
+      ? Isolated(reorgChain)
+      : Global
     switch state->IndexerState.pendingRollback {
     | None => (scope, rollbackTargetCheckpointId)
     | Some({scope: pendingScope, targetCheckpointId: pendingTarget}) =>
@@ -182,6 +183,9 @@ and executeRollback = async (
   }
 
   let rolledBackChains = []
+  // Where the rollback leaves each chain it moves. Travels with the diff, since
+  // the batch that carries it may belong to a chain the rollback never touched.
+  let progressedChains: array<InternalTable.Chains.progressedChain> = []
   let rolledBackAddresses = []
   state
   ->IndexerState.chainStates
@@ -202,6 +206,14 @@ and executeRollback = async (
     rolledBackAddresses->Array.pushMany(killedAddresses)->ignore
     let toBlock = cs->ChainState.committedProgressBlockNumber
     if fromBlock !== toBlock {
+      progressedChains
+      ->Array.push({
+        chainId,
+        progressBlockNumber: toBlock,
+        sourceBlockNumber: cs->ChainState.knownHeight,
+        totalEventsProcessed: cs->ChainState.numEventsProcessed,
+      })
+      ->ignore
       rolledBackChains
       ->Array.push({
         "chainId": chainId,
@@ -219,7 +231,7 @@ and executeRollback = async (
     ~scope,
     ~rollbackTargetCheckpointId,
     ~rollbackDiffCheckpointId=state->IndexerState.committedCheckpointId->BigInt.add(1n),
-    ~progressBlockNumberByChainId=newProgressBlockNumberPerChain,
+    ~progressedChains,
     ~rolledBackAddresses,
   )
 
