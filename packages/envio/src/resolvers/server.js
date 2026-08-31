@@ -61,7 +61,7 @@ const wireError = (message, code) => ({
  * `port: 0` to let the OS choose one.
  */
 export async function startResolverServer(options) {
-  const { resolvers, pool, exposeErrors = false } = options;
+  const { resolvers, pool, exposeErrors = false, checkCompatible } = options;
   const port = options.port ?? ResolversEnv.port();
   const host = options.host ?? "0.0.0.0";
 
@@ -88,12 +88,19 @@ export async function startResolverServer(options) {
     }
 
     if (request.method === "GET" && path === "/readyz") {
-      // Ready means the database answers, not merely that the process is up:
-      // a resolver pod that cannot reach Postgres has nothing to serve.
+      // Ready means the database answers and is the one this build indexes,
+      // not merely that the process is up: a resolver pod that cannot reach
+      // Postgres has nothing to serve, and one pointed at a database indexed
+      // by a different build would answer with plausible wrong numbers.
       pool
         .forResolver({ name: "readyz", timeoutMs: 2_000 })
         .sql.unsafe("SELECT 1;")
-        .then(() => send(response, 200, { status: "ok" }))
+        .then(async () => (checkCompatible ? await checkCompatible() : null))
+        .then((reason) =>
+          reason == null
+            ? send(response, 200, { status: "ok" })
+            : send(response, 503, { status: "incompatible", reason })
+        )
         .catch((error) => {
           send(response, 503, { status: "unavailable", reason: error.message });
         });
