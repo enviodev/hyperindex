@@ -473,7 +473,7 @@ fn collect_named<T>(
 /// An `accounts` list. Absent means an instruction that takes none; present but
 /// not an array is a defect, since reading it as empty would drop its slots and
 /// shift every later account's name.
-fn account_array<'a>(node: Option<&'a Value>) -> Result<&'a [Value]> {
+fn account_array(node: Option<&Value>) -> Result<&[Value]> {
     match node {
         None => Ok(&[]),
         Some(node) => node
