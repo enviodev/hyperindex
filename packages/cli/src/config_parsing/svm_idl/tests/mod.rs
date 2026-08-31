@@ -549,9 +549,8 @@ fn reads_shank_discriminants_instead_of_hashing_the_name() {
         "address: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n\
          instruction burnNft 0x1d () ()\n\
          instruction createMetadataAccount 0x00 (metadata) (isMutable: bool)\n\
-         unusable instruction undispatchable: discriminant: this Shank IDL declares no \
-         'discriminant' for the instruction, and a hashed Anchor discriminator is not what a \
-         Shank program dispatches on\n"
+         unusable instruction undispatchable: discriminant: this Shank IDL declares none, and \
+         a hashed Anchor discriminator is not what a Shank program dispatches on\n"
     );
 }
 

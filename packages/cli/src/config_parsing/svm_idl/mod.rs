@@ -1,9 +1,5 @@
 //! Program IDL parsing. Owns the Anchor and Codama dialects; the Borsh
 //! runtime (`FieldType`, `decode_instruction`) stays upstream.
-//!
-//! Nothing in the config pipeline calls this yet, so the whole module reads as
-//! dead code until the wiring lands. Drop the attribute then.
-#![allow(dead_code)]
 
 mod anchor;
 mod codama;
@@ -467,18 +463,16 @@ fn account_array(node: Option<&Value>) -> Result<&[Value]> {
 /// required, and a transaction that omits it pairs every later pubkey with the
 /// wrong name.
 pub(super) fn account_slot(node: &Value) -> Result<IdlAccount> {
-    let mut optional = false;
-    for key in ["optional", "isOptional"] {
-        match node.get(key) {
-            None => continue,
-            Some(Value::Bool(value)) => optional = *value,
-            Some(other) => bail!("'{key}' must be a boolean, got {other}"),
-        }
-        break;
-    }
+    let declared = ["optional", "isOptional"]
+        .into_iter()
+        .find_map(|key| node.get(key).map(|value| (key, value)));
     Ok(IdlAccount {
         name: required_str(node, "name")?.to_string(),
-        optional,
+        optional: match declared {
+            None => false,
+            Some((_, Value::Bool(optional))) => *optional,
+            Some((key, other)) => bail!("'{key}' must be a boolean, got {other}"),
+        },
     })
 }
 

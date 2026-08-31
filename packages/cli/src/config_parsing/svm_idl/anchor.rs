@@ -83,9 +83,8 @@ fn parse_instructions(root: &Map<String, Value>) -> Result<Instructions> {
                 (Some(node), _) => parse_byte_array(node).context("discriminator")?,
                 (None, Some(node)) => discriminant_bytes(node).context("discriminant")?,
                 (None, None) if shank => bail!(
-                    "discriminant: this Shank IDL declares no 'discriminant' for the \
-                     instruction, and a hashed Anchor discriminator is not what a Shank program \
-                     dispatches on"
+                    "discriminant: this Shank IDL declares none, and a hashed Anchor \
+                     discriminator is not what a Shank program dispatches on"
                 ),
                 (None, None) => hashed_discriminator("global:", &to_snake_case(name)),
             };
