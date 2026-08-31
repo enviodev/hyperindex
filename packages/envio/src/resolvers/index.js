@@ -13,6 +13,7 @@ export { ResolverError } from "./errors.js";
 export {
   buildManifest,
   defineEnum,
+  defineInput,
   defineScalar,
   defineType,
   toSDL,
