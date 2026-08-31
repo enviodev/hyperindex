@@ -12,8 +12,8 @@ use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 
 use super::{
-    collect_instructions, collect_named, required_str, IdlAccount, Instructions, IxIdl, ProgramIdl,
-    Unusable,
+    account_array, account_slot, collect_instructions, collect_named, required_str, IdlAccount,
+    Instructions, IxIdl, ProgramIdl, Unusable,
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
@@ -220,20 +220,7 @@ fn number_bytes(value: &Value, ty: &Value) -> Result<Vec<u8>> {
 }
 
 fn parse_accounts(node: Option<&Value>) -> Result<Vec<IdlAccount>> {
-    let Some(arr) = node.and_then(Value::as_array) else {
-        return Ok(Vec::new());
-    };
-    arr.iter()
-        .map(|a| {
-            Ok(IdlAccount {
-                name: required_str(a, "name")?.to_string(),
-                optional: a
-                    .get("isOptional")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            })
-        })
-        .collect()
+    account_array(node)?.iter().map(account_slot).collect()
 }
 
 fn parse_arguments(node: Option<&Value>, encoded_arg_names: &[String]) -> Result<Vec<NamedField>> {

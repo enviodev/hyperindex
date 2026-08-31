@@ -24,8 +24,8 @@ use sha2::{Digest, Sha256};
 use crate::config_parsing::field_types::to_snake_case;
 
 use super::{
-    collect_instructions, collect_named, required_str, IdlAccount, Instructions, IxIdl, ProgramIdl,
-    Unusable,
+    account_array, account_slot, collect_instructions, collect_named, required_str, IdlAccount,
+    Instructions, IxIdl, ProgramIdl, Unusable,
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
@@ -144,35 +144,17 @@ fn parse_byte_array(node: &Value) -> Result<Vec<u8>> {
 }
 
 /// Composite account groups (`{ name, accounts: [...] }`) flatten into the
-/// parent's list — Anchor inlines them at the call site. An `accounts` that is
-/// present but not an array is a defect, not an empty group: swallowing it
-/// would drop the group's slots and shift every later account's name.
+/// parent's list — Anchor inlines them at the call site.
 fn parse_accounts(node: Option<&Value>) -> Result<Vec<IdlAccount>> {
-    let Some(node) = node else {
-        return Ok(Vec::new());
-    };
-    let arr = node
-        .as_array()
-        .ok_or_else(|| anyhow!("expected an array of accounts, got {node}"))?;
+    let arr = account_array(node)?;
     let mut out = Vec::with_capacity(arr.len());
     for a in arr {
         match a.get("accounts") {
             Some(group) => out.extend(parse_accounts(Some(group))?),
-            None => out.push(IdlAccount {
-                name: required_str(a, "name")?.to_string(),
-                optional: flag(a, "optional", "isOptional")?,
-            }),
+            None => out.push(account_slot(a)?),
         }
     }
     Ok(out)
-}
-
-fn flag(node: &Value, modern: &str, legacy: &str) -> Result<bool> {
-    match node.get(modern).or_else(|| node.get(legacy)) {
-        None => Ok(false),
-        Some(Value::Bool(value)) => Ok(*value),
-        Some(other) => bail!("{modern} must be a boolean, got {other}"),
-    }
 }
 
 fn parse_named_fields(node: Option<&Value>, path: &str) -> Result<Vec<NamedField>> {

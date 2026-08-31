@@ -192,6 +192,17 @@ fn separates_file_level_defects_from_instruction_level_ones() {
                  "accounts": [{ "name": "group", "accounts": null },
                               { "name": "vault" }] }] }"#,
         ),
+        (
+            // Read as `false` the slot becomes required, and a transaction that
+            // omits it pairs every later pubkey with the wrong name. Anchor
+            // already refused this; Codama used to default it.
+            "codama account with an unreadable isOptional",
+            r#"{ "kind": "rootNode", "program": { "instructions": [{
+                 "kind": "instructionNode", "name": "swap",
+                 "accounts": [{ "name": "vault", "isOptional": "yes" }],
+                 "discriminators": [{ "kind": "constantDiscriminatorNode", "offset": 0,
+                   "constant": { "value": { "kind": "bytesValueNode", "data": "03" } } }] }] } }"#,
+        ),
     ];
 
     let reported: Vec<String> = cases
@@ -240,6 +251,7 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "codama argument reusing a discriminator name: swap set aside: IDL declares argument 'tag' more than once",
             "codama discriminator offset that is not a byte position: swap set aside: discriminators: expected a non-negative integer 'offset', got -1",
             "anchor composite group whose 'accounts' is not an array: swap set aside: accounts: expected an array of accounts, got null",
+            "codama account with an unreadable isOptional: swap set aside: accounts: 'isOptional' must be a boolean, got \"yes\"",
         ]
     );
 }

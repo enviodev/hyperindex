@@ -411,6 +411,40 @@ fn collect_named<T>(
     Ok((out, unusable))
 }
 
+/// An `accounts` list. Absent means an instruction that takes none; present but
+/// not an array is a defect, since reading it as empty would drop its slots and
+/// shift every later account's name.
+fn account_array<'a>(node: Option<&'a Value>) -> Result<&'a [Value]> {
+    match node {
+        None => Ok(&[]),
+        Some(node) => node
+            .as_array()
+            .map(Vec::as_slice)
+            .ok_or_else(|| anyhow!("expected an array of accounts, got {node}")),
+    }
+}
+
+/// One account slot. The dialects spell the optional flag differently — Anchor
+/// 0.30 `optional`, legacy Anchor and Codama `isOptional` — but neither may
+/// leave it unreadable: defaulting a non-boolean to `false` makes the slot
+/// required, and a transaction that omits it pairs every later pubkey with the
+/// wrong name.
+pub(super) fn account_slot(node: &Value) -> Result<IdlAccount> {
+    let mut optional = false;
+    for key in ["optional", "isOptional"] {
+        match node.get(key) {
+            None => continue,
+            Some(Value::Bool(value)) => optional = *value,
+            Some(other) => bail!("'{key}' must be a boolean, got {other}"),
+        }
+        break;
+    }
+    Ok(IdlAccount {
+        name: required_str(node, "name")?.to_string(),
+        optional,
+    })
+}
+
 fn reject_duplicate_account_names(accounts: &[IdlAccount]) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
     for account in accounts {
