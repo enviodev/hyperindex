@@ -232,10 +232,16 @@ let run = async (
             b->Change.getEntityId->EntityId.toKey,
           ) {
           | 0. =>
-            Float.compare(
-              a->Change.getCheckpointId->BigInt.toFloat,
-              b->Change.getCheckpointId->BigInt.toFloat,
-            )
+            // Compared as bigints: checkpoint ids are unbounded, and past 2^53
+            // a float comparison would call distinct ids equal.
+            let (a, b) = (a->Change.getCheckpointId, b->Change.getCheckpointId)
+            if a == b {
+              0.
+            } else if a < b {
+              -1.
+            } else {
+              1.
+            }
           | order => order
           }
         })
