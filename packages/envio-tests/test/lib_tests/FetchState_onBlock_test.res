@@ -55,7 +55,7 @@ let makeInitialWithOnBlock = (~startBlock=0, ~onBlockRegistrations) => {
   FetchState.make(
     ~onEventRegistrations,
     ~addressStore,
-    ~addresses,
+    ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
     ~startBlock,
     ~endBlock=None,
     ~maxAddrInPartition=3,

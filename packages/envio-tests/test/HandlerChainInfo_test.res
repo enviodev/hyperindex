@@ -68,7 +68,6 @@ describe("context.chain inside a handler", () => {
       let chain1 = source(1)
       let chain137 = source(137)
 
-      await Utils.delay(0)
       chain1.resolveGetHeightOrThrow(300)
       chain137.resolveGetHeightOrThrow(300)
 

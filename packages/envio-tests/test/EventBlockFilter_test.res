@@ -396,7 +396,7 @@ describe("FetchState — where.block._gte drives the first query's fromBlock", (
     FetchState.make(
       ~onEventRegistrations,
       ~addressStore=TestAddresses.makeStore(~onEventRegistrations),
-      ~addresses,
+      ~addressRows=TestAddresses.addressRows(~addresses, ~onEventRegistrations),
       ~startBlock=0,
       ~endBlock=None,
       ~maxAddrInPartition=3,

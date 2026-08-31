@@ -11,7 +11,7 @@ describe("ChainState reorg threshold", () => {
     let base = FetchState.make(
       ~onEventRegistrations=[],
       ~addressStore,
-      ~addresses=[],
+      ~addressRows=AddressRows.emptySeedRows(),
       ~onBlockRegistrations=[
         {
           Internal.index: 0,
@@ -139,6 +139,7 @@ describe("ChainState reorg threshold", () => {
       checkpointBlockNumbers: [],
       checkpointBlockHashes: [],
       checkpointEventsProcessed: [],
+      registeredAddresses: [],
     }
 
     cs->ChainState.applyBatchProgress(~batch, ~blockTimestampName="timestamp")

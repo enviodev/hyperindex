@@ -71,7 +71,6 @@ describe("Multichain: chain with height subscription stuck at head", () => {
     async (~t, ~indexer, ~source) => {
       let stuckChain = source(100)
       let healthyChain = source(1337)
-      await Utils.delay(0)
 
       // Backfill both chains to head 100 so the indexer flips to realtime —
       // the height subscription is only created in realtime mode.

@@ -178,12 +178,9 @@ describe("Per-chain entity partitions against Postgres", () => {
     async (~t, ~indexer, ~source) => {
       let source1 = source(1)
       let source137 = source(137)
-      await Utils.delay(0)
 
       source1.resolveGetHeightOrThrow(300)
       source137.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       source1.resolveGetItemsOrThrow([bump(1n)], ~latestFetchedBlockNumber=300)
       source137.resolveGetItemsOrThrow([bump(10n)], ~latestFetchedBlockNumber=300)
@@ -338,6 +335,7 @@ describe("Reused chain-scoped statements stay pruned", () => {
           ~pgDatabase="",
           ~pgPassword="",
           ~isHasuraEnabled=false,
+          ~ecosystem=Evm,
         )
         let counts = []
         for _ in 1 to 8 {

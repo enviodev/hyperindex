@@ -173,11 +173,8 @@ describe("Non-string entity id — end-to-end via the in-process indexer", () =>
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await Utils.delay(0)
 
       source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       source.resolveGetItemsOrThrow(
         [
@@ -341,6 +338,8 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
       progressBlockByChain: Dict.make(),
       entities: Dict.make(),
       entityConfigs,
+      addresses: AddressRows.Table.make(),
+      contractMapping: ContractMapping.empty,
       processChanges: [],
     }
   }
@@ -348,6 +347,8 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
   let deletedIdsOf = (~entityConfig: Internal.entityConfig, ~entityId: EntityId.t) => {
     let state = makeState(~entityConfig)
     state->TestIndexer.handleWriteBatch(
+      ~config=idTypesConfig,
+      ~registeredAddresses=[],
       ~updatedEntities=[
         {
           entityConfig,

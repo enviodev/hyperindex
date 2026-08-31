@@ -267,6 +267,7 @@ let makeFromDbState = (
         ~isInReorgThreshold,
         ~isRealtime,
         ~config,
+        ~contractMapping=initialState.contractMapping,
         ~registrationsByChainId,
         ~reducedPollingInterval?,
       ),
@@ -769,6 +770,7 @@ let drainBatchRun = (state: t): Batch.t => {
   let checkpointBlockNumbers = []
   let checkpointBlockHashes = []
   let checkpointEventsProcessed = []
+  let registeredAddresses = []
   all->Array.forEach(batch => {
     // Once one batch lands in rest, all later ones follow it, preserving order.
     if rest->Utils.Array.isEmpty && batch.isInReorgThreshold == isInReorgThreshold {
@@ -782,6 +784,7 @@ let drainBatchRun = (state: t): Batch.t => {
       checkpointBlockNumbers->Array.pushMany(batch.checkpointBlockNumbers)
       checkpointBlockHashes->Array.pushMany(batch.checkpointBlockHashes)
       checkpointEventsProcessed->Array.pushMany(batch.checkpointEventsProcessed)
+      registeredAddresses->Array.pushMany(batch.registeredAddresses)
     } else {
       rest->Array.push(batch)
     }
@@ -798,6 +801,7 @@ let drainBatchRun = (state: t): Batch.t => {
     checkpointBlockNumbers,
     checkpointBlockHashes,
     checkpointEventsProcessed,
+    registeredAddresses,
   }
 }
 
@@ -809,7 +813,13 @@ let takeRollback = (state: t): option<Persistence.rollback> => {
 }
 
 // Advance the committed (durably persisted) frontier after a successful write.
-let markCommitted = (state: t, ~upToCheckpointId) => state.committedCheckpointId = upToCheckpointId
+// Written rows leave the buffer only once the transaction that holds them has
+// committed. A failed write keeps them, and re-inserting a row the database
+// already has is a no-op. Rows staged while the write was in flight belong to
+// later checkpoints — ids only ever grow — so this can't drop one unwritten.
+let markCommitted = (state: t, ~upToCheckpointId) => {
+  state.committedCheckpointId = upToCheckpointId
+}
 
 // Reset the in-memory tables and arm the rollback diff that the next write commits.
 let beginRollbackDiff = (
@@ -817,15 +827,25 @@ let beginRollbackDiff = (
   ~targetCheckpointId,
   ~diffCheckpointId,
   ~progressBlockNumberByChainId,
+  ~rolledBackAddresses,
 ) => {
   let perChainEntities = state.allEntities->EntityTables.perChain
   state.entities = EntityTables.make(state.allEntities->EntityTables.crossChain)
   state->chainStates->Utils.Dict.forEach(cs => cs->ChainState.resetEntities(~perChainEntities))
   state.effectState->EffectState.resetForRollback
+  // The address store reports only what each rollback killed, and never
+  // re-reports a registration it already tombstoned. A rollback that lands
+  // before the previous one has been written must therefore carry the earlier
+  // keys too, or their rows outlive every rollback that could delete them.
+  let rolledBackAddresses = switch state.rollback {
+  | Some({rolledBackAddresses: pending}) => pending->Array.concat(rolledBackAddresses)
+  | None => rolledBackAddresses
+  }
   state.rollback = Some({
     targetCheckpointId,
     diffCheckpointId,
     progressBlockNumberByChainId,
+    rolledBackAddresses,
   })
 }
 

@@ -168,8 +168,6 @@ describe("Deferred schema indexes", () => {
       ))
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexer.waitUntilReady()
 
@@ -214,11 +212,8 @@ describe("Deferred schema indexes", () => {
       let gate = gate.contents
       let source = source(1337)
       let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       while gate.entered.contents === 0 {
         await Utils.delay(0)
@@ -270,11 +265,8 @@ describe("Deferred schema indexes", () => {
       let gate = joinGate.contents
       let finalizeCalls = joinFinalizeCalls
       let source = source(1337)
-      await Utils.delay(0)
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       while gate.entered.contents === 0 {
         await Utils.delay(0)
@@ -332,7 +324,6 @@ describe("Deferred schema indexes", () => {
       let chainA = source(100)
       let chainB = source(1337)
       let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
-      await Utils.delay(0)
 
       chainA.resolveGetHeightOrThrow(100)
       chainB.resolveGetHeightOrThrow(100)
@@ -393,8 +384,6 @@ describe("Deferred schema indexes", () => {
       let _ = await sql->Postgres.unsafe(`CREATE INDEX "A_b_id" ON "${pgSchema}"."B"("c_id");`)
 
       source.resolveGetHeightOrThrow(100)
-      await Utils.delay(0)
-      await Utils.delay(0)
       source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=100)
       await indexer.waitUntilReady()
 
@@ -431,10 +420,7 @@ describe("Automatic getWhere indexes", () => {
       let matched = ref([])
       let optionalColumn = "optionalStringToTestLinkedEntities"
 
-      await Utils.delay(0)
       source.resolveGetHeightOrThrow(1000)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       source.resolveGetItemsOrThrow(
         [
@@ -513,7 +499,9 @@ describe("Automatic getWhere indexes", () => {
 
       // The automatic index is the indexer's own, so finalizing must leave it be.
       await MockSource.waitItemsQuery(source)
-      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=1000)
+      // The backfill is chunked into a query per range; the chain only reaches
+      // the head once every one of them is answered.
+      source.drainItemsQueries(~latestFetchedBlockNumber=1000)
       await indexer.waitUntilReady()
 
       t.expect(

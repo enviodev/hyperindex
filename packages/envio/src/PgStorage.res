@@ -290,6 +290,8 @@ let makeInitializeTransaction = (
   let generalTables = [
     InternalTable.Chains.table,
     InternalTable.EnvioInfo.table,
+    InternalTable.EnvioContracts.table,
+    InternalTable.EnvioAddresses.table,
     InternalTable.Checkpoints.table,
     InternalTable.RawEvents.table,
   ]
@@ -1037,6 +1039,7 @@ let rec writeBatch = async (
   ~setQueryCache,
   ~updatedEffectsCache,
   ~updatedEntities: array<Persistence.updatedEntity>,
+  ~registeredAddresses: array<AddressRows.staged>,
   ~sinkPromise: option<promise<option<exn>>>,
   ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
   ~escapeTables=?,
@@ -1293,7 +1296,7 @@ let rec writeBatch = async (
     //valid event identifier, where all rows created after this eventIdentifier should
     //be deleted
     let rollbackTables = switch rollback {
-    | Some({targetCheckpointId: rollbackTargetCheckpointId}) =>
+    | Some({targetCheckpointId: rollbackTargetCheckpointId, rolledBackAddresses}) =>
       Some(
         sql => {
           // Postgres owns history tables only for Postgres-backed entities;
@@ -1314,6 +1317,22 @@ let rec writeBatch = async (
             sql->InternalTable.Checkpoints.rollback(~pgSchema, ~rollbackTargetCheckpointId),
           )
           ->ignore
+
+          // Addresses are insert-only, so undoing their registrations is a
+          // delete rather than a history replay. It runs before the batch's own
+          // inserts in the same transaction, so a re-registered address lands
+          // after its old row is gone.
+          if rolledBackAddresses->Utils.Array.notEmpty {
+            promises
+            ->Array.push(
+              sql->InternalTable.EnvioAddresses.delete(
+                ~pgSchema,
+                ~keys=rolledBackAddresses,
+                ~chainIdMode,
+              ),
+            )
+            ->ignore
+          }
           Promise.all(promises)
         },
       )
@@ -1354,6 +1373,16 @@ let rec writeBatch = async (
             )
             ->ignore
           | None => ()
+          }
+
+          if registeredAddresses->Utils.Array.notEmpty {
+            setOperations->Array.push(sql =>
+              sql->InternalTable.EnvioAddresses.insert(
+                ~pgSchema,
+                ~rows=registeredAddresses->Array.map(staged => staged.row),
+                ~chainIdMode,
+              )
+            )
           }
 
           if shouldSaveHistory {
@@ -1430,6 +1459,7 @@ let rec writeBatch = async (
       ~updatedEffectsCache,
       ~allEntities,
       ~updatedEntities,
+      ~registeredAddresses,
       ~sinkPromise,
       ~chainMetaData,
     )
@@ -1545,6 +1575,9 @@ let make = (
   ~pgPassword,
   ~isHasuraEnabled,
   ~chainIdMode: ChainId.mode=Int32,
+  // Decides how wide an address key is, both when the config's addresses are
+  // encoded at initialize and when stored rows are grouped on resume.
+  ~ecosystem: Ecosystem.name,
   ~sink: option<Sink.t>=?,
   ~onInitialize=?,
   ~onNewTables=?,
@@ -1738,6 +1771,7 @@ let make = (
     ~chainConfigs=[],
     ~entities=[],
     ~enums=[],
+    ~contractMapping,
     ~envioInfo,
   ): Persistence.initialState => {
     // Per-entity storage routing: PG owns tables only for entities that
@@ -1791,43 +1825,34 @@ let make = (
     // Execute all queries within a single transaction for integrity.
     // The envio_info row is written in the same transaction so a successful
     // initialize is atomic — no schema can come up without the matching row.
+    let rowsByChain =
+      chainConfigs->Array.map(chainConfig =>
+        chainConfig->ChainState.configStorageRows(~ecosystem, ~contractMapping)
+      )
+    let configAddressRows = rowsByChain->Array.flat
+
+    // The contract mapping and the config's addresses join the schema in the
+    // same transaction as envio_info: a schema that comes up without them would
+    // resume against ids nothing assigned.
     let _ = await sql->Postgres.beginSql(async sql => {
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
       let _ = await Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
       await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
-    })
-
-    // Populate config addresses into envio_addresses with registration_block/log = -1
-    let ids = []
-    let addrChainIds = []
-    let addrContractNames = []
-    chainConfigs->Array.forEach(chain => {
-      chain.contracts->Array.forEach(contract => {
-        contract.addresses->Array.forEach(
-          address => {
-            ids->Array.push(Config.EnvioAddresses.makeId(~chainId=chain.id, ~address))->ignore
-            addrChainIds->Array.push(chain.id)->ignore
-            addrContractNames->Array.push(contract.name)->ignore
-          },
-        )
-      })
-    })
-    if ids->Array.length > 0 {
-      let addrChainIdArrayType = Table.getPgFieldType(
-        ~fieldType=ChainId,
+      await InternalTable.EnvioContracts.insert(
+        sql,
         ~pgSchema,
-        ~isArray=true,
-        ~isNumericArrayAsText=false,
-        ~isNullable=false,
-        ~chainIdMode,
+        ~contractNames=contractMapping->ContractMapping.names,
       )
-      await sql->Postgres.unpreparedUnsafe(
-        `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.table.tableName}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
-SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChainIdArrayType},$3::text[]) AS t(id, chain_id, contract_name);`,
-        (ids, addrChainIds, addrContractNames)->(Utils.magic: _ => unknown),
-      )
-    }
+      if configAddressRows->Utils.Array.notEmpty {
+        await InternalTable.EnvioAddresses.insert(
+          sql,
+          ~pgSchema,
+          ~rows=configAddressRows,
+          ~chainIdMode,
+        )
+      }
+    })
 
     let cache = await restoreEffectCache(~withUpload=true)
 
@@ -1843,10 +1868,12 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       cleanRun: true,
       cache,
       reorgCheckpoints: [],
-      // Just-written row; resume's compat check would no-op on a clean run,
-      // but keep the field consistent with the resume path's shape.
+      contractMapping,
       envioInfo: Some(envioInfo),
-      chains: chainConfigs->Array.map((chainConfig): Persistence.initialChainState => {
+      chains: chainConfigs->Array.mapWithIndex((
+        chainConfig,
+        idx,
+      ): Persistence.initialChainState => {
         id: chainConfig.id,
         startBlock: chainConfig.startBlock,
         endBlock: chainConfig.endBlock,
@@ -1855,7 +1882,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
         numEventsProcessed: 0.,
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
-        indexingAddresses: ChainState.configAddresses(chainConfig),
+        addressRows: rowsByChain->Array.getUnsafe(idx)->AddressRows.seedRowsOf,
         sourceBlockNumber: 0,
       }),
       checkpointId: InternalTable.Checkpoints.initialCheckpointId,
@@ -2245,7 +2272,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints, envioInfo) = await Promise.all5((
+    let (cache, chains, checkpointIdResult, reorgCheckpoints, (envioInfo, contractMapping)) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
@@ -2260,7 +2287,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
           timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Null.toOption,
           numEventsProcessed: rawInitialState.numEventsProcessed,
           progressBlockNumber: rawInitialState.progressBlockNumber,
-          indexingAddresses: rawInitialState.indexingAddresses,
+          addressRows: rawInitialState.addressRows,
           sourceBlockNumber: rawInitialState.sourceBlockNumber,
         })
       }),
@@ -2279,7 +2306,18 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
           }>,
         >
       ),
-      InternalTable.EnvioInfo.read(sql, ~pgSchema),
+      Promise.all2((
+        InternalTable.EnvioInfo.read(sql, ~pgSchema),
+        InternalTable.EnvioContracts.read(sql, ~pgSchema),
+      ))->Promise.thenResolve(((info, names)) =>
+        // Both tables join the schema in one transaction. A missing mapping
+        // means an older envio wrote this schema, so treat the snapshot as
+        // unreadable rather than decoding address rows against ids nothing assigned.
+        switch (info, names) {
+        | (Some(info), Some(names)) => (Some(info), ContractMapping.fromStoredNames(names))
+        | _ => (None, ContractMapping.empty)
+        }
+      ),
     ))
 
     await reloadIndexCatalog()
@@ -2306,6 +2344,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       cache,
       chains,
       checkpointId,
+      contractMapping,
       envioInfo,
     }
   }
@@ -2400,6 +2439,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
     ~allEntities,
     ~updatedEffectsCache,
     ~updatedEntities,
+    ~registeredAddresses,
     ~chainMetaData,
     ~onWrite,
   ) => {
@@ -2446,6 +2486,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
       ~updatedEntities=pgUpdates,
+      ~registeredAddresses,
       ~sinkPromise,
       ~chainMetaData,
     )
@@ -2491,6 +2532,7 @@ let makeStorageFromEnv = (
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
     ~chainIdMode=config.chainIdMode,
+    ~ecosystem=config.ecosystem.name,
     ~sink=?{
       // Internally ClickHouse storage is implemented as a sync of the
       // Postgres storage. Required env vars are validated here only when
@@ -2543,7 +2585,7 @@ let makeStorageFromEnv = (
               ~pgSchema,
               ~userEntities=config->Config.getPgUserEntities,
               ~responseLimit=Env.Hasura.responseLimit,
-              ~schema=Schema.make(config.allEntities->Array.map(e => e.table)),
+              ~schema=Schema.make(config.userEntities->Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
             )->Promise.catch(err => {
               Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
