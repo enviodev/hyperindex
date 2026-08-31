@@ -380,7 +380,7 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
     baseSchema
   }
   let fieldSchema = if isNullable {
-    S.null(fieldSchema)->S.toUnknown
+    Utils.Schema.nullTolerant(fieldSchema)->S.toUnknown
   } else {
     fieldSchema
   }
