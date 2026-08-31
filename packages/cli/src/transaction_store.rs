@@ -29,7 +29,7 @@ use crate::field_table::{
     access_lists_cells, access_lists_from, auth_lists_cells, auth_lists_from, bool_cells,
     bool_from, bytes_cells, f64_cells, f64_from, fixed_from, hash_list_cells, hash_list_from,
     hex_full, hex_quantity, str_list_cells, str_list_from, u64_cells, u64_from, utf8, var_from,
-    AnyCol, Table,
+    AnyCol, Known, Table,
 };
 use crate::svm_hypersync_source::types::bigint_u64;
 
@@ -784,7 +784,19 @@ impl TransactionStore {
     /// Merge one response's EVM transactions into the table (called by the
     /// HyperSync source while building a page). Rows without a (block, index)
     /// key are dropped. Not exposed to JS.
-    pub(crate) fn insert_evm_txs(&self, mut txs: Vec<simple_types::Transaction>) {
+    pub(crate) fn insert_evm_txs(&self, txs: Vec<simple_types::Transaction>) {
+        self.insert_evm_txs_covering(txs, 0);
+    }
+
+    /// Merge transactions fetched for a known field selection. `covering` marks
+    /// every field the fetch asked for, so one the transaction genuinely has no
+    /// value for (a null `to` on a contract creation) still reads as fetched
+    /// and is not requested again.
+    pub(crate) fn insert_evm_txs_covering(
+        &self,
+        mut txs: Vec<simple_types::Transaction>,
+        covering: u64,
+    ) {
         txs.retain(|t| t.block_number.is_some() && t.transaction_index.is_some());
         if txs.is_empty() {
             return;
@@ -800,7 +812,11 @@ impl TransactionStore {
             .iter()
             .map(|&f| evm_tx_col(f, &txs))
             .collect();
-        self.inner.lock().unwrap().txs.merge_batch(keys, cols);
+        self.inner
+            .lock()
+            .unwrap()
+            .txs
+            .merge_batch(keys, cols, Known::All(covering));
     }
 
     /// Merge one response's SVM transactions into the table, keyed by
@@ -826,7 +842,7 @@ impl TransactionStore {
             .iter()
             .map(|&f| svm_tx_col(f, &txs))
             .collect();
-        self.inner.lock().unwrap().txs.merge_batch(keys, cols);
+        self.inner.lock().unwrap().txs.merge_batch(keys, cols, Known::All(0));
     }
 
     /// Merge one response's SVM account activity into the companion table,
@@ -881,7 +897,7 @@ impl TransactionStore {
             .lock()
             .unwrap()
             .account_activity
-            .merge_batch(keys, cols);
+            .merge_batch(keys, cols, Known::All(0));
     }
 }
 
