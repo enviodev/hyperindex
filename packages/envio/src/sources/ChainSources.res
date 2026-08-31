@@ -1,7 +1,6 @@
-// Builds the sources for a chain from its config. Extracted out of
-// `ChainState.makeInternal` so `StartBlockResolver` (which runs earlier, to
-// resolve a `latest` start block before the chain's persisted state exists)
-// can build the same sources without depending on `ChainState`/`Persistence`.
+// Sits below `ChainState`/`Persistence` in the module graph so that
+// `StartBlockResolver` (called from `Persistence.init`) can build a chain's
+// sources without a dependency cycle.
 let make = (
   ~chainConfig: Config.chain,
   ~onEventRegistrations: array<Internal.onEventRegistration>,

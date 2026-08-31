@@ -130,6 +130,30 @@ impl human_config::evm::Chain {
         }
         Ok(())
     }
+
+    // A contract can't start before its chain, and a `latest` chain start block
+    // is only known once the indexer first runs - so any contract-level
+    // start_block is guaranteed to be in the past relative to it.
+    pub fn validate_no_contract_start_block_with_latest(&self) -> anyhow::Result<()> {
+        if let StartBlock::Tag(_) = self.start_block {
+            if let Some(contract) = self
+                .contracts
+                .iter()
+                .flatten()
+                .find(|contract| contract.start_block.is_some())
+            {
+                return Err(anyhow!(
+                    "Contract {:?} on chain {} sets start_block, but the chain's start_block is \
+                     \"latest\". A contract can't start before its chain does, and \"latest\" \
+                     isn't known until the indexer first runs. Remove the contract's \
+                     start_block, or pin the chain's start_block to a fixed value.",
+                    contract.name,
+                    self.id
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Result<()> {
@@ -144,6 +168,7 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     for chain in &evm_config.chains {
         // validate endblock is a greater than the startblock
         chain.validate_endblock_lte_startblock()?;
+        chain.validate_no_contract_start_block_with_latest()?;
         chain.validate_finite_endblock_networks()?;
 
         // Addresses are compared case-insensitively: checksum and lowercase
@@ -405,6 +430,39 @@ mod tests {
         assert!(chain_no_end_block
             .validate_endblock_lte_startblock()
             .is_ok());
+    }
+
+    #[test]
+    fn latest_start_block_rejects_a_contract_level_start_block() {
+        let contracts = Some(vec![super::human_config::ChainContract {
+            name: "C".to_string(),
+            address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+                .to_string()
+                .into(),
+            start_block: Some(100),
+            config: None,
+        }]);
+
+        let mut latest = make_chain(
+            super::StartBlock::Tag(super::human_config::StartBlockTag::Latest),
+            None,
+        );
+        latest.contracts = contracts.clone();
+
+        let mut numeric = make_chain(super::StartBlock::Number(0), None);
+        numeric.contracts = contracts;
+
+        assert_eq!(
+            (
+                latest
+                    .validate_no_contract_start_block_with_latest()
+                    .is_err(),
+                numeric
+                    .validate_no_contract_start_block_with_latest()
+                    .is_ok(),
+            ),
+            (true, true)
+        );
     }
 
     #[test]

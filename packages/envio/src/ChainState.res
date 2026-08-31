@@ -203,8 +203,8 @@ let makeInternal = (
 
   chainConfig.contracts->Array.forEach(contract => {
     switch contract.startBlock {
-    // Compared against the resolved `~startBlock` param (never the raw
-    // `chainConfig.startBlock`, which may still be `Latest` and unresolved).
+    // Against the resolved `~startBlock` param: `chainConfig.startBlock` is
+    // still 0 for a `latest` chain on paths that don't rebind the config.
     | Some(contractStartBlock) if contractStartBlock < startBlock =>
       JsError.throwWithMessage(
         `The start block for contract "${contract.name}" is less than the chain start block. This is not supported yet.`,

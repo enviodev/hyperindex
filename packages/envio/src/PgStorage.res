@@ -1875,9 +1875,7 @@ let make = (
         idx,
       ): Persistence.initialChainState => {
         id: chainConfig.id,
-        // Guaranteed resolved: `chainConfigs` came through
-        // `StartBlockResolver.resolveAllOrThrow` in `Persistence.init`.
-        startBlock: chainConfig.startBlock->Config.startBlockToIntExn,
+        startBlock: chainConfig.startBlock,
         endBlock: chainConfig.endBlock,
         maxReorgDepth: chainConfig.maxReorgDepth,
         progressBlockNumber: -1,

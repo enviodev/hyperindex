@@ -777,10 +777,9 @@ let registerOnBlock = (
 
       if shouldRegister {
         matchedAny := true
-        let chainStartBlock = chainConfig.startBlock->Config.startBlockToIntExn
-        if range._gte->Option.getOr(chainStartBlock) < chainStartBlock {
+        if range._gte->Option.getOr(chainConfig.startBlock) < chainConfig.startBlock {
           JsError.throwWithMessage(
-            `The start block for onBlock handler "${name}" is less than the chain start block (${chainStartBlock->Int.toString}). This is not supported yet.`,
+            `The start block for onBlock handler "${name}" is less than the chain start block (${chainConfig.startBlock->Int.toString}). This is not supported yet.`,
           )
         }
         switch chainConfig.endBlock {

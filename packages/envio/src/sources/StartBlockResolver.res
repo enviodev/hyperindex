@@ -10,66 +10,115 @@
 // `Persistence.init`, which wipes the DB and runs this resolver again, the
 // same as any other fresh deploy.
 
-// Sources built only to probe `getHeightOrThrow` - no real registrations
-// exist yet at this point in startup (handler files load after persistence
+// Long enough for `SourceManager.waitForNewBlock` to fail over to `for:
+// fallback` sources (after its stall timeout) before startup gives up.
+let defaultDeadlineMs = 5 * 60 * 1000
+
+// Sources built only to probe the chain's height - no real registrations exist
+// yet at this point in startup (handler files load after persistence
 // initializes), and none are needed just to ask a backend for its height.
 let makeProbeSources = (chainConfig: Config.chain, ~lowercaseAddresses): array<Source.t> => {
-  switch chainConfig.sourceConfig {
-  | Config.SimulateSourceConfig(_) =>
-    JsError.throwWithMessage(
-      `Chain ${chainConfig.id->ChainId.toString}: resolving "latest" is not supported for a simulated source.`,
-    )
-  | _ =>
-    let addressStore = AddressStore.make(
-      ~ecosystem=chainConfig.ecosystem,
-      ~shouldChecksum=!lowercaseAddresses,
-      ~contracts=[],
-    )
-    ChainSources.make(~chainConfig, ~onEventRegistrations=[], ~addressStore, ~lowercaseAddresses)
-  }
+  let addressStore = AddressStore.make(
+    ~ecosystem=chainConfig.ecosystem,
+    ~shouldChecksum=!lowercaseAddresses,
+    ~contracts=[],
+  )
+  ChainSources.make(~chainConfig, ~onEventRegistrations=[], ~addressStore, ~lowercaseAddresses)
 }
 
-let resolveOneOrThrow = async (chainConfig: Config.chain, ~lowercaseAddresses): int => {
-  switch chainConfig.startBlock {
-  | Config.Number(n) => n
-  | Config.Latest =>
-    let sources = chainConfig->makeProbeSources(~lowercaseAddresses)
-    let source = SourceManager.make(~sources, ~isRealtime=false)->SourceManager.getActiveSource
-    let getHeightRetryInterval = SourceManager.makeGetHeightRetryInterval(
-      ~initialRetryInterval=1000,
-      ~backoffMultiplicative=2,
-      ~maxRetryInterval=60_000,
-    )
-    let rec attempt = async retry =>
-      switch await source.getHeightOrThrow() {
-      | {height} => height
-      | exception exn =>
-        Logging.warn({
-          "msg": `Failed to resolve the "latest" start block for chain ${chainConfig.id->ChainId.toString}. Retrying.`,
-          "err": exn->Utils.prettifyExn,
-        })
-        await Utils.delay(getHeightRetryInterval(~retry))
-        await attempt(retry + 1)
-      }
-    await attempt(0)
-  }
-}
-
-// Resolves every chain's "latest" (if any) in parallel, and fails fast if a
-// resolved start block would leave nothing to index.
-let resolveAllOrThrow = async (chainConfigs: array<Config.chain>, ~lowercaseAddresses): array<
-  Config.chain,
-> =>
-  await chainConfigs
-  ->Array.map(async chainConfig => {
-    let resolved = await chainConfig->resolveOneOrThrow(~lowercaseAddresses)
-    switch chainConfig.endBlock {
-    | Some(endBlock) if resolved > endBlock =>
-      JsError.throwWithMessage(
-        `Chain ${chainConfig.id->ChainId.toString}: the resolved "latest" start block (${resolved->Int.toString}) is greater than the configured end_block (${endBlock->Int.toString}). There is nothing to index - remove end_block, raise it above the chain's current head, or pin start_block to a fixed value instead of "latest".`,
-      )
-    | _ => ()
-    }
-    {...chainConfig, startBlock: Config.Number(resolved)}
+let resolveHeadOrThrow = async (
+  chainConfig: Config.chain,
+  ~lowercaseAddresses,
+  ~getHeightRetryInterval=?,
+  ~newBlockStallTimeout=?,
+  ~deadlineMs,
+): int => {
+  // The runtime's own height polling: retries a failing source with backoff
+  // and fails over to `for: fallback` sources after the stall timeout, rather
+  // than pinning startup on a single primary.
+  let sourceManager = SourceManager.make(
+    ~sources=chainConfig->makeProbeSources(~lowercaseAddresses),
+    ~isRealtime=false,
+    ~getHeightRetryInterval?,
+    ~newBlockStallTimeout?,
+  )
+  let timeoutId = ref(None)
+  let deadline = Promise.make((_, reject) => {
+    timeoutId := Some(setTimeout(() => {
+          reject(
+            JsError.make(
+              `Chain ${chainConfig.id->ChainId.toString}: couldn't resolve the "latest" start block - no source answered a height request within ${(deadlineMs / 1000)
+                  ->Int.toString}s. Check the chain's RPC/HyperSync endpoints and ENVIO_API_TOKEN, then start again.`,
+            ),
+          )
+        }, deadlineMs))
   })
-  ->Promise.all
+  let clearDeadline = () =>
+    switch timeoutId.contents {
+    | Some(id) => clearTimeout(id)
+    | None => ()
+    }
+  switch await Promise.race([
+    sourceManager->SourceManager.waitForNewBlock(
+      ~knownHeight=0,
+      ~isRealtime=false,
+      ~reducedPolling=false,
+    ),
+    deadline,
+  ]) {
+  | height =>
+    clearDeadline()
+    height
+  | exception exn =>
+    clearDeadline()
+    throw(exn)
+  }
+}
+
+// Sequential rather than `Promise.all`: a chain that fails validation must not
+// leave sibling chains' height polling running behind the rejection.
+let resolveAllOrThrow = async (
+  chainConfigs: array<Config.chain>,
+  ~lowercaseAddresses,
+  ~getHeightRetryInterval=?,
+  ~newBlockStallTimeout=?,
+  ~deadlineMs=defaultDeadlineMs,
+): array<Config.chain> => {
+  let resolved = []
+  for i in 0 to chainConfigs->Array.length - 1 {
+    let chainConfig = chainConfigs->Array.getUnsafe(i)
+    let chainConfig = if chainConfig.isLatestStartBlock {
+      let head = await chainConfig->resolveHeadOrThrow(
+        ~lowercaseAddresses,
+        ~getHeightRetryInterval?,
+        ~newBlockStallTimeout?,
+        ~deadlineMs,
+      )
+      let chainId = chainConfig.id->ChainId.toString
+      switch chainConfig.endBlock {
+      | Some(endBlock) if head > endBlock =>
+        JsError.throwWithMessage(
+          `Chain ${chainId}: the "latest" start block resolved to ${head->Int.toString}, which is past the configured end_block (${endBlock->Int.toString}). There is nothing to index - remove end_block, raise it above the chain's current head, or pin start_block to a fixed value instead of "latest".`,
+        )
+      | _ => ()
+      }
+      // Checked here, before anything is persisted: the same guard in
+      // `ChainState.makeInternal` would only fire after the resolved head is
+      // written to envio_chains, and then again on every resume.
+      chainConfig.contracts->Array.forEach(contract =>
+        switch contract.startBlock {
+        | Some(contractStartBlock) if contractStartBlock < head =>
+          JsError.throwWithMessage(
+            `Chain ${chainId}: contract "${contract.name}" has start_block ${contractStartBlock->Int.toString}, but the chain's "latest" start block resolved to ${head->Int.toString}. A contract can't start before its chain does - remove the contract's start_block, or pin the chain's start_block to a fixed value instead of "latest".`,
+          )
+        | _ => ()
+        }
+      )
+      {...chainConfig, startBlock: head}
+    } else {
+      chainConfig
+    }
+    resolved->Array.push(chainConfig)->ignore
+  }
+  resolved
+}

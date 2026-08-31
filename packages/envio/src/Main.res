@@ -126,14 +126,7 @@ let buildChainsObject = (~config: Config.t) => {
         get: () => {
           switch getInitialChainState(~chainId=chainConfig.id) {
           | Some(chainState) => chainState.startBlock
-          | None =>
-            switch chainConfig.startBlock {
-            | Config.Number(n) => n
-            | Config.Latest =>
-              JsError.throwWithMessage(
-                `Chain ${chainIdStr}'s start_block is "latest" and hasn't been resolved yet - this is only available once the indexer has initialized persistence.`,
-              )
-            }
+          | None => chainConfig.startBlock
           }
         },
       },
@@ -658,16 +651,14 @@ let start = async (
   // itself (and the raw JSON snapshotted into `envio_info`) still say "latest",
   // which is what keeps the config-compat check stable across normal resumes
   // (a `-r`/`--restart` deploy is a fresh one, and resolves "latest" again).
-  let initializedState = persistence->Persistence.getInitializedState
   let config = {
     ...config,
     chainMap: config.chainMap->ChainMap.mapWithKey((chainId, chainConfig) =>
-      switch initializedState.chains->Array.find(c => c.id === chainId) {
-      | Some({startBlock}) => {...chainConfig, startBlock: Config.Number(startBlock)}
-      // A chain missing from persisted state: added to config.yaml after the
-      // schema was already initialized. Dynamic chain addition isn't
-      // supported (schema/config changes require a resync from scratch), so
-      // this is left as-is rather than worked around here.
+      switch getInitialChainState(~chainId) {
+      | Some({startBlock}) => {...chainConfig, startBlock}
+      // Not in persisted state: a chain added to config.yaml after the schema
+      // was initialized. Dynamic chain addition isn't supported (that's a
+      // resync from scratch), so it's left as-is.
       | None => chainConfig
       }
     ),

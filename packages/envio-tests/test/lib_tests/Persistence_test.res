@@ -58,10 +58,9 @@ describe("Test Persistence layer init", () => {
     ).toEqual(true)
 
     // Resolving "latest" start blocks (a no-op here, chainConfigs is empty)
-    // runs between the isInitialized check and the storage.initialize call,
-    // adding microtask ticks before initializeCalls is populated.
-    let _ = await Promise.resolve()
-    let _ = await Promise.resolve()
+    // runs between the isInitialized check and the storage.initialize call;
+    // drain the microtask queue rather than counting its awaits.
+    await Utils.delay(0)
 
     t.expect(
       (
@@ -130,10 +129,9 @@ describe("Test Persistence layer init", () => {
         ~runCommand=runCmd,
       )
     // Resolving "latest" start blocks (a no-op here, chainConfigs is empty)
-    // runs between the reset check and the storage.initialize call, adding
-    // microtask ticks before initializeCalls is populated.
-    let _ = await Promise.resolve()
-    let _ = await Promise.resolve()
+    // runs between the reset check and the storage.initialize call; drain
+    // the microtask queue rather than counting its awaits.
+    await Utils.delay(0)
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,

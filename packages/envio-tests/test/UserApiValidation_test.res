@@ -53,7 +53,7 @@ chains:
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.name).toBe("in-memory")
     t.expect(config.userEntities->Array.length).toBe(0)
-    t.expect(chain.startBlock->Config.startBlockToIntExn).toBe(42)
+    t.expect(chain.startBlock).toBe(42)
 
     switch chain.sourceConfig {
     | Config.EvmSourceConfig({rpcs}) => {
@@ -1010,10 +1010,7 @@ chains:
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.ecosystem.name).toEqual(Ecosystem.Fuel)
-    t.expect((chain.id->ChainId.toString, chain.startBlock->Config.startBlockToIntExn)).toEqual((
-      "0",
-      7,
-    ))
+    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("0", 7))
   })
 
   it("parses a minimal SVM config through the public boundary", t => {
@@ -1029,10 +1026,7 @@ chains:
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.ecosystem.name).toEqual(Ecosystem.Svm)
-    t.expect((chain.id->ChainId.toString, chain.startBlock->Config.startBlockToIntExn)).toEqual((
-      "7565164",
-      8,
-    ))
+    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("7565164", 8))
   })
 
   it("validates event field selections against only the chain that uses them", t => {
@@ -1102,7 +1096,7 @@ chains:
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.chainMap->ChainMap.values->Array.length).toBe(1)
     t.expect(chain.id->ChainId.toString).toBe("137")
-    t.expect(chain.startBlock->Config.startBlockToIntExn).toBe(2000)
+    t.expect(chain.startBlock).toBe(2000)
   })
 
   it("normalizes trailing slashes in HyperSync URLs", t => {
