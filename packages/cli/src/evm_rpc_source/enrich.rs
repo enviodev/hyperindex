@@ -49,6 +49,9 @@ type Fetched = (Arc<Json>, f64, Arc<AtomicBool>);
 
 pub(crate) type FetchCache = Inflight<FetchKey, Fetched, RpcError>;
 
+/// A transaction's place in its block, which is how both stores key it.
+pub(crate) type TxKey = (u64, u32);
+
 /// One outstanding JSON-RPC read, as the deduplication map keys it. A hash is
 /// held as its bytes — the one canonical form — and rendered where the request
 /// is built.
@@ -158,7 +161,7 @@ struct TxRef {
 #[derive(Default)]
 pub(crate) struct PageRefs {
     blocks: HashMap<u64, BlockRef>,
-    transactions: HashMap<(u64, u32), TxRef>,
+    transactions: HashMap<TxKey, TxRef>,
 }
 
 impl PageRefs {
@@ -213,7 +216,7 @@ async fn read(
 ) -> Result<Option<Arc<Json>>, EnrichError> {
     let method = key.method();
     let (value, seconds, unclaimed) = cache
-        .get(key.clone(), || {
+        .get(key, || {
             let client = client.clone();
             let params = key.params();
             async move {
@@ -404,7 +407,7 @@ struct TxGroup {
     covering: u64,
     fields: Vec<TransactionField>,
     reads: TxReads,
-    entries: Vec<((u64, u32), format::Hash)>,
+    entries: Vec<(TxKey, format::Hash)>,
 }
 
 /// Which blocks to read, and for which fields. A referenced block is skipped
@@ -453,7 +456,7 @@ fn plan_blocks(
 /// selected fields all come off the log, or which the store already covers,
 /// needs no request at all.
 fn plan_transactions(refs: &PageRefs, known: &TransactionStore) -> Vec<TxGroup> {
-    let mut by_covering: HashMap<u64, Vec<((u64, u32), format::Hash)>> = HashMap::new();
+    let mut by_covering: HashMap<u64, Vec<(TxKey, format::Hash)>> = HashMap::new();
     for (&key, tx_ref) in &refs.transactions {
         let wanted = tx_ref.mask & !TX_LOG_MASK;
         if wanted == 0 || known.covers(key, wanted) {
@@ -660,8 +663,8 @@ mod tests {
         numbers
     }
 
-    fn planned_keys(groups: &[TxGroup]) -> Vec<(u64, u32)> {
-        let mut keys: Vec<(u64, u32)> = groups
+    fn planned_keys(groups: &[TxGroup]) -> Vec<TxKey> {
+        let mut keys: Vec<TxKey> = groups
             .iter()
             .flat_map(|group| group.entries.iter().map(|(key, _)| *key))
             .collect();

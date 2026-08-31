@@ -321,244 +321,46 @@ mod tests {
     use strum::VariantArray;
 
     #[test]
-    fn every_store_field_round_trips_from_its_own_response_key() {
-        // The store field's `name()` is also its JSON-RPC response key, which
-        // is what lets one enum drive both the mask and the parsing. Pin it by
-        // decoding a response built purely from `name()`.
-        let mut block = Block::default();
-        for &field in EvmBlockField::VARIANTS {
-            let raw = match field {
-                EvmBlockField::Uncles => json!(["0x".to_string() + &"11".repeat(32)]),
-                EvmBlockField::Miner => json!("0x".to_string() + &"22".repeat(20)),
-                EvmBlockField::Hash
-                | EvmBlockField::ParentHash
-                | EvmBlockField::Sha3Uncles
-                | EvmBlockField::TransactionsRoot
-                | EvmBlockField::StateRoot
-                | EvmBlockField::ReceiptsRoot
-                | EvmBlockField::ParentBeaconBlockRoot
-                | EvmBlockField::WithdrawalsRoot
-                | EvmBlockField::SendRoot
-                | EvmBlockField::MixHash => json!("0x".to_string() + &"33".repeat(32)),
-                EvmBlockField::Nonce => json!("0x".to_string() + &"44".repeat(8)),
-                _ => json!("0x2a"),
-            };
-            set_block_field(&mut block, field, &raw).expect(field.name());
-        }
-        assert_eq!(
-            (
-                block.number,
-                block.timestamp.as_ref().map(Hex::encode_hex),
-                block.gas_used.as_ref().map(Hex::encode_hex),
-                block.uncles.map(|u| u.len()),
-            ),
-            (Some(42), Some("0x2a".into()), Some("0x2a".into()), Some(1))
-        );
-    }
-
-    #[test]
-    fn every_transaction_field_but_the_log_derived_pair_decodes() {
+    fn the_list_shaped_transaction_fields_decode() {
+        // The per-column pin gives each field a value only it could have, which
+        // a list rendered by its length cannot be; these two are checked here
+        // against their real response shapes instead.
         let mut tx = Transaction::default();
-        for &field in EvmTxField::VARIANTS {
-            if tx_carrier(field) == Carrier::Log {
-                continue;
-            }
-            let raw = match field {
-                EvmTxField::From | EvmTxField::To | EvmTxField::ContractAddress => {
-                    json!("0x".to_string() + &"22".repeat(20))
-                }
-                EvmTxField::Root => json!("0x".to_string() + &"33".repeat(32)),
-                EvmTxField::BlobVersionedHashes => json!(["0x".to_string() + &"11".repeat(32)]),
-                EvmTxField::L1FeeScalar => json!("1.5"),
-                EvmTxField::Status => json!("0x1"),
-                EvmTxField::AccessList => json!([{
-                    "address": "0x".to_string() + &"22".repeat(20),
-                    "storageKeys": ["0x".to_string() + &"11".repeat(32)],
-                }]),
-                EvmTxField::AuthorizationList => json!([{
-                    "chainId": "0x1",
-                    "address": "0x".to_string() + &"22".repeat(20),
-                    "nonce": "0x1",
-                    "yParity": "0x0",
-                    "r": "0x1",
-                    "s": "0x1",
-                }]),
-                _ => json!("0x2a"),
-            };
-            set_tx_field(&mut tx, field, &raw).expect(field.name());
-        }
+        set_tx_field(
+            &mut tx,
+            EvmTxField::AccessList,
+            &json!([{
+                "address": "0x".to_string() + &"22".repeat(20),
+                "storageKeys": ["0x".to_string() + &"11".repeat(32)],
+            }]),
+        )
+        .unwrap();
+        set_tx_field(
+            &mut tx,
+            EvmTxField::AuthorizationList,
+            &json!([{
+                "chainId": "0x1",
+                "address": "0x".to_string() + &"22".repeat(20),
+                "nonce": "0x1",
+                "yParity": "0x0",
+                "r": "0x1",
+                "s": "0x1",
+            }]),
+        )
+        .unwrap();
         assert_eq!(
             (
-                tx.gas.as_ref().map(Hex::encode_hex),
-                tx.l1_fee_scalar,
-                tx.access_list.as_ref().map(Vec::len),
-                tx.authorization_list.as_ref().map(Vec::len),
-                tx.status.map(|s| s.to_u8()),
+                tx.access_list
+                    .as_ref()
+                    .and_then(|list| list.first())
+                    .and_then(|entry| entry.storage_keys.as_ref())
+                    .map(Vec::len),
+                tx.authorization_list
+                    .as_ref()
+                    .and_then(|list| list.first())
+                    .map(|entry| entry.address.encode_hex()),
             ),
-            (Some("0x2a".into()), Some(1.5), Some(1), Some(1), Some(1))
-        );
-    }
-
-    /// A value unique to the field's own ordinal, in whatever shape that field
-    /// takes. Two fields never share one, so a value read into the wrong
-    /// column shows up as the other field's.
-    fn distinct_value(ordinal: u32, shape: Shape) -> Json {
-        let nth = ordinal + 1;
-        match shape {
-            Shape::Quantity => json!(format!("0x{nth:x}")),
-            Shape::Hash => json!(format!("0x{}", format!("{nth:02x}").repeat(32))),
-            Shape::Address => json!(format!("0x{}", format!("{nth:02x}").repeat(20))),
-            Shape::Nonce => json!(format!("0x{}", format!("{nth:02x}").repeat(8))),
-            Shape::HashList => json!([format!("0x{}", format!("{nth:02x}").repeat(32))]),
-            Shape::Decimal => json!(format!("{nth}.5")),
-            // A receipt status is only ever failure or success, so this one
-            // field cannot take a value derived from its ordinal.
-            Shape::Status => json!("0x1"),
-        }
-    }
-
-    #[derive(Clone, Copy)]
-    enum Shape {
-        Quantity,
-        Hash,
-        Address,
-        Nonce,
-        HashList,
-        Decimal,
-        Status,
-    }
-
-    fn block_shape(field: EvmBlockField) -> Shape {
-        use EvmBlockField::*;
-        match field {
-            Hash | ParentHash | Sha3Uncles | TransactionsRoot | StateRoot | ReceiptsRoot
-            | ParentBeaconBlockRoot | WithdrawalsRoot | SendRoot | MixHash => Shape::Hash,
-            Miner => Shape::Address,
-            Nonce => Shape::Nonce,
-            Uncles => Shape::HashList,
-            _ => Shape::Quantity,
-        }
-    }
-
-    fn tx_shape(field: EvmTxField) -> Shape {
-        use EvmTxField::*;
-        match field {
-            Hash | Root => Shape::Hash,
-            From | To | ContractAddress => Shape::Address,
-            BlobVersionedHashes => Shape::HashList,
-            L1FeeScalar => Shape::Decimal,
-            Status => Shape::Status,
-            _ => Shape::Quantity,
-        }
-    }
-
-    /// Every field's materialised cell, by name.
-    fn cells(names: &[&'static str], columns: &Columns) -> Vec<(&'static str, Option<String>)> {
-        names
-            .iter()
-            .map(|&name| {
-                (
-                    name,
-                    crate::field_columns::test_support::cell(columns, name, 0),
-                )
-            })
-            .collect()
-    }
-
-    /// The fields whose cell is missing, and the values shared by more than one
-    /// field. Each field was given a value only it could have, so a field read
-    /// from the wrong response key loses its value, and one assigned to another
-    /// field's column shares that field's.
-    fn misplaced(
-        cells: &[(&'static str, Option<String>)],
-    ) -> (Vec<&'static str>, Vec<&'static str>) {
-        let missing = cells
-            .iter()
-            .filter(|(_, value)| value.is_none())
-            .map(|(name, _)| *name)
-            .collect();
-        let mut seen: HashMap<&str, &'static str> = HashMap::new();
-        let mut shared = Vec::new();
-        for (name, value) in cells {
-            let Some(value) = value else { continue };
-            match seen.insert(value.as_str(), name) {
-                Some(other) => shared.extend_from_slice(&[other, name]),
-                None => {}
-            }
-        }
-        (missing, shared)
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn every_block_field_lands_in_its_own_column() {
-        // Give each field a value only it could have and read every column back
-        // through the store: a field decoded from the wrong response key comes
-        // back empty, and one assigned to another field's column comes back
-        // holding that field's value.
-        let mut block = Block::default();
-        let mut mask = 0u64;
-        for &field in EvmBlockField::VARIANTS {
-            let raw = distinct_value(field as u32, block_shape(field));
-            set_block_field(&mut block, field, &raw).expect(field.name());
-            mask |= 1u64 << (field as u32);
-        }
-
-        let store = crate::block_store::BlockStore::new_evm(false);
-        store.insert_evm_blocks_covering(vec![block], mask);
-        let columns = store
-            .materialize(vec![1], vec![mask as f64])
-            .await
-            .expect("materialize");
-        let names: Vec<&'static str> = EvmBlockField::VARIANTS.iter().map(|f| f.name()).collect();
-        assert_eq!(
-            misplaced(&cells(&names, &columns)),
-            (Vec::new(), Vec::new())
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn every_transaction_field_lands_in_its_own_column() {
-        let mut tx = Transaction {
-            block_number: Some(7u64.into()),
-            transaction_index: Some(3u64.into()),
-            ..Default::default()
-        };
-        let mut mask = 0u64;
-        for &field in EvmTxField::VARIANTS {
-            mask |= 1u64 << (field as u32);
-            // The index keys the row rather than coming from a response, and
-            // the two list fields render by length, which cannot be distinct.
-            if matches!(
-                field,
-                EvmTxField::TransactionIndex
-                    | EvmTxField::AccessList
-                    | EvmTxField::AuthorizationList
-            ) {
-                continue;
-            }
-            let raw = distinct_value(field as u32, tx_shape(field));
-            set_tx_field(&mut tx, field, &raw).expect(field.name());
-        }
-
-        let store = crate::transaction_store::TransactionStore::new_evm(false);
-        store.insert_evm_txs_covering(vec![tx], mask);
-        let columns = store
-            .materialize(vec![7], vec![3], vec![mask as f64])
-            .await
-            .expect("materialize");
-        let names: Vec<&'static str> = EvmTxField::VARIANTS
-            .iter()
-            .filter(|f| {
-                !matches!(
-                    f,
-                    EvmTxField::AccessList | EvmTxField::AuthorizationList
-                )
-            })
-            .map(|f| f.name())
-            .collect();
-        assert_eq!(
-            misplaced(&cells(&names, &columns)),
-            (Vec::new(), Vec::new())
+            (Some(1), Some(format!("0x{}", "22".repeat(20))))
         );
     }
 

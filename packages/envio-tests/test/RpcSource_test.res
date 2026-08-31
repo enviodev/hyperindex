@@ -13,9 +13,9 @@ let makeAddressStore = (
   ~addresses=[],
 ) =>
   TestAddresses.makeStore(
-    ~onEventRegistrations=onEventRegistrations->Array.map(reg => (
-      reg :> Internal.onEventRegistration
-    )),
+    ~onEventRegistrations=onEventRegistrations->Array.map(reg =>
+      (reg :> Internal.onEventRegistration)
+    ),
     ~addresses,
   )
 
@@ -105,9 +105,7 @@ describe("RpcSource - field selection end to end", () => {
         )
       | "eth_getTransactionReceipt" =>
         receipt->Option.getOr(
-          JSON.parseOrThrow(
-            `{"gasUsed":"0x5208","cumulativeGasUsed":"0x5209","effectiveGasPrice":"0x9","status":"0x1","from":"0xAbC0000000000000000000000000000000000123","to":null,"l1FeeScalar":"1.5"}`,
-          ),
+          JSON.parseOrThrow(`{"gasUsed":"0x5208","cumulativeGasUsed":"0x5209","effectiveGasPrice":"0x9","status":"0x1","from":"0xAbC0000000000000000000000000000000000123","to":null,"l1FeeScalar":"1.5"}`),
         )
       | _ => JsError.throwWithMessage(`Unexpected RPC method ${method}`)
       }
@@ -193,10 +191,7 @@ describe("RpcSource - field selection end to end", () => {
 
   Async.it("Reads a transaction-only selection from the transaction alone", async t => {
     let mock = await startProvider()
-    let payloads = await fetchPayloads(
-      ~mock,
-      ~transactionFieldNames=[Gas, Input, Nonce],
-    )
+    let payloads = await fetchPayloads(~mock, ~transactionFieldNames=[Gas, Input, Nonce])
     let counts = (
       mock->countMethod("eth_getTransactionByHash"),
       mock->countMethod("eth_getTransactionReceipt"),
@@ -237,6 +232,35 @@ describe("RpcSource - field selection end to end", () => {
     t.expect((payloads->Array.map(p => p.transaction), counts)).toEqual((
       [Some({"from": "0xabc0000000000000000000000000000000000123", "to": None}->Obj.magic)],
       (1, 0),
+    ))
+  })
+
+  // `from`/`to`/`type` ride on both responses, so a selection that also needs a
+  // receipt-only field must read them off the receipt rather than pay for a
+  // second request. Nothing marks them missing, so a regression here would show
+  // up as `undefined` in a handler instead of an error.
+  Async.it("Serves a selection carried by both responses from the receipt", async t => {
+    let mock = await startProvider(
+      ~receipt=JSON.parseOrThrow(`{"gasUsed":"0x5208","from":"0x1111111111111111111111111111111111111111","to":"0x2222222222222222222222222222222222222222","type":"0x2"}`),
+    )
+    let payloads = await fetchPayloads(~mock, ~transactionFieldNames=[From, To, Type, GasUsed])
+    let counts = (
+      mock->countMethod("eth_getTransactionByHash"),
+      mock->countMethod("eth_getTransactionReceipt"),
+    )
+    mock.close()
+    t.expect((payloads->Array.map(p => p.transaction), counts)).toEqual((
+      [
+        Some(
+          {
+            "from": "0x1111111111111111111111111111111111111111",
+            "to": "0x2222222222222222222222222222222222222222",
+            "type": 2,
+            "gasUsed": 21000n,
+          }->Obj.magic,
+        ),
+      ],
+      (0, 1),
     ))
   })
 
@@ -339,6 +363,88 @@ describe("RpcSource - field selection end to end", () => {
       [Some({"miner": "0xabc0000000000000000000000000000000000123"}->Obj.magic)],
       [Some({"miner": "0xABc0000000000000000000000000000000000123"}->Obj.magic)],
     ))
+  })
+
+  Async.it("Normalizes transaction addresses to the chain's configured casing", async t => {
+    let addressesWith = async (~lowercaseAddresses) => {
+      let mock = await startProvider(
+        ~receipt=JSON.parseOrThrow(`{"gasUsed":"0x5208","from":"0xAbC0000000000000000000000000000000000123","contractAddress":"0xdEf0000000000000000000000000000000000456"}`),
+      )
+      let payloads = await fetchPayloads(
+        ~mock,
+        ~transactionFieldNames=[From, ContractAddress, GasUsed],
+        ~lowercaseAddresses,
+      )
+      mock.close()
+      payloads->Array.map(p => p.transaction)
+    }
+    let lowercased = await addressesWith(~lowercaseAddresses=true)
+    let checksummed = await addressesWith(~lowercaseAddresses=false)
+    t.expect((lowercased, checksummed)).toEqual((
+      [
+        Some(
+          {
+            "from": "0xabc0000000000000000000000000000000000123",
+            "contractAddress": "0xdef0000000000000000000000000000000000456",
+            "gasUsed": 21000n,
+          }->Obj.magic,
+        ),
+      ],
+      [
+        Some(
+          {
+            "from": "0xABc0000000000000000000000000000000000123",
+            "contractAddress": "0xDEf0000000000000000000000000000000000456",
+            "gasUsed": 21000n,
+          }->Obj.magic,
+        ),
+      ],
+    ))
+  })
+
+  Async.it("Materialises accessList and authorizationList onto the payload", async t => {
+    let listAddress = "0x" ++ "22"->String.repeat(20)
+    let storageKey = "0x" ++ "11"->String.repeat(32)
+    let mock = await startProvider(
+      ~transaction=JSON.parseOrThrow(
+        `{"hash":"${txHash}","accessList":[{"address":"${listAddress}","storageKeys":["${storageKey}"]}],"authorizationList":[{"chainId":"0x1","address":"${listAddress}","nonce":"0x1","yParity":"0x0","r":"0x1","s":"0x1"}]}`,
+      ),
+    )
+    let payloads = await fetchPayloads(
+      ~mock,
+      ~transactionFieldNames=[AccessList, AuthorizationList],
+    )
+    mock.close()
+    t.expect(payloads->Array.map(p => p.transaction)).toEqual([
+      Some(
+        {
+          "accessList": [{"address": listAddress, "storageKeys": [storageKey]}],
+          "authorizationList": [
+            {
+              "chainId": 1n,
+              "address": listAddress,
+              "nonce": 1,
+              "yParity": 0,
+              "r": "0x1",
+              "s": "0x1",
+            },
+          ],
+        }->Obj.magic,
+      ),
+    ])
+  })
+
+  // A pre-EIP-2930 transaction has no `accessList` at all. Treating that as a
+  // missing selected field would fail the query and disable the source.
+  Async.it("Accepts a legacy transaction that carries no accessList", async t => {
+    let mock = await startProvider(
+      ~transaction=JSON.parseOrThrow(`{"hash":"${txHash}","gas":"0x5208"}`),
+    )
+    let payloads = await fetchPayloads(~mock, ~transactionFieldNames=[AccessList])
+    mock.close()
+    t.expect(payloads->Array.map(p => p.transaction)).toEqual([
+      Some({"accessList": None}->Obj.magic),
+    ])
   })
 
   Async.it("Reads a decimal-encoded l1FeeScalar", async t => {
@@ -487,38 +593,45 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       }
 
       // eth_getLogs always trips the 50k-log cap; blocks resolve normally.
-      let mock = await MockRpcServer.start(~handler=requestBody => {
-        let method =
-          requestBody
-          ->JSON.parseOrThrow
-          ->JSON.Decode.object
-          ->Option.flatMap(Dict.get(_, "method"))
-          ->Option.flatMap(JSON.Decode.string)
-          ->Option.getOr("")
-        switch method {
-        | "eth_getLogs" => (
-            200,
-            `{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"More than 50000 logs returned"}}`,
-          )
-        | _ =>
-          (
-            200,
-            JSON.stringify(
-              JSON.Object(
-                Dict.fromArray([
-                  ("jsonrpc", JSON.String("2.0")),
-                  ("id", JSON.Number(1.)),
-                  ("result", blockJson(requestBody)),
-                ]),
+      let mock = await MockRpcServer.start(
+        ~handler=requestBody => {
+          let method =
+            requestBody
+            ->JSON.parseOrThrow
+            ->JSON.Decode.object
+            ->Option.flatMap(Dict.get(_, "method"))
+            ->Option.flatMap(JSON.Decode.string)
+            ->Option.getOr("")
+          switch method {
+          | "eth_getLogs" => (
+              200,
+              `{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"More than 50000 logs returned"}}`,
+            )
+          | _ => (
+              200,
+              JSON.stringify(
+                JSON.Object(
+                  Dict.fromArray([
+                    ("jsonrpc", JSON.String("2.0")),
+                    ("id", JSON.Number(1.)),
+                    ("result", blockJson(requestBody)),
+                  ]),
+                ),
               ),
-            ),
-          )
-        }
-      })
+            )
+          }
+        },
+      )
 
       let addressStore = makeAddressStore(
         ~onEventRegistrations=[eventConfig],
-        ~addresses=[{address: mockAddress, contractName: eventConfig.eventConfig.contractName, registrationBlock: -1}],
+        ~addresses=[
+          {
+            address: mockAddress,
+            contractName: eventConfig.eventConfig.contractName,
+            registrationBlock: -1,
+          },
+        ],
       )
       let source = RpcSource.make({
         url: mock.url,
@@ -641,42 +754,49 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
       // Only the first eth_getLogs is too dense; the rest fit, so the interval
       // shrinks once then re-adapts upward via acceleration.
       let getLogsCount = ref(0)
-      let mock = await MockRpcServer.start(~handler=requestBody => {
-        let method =
-          requestBody
-          ->JSON.parseOrThrow
-          ->JSON.Decode.object
-          ->Option.flatMap(Dict.get(_, "method"))
-          ->Option.flatMap(JSON.Decode.string)
-          ->Option.getOr("")
-        switch method {
-        | "eth_getLogs" =>
-          getLogsCount := getLogsCount.contents + 1
-          getLogsCount.contents == 1
-            ? (
-                200,
-                `{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"More than 50000 logs returned"}}`,
-              )
-            : (200, `{"jsonrpc":"2.0","id":1,"result":[]}`)
-        | _ =>
-          (
-            200,
-            JSON.stringify(
-              JSON.Object(
-                Dict.fromArray([
-                  ("jsonrpc", JSON.String("2.0")),
-                  ("id", JSON.Number(1.)),
-                  ("result", blockJson(requestBody)),
-                ]),
+      let mock = await MockRpcServer.start(
+        ~handler=requestBody => {
+          let method =
+            requestBody
+            ->JSON.parseOrThrow
+            ->JSON.Decode.object
+            ->Option.flatMap(Dict.get(_, "method"))
+            ->Option.flatMap(JSON.Decode.string)
+            ->Option.getOr("")
+          switch method {
+          | "eth_getLogs" =>
+            getLogsCount := getLogsCount.contents + 1
+            getLogsCount.contents == 1
+              ? (
+                  200,
+                  `{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"More than 50000 logs returned"}}`,
+                )
+              : (200, `{"jsonrpc":"2.0","id":1,"result":[]}`)
+          | _ => (
+              200,
+              JSON.stringify(
+                JSON.Object(
+                  Dict.fromArray([
+                    ("jsonrpc", JSON.String("2.0")),
+                    ("id", JSON.Number(1.)),
+                    ("result", blockJson(requestBody)),
+                  ]),
+                ),
               ),
-            ),
-          )
-        }
-      })
+            )
+          }
+        },
+      )
 
       let addressStore = makeAddressStore(
         ~onEventRegistrations=[eventConfig],
-        ~addresses=[{address: mockAddress, contractName: eventConfig.eventConfig.contractName, registrationBlock: -1}],
+        ~addresses=[
+          {
+            address: mockAddress,
+            contractName: eventConfig.eventConfig.contractName,
+            registrationBlock: -1,
+          },
+        ],
       )
       let source = RpcSource.make({
         url: mock.url,
@@ -709,14 +829,14 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
             ~retry=0,
             ~logger=Logging.createChild(~params={"test": "RpcSource re-grow"}),
           )
-          ()
         } catch {
         | Source.GetItemsError(_) => ()
         }
 
       let toBlockOfLogsRequest = body =>
         switch body->JSON.parseOrThrow->JSON.Decode.object {
-        | Some(obj) if obj->Dict.get("method")->Option.flatMap(JSON.Decode.string) == Some("eth_getLogs") =>
+        | Some(obj)
+          if obj->Dict.get("method")->Option.flatMap(JSON.Decode.string) == Some("eth_getLogs") =>
           obj
           ->Dict.get("params")
           ->Option.flatMap(JSON.Decode.array)
@@ -757,7 +877,10 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
       ("number", JSON.String("0x2710")),
       ("timestamp", JSON.String("0x64")),
       ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-      ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
+      (
+        "parentHash",
+        JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+      ),
     ]),
   )
 
@@ -780,7 +903,11 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
   let jsonRpcResult = result =>
     JSON.stringify(
       JSON.Object(
-        Dict.fromArray([("jsonrpc", JSON.String("2.0")), ("id", JSON.Number(1.)), ("result", result)]),
+        Dict.fromArray([
+          ("jsonrpc", JSON.String("2.0")),
+          ("id", JSON.Number(1.)),
+          ("result", result),
+        ]),
       ),
     )
 
@@ -815,70 +942,81 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
     ("PublicNode's max block range", "maximum block range: 2000", 2000),
     ("Hyperliquid's max block range", "query exceeds max block range 1000", 1000),
   ]->Array.forEach(((name, message, suggestedInterval)) => {
-    Async.it(`Resizes to the suggested interval for ${name}`, async t => {
-      let mock = await MockRpcServer.start(~handler=requestBody => {
-        let method =
-          requestBody
-          ->JSON.parseOrThrow
-          ->JSON.Decode.object
-          ->Option.flatMap(Dict.get(_, "method"))
-          ->Option.flatMap(JSON.Decode.string)
-          ->Option.getOr("")
-        switch method {
-        | "eth_getLogs" => (200, jsonRpcError(message))
-        | _ => (200, jsonRpcResult(blockJson))
-        }
-      })
+    Async.it(
+      `Resizes to the suggested interval for ${name}`,
+      async t => {
+        let mock = await MockRpcServer.start(
+          ~handler=requestBody => {
+            let method =
+              requestBody
+              ->JSON.parseOrThrow
+              ->JSON.Decode.object
+              ->Option.flatMap(Dict.get(_, "method"))
+              ->Option.flatMap(JSON.Decode.string)
+              ->Option.getOr("")
+            switch method {
+            | "eth_getLogs" => (200, jsonRpcError(message))
+            | _ => (200, jsonRpcResult(blockJson))
+            }
+          },
+        )
 
-      let addressStore = makeAddressStore(
-        ~onEventRegistrations=[eventConfig],
-        ~addresses=[{address: mockAddress, contractName: eventConfig.eventConfig.contractName, registrationBlock: -1}],
-      )
-      let source = RpcSource.make({
-        url: mock.url,
-        chainId,
-        onEventRegistrations: [eventConfig],
-        sourceFor: Sync,
-        syncConfig: EvmChain.getSyncConfig({}),
-        lowercaseAddresses: false,
-        addressStore,
-        blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-        transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-      })
-
-      let retry = try {
-        let result = try {
-          let _ = await source.getItemsOrThrow(
-            ~fromBlock=0,
-            ~toBlock=Some(1_000_000),
-            ~addressSet=addressStore->AddressStore.makeSet(
-              ~contractName=eventConfig.eventConfig.contractName,
-            ),
-            ~knownHeight=1_000_000,
-            ~partitionId="0",
-            ~selection={
-              dependsOnAddresses: true,
-              onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
+        let addressStore = makeAddressStore(
+          ~onEventRegistrations=[eventConfig],
+          ~addresses=[
+            {
+              address: mockAddress,
+              contractName: eventConfig.eventConfig.contractName,
+              registrationBlock: -1,
             },
-            ~itemsTarget=Some(5000),
-            ~retry=0,
-            ~logger=Logging.createChild(~params={"test": "RpcSource classify " ++ name}),
-          )
-          None
-        } catch {
-        | Source.GetItemsError(FailedGettingItems({retry})) => Some(retry)
-        | Source.GetItemsError(_) => None
-        }
-        mock.close()
-        result
-      } catch {
-      | exn =>
-        mock.close()
-        throw(exn)
-      }
+          ],
+        )
+        let source = RpcSource.make({
+          url: mock.url,
+          chainId,
+          onEventRegistrations: [eventConfig],
+          sourceFor: Sync,
+          syncConfig: EvmChain.getSyncConfig({}),
+          lowercaseAddresses: false,
+          addressStore,
+          blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+          transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+        })
 
-      t.expect(retry).toEqual(Some(WithSuggestedToBlock({toBlock: suggestedInterval - 1})))
-    })
+        let retry = try {
+          let result = try {
+            let _ = await source.getItemsOrThrow(
+              ~fromBlock=0,
+              ~toBlock=Some(1_000_000),
+              ~addressSet=addressStore->AddressStore.makeSet(
+                ~contractName=eventConfig.eventConfig.contractName,
+              ),
+              ~knownHeight=1_000_000,
+              ~partitionId="0",
+              ~selection={
+                dependsOnAddresses: true,
+                onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
+              },
+              ~itemsTarget=Some(5000),
+              ~retry=0,
+              ~logger=Logging.createChild(~params={"test": "RpcSource classify " ++ name}),
+            )
+            None
+          } catch {
+          | Source.GetItemsError(FailedGettingItems({retry})) => Some(retry)
+          | Source.GetItemsError(_) => None
+          }
+          mock.close()
+          result
+        } catch {
+        | exn =>
+          mock.close()
+          throw(exn)
+        }
+
+        t.expect(retry).toEqual(Some(WithSuggestedToBlock({toBlock: suggestedInterval - 1})))
+      },
+    )
   })
 })
 
@@ -906,7 +1044,10 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
           ("blockNumber", JSON.String("0x64")),
           ("transactionHash", JSON.String(transactionHash)),
           ("transactionIndex", JSON.String("0x1")),
-          ("blockHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          (
+            "blockHash",
+            JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          ),
           ("logIndex", JSON.String("0x2")),
           ("removed", JSON.Boolean(false)),
         ]),
@@ -915,24 +1056,37 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
         Dict.fromArray([
           ("number", JSON.String("0x64")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
+          (
+            "hash",
+            JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          ),
+          (
+            "parentHash",
+            JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+          ),
         ]),
       )
 
-      let mock = await MockRpcServer.make(~getResult=method =>
-        switch method {
-        | "eth_getLogs" => JSON.Array([logJson])
-        | "eth_getBlockByNumber" => blockJson
-        // eth_getTransactionByHash/eth_getTransactionReceipt return null,
-        // like a load-balanced node that hasn't caught up with the head
-        | _ => JSON.Null
-        }
+      let mock = await MockRpcServer.make(
+        ~getResult=method =>
+          switch method {
+          | "eth_getLogs" => JSON.Array([logJson])
+          | "eth_getBlockByNumber" => blockJson
+          // eth_getTransactionByHash/eth_getTransactionReceipt return null,
+          // like a load-balanced node that hasn't caught up with the head
+          | _ => JSON.Null
+          },
       )
 
       let addressStore = makeAddressStore(
         ~onEventRegistrations=[eventConfig],
-        ~addresses=[{address: mockAddress, contractName: eventConfig.eventConfig.contractName, registrationBlock: -1}],
+        ~addresses=[
+          {
+            address: mockAddress,
+            contractName: eventConfig.eventConfig.contractName,
+            registrationBlock: -1,
+          },
+        ],
       )
       let source = RpcSource.make({
         url: mock.url,
@@ -983,13 +1137,11 @@ describe("RpcSource - getItemsOrThrow with missing transaction data", () => {
       // the source manager acts on and on the error the logs carry.
       let describe = error =>
         switch error {
-        | Some(
-            Source.FailedGettingItems({
-              exn,
-              attemptedToBlock,
-              retry: WithBackoff({message, backoffMillis}),
-            }),
-          ) => {
+        | Some(Source.FailedGettingItems({
+            exn,
+            attemptedToBlock,
+            retry: WithBackoff({message, backoffMillis}),
+          })) => {
             "attemptedToBlock": attemptedToBlock,
             "backoffMillis": backoffMillis,
             "namesTheMissingReceipt": message->String.includes(transactionHash),
@@ -1036,31 +1188,31 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
       // for both, so the result must be deduped to one item.
       let eventConfig = {
         ...EventRegistration.evmOnEventRegistration(
-        ~id=sighash,
-        // Two indexed params so the log carries the topic1/topic2 values the
-        // OR branches filter on and decodes cleanly (derived topicCount 3).
-        ~paramsMetadata=[
-          {name: "a", abiType: "uint256", indexed: true},
-          {name: "b", abiType: "uint256", indexed: true},
-        ],
-        ~eventFilters=[
-          {
-            topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-            topic1: Values([
-              "0x0000000000000000000000000000000000000000000000000000000000000001"->EvmTypes.Hex.fromStringUnsafe,
-            ]),
-            topic2: Values([]),
-            topic3: Values([]),
-          },
-          {
-            topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-            topic1: Values([]),
-            topic2: Values([
-              "0x0000000000000000000000000000000000000000000000000000000000000002"->EvmTypes.Hex.fromStringUnsafe,
-            ]),
-            topic3: Values([]),
-          },
-        ],
+          ~id=sighash,
+          // Two indexed params so the log carries the topic1/topic2 values the
+          // OR branches filter on and decodes cleanly (derived topicCount 3).
+          ~paramsMetadata=[
+            {name: "a", abiType: "uint256", indexed: true},
+            {name: "b", abiType: "uint256", indexed: true},
+          ],
+          ~eventFilters=[
+            {
+              topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+              topic1: Values([
+                "0x0000000000000000000000000000000000000000000000000000000000000001"->EvmTypes.Hex.fromStringUnsafe,
+              ]),
+              topic2: Values([]),
+              topic3: Values([]),
+            },
+            {
+              topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+              topic1: Values([]),
+              topic2: Values([
+                "0x0000000000000000000000000000000000000000000000000000000000000002"->EvmTypes.Hex.fromStringUnsafe,
+              ]),
+              topic3: Values([]),
+            },
+          ],
         ),
         index: 0,
       }
@@ -1086,7 +1238,10 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
             JSON.String("0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"),
           ),
           ("transactionIndex", JSON.String("0x1")),
-          ("blockHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          (
+            "blockHash",
+            JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          ),
           ("logIndex", JSON.String("0x2")),
           ("removed", JSON.Boolean(false)),
         ]),
@@ -1095,22 +1250,35 @@ describe("RpcSource - getItemsOrThrow fans out multiple selections", () => {
         Dict.fromArray([
           ("number", JSON.String("0x64")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
+          (
+            "hash",
+            JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          ),
+          (
+            "parentHash",
+            JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+          ),
         ]),
       )
 
-      let mock = await MockRpcServer.make(~getResult=method =>
-        switch method {
-        | "eth_getLogs" => JSON.Array([logJson])
-        | "eth_getBlockByNumber" => blockJson
-        | _ => JSON.Null
-        }
+      let mock = await MockRpcServer.make(
+        ~getResult=method =>
+          switch method {
+          | "eth_getLogs" => JSON.Array([logJson])
+          | "eth_getBlockByNumber" => blockJson
+          | _ => JSON.Null
+          },
       )
 
       let addressStore = makeAddressStore(
         ~onEventRegistrations=[eventConfig],
-        ~addresses=[{address: mockAddress, contractName: eventConfig.eventConfig.contractName, registrationBlock: -1}],
+        ~addresses=[
+          {
+            address: mockAddress,
+            contractName: eventConfig.eventConfig.contractName,
+            registrationBlock: -1,
+          },
+        ],
       )
       let source = RpcSource.make({
         url: mock.url,
@@ -1182,130 +1350,134 @@ describe("RpcSource - builds partition log selections end to end", () => {
     }
   }
 
-  Async.it(
-    "builds the partition's real RPC filters without a test-only query API",
-    async t => {
-      let addressBound = {
-        ...EventRegistration.evmOnEventRegistration(~id=sighash1),
-        index: 0,
-      }
-      let wildcardA = {
-        ...EventRegistration.evmOnEventRegistration(
-          ~id=sighash2,
-          ~contractName="WildcardA",
-          ~isWildcard=true,
-        ),
-        index: 1,
-      }
-      let wildcardB = {
-        ...EventRegistration.evmOnEventRegistration(
-          ~id=sighash3,
-          ~contractName="WildcardB",
-          ~isWildcard=true,
-        ),
-        index: 2,
-      }
-      let wildcardByAddress = {
-        ...EventRegistration.evmOnEventRegistration(
-          ~id=sighash4,
-          ~isWildcard=true,
-          ~dependsOnAddresses=true,
-        ),
-        index: 3,
-      }
-      let excluded = {
-        ...EventRegistration.evmOnEventRegistration(
-          ~id=excludedSighash,
-          ~contractName="Excluded",
-          ~isWildcard=true,
-        ),
-        index: 4,
-      }
-      let allRegistrations = [addressBound, wildcardA, wildcardB, wildcardByAddress, excluded]
-      let selectedRegistrations = [addressBound, wildcardA, wildcardB, wildcardByAddress]
+  Async.it("builds the partition's real RPC filters without a test-only query API", async t => {
+    let addressBound = {
+      ...EventRegistration.evmOnEventRegistration(~id=sighash1),
+      index: 0,
+    }
+    let wildcardA = {
+      ...EventRegistration.evmOnEventRegistration(
+        ~id=sighash2,
+        ~contractName="WildcardA",
+        ~isWildcard=true,
+      ),
+      index: 1,
+    }
+    let wildcardB = {
+      ...EventRegistration.evmOnEventRegistration(
+        ~id=sighash3,
+        ~contractName="WildcardB",
+        ~isWildcard=true,
+      ),
+      index: 2,
+    }
+    let wildcardByAddress = {
+      ...EventRegistration.evmOnEventRegistration(
+        ~id=sighash4,
+        ~isWildcard=true,
+        ~dependsOnAddresses=true,
+      ),
+      index: 3,
+    }
+    let excluded = {
+      ...EventRegistration.evmOnEventRegistration(
+        ~id=excludedSighash,
+        ~contractName="Excluded",
+        ~isWildcard=true,
+      ),
+      index: 4,
+    }
+    let allRegistrations = [addressBound, wildcardA, wildcardB, wildcardByAddress, excluded]
+    let selectedRegistrations = [addressBound, wildcardA, wildcardB, wildcardByAddress]
 
-      let blockJson = JSON.Object(
-        Dict.fromArray([
-          ("number", JSON.String("0x64")),
-          ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
-        ]),
-      )
-      let mock = await MockRpcServer.make(~getResult=method =>
+    let blockJson = JSON.Object(
+      Dict.fromArray([
+        ("number", JSON.String("0x64")),
+        ("timestamp", JSON.String("0x64")),
+        ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+        (
+          "parentHash",
+          JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+        ),
+      ]),
+    )
+    let mock = await MockRpcServer.make(
+      ~getResult=method =>
         switch method {
         | "eth_getLogs" => JSON.Array([])
         | "eth_getBlockByNumber" => blockJson
         | _ => JSON.Null
-        }
-      )
-      let addressStore = makeAddressStore(
-        ~onEventRegistrations=allRegistrations,
-        ~addresses=[
-          {
-            address: mockAddress,
-            contractName: addressBound.eventConfig.contractName,
-            registrationBlock: -1,
-          },
-        ],
-      )
-      let source = RpcSource.make({
-        url: mock.url,
-        chainId,
-        onEventRegistrations: allRegistrations,
-        sourceFor: Sync,
-        syncConfig: EvmChain.getSyncConfig({}),
-        lowercaseAddresses: false,
-        addressStore,
-        blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-        transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-      })
+        },
+    )
+    let addressStore = makeAddressStore(
+      ~onEventRegistrations=allRegistrations,
+      ~addresses=[
+        {
+          address: mockAddress,
+          contractName: addressBound.eventConfig.contractName,
+          registrationBlock: -1,
+        },
+      ],
+    )
+    let source = RpcSource.make({
+      url: mock.url,
+      chainId,
+      onEventRegistrations: allRegistrations,
+      sourceFor: Sync,
+      syncConfig: EvmChain.getSyncConfig({}),
+      lowercaseAddresses: false,
+      addressStore,
+      blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+      transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+    })
 
-      let (page, filters) = try {
-        let page = await source.getItemsOrThrow(
-          ~fromBlock=0,
-          ~toBlock=Some(100),
-          ~addressSet=addressStore->AddressStore.makeSet(
-            ~contractName=addressBound.eventConfig.contractName,
+    let (page, filters) = try {
+      let page = await source.getItemsOrThrow(
+        ~fromBlock=0,
+        ~toBlock=Some(100),
+        ~addressSet=addressStore->AddressStore.makeSet(
+          ~contractName=addressBound.eventConfig.contractName,
+        ),
+        ~knownHeight=100,
+        ~partitionId="selection-e2e",
+        ~selection={
+          dependsOnAddresses: true,
+          onEventRegistrations: selectedRegistrations->Array.map(
+            reg => (reg :> Internal.onEventRegistration),
           ),
-          ~knownHeight=100,
-          ~partitionId="selection-e2e",
-          ~selection={
-            dependsOnAddresses: true,
-            onEventRegistrations: selectedRegistrations->Array.map(reg =>
-              (reg :> Internal.onEventRegistration)
-            ),
-          },
-          ~itemsTarget=Some(5000),
-          ~retry=0,
-          ~logger=Logging.createChild(~params={"test": "RpcSource selection e2e"}),
-        )
-        let filters =
-          mock.requests
-          ->Array.filterMap(summarizeGetLogsRequest)
-          ->Array.toSorted(String.compare)
-        mock.close()
-        (page, filters)
-      } catch {
-      | exn =>
-        mock.close()
-        throw(exn)
-      }
+        },
+        ~itemsTarget=Some(5000),
+        ~retry=0,
+        ~logger=Logging.createChild(~params={"test": "RpcSource selection e2e"}),
+      )
+      let filters =
+        mock.requests
+        ->Array.filterMap(summarizeGetLogsRequest)
+        ->Array.toSorted(String.compare)
+      mock.close()
+      (page, filters)
+    } catch {
+    | exn =>
+      mock.close()
+      throw(exn)
+    }
 
-      let address = mockAddress->Address.toString
-      let addressTopic =
-        "0x000000000000000000000000" ++ address->String.toLowerCase->String.slice(~start=2)
-      let expectedFilters = [
+    let address = mockAddress->Address.toString
+    let addressTopic =
+      "0x000000000000000000000000" ++ address->String.toLowerCase->String.slice(~start=2)
+    let expectedFilters =
+      [
         `address=["${address}"];topics=[["${sighash1}"]]`,
         `address=null;topics=[["${sighash2}","${sighash3}"]]`,
         `address=null;topics=[["${sighash4}"],["${addressTopic}"]]`,
       ]->Array.toSorted(String.compare)
 
-      t.expect((filters, page.parsedQueueItems->Array.length, page.latestFetchedBlockNumber)).toEqual(
-        (expectedFilters, 0, 100),
-      )
-    },
-  )
+    t.expect((
+      filters,
+      page.parsedQueueItems->Array.length,
+      page.latestFetchedBlockNumber,
+    )).toEqual((expectedFilters, 0, 100))
+  })
 })
 
 describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
@@ -1318,29 +1490,40 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
       // nothing to query — the batch must advance the cursor without issuing an
       // eth_getLogs (and without throwing, which the pre-fan-out code did).
       let eventConfig = {
-        ...EventRegistration.evmOnEventRegistration(~id=sighash, ~isWildcard=true, ~eventFilters=[]),
+        ...EventRegistration.evmOnEventRegistration(
+          ~id=sighash,
+          ~isWildcard=true,
+          ~eventFilters=[],
+        ),
         index: 0,
       }
 
       // Echo the requested block number so `latestFetchedBlockNumber` reflects
       // the block the source actually loaded, not a constant baked into the mock.
-      let mock = await MockRpcServer.makeWithParams(~getResult=(~method, ~params) =>
-        switch method {
-        | "eth_getBlockByNumber" =>
-          let requestedBlockHex = switch params {
-          | JSON.Array([JSON.String(hex), _]) => hex
-          | _ => "0x0"
-          }
-          JSON.Object(
-            Dict.fromArray([
-              ("number", JSON.String(requestedBlockHex)),
-              ("timestamp", JSON.String("0x64")),
-              ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-              ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
-            ]),
-          )
-        | _ => JSON.Null
-        }
+      let mock = await MockRpcServer.makeWithParams(
+        ~getResult=(~method, ~params) =>
+          switch method {
+          | "eth_getBlockByNumber" =>
+            let requestedBlockHex = switch params {
+            | JSON.Array([JSON.String(hex), _]) => hex
+            | _ => "0x0"
+            }
+            JSON.Object(
+              Dict.fromArray([
+                ("number", JSON.String(requestedBlockHex)),
+                ("timestamp", JSON.String("0x64")),
+                (
+                  "hash",
+                  JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+                ),
+                (
+                  "parentHash",
+                  JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+                ),
+              ]),
+            )
+          | _ => JSON.Null
+          },
       )
 
       // Wildcard-only selection: the partition carries no addresses.
@@ -1362,7 +1545,6 @@ describe("RpcSource - getItemsOrThrow with a skip-all event filter", () => {
           ~fromBlock=0,
           ~toBlock=Some(100),
           ~addressSet=addressStore->AddressStore.emptySet,
-
           ~knownHeight=100,
           ~partitionId="0",
           ~selection={
@@ -1453,7 +1635,10 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
             JSON.String("0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"),
           ),
           ("transactionIndex", JSON.String("0x1")),
-          ("blockHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+          (
+            "blockHash",
+            JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          ),
           ("logIndex", JSON.String("0x2")),
           ("removed", JSON.Boolean(false)),
         ]),
@@ -1462,8 +1647,14 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
         Dict.fromArray([
           ("number", JSON.String("0x64")),
           ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
+          (
+            "hash",
+            JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+          ),
+          (
+            "parentHash",
+            JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+          ),
         ]),
       )
 
@@ -1474,12 +1665,13 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
         | JSON.Array([JSON.Object(filter)]) =>
           let addressOk = switch filter->Dict.get("address") {
           | Some(JSON.Array(addrs)) =>
-            addrs->Array.some(a =>
-              switch a {
-              | JSON.String(s) =>
-                s->String.toLowerCase == addrA->Address.toString->String.toLowerCase
-              | _ => false
-              }
+            addrs->Array.some(
+              a =>
+                switch a {
+                | JSON.String(s) =>
+                  s->String.toLowerCase == addrA->Address.toString->String.toLowerCase
+                | _ => false
+                },
             )
           | _ => true
           }
@@ -1500,12 +1692,14 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
         | _ => false
         }
 
-      let mock = await MockRpcServer.makeWithParams(~getResult=(~method, ~params) =>
-        switch method {
-        | "eth_getLogs" => queryReturnsLeakedLog(params) ? JSON.Array([leakedLog]) : JSON.Array([])
-        | "eth_getBlockByNumber" => blockJson
-        | _ => JSON.Null
-        }
+      let mock = await MockRpcServer.makeWithParams(
+        ~getResult=(~method, ~params) =>
+          switch method {
+          | "eth_getLogs" =>
+            queryReturnsLeakedLog(params) ? JSON.Array([leakedLog]) : JSON.Array([])
+          | "eth_getBlockByNumber" => blockJson
+          | _ => JSON.Null
+          },
       )
 
       let addressStore = makeAddressStore(
@@ -1538,7 +1732,10 @@ describe("RpcSource - getItemsOrThrow scopes filters to each contract's addresse
           ~partitionId="0",
           ~selection={
             dependsOnAddresses: true,
-            onEventRegistrations: [(eventA :> Internal.onEventRegistration), (eventB :> Internal.onEventRegistration)],
+            onEventRegistrations: [
+              (eventA :> Internal.onEventRegistration),
+              (eventB :> Internal.onEventRegistration),
+            ],
           },
           ~itemsTarget=Some(5000),
           ~retry=0,

@@ -39,7 +39,9 @@ let topicSelection: Internal.resolvedTopicSelection = {
 let registration: Internal.evmOnEventRegistration = {
   ...EventRegistration.evmOnEventRegistration(
     ~id=sighash,
-    ~blockFieldNames=[Number, Timestamp, Hash, ParentHash],
+    // `gasUsed` is the one selected field a fetched block does not carry
+    // anyway, so it is what a later range can be served from the store.
+    ~blockFieldNames=[Number, Timestamp, Hash, ParentHash, GasUsed],
     ~transactionFieldNames=[],
     ~eventFilters=[topicSelection],
   ),
@@ -75,23 +77,22 @@ let blockJson = (state, blockNumber) =>
       )}","parentHash":"${blockHash(
         ~blockNumber=blockNumber - 1,
         ~fork=state->forkOf(blockNumber - 1),
-      )}"}`,
+      )}","gasUsed":"0x2a"}`,
   )
 
 // One log per block in the requested range, so every block in a fetched range
 // contributes its hash to the page.
-let logsJson = (state, ~fromBlock, ~toBlock) =>
-  JSON.Array(
-    Array.fromInitializer(~length=toBlock - fromBlock + 1, i => {
-      let blockNumber = fromBlock + i
-      JSON.parseOrThrow(
-        `{"address":"${contractAddress}","topics":["${sighash}"],"data":"0x","blockNumber":"${blockNumber->hex}","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"${blockHash(
-            ~blockNumber,
-            ~fork=state->forkOf(blockNumber),
-          )}","logIndex":"0x0","removed":false}`,
-      )
-    }),
-  )
+let logsJson = (state, ~fromBlock, ~toBlock) => JSON.Array(
+  Array.fromInitializer(~length=toBlock - fromBlock + 1, i => {
+    let blockNumber = fromBlock + i
+    JSON.parseOrThrow(
+      `{"address":"${contractAddress}","topics":["${sighash}"],"data":"0x","blockNumber":"${blockNumber->hex}","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"${blockHash(
+          ~blockNumber,
+          ~fork=state->forkOf(blockNumber),
+        )}","logIndex":"0x0","removed":false}`,
+    )
+  }),
+)
 
 let hexParam = json => {
   let quantity = json->JSON.Decode.string->Option.getOrThrow(~message="expected a hex quantity")
@@ -215,8 +216,11 @@ describe("Rollback against a real RPC server", () => {
 
     // The chain reorgs from 102 up, and the source refetches across the seam.
     state.forkFrom = 102
-    let reorgedPage =
-      await source->fetchRange(~fromBlock=103, ~toBlock=104, ~knownHeight=state.height)
+    let reorgedPage = await source->fetchRange(
+      ~fromBlock=103,
+      ~toBlock=104,
+      ~knownHeight=state.height,
+    )
 
     t.expect(
       chainState->ChainState.registerReorgGuard(
@@ -273,6 +277,67 @@ describe("Rollback against a real RPC server", () => {
       target,
       ~message="Refetched hashes place the fork at 100, so the rollback goes to 99",
     ).toEqual(99)
+
+    await mock.closeAsync()
+  })
+
+  // A block whose selected fields the store already covers is not re-fetched,
+  // so the only thing the second range says about it is the `blockHash` of its
+  // own logs. That is what has to catch a store row left behind by a dead fork.
+  Async.it("detects a reorg on a block it served from the store", async t => {
+    let state = {height: 110, forkFrom: 999}
+    let mock = await startServer(state)
+    let (blockStore, transactionStore) = makeStores()
+    let source = makeSource(~url=mock.url, ~blockStore, ~transactionStore)
+    let chainState = makeChainState(~source, ~knownHeight=state.height, ~blockStore)
+
+    let page = await source->fetchRange(~fromBlock=100, ~toBlock=104, ~knownHeight=state.height)
+    let firstGuard =
+      chainState->ChainState.registerReorgGuard(~blockStore=page.blockStore, ~knownHeight=110)
+
+    // 102 and 103 are now interior to the refetched range and fully covered by
+    // the store, so neither is read again — yet both moved to the other fork.
+    state.forkFrom = 102
+    let requestsBefore = mock.requests->Array.length
+    let reorgedPage = await source->fetchRange(
+      ~fromBlock=101,
+      ~toBlock=104,
+      ~knownHeight=state.height,
+    )
+    let refetchedBlocks =
+      mock.requests
+      ->Array.slice(~start=requestsBefore, ~end=mock.requests->Array.length)
+      ->Array.filterMap(
+        body =>
+          switch body->JSON.parseOrThrow->JSON.Decode.object {
+          | Some(request)
+            if request->Dict.get("method")->Option.flatMap(JSON.Decode.string) ==
+              Some("eth_getBlockByNumber") =>
+            request
+            ->Dict.getUnsafe("params")
+            ->JSON.Decode.array
+            ->Option.flatMap(params => params->Array.get(0))
+            ->Option.map(hexParam)
+          | _ => None
+          },
+      )
+      ->Array.toSorted(Int.compare)
+
+    t.expect((
+      firstGuard,
+      refetchedBlocks,
+      chainState->ChainState.registerReorgGuard(
+        ~blockStore=reorgedPage.blockStore,
+        ~knownHeight=110,
+      ),
+    )).toEqual((
+      ReorgDetection.NoReorg,
+      [101, 104],
+      ReorgDetection.ReorgDetected({
+        scannedBlock: {blockNumber: 102, blockHash: blockHash(~blockNumber=102, ~fork="a")},
+        receivedBlock: {blockNumber: 102, blockHash: blockHash(~blockNumber=102, ~fork="b")},
+      }),
+    ))
 
     await mock.closeAsync()
   })

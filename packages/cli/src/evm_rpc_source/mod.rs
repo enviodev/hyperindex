@@ -235,6 +235,29 @@ pub struct EvmRpcClient {
     should_checksum: bool,
 }
 
+/// Everything one page read works from: the range, the queries to run over it,
+/// and the stores whose contents decide what still has to be fetched.
+struct PageQuery<'a> {
+    from_block: u64,
+    to_block: u64,
+    selections: &'a [BuiltLogSelection],
+    set_cache: &'a Arc<SetCache>,
+    decoder: &'a Arc<SelectionDecoder>,
+    known_blocks: &'a BlockStore,
+    known_transactions: &'a TransactionStore,
+    should_checksum: bool,
+}
+
+/// The attempt a retry decision is about.
+struct Attempt<'a> {
+    partition_id: &'a str,
+    from_block: u64,
+    to_block: u64,
+    /// The structural cap on this source's range, which a provider's own
+    /// "limited to N blocks" may only tighten.
+    source_max: u64,
+}
+
 /// Why a page could not be read.
 enum PageError {
     Rpc(RpcError),
@@ -469,23 +492,25 @@ impl EvmRpcClient {
                 .map_err(map_err)?,
         );
 
+        let query = PageQuery {
+            from_block,
+            to_block,
+            selections: &built.log_selections,
+            set_cache: &set_cache,
+            decoder: &selection_decoder,
+            known_blocks,
+            known_transactions,
+            should_checksum,
+        };
+        let attempt = Attempt {
+            partition_id: &params.partition_id,
+            from_block,
+            to_block,
+            source_max,
+        };
         let stats = Stats::default();
         let timeout = Duration::from_millis(self.sync_config.query_timeout_millis);
-        let outcome = tokio::time::timeout(
-            timeout,
-            self.read_page(
-                from_block,
-                to_block,
-                &built.log_selections,
-                &set_cache,
-                &selection_decoder,
-                &stats,
-                known_blocks,
-                known_transactions,
-                should_checksum,
-            ),
-        )
-        .await;
+        let outcome = tokio::time::timeout(timeout, self.read_page(&query, &stats)).await;
 
         // Only a page that was read has stores; every other outcome returns
         // empty ones, so the match decides the result and the stores follow.
@@ -548,10 +573,7 @@ impl EvmRpcClient {
                     .unwrap_or_else(|| describe_rpc_error(&err));
                 (
                     self.retry_result(
-                        &params.partition_id,
-                        from_block,
-                        to_block,
-                        source_max,
+                        &attempt,
                         provider_message.as_deref(),
                         message,
                         stats.take(),
@@ -566,15 +588,7 @@ impl EvmRpcClient {
                     self.sync_config.query_timeout_millis
                 );
                 (
-                    self.retry_result(
-                        &params.partition_id,
-                        from_block,
-                        to_block,
-                        source_max,
-                        Some(&message),
-                        message.clone(),
-                        stats.take(),
-                    ),
+                    self.retry_result(&attempt, Some(&message), message.clone(), stats.take()),
                     None,
                 )
             }
@@ -591,28 +605,13 @@ impl EvmRpcClient {
     }
 
     /// Reads the logs, then everything the routed items need to be materialised.
-    #[allow(clippy::too_many_arguments)]
     async fn read_page(
         &self,
-        from_block: u64,
-        to_block: u64,
-        selections: &[BuiltLogSelection],
-        set_cache: &Arc<SetCache>,
-        selection_decoder: &Arc<SelectionDecoder>,
+        query: &PageQuery<'_>,
         stats: &Stats,
-        known_blocks: &BlockStore,
-        known_transactions: &TransactionStore,
-        should_checksum: bool,
     ) -> Result<(Vec<EventItem>, enrich::EnrichedPage), PageError> {
         let decoded = self
-            .fetch_page(
-                from_block,
-                to_block,
-                selections,
-                set_cache,
-                selection_decoder,
-                stats,
-            )
+            .fetch_page(query, stats)
             .await
             .map_err(PageError::Rpc)?;
 
@@ -647,12 +646,12 @@ impl EvmRpcClient {
             &self.fetches,
             stats,
             EnrichRequest {
-                from_block,
-                to_block,
+                from_block: query.from_block,
+                to_block: query.to_block,
                 refs,
-                known_blocks,
-                known_transactions,
-                should_checksum,
+                known_blocks: query.known_blocks,
+                known_transactions: query.known_transactions,
+                should_checksum: query.should_checksum,
             },
         )
         .await?;
@@ -661,17 +660,19 @@ impl EvmRpcClient {
 
     /// Builds the retry decision for a page that could not be read, updating
     /// the AIMD state as a side effect.
-    #[allow(clippy::too_many_arguments)]
     fn retry_result(
         &self,
-        partition_id: &str,
-        from_block: u64,
-        to_block: u64,
-        source_max: u64,
+        attempt: &Attempt<'_>,
         provider_message: Option<&str>,
         error_message: String,
         request_stats: Vec<RequestStat>,
     ) -> NextPageResult {
+        let Attempt {
+            partition_id,
+            from_block,
+            to_block,
+            source_max,
+        } = *attempt;
         let executed_interval = to_block - from_block + 1;
         let shrunk_interval =
             interval::shrink(executed_interval, self.sync_config.backoff_multiplicative);
@@ -725,29 +726,24 @@ impl EvmRpcClient {
     /// every selection to settle (unlike `Promise.all`'s fail-fast) so every
     /// request's timing is still captured for `requestStats` even when one of
     /// them errors.
-    #[allow(clippy::too_many_arguments)]
     async fn fetch_page(
         &self,
-        from_block: u64,
-        to_block: u64,
-        selections: &[BuiltLogSelection],
-        set_cache: &Arc<SetCache>,
-        selection_decoder: &Arc<SelectionDecoder>,
+        query: &PageQuery<'_>,
         stats: &Stats,
     ) -> Result<Vec<DecodedItem>, RpcError> {
-        if selections.is_empty() {
+        if query.selections.is_empty() {
             return Ok(Vec::new());
         }
 
-        let results = futures_util::future::join_all(selections.iter().map(|selection| async {
+        let results = futures_util::future::join_all(query.selections.iter().map(|selection| async {
             let started = Instant::now();
             let result = self
                 .fetch_logs_raw(
-                    from_block as i64,
-                    to_block as i64,
+                    query.from_block as i64,
+                    query.to_block as i64,
                     selection,
-                    set_cache.clone(),
-                    selection_decoder.clone(),
+                    query.set_cache.clone(),
+                    query.decoder.clone(),
                 )
                 .await;
             stats.record_log_query(started.elapsed().as_secs_f64());
