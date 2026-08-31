@@ -66,6 +66,13 @@ const resolvers = [
   }),
 
   createResolver({
+    name: "selectionProbe",
+    output: S.string,
+    timeoutMs: 5_000,
+    handler: async ({ selection }) => JSON.stringify(selection),
+  }),
+
+  createResolver({
     name: "adminOnly",
     output: S.string,
     admin: true,
@@ -114,7 +121,7 @@ describe("resolver /hasura-action", () => {
       answer: { status: 200, body: [{ id: "p1", size: "250" }] },
       seen: {
         args: { account: "0xaaa", minSize: 100n },
-        selection: {},
+        selection: { id: {}, size: {} },
         role: "public",
         // Hasura sends no request id, so the service mints one -- without it a
         // failure in the logs cannot be tied to the request that caused it.
@@ -241,6 +248,97 @@ describe("resolver /hasura-action", () => {
       status: answer.status,
       code: answer.body.extensions.code,
     }).toEqual({ status: 400, code: "BAD_REQUEST" });
+  });
+
+  it("gives the handler the selection Hasura's callers asked for", async () => {
+    // Hasura sends the operation as text, not as a parsed selection, so the
+    // tree a resolver skips work on has to be recovered from it. GMX's PnL
+    // resolver skips a TradeAction aggregation when the fee breakdown is not
+    // requested, which is the whole reason this is not left empty.
+    const queries: [string, string][] = [
+      ["plain", `query { selectionProbe { openFeesUsd closeFeesUsd } }`],
+      // The declared field name, never the alias -- a resolver knows its own
+      // result type and nothing about what the caller renamed it to.
+      ["aliases", `query { probe: selectionProbe { fees: openFeesUsd } }`],
+      ["nested", `query { selectionProbe { bucket { openFeesUsd } } }`],
+      [
+        "fragments",
+        `query { selectionProbe { ...Fees ... on Bucket { closeFeesUsd } } }
+         fragment Fees on Bucket { openFeesUsd }`,
+      ],
+      // A brace or a hash inside a string argument is not structure.
+      ["string args", `query { selectionProbe(note: "} # { not a selection") { openFeesUsd } }`],
+      [
+        "block strings",
+        `query { selectionProbe(note: """
+           } still not a selection
+         """) { openFeesUsd } }`,
+      ],
+      [
+        "comments and commas",
+        `query {  # the fee breakdown
+           selectionProbe { openFeesUsd, closeFeesUsd }  # both of them
+         }`,
+      ],
+      [
+        "variables and directives",
+        `query Fees($withClose: Boolean! = true) @cached {
+           selectionProbe(note: $note) { openFeesUsd closeFeesUsd @include(if: $withClose) }
+         }`,
+      ],
+      // Hasura merges actions into the query root beside table fields, so the
+      // document routinely holds selections that are not ours.
+      [
+        "other root fields",
+        `query { Account(where: { id: { _eq: "0x" } }) { id } selectionProbe { openFeesUsd } }`,
+      ],
+      ["__typename", `query { selectionProbe { __typename openFeesUsd } }`],
+      // The same action asked for twice in one document, and a fragment cycle
+      // that would otherwise be followed forever.
+      [
+        "repeated field",
+        `query { selectionProbe { openFeesUsd } selectionProbe { closeFeesUsd } }`,
+      ],
+      [
+        "fragment cycle",
+        `query { selectionProbe { ...A } }
+         fragment A on Bucket { openFeesUsd ...B }
+         fragment B on Bucket { closeFeesUsd ...A }`,
+      ],
+      // The selection is an optimisation, never correctness: anything that
+      // cannot be read leaves the resolver doing its full work.
+      ["unparseable", `query { selectionProbe { openFeesUsd `],
+      ["absent", ``],
+    ];
+
+    const seenSelections = await Promise.all(
+      queries.map(async ([label, request_query]) => {
+        const answer = await action({
+          action: { name: "selectionProbe" },
+          input: {},
+          session_variables: { "x-hasura-role": "public" },
+          ...(request_query === "" ? {} : { request_query }),
+        });
+        return [label, JSON.parse(answer.body as string)];
+      })
+    );
+
+    expect(seenSelections).toEqual([
+      ["plain", { openFeesUsd: {}, closeFeesUsd: {} }],
+      ["aliases", { openFeesUsd: {} }],
+      ["nested", { bucket: { openFeesUsd: {} } }],
+      ["fragments", { openFeesUsd: {}, closeFeesUsd: {} }],
+      ["string args", { openFeesUsd: {} }],
+      ["block strings", { openFeesUsd: {} }],
+      ["comments and commas", { openFeesUsd: {}, closeFeesUsd: {} }],
+      ["variables and directives", { openFeesUsd: {}, closeFeesUsd: {} }],
+      ["other root fields", { openFeesUsd: {} }],
+      ["__typename", { openFeesUsd: {} }],
+      ["repeated field", { openFeesUsd: {}, closeFeesUsd: {} }],
+      ["fragment cycle", { openFeesUsd: {}, closeFeesUsd: {} }],
+      ["unparseable", {}],
+      ["absent", {}],
+    ]);
   });
 
   it("leaves /resolve answering serve's contract", async () => {
