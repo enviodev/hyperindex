@@ -1173,7 +1173,7 @@ mod tests {
                 ],
                 Some(
                     "DELETE FROM `mock`.`envio_checkpoints` WHERE `id` > 42 \
-                     SETTINGS mutations_sync = 2"
+                     SETTINGS lightweight_deletes_sync = 2"
                         .to_string()
                 )
             )

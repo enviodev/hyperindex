@@ -354,9 +354,17 @@ pub fn trim_history_table(
     )
 }
 
+/// Trims the checkpoints past the one being resumed from.
+///
+/// `DELETE FROM` is a lightweight delete, which `mutations_sync` has no say
+/// over — `lightweight_deletes_sync` is the setting that makes the statement
+/// wait for the rows to actually be masked. Named explicitly rather than left to
+/// the server default, which a profile is free to set to 0: resume would then
+/// return with checkpoints still above the frontier, and replayed rows would
+/// become readable through a checkpoint that no longer covers them.
 pub fn trim_checkpoints(database: &str, history: &HistorySchema, checkpoint_id: &str) -> String {
     format!(
-        "DELETE FROM {}.{} WHERE {} > {checkpoint_id} SETTINGS mutations_sync = 2",
+        "DELETE FROM {}.{} WHERE {} > {checkpoint_id} SETTINGS lightweight_deletes_sync = 2",
         quoted(database),
         quoted(&history.checkpoints_table),
         quoted(&history.id_column)
@@ -687,7 +695,8 @@ mod tests {
                 "ALTER TABLE `db`.`envio_history_Account` DELETE WHERE \
                  `envio_checkpoint_id` > 42 SETTINGS mutations_sync = 2"
                     .to_string(),
-                "DELETE FROM `db`.`envio_checkpoints` WHERE `id` > 42 SETTINGS mutations_sync = 2"
+                "DELETE FROM `db`.`envio_checkpoints` WHERE `id` > 42 \
+                 SETTINGS lightweight_deletes_sync = 2"
                     .to_string()
             )
         );
