@@ -494,6 +494,17 @@ external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 module Schema = {
   let variantTag = S.union([S.string, S.object(s => s.field("TAG", S.string))])
 
+  // A ReScript `option` is `undefined` at runtime, so `S.null`'s serializer
+  // treats only `undefined` as the empty case — a genuine `null`, which a JS
+  // handler writes for a field it doesn't set, reaches the value serializer
+  // and crashes it (`null.toString()` for a BigInt column). Collapse both to
+  // `None` before the value serializer sees them.
+  let nullTolerant = schema =>
+    S.null(schema)->S.transform(_ => {
+      parser: value => value,
+      serializer: value => value->(magic: option<'a> => Nullable.t<'a>)->Nullable.toOption,
+    })
+
   // Don't use S.unknown, since it's not serializable to json
   // In a nutshell, this is completely unsafe.
   let dbDate =
