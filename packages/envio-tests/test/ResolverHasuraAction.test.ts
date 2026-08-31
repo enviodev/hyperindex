@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { S } from "envio";
 import {
   createResolver,
   defineInput,
   defineType,
   ResolverError,
-} from "../../envio/src/resolvers/index.js";
+  S,
+} from "envio";
 import { createResolverPoolFromEnv } from "../../envio/src/resolvers/db.js";
 import { startResolverServer } from "../../envio/src/resolvers/server.js";
 

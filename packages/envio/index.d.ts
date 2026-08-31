@@ -2492,6 +2492,18 @@ export function defineType<F extends Record<string, unknown>>(
   fields: F
 ): Sury.Schema<UnknownToOutput<F>>;
 
+/**
+ * Names a schema that appears in an argument.
+ *
+ * GraphQL keeps input and output types in a separate namespace from object
+ * types, so a `where` argument is declared with this rather than with
+ * {@link defineType}.
+ */
+export function defineInput<F extends Record<string, unknown>>(
+  name: string,
+  fields: F
+): Sury.Schema<UnknownToOutput<F>>;
+
 /** Names a schema representing a GraphQL enum. */
 export function defineEnum<const V extends readonly string[]>(
   name: string,
