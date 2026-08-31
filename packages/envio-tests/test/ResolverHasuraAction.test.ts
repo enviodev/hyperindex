@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { S } from "envio";
 import {
   createResolver,
+  defineInput,
   defineType,
   ResolverError,
 } from "../../envio/src/resolvers/index.js";
@@ -14,6 +15,15 @@ import { startResolverServer } from "../../envio/src/resolvers/server.js";
 // apart.
 
 const Row = defineType("Row", { id: S.string, size: S.bigint });
+
+const MarketAprsWhereInput = defineInput("MarketAprsWhereInput", {
+  periodStart: S.int32,
+  marketAddresses: S.optional(S.array(S.string)),
+});
+const CodeTierRuleInput = defineInput("CodeTierRuleInput", {
+  tier: S.string,
+  share: S.string,
+});
 
 let seen: Record<string, unknown> = {};
 
@@ -63,6 +73,17 @@ const resolvers = [
     handler: async () => {
       throw new Error("connection to postgres://user:hunter2@db failed");
     },
+  }),
+
+  createResolver({
+    name: "marketsAprByPeriod",
+    args: {
+      where: MarketAprsWhereInput,
+      codeTiersAsc: S.optional(S.array(CodeTierRuleInput)),
+    },
+    output: S.string,
+    timeoutMs: 5_000,
+    handler: async ({ args }) => JSON.stringify(args),
   }),
 
   createResolver({
@@ -339,6 +360,43 @@ describe("resolver /hasura-action", () => {
       ["unparseable", {}],
       ["absent", {}],
     ]);
+  });
+
+  it("coerces an object-shaped argument through its declared input type", async () => {
+    // Nearly every resolver in the reference implementation takes a `where`
+    // argument, so Hasura's nested `input` has to reach the handler as the
+    // object the declaration describes -- optional members absent rather than
+    // null, and a list of input objects intact.
+    expect(
+      await action({
+        action: { name: "marketsAprByPeriod" },
+        input: {
+          where: { periodStart: 1735689600, marketAddresses: ["0xaaa", "0xbbb"] },
+          codeTiersAsc: [{ tier: "1", share: "500" }],
+        },
+        session_variables: { "x-hasura-role": "public" },
+        request_query: "query { marketsAprByPeriod(where: { periodStart: 1735689600 }) }",
+      })
+    ).toEqual({
+      status: 200,
+      body: JSON.stringify({
+        where: { periodStart: 1735689600, marketAddresses: ["0xaaa", "0xbbb"] },
+        codeTiersAsc: [{ tier: "1", share: "500" }],
+      }),
+    });
+  });
+
+  it("rejects an argument the declared input type refuses", async () => {
+    const answer = await action({
+      action: { name: "marketsAprByPeriod" },
+      input: { where: { periodStart: "not a number" } },
+      session_variables: { "x-hasura-role": "public" },
+      request_query: "query { marketsAprByPeriod(where: {}) }",
+    });
+    expect({
+      status: answer.status,
+      code: (answer.body as { extensions: { code: string } }).extensions.code,
+    }).toEqual({ status: 400, code: "BAD_USER_INPUT" });
   });
 
   it("leaves /resolve answering serve's contract", async () => {
