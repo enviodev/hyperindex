@@ -95,6 +95,12 @@ type Position {
 
 let config = InternalTestIndexer.fromUserApi(~schema, ~configYaml).config
 
+// What the indexer would have recorded in `envio_info` for this project.
+// Passed explicitly because `serve` otherwise reads it off disk, and these
+// tests run from the workspace root rather than from the fixture.
+let envioInfo =
+  Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow->Config.stripSensitiveData
+
 // The same project with nothing declared, for the artefacts codegen has to
 // emit either way.
 let configWithoutResolvers =
@@ -187,7 +193,7 @@ extend type Query {
   })
 
   Async.it("serves the declarations it just imported, and drains on shutdown", async t => {
-    let running = await ResolverProcess.serve(~config, ~projectRoot, ~port=0)
+    let running = await ResolverProcess.serve(~config, ~projectRoot, ~envioInfo, ~port=0)
     let url = `http://127.0.0.1:${running.server.port->Int.toString}/resolve`
     let body = `{"field":"ping","args":{},"selection":{},"role":"public","requestId":"r"}`
 
