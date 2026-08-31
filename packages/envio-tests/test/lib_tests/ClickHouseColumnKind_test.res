@@ -37,6 +37,8 @@ let samples = (fieldType: Table.fieldType): array<Table.fieldType> =>
   | BigInt(_) => [BigInt({}), BigInt({precision: 20}), BigInt({precision: 40})]
   | BigDecimal(_) => [BigDecimal({}), BigDecimal({config: (18, 4)}), BigDecimal({config: (40, 4)})]
   | Enum(_) => [Enum({config: enumConfig})]
+  | SmallInt
+  | Bytea => []
   }
 
 let fieldTypes =
