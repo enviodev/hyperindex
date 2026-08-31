@@ -153,6 +153,10 @@ struct BlockRef {
 
 struct TxRef {
     mask: u64,
+    /// The hash the first log of this transaction reported. Two logs sharing a
+    /// (block, index) but naming different transactions could only come from
+    /// different forks, and their blocks disagree too — which the block
+    /// observations above catch before anything is materialised.
     hash: format::Hash,
 }
 
@@ -181,13 +185,14 @@ impl PageRefs {
         if !block.log_hashes.contains(block_hash) {
             block.log_hashes.push(block_hash.clone());
         }
-        self.transactions
+        let transaction = self
+            .transactions
             .entry((block_number, transaction_index))
-            .and_modify(|existing| existing.mask |= fields.tx_mask)
             .or_insert_with(|| TxRef {
-                mask: fields.tx_mask,
+                mask: 0,
                 hash: transaction_hash.clone(),
             });
+        transaction.mask |= fields.tx_mask;
     }
 }
 

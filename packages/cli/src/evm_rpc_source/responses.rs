@@ -51,7 +51,9 @@ pub(crate) fn build_block(
     if block.number != Some(requested) {
         return Err(anyhow!(
             "asked the RPC for block {requested} and it answered with block {}",
-            block.number.map_or_else(|| "none".to_string(), |n| n.to_string()),
+            block
+                .number
+                .map_or_else(|| "none".to_string(), |n| n.to_string()),
         ));
     }
 
@@ -216,7 +218,10 @@ mod tests {
         let err = build_block(&response, 16, &[BlockField::Timestamp])
             .unwrap_err()
             .to_string();
-        assert!(err.contains("block 16") && err.contains("block 17"), "{err}");
+        assert!(
+            err.contains("block 16") && err.contains("block 17"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -322,8 +327,7 @@ mod tests {
             TransactionField::Type,
             TransactionField::Gas,
         ];
-        let tx =
-            build_transaction(1, 0, &hash(1), Some(&transaction), None, &selection).unwrap();
+        let tx = build_transaction(1, 0, &hash(1), Some(&transaction), None, &selection).unwrap();
         check_transaction(&tx, &selection).unwrap();
         assert_eq!(
             (

@@ -326,6 +326,10 @@ describe("Rollback against a real RPC server", () => {
     t.expect((
       firstGuard,
       refetchedBlocks,
+      reorgedPage.blockStore->BlockStore.getHashes(~fromBlock=0, ~belowBlock=200),
+      chainState
+      ->ChainState.blockStore
+      ->BlockStore.getHashes(~fromBlock=0, ~belowBlock=200),
       chainState->ChainState.registerReorgGuard(
         ~blockStore=reorgedPage.blockStore,
         ~knownHeight=110,
@@ -333,6 +337,8 @@ describe("Rollback against a real RPC server", () => {
     )).toEqual((
       ReorgDetection.NoReorg,
       [101, 104],
+      {BlockStore.blockNumbers: [], hashes: []},
+      {BlockStore.blockNumbers: [], hashes: []},
       ReorgDetection.ReorgDetected({
         scannedBlock: {blockNumber: 102, blockHash: blockHash(~blockNumber=102, ~fork="a")},
         receivedBlock: {blockNumber: 102, blockHash: blockHash(~blockNumber=102, ~fork="b")},

@@ -572,12 +572,7 @@ impl EvmRpcClient {
                     .clone()
                     .unwrap_or_else(|| describe_rpc_error(&err));
                 (
-                    self.retry_result(
-                        &attempt,
-                        provider_message.as_deref(),
-                        message,
-                        stats.take(),
-                    ),
+                    self.retry_result(&attempt, provider_message.as_deref(), message, stats.take()),
                     None,
                 )
             }
@@ -735,21 +730,22 @@ impl EvmRpcClient {
             return Ok(Vec::new());
         }
 
-        let results = futures_util::future::join_all(query.selections.iter().map(|selection| async {
-            let started = Instant::now();
-            let result = self
-                .fetch_logs_raw(
-                    query.from_block as i64,
-                    query.to_block as i64,
-                    selection,
-                    query.set_cache.clone(),
-                    query.decoder.clone(),
-                )
-                .await;
-            stats.record_log_query(started.elapsed().as_secs_f64());
-            result
-        }))
-        .await;
+        let results =
+            futures_util::future::join_all(query.selections.iter().map(|selection| async {
+                let started = Instant::now();
+                let result = self
+                    .fetch_logs_raw(
+                        query.from_block as i64,
+                        query.to_block as i64,
+                        selection,
+                        query.set_cache.clone(),
+                        query.decoder.clone(),
+                    )
+                    .await;
+                stats.record_log_query(started.elapsed().as_secs_f64());
+                result
+            }))
+            .await;
 
         let mut items = Vec::new();
         let mut seen: HashSet<(i64, i64, i64)> = HashSet::new();
