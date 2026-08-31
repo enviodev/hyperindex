@@ -40,6 +40,15 @@ let getLastKnownValidBlock = async (
   }
 }
 
+// A chain the rollback moved: where it leaves the chain — written with the diff,
+// since the batch that carries it may belong to a chain the rollback never
+// touched — and what it took away, for the log.
+type rolledBackChain = {
+  progress: InternalTable.Chains.progressedChain,
+  fromBlock: int,
+  rollbackedEvents: float,
+}
+
 let rec rollback = async (
   state: IndexerState.t,
   ~scheduleFetch,
@@ -182,10 +191,7 @@ and executeRollback = async (
     }
   }
 
-  let rolledBackChains = []
-  // Where the rollback leaves each chain it moves. Travels with the diff, since
-  // the batch that carries it may belong to a chain the rollback never touched.
-  let progressedChains: array<InternalTable.Chains.progressedChain> = []
+  let rolledBackChains: array<rolledBackChain> = []
   let rolledBackAddresses = []
   state
   ->IndexerState.chainStates
@@ -206,20 +212,16 @@ and executeRollback = async (
     rolledBackAddresses->Array.pushMany(killedAddresses)->ignore
     let toBlock = cs->ChainState.committedProgressBlockNumber
     if fromBlock !== toBlock {
-      progressedChains
-      ->Array.push({
-        chainId,
-        progressBlockNumber: toBlock,
-        sourceBlockNumber: cs->ChainState.knownHeight,
-        totalEventsProcessed: cs->ChainState.numEventsProcessed,
-      })
-      ->ignore
       rolledBackChains
       ->Array.push({
-        "chainId": chainId,
-        "fromBlock": fromBlock,
-        "toBlock": toBlock,
-        "rollbackedEvents": eventsProcessedDiffByChain
+        progress: {
+          chainId,
+          progressBlockNumber: toBlock,
+          sourceBlockNumber: cs->ChainState.knownHeight,
+          totalEventsProcessed: cs->ChainState.numEventsProcessed,
+        },
+        fromBlock,
+        rollbackedEvents: eventsProcessedDiffByChain
         ->ChainId.Dict.dangerouslyGetNonOption(chainId)
         ->Option.getOr(0.),
       })
@@ -231,17 +233,17 @@ and executeRollback = async (
     ~scope,
     ~rollbackTargetCheckpointId,
     ~rollbackDiffCheckpointId=state->IndexerState.committedCheckpointId->BigInt.add(1n),
-    ~progressedChains,
+    ~progressedChains=rolledBackChains->Array.map(({progress}) => progress),
     ~rolledBackAddresses,
   )
 
-  rolledBackChains->Array.forEach(rolledBack => {
+  rolledBackChains->Array.forEach(({progress, fromBlock, rollbackedEvents}) => {
     logger->Logging.childInfo({
       "msg": "Rollbacked",
-      "chainId": rolledBack["chainId"],
-      "fromBlock": rolledBack["fromBlock"],
-      "toBlock": rolledBack["toBlock"],
-      "rollbackedEvents": rolledBack["rollbackedEvents"],
+      "chainId": progress.chainId,
+      "fromBlock": fromBlock,
+      "toBlock": progress.progressBlockNumber,
+      "rollbackedEvents": rollbackedEvents,
     })
   })
   logger->Logging.childTrace({
