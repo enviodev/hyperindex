@@ -82,15 +82,6 @@ type columnValuesInput = {
 external registerEntityTable: (t, entitySpec) => registeredTable = "registerEntityTable"
 
 @send
-external renderCreateHistoryTable: (
-  Core.clickHouseSinkCtor,
-  entitySpec,
-  ~database: string,
-  ~chainIdMode: string,
-  ~history: historySchema,
-) => string = "renderCreateHistoryTable"
-
-@send
 external registerCheckpointsTable: (t, array<columnSpec>) => registeredTable =
   "registerCheckpointsTable"
 

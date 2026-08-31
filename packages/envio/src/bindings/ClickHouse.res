@@ -141,18 +141,6 @@ let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySp
   }
 }
 
-let makeCreateHistoryTableQuery = (
-  ~entityConfig: Internal.entityConfig,
-  ~database,
-  ~chainIdMode: ChainId.mode=Int32,
-) =>
-  Core.getAddon().clickHouseSink->ClickHouseSink.renderCreateHistoryTable(
-    entitySpec(~entityConfig),
-    ~database,
-    ~chainIdMode=(chainIdMode :> string),
-    ~history=ClickHouseSink.historySchema(),
-  )
-
 type converters = {
   convertSetOrThrow: Change.t<Internal.entity> => dict<unknown>,
   convertDeleteOrThrow: Change.t<Internal.entity> => dict<unknown>,

@@ -330,28 +330,6 @@ impl ClickHouseSink {
     }
 
     #[napi]
-    pub fn render_create_history_table(
-        entity: EntitySpecInput,
-        database: String,
-        chain_id_mode: String,
-        history: ddl::HistorySchema,
-    ) -> napi::Result<String> {
-        let entity: ddl::EntitySpec = entity.into();
-        let chain_id_mode = ChainIdMode::parse(&chain_id_mode).map_err(to_napi)?;
-        ddl::create_history_table(
-            &entity,
-            &database,
-            &history,
-            ddl::Topology {
-                replicated: false,
-                ddl_on_cluster: false,
-            },
-            chain_id_mode,
-        )
-        .map_err(to_napi)
-    }
-
-    #[napi]
     pub fn register_checkpoints_table(
         &self,
         columns: Vec<ColumnSpecInput>,
