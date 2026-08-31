@@ -8,26 +8,31 @@ type metric = {
 // client the run won't clean up.
 type pg = {sql: Postgres.sql, pgSchema: string}
 
-// Which persistence a run is exercised against. Locally the whole suite runs
-// on memory; CI runs it once per backend.
-type backend = [#memory | #postgres | #clickhouse]
+// Which persistence a run is exercised against. Both are Postgres-backed; the
+// ClickHouse one adds the sink on top. CI runs the suite once per backend.
+type backend = [#postgres | #clickhouse]
 
 let backendName = (backend: backend) =>
   switch backend {
-  | #memory => "memory"
   | #postgres => "postgres"
   | #clickhouse => "clickhouse"
   }
 
 let selectedBackend: backend = switch %raw(`process.env.ENVIO_TEST_STORAGE`)->Nullable.toOption {
-| None | Some("") => #memory
-| Some("memory") => #memory
-| Some("postgres") => #postgres
+| None | Some("") | Some("postgres") => #postgres
 | Some("clickhouse") => #clickhouse
 | Some(other) =>
   JsError.throwWithMessage(
-    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected memory, postgres or clickhouse.`,
+    `Unknown ENVIO_TEST_STORAGE value "${other}". Expected postgres or clickhouse.`,
   )
+}
+
+// One row of `envio_addresses`, with its key rendered back to a string.
+type addressRow = {
+  chainId: ChainId.t,
+  address: Address.t,
+  contractName: string,
+  registrationBlock: int,
 }
 
 type rec t = {
@@ -38,15 +43,16 @@ type rec t = {
   query: 'entity. string => promise<array<'entity>>,
   queryHistory: 'entity. string => promise<array<Change.t<'entity>>>,
   queryRaw: 'entity. Internal.entityConfig => promise<array<'entity>>,
+  // `envio_addresses` isn't an entity, so it has a read path of its own. The
+  // stored key is rendered back here, the only place a test needs a string.
+  queryAddresses: unit => promise<array<addressRow>>,
   queryCheckpoints: unit => promise<array<InternalTable.Checkpoints.t>>,
   queryEffectCache: 'input 'output. (
     Envio.effect<'input, 'output>,
     ~scope: Internal.chainScope,
   ) => promise<array<{"id": string, "output": JSON.t}>>,
   metric: string => promise<array<metric>>,
-  // Present only on the postgres-backed backends. A test that reads SQL
-  // directly is a postgres-only test, and says so by reaching through this.
-  pg: option<pg>,
+  pg: pg,
   // Quiesce the run: its loops keep driving the database otherwise, and the
   // schema is dropped out from under them at the end of `run`.
   stop: unit => promise<unit>,
@@ -55,15 +61,6 @@ type rec t = {
 
 let entityConfigByName = (config: Config.t, name): Internal.entityConfig =>
   config.userEntitiesByName->Dict.get(name)->Option.getOrThrow
-
-let pgOrThrow = (indexer: t) =>
-  switch indexer.pg {
-  | Some(pg) => pg
-  | None =>
-    JsError.throwWithMessage(
-      "This test reads Postgres directly, so it only runs on a postgres-backed backend. Mark #memory unsupported on the scenario.",
-    )
-  }
 
 // Runs `body` against a fresh indexer in a Postgres schema of its own, then
 // tears both down — so tests never stop an indexer by hand, and files can run
@@ -87,20 +84,16 @@ let run = async (
   body: t => promise<unit>,
 ) => {
   // Postgres resources this run owns: one schema, plus every client and
-  // indexer built inside it (`restart` adds more). Unused on `#memory`.
+  // indexer built inside it (`restart` adds more).
   let pgSchema = TestPgSchema.make()
   let clients = []
   let stops = []
-
-  // Outlives every indexer the run builds, so a restart resumes from what the
-  // previous one persisted — the same way a postgres schema does.
-  let memoryState = MemoryStorage.make()
 
   // The ClickHouse leg writes through the sink Postgres storage attaches, into
   // a database of this run's own.
   let clickHouseDatabase = switch backend {
   | #clickhouse => Some(TestClickHouse.make())
-  | #memory | #postgres => None
+  | #postgres => None
   }
 
   // The builder is only reachable here and from `restart`, so it takes just
@@ -115,26 +108,18 @@ let run = async (
     let registrationsByChainId = await resolveRegistrations()
     MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
 
-    let (persistence, pg) = switch backend {
-    | #memory =>
-      let storage = mapStorage(memoryState->MemoryStorage.toStorage(~config))
-      (
-        Persistence.make(~userEntities=config.userEntities, ~allEnums=config.allEnums, ~storage),
-        None,
-      )
-    | #postgres | #clickhouse =>
-      switch clickHouseDatabase {
-      | Some(database) => TestClickHouse.use(~database)
-      | None => ()
-      }
-      let sql = PgStorage.makeClient()
-      clients->Array.push(sql)->ignore
-      let storage = mapStorage(
-        // Tracking tables in Hasura costs ~1.9 seconds per indexer.
-        PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
-      )
-      (PgStorage.makePersistenceFromConfig(~config, ~storage), Some({sql, pgSchema}))
+    switch clickHouseDatabase {
+    | Some(database) => TestClickHouse.use(~database)
+    | None => ()
     }
+    let sql = PgStorage.makeClient()
+    clients->Array.push(sql)->ignore
+    let storage = mapStorage(
+      // Tracking tables in Hasura costs ~1.9 seconds per indexer.
+      PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
+    )
+    let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
+    let pg = {sql, pgSchema}
 
     let onError = switch onError {
     | Some(onError) => onError
@@ -147,6 +132,7 @@ let run = async (
 
     await persistence->Persistence.init(
       ~chainConfigs=config.chainMap->ChainMap.values,
+      ~contractMapping=config.contractMapping,
       ~envioInfo=JSON.Encode.object(Dict.make()),
       ~resetCommand="envio dev -r",
       ~runCommand=Some("envio dev"),
@@ -203,73 +189,63 @@ let run = async (
       }
     stops->Array.push(stop)->ignore
 
-    // Both backends hand back decoded entities, so an assertion reads the same
-    // either way: postgres parses its rows with the table's field schemas, and
-    // the memory store never encoded them in the first place.
+    // Rows come back decoded: postgres parses them with the table's field schemas.
     let queryEntity = (entityConfig: Internal.entityConfig) =>
-      switch pg {
-      | None =>
-        Promise.resolve(
-          memoryState
-          ->MemoryStorage.currentRows(~entityConfig)
-          ->(Utils.magic: array<Internal.entity> => array<unknown>),
-        )
-      | Some({sql, pgSchema}) =>
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
-        )
-        ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
-      }
+      sql
+      ->Postgres.unsafe(
+        PgStorage.makeLoadAllQuery(~pgSchema, ~tableName=entityConfig.table.tableName),
+      )
+      ->Promise.thenResolve(items => items->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema))
 
     let queryEntityHistory = (entityConfig: Internal.entityConfig) =>
-      switch pg {
-      | None =>
-        Promise.resolve(memoryState->MemoryStorage.historyChanges(~entityConfig))
-      | Some({sql, pgSchema}) =>
-        sql
-        ->Postgres.unsafe(
-          PgStorage.makeLoadAllQuery(
-            ~pgSchema,
-            ~tableName=PgStorage.getEntityHistory(~entityConfig).table.tableName,
+      sql
+      ->Postgres.unsafe(
+        PgStorage.makeLoadAllQuery(
+          ~pgSchema,
+          ~tableName=PgStorage.getEntityHistory(~entityConfig).table.tableName,
+        ),
+      )
+      ->Promise.thenResolve(items => {
+        // Rows aren't ordered by the query, and insert order isn't meaningful
+        // since checkpointId is the source of truth. Sort for stable assertions.
+        items
+        ->S.parseOrThrow(
+          S.array(
+            S.union([
+              PgStorage.getEntityHistory(~entityConfig).setChangeSchema,
+              S.object((s): Change.t<Internal.entity> => {
+                s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
+                Delete({
+                  entityId: s.field("id", entityConfig.table->Table.getIdSchema),
+                  checkpointId: s.field(
+                    EntityHistory.checkpointIdFieldName,
+                    EntityHistory.unsafeCheckpointIdSchema,
+                  ),
+                })
+              }),
+            ]),
           ),
         )
-        ->Promise.thenResolve(items => {
-          // Rows aren't ordered by the query, and insert order isn't meaningful
-          // since checkpointId is the source of truth. Sort for stable assertions.
-          items
-          ->S.parseOrThrow(
-            S.array(
-              S.union([
-                PgStorage.getEntityHistory(~entityConfig).setChangeSchema,
-                S.object((s): Change.t<Internal.entity> => {
-                  s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
-                  Delete({
-                    entityId: s.field("id", entityConfig.table->Table.getIdSchema),
-                    checkpointId: s.field(
-                      EntityHistory.checkpointIdFieldName,
-                      EntityHistory.unsafeCheckpointIdSchema,
-                    ),
-                  })
-                }),
-              ]),
-            ),
-          )
-          ->Array.toSorted((a, b) => {
-            switch String.compare(
-              a->Change.getEntityId->EntityId.toKey,
-              b->Change.getEntityId->EntityId.toKey,
-            ) {
-            | 0. =>
-              Float.compare(
-                a->Change.getCheckpointId->BigInt.toFloat,
-                b->Change.getCheckpointId->BigInt.toFloat,
-              )
-            | order => order
+        ->Array.toSorted((a, b) => {
+          switch String.compare(
+            a->Change.getEntityId->EntityId.toKey,
+            b->Change.getEntityId->EntityId.toKey,
+          ) {
+          | 0. =>
+            // Compared as bigints: checkpoint ids are unbounded, and past 2^53
+            // a float comparison would call distinct ids equal.
+            let (a, b) = (a->Change.getCheckpointId, b->Change.getCheckpointId)
+            if a == b {
+              0.
+            } else if a < b {
+              -1.
+            } else {
+              1.
             }
-          })
+          | order => order
+          }
         })
-      }
+      })
 
     {
       getBatchWritePromise: () => {
@@ -375,40 +351,47 @@ let run = async (
           Utils.magic: promise<array<unknown>> => promise<array<entity>>
         ),
       queryRaw: (type entity, entityConfig: Internal.entityConfig) =>
-        queryEntity(entityConfig)->(
-          Utils.magic: promise<array<unknown>> => promise<array<entity>>
-        ),
+        queryEntity(entityConfig)->(Utils.magic: promise<array<unknown>> => promise<array<entity>>),
+      queryAddresses: async () => {
+        let rows =
+          (await sql->Postgres.unsafe(InternalTable.EnvioAddresses.makeGetRowsQuery(~pgSchema)))->(
+            Utils.magic: unknown => array<AddressRows.row>
+          )
+        let addresses =
+          rows->AddressRows.render(
+            ~ecosystem=(config.ecosystem.name :> string),
+            ~shouldChecksum=!config.lowercaseAddresses,
+          )
+        rows->Array.mapWithIndex((row, idx): addressRow => {
+          chainId: row.chainId->ChainId.normalizeOrThrow,
+          address: addresses->Array.getUnsafe(idx),
+          contractName: config.contractMapping->ContractMapping.nameOfOrThrow(row.contractId),
+          registrationBlock: row.registrationBlock,
+        })
+      },
       queryHistory: (type entity, name) =>
         queryEntityHistory(config->entityConfigByName(name))->(
           Utils.magic: promise<array<Change.t<Internal.entity>>> => promise<array<Change.t<entity>>>
         ),
       queryCheckpoints: () =>
-        switch pg {
-        | None => Promise.resolve(memoryState->MemoryStorage.checkpointRows)
-        | Some({sql, pgSchema}) =>
-          sql
-          ->Postgres.unsafe(
-            PgStorage.makeLoadAllQuery(
-              ~pgSchema,
-              ~tableName=InternalTable.Checkpoints.table.tableName,
-            ),
-          )
-          ->Promise.thenResolve(rows =>
-            rows
-            ->(Utils.magic: unknown => array<unknown>)
-            ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
-          )
-        },
+        sql
+        ->Postgres.unsafe(
+          PgStorage.makeLoadAllQuery(
+            ~pgSchema,
+            ~tableName=InternalTable.Checkpoints.table.tableName,
+          ),
+        )
+        ->Promise.thenResolve(rows =>
+          rows
+          ->(Utils.magic: unknown => array<unknown>)
+          ->Array.map(row => row->S.convertOrThrow(InternalTable.Checkpoints.dbSchema))
+        ),
       queryEffectCache: (type input output, effect: Envio.effect<input, output>, ~scope) => {
         let effect = effect->(Utils.magic: Envio.effect<input, output> => Internal.effect)
         let tableName = Internal.EffectCache.toTableName(~effectName=effect.name, ~scope)
-        switch pg {
-        | None => Promise.resolve(memoryState->MemoryStorage.effectCacheRows(~tableName))
-        | Some({sql, pgSchema}) =>
-          sql
-          ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
-          ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
-        }
+        sql
+        ->Postgres.unsafe(PgStorage.makeLoadAllQuery(~pgSchema, ~tableName))
+        ->(Utils.magic: promise<unknown> => promise<array<{"id": string, "output": JSON.t}>>)
       },
       metric: async name => {
         // Parse the metric's samples back out of the rendered /metrics text.

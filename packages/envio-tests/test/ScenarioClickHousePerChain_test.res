@@ -47,7 +47,6 @@ type Counter {
 }
 `,
   ~unsupported=[
-    {backend: #memory, reason: "asserts against a ClickHouse server"},
     {backend: #postgres, reason: "asserts against a ClickHouse server"},
   ],
 )
@@ -73,7 +72,6 @@ describe("Scenario ClickHouse per-chain entity", () => {
       let chain1 = source(1)
       let chain137 = source(137)
 
-      await Utils.delay(0)
       chain1.resolveGetHeightOrThrow(10)
       chain137.resolveGetHeightOrThrow(10)
 

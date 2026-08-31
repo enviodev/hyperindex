@@ -55,6 +55,7 @@ describe("Concurrent batch write and processing", () => {
         ~allEntities,
         ~updatedEffectsCache,
         ~updatedEntities,
+        ~registeredAddresses,
         ~chainMetaData,
         ~onWrite,
       ) => {
@@ -74,6 +75,7 @@ describe("Concurrent batch write and processing", () => {
             ~allEntities,
             ~updatedEffectsCache,
             ~updatedEntities,
+            ~registeredAddresses,
             ~chainMetaData,
             ~onWrite,
           ) {

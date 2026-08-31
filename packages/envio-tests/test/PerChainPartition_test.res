@@ -140,16 +140,7 @@ type counterRow = {
 type counterOps = {set: {"id": string, "count": bigint, "owner": string} => unit}
 type handlerContext = {@as("Counter") counter: counterOps}
 
-let scenario = Scenario.make(
-  ~schema,
-  ~configYaml,
-  ~unsupported=[
-    {
-      Scenario.backend: #memory,
-      reason: "reads the Postgres catalog and query plans directly",
-    },
-  ],
-)
+let scenario = Scenario.make(~schema, ~configYaml)
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 
@@ -192,7 +183,7 @@ describe("Per-chain entity partitions against Postgres", () => {
 
       let rows: array<counterRow> = await indexer.query("Counter")
 
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
 
       // Every relation the Counter entity owns: the parent, its partitions, and
       // its history table — with what each one is attached to.
@@ -292,12 +283,6 @@ let lockScenario = Scenario.make(
         address: "0x0000000000000000000000000000000000000001"`
   })
   ->Array.joinUnsafe("") ++ "\n",
-  ~unsupported=[
-    {
-      Scenario.backend: #memory,
-      reason: "counts Postgres relation locks directly",
-    },
-  ],
 )
 
 describe("Reused chain-scoped statements stay pruned", () => {
@@ -310,7 +295,7 @@ describe("Reused chain-scoped statements stay pruned", () => {
       await Utils.delay(0)
       await indexer.stop()
 
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       let entityConfig = lockScenario.config->IndexerRunner.entityConfigByName("Counter")
       let chainId = 137->ChainId.fromInt
       // The shape `LoadLayer.scopeFilter` builds for a per-chain entity: the
@@ -335,6 +320,7 @@ describe("Reused chain-scoped statements stay pruned", () => {
           ~pgDatabase="",
           ~pgPassword="",
           ~isHasuraEnabled=false,
+          ~ecosystem=Evm,
         )
         let counts = []
         for _ in 1 to 8 {

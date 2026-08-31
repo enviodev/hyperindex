@@ -26,10 +26,7 @@ type Counter {
   count: BigInt!
 }
 `,
-  ~unsupported=[
-    {backend: #memory, reason: "asserts against a ClickHouse server"},
-    {backend: #postgres, reason: "asserts against a ClickHouse server"},
-  ],
+  ~unsupported=[{backend: #postgres, reason: "asserts against a ClickHouse server"}],
 )
 
 type counter = {id: string, count: bigint}
@@ -52,13 +49,10 @@ let feed = async (
   ~id="total",
   ~count,
 ) => {
-  await Utils.delay(0)
   switch height {
   | Some(height) => source.resolveGetHeightOrThrow(height)
   | None => ()
   }
-  await Utils.delay(0)
-  await Utils.delay(0)
   source.resolveGetItemsOrThrow(
     [{blockNumber, logIndex: 0, handler: setCounter(~id, ~count)}],
     ~latestFetchedBlockNumber=blockNumber + 5,
@@ -98,13 +92,7 @@ describe("ClickHouse sink after a resume", () => {
       let checkpoints = await indexer.queryCheckpoints()
 
       let resumed = await indexer.restart()
-      await feed(
-        resumed,
-        ~source=source(1),
-        ~blockNumber=20,
-        ~id="second",
-        ~count=2n,
-      )
+      await feed(resumed, ~source=source(1), ~blockNumber=20, ~id="second", ~count=2n)
 
       let database = TestClickHouse.currentDatabase()
       let rows = await TestClickHouse.query(

@@ -88,16 +88,21 @@ let getGlobalPersistence = () =>
 let setGlobalPersistence = (persistence: Persistence.t) =>
   EnvioGlobal.value.persistence = Some(persistence->(Utils.magic: Persistence.t => unknown))
 
-let getInitialChainState = (~chainId: ChainId.t): option<Persistence.initialChainState> => {
+let getInitialState = (): option<Persistence.initialState> => {
   switch getGlobalPersistence() {
   | Some(persistence) =>
     switch persistence.storageStatus {
-    | Ready(initialState) => initialState.chains->Array.find(c => c.id === chainId)
+    | Ready(initialState) => Some(initialState)
     | _ => None
     }
   | None => None
   }
 }
+
+let getInitialChainState = (~chainId: ChainId.t): option<Persistence.initialChainState> =>
+  getInitialState()->Option.flatMap(initialState =>
+    initialState.chains->Array.find(c => c.id === chainId)
+  )
 
 // Importing `generated` must not trigger `Config.load()`,
 // so the exported indexer calls this lazily on first `indexer.chains` access.
@@ -184,20 +189,23 @@ let buildChainsObject = (~config: Config.t) => {
                 chainState->ChainState.contractAddresses(~contractName=contract.name)
               }
             // Before the global state is available (eg during handler
-            // module load after resume), combine static addresses from config
-            // with dynamic contracts persisted in the database.
+            // module load after resume), read them off what persistence
+            // restored — which already holds the config's own addresses
+            // alongside the dynamically registered ones.
             | None =>
-              switch getInitialChainState(~chainId=chainConfig.id) {
-              | Some(chainState) =>
-                let addresses = contract.addresses->Array.copy
-                chainState.indexingAddresses->Array.forEach(
-                  dc => {
-                    if dc.contractName === contract.name {
-                      addresses->Array.push(dc.address)->ignore
-                    }
-                  },
-                )
-                addresses
+              switch getInitialState() {
+              | Some(initialState) =>
+                switch initialState.chains->Array.find(c => c.id === chainConfig.id) {
+                | Some(chainState) =>
+                  chainState.addressRows->AddressRows.renderOfContract(
+                    ~ecosystem=(config.ecosystem.name :> string),
+                    ~shouldChecksum=!config.lowercaseAddresses,
+                    ~contractId=initialState.contractMapping->ContractMapping.idOfOrThrow(
+                      contract.name,
+                    ),
+                  )
+                | None => contract.addresses
+                }
               | None => contract.addresses
               }
             }
@@ -577,6 +585,7 @@ let migrate = async (~reset) => {
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
+    ~contractMapping=config.contractMapping,
     ~envioInfo=getEnvioInfo(),
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
@@ -628,6 +637,7 @@ let start = async (
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
+    ~contractMapping=config.contractMapping,
     ~envioInfo=getEnvioInfo(),
     ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
     ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),

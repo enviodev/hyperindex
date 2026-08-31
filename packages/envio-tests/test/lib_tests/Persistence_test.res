@@ -11,8 +11,8 @@ describe("Test Persistence layer init", () => {
 
     t.expect(
       persistence.allEntities,
-      ~message=`All entities should automatically include the indexer core ones`,
-    ).toEqual([InternalTable.EnvioAddresses.entityConfig])
+      ~message=`The indexer's own tables aren't entities, so the user's list is untouched`,
+    ).toEqual([])
     t.expect(
       persistence.allEnums,
       ~message=`All enums should automatically include the indexer core ones`,
@@ -29,7 +29,7 @@ describe("Test Persistence layer init", () => {
 
     let envioInfo = JSON.Encode.object(Dict.make())
     let p =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
 
     t.expect(
       storageMock.isInitializedCalls,
@@ -73,11 +73,12 @@ describe("Test Persistence layer init", () => {
 
     let initialState: Persistence.initialState = {
       cleanRun: true,
+      contractMapping: ContractMapping.empty,
+      envioInfo: Some(envioInfo),
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
       checkpointId: 0n,
-      envioInfo: Some(envioInfo),
     }
     storageMock.resolveInitialize(initialState)
     let _ = await Promise.resolve()
@@ -91,7 +92,7 @@ describe("Test Persistence layer init", () => {
     // Can resolve the promise now
     await p
 
-    await persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+    await persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -105,6 +106,7 @@ describe("Test Persistence layer init", () => {
       persistence->Persistence.init(
         ~reset=true,
         ~chainConfigs=[],
+        ~contractMapping=ContractMapping.empty,
         ~envioInfo,
         ~resetCommand=resetCmd, ~runCommand=runCmd,
       )
@@ -129,31 +131,32 @@ describe("Test Persistence layer init", () => {
   })
 
   Async.it("Should skip initialization when storage is already initialized", async t => {
+    let envioInfo = JSON.Encode.object(Dict.make())
+    // The stored snapshot matches the running one, so the compat gate no-ops.
     let storageMock = MockStorage.make([#isInitialized, #resumeInitialState])
 
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
-    let envioInfo = JSON.Encode.object(Dict.make())
-
     let p =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
     // Additional calls to init should not do anything
     let _ =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
     let _ =
-      persistence->Persistence.init(~chainConfigs=[], ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+      persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
 
     storageMock.resolveIsInitialized(true)
-    let _ = await Promise.resolve()
+    // Let resumeInitialState register its resolver.
+    await Utils.delay(0)
 
     let initialState: Persistence.initialState = {
       cleanRun: false,
+      contractMapping: ContractMapping.empty,
+      envioInfo: Some(envioInfo),
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
       checkpointId: 0n,
-      // Compat check sees a stored value matching the running one → no-op.
-      envioInfo: Some(envioInfo),
     }
     storageMock.resolveLoadInitialState(initialState)
     await p
@@ -172,8 +175,8 @@ Although it should load effect caches metadata.`,
     ).toEqual((1, 0, 1))
   })
 
-  // Drive a single resume against a mock that returns `~storedEnvioInfo` from
-  // resumeInitialState, then capture whatever Persistence.init throws.
+  // Drive a single resume whose payload carries `~storedEnvioInfo`, then
+  // capture whatever Persistence.init throws.
   let resumeWith = async (
     ~storedEnvioInfo: option<JSON.t>,
     ~current: JSON.t,
@@ -182,31 +185,35 @@ Although it should load effect caches metadata.`,
   ) => {
     let storageMock = MockStorage.make([#isInitialized, #resumeInitialState])
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
-    let resumePromise =
-      persistence->Persistence.init(
-        ~chainConfigs=[],
-        ~envioInfo=current,
-        ~resetCommand,
-        ~runCommand,
-      )
+    // Attach before resolving the mock: throwIfIncompatible rejects this
+    // promise, and an unattached rejection would surface as unhandled.
+    let settled = (
+      async () =>
+        switch await persistence->Persistence.init(
+          ~chainConfigs=[],
+          ~contractMapping=ContractMapping.empty,
+          ~envioInfo=current,
+          ~resetCommand,
+          ~runCommand,
+        ) {
+        | () => None
+        | exception exn => Some(exn)
+        }
+    )()
     storageMock.resolveIsInitialized(true)
-    let _ = await Promise.resolve()
+    await Utils.delay(0)
     let initialState: Persistence.initialState = {
       cleanRun: false,
+      contractMapping: ContractMapping.empty,
+      envioInfo: storedEnvioInfo,
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
       checkpointId: 0n,
-      envioInfo: storedEnvioInfo,
     }
     storageMock.resolveLoadInitialState(initialState)
 
-    let raised = try {
-      await resumePromise
-      None
-    } catch {
-    | exn => Some(exn)
-    }
+    let raised = await settled
     let message = switch raised {
     | Some(JsExn(e)) => e->JsExn.message->Option.getOr("")
     | _ => ""
@@ -214,15 +221,15 @@ Although it should load effect caches metadata.`,
     (raised, message, storageMock)
   }
 
-  Async.it("Throws version-mismatch incompat error when envio_info is missing", async t => {
+  Async.it("Throws version-mismatch incompat error when the stored config is unreadable", async t => {
     let (_, message, _) = await resumeWith(
       ~storedEnvioInfo=None,
       ~current=JSON.parseOrThrow(`{"name": "demo"}`),
     )
-    t.expect(message, ~message="full incompat message with missing-info bullet").toBe(
+    t.expect(message, ~message="full incompat message with older-version bullet").toBe(
       `The following config changes are incompatible with the existing indexer data:
 
-    - envio info is missing — storage initialized by an older envio
+    - storage was initialized by an older envio version
 
 Pick one:
   1. Revert the changes above  # resume indexing where it left off

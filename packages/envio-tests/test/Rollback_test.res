@@ -109,11 +109,9 @@ let asRegisterContext = (context: Internal.contractRegisterContext) =>
 
 // Query only dynamically registered addresses (exclude config addresses with registrationBlock=-1)
 let queryDynamicAddresses = (indexer: IndexerRunner.t) =>
-  (
-    indexer.queryRaw(InternalTable.EnvioAddresses.entityConfig): promise<
-      array<InternalTable.EnvioAddresses.t>,
-    >
-  )->Promise.thenResolve(rows => rows->Array.filter(r => r.registrationBlock !== -1))
+  indexer.queryAddresses()->Promise.thenResolve(rows =>
+    rows->Array.filter(r => r.registrationBlock !== -1)
+  )
 
 describe("E2E rollback tests", () => {
   let testSingleChainRollback = async (
@@ -1049,12 +1047,9 @@ describe("E2E rollback tests", () => {
         ~message="Added the processed dynamic contract to the db",
       ).toEqual([
         {
-          id: `1337-${Envio.TestHelpers.Addresses.mockAddresses
-            ->Array.getUnsafe(0)
-            ->Address.toString}`,
+          IndexerRunner.address: Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
           chainId: 1337->ChainId.fromInt,
           registrationBlock: 102,
-          registrationLogIndex: -1,
           contractName: "SimpleNft",
         },
       ])
@@ -1147,12 +1142,9 @@ describe("E2E rollback tests", () => {
         ~message="Should have only one dynamic contract in the db. The second one rollbacked from db, the third one rollbacked from fetch state",
       ).toEqual([
         {
-          id: `1337-${Envio.TestHelpers.Addresses.mockAddresses
-            ->Array.getUnsafe(0)
-            ->Address.toString}`,
+          IndexerRunner.address: Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
           chainId: 1337->ChainId.fromInt,
           registrationBlock: 102,
-          registrationLogIndex: -1,
           contractName: "SimpleNft",
         },
       ])
@@ -2027,6 +2019,85 @@ describe("E2E rollback tests", () => {
           }),
         ],
       ))
+    },
+  )
+
+  scenario->Scenario.it(
+    "Deletes a rolled back address when a second reorg lands before the write",
+    ~sources=[{chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let sourceMock = source(1337)
+      await Utils.delay(0)
+
+      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=sourceMock)
+
+      sourceMock.resolveGetItemsOrThrow([])
+      await indexer.getBatchWritePromise()
+
+      sourceMock.resolveGetItemsOrThrow([
+        {
+          blockNumber: 102,
+          logIndex: 0,
+          contractRegister: async args => {
+            let context = args.context->asRegisterContext
+            context.chain.simpleNft.add(
+              Envio.TestHelpers.Addresses.mockAddresses->Array.getUnsafe(0),
+            )
+          },
+          handler: async _ => (),
+        },
+      ])
+      await indexer.getBatchWritePromise()
+      // The registration only reaches storage once the partition created for it
+      // has fetched the block that registered it.
+      sourceMock.resolveGetItemsOrThrow(
+        [{blockNumber: 102, logIndex: 1, handler: async _ => ()}],
+        ~filter=MockSource.coveringBlock(102),
+        ~latestFetchedBlockNumber=102,
+      )
+      await indexer.getBatchWritePromise()
+      t.expect(
+        (await queryDynamicAddresses(indexer))->Array.length,
+        ~message="the registration is stored before any reorg",
+      ).toEqual(1)
+
+      // First reorg: rolls back past block 102, so the address store drops the
+      // registration and hands its row over for deletion.
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~filter=query => query["p"] === "1",
+        ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+      sourceMock.resolveGetBlockHashes([
+        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+        {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
+      ])
+      await indexer.getRollbackReadyPromise()
+
+      // Second reorg before any batch is written: the store has already
+      // tombstoned the registration, so it reports nothing this time round.
+      sourceMock.resolveGetItemsOrThrow(
+        [],
+        ~filter=MockSource.coveringBlock(102),
+        ~prevRangeLastBlock={blockNumber: 101, blockHash: "0x101a"},
+      )
+      await Utils.delay(0)
+      await Utils.delay(0)
+      sourceMock.resolveGetBlockHashes([
+        {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
+      ])
+      await indexer.getRollbackReadyPromise()
+
+      sourceMock.resolveGetItemsOrThrow([], ~filter=MockSource.coveringBlock(101))
+      await indexer.getBatchWritePromise()
+
+      t.expect(
+        await queryDynamicAddresses(indexer),
+        ~message="the write carries both rollbacks' deletions, not just the last one's",
+      ).toEqual([])
     },
   )
 
@@ -2928,6 +2999,7 @@ describe("E2E rollback tests", () => {
         ~allEntities,
         ~updatedEffectsCache,
         ~updatedEntities,
+        ~registeredAddresses,
         ~chainMetaData,
         ~onWrite,
       ) => {
@@ -2945,6 +3017,7 @@ describe("E2E rollback tests", () => {
             ~allEntities,
             ~updatedEffectsCache,
             ~updatedEntities,
+            ~registeredAddresses,
             ~chainMetaData,
             ~onWrite,
           )

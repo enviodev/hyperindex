@@ -120,6 +120,7 @@ let runOneWrite = async (state: IndexerState.t) => {
       }
     })
     let updatedEffectsCache = snapshotEffects(state, ~cache)
+    let registeredAddresses = batch.registeredAddresses
 
     let writtenEntityNames = Utils.Set.make()
     updatedEntities->Array.forEach(({entityConfig}) =>
@@ -145,6 +146,7 @@ let runOneWrite = async (state: IndexerState.t) => {
         ~config,
         ~allEntities=persistence.allEntities,
         ~updatedEntities,
+        ~registeredAddresses,
         ~updatedEffectsCache,
         ~chainMetaData,
         ~onWrite=(~storage, ~timeSeconds) =>

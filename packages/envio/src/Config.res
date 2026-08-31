@@ -107,6 +107,9 @@ type t = {
   // they can express fits an INTEGER.
   chainIdMode: ChainId.mode,
   chainMap: ChainMap.t<chain>,
+  // Derived from every chain's contracts, so an id means the same contract on
+  // every chain and on every restart.
+  contractMapping: ContractMapping.t,
   defaultChain: option<chain>,
   ecosystem: Ecosystem.t,
   enableRawEvents: bool,
@@ -123,74 +126,7 @@ type t = {
   isDev: bool,
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
-  allEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
-}
-
-module EnvioAddresses = {
-  let name = "envio_addresses"
-  let index = -1
-
-  let makeId = (~chainId: ChainId.t, ~address) => {
-    chainId->ChainId.toString ++ "-" ++ address->Address.toString
-  }
-
-  type t = {
-    id: string,
-    @as("chain_id") chainId: ChainId.t,
-    @as("registration_block") registrationBlock: int,
-    // Vestigial: always written as -1 and never read back. The column stays so
-    // an existing schema doesn't need a migration.
-    @as("registration_log_index") registrationLogIndex: int,
-    @as("contract_name") contractName: string,
-  }
-
-  // Extract the raw contract address from the composite id ({chainId}-{address}).
-  // Inverse of makeId. Keep in sync with makeId above and the SUBSTRING SQL in
-  // InternalTable.Chains.makeGetInitialStateQuery.
-  let getAddress = (entity: t): Address.t => {
-    let sepIdx = entity.id->String.indexOf("-")
-    entity.id
-    ->String.slice(~start=sepIdx + 1, ~end=entity.id->String.length)
-    ->Address.unsafeFromString
-  }
-
-  let schema = S.schema(s => {
-    id: s.matches(S.string),
-    chainId: s.matches(ChainId.schema),
-    registrationBlock: s.matches(S.int),
-    registrationLogIndex: s.matches(S.int),
-    contractName: s.matches(S.string),
-  })
-
-  let table = Table.mkTable(
-    name,
-    ~fields=[
-      Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
-      Table.mkField("chain_id", ChainId, ~fieldSchema=ChainId.schema),
-      Table.mkField("registration_block", Int32, ~fieldSchema=S.int),
-      // -1 sentinel when registered from a block handler (no log index)
-      Table.mkField("registration_log_index", Int32, ~fieldSchema=S.int),
-      Table.mkField("contract_name", String, ~fieldSchema=S.string),
-    ],
-  )
-
-  external castToInternal: t => Internal.entity = "%identity"
-
-  let entityConfig = {
-    Internal.name,
-    index,
-    schema,
-    table,
-    // Internal address tracking is Postgres-only; the global config is
-    // always required to have Postgres enabled (Storage::resolve forbids
-    // a Postgres-disabled global), so this is safe regardless of mode.
-    storage: {postgres: true, clickhouse: false},
-    // The table already keys rows by chain through the composite `id`, so the
-    // per-chain mode must not append a second chain-id column to it.
-    crossChain: true,
-    internal: true,
-  }->Internal.fromGenericEntityConfig
 }
 
 type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("realtime") Realtime
@@ -444,7 +380,7 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
     baseSchema
   }
   let fieldSchema = if isNullable {
-    S.null(fieldSchema)->S.toUnknown
+    Utils.Schema.nullTolerant(fieldSchema)->S.toUnknown
   } else {
     fieldSchema
   }
@@ -629,6 +565,14 @@ let publicConfigSchema = S.schema(s =>
     "entities": s.matches(S.option(S.array(entityJsonSchema))),
   }
 )
+
+let contractMappingOf = (~chainConfigs: array<chain>): ContractMapping.t => {
+  let names = []
+  chainConfigs->Array.forEach(chain =>
+    chain.contracts->Array.forEach(contract => names->Array.push(contract.name)->ignore)
+  )
+  ContractMapping.make(~names)
+}
 
 let fromPublic = (publicConfigJson: JSON.t) => {
   let maxAddrInPartition = Env.maxAddrInPartition
@@ -931,25 +875,24 @@ let fromPublic = (publicConfigJson: JSON.t) => {
           }
         })
 
-      // The same address under two contract definitions (or twice under one)
-      // would later violate the (chainId, address) primary key of
-      // envio_addresses with an opaque Postgres error — fail fast with the
-      // offending pair instead. parseAddress already canonicalizes casing
-      // (checksum or lowercase), so an exact match catches case variants too.
-      let contractNameByAddress = Dict.make()
+      // One address listed twice for the same contract would violate the
+      // (chainId, address, contract) primary key of envio_addresses with an
+      // opaque Postgres error — fail fast instead. Two contracts may share an
+      // address: each indexes it with its own events. parseAddress already
+      // canonicalizes casing (checksum or lowercase), so an exact match
+      // catches case variants too.
+      let seen = Utils.Set.make()
       contracts->Array.forEach(contract => {
         contract.addresses->Array.forEach(
           address => {
             let addressString = address->Address.toString
-            switch contractNameByAddress->Dict.get(addressString) {
-            | Some(existingContractName) =>
+            let key = contract.name ++ "-" ++ addressString
+            if seen->Utils.Set.has(key) {
               JsError.throwWithMessage(
-                existingContractName === contract.name
-                  ? `Address ${addressString} is listed multiple times for the contract ${contract.name} on chain ${chainId->ChainId.toString}. Please remove the duplicate from your config.`
-                  : `Address ${addressString} on chain ${chainId->ChainId.toString} is configured for multiple contracts: ${existingContractName} and ${contract.name}. Indexing the same address with multiple contract definitions is not supported. Please define the events on a single contract definition instead.`,
+                `Address ${addressString} is listed multiple times for the contract ${contract.name} on chain ${chainId->ChainId.toString}. Please remove the duplicate from your config.`,
               )
-            | None => contractNameByAddress->Dict.set(addressString, contract.name)
             }
+            seen->Utils.Set.add(key)->ignore
           },
         )
       })
@@ -1075,8 +1018,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     ->Option.getOr([])
     ->parseEntitiesFromJson(~enumConfigsByName, ~globalStorage, ~defaultCrossChain)
 
-  let allEntities = userEntities->Array.concat([EnvioAddresses.entityConfig])
-
   // Keyed by the capitalized entity name to match the handler-context
   // accessor (`context.Pool_snapshots`) the generated types expose, while
   // entityConfig.name stays the original schema name used for the physical
@@ -1113,6 +1054,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     storage: globalStorage,
     chainIdMode: publicConfig["chainIdMode"]->Option.getOr(Int32),
     chainMap,
+    contractMapping: contractMappingOf(~chainConfigs=chains),
     defaultChain: chains->Array.get(0),
     enableRawEvents: publicConfig["rawEvents"]->Option.getOr(false),
     ecosystem,
@@ -1124,7 +1066,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     isDev: publicConfig["isDev"]->Option.getOr(false),
     userEntitiesByName,
     userEntities,
-    allEntities,
     allEnums,
   }
 }

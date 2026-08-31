@@ -148,11 +148,11 @@ describe("EVM config YAML", () => {
     )
   })
 
-  it("rejects one address assigned to two contracts on the same chain", t => {
-    expectParseError(
-      t,
-      `
-name: duplicate-address
+  // https://github.com/enviodev/hyperindex/issues/1187
+  it("accepts one address assigned to two contracts on the same chain", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: shared-address
 contracts:
   - name: AaveToken
     events:
@@ -169,8 +169,60 @@ chains:
       - name: AaveV3
         address: "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9"
 `,
-      "Address 0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9 on chain 1 is configured for multiple contracts: AaveToken and AaveV3. Indexing the same address with multiple contract definitions is not supported. Please define the events on a single contract definition instead.",
     )
+    t.expect(
+      (config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts->Array.map(
+        contract => (contract.name, contract.addresses),
+      ),
+    ).toEqual([
+      ("AaveToken", ["0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"->Address.unsafeFromString]),
+      ("AaveV3", ["0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"->Address.unsafeFromString]),
+    ])
+  })
+
+  it("rejects a contract named like an Object prototype key", t => {
+    expectParseError(
+      t,
+      `
+name: proto-contract
+contracts:
+  - name: __proto__
+    events:
+      - event: Transfer()
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: __proto__
+        address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
+`,
+      "The config contains reserved words for contract names: \"__proto__\". They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.",
+    )
+  })
+
+  // Codegen capitalizes every config name before it reaches an identifier
+  // position, so a keyword of the generated languages is only ever a keyword in
+  // the YAML.
+  it("accepts contract and event names that are keywords of the generated languages", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: keyword-config
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: let
+        address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"
+        events:
+          - event: module()
+          - event: switch()
+`,
+    )
+    t.expect(
+      (config.chainMap->ChainMap.values->Array.getUnsafe(0)).contracts->Array.map(
+        contract => (contract.name, contract.events->Array.map(event => event.name)),
+      ),
+    ).toEqual([("Let", ["module", "switch"])])
   })
 
   it("rejects an address listed twice for one contract", t => {
@@ -863,14 +915,14 @@ chains:
       `
 name: reserved-contract-name
 contracts:
-  - name: module
+  - name: constructor
     events:
       - event: Transfer()
 chains:
   - id: 1
     start_block: 0
 `,
-      "The config contains reserved words for contract names: \"module\". They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.",
+      "The config contains reserved words for contract names: \"constructor\". They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.",
     ),
     (
       "rejects configs where every chain is skipped",
@@ -1711,6 +1763,40 @@ type user { id: ID! }
 type User { id: ID! }
 `,
       "Schema contains entities whose names collide when capitalized. Each entity is exposed on the handler context under its capitalized name, so these must be unique: User (from User, user)",
+    ),
+    (
+      // The test indexer buckets a batch's changes in a dict keyed by entity
+      // name, and a plain object answers `constructor` from its prototype — so
+      // the bucket comes back as `Object` and the write throws on a missing
+      // `sets` array.
+      "rejects an entity named like an Object prototype key",
+      `
+type constructor { id: ID! }
+`,
+      "Schema contains the following reserved keywords: constructor",
+    ),
+    (
+      "rejects an entity named toString",
+      `
+type toString { id: ID! }
+`,
+      "Schema contains the following reserved keywords: toString",
+    ),
+    (
+      "rejects an entity named hasOwnProperty",
+      `
+type hasOwnProperty { id: ID! }
+`,
+      "Schema contains the following reserved keywords: hasOwnProperty",
+    ),
+    (
+      // `Enum` is already exported by the `envio` module, and every entity is
+      // re-exported there under its capitalized name.
+      "rejects an entity whose capitalized name collides with an envio export",
+      `
+type enum { id: ID! }
+`,
+      "Schema contains the following reserved keywords: enum",
     ),
   ]->Array.forEach(((name, schema, message)) => {
     it(name, t => expectParseError(t, ~schema, baseYaml, message))

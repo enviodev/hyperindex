@@ -16,8 +16,8 @@ let decodeLogs = async (
 ): array<EvmRpcClient.rpcEventItem> => {
   // logIndex must be unique per log within the block — the client dedups a
   // page's items by (blockNumber, logIndex).
-  let logJsons = logs->Array.mapWithIndex(((topics, data), i) =>
-    JSON.Object(
+  let logJsons =
+    logs->Array.mapWithIndex(((topics, data), i) => JSON.Object(
       Dict.fromArray([
         ("address", JSON.String(mockAddress)),
         ("topics", JSON.Array(topics->Array.map(t => JSON.String(t)))),
@@ -29,22 +29,24 @@ let decodeLogs = async (
         ("logIndex", JSON.String(`0x${i->Int.toString(~radix=16)}`)),
         ("removed", JSON.Boolean(false)),
       ]),
-    )
-  )
+    ))
   await MockRpcServer.withScenario(
     ~name="native decoder logs",
     ~calls=[
-      MockRpcServer.expectCall(
-        ~method="eth_getLogs",
-        ~reply=RpcResult(JSON.Array(logJsons)),
-      ),
+      MockRpcServer.expectCall(~method="eth_getLogs", ~reply=RpcResult(JSON.Array(logJsons))),
     ],
     async mock => {
+      // One entry per contract, not per registration: two events on one
+      // contract are still one contract, and the store keys its ids on that.
+      let contractNames =
+        ContractMapping.make(
+          ~names=eventRegistrations->Array.map(reg => reg.contractName),
+        )->ContractMapping.names
       let addressStore = AddressStore.make(
         ~ecosystem=Ecosystem.Evm,
         ~shouldChecksum=false,
-        ~contracts=eventRegistrations->Array.map((reg): AddressStore.contract => {
-          name: reg.contractName,
+        ~contracts=contractNames->Array.map((name): AddressStore.contract => {
+          name,
           startBlock: None,
           dependsOnAddresses: true,
         }),

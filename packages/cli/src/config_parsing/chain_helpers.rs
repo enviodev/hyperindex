@@ -385,6 +385,9 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Sophon = 50104,
 
+    #[subenum(HypersyncChain)]
+    StablesKinshipGrass = 988,
+
     StatusSepolia = 1660990954,
 
     #[subenum(HypersyncChain)]
@@ -604,6 +607,7 @@ impl Network {
             | Network::Injective
             | Network::Megaeth
             | Network::SeiTestnet
+            | Network::StablesKinshipGrass
             | Network::StatusSepolia
             | Network::Tempo
             | Network::Tron
