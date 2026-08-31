@@ -155,7 +155,7 @@ describe("Test makeClickHouseEntitySchema", () => {
 describe("ClickHouse checkpoints columns", () => {
   Async.it("register in the order a batch's values are written", async t => {
     t.expect(
-      ClickHouse.checkpointColumnSpecs()->Array.map(({name, fieldType}) => (name, fieldType)),
+      ClickHouse.checkpointColumnSpecs->Array.map(({name, fieldType}) => (name, fieldType)),
     ).toEqual([
       ("id", "UInt64"),
       ("chain_id", "ChainId"),

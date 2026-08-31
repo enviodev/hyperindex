@@ -86,14 +86,29 @@ let makeColumnSpec = (
   },
 }
 
-let checkpointColumnSpecs = () =>
-  InternalTable.Checkpoints.columns->Array.filterMap(({field, clickHouseFieldType}) =>
-    switch field {
-    | Table.Field({fieldName, isNullable}) =>
-      Some(makeColumnSpec(~name=fieldName, ~fieldType=clickHouseFieldType, ~isNullable))
-    | DerivedFrom(_) => None
-    }
-  )
+type checkpointColumn = {
+  spec: ClickHouseSink.columnSpec,
+  valuesOf: Batch.t => array<unknown>,
+}
+
+// Registration and staging both read this one list, so the column a batch's
+// values are written to is the column that was registered in its place.
+let checkpointColumns = InternalTable.Checkpoints.columns->Array.filterMap(({
+  field,
+  clickHouseFieldType,
+  valuesOf,
+}) =>
+  switch field {
+  | Table.Field({fieldName, isNullable}) =>
+    Some({
+      spec: makeColumnSpec(~name=fieldName, ~fieldType=clickHouseFieldType, ~isNullable),
+      valuesOf,
+    })
+  | DerivedFrom(_) => None
+  }
+)
+
+let checkpointColumnSpecs = checkpointColumns->Array.map(({spec}) => spec)
 
 let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySpec => {
   let options = entityConfig.storage.clickhouseOptions
@@ -225,7 +240,7 @@ let checkpointsTable = (sink, ~registry) =>
   | None =>
     let table =
       sink
-      ->ClickHouseSink.registerCheckpointsTable(checkpointColumnSpecs())
+      ->ClickHouseSink.registerCheckpointsTable(checkpointColumnSpecs)
       ->ClickHouseSink.makeTable(~name=InternalTable.Checkpoints.table.tableName)
     registry.checkpoints = Some(table)
     table
@@ -245,12 +260,10 @@ let stageCheckpointsOrThrow = (sink, ~registry, ~batch: Batch.t) => {
   } else {
     let table = sink->checkpointsTable(~registry)
     try {
-      // The table was registered from the same column list, in this order.
+      // The table was registered from `checkpointColumns`, in this order.
       let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
       builders->Array.forEachWithIndex((builder, index) => {
-        let columnValues = (InternalTable.Checkpoints.columns->Array.getUnsafe(index)).valuesOf(
-          batch,
-        )
+        let columnValues = (checkpointColumns->Array.getUnsafe(index)).valuesOf(batch)
         for row in 0 to rows - 1 {
           builder->ClickHouseSink.writeValue(~row, columnValues->Array.getUnsafe(row))
         }
@@ -337,7 +350,7 @@ let initialize = async (sink, ~entities: array<Internal.entityConfig>) => {
   try {
     await sink->ClickHouseSink.initialize({
       entities: entities->Array.map(entityConfig => entitySpec(~entityConfig)),
-      checkpointColumns: checkpointColumnSpecs(),
+      checkpointColumns: checkpointColumnSpecs,
       replicated: Env.ClickHouse.replicated(),
       databaseEngine: ?Env.ClickHouse.databaseEngine(),
     })
