@@ -846,6 +846,12 @@ describe("SourceManager fetchNext", () => {
 })
 
 describe("SourceManager wait for new blocks", () => {
+  // Several tests below install fake timers inline. A throw between installing
+  // and restoring them would otherwise leave the fake clock running for every
+  // real-timer test after it, burying the original failure in timeouts. A no-op
+  // where fake timers were never installed.
+  afterEach(() => Vi.useRealTimers())
+
   Async.it(
     "Immediately resolves when the source height is higher than the current height",
     async t => {
@@ -2808,6 +2814,12 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
 })
 
 describe("SourceManager height subscription", () => {
+  // Several tests below install fake timers inline. A throw between installing
+  // and restoring them would otherwise leave the fake clock running for every
+  // real-timer test after it, burying the original failure in timeouts. A no-op
+  // where fake timers were never installed.
+  afterEach(() => Vi.useRealTimers())
+
   Async.it(
     "Creates subscription when getHeightOrThrow returns same height as knownHeight",
     async t => {
@@ -2970,8 +2982,8 @@ describe("SourceManager height subscription", () => {
           ~reducedPolling=false,
         )
 
-      // First stall is unjittered: the operator is promised a warning at
-      // exactly newBlockStallTimeoutRealtime. Repeats after that are jittered.
+      // The poke that starts this polling lands somewhere in
+      // [stallTimeout/2, stallTimeout), so the wait has to span the whole window.
       await Utils.delay(stallTimeout + 30)
 
       t.expect(

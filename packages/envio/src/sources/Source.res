@@ -133,19 +133,13 @@ type sourceFor = Sync | Fallback | Realtime
 // Connection state of a height subscription, reported by every transport.
 // `Down` repeats on each failed retry while the stream stays broken, and `Live`
 // fires on every (re)connect, so consumers must treat both as idempotent.
-// `reason` is pre-bucketed for use as a metric label. The shipped transports
-// report an HTTP status, or "error", "connect-failed", "stale", "unreadable" or
-// "subscribe-rejected"; a connection that ends cleanly arrives as "rotated" or
-// "closed", depending on whether it had served long enough to be worth making.
-// `detail` is whatever the provider said
-// for this one failure — an error message, or the frame nobody could read — so
-// it belongs in a log line and never in a label.
+// `reason` is pre-bucketed for use as a metric label, and an HTTP status is one.
+// `detail` is whatever the provider said for this one failure — an error
+// message, or the frame nobody could read — so it belongs in a log line and
+// never in a label.
 type heightSubscriptionStatus = Live | Down({reason: string, detail?: string})
 
-// The reasons that carry meaning beyond their label. They belong to the status
-// above rather than to any one transport or driver: a consumer keys behaviour
-// off them, so a subscription that reports its own disconnects has to be able to
-// name them without reaching into whichever implementation happens to ship them.
+// The reasons a consumer keys behaviour off, rather than merely labels with.
 //
 // A stream that ended cleanly is a rotation if it had served long enough to be
 // worth making, and a plain close if it had not: routine load balancing against

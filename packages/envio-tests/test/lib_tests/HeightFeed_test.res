@@ -224,6 +224,12 @@ describe("HeightFeed unsubscribe", () => {
 })
 
 describe("HeightFeed stream state", () => {
+  // Several tests below install fake timers inline. A throw between installing
+  // and restoring them would otherwise leave the fake clock running for every
+  // real-timer test after it, burying the original failure in timeouts. A no-op
+  // where fake timers were never installed.
+  afterEach(() => Vi.useRealTimers())
+
   Async.it("Polls alongside a live stream once poked, until a push proves it", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
@@ -562,6 +568,12 @@ describe("HeightFeed stream state", () => {
 })
 
 describe("HeightFeed poll failures", () => {
+  // Several tests below install fake timers inline. A throw between installing
+  // and restoring them would otherwise leave the fake clock running for every
+  // real-timer test after it, burying the original failure in timeouts. A no-op
+  // where fake timers were never installed.
+  afterEach(() => Vi.useRealTimers())
+
   Async.it("Escalates the retry interval, and resets it after a success", async t => {
     let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
     let retries = []

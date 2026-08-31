@@ -149,6 +149,11 @@ let fireWaiters = (feed: t, height) => {
   }
 }
 
+// Takes back every waiter's complaint that its stream had gone silent. The
+// reason differs at each call site; the effect is always that polling alongside
+// the stream is no longer owed.
+let clearPokes = (feed: t) => feed.waiters->Array.forEach(waiter => waiter.poked = false)
+
 let recordHeight = (feed: t, height) =>
   if height > feed.knownHeight {
     feed.knownHeight = height
@@ -175,20 +180,13 @@ let sleep = (feed: t, millis) =>
 // faster wait is sitting on.
 let currentInterval = (feed: t) =>
   feed.waiters
-  ->Array.reduce(None, (shortest, waiter) => {
-    let interval = waiter.interval()
-    Some(
-      switch shortest {
-      | Some(shortest) => Pervasives.min(shortest, interval)
-      | None => interval
-      },
-    )
-  })
+  ->Array.reduce(None, (shortest, waiter) =>
+    Utils.Math.minOptInt(shortest, Some(waiter.interval()))
+  )
   ->Option.getOr(feed.source.pollingInterval)
 
-// What an answer means for the feed, whoever asked for it. The poll loop and a
-// connect's catch-up both reach this, and an answer is worth the same from
-// either: the endpoint responded, and it responded with the head.
+// What an answer means for the feed, whoever asked for it: the endpoint
+// responded, and it responded with the head.
 let recordAnswer = (feed: t, ~generation, res: Source.getHeightResponse) => {
   feed.recordRequestStats(res.requestStats)
   feed.pollRetry = 0
@@ -209,7 +207,7 @@ let recordAnswer = (feed: t, ~generation, res: Source.getHeightResponse) => {
     // answered its own question; the next window of silence can earn another
     // poke. Without this a chain whose blocks are further apart than the stall
     // timeout polls continuously beside a stream that is working perfectly.
-    feed.waiters->Array.forEach(waiter => waiter.poked = false)
+    feed->clearPokes
   }
   feed->recordHeight(res.height)
   // Answering may have been the last of the loop's reasons to run. Costs nothing
@@ -378,7 +376,7 @@ let handlePushedHeight = (feed: t, height) => {
   if advances {
     feed.connectionUnproven = false
   }
-  feed.waiters->Array.forEach(waiter => waiter.poked = false)
+  feed->clearPokes
   feed->recordHeight(height)
   feed->wakeIfIdle
 }
@@ -400,7 +398,7 @@ let markStreamDown = (feed: t, ~reason) => {
   feed.connectionUnproven = false
   // The connection they gave up on is gone; the one that replaces it starts with
   // a catch-up of its own to prove it.
-  feed.waiters->Array.forEach(waiter => waiter.poked = false)
+  feed->clearPokes
   feed.connectionGeneration = feed.connectionGeneration + 1
 
   // A loop already running may be sleeping off an interval chosen while that
