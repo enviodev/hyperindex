@@ -436,8 +436,8 @@ let rec makeFilterCondition = (
   // `LoadLayer.scopeFilter` is what puts this filter here, and the value is
   // range-checked to a non-negative safe integer, so it can carry nothing but
   // digits.
-  | Eq({fieldName, fieldValue}) if (getQueryFieldOrThrow(fieldName)).isChainId =>
-    `"${(getQueryFieldOrThrow(fieldName)).pgDbFieldName}" = ${fieldValue
+  | Eq({fieldName, fieldValue}) if getQueryFieldOrThrow(fieldName).isChainId =>
+    `"${getQueryFieldOrThrow(fieldName).pgDbFieldName}" = ${fieldValue
       ->ChainId.normalizeOrThrow
       ->ChainId.toString}`
   | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
@@ -2296,7 +2296,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
 
     // Resume sink if present - needed to rollback any reorg changes
     switch sink {
-    | Some(sink) => await sink.resume(~checkpointId)
+    | Some(sink) => await sink.resume(~checkpointId, ~chains)
     | None => ()
     }
 

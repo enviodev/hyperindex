@@ -47,6 +47,10 @@ pub struct HistorySchema {
     pub change_variants: Vec<String>,
     pub set_variant: String,
     pub checkpoints_table: String,
+    /// Columns of the checkpoints table a resume reads to decide which
+    /// checkpoints each chain's recorded progress already covers.
+    pub checkpoint_chain_id_column: String,
+    pub checkpoint_block_number_column: String,
     pub history_table_prefix: String,
 }
 
@@ -384,6 +388,8 @@ pub(crate) mod test_support {
             change_variants: vec!["SET".to_string(), "DELETE".to_string()],
             set_variant: "SET".to_string(),
             checkpoints_table: "envio_checkpoints".to_string(),
+            checkpoint_chain_id_column: "chain_id".to_string(),
+            checkpoint_block_number_column: "block_number".to_string(),
             history_table_prefix: "envio_history_".to_string(),
         }
     }

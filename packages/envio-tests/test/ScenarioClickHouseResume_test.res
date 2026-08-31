@@ -36,9 +36,34 @@ type counter = {id: string, count: bigint}
 type counterOps = {set: counter => unit}
 type counterContext = {@as("Counter") counter: counterOps}
 
-let setCounter = (~count) => async (args: Internal.handlerArgs) => {
-  let context = args.context->(Utils.magic: Internal.handlerContext => counterContext)
-  context.counter.set({id: "total", count})
+let setCounter = (~id, ~count) =>
+  async (args: Internal.handlerArgs) => {
+    let context = args.context->(Utils.magic: Internal.handlerContext => counterContext)
+    context.counter.set({id, count})
+  }
+
+let feed = async (
+  indexer: IndexerRunner.t,
+  ~source: MockSource.t,
+  ~blockNumber,
+  // Answered once per indexer, and only while it is still asking: a chain far
+  // from its head stays in backfill and fetches on without polling again.
+  ~height=?,
+  ~id="total",
+  ~count,
+) => {
+  await Utils.delay(0)
+  switch height {
+  | Some(height) => source.resolveGetHeightOrThrow(height)
+  | None => ()
+  }
+  await Utils.delay(0)
+  await Utils.delay(0)
+  source.resolveGetItemsOrThrow(
+    [{blockNumber, logIndex: 0, handler: setCounter(~id, ~count)}],
+    ~latestFetchedBlockNumber=blockNumber + 5,
+  )
+  await indexer.getBatchWritePromise()
 }
 
 describe("ClickHouse sink after a resume", () => {
@@ -46,30 +71,49 @@ describe("ClickHouse sink after a resume", () => {
     "writes through a restart that resumes the existing storage",
     ~sources=[{chain: 1}],
     async (~t, ~indexer, ~source) => {
-      let feed = async (indexer: IndexerRunner.t, ~source: MockSource.t, ~blockNumber, ~count) => {
-        await Utils.delay(0)
-        source.resolveGetHeightOrThrow(blockNumber + 5)
-        await Utils.delay(0)
-        await Utils.delay(0)
-        source.resolveGetItemsOrThrow(
-          [{blockNumber, logIndex: 0, handler: setCounter(~count)}],
-          ~latestFetchedBlockNumber=blockNumber + 5,
-        )
-        await indexer.getBatchWritePromise()
-      }
-
-      await feed(indexer, ~source=source(1), ~blockNumber=5, ~count=42n)
+      await feed(indexer, ~source=source(1), ~blockNumber=5, ~height=10, ~count=42n)
 
       // The second indexer finds the storage the first one built, so it resumes
       // rather than initializing.
       let resumed = await indexer.restart()
-      await feed(resumed, ~source=source(1), ~blockNumber=20, ~count=43n)
+      await feed(resumed, ~source=source(1), ~blockNumber=20, ~height=25, ~count=43n)
 
       let database = TestClickHouse.currentDatabase()
       let rows = await TestClickHouse.query(
         `SELECT id, count FROM \`${database}\`.\`Counter\` FORMAT JSONEachRow`,
       )
       t.expect(rows->String.trim).toEqual(`{"id":"total","count":"43"}`)
+    },
+  )
+
+  scenario->Scenario.it(
+    "keeps the rows it wrote before a restart during backfill",
+    ~sources=[{chain: 1}],
+    async (~t, ~indexer, ~source) => {
+      await feed(indexer, ~source=source(1), ~blockNumber=5, ~height=100000, ~id="first", ~count=1n)
+
+      // Outside the reorg threshold Postgres saves no checkpoint at all, so the
+      // committed checkpoint a resume trims back to is the one that means
+      // "nothing committed" — while ClickHouse holds every row written so far.
+      let checkpoints = await indexer.queryCheckpoints()
+
+      let resumed = await indexer.restart()
+      await feed(
+        resumed,
+        ~source=source(1),
+        ~blockNumber=20,
+        ~id="second",
+        ~count=2n,
+      )
+
+      let database = TestClickHouse.currentDatabase()
+      let rows = await TestClickHouse.query(
+        `SELECT id, count FROM \`${database}\`.\`Counter\` ORDER BY id FORMAT JSONEachRow`,
+      )
+      t.expect((checkpoints->Array.length, rows->String.trim->String.split("\n"))).toEqual((
+        0,
+        [`{"id":"first","count":"1"}`, `{"id":"second","count":"2"}`],
+      ))
     },
   )
 })

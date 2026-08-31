@@ -1,4 +1,3 @@
-
 type t
 
 type historySchema = {
@@ -8,8 +7,12 @@ type historySchema = {
   changeVariants: array<string>,
   setVariant: string,
   checkpointsTable: string,
+  checkpointChainIdColumn: string,
+  checkpointBlockNumberColumn: string,
   historyTablePrefix: string,
 }
+
+type chainProgressInput = {chainId: string, progressBlockNumber: int}
 
 type options = {
   url: string,
@@ -93,7 +96,8 @@ external registerCheckpointsTable: (t, array<columnSpec>) => registeredTable =
 
 @send external initialize: (t, initializeInput) => promise<unit> = "initialize"
 
-@send external resume: (t, string) => promise<unit> = "resume"
+@send
+external resume: (t, string, array<chainProgressInput>) => promise<unit> = "resume"
 
 @send
 external stage: (t, ~table: int, ~rows: int, ~columns: array<columnValuesInput>) => int = "stage"
@@ -111,6 +115,8 @@ let historySchema = (): historySchema => {
   changeVariants: EntityHistory.RowAction.variants->Array.map(variant => (variant :> string)),
   setVariant: (EntityHistory.RowAction.SET :> string),
   checkpointsTable: InternalTable.Checkpoints.table.tableName,
+  checkpointChainIdColumn: (#chain_id: InternalTable.Checkpoints.field :> string),
+  checkpointBlockNumberColumn: (#block_number: InternalTable.Checkpoints.field :> string),
   historyTablePrefix: EntityHistory.historyTablePrefix,
 }
 
@@ -166,20 +172,22 @@ external asString: unknown => string = "%identity"
 // quieter and worse — it renders as `null`, which the column then refuses for a
 // reason naming `null` rather than the NaN the handler actually wrote.
 %%private(
-  let jsonSafe = (~column) => (_, value: JSON.t) =>
-    switch value->typeof {
-    | #bigint => value->(Utils.magic: JSON.t => unknown)->stringOf->(Utils.magic: string => JSON.t)
-    | #number =>
-      let number = value->(Utils.magic: JSON.t => float)
-      if number->Float.isFinite {
-        value
-      } else {
-        JsError.throwWithMessage(
-          `${number->Float.toString} has no JSON form, so it cannot be stored in the \`${column}\` column. Store a finite number, or keep it out of the entity.`,
-        )
+  let jsonSafe = (~column) =>
+    (_, value: JSON.t) =>
+      switch value->typeof {
+      | #bigint =>
+        value->(Utils.magic: JSON.t => unknown)->stringOf->(Utils.magic: string => JSON.t)
+      | #number =>
+        let number = value->(Utils.magic: JSON.t => float)
+        if number->Float.isFinite {
+          value
+        } else {
+          JsError.throwWithMessage(
+            `${number->Float.toString} has no JSON form, so it cannot be stored in the \`${column}\` column. Store a finite number, or keep it out of the entity.`,
+          )
+        }
+      | _ => value
       }
-    | _ => value
-    }
 )
 
 let toText = (value: unknown, ~replacer) =>
