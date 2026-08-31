@@ -60,6 +60,34 @@ envio_source_request_seconds_total{method="getLogs"} 1.5`)
   })
 })
 
+// The state a Metrics.t carries when a test says nothing about it. Each test
+// below spreads this and names only the fields it asserts on.
+let baseMetrics: Metrics.t = {
+  startTime: Date.fromTime(0.),
+  metricTime: Date.fromTime(0.),
+  elapsedSeconds: 0.,
+  targetBufferSize: 0,
+  isInReorgThreshold: false,
+  rollbackEnabled: false,
+  maxBatchSize: 0,
+  preloadSeconds: 0.,
+  processingSeconds: 0.,
+  processingStalledOnFetchSeconds: 0.,
+  processingStalledOnStorageWriteSeconds: 0.,
+  rollbackSeconds: 0.,
+  rollbackCount: 0,
+  rollbackEventsCount: 0.,
+  chains: [],
+  handlers: [],
+  effects: [],
+  storageLoads: [],
+  storageWrites: [],
+  historyPrunes: [],
+  sourceRequests: [],
+  sourceHeights: [],
+  sourceHeightStreams: [],
+}
+
 describe("Metrics.collect", () => {
   it("Renders only the indexer info when there is no state", t => {
     t.expect(Metrics.collect(~metrics=None)).toBe(
@@ -72,22 +100,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
   it("Escapes both the effect and the scope label values", t => {
     let metrics: Metrics.t = {
-      startTime: Date.fromTime(0.),
-      metricTime: Date.fromTime(0.),
-      elapsedSeconds: 0.,
-      targetBufferSize: 0,
-      isInReorgThreshold: false,
-      rollbackEnabled: false,
-      maxBatchSize: 0,
-      preloadSeconds: 0.,
-      processingSeconds: 0.,
-      processingStalledOnFetchSeconds: 0.,
-      processingStalledOnStorageWriteSeconds: 0.,
-      rollbackSeconds: 0.,
-      rollbackCount: 0,
-      rollbackEventsCount: 0.,
-      chains: [],
-      handlers: [],
+      ...baseMetrics,
       effects: [
         {
           effect: `a",b=c`,
@@ -102,12 +115,6 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           cacheCount: None,
         },
       ],
-      storageLoads: [],
-      storageWrites: [],
-      historyPrunes: [],
-      sourceRequests: [],
-      sourceHeights: [],
-      sourceHeightStreams: [],
     }
 
     t.expect(
@@ -118,61 +125,16 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
   })
 
   it("Omits the height stream families entirely when no source subscribes", t => {
-    let metrics: Metrics.t = {
-      startTime: Date.fromTime(0.),
-      metricTime: Date.fromTime(0.),
-      elapsedSeconds: 0.,
-      targetBufferSize: 0,
-      isInReorgThreshold: false,
-      rollbackEnabled: false,
-      maxBatchSize: 0,
-      preloadSeconds: 0.,
-      processingSeconds: 0.,
-      processingStalledOnFetchSeconds: 0.,
-      processingStalledOnStorageWriteSeconds: 0.,
-      rollbackSeconds: 0.,
-      rollbackCount: 0,
-      rollbackEventsCount: 0.,
-      chains: [],
-      handlers: [],
-      effects: [],
-      storageLoads: [],
-      storageWrites: [],
-      historyPrunes: [],
-      sourceRequests: [],
-      sourceHeights: [],
-      sourceHeightStreams: [],
-    }
-
+    // No source samples at all, which is what a chain that only ever polls
+    // reports — the base is already exactly that.
     t.expect(
-      Metrics.collect(~metrics=Some(metrics))->String.includes("envio_source_height_stream"),
+      Metrics.collect(~metrics=Some(baseMetrics))->String.includes("envio_source_height_stream"),
     ).toBe(false)
   })
 
   it("Renders a stream that has never connected as zero connects", t => {
     let metrics: Metrics.t = {
-      startTime: Date.fromTime(0.),
-      metricTime: Date.fromTime(0.),
-      elapsedSeconds: 0.,
-      targetBufferSize: 0,
-      isInReorgThreshold: false,
-      rollbackEnabled: false,
-      maxBatchSize: 0,
-      preloadSeconds: 0.,
-      processingSeconds: 0.,
-      processingStalledOnFetchSeconds: 0.,
-      processingStalledOnStorageWriteSeconds: 0.,
-      rollbackSeconds: 0.,
-      rollbackCount: 0,
-      rollbackEventsCount: 0.,
-      chains: [],
-      handlers: [],
-      effects: [],
-      storageLoads: [],
-      storageWrites: [],
-      historyPrunes: [],
-      sourceRequests: [],
-      sourceHeights: [],
+      ...baseMetrics,
       sourceHeightStreams: [
         {
           source: "RPC (rpc.example.com)",
@@ -197,28 +159,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
   it("Aggregates height stream samples that share a source name and chain", t => {
     let metrics: Metrics.t = {
-      startTime: Date.fromTime(0.),
-      metricTime: Date.fromTime(0.),
-      elapsedSeconds: 0.,
-      targetBufferSize: 0,
-      isInReorgThreshold: false,
-      rollbackEnabled: false,
-      maxBatchSize: 0,
-      preloadSeconds: 0.,
-      processingSeconds: 0.,
-      processingStalledOnFetchSeconds: 0.,
-      processingStalledOnStorageWriteSeconds: 0.,
-      rollbackSeconds: 0.,
-      rollbackCount: 0,
-      rollbackEventsCount: 0.,
-      chains: [],
-      handlers: [],
-      effects: [],
-      storageLoads: [],
-      storageWrites: [],
-      historyPrunes: [],
-      sourceRequests: [],
-      sourceHeights: [],
+      ...baseMetrics,
       // Two RPC urls on the same host share a source name, and duplicate
       // samples would make Prometheus reject the whole scrape.
       sourceHeightStreams: [
