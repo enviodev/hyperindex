@@ -580,13 +580,13 @@ async fn fetch_transactions(
                             client,
                             inflight,
                             stats,
-                            group.reads.transaction.then(|| FetchKey::Transaction(key)),
+                            group.reads.transaction.then_some(FetchKey::Transaction(key)),
                         ),
                         read_opt(
                             client,
                             inflight,
                             stats,
-                            group.reads.receipt.then(|| FetchKey::Receipt(key)),
+                            group.reads.receipt.then_some(FetchKey::Receipt(key)),
                         ),
                     )
                     .await;
