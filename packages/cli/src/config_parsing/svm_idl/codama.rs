@@ -253,8 +253,11 @@ fn reject_ambiguous_optional_accounts(ix: &Value, accounts: &[IdlAccount]) -> Re
 }
 
 fn parse_arguments(node: Option<&Value>, encoded_arg_names: &[String]) -> Result<Vec<NamedField>> {
-    let Some(arr) = node.and_then(Value::as_array) else {
-        return Ok(Vec::new());
+    let arr = match node {
+        None => return Ok(Vec::new()),
+        Some(node) => node
+            .as_array()
+            .ok_or_else(|| anyhow!("expected an array of arguments, got {node}"))?,
     };
     // Codama encodes arguments in declaration order, so the ones a field
     // discriminator consumes have to be the leading ones, in the order their

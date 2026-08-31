@@ -156,9 +156,15 @@ fn parse_accounts(node: Option<&Value>) -> Result<Vec<IdlAccount>> {
     Ok(out)
 }
 
+/// Present but not an array is a defect, not an empty list: read as empty, an
+/// instruction would decode as taking no data and report an empty payload for
+/// every call.
 fn parse_named_fields(node: Option<&Value>, path: &str) -> Result<Vec<NamedField>> {
-    let Some(arr) = node.and_then(Value::as_array) else {
-        return Ok(Vec::new());
+    let arr = match node {
+        None => return Ok(Vec::new()),
+        Some(node) => node
+            .as_array()
+            .ok_or_else(|| anyhow!("{path}: expected an array of arguments, got {node}"))?,
     };
     arr.iter().map(|f| parse_named_field(f, path)).collect()
 }
@@ -247,8 +253,10 @@ fn parse_type_def(name: &str, node: &Value) -> Result<FieldType> {
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("type '{name}' has no 'kind'"))?;
     match kind {
+        // A unit struct spells its absent body as a null `fields`, the same way
+        // an enum's unit variant does.
         "struct" => Ok(FieldType::Struct(parse_named_fields(
-            node.get("fields"),
+            node.get("fields").filter(|fields| !fields.is_null()),
             &format!("type '{name}'"),
         )?)),
         "enum" => {

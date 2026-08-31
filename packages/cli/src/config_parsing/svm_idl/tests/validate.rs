@@ -203,6 +203,20 @@ fn separates_file_level_defects_from_instruction_level_ones() {
                  "discriminators": [{ "kind": "constantDiscriminatorNode", "offset": 0,
                    "constant": { "value": { "kind": "bytesValueNode", "data": "03" } } }] }] } }"#,
         ),
+        (
+            // Read as an empty list the instruction decodes as taking no data,
+            // and every call reports an empty payload.
+            "anchor instruction whose 'args' is not an array",
+            r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
+                 "args": null }] }"#,
+        ),
+        (
+            "codama instruction whose 'arguments' is not an array",
+            r#"{ "kind": "rootNode", "program": { "instructions": [{
+                 "kind": "instructionNode", "name": "swap", "arguments": null,
+                 "discriminators": [{ "kind": "constantDiscriminatorNode", "offset": 0,
+                   "constant": { "value": { "kind": "bytesValueNode", "data": "03" } } }] }] } }"#,
+        ),
     ];
 
     let reported: Vec<String> = cases
@@ -252,6 +266,8 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "codama discriminator offset that is not a byte position: swap set aside: discriminators: expected a non-negative integer 'offset', got -1",
             "anchor composite group whose 'accounts' is not an array: swap set aside: accounts: expected an array of accounts, got null",
             "codama account with an unreadable isOptional: swap set aside: accounts: 'isOptional' must be a boolean, got \"yes\"",
+            "anchor instruction whose 'args' is not an array: swap set aside: args: expected an array of arguments, got null",
+            "codama instruction whose 'arguments' is not an array: swap set aside: expected an array of arguments, got null",
         ]
     );
 }
