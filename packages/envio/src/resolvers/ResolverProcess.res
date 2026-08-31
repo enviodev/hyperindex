@@ -45,6 +45,10 @@ type serverOptions = {
   pool: pool,
   port?: int,
   exposeErrors?: bool,
+  // `null` means ready. A string is the reason it is not, and reaches the
+  // probe's body so an operator reads it from `kubectl describe` rather than
+  // by correlating logs.
+  checkCompatible?: unit => promise<Nullable.t<string>>,
 }
 
 @module("./server.js")
@@ -226,10 +230,61 @@ type resolverRef = {name: string, timeoutMs: int}
 @get external sqlOf: dbHandle => sqlFn = "sql"
 @send
 external unsafe: (sqlFn, string, array<JSON.t>) => promise<array<{"n": int}>> = "unsafe"
+@send
+external readConfigRows: (sqlFn, string, array<JSON.t>) => promise<array<{"config": string}>> =
+  "unsafe"
+
+// The compat check the indexer runs on resume, run instead against the database
+// a resolver process was pointed at.
+//
+// It reads on every probe rather than once at startup because the mismatch it
+// exists for arrives later: the indexer is redeployed with a new config while
+// this pod keeps serving, and readiness is the only thing that can still take
+// it out of rotation.
+let compatibilityOf = (~pool, ~pgSchema, ~envioInfo) => async () => {
+  let sql =
+    pool->forResolver({name: "readyz", timeoutMs: 2_000})->sqlOf
+  switch await readConfigRows(
+    sql,
+    `SELECT "config" FROM "${pgSchema}"."${InternalTable.EnvioInfo.table.tableName}" LIMIT 1;`,
+    [],
+  ) {
+  | rows =>
+    switch rows->Array.get(0) {
+    | None =>
+      Nullable.make(
+        "The database records no config, so it cannot be checked against this build. It was initialized by an envio version that predates the check.",
+      )
+    | Some(row) =>
+      switch Config.diffPaths(~stored=row["config"]->JSON.parseOrThrow, ~current=envioInfo) {
+      | [] => Nullable.null
+      | changedPaths =>
+        Nullable.make(
+          `The database was indexed with a different config: ${changedPaths->Array.join(
+              ", ",
+            )}. This build must not answer for it.`,
+        )
+      }
+    }
+  | exception exn =>
+    InternalTable.isUndefinedTable(exn)
+      ? Nullable.make(
+          "The database has no envio_info table, so it was not initialized by this indexer.",
+        )
+      : throw(exn)
+  }
+}
 
 type running = {server: server, pool: pool, shutdown: unit => promise<unit>}
 
-let serve = async (~config: Config.t, ~projectRoot, ~port=?, ~exposeErrors=?) => {
+let serve = async (
+  ~config: Config.t,
+  ~projectRoot,
+  ~port=?,
+  ~exposeErrors=?,
+  ~pgSchema=Env.Db.publicSchema,
+  ~envioInfo=Config.getPublicConfigJson()->Config.stripSensitiveData,
+) => {
   let exposeErrors = exposeErrors->Option.getOr(Env.Resolvers.exposeErrors())
   let relativePath = switch config.resolvers {
   | Some(relativePath) => relativePath
@@ -257,8 +312,14 @@ let serve = async (~config: Config.t, ~projectRoot, ~port=?, ~exposeErrors=?) =>
   let entities = Dict.make()
   config->Config.getPgUserEntities->Array.forEach(entity => entities->Dict.set(entity.name, entity))
 
-  let pool = createResolverPoolFromEnv({entities, pgSchema: Env.Db.publicSchema})
-  let server = await startResolverServer({resolvers, pool, ?port, exposeErrors})
+  let pool = createResolverPoolFromEnv({entities, pgSchema})
+  let server = await startResolverServer({
+    resolvers,
+    pool,
+    ?port,
+    exposeErrors,
+    checkCompatible: compatibilityOf(~pool, ~pgSchema, ~envioInfo),
+  })
   Logging.info(
     `Serving ${resolvers
       ->Array.length
