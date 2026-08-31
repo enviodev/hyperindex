@@ -332,6 +332,32 @@ describe("RpcSource - field selection end to end", () => {
   // answering badly, not a selection the chain cannot serve. Reporting them as
   // a field-selection failure disables the source for good — on a chain with a
   // single RPC the indexer then stops — so they have to stay retryable.
+  // A page that ends in a retry still made its requests, and the source's
+  // metrics count them — the reason both failure variants carry requestStats
+  // rather than throwing them away with the page.
+  Async.it("Counts the requests a failed page made", async t => {
+    let mock = await startProvider(
+      ~transaction=JSON.parseOrThrow(`{"hash":"${txHash}","gas":"not-hex"}`),
+    )
+    let methods = try {
+      let _ = await fetchPayloads(~mock, ~transactionFieldNames=[Gas])
+      []
+    } catch {
+    | Source.GetItemsError(error) =>
+      let seen = Utils.Set.make()
+      error
+      ->Source.getItemsErrorRequestStats
+      ->Array.forEach(({Source.method: method}) => seen->Utils.Set.add(method)->ignore)
+      seen->Utils.Set.toArray->Array.toSorted(String.compare)
+    }
+    mock.close()
+    t.expect(methods).toEqual([
+      "eth_getBlockByNumber",
+      "eth_getLogs",
+      "eth_getTransactionByHash",
+    ])
+  })
+
   Async.it("Retries rather than disabling the source on a value it cannot decode", async t => {
     let mock = await startProvider(
       ~transaction=JSON.parseOrThrow(`{"hash":"${txHash}","gas":"not-hex"}`),
