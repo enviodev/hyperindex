@@ -168,8 +168,8 @@ external asString: unknown => string = "%identity"
       }
 )
 
-// A column keeps the replacer it was registered with: it closes over nothing
-// but the column's name, and a batch has as many rows as the sink can hold.
+// The replacer closes over nothing but the column's name, so it is built once
+// with the column rather than once per column per batch.
 type column = {name: string, kind: kind, isNullable: bool, replacer: JSON.replacer}
 type table = {handle: int, name: string, columns: array<column>}
 
