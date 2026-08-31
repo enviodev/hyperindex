@@ -48,7 +48,7 @@ const MAX_RETRY_DELAY: Duration = Duration::from_millis(1_000);
 
 #[derive(Debug, Clone, Copy)]
 struct Tuning {
-    attempts: u32,
+    retries: u32,
     statement_timeout: Duration,
     max_retry_delay: Duration,
     request_timeout: Duration,
@@ -57,7 +57,7 @@ struct Tuning {
 impl Default for Tuning {
     fn default() -> Self {
         Self {
-            attempts: MAX_RETRIES,
+            retries: MAX_RETRIES,
             max_retry_delay: MAX_RETRY_DELAY,
             request_timeout: REQUEST_TIMEOUT,
             statement_timeout: STATEMENT_TIMEOUT,
@@ -67,14 +67,14 @@ impl Default for Tuning {
 
 impl Tuning {
     fn delay(&self, retries_left: u32) -> Duration {
-        if self.attempts < 2 {
+        if self.retries < 2 {
             return Duration::ZERO;
         }
         let span = self.max_retry_delay.as_millis() as u64;
         Duration::from_millis(
             (span / 10
-                + (span - span / 10) * u64::from(self.attempts - retries_left)
-                    / u64::from(self.attempts - 1))
+                + (span - span / 10) * u64::from(self.retries - retries_left)
+                    / u64::from(self.retries - 1))
             .min(span),
         )
     }
@@ -793,7 +793,7 @@ impl ClickHouseSink {
         encoded: &EncodedRows,
     ) -> Result<()> {
         let mut failures = 0usize;
-        let mut pending = vec![(0usize, encoded.rows(), self.tuning.attempts)];
+        let mut pending = vec![(0usize, encoded.rows(), self.tuning.retries)];
         while let Some((start, end, retries)) = pending.pop() {
             match self.post_rows(query, encoded.slice(start, end)).await {
                 Ok(()) => continue,
@@ -812,8 +812,7 @@ impl ClickHouseSink {
                     let rows = end - start;
                     (self.warn)(&format!(
                         "ClickHouse insert of {rows} row(s) into `{table}` failed, \
-                         {} retries left: {:#}",
-                        retries - 1,
+                         {retries} retries left: {:#}",
                         failure.error
                     ));
                     tokio::time::sleep(self.tuning.delay(retries)).await;
@@ -847,11 +846,8 @@ impl ClickHouseSink {
             Ok(response) => response,
             Err(err) => {
                 return Err(InsertFailure {
+                    retry: retry_for_send_error(&err),
                     error: anyhow::Error::new(err).context("ClickHouse insert request failed"),
-                    // The body may already have landed. A timeout or reset after
-                    // the send is the same unknown as 319: another send would
-                    // double-write.
-                    retry: Retry::Ambiguous,
                 });
             }
         };
@@ -882,7 +878,10 @@ enum Retry {
     Ambiguous,
 }
 
+/// Conditions a smaller batch is answered differently by, because what ran out
+/// was proportional to the batch's size.
 const HALVED_ERROR_CODES: &[u32] = &[
+    173, // CANNOT_ALLOCATE_MEMORY
     241, // MEMORY_LIMIT_EXCEEDED
 ];
 
@@ -896,25 +895,49 @@ const AMBIGUOUS_ERROR_CODES: &[u32] = &[
     319, // UNKNOWN_STATUS_OF_INSERT
 ];
 
-const SAME_ROWS_ERROR_CODES: &[u32] = &[
-    202, // TOO_MANY_SIMULTANEOUS_QUERIES
-    203, // NO_FREE_CONNECTION
-    236, // ABORTED — a replica on its way down or back up
-    242, // TABLE_IS_READ_ONLY — a replicated table that has lost its Keeper session
-    252, // TOO_MANY_PARTS
-    285, // TOO_FEW_LIVE_REPLICAS
-    999, // KEEPER_EXCEPTION
+/// Codes that say the deployment or the rows are what failed — a table that is
+/// not there, credentials the server does not accept, a value it cannot read.
+/// No retry of any size talks it out of one.
+const NEVER_ERROR_CODES: &[u32] = &[
+    6,   // CANNOT_PARSE_TEXT
+    16,  // NO_SUCH_COLUMN_IN_TABLE
+    27,  // CANNOT_PARSE_INPUT_ASSERTION_FAILED
+    33,  // CANNOT_READ_ALL_DATA
+    44,  // ILLEGAL_COLUMN
+    47,  // UNKNOWN_IDENTIFIER
+    53,  // TYPE_MISMATCH
+    60,  // UNKNOWN_TABLE
+    62,  // SYNTAX_ERROR
+    81,  // UNKNOWN_DATABASE
+    117, // INCORRECT_DATA
+    192, // UNKNOWN_USER
+    193, // WRONG_PASSWORD
+    194, // REQUIRED_PASSWORD
+    497, // ACCESS_DENIED
+    516, // AUTHENTICATION_FAILED
 ];
 
-/// Whitelisted rather than blacklisted so a code nobody has thought about ends a
-/// write with the server's own message instead of a batch's worth of doomed
-/// requests.
+/// A request that never reached the server carries no risk of a double write, so
+/// it is resent. Anything that failed after the body went out — a timeout, a
+/// socket that died waiting for the answer — leaves the same unknown as 319.
+fn retry_for_send_error(err: &reqwest::Error) -> Retry {
+    if err.is_connect() {
+        Retry::SameRows
+    } else {
+        Retry::Ambiguous
+    }
+}
+
+/// A code nobody has classified is retried rather than surfaced: an overloaded
+/// server has far more codes for saying so than this file can enumerate, and the
+/// retry budget bounds what being wrong costs. Only the lists above,
+/// and a 4xx the server never wrote, end a write on the first answer.
 fn retry_for(status: reqwest::StatusCode, body: &str) -> Retry {
     match clickhouse_error_code(body) {
         Some(code) if HALVED_ERROR_CODES.contains(&code) => Retry::Halved,
-        Some(code) if SAME_ROWS_ERROR_CODES.contains(&code) => Retry::SameRows,
         Some(code) if AMBIGUOUS_ERROR_CODES.contains(&code) => Retry::Ambiguous,
-        Some(_) => Retry::Never,
+        Some(code) if NEVER_ERROR_CODES.contains(&code) => Retry::Never,
+        Some(_) => Retry::SameRows,
         // Nothing in the body is ClickHouse's, so something in front of it
         // answered — a proxy or load balancer — and only its status says what.
         None => match status {
@@ -934,7 +957,14 @@ fn retry_for(status: reqwest::StatusCode, body: &str) -> Retry {
     }
 }
 
+/// The code out of a ClickHouse error body. A proxy in front of the server can
+/// quote a `Code:` of its own, so the marker ClickHouse puts in every exception
+/// it writes is what makes the number the server's own verdict rather than
+/// someone else's.
 fn clickhouse_error_code(body: &str) -> Option<u32> {
+    if !body.contains("DB::Exception") {
+        return None;
+    }
     let digits: String = body
         .split_once("Code: ")?
         .1
@@ -1168,11 +1198,11 @@ mod tests {
         }
     }
 
-    fn sink_with(server: &mock_server::MockClickHouse, tuning: Tuning) -> TestSink {
+    fn sink_at(url: String, tuning: Tuning) -> TestSink {
         let warnings = Arc::new(Mutex::new(Vec::new()));
         let collected = warnings.clone();
         let sink = ClickHouseSink::build(
-            options(server.url.clone()),
+            options(url),
             tuning,
             Arc::new(move |message: &str| collected.lock().unwrap().push(message.to_string())),
         )
@@ -1180,11 +1210,15 @@ mod tests {
         TestSink { sink, warnings }
     }
 
-    fn sink_for(server: &mock_server::MockClickHouse, attempts: u32) -> TestSink {
+    fn sink_with(server: &mock_server::MockClickHouse, tuning: Tuning) -> TestSink {
+        sink_at(server.url.clone(), tuning)
+    }
+
+    fn sink_for(server: &mock_server::MockClickHouse, retries: u32) -> TestSink {
         sink_with(
             server,
             Tuning {
-                attempts,
+                retries,
                 max_retry_delay: Duration::ZERO,
                 ..Tuning::default()
             },
@@ -1407,6 +1441,80 @@ mod tests {
         );
     }
 
+    /// An address nothing listens on, so every connection to it is refused.
+    async fn refused_url() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        url
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_refused_connection_is_retried() {
+        let sink = sink_at(
+            refused_url().await,
+            Tuning {
+                retries: 3,
+                max_retry_delay: Duration::ZERO,
+                ..Tuning::default()
+            },
+        );
+        let handle = stage_ids(&sink, &["a"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("ClickHouse insert request failed"),
+                sink.warnings().len(),
+                sink.warnings()
+                    .first()
+                    .is_some_and(|warning| warning.contains("3 retries left")),
+            ),
+            (true, 3, true),
+            "expected three retries counted down from three, got: {:?} / {}",
+            sink.warnings(),
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_transient_code_nobody_listed_is_retried_whole() {
+        let server = mock_server::MockClickHouse::rejecting_with(
+            2,
+            "Code: 439. DB::Exception: Cannot schedule a task",
+        )
+        .await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b"]);
+
+        write(&sink, handle).await.unwrap();
+
+        assert_eq!(
+            (server.accepted_batches(), server.inserts_seen()),
+            (vec![vec!["a".to_string(), "b".to_string()]], 3)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_proxy_page_quoting_a_code_is_read_as_the_proxys_own() {
+        let server = mock_server::MockClickHouse::rejecting_with_status(
+            1,
+            502,
+            "Error Code: 60. upstream unavailable",
+        )
+        .await;
+        let sink = sink_for(&server, 4);
+        let handle = stage_ids(&sink, &["a", "b"]);
+
+        write(&sink, handle).await.unwrap();
+
+        assert_eq!(
+            (server.accepted_batches(), server.inserts_seen()),
+            (vec![vec!["a".to_string(), "b".to_string()]], 2)
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn an_insert_whose_status_is_unknown_is_not_resent() {
         let server = mock_server::MockClickHouse::accepting_then_erroring(
@@ -1446,7 +1554,7 @@ mod tests {
         let sink = sink_with(
             &server,
             Tuning {
-                attempts: 4,
+                retries: 4,
                 max_retry_delay: Duration::ZERO,
                 request_timeout: Duration::from_millis(150),
                 statement_timeout: Duration::from_millis(150),
@@ -1473,7 +1581,7 @@ mod tests {
         let sink = sink_with(
             &server,
             Tuning {
-                attempts: 1,
+                retries: 1,
                 max_retry_delay: Duration::ZERO,
                 request_timeout: Duration::from_millis(150),
                 statement_timeout: Duration::from_millis(150),
