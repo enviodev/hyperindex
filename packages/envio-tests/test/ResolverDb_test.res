@@ -80,6 +80,7 @@ Async.beforeAll(async () => {
   let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
   await persistence->Persistence.init(
     ~chainConfigs=config.chainMap->ChainMap.values,
+    ~contractMapping=config.contractMapping,
     ~envioInfo=JSON.Encode.object(Dict.make()),
     ~resetCommand="envio dev -r",
     ~runCommand=Some("envio dev"),
