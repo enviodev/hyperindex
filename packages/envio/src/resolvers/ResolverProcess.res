@@ -14,6 +14,29 @@ external buildRegisteredManifest: unit => manifestBundle = "buildRegisteredManif
 @module("./index.js")
 external getRegisteredResolvers: unit => array<unknown> = "getRegisteredResolvers"
 
+type hasuraMetadataOptions = {handlerUrl: string}
+
+@module("./hasuraMetadata.js")
+external buildHasuraMetadata: (JSON.t, hasuraMetadataOptions) => JSON.t = "buildHasuraMetadata"
+
+type applyOptions = {endpoint: string, adminSecret: string, metadata: JSON.t}
+type applyResult = {applied: bool, reasons: array<string>}
+
+@module("./hasuraApply.js")
+external applyResolverMetadata: applyOptions => promise<applyResult> = "applyResolverMetadata"
+
+type reassertOptions = {
+  endpoint: string,
+  adminSecret: string,
+  metadata: JSON.t,
+  intervalMs: int,
+  onApplied: array<string> => unit,
+  onError: exn => unit,
+}
+
+@module("./hasuraApply.js")
+external startMetadataReassert: reassertOptions => (unit => unit) = "startMetadataReassert"
+
 type schemaNames = {entities: array<string>, enums: array<string>}
 
 @module("./collisions.js")
@@ -181,6 +204,20 @@ let writeManifest = async (~config: Config.t, ~projectRoot) => {
   )
 }
 
+/// The Hasura metadata for this project's resolvers, as `envio resolvers
+/// metadata` prints it.
+let metadataJson = async (~config: Config.t, ~projectRoot, ~handlerUrl) => {
+  let manifest = switch config.resolvers {
+  | None => emptyManifest
+  | Some(relativePath) =>
+    await loadOrThrow(~projectRoot, ~relativePath)
+    let bundle = buildRegisteredManifest()
+    checkCollisions(bundle.manifest, schemaNamesOf(config))
+    bundle.manifest
+  }
+  buildHasuraMetadata(manifest, {handlerUrl: handlerUrl})
+}
+
 @val @scope("process") external onSignal: (string, unit => unit) => unit = "on"
 
 // Node closes the server but leaves keep-alive connections to time out on
@@ -297,7 +334,8 @@ let serve = async (
 
   // Checked here too, not only at manifest time: `envio dev` never writes the
   // artefacts, and a collision it doesn't catch becomes a schema serve refuses.
-  checkCollisions(buildRegisteredManifest().manifest, schemaNamesOf(config))
+  let manifest = buildRegisteredManifest().manifest
+  checkCollisions(manifest, schemaNamesOf(config))
 
   let resolvers = getRegisteredResolvers()
   if resolvers->Utils.Array.isEmpty {
@@ -326,6 +364,60 @@ let serve = async (
       ->Int.toString} custom resolvers on port ${server.port->Int.toString}`,
   )
 
+  // After the socket is listening, never before: an action Hasura knows about
+  // is one it will send traffic to.
+  let stopReassert = switch (
+    Env.Resolvers.hasuraEndpoint(),
+    Env.Resolvers.hasuraAdminSecret(),
+  ) {
+  | (Some(endpoint), Some(adminSecret)) =>
+    let handlerUrl = switch Env.Resolvers.publicUrl() {
+    | Some(url) => url
+    | None =>
+      JsError.throwWithMessage(
+        "HASURA_GRAPHQL_ENDPOINT is set, so this process registers its resolvers with Hasura, but ENVIO_RESOLVERS_PUBLIC_URL is not. It is the URL Hasura posts to, which is not the address this process binds -- Hasura has no other way to reach the resolvers.",
+      )
+    }
+    let metadata = buildHasuraMetadata(manifest, {handlerUrl: handlerUrl})
+    let {applied, reasons} = await applyResolverMetadata({endpoint, adminSecret, metadata})
+    Logging.info(
+      applied
+        ? `Registered custom resolvers with Hasura: ${reasons->Array.join("; ")}`
+        : "Hasura already publishes these custom resolvers; nothing to register",
+    )
+    let intervalMs = Env.Resolvers.metadataIntervalMs()
+    if intervalMs === 0 {
+      () => ()
+    } else {
+      startMetadataReassert({
+        endpoint,
+        adminSecret,
+        metadata,
+        intervalMs,
+        // Not defensive: `Hasura.trackDatabase` opens with a wholesale
+        // `clear_metadata`, so a re-initialised indexer deletes these actions
+        // while this process keeps running.
+        onApplied: reasons =>
+          Logging.warn(
+            `Hasura had lost the custom resolvers and they were restored: ${reasons->Array.join(
+                "; ",
+              )}`,
+          ),
+        onError: exn =>
+          Logging.error(
+            `Failed to re-assert the custom resolver metadata: ${exn
+              ->Utils.prettifyExn
+              ->Obj.magic}`,
+          ),
+      })
+    }
+  | _ =>
+    Logging.info(
+      "HASURA_GRAPHQL_ENDPOINT is not set, so nothing was registered with Hasura. This process still answers /hasura-action and /resolve.",
+    )
+    () => ()
+  }
+
   let stopped = ref(None)
   let shutdown = () =>
     switch stopped.contents {
@@ -333,6 +425,7 @@ let serve = async (
     | None =>
       let promise = (
         async () => {
+          stopReassert()
           // In-flight requests finish; the grace period only bounds how long
           // an idle connection can delay the exit.
           switch await Promise.race([server.close(), Utils.delay(closeGracePeriodMs)]) {
