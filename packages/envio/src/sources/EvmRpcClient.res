@@ -10,14 +10,6 @@ type cfg = {
   queryTimeoutMillis: int,
 }
 
-// Only logs that resolved to a registration cross the boundary, each carrying
-// its registration's chain-scoped index.
-type rpcEventItem = {
-  log: Rpc.GetLogs.log,
-  onEventRegistrationIndex: int,
-  params: Internal.eventParams,
-}
-
 type nextPageParams = {
   fromBlock: int,
   toBlockCeiling: int,
@@ -30,18 +22,54 @@ type nextPageParams = {
   // depend on addresses (client-side filtering). None/empty means
   // every address-dependent contract is filtered server-side.
   clientFilteredContracts: option<array<string>>,
+  // How many times this query has already been retried, which sets how long a
+  // transient miss waits before the next attempt.
+  retry: int,
 }
 
-type nextPageResponse = {
-  items: array<rpcEventItem>,
+// Rust reports what to do about a page it could not read, rather than throwing
+// it: `tag` picks which of the two shapes below is populated.
+type retryDecision = {
+  tag: string,
+  toBlock: option<int>,
+  message: option<string>,
+  backoffMillis: option<int>,
+}
+
+// `kind` discriminates the outcome: "ok" carries the page, "retry" carries a
+// `retry` decision, and "fieldSelection" reports a selection this provider
+// cannot serve. A thrown error from `getNextPage` is a genuine bug, not an
+// outcome to recover from.
+type nextPageResult = {
+  kind: string,
+  requestStats: array<Source.requestStat>,
   toBlock: int,
+  items: array<EvmEventItem.t>,
+  message: option<string>,
+  errorMessage: option<string>,
+  retry: option<retryDecision>,
+}
+
+// `message` is set when the read failed, in which case the page returned
+// alongside it is empty.
+type blockHashResult = {
+  message: option<string>,
   requestStats: array<Source.requestStat>,
 }
 
-// The caller provides a range; Rust decides the actual `toBlock` and returns it.
 type t = {
   getHeight: unit => promise<int>,
-  getNextPage: (nextPageParams, AddressSet.t) => promise<nextPageResponse>,
+  // The chain's stores are passed in so a block or transaction another
+  // partition already read is not read again; the returned stores are this
+  // page's own, to be merged by the caller.
+  getNextPage: (
+    nextPageParams,
+    AddressSet.t,
+    BlockStore.t,
+    TransactionStore.t,
+  ) => promise<(nextPageResult, BlockStore.t, TransactionStore.t)>,
+  getBlockHashes: array<int> => promise<(blockHashResult, BlockStore.t)>,
+  onReorg: unit => unit,
 }
 
 @send
@@ -53,35 +81,6 @@ external classNew: (
   ~addressStore: AddressStore.t,
 ) => t = "new"
 
-// Rust encodes JSON-RPC errors as a JSON payload in the napi error's
-// message: `{"kind":"JsonRpcError","code":-32005,"message":"..."}`.
-// Parse it back so callers keep matching on Rpc.JsonRpcError.
-let getJsonRpcError = (exn: exn): option<Rpc.rpcError> =>
-  switch exn {
-  | JsExn(e) =>
-    switch e->JsExn.message {
-    | Some(msg) =>
-      switch msg->JSON.parseOrThrow->JSON.Decode.object {
-      | exception _ => None
-      | None => None
-      | Some(obj) =>
-        switch (obj->Dict.get("kind"), obj->Dict.get("code"), obj->Dict.get("message")) {
-        | (Some(String("JsonRpcError")), Some(Number(code)), Some(String(message))) =>
-          Some({code: code->Float.toInt, message})
-        | _ => None
-        }
-      }
-    | None => None
-    }
-  | _ => None
-  }
-
-let coerceErrorOrThrow = exn =>
-  switch exn->getJsonRpcError {
-  | Some(rpcError) => throw(Rpc.JsonRpcError(rpcError))
-  | None => exn->throw
-  }
-
 let make = (
   ~url,
   ~checksumAddresses,
@@ -90,8 +89,8 @@ let make = (
   ~headers=?,
   ~eventRegistrations=[],
   ~addressStore,
-) => {
-  let client = Core.getAddon().evmRpcClient->classNew(
+) =>
+  Core.getAddon().evmRpcClient->classNew(
     {
       url,
       ?httpReqTimeoutMillis,
@@ -107,9 +106,19 @@ let make = (
     ~checksumAddresses,
     ~addressStore,
   )
-  {
-    getHeight: () => client.getHeight()->Promise.catch(coerceErrorOrThrow),
-    getNextPage: (params, addressSet) =>
-      client.getNextPage(params, addressSet)->Promise.catch(coerceErrorOrThrow),
+
+// Turn Rust's retry decision into the variant the source manager acts on.
+let toSourceRetry = (decision: retryDecision): Source.getItemsRetry =>
+  switch (decision.tag, decision.toBlock, decision.backoffMillis) {
+  | ("suggestedToBlock", Some(toBlock), _) => WithSuggestedToBlock({toBlock: toBlock})
+  | ("backoff", _, Some(backoffMillis)) =>
+    WithBackoff({
+      message: decision.message->Option.getOr("Retrying the block range."),
+      backoffMillis,
+    })
+  | _ =>
+    WithBackoff({
+      message: `The RPC client returned an unrecognised retry decision ${decision.tag}. Please, report to the Envio team.`,
+      backoffMillis: 1000,
+    })
   }
-}

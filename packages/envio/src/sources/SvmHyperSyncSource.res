@@ -229,7 +229,6 @@ let make = (
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,
-      fromBlockQueried: fromBlock,
       requestStats,
     }
   }

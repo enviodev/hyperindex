@@ -261,6 +261,18 @@ let makeInternal = (
     }
   })
 
+  // The chain's stores are created before its sources: a source that fetches
+  // block and transaction data per item reads them to skip what another
+  // partition already fetched.
+  let blockStore = BlockStore.make(
+    ~ecosystem=config.ecosystem.name,
+    ~shouldChecksum=!lowercaseAddresses,
+  )
+  let transactionStore = TransactionStore.make(
+    ~ecosystem=config.ecosystem.name,
+    ~shouldChecksum=!lowercaseAddresses,
+  )
+
   // Create sources lazily here - this is where API token validation happens
   let chainId = chainConfig.id
   let sources = switch chainConfig.sourceConfig {
@@ -286,6 +298,8 @@ let makeInternal = (
       ~rpcs=evmRpcs,
       ~lowercaseAddresses,
       ~addressStore,
+      ~blockStore,
+      ~transactionStore,
     )
   | Config.FuelSourceConfig({hypersync}) => [
       FuelHyperSyncSource.make({
@@ -331,11 +345,6 @@ let makeInternal = (
   | Config.CustomSources(sources) => sources
   }
 
-  let blockStore = BlockStore.make(
-    ~ecosystem=config.ecosystem.name,
-    ~shouldChecksum=!lowercaseAddresses,
-  )
-
   // Seed the stored reorg checkpoints (hash-only rows) so detection resumes
   // against the hashes scanned before the restart.
   if chainReorgCheckpoints->Utils.Array.notEmpty {
@@ -377,10 +386,7 @@ let makeInternal = (
     ~perChainEntities=config.userEntities->EntityTables.perChain,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed,
-    ~transactionStore=TransactionStore.make(
-      ~ecosystem=config.ecosystem.name,
-      ~shouldChecksum=!lowercaseAddresses,
-    ),
+    ~transactionStore,
     ~chainDensity,
     ~blockStore,
     ~reorgThresholdReadyTolerance=config.reorgThresholdReadyTolerance,

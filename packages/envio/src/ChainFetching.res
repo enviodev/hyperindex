@@ -113,14 +113,13 @@ let rec onQueryResponse = async (
       latestFetchedBlockNumber,
       stats,
       knownHeight,
-      fromBlockQueried,
     } = response
 
     chainState->ChainState.recordBlockRangeFetch(
       ~totalTimeElapsed=stats.totalTimeElapsed,
       ~parsingTimeElapsed=stats.parsingTimeElapsed->Option.getOr(0.),
       ~numEvents=parsedQueueItems->Array.length,
-      ~blockRangeSize=latestFetchedBlockNumber - fromBlockQueried + 1,
+      ~blockRangeSize=latestFetchedBlockNumber - query.fromBlock + 1,
     )
 
     let numContractRegisterEvents = parsedQueueItems->Array.reduce(0, (count, item) => {
@@ -132,7 +131,7 @@ let rec onQueryResponse = async (
         "msg": "Finished querying",
         "chainId": chainId,
         "partitionId": query.partitionId,
-        "fromBlock": fromBlockQueried,
+        "fromBlock": query.fromBlock,
         "toBlock": latestFetchedBlockNumber,
         "numEvents": parsedQueueItems->Array.length,
       })
@@ -141,7 +140,7 @@ let rec onQueryResponse = async (
         "msg": "Finished querying",
         "chainId": chainId,
         "partitionId": query.partitionId,
-        "fromBlock": fromBlockQueried,
+        "fromBlock": query.fromBlock,
         "toBlock": latestFetchedBlockNumber,
         "numEvents": parsedQueueItems->Array.length,
         "numContractRegisterEvents": numContractRegisterEvents,

@@ -789,61 +789,6 @@ chains:
       "block_fields selection contains the following duplicates: parentHash",
     ),
     (
-      "rejects transaction fields unavailable through RPC sync",
-      `
-name: unavailable-rpc-transaction-field
-field_selection:
-  transaction_fields: [accessList]
-chains:
-  - id: 999999
-    rpc:
-      url: https://rpc.example.test
-      for: sync
-    start_block: 0
-`,
-      "The following selected transaction_fields are unavailable for indexing via RPC: accessList",
-    ),
-    (
-      "rejects event fields unavailable on a local RPC contract",
-      `
-name: unavailable-local-event-field
-chains:
-  - id: 999999
-    rpc:
-      url: https://rpc.example.test
-      for: sync
-    start_block: 0
-    contracts:
-      - name: Token
-        events:
-          - event: Transfer()
-            field_selection:
-              transaction_fields: [accessList]
-`,
-      "Failed parsing abi types for events in contract Token on network 999999: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
-    ),
-    (
-      "rejects event fields unavailable on a global contract used by RPC",
-      `
-name: unavailable-global-event-field
-contracts:
-  - name: Token
-    events:
-      - event: Transfer()
-        field_selection:
-          transaction_fields: [accessList]
-chains:
-  - id: 999999
-    rpc:
-      url: https://rpc.example.test
-      for: sync
-    start_block: 0
-    contracts:
-      - name: Token
-`,
-      "Failed parsing abi types for events in global contract Token: The following selected transaction_fields are unavailable for indexing via RPC: accessList",
-    ),
-    (
       "rejects duplicate contract names case-insensitively",
       `
 name: duplicate-contracts

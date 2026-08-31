@@ -84,7 +84,6 @@ type blockRangeFetchResponse = {
   // detection. Sources that keep the block inline on the payload (RPC/Simulate)
   // contribute hash-only rows built from the block hashes they saw.
   blockStore: BlockStore.t,
-  fromBlockQueried: int,
   latestFetchedBlockNumber: int,
   stats: blockRangeFetchStats,
   requestStats: array<requestStat>,

@@ -18,7 +18,6 @@ type pinnedEvent = {
 
 type pinnedPage = {
   knownHeight: int,
-  fromBlockQueried: int,
   latestFetchedBlockNumber: int,
   events: array<pinnedEvent>,
   blockHashes: array<ReorgDetection.blockData>,
@@ -93,13 +92,21 @@ let storedBlockHashes = (blockStore: BlockStore.t): array<ReorgDetection.blockDa
     }
   )
 
-let normalizePage = (response: Source.blockRangeFetchResponse): pinnedPage => {
-  knownHeight: response.knownHeight,
-  fromBlockQueried: response.fromBlockQueried,
-  latestFetchedBlockNumber: response.latestFetchedBlockNumber,
-  events: response.parsedQueueItems->Array.map(normalizeEvent),
-  blockHashes: response.blockStore->storedBlockHashes,
-  requestCounts: response.requestStats->countRequests,
+// The page's own stores back `block` and `transaction`, so the pin resolves
+// them the way batch prep does before reading the payload.
+let normalizePage = async (response: Source.blockRangeFetchResponse): pinnedPage => {
+  await ChainState.materializePageItems(
+    ~items=response.parsedQueueItems,
+    ~transactionStore=response.transactionStore,
+    ~blockStore=response.blockStore,
+  )
+  {
+    knownHeight: response.knownHeight,
+    latestFetchedBlockNumber: response.latestFetchedBlockNumber,
+    events: response.parsedQueueItems->Array.map(normalizeEvent),
+    blockHashes: response.blockStore->storedBlockHashes,
+    requestCounts: response.requestStats->countRequests,
+  }
 }
 
 let jsExnMessage = exn =>
@@ -114,7 +121,7 @@ let providerMessage = exn =>
   if exn->isNullish {
     None
   } else {
-    exn->RpcSource.getErrorMessage
+    exn->jsExnMessage
   }
 
 let normalizeRetry = retry =>
@@ -143,6 +150,6 @@ let normalizeError = error =>
   }
 
 let capture = async getPage =>
-  try Ok((await getPage())->normalizePage) catch {
+  try Ok(await (await getPage())->normalizePage) catch {
   | Source.GetItemsError(error) => Error(error->normalizeError)
   }

@@ -515,11 +515,13 @@ impl EvmRpcClient {
                         to_block: to_block as i64,
                         items: Vec::new(),
                         message: Some(message.clone()),
-                        error_message: Some(message),
+                        error_message: Some(message.clone()),
                         retry: Some(RetryDecision {
                             tag: "backoff".to_string(),
                             to_block: None,
-                            message: None,
+                            // The reason the wait exists travels with it, so a
+                            // retry is explained where it is acted on.
+                            message: Some(message),
                             backoff_millis: Some(backoff),
                         }),
                     },
@@ -873,19 +875,14 @@ impl EvmRpcClient {
     }
 }
 
-/// Encodes JSON-RPC errors as a JSON payload in the napi error's message.
-/// The ReScript side parses it back into a structured exception, keeping
-/// the provider's code and message intact across the boundary.
+/// A JSON-RPC failure as a plain message. The provider's code is part of the
+/// text rather than a separate channel: nothing recovers from it
+/// programmatically, and one readable message beats a payload every reader has
+/// to decode first.
 fn rpc_error_to_napi(e: RpcError) -> napi::Error {
     match e {
         RpcError::JsonRpc { code, message } => {
-            let payload = serde_json::json!({
-                "kind": "JsonRpcError",
-                "code": code,
-                "message": message,
-            })
-            .to_string();
-            napi::Error::from_reason(payload)
+            napi::Error::from_reason(format!("JSON-RPC error {code}: {message}"))
         }
         RpcError::Other(e) => map_err(e),
     }

@@ -568,18 +568,26 @@ impl TransactionStore {
     /// Move every row from `page` into this store (merging a fetch-response
     /// page into the persistent per-chain store).
     #[napi]
-    pub fn merge(&self, page: &TransactionStore) {
+    pub fn merge(&self, page: &TransactionStore) -> napi::Result<()> {
         // Merging a store into itself would lock the same Mutex twice (deadlock).
         if std::ptr::eq(self, page) {
-            return;
+            return Ok(());
         }
-        // A page and its persistent store are the same per-chain ecosystem (both
-        // derive it from the one chain config), so the decoder is unaffected by the merge.
-        debug_assert_eq!(self.ecosystem, page.ecosystem);
+        // Field codes are per-ecosystem, so merging across one would read a
+        // column as a different field. A page and its persistent store always
+        // share the chain's ecosystem, but `merge` is public over N-API, so
+        // reject it in every build rather than panicking inside a callback,
+        // where an abort would take the process down.
+        if std::mem::discriminant(&self.ecosystem) != std::mem::discriminant(&page.ecosystem) {
+            return Err(napi::Error::from_reason(
+                "TransactionStore.merge: cannot merge a page from a different ecosystem",
+            ));
+        }
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
         dst.txs.append_from(&mut src.txs);
         dst.account_activity.append_from(&mut src.account_activity);
+        Ok(())
     }
 
     /// Bulk-materialise transactions in columnar form, one row per

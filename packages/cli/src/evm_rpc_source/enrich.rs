@@ -72,7 +72,7 @@ impl FetchKey {
         match self {
             FetchKey::Block(number) => format!("block {number}"),
             FetchKey::Transaction(hash) => format!("transaction {hash}"),
-            FetchKey::Receipt(hash) => format!("receipt for transaction {hash}"),
+            FetchKey::Receipt(hash) => format!("the receipt of transaction {hash}"),
         }
     }
 }
@@ -221,6 +221,9 @@ async fn read(
     Ok((!value.is_null()).then_some(value))
 }
 
+/// Read something the chain must have. A null answer is the load-balancing
+/// symptom `EnrichError::NotFound` describes, so it is reported the same way
+/// for a block, a transaction and a receipt alike.
 async fn require(
     client: &Arc<JsonRpcClient>,
     cache: &FetchCache,
@@ -228,9 +231,13 @@ async fn require(
     key: FetchKey,
 ) -> Result<Arc<Json>, EnrichError> {
     let description = key.describe();
-    read(client, cache, stats, key)
-        .await?
-        .ok_or_else(|| EnrichError::NotFound(format!("the RPC returned null for {description}")))
+    read(client, cache, stats, key).await?.ok_or_else(|| {
+        EnrichError::NotFound(format!(
+            "The RPC returned null for {description}. The provider may be load-balanced between \
+             nodes that drift from the head independently; indexing continues correctly once the \
+             query is retried."
+        ))
+    })
 }
 
 /// Which responses a transaction's selected fields need. Fields carried by
@@ -536,19 +543,7 @@ async fn read_if(
     if !wanted {
         return Ok(None);
     }
-    let key = key();
-    let description = key.describe();
-    require(client, cache, stats, key)
-        .await
-        .map(Some)
-        .map_err(|err| match err {
-            EnrichError::NotFound(_) => EnrichError::NotFound(format!(
-                "the RPC returned null for {description}. The provider may be load-balanced \
-                 between nodes that drift from the head independently; indexing continues \
-                 correctly once the query is retried."
-            )),
-            other => other,
-        })
+    require(client, cache, stats, key()).await.map(Some)
 }
 
 fn refs_hash(hash: &str) -> Result<format::Hash, EnrichError> {
@@ -658,6 +653,14 @@ mod tests {
         // is all reorg detection needs from it.
         let plan = plan_blocks(&refs_for(50, 0, 0), 40, 60, &BlockStore::new_evm(false));
         assert_eq!(planned_numbers(&plan), vec![40, 60]);
+    }
+
+    #[test]
+    fn a_boundary_block_an_item_wants_nothing_from_is_still_read() {
+        // The item makes the block referenced but selects no field of it; it is
+        // still the range's boundary, so its reorg observation is read.
+        let plan = plan_blocks(&refs_for(40, 0, 0), 40, 40, &BlockStore::new_evm(false));
+        assert_eq!(planned_numbers(&plan), vec![40]);
     }
 
     #[test]

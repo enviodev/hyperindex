@@ -10,14 +10,6 @@ let heightCall = (~reply, ~headers=?) =>
     ~headers?,
   )
 
-let getHeightJsonRpcError = async (client: EvmRpcClient.t): option<Rpc.rpcError> =>
-  try {
-    let _ = await client.getHeight()
-    None
-  } catch {
-  | Rpc.JsonRpcError(e) => Some(e)
-  }
-
 let getHeightErrorMessage = async (client: EvmRpcClient.t) =>
   try {
     let _ = await client.getHeight()
@@ -45,7 +37,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
     t.expect(height).toBe(436)
   })
 
-  Async.it("Transfers JSON-RPC error as structured Rpc.JsonRpcError", async t => {
+  Async.it("Reports a JSON-RPC error with its provider code", async t => {
     let error = await MockRpcServer.withScenario(
       ~name="structured JSON-RPC error",
       ~calls=[
@@ -60,11 +52,11 @@ describe("EvmRpcClient - getHeight via napi", () => {
         ~syncConfig,
         ~addressStore=TestAddresses.makeStore(),
       )
-        await getHeightJsonRpcError(client)
+        await getHeightErrorMessage(client)
       },
     )
 
-    t.expect(error).toEqual(Some({code: -32005, message: "limited to a 1000 blocks range"}))
+    t.expect(error).toEqual(Some("JSON-RPC error -32005: limited to a 1000 blocks range"))
   })
 
   Async.it("Parses JSON-RPC error body even with a non-200 status", async t => {
@@ -85,11 +77,11 @@ describe("EvmRpcClient - getHeight via napi", () => {
         ~syncConfig,
         ~addressStore=TestAddresses.makeStore(),
       )
-        await getHeightJsonRpcError(client)
+        await getHeightErrorMessage(client)
       },
     )
 
-    t.expect(error).toEqual(Some({code: -32029, message: "rate limited"}))
+    t.expect(error).toEqual(Some("JSON-RPC error -32029: rate limited"))
   })
 
   Async.it("Reports HTTP status and body snippet for a non-JSON response", async t => {
@@ -230,6 +222,35 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     transactionFields: [],
   }
 
+  // The client reads the range's last block for its reorg observation, whatever
+  // the field selection is.
+  let blockReply = (~number) =>
+    MockRpcServer.expectCall(
+      ~method="eth_getBlockByNumber",
+      ~reply=RpcResult(
+        JSON.parseOrThrow(
+          `{"number":"${number}","timestamp":"0x1","hash":"0x${"b1"->String.repeat(
+              32,
+            )}","parentHash":"0x${"b0"->String.repeat(32)}"}`,
+        ),
+      ),
+    )
+
+  let callNextPage = (client: EvmRpcClient.t, ~fromBlock, ~toBlockCeiling, ~indexes, ~addressSet) =>
+    client.getNextPage(
+      {
+        fromBlock,
+        toBlockCeiling,
+        partitionId: "0",
+        registrationIndexes: indexes,
+        clientFilteredContracts: None,
+        retry: 0,
+      },
+      addressSet,
+      BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+      TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+    )
+
   // The chain's address index, holding the one ERC20 address these logs are
   // emitted from. Non-wildcard registrations only route emitters it holds.
   let makeAddressStore = () => {
@@ -259,10 +280,11 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ),
           ~reply=RpcResult(
             JSON.parseOrThrow(
-              `[{"address":"${contractAddress}","topics":["${transferSighash}","0x0000000000000000000000000000000000000000000000000000000000000001","0x0000000000000000000000000000000000000000000000000000000000000002"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8","blockNumber":"0x64","transactionHash":"0xabc","transactionIndex":"0x1","blockHash":"0xb64","logIndex":"0x2","removed":false}]`,
+              `[{"address":"${contractAddress}","topics":["${transferSighash}","0x0000000000000000000000000000000000000000000000000000000000000001","0x0000000000000000000000000000000000000000000000000000000000000002"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8","blockNumber":"0x64","transactionHash":"0xabababababababababababababababababababababababababababababababab","transactionIndex":"0x1","blockHash":"0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0","logIndex":"0x2","removed":false}]`,
             ),
           ),
         ),
+        blockReply(~number="0x64"),
       ],
       async mock => {
         let addressStore = makeAddressStore()
@@ -274,26 +296,30 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~addressStore,
         )
 
-        let {items, toBlock} = await client.getNextPage(
-          {
-            fromBlock: 100,
-            toBlockCeiling: 100,
-            partitionId: "0",
-            registrationIndexes: [3],
-            clientFilteredContracts: None,
-          },
-          addressStore->AddressStore.makeSet(~contractName="ERC20"),
+        let (result, _, _) = await client->callNextPage(
+          ~fromBlock=100,
+          ~toBlockCeiling=100,
+          ~indexes=[3],
+          ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
         )
+        let {EvmRpcClient.items: items, toBlock} = result
         (
           toBlock,
-          items->Array.map(({log, onEventRegistrationIndex, params}) => {
+          items->Array.map(({
+            blockNumber,
+            transactionIndex,
+            logIndex,
+            srcAddress,
+            onEventRegistrationIndex,
+            params,
+          }) => {
             let decoded = params->(Utils.magic: Internal.eventParams => {..})
             {
               "onEventRegistrationIndex": onEventRegistrationIndex,
-              "blockNumber": log.blockNumber,
-              "transactionIndex": log.transactionIndex,
-              "logIndex": log.logIndex,
-              "topicCount": log.topics->Array.length,
+              "blockNumber": blockNumber,
+              "transactionIndex": transactionIndex,
+              "logIndex": logIndex,
+              "srcAddress": srcAddress->Address.toString,
               "from": decoded["from"],
               "to": decoded["to"],
               "value": decoded["value"]->BigInt.toString,
@@ -311,7 +337,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           "blockNumber": 100,
           "transactionIndex": 1,
           "logIndex": 2,
-          "topicCount": 3,
+          "srcAddress": contractAddress,
           "from": "0x0000000000000000000000000000000000000001",
           "to": "0x0000000000000000000000000000000000000002",
           "value": "1000",
@@ -331,10 +357,11 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ),
           ~reply=RpcResult(
             JSON.parseOrThrow(
-              `[{"address":"${contractAddress}","topics":["0x0000000000000000000000000000000000000000000000000000000000000009"],"data":"0x","blockNumber":"0x1","transactionHash":"0xabc","transactionIndex":"0x0","blockHash":"0xb01","logIndex":"0x0","removed":false}]`,
+              `[{"address":"${contractAddress}","topics":["0x0000000000000000000000000000000000000000000000000000000000000009"],"data":"0x","blockNumber":"0x1","transactionHash":"0xabababababababababababababababababababababababababababababababab","transactionIndex":"0x0","blockHash":"0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0","logIndex":"0x0","removed":false}]`,
             ),
           ),
         ),
+        blockReply(~number="0x1"),
       ],
       async mock => {
         let addressStore = makeAddressStore()
@@ -346,15 +373,11 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~addressStore,
         )
 
-        let {items} = await client.getNextPage(
-          {
-            fromBlock: 1,
-            toBlockCeiling: 1,
-            partitionId: "0",
-            registrationIndexes: [3],
-            clientFilteredContracts: None,
-          },
-          addressStore->AddressStore.makeSet(~contractName="ERC20"),
+        let ({EvmRpcClient.items: items}, _, _) = await client->callNextPage(
+          ~fromBlock=1,
+          ~toBlockCeiling=1,
+          ~indexes=[3],
+          ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
         )
         items->Array.length
       },
@@ -363,8 +386,10 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     t.expect(itemCount).toEqual(0)
   })
 
-  Async.it("Surfaces a classified provider error via the retry-decision payload", async t => {
-    let exn = await MockRpcServer.withScenario(
+  Async.it("Reports a classified provider error as a retry decision", async t => {
+    // A provider's range limit comes back as a value, not an exception: the
+    // narrower range to retry is the point of the call, not a failure of it.
+    let outcome = await MockRpcServer.withScenario(
       ~name="classified provider range error",
       ~calls=[
         MockRpcServer.expectCall(
@@ -395,26 +420,24 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ],
           ~addressStore,
         )
-        try {
-          let _ = await client.getNextPage(
-            {
-              fromBlock: 0,
-              toBlockCeiling: 5000,
-              partitionId: "0",
-              registrationIndexes: [0],
-              clientFilteredContracts: None,
-            },
-            addressStore->AddressStore.emptySet,
-          )
-          None
-        } catch {
-        | exn => Some(exn)
-        }
+        let (result, _, _) = await client->callNextPage(
+          ~fromBlock=0,
+          ~toBlockCeiling=5000,
+          ~indexes=[0],
+          ~addressSet=addressStore->AddressStore.emptySet,
+        )
+        (
+          result.kind,
+          result.errorMessage,
+          result.retry->Option.map(EvmRpcClient.toSourceRetry),
+        )
       },
     )
 
-    t.expect(exn->Option.flatMap(RpcSource.getErrorMessage)).toEqual(
+    t.expect(outcome).toEqual((
+      "retry",
       Some("eth_getLogs is limited to a 1000 blocks range"),
-    )
+      Some(Source.WithSuggestedToBlock({toBlock: 999})),
+    ))
   })
 })

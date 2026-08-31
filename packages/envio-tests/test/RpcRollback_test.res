@@ -117,7 +117,14 @@ let startServer = state =>
     }
   })
 
-let makeSource = (~url) =>
+// The chain's stores are created before its source, as in production: the
+// source reads them to skip a block another partition already fetched.
+let makeStores = () => (
+  BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+  TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+)
+
+let makeSource = (~url, ~blockStore, ~transactionStore) =>
   RpcSource.make({
     url,
     chainId,
@@ -132,6 +139,8 @@ let makeSource = (~url) =>
     }),
     lowercaseAddresses: true,
     addressStore: addressStore(),
+    blockStore,
+    transactionStore,
   })
 
 let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
@@ -152,7 +161,7 @@ let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
     ~logger=Logging.getLogger(),
   )
 
-let makeChainState = (~source: Source.t, ~knownHeight) => {
+let makeChainState = (~source: Source.t, ~knownHeight, ~blockStore) => {
   let chainConfig = TestConfig.make(~chainId=1337).chainMap->ChainMap.get(chainId)
   let store = addressStore()
   let fetchState = FetchState.make(
@@ -178,7 +187,7 @@ let makeChainState = (~source: Source.t, ~knownHeight) => {
     ~shouldRollbackOnReorg=true,
     ~maxReorgDepth=200,
     ~committedProgressBlockNumber=-1,
-    ~blockStore=BlockStore.make(~ecosystem=Evm, ~shouldChecksum=false),
+    ~blockStore,
     ~logger=Logging.getLogger(),
   )
 }
@@ -187,8 +196,9 @@ describe("Rollback against a real RPC server", () => {
   Async.it("detects a reorg from fetched hashes and finds the rollback depth", async t => {
     let state = {height: 105, forkFrom: 999}
     let mock = await startServer(state)
-    let source = makeSource(~url=mock.url)
-    let chainState = makeChainState(~source, ~knownHeight=state.height)
+    let (blockStore, transactionStore) = makeStores()
+    let source = makeSource(~url=mock.url, ~blockStore, ~transactionStore)
+    let chainState = makeChainState(~source, ~knownHeight=state.height, ~blockStore)
 
     // Blocks 100-102 on the original chain.
     let page = await source->fetchRange(~fromBlock=100, ~toBlock=102, ~knownHeight=state.height)
@@ -236,8 +246,9 @@ describe("Rollback against a real RPC server", () => {
   Async.it("drops the source's pre-reorg cache before searching for the fork", async t => {
     let state = {height: 105, forkFrom: 999}
     let mock = await startServer(state)
-    let source = makeSource(~url=mock.url)
-    let chainState = makeChainState(~source, ~knownHeight=state.height)
+    let (blockStore, transactionStore) = makeStores()
+    let source = makeSource(~url=mock.url, ~blockStore, ~transactionStore)
+    let chainState = makeChainState(~source, ~knownHeight=state.height, ~blockStore)
 
     let page = await source->fetchRange(~fromBlock=100, ~toBlock=102, ~knownHeight=state.height)
     t.expect(

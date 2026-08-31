@@ -89,6 +89,8 @@ let makeSource = (~factory, ~url, ~registration: Internal.evmOnEventRegistration
     syncConfig,
     lowercaseAddresses: true,
     addressStore: makeAddressStore(~registration),
+    blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+    transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   }
   factory(options)
 }
@@ -234,14 +236,12 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
 
       t.expect({
         "knownHeight": page.knownHeight,
-        "fromBlockQueried": page.fromBlockQueried,
         "latestFetchedBlockNumber": page.latestFetchedBlockNumber,
         "events": page.events->Array.map(eventSummary),
         "blockHashes": page.blockHashes,
         "requestCounts": page.requestCounts,
       }).toEqual({
         "knownHeight": 100,
-        "fromBlockQueried": 100,
         "latestFetchedBlockNumber": 100,
         "events": [
           {
@@ -375,12 +375,16 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
         },
       )
 
+      // A null receipt is the load-balancing symptom, so the source asks for a
+      // retry and says which receipt was missing, on both the retry decision
+      // the source manager reads and the error the logs carry.
+      let notFoundMessage = `The RPC returned null for the receipt of transaction ${transactionHash}. The provider may be load-balanced between nodes that drift from the head independently; indexing continues correctly once the query is retried.`
       t.expect(error).toEqual(
         RpcSourcePins.FailedGettingItems({
           attemptedToBlock: 100,
-          providerMessage: None,
+          providerMessage: Some(notFoundMessage),
           retry: Backoff({
-            message: `Transaction receipt not found for hash: ${transactionHash}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in 1000ms.`,
+            message: notFoundMessage,
             backoffMillis: 1_000,
           }),
         }),
@@ -420,6 +424,8 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             syncConfig: defaultSyncConfig,
             lowercaseAddresses: true,
             addressStore,
+            blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+            transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
           }
           let source = factory(options)
           let call = () =>
@@ -672,6 +678,8 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
             syncConfig,
             lowercaseAddresses: true,
             addressStore,
+            blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+            transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
           }
           let source = factory(options)
           switch await RpcSourcePins.capture(() =>
