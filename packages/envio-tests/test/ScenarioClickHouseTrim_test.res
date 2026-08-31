@@ -32,7 +32,6 @@ type Counter {
 }
 `,
   ~unsupported=[
-    {backend: #memory, reason: "asserts against a ClickHouse server"},
     {backend: #postgres, reason: "asserts against a ClickHouse server"},
   ],
 )

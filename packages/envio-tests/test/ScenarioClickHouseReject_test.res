@@ -40,7 +40,6 @@ type Bounded @storage(clickhouse: {}) {
 }
 `,
   ~unsupported=[
-    {backend: #memory, reason: "asserts against a ClickHouse server"},
     {backend: #postgres, reason: "the ClickHouse-only entity needs a ClickHouse database"},
   ],
 )
