@@ -315,34 +315,35 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
       })
     })
 
-    Async.it("pins onReorg cache invalidation without resetting paging state", async t => {
-      let requestCounts = await MockRpcServer.withScenario(
-        ~name=`${name}: onReorg cache invalidation`,
+    Async.it("pins that onReorg leaves the partition's paging range alone", async t => {
+      // onReorg drops in-flight reads so nothing issued afterwards joins a
+      // response describing the orphaned fork — an effect only visible under
+      // concurrency, pinned in the client's own tests. What is visible here is
+      // what it must NOT do: the adaptive block range is paging state, not a
+      // view of the chain, and re-deriving it would cost the ramp-up that
+      // reaching this range took.
+      let ranges = await MockRpcServer.withScenario(
+        ~name=`${name}: onReorg keeps paging state`,
         ~calls=successfulCalls(~times=2, ~logs=[log(~logIndex="0x2")]),
         async mock => {
           let registration = makeRegistration()
           let source = makeSource(~factory, ~url=mock.url, ~registration)
           let _ = await source->invoke(~registration)
           let onReorg = source.onReorg->Option.getOrThrow(
-            ~message="RPC source must expose onReorg for cache invalidation",
+            ~message="RPC source must expose onReorg",
           )
           onReorg()
           let _ = await source->invoke(~registration)
           mock.transcript()
-          ->Array.reduce(Dict.make(), (counts, entry) => {
-            let method = entry.request.method
-            counts->Dict.set(method, counts->Dict.get(method)->Option.getOr(0) + 1)
-            counts
-          })
+          ->Array.filterMap(entry =>
+            entry.request.method === "eth_getLogs" ? Some(entry.request.params) : None
+          )
         },
       )
 
-      t.expect(requestCounts).toEqual(Dict.fromArray([
-        ("eth_getLogs", 2),
-        ("eth_getBlockByNumber", 2),
-        ("eth_getTransactionByHash", 2),
-        ("eth_getTransactionReceipt", 2),
-      ]))
+      t.expect(ranges->Array.length === 2 && ranges->Array.getUnsafe(0) == ranges->Array.getUnsafe(1)).toBe(
+        true,
+      )
     })
 
     Async.it("pins missing receipt data as a retryable source error", async t => {

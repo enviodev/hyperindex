@@ -303,6 +303,60 @@ mod tests {
     }
 
     #[test]
+    fn a_transaction_without_signature_fields_is_accepted() {
+        // A ZKSync EIP-712 transaction (type 0x71) carries no v/r/s/yParity.
+        // They are absent by the shape of the transaction, not by a gap in the
+        // response, so requiring them would fail the whole page.
+        let transaction = json!({
+            "gas": "0x1",
+            "gasPrice": "0x2",
+            "nonce": "0x3",
+            "value": "0x4",
+            "type": "0x71",
+        });
+        let selection = [
+            TransactionField::V,
+            TransactionField::R,
+            TransactionField::S,
+            TransactionField::YParity,
+            TransactionField::Type,
+            TransactionField::Gas,
+        ];
+        let tx =
+            build_transaction(1, 0, &hash(1), Some(&transaction), None, &selection).unwrap();
+        check_transaction(&tx, &selection).unwrap();
+        assert_eq!(
+            (
+                tx.v.is_some(),
+                tx.r.is_some(),
+                tx.s.is_some(),
+                tx.y_parity.is_some(),
+                tx.type_.map(u8::from),
+            ),
+            (false, false, false, false, Some(113))
+        );
+    }
+
+    #[test]
+    fn a_legacy_transaction_without_an_access_list_is_accepted() {
+        // Only typed transactions carry one, so requiring it would fail on the
+        // first legacy transaction a page touches — and a field-selection
+        // failure disables the source.
+        let selection = [TransactionField::AccessList, TransactionField::Gas];
+        let tx = build_transaction(
+            1,
+            0,
+            &hash(1),
+            Some(&json!({ "gas": "0x1" })),
+            None,
+            &selection,
+        )
+        .unwrap();
+        check_transaction(&tx, &selection).unwrap();
+        assert_eq!((tx.access_list.is_some(), tx.gas.is_some()), (false, true));
+    }
+
+    #[test]
     fn a_transaction_missing_a_selected_non_nullable_field_is_rejected() {
         let selection = [TransactionField::Gas];
         let tx = build_transaction(1, 0, &hash(1), Some(&json!({})), None, &selection).unwrap();

@@ -153,6 +153,24 @@ pub(crate) mod test_support {
             _ => panic!("expected a {name} string column"),
         }
     }
+
+    /// One cell rendered as text, whatever its column's type. For tests that
+    /// compare a field's value without caring how it is stored — the point
+    /// being that two fields never render alike.
+    pub(crate) fn cell(cols: &Columns, name: &str, row: usize) -> Option<String> {
+        let render_list = |len: usize| format!("[{len}]");
+        match column(cols, name)? {
+            Column::I64(v) => v[row].map(|value| value.to_string()),
+            Column::F64(v) => v[row].map(|value| value.to_string()),
+            Column::Bool(v) => v[row].map(|value| value.to_string()),
+            Column::Big(v) => v[row].as_ref().map(|value| format!("{:?}", value.words)),
+            Column::Str(v) => v[row].clone(),
+            Column::StrVec(v) => v[row].as_ref().map(|value| value.join(",")),
+            Column::AccessList(v) => v[row].as_ref().map(|value| render_list(value.len())),
+            Column::AuthList(v) => v[row].as_ref().map(|value| render_list(value.len())),
+            Column::AccountActivities(v) => v[row].as_ref().map(|value| render_list(value.len())),
+        }
+    }
 }
 
 impl ToNapiValue for Columns {
