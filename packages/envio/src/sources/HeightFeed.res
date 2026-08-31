@@ -259,7 +259,14 @@ let heightWithin = async (feed: t, ~generation) => {
   let answered = try await Promise.race([
     request->Promise.thenResolve(res => Some(res)),
     Promise.make((resolve, _reject) => {
-      timeoutId := Some(setTimeout(() => resolve(None), pollTimeoutMillis))
+      timeoutId := Some(setTimeout(() => {
+            // Set here rather than after the race resolves, so it is already
+            // true for a handler that runs in this same turn: an answer landing
+            // alongside the timeout would otherwise be declined by the handler
+            // and thrown away by the caller alike.
+            abandoned := true
+            resolve(None)
+          }, pollTimeoutMillis))
     }),
   ]) catch {
   | exn =>
@@ -269,9 +276,7 @@ let heightWithin = async (feed: t, ~generation) => {
   timeoutId->Utils.clearTimeoutRef
   switch answered {
   | Some(res) => res
-  | None =>
-    abandoned := true
-    throw(timedOut())
+  | None => throw(timedOut())
   }
 }
 
