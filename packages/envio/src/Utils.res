@@ -499,6 +499,9 @@ module Schema = {
   // handler writes for a field it doesn't set, reaches the value serializer
   // and crashes it (`null.toString()` for a BigInt column). Collapse both to
   // `None` before the value serializer sees them.
+  //
+  // Revisit on the Sury v11 migration: if its nullable handles a `null` value
+  // on the serialize side, this wrapper goes away.
   let nullTolerant = schema =>
     S.null(schema)->S.transform(_ => {
       parser: value => value,
