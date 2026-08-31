@@ -74,6 +74,23 @@ export function defineType(name, fields) {
   return tagged(S.schema(fields), { name, fields: declared });
 }
 
+/**
+ * Names a schema that appears in an argument.
+ *
+ * GraphQL keeps input and output types in separate namespaces: a `where`
+ * argument is an `input`, and an object type declared with defineType cannot
+ * stand in for one.
+ */
+export function defineInput(name, fields) {
+  if (!GQL_NAME.test(name)) {
+    throw new Error(
+      `Invalid GraphQL input type name '${name}': must match ${GQL_NAME.source}`
+    );
+  }
+  const declared = { ...fields };
+  return tagged(S.schema(fields), { name, fields: declared, input: true });
+}
+
 /** Names a schema representing a GraphQL enum. */
 export function defineEnum(name, values) {
   if (!GQL_NAME.test(name)) {
@@ -138,8 +155,7 @@ function tagOf(schema) {
  * practice — `S.string` means "a string", `S.optional(S.string)` means "or
  * absent".
  */
-export function toGraphQLType(schema, types, path) {
-  const named = schema[NAMED];
+export function toGraphQLType(schema, types, path, position = "output") {
   const tag = tagOf(schema);
 
   if (tag.kind === "option" || tag.kind === "null") {
@@ -157,35 +173,56 @@ export function toGraphQLType(schema, types, path) {
       return nullableOf(innerTag.node._0, types, path);
     }
     if (innerNamed) {
-      register(inner, innerNamed, types, path);
+      register(inner, innerNamed, types, path, position);
       return innerNamed.name;
     }
     // After the explicit name, so `defineScalar` on a clone still wins.
     const envioScalar = ENVIO_SCALARS.get(inner);
     if (envioScalar !== undefined) {
-      register(inner, { name: envioScalar, scalar: true }, types, path);
+      register(inner, { name: envioScalar, scalar: true }, types, path, position);
       return envioScalar;
     }
     if (innerTag.kind === "array") {
-      return `[${toGraphQLType(innerTag.node._0, types, `${path}[]`)}]`;
+      return `[${toGraphQLType(innerTag.node._0, types, `${path}[]`, position)}]`;
     }
     const builtin = BUILTIN_SCALARS[innerTag.kind];
     if (builtin) return builtin;
 
     if (innerTag.kind === "object") {
+      const define = position === "input" ? "defineInput" : "defineType";
       throw new Error(
-        `${path}: object types must be named. Wrap it in defineType("SomeName", {...}) — ` +
+        `${path}: object types must be named. Wrap it in ${define}("SomeName", {...}) — ` +
           `GraphQL has no anonymous types, and a generated name would leak into your public API.`
       );
     }
     throw new Error(
       `${path}: unsupported schema '${describe(inner)}'. Supported: string, int32, number, ` +
-        `boolean, arrays, optionals, and schemas named with defineType / defineEnum / defineScalar.`
+        `boolean, arrays, optionals, and schemas named with defineType / defineInput / ` +
+        `defineEnum / defineScalar.`
     );
   }
 }
 
-function register(schema, named, types, path) {
+function register(schema, named, types, path, position) {
+  // Checked before the registration below returns early, so a type reused in
+  // the wrong position is caught even when it is already registered from the
+  // right one. Scalars and enums are legal in both.
+  if (named.fields) {
+    if (named.input && position === "output") {
+      throw new Error(
+        `${path}: '${named.name}' is an input object and cannot appear in a result. ` +
+          `Declare the result's type with defineType("${named.name}Result", {...}).`
+      );
+    }
+    if (!named.input && position === "input") {
+      throw new Error(
+        `${path}: '${named.name}' is an object type and cannot be an argument. ` +
+          `Declare it with defineInput("${named.name}Input", {...}) — GraphQL keeps input ` +
+          `and output types in separate namespaces.`
+      );
+    }
+  }
+
   const existing = types.get(named.name);
   if (existing) {
     // The same declaration used twice is fine; two different ones sharing a
@@ -216,7 +253,7 @@ function register(schema, named, types, path) {
     return;
   }
   entry.def = {
-    kind: "object",
+    kind: named.input ? "input_object" : "object",
     name: named.name,
     fields: Object.entries(named.fields).map(([fieldName, fieldSchema]) => {
       if (!GQL_NAME.test(fieldName)) {
@@ -224,7 +261,12 @@ function register(schema, named, types, path) {
       }
       return {
         name: fieldName,
-        type: toGraphQLType(fieldSchema, types, `${named.name}.${fieldName}`),
+        type: toGraphQLType(
+          fieldSchema,
+          types,
+          `${named.name}.${fieldName}`,
+          named.input ? "input" : "output"
+        ),
       };
     }),
   };
@@ -266,7 +308,7 @@ export function buildManifest(resolvers) {
         }
         return {
           name: argName,
-          type: toGraphQLType(argSchema, types, `${name}.${argName}`),
+          type: toGraphQLType(argSchema, types, `${name}.${argName}`, "input"),
         };
       }),
       type: toGraphQLType(resolver.output, types, `${name} result`),
@@ -299,7 +341,7 @@ export function toSDL(manifest) {
       for (const v of type.values) lines.push(`  ${v.name}`);
       lines.push("}", "");
     } else {
-      lines.push(`type ${type.name} {`);
+      lines.push(`${type.kind === "input_object" ? "input" : "type"} ${type.name} {`);
       for (const f of type.fields) lines.push(`  ${f.name}: ${f.type}`);
       lines.push("}", "");
     }
