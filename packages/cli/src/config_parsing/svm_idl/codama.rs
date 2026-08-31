@@ -70,9 +70,11 @@ fn parse_instructions(program: &Map<String, Value>) -> Result<Instructions> {
         arr,
         |_name, ix| parse_discriminators(ix).context("discriminators"),
         |ix, discriminator, encoded_arg_names| {
+            let accounts = parse_accounts(ix.get("accounts")).context("accounts")?;
+            reject_ambiguous_optional_accounts(ix, &accounts)?;
             Ok(IxIdl {
                 discriminator,
-                accounts: parse_accounts(ix.get("accounts")).context("accounts")?,
+                accounts,
                 args: parse_arguments(ix.get("arguments"), &encoded_arg_names)?,
             })
         },
@@ -223,6 +225,33 @@ fn parse_accounts(node: Option<&Value>) -> Result<Vec<IdlAccount>> {
     account_array(node)?.iter().map(account_slot).collect()
 }
 
+/// `optionalAccountStrategy` decides what an absent optional account leaves
+/// behind. Codama's default fills the slot with the program id, so every later
+/// account keeps its declared position. Under `omitted` there is no slot, and a
+/// non-trailing optional shifts everything after it — this parser pairs names
+/// to accounts by position, as the runtime does, so it has no way to say which
+/// name such a slot carries.
+fn reject_ambiguous_optional_accounts(ix: &Value, accounts: &[IdlAccount]) -> Result<()> {
+    match ix.get("optionalAccountStrategy") {
+        None => return Ok(()),
+        Some(strategy) => match strategy.as_str() {
+            Some("programId") => return Ok(()),
+            Some("omitted") => {}
+            _ => bail!("unsupported optionalAccountStrategy {strategy}"),
+        },
+    }
+    for (account, trailing) in accounts.iter().zip(super::trailing_optional_mask(accounts)) {
+        if account.optional && !trailing {
+            bail!(
+                "account '{}' is optional and left out entirely when absent, so every account \
+                 after it shifts and this parser cannot tell which name a slot carries",
+                account.name
+            );
+        }
+    }
+    Ok(())
+}
+
 fn parse_arguments(node: Option<&Value>, encoded_arg_names: &[String]) -> Result<Vec<NamedField>> {
     let Some(arr) = node.and_then(Value::as_array) else {
         return Ok(Vec::new());
@@ -287,12 +316,13 @@ const DESCRIPTIVE_KEYS: [&str; 3] = ["kind", "docs", "display"];
 /// after it, so each arm lists the keys it models and refuses the rest.
 ///
 /// Account and discriminator nodes are deliberately not held to this. They
-/// carry keys deciding which pubkey fills which slot —
-/// `optionalAccountStrategy`, `remainingAccounts`, per-account `defaultValue`
-/// — which this parser does not model: it pairs names to accounts by
-/// position, as the runtime does. SPL Token declares those keys on nearly
-/// every instruction, so refusing them would cost the whole program to
-/// describe something no name lookup here depends on.
+/// carry keys deciding which pubkey fills which slot — `remainingAccounts`,
+/// per-account `defaultValue` — which this parser does not model: it pairs
+/// names to accounts by position, as the runtime does. SPL Token declares
+/// those keys on nearly every instruction, so refusing them would cost the
+/// whole program to describe something no name lookup here depends on. The one
+/// that can move a slot, `optionalAccountStrategy`, is read separately by
+/// `reject_ambiguous_optional_accounts`.
 fn reject_unmodelled_keys(node: &Value, path: &str, modelled: &[&str]) -> Result<()> {
     let Some(obj) = node.as_object() else {
         return Ok(());

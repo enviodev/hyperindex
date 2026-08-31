@@ -256,6 +256,58 @@ fn separates_file_level_defects_from_instruction_level_ones() {
     );
 }
 
+/// Codama's default `optionalAccountStrategy` fills an absent optional account
+/// with the program id, so every later account stays at its declared position.
+/// Under `omitted` the slot is gone, and a non-trailing optional shifts
+/// everything after it — this parser pairs names to accounts by position, as
+/// the runtime does, so it would report the wrong pubkey under every later
+/// name.
+#[test]
+fn demotes_omitted_strategy_instructions_with_a_middle_optional() {
+    let instruction = |name: &str, strategy: &str, byte: &str| {
+        format!(
+            r#"{{ "kind": "instructionNode", "name": "{name}"{strategy},
+                 "accounts": [{{ "name": "source" }},
+                              {{ "name": "authority", "isOptional": true }},
+                              {{ "name": "destination" }}],
+                 "discriminators": [{{ "kind": "constantDiscriminatorNode", "offset": 0,
+                   "constant": {{ "value": {{ "kind": "bytesValueNode",
+                                              "data": "{byte}" }} }} }}] }}"#
+        )
+    };
+    let idl = parse_idl(
+        &format!(
+            r#"{{ "kind": "rootNode", "program": {{ "instructions": [
+                 {shifted}, {padded},
+                 {{ "kind": "instructionNode", "name": "trailing",
+                    "optionalAccountStrategy": "omitted",
+                    "accounts": [{{ "name": "account" }},
+                                 {{ "name": "rent", "isOptional": true }}],
+                    "discriminators": [{{ "kind": "constantDiscriminatorNode", "offset": 0,
+                      "constant": {{ "value": {{ "kind": "bytesValueNode",
+                                                 "data": "03" }} }} }}] }}] }} }}"#,
+            shifted = instruction("shifted", r#", "optionalAccountStrategy": "omitted""#, "01"),
+            padded = instruction(
+                "padded",
+                r#", "optionalAccountStrategy": "programId""#,
+                "02"
+            ),
+        ),
+        "Program",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        render(&idl),
+        "address: -\n\
+         instruction padded 0x02 (source, authority:?, destination) ()\n\
+         instruction trailing 0x03 (account, rent:?) ()\n\
+         unusable instruction shifted: account 'authority' is optional and left out entirely \
+         when absent, so every account after it shifts and this parser cannot tell which name a \
+         slot carries\n"
+    );
+}
+
 /// Two Anchor composite groups may nest the same inner name — in the program's
 /// source they are separate namespaces. Flattening collides them, but that is
 /// one instruction's defect: every other per-instruction defect leaves the rest
