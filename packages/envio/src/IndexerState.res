@@ -793,6 +793,9 @@ let drainBatchRun = (state: t): Batch.t => {
   }
 }
 
+// The rollback diff staged for the next write, if one hasn't been written yet.
+let pendingRollback = (state: t): option<Persistence.rollback> => state.rollback
+
 // Take the pending rollback diff to write, clearing it from the store.
 let takeRollback = (state: t): option<Persistence.rollback> => {
   let rollback = state.rollback
@@ -814,6 +817,7 @@ let beginRollbackDiff = (
   state: t,
   ~targetCheckpointId,
   ~diffCheckpointId,
+  ~scope,
   ~progressBlockNumberByChainId,
   ~rolledBackAddresses,
 ) => {
@@ -832,6 +836,7 @@ let beginRollbackDiff = (
   state.rollback = Some({
     targetCheckpointId,
     diffCheckpointId,
+    scope,
     progressBlockNumberByChainId,
     rolledBackAddresses,
   })

@@ -635,11 +635,22 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
     ->Utils.Promise.ignoreValue
   }
 
-  let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
+  // The chain a checkpoint belongs to, named once for the queries that narrow a
+  // rollback to it.
+  let chainIdColumn = Some((#chain_id: field :> string))
+
+  let rollback = (
+    sql,
+    ~pgSchema,
+    ~scope: RollbackScope.t,
+    ~rollbackTargetCheckpointId: Internal.checkpointId,
+  ) => {
     sql
     ->Postgres.preparedUnsafe(
-      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
-      [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1${scope->RollbackScope.predicate(
+          ~chainIdColumn,
+        )};`,
+      scope->RollbackScope.params(~targetCheckpointId=rollbackTargetCheckpointId),
     )
     ->Utils.Promise.ignoreValue
   }
@@ -684,25 +695,26 @@ LIMIT 1;`
     })
   }
 
-  let makeGetRollbackProgressDiffQuery = (~pgSchema) => {
+  let makeGetRollbackProgressDiffQuery = (~pgSchema, ~scope: RollbackScope.t) => {
     `SELECT 
   "${(#chain_id: field :> string)}"::float8 as "${(#chain_id: field :> string)}",
   SUM("${(#events_processed: field :> string)}") as events_processed_diff,
   MIN("${(#block_number: field :> string)}") - 1 as new_progress_block_number
 FROM "${pgSchema}"."${table.tableName}"
-WHERE "${(#id: field :> string)}" > $1
+WHERE "${(#id: field :> string)}" > $1${scope->RollbackScope.predicate(~chainIdColumn)}
 GROUP BY "${(#chain_id: field :> string)}";`
   }
 
   let getRollbackProgressDiff = (
     sql,
     ~pgSchema,
+    ~scope: RollbackScope.t,
     ~rollbackTargetCheckpointId: Internal.checkpointId,
   ) => {
     sql
     ->Postgres.preparedUnsafe(
-      makeGetRollbackProgressDiffQuery(~pgSchema),
-      [rollbackTargetCheckpointId->BigInt.toString]->Obj.magic,
+      makeGetRollbackProgressDiffQuery(~pgSchema, ~scope),
+      scope->RollbackScope.params(~targetCheckpointId=rollbackTargetCheckpointId),
     )
     ->(
       Utils.magic: promise<unknown> => promise<

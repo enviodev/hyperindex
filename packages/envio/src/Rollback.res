@@ -127,6 +127,26 @@ and executeRollback = async (
     }
   }
 
+  // The diff computed here replaces a pending one rather than merging with it,
+  // so its deletes have to cover everything that one would have deleted. A
+  // lower target covers a higher one within the same scope, but two scopes
+  // naming different chains only meet at Global. The flush above leaves a
+  // pending diff only when no batch has come along to carry it.
+  let (scope, rollbackTargetCheckpointId) = {
+    let scope = (state->IndexerState.config).isIsolatedMultichain
+      ? RollbackScope.Isolated(reorgChain)
+      : Global
+    switch state->IndexerState.pendingRollback {
+    | None => (scope, rollbackTargetCheckpointId)
+    | Some({scope: pendingScope, targetCheckpointId: pendingTargetCheckpointId}) => (
+        scope == pendingScope ? scope : Global,
+        rollbackTargetCheckpointId < pendingTargetCheckpointId
+          ? rollbackTargetCheckpointId
+          : pendingTargetCheckpointId,
+      )
+    }
+  }
+
   let eventsProcessedDiffByChain = Dict.make()
   let newProgressBlockNumberPerChain = Dict.make()
   let rollbackedProcessedEvents = ref(0.)
@@ -134,7 +154,7 @@ and executeRollback = async (
   {
     let rollbackProgressDiff = await (
       state->IndexerState.persistence
-    ).storage.getRollbackProgressDiff(~rollbackTargetCheckpointId)
+    ).storage.getRollbackProgressDiff(~scope, ~rollbackTargetCheckpointId)
     for idx in 0 to rollbackProgressDiff->Array.length - 1 {
       let diff = rollbackProgressDiff->Array.getUnsafe(idx)
       eventsProcessedDiffByChain->ChainId.Dict.set(
@@ -192,6 +212,7 @@ and executeRollback = async (
   })
 
   let diff = await state->InMemoryStore.prepareRollbackDiff(
+    ~scope,
     ~rollbackTargetCheckpointId,
     ~rollbackDiffCheckpointId=state->IndexerState.committedCheckpointId->BigInt.add(1n),
     ~progressBlockNumberByChainId=newProgressBlockNumberPerChain,

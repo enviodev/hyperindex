@@ -136,12 +136,14 @@ let recordRollbackSuccess: (t, ~timeSeconds: float, ~rollbackedProcessedEvents: 
 // Store domain operations.
 let queueProcessedBatch: (t, ~batch: Batch.t) => unit
 let drainBatchRun: t => Batch.t
+let pendingRollback: t => option<Persistence.rollback>
 let takeRollback: t => option<Persistence.rollback>
 let markCommitted: (t, ~upToCheckpointId: Internal.checkpointId) => unit
 let beginRollbackDiff: (
   t,
   ~targetCheckpointId: Internal.checkpointId,
   ~diffCheckpointId: Internal.checkpointId,
+  ~scope: RollbackScope.t,
   ~progressBlockNumberByChainId: dict<int>,
   ~rolledBackAddresses: array<AddressRows.key>,
 ) => unit

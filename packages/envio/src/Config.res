@@ -127,6 +127,10 @@ type t = {
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
+  // With several chains and no cross-chain entity, a reorg on one chain can
+  // never have changed a row another chain owns, so its rollback stays isolated
+  // to that chain instead of dragging every sibling back with it.
+  isIsolatedMultichain: bool,
 }
 
 type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("realtime") Realtime
@@ -1067,6 +1071,8 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     userEntitiesByName,
     userEntities,
     allEnums,
+    isIsolatedMultichain: chains->Array.length > 1 &&
+      userEntities->Array.every(entityConfig => !entityConfig.crossChain),
   }
 }
 
