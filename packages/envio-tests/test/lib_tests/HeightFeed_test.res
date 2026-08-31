@@ -265,6 +265,34 @@ describe("HeightFeed stream state", () => {
     )).toStrictEqual((2, 2, 3, [101], 3))
   })
 
+  Async.it(
+    "Keeps polling a poked stream until it delivers, not until one poll is quiet",
+    async t => {
+      let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval=5)
+      let (feed, _stats) = makeFeed(mock)
+      feed->HeightFeed.enableStream
+      let (heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 5)
+
+      mock.setHeightSubscriptionStatus(Live)
+      mock.resolveGetHeightOrThrow(100)
+      await Utils.delay(0)
+
+      // The stream says it is connected and has sent nothing for a whole window,
+      // so the wait stops taking its word for it.
+      subscription.poke()
+      // A poll that agrees the chain is quiet is not the stream delivering. It
+      // says nothing about whether the stream would have, so the distrust stands.
+      mock.resolveGetHeightOrThrow(100)
+      await Utils.delay(20)
+      // The chain moves, and a stream that has gone silent will not say so. Only
+      // the polling the poke asked for can find it.
+      mock.resolveGetHeightOrThrow(101)
+      await Utils.delay(20)
+
+      t.expect(heights).toStrictEqual([101])
+    },
+  )
+
   Async.it("Takes a poke back on any push, even of a height it already knew", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],

@@ -201,14 +201,10 @@ let recordAnswer = (feed: t, ~generation, res: Source.getHeightResponse) => {
   if generation === feed.connectionGeneration {
     feed.connectionUnproven = false
   }
-  if res.height <= feed.knownHeight {
-    // The poll agreed with the stream, so the silence that earned the poke was a
-    // quiet chain rather than a stream hiding heights. Polling alongside it has
-    // answered its own question; the next window of silence can earn another
-    // poke. Without this a chain whose blocks are further apart than the stall
-    // timeout polls continuously beside a stream that is working perfectly.
-    feed->clearPokes
-  }
+  // Deliberately does not take back a poke, however quiet the answer is. A poll
+  // agreeing with the stream at one instant says nothing about whether the
+  // stream would have delivered the next block, and that is the only thing the
+  // poke ever doubted — only the stream itself delivering settles it.
   feed->recordHeight(res.height)
   // Answering may have been the last of the loop's reasons to run. Costs nothing
   // when the loop itself is the caller: it only sleeps after this returns.
