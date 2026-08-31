@@ -554,10 +554,10 @@ describe("HeightFeed stream state", () => {
     let (feed, _stats) = makeFeed(mock)
     feed->HeightFeed.enableStream
 
-    t.expect((
-      mock.heightSubscriptionCalls->Array.length,
-      feed->HeightFeed.sample,
-    )).toStrictEqual((0, None))
+    t.expect((mock.heightSubscriptionCalls->Array.length, feed->HeightFeed.sample)).toStrictEqual((
+      0,
+      None,
+    ))
   })
 })
 
@@ -605,6 +605,26 @@ describe("HeightFeed poll failures", () => {
 
     t.expect((pollsBefore, pollsAfter > pollsBefore)).toStrictEqual((1, true))
   })
+
+  Async.it(
+    "Records a poll answer that arrives after the bound rather than dropping it",
+    async t => {
+      Vi.useFakeTimers()
+      let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
+      let (feed, _stats) = makeFeed(mock, ~getHeightRetryInterval=(~retry as _) => 10_000)
+      let (heights, _subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+
+      // The endpoint answers, only slower than the bound allows. The request was
+      // made and the height is the head, so a source that always answers just past
+      // the bound must still move the feed rather than never moving it at all.
+      await Vi.advanceTimersByTimeAsync(HeightFeed.pollTimeoutMillis + 100)
+      mock.resolveGetHeightOrThrowAt(~index=0, 101)
+      await Vi.advanceTimersByTimeAsync(1)
+      Vi.useRealTimers()
+
+      t.expect((heights, feed->HeightFeed.knownHeight)).toStrictEqual(([101], 101))
+    },
+  )
 
   Async.it("Lets a catch-up that answers reset the poll ramp", async t => {
     let mock = MockSource.make(

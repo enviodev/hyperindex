@@ -65,11 +65,9 @@ let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
     ws->WebSocket.onopen(() => ws->WebSocket.send(subscribeRequestJson))
 
     ws->WebSocket.onmessage(event => {
-      let message = try {
-        Some(event.data->JSON.parseOrThrow->S.parseOrThrow(wsMessageSchema))
-      } catch {
-      | _ => None
-      }
+      let message = Utils.Option.catchToNone(
+        () => event.data->JSON.parseOrThrow->S.parseOrThrow(wsMessageSchema),
+      )
       switch message {
       | Some(NewHead(blockNumber)) => driver.onHeight(blockNumber)
       // An open socket isn't usable until the node accepts the subscription.
@@ -85,7 +83,7 @@ let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
     })
 
     ws->WebSocket.onerror(error => driver.onFailure(~reason="error", ~detail=?error->JsExn.message))
-    ws->WebSocket.onclose(() => driver.onFailure(~reason=HeightStream.closedReason))
+    ws->WebSocket.onclose(() => driver.onFailure(~reason=Source.closedReason))
 
     () => ws->WebSocket.close
   })

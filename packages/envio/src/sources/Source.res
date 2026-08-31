@@ -142,6 +142,23 @@ type sourceFor = Sync | Fallback | Realtime
 // it belongs in a log line and never in a label.
 type heightSubscriptionStatus = Live | Down({reason: string, detail?: string})
 
+// The reasons that carry meaning beyond their label. They belong to the status
+// above rather than to any one transport or driver: a consumer keys behaviour
+// off them, so a subscription that reports its own disconnects has to be able to
+// name them without reaching into whichever implementation happens to ship them.
+//
+// A stream that ended cleanly is a rotation if it had served long enough to be
+// worth making, and a plain close if it had not: routine load balancing against
+// a server dropping connections it should be serving.
+let closedReason = "closed"
+let rotatedReason = "rotated"
+// Frames a transport could not read. Unlike every other reason this one never
+// heals on its own, so its consumer says so out loud.
+let unreadableReason = "unreadable"
+// The consumer benched the source. Not an outage: nothing failed, and nothing
+// is going to reconnect.
+let unsubscribedReason = "unsubscribed"
+
 type t = {
   name: string,
   sourceFor: sourceFor,

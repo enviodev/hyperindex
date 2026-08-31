@@ -34,8 +34,9 @@ type address = {port: int}
 @send external writeHead: (res, int, dict<string>) => unit = "writeHead"
 @send external end_: (res, string) => unit = "end"
 @send external destroy: res => unit = "destroy"
-// For a streamed body (an SSE feed arrives in chunks and ends without a final
-// payload), which the request/response RPC handlers below never need.
+// For a streamed body: an SSE feed arrives in chunks and ends without a final
+// payload, so it needs a second binding to the same `end` method that takes no
+// body.
 @send external write: (res, string) => unit = "write"
 @send external endStream: (res, unit) => unit = "end"
 
@@ -114,15 +115,7 @@ let getHeader = (headers: dict<headerValue>, name: string): option<string> =>
   | None => None
   }
 
-let expectCall = (
-  ~label=?,
-  ~method,
-  ~params=?,
-  ~headers=?,
-  ~reply,
-  ~times=1,
-  ~phase=0,
-) => {
+let expectCall = (~label=?, ~method, ~params=?, ~headers=?, ~reply, ~times=1, ~phase=0) => {
   label: label->Option.getOr(method),
   method,
   params,
@@ -196,7 +189,8 @@ let matchesCall = (call: expectedCall, request: rpcRequest) => {
 let addHeaders = (~base: dict<string>, extra: option<dict<string>>) => {
   switch extra {
   | None => ()
-  | Some(headers) => headers->Utils.Dict.forEachWithKey((value, name) => base->Dict.set(name, value))
+  | Some(headers) =>
+    headers->Utils.Dict.forEachWithKey((value, name) => base->Dict.set(name, value))
   }
   base
 }
@@ -215,11 +209,7 @@ let writeEnvelope = (res, ~id, ~fieldName, ~value) => {
     ~status=200,
     ~body=JSON.stringify(
       JSON.Object(
-        Dict.fromArray([
-          ("jsonrpc", JSON.String("2.0")),
-          ("id", id),
-          (fieldName, value),
-        ]),
+        Dict.fromArray([("jsonrpc", JSON.String("2.0")), ("id", id), (fieldName, value)]),
       ),
     ),
   )
@@ -296,79 +286,99 @@ let startInternal = (~name, ~calls: array<expectedCall>, ~legacyHandler=?) =>
       req->setEncoding("utf8")
       let data = ref("")
       req->onData(chunk => data := data.contents ++ chunk)
-      req->onEnd(() => {
-        sequence := sequence.contents + 1
-        requests->Array.push(data.contents)->ignore
-        requestHeaders->Array.push(req->reqHeaders)->ignore
+      req->onEnd(
+        () => {
+          sequence := sequence.contents + 1
+          requests->Array.push(data.contents)->ignore
+          requestHeaders->Array.push(req->reqHeaders)->ignore
 
-        switch legacyHandler {
-        | Some(handler) => {
-            let (status, body) = handler(data.contents)
-            res->writeRaw(~status, ~body)
-          }
-        | None =>
-          switch parseRequest(~sequence=sequence.contents, ~req, ~rawBody=data.contents) {
-          | Error(message) => {
-              failures->Array.push(`Request #${sequence.contents->Int.toString}: ${message}`)->ignore
-              res->writeRaw(~status=400, ~body=JSON.stringify(JSON.String(message)))
+          switch legacyHandler {
+          | Some(handler) => {
+              let (status, body) = handler(data.contents)
+              res->writeRaw(~status, ~body)
             }
-          | Ok(request) => {
-              let activePhase = states->Array.reduce(2147483647, (phase, state) =>
-                state.remaining > 0 ? Pervasives.min(phase, state.call.phase) : phase
-              )
-              let matched = states->Array.find(state =>
-                state.remaining > 0 &&
-                state.call.phase == activePhase &&
-                state.call->matchesCall(request)
-              )
-              switch matched {
-              | Some(state) => {
-                  state.remaining = state.remaining - 1
-                  transcript->Array.push({request, matchedLabel: Some(state.call.label)})->ignore
-                  sendReply(
-                    res,
-                    request,
-                    state.call.reply,
-                    ~onTimer=id => pendingTimers->Array.push(id)->ignore,
+          | None =>
+            switch parseRequest(~sequence=sequence.contents, ~req, ~rawBody=data.contents) {
+            | Error(message) => {
+                failures
+                ->Array.push(`Request #${sequence.contents->Int.toString}: ${message}`)
+                ->ignore
+                res->writeRaw(~status=400, ~body=JSON.stringify(JSON.String(message)))
+              }
+            | Ok(request) => {
+                let activePhase =
+                  states->Array.reduce(
+                    2147483647,
+                    (phase, state) =>
+                      state.remaining > 0 ? Pervasives.min(phase, state.call.phase) : phase,
                   )
-                }
-              | None => {
-                  transcript->Array.push({request, matchedLabel: None})->ignore
-                  let pendingInPhase = states
-                  ->Array.filter(state => state.remaining > 0 && state.call.phase == activePhase)
-                  ->Array.map(state => state.call.label)
-                  let detail = `Unexpected request #${request.sequence->Int.toString}: ${request.method}(${request.params->JSON.stringify}). Active expectations: ${pendingInPhase->Array.joinUnsafe(", ")}`
-                  failures->Array.push(detail)->ignore
-                  res->writeRaw(
-                    ~status=500,
-                    ~body=JSON.stringify(JSON.Object(Dict.fromArray([("error", JSON.String(detail))]))),
+                let matched =
+                  states->Array.find(
+                    state =>
+                      state.remaining > 0 &&
+                      state.call.phase == activePhase &&
+                      state.call->matchesCall(request),
                   )
+                switch matched {
+                | Some(state) => {
+                    state.remaining = state.remaining - 1
+                    transcript->Array.push({request, matchedLabel: Some(state.call.label)})->ignore
+                    sendReply(
+                      res,
+                      request,
+                      state.call.reply,
+                      ~onTimer=id => pendingTimers->Array.push(id)->ignore,
+                    )
+                  }
+                | None => {
+                    transcript->Array.push({request, matchedLabel: None})->ignore
+                    let pendingInPhase =
+                      states
+                      ->Array.filter(
+                        state => state.remaining > 0 && state.call.phase == activePhase,
+                      )
+                      ->Array.map(state => state.call.label)
+                    let detail = `Unexpected request #${request.sequence->Int.toString}: ${request.method}(${request.params->JSON.stringify}). Active expectations: ${pendingInPhase->Array.joinUnsafe(
+                        ", ",
+                      )}`
+                    failures->Array.push(detail)->ignore
+                    res->writeRaw(
+                      ~status=500,
+                      ~body=JSON.stringify(
+                        JSON.Object(Dict.fromArray([("error", JSON.String(detail))])),
+                      ),
+                    )
+                  }
                 }
               }
             }
           }
-        }
-      })
+        },
+      )
     })
     server->onceServerError(reject)
     server->listenOnHost(0, "127.0.0.1", () => {
       let closeAsync = () =>
-        Promise.make((resolveClose, _rejectClose) => {
-          if closed.contents {
-            resolveClose()
-          } else {
-            closed := true
-            pendingTimers->Array.forEach(clearTimeout)
-            pendingTimers->Utils.Array.clearInPlace
-            server->closeAllConnections
-            server->close(resolveClose)
-          }
-        })
+        Promise.make(
+          (resolveClose, _rejectClose) => {
+            if closed.contents {
+              resolveClose()
+            } else {
+              closed := true
+              pendingTimers->Array.forEach(clearTimeout)
+              pendingTimers->Utils.Array.clearInPlace
+              server->closeAllConnections
+              server->close(resolveClose)
+            }
+          },
+        )
       let verify = () => makeVerification(states, failures)
       let verifyOrThrow = () => {
         let verification = verify()
-        if verification.failures->Utils.Array.isEmpty->not ||
-          verification.pending->Utils.Array.isEmpty->not {
+        if (
+          verification.failures->Utils.Array.isEmpty->not ||
+            verification.pending->Utils.Array.isEmpty->not
+        ) {
           JsError.throwWithMessage(verification->verificationMessage(~name))
         }
       }

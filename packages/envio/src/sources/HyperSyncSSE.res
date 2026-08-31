@@ -8,7 +8,7 @@ let failure = (error: EventSource.errorEvent) =>
   | (None, Some(message)) => ("error", Some(message))
   // The stream ended without an HTTP error, which is how a load balancer
   // rotating connections shows up.
-  | (None, None) => (HeightStream.closedReason, None)
+  | (None, None) => (Source.closedReason, None)
   }
 
 let subscribe = (~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>
@@ -18,15 +18,10 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>
       ~url=`${hyperSyncUrl}/height/sse`,
       ~options={
         fetch: (url, ~args) => {
-          let headers = Dict.make()
-          switch args.headers {
-          | Some(existing) =>
-            existing->Dict.toArray->Array.forEach(((key, value)) => headers->Dict.set(key, value))
-          | None => ()
-          }
+          let headers = args.headers->Option.mapOr(Dict.make(), Utils.Dict.shallowCopy)
           headers->Dict.set("Authorization", `Bearer ${apiToken}`)
           headers->Dict.set("User-Agent", userAgent)
-          EventSource.Fetch.fetch(url, ~args={...args, headers: headers})
+          EventSource.Fetch.fetch(url, ~args={...args, headers})
         },
       },
     )

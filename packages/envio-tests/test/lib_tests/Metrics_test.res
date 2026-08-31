@@ -28,8 +28,10 @@ envio_indexing_addresses{chainId="137"} 0`)
   })
 
   it("Escapes quotes/backslashes/newlines and passes commas and equals through", t => {
-    t.expect(`weird "name",a=b \\ with
-newline`->Metrics.escapeLabelValue).toBe(`weird \\"name\\",a=b \\\\ with\\nnewline`)
+    t.expect(
+      `weird "name",a=b \\ with
+newline`->Metrics.escapeLabelValue,
+    ).toBe(`weird \\"name\\",a=b \\\\ with\\nnewline`)
   })
 
   it("Renders only the header for a series without entries and skips seriesOpt None samples", t => {
@@ -60,10 +62,12 @@ envio_source_request_seconds_total{method="getLogs"} 1.5`)
 
 describe("Metrics.collect", () => {
   it("Renders only the indexer info when there is no state", t => {
-    t.expect(Metrics.collect(~metrics=None)).toBe(`# HELP envio_info Information about the indexer
+    t.expect(Metrics.collect(~metrics=None)).toBe(
+      `# HELP envio_info Information about the indexer
 # TYPE envio_info gauge
 envio_info{version="${Utils.EnvioPackage.value.version}"} 1
-`)
+`,
+    )
   })
 
   it("Escapes both the effect and the scope label values", t => {
@@ -107,9 +111,9 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
     }
 
     t.expect(
-      Metrics.collect(~metrics=Some(metrics))->String.includes(
-        `envio_effect_call_total{effect="a\\",b=c",scope="d\\"e"} 2`,
-      ),
+      Metrics.collect(
+        ~metrics=Some(metrics),
+      )->String.includes(`envio_effect_call_total{effect="a\\",b=c",scope="d\\"e"} 2`),
     ).toBe(true)
   })
 
@@ -186,7 +190,9 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       Metrics.collect(~metrics=Some(metrics))
       ->String.split("\n")
       ->Array.filter(line => line->String.startsWith("envio_source_height_stream")),
-    ).toStrictEqual([`envio_source_height_stream_connects_total{source="RPC (rpc.example.com)",chainId="1"} 0`])
+    ).toStrictEqual([
+      `envio_source_height_stream_connects_total{source="RPC (rpc.example.com)",chainId="1"} 0`,
+    ])
   })
 
   it("Aggregates height stream samples that share a source name and chain", t => {
@@ -384,7 +390,8 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       ],
     }
 
-    t.expect(Metrics.collect(~metrics=Some(metrics))).toBe(`# HELP envio_info Information about the indexer
+    t.expect(Metrics.collect(~metrics=Some(metrics))).toBe(
+      `# HELP envio_info Information about the indexer
 # TYPE envio_info gauge
 envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
@@ -513,7 +520,7 @@ envio_source_request_total{source="HyperSync",chainId="1",method="heightPush"} 7
 # TYPE envio_source_request_seconds_total counter
 envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 33.75
 
-# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected. Compare against the disconnects total, which is absent until the first disconnect and counts as zero while it is: one more connect than disconnects means the stream is up, equal counts mean it is down and the indexer is polling instead, and zero connects means it has never come up.
+# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected. Compare against the disconnects total, which is absent until the first disconnect and counts as zero while it is: one more connect than disconnects means the stream is up, and equal counts mean it is down and the indexer is polling instead. Zero connects means the stream has not come up, which is the normal reading for a chain that is still backfilling: subscriptions are only opened once a chain reaches the head.
 # TYPE envio_source_height_stream_connects_total counter
 envio_source_height_stream_connects_total{source="HyperSync",chainId="1"} 3
 
@@ -650,6 +657,7 @@ envio_indexing_addresses{chainId="1"} 7
 # TYPE envio_indexing_contract_addresses gauge
 envio_indexing_contract_addresses{chainId="1",contract="Gravatar"} 5
 envio_indexing_contract_addresses{chainId="1",contract="NftFactory"} 2
-`)
+`,
+    )
   })
 })

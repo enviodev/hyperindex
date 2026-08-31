@@ -60,7 +60,6 @@ type t = {
   newBlockStallTimeoutRealtime: int,
   stalledPollingInterval: int,
   reducedPollingInterval: int,
-  getHeightRetryInterval: (~retry: int) => int,
   mutable activeSource: Source.t,
   mutable waitingForNewBlockStateId: option<int>,
   // Dedupes the "waiting for new blocks" trace so it fires once per contiguous
@@ -366,7 +365,6 @@ let make = (
     newBlockStallTimeoutRealtime,
     stalledPollingInterval,
     reducedPollingInterval,
-    getHeightRetryInterval,
     recoveryTimeout,
     statusStart: Performance.now(),
     status: Idle,
@@ -691,8 +689,8 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
   if !sourceManager.waitingLogged {
     logger->Logging.childTrace(
       reducedPolling
-        ? `Waiting for new blocks with reduced polling (${(sourceManager.reducedPollingInterval /
-              1000)->Int.toString}s). Chain is caught up, waiting for other chains to backfill.`
+        ? `Waiting for new blocks with reduced polling (${(sourceManager.reducedPollingInterval / 1000)
+              ->Int.toString}s). Chain is caught up, waiting for other chains to backfill.`
         : "Initiating check for new blocks.",
     )
     sourceManager.waitingLogged = true
@@ -718,17 +716,15 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
     // Every waiter this wait holds, on primaries and on any fallback recruited
     // later, so the stall poke reaches all of them.
     let watched: array<HeightFeed.subscription> = []
+    let pokeTimeoutId = ref(None)
     let stallTimeoutId = ref(None)
 
     // Safe to repeat: unsubscribing twice removes a waiter that is already gone.
     let cleanup = () => {
       watched->Array.forEach(subscription => subscription.unsubscribe())
       watched->Utils.Array.clearInPlace
-      switch stallTimeoutId.contents {
-      | Some(timeoutId) => clearTimeout(timeoutId)
-      | None => ()
-      }
-      stallTimeoutId := None
+      pokeTimeoutId->Utils.clearTimeoutRef
+      stallTimeoutId->Utils.clearTimeoutRef
     }
 
     let settled = ref(false)
@@ -756,21 +752,20 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
         // realtime wait starts wanting them, and not before.
         sourceState.feed->HeightFeed.enableStream
       }
-      let subscription =
-        sourceState.feed->HeightFeed.onHeightAbove(
-          ~knownHeight,
-          // Read per poll rather than captured, so a wait that goes on to stall
-          // slows its own polling down without anything having to restart it.
-          ~interval=() =>
-            if reducedPolling {
-              sourceManager.reducedPollingInterval
-            } else if stalled.contents {
-              sourceManager.stalledPollingInterval
-            } else {
-              sourceState.source.pollingInterval
-            },
-          ~onHeight=height => settle(sourceState.source, height),
-        )
+      let subscription = sourceState.feed->HeightFeed.onHeightAbove(
+        ~knownHeight,
+        // Read per poll rather than captured, so a wait that goes on to stall
+        // slows its own polling down without anything having to restart it.
+        ~interval=() =>
+          if reducedPolling {
+            sourceManager.reducedPollingInterval
+          } else if stalled.contents {
+            sourceManager.stalledPollingInterval
+          } else {
+            sourceState.source.pollingInterval
+          },
+        ~onHeight=height => settle(sourceState.source, height),
+      )
       watched->Array.push(subscription)->ignore
     }
 
@@ -785,24 +780,44 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
       // still being registered. Those are attached now, so take them back off.
       cleanup()
     } else {
-      // Re-armed every time it fires. Poking a stream is a one-shot — the next
-      // height it delivers, or the catch-up of a reconnect part way through this
-      // wait, takes it back at its word — and the silence that earned the poke
-      // can come straight back. Left un-armed, one such recovery would retire
-      // the polling for the rest of the wait, and a stream that keeps its
-      // keep-alives flowing while it stops sending heights would hang it
-      // indefinitely, since its own staleness detector never trips.
-      let rec armStallTimeout = (~recruitFallbacks, ~delay) =>
-        stallTimeoutId :=
-          Some(
-            setTimeout(() => {
+      // A window of silence from a stream that says it is connected: stop taking
+      // its word for it and poll alongside it. This is the one failure a
+      // stream's own staleness detector cannot see, because a transport that
+      // keeps pinging looks alive to it.
+      //
+      // Spread across the window, and re-spread on every repeat: every indexer
+      // on one provider goes quiet in the same instant that provider does, and
+      // putting them all on one schedule is how a quiet chain becomes a
+      // stampede. Re-armed because poking is a one-shot — the next height a
+      // stream delivers, or the catch-up of a reconnect part way through this
+      // wait, takes it back at its word — and the silence that earned it can
+      // come straight back.
+      let rec armPokeTimeout = () => pokeTimeoutId := Some(setTimeout(() => {
+              pokeTimeoutId := None
+              if !settled.contents {
+                watched->Array.forEach(subscription => subscription.poke())
+              }
+
+              // Re-checked: poking can answer the wait, and a timer armed after
+              // the cleanup that follows is one nothing can ever clear.
+              if !settled.contents {
+                armPokeTimeout()
+              }
+            }, Utils.jitter(stallTimeout)))
+
+      // Punctual, unlike the poke it used to share a timer with: newBlockStallTimeout
+      // is a promise to the operator about when they hear about a quiet chain,
+      // and spreading that would report it early. Fires once — the warning is
+      // worth saying once per wait, and a fallback stays recruited.
+      let armStallTimeout = () => stallTimeoutId := Some(setTimeout(() => {
+              stallTimeoutId := None
               if !settled.contents {
                 stalled := true
 
-                if recruitFallbacks {
-                  // Build fallback: non-disabled sources not in mainSources with a valid role, even with recent lastFailedAt
-                  let fallbackSources = []
-                  sourcesState->Array.forEach(sourceState => {
+                // Build fallback: non-disabled sources not in mainSources with a valid role, even with recent lastFailedAt
+                let fallbackSources = []
+                sourcesState->Array.forEach(
+                  sourceState => {
                     if (
                       !sourceState.disabled &&
                       !(mainSources->Array.includes(sourceState)) &&
@@ -814,57 +829,46 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
                     ) {
                       fallbackSources->Array.push(sourceState)
                     }
-                  })
+                  },
+                )
 
-                  switch fallbackSources {
-                  | [] =>
-                    logger->Logging.childWarn(
-                      `No new blocks detected within ${(stallTimeout / 1000)
-                          ->Int.toString}s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync`,
-                    )
-                  | _ =>
-                    logger->Logging.childWarn(
-                      `No new blocks detected within ${(stallTimeout / 1000)
-                          ->Int.toString}s. Continuing polling with secondary RPC sources from the configuration.`,
-                    )
-                  }
-
-                  fallbackSources->Array.forEach(sourceState =>
-                    if !settled.contents {
-                      sourceState->watch
-                    }
+                switch fallbackSources {
+                | [] =>
+                  logger->Logging.childWarn(
+                    `No new blocks detected within ${(stallTimeout / 1000)
+                        ->Int.toString}s. Polling will continue at a reduced rate. For better reliability, refer to our RPC fallback guide: https://docs.envio.dev/docs/HyperIndex/rpc-sync`,
+                  )
+                | _ =>
+                  logger->Logging.childWarn(
+                    `No new blocks detected within ${(stallTimeout / 1000)
+                        ->Int.toString}s. Continuing polling with secondary RPC sources from the configuration.`,
                   )
                 }
 
-                // A whole stall window of silence from a stream that says it is
-                // connected: stop taking its word for it and poll alongside it.
-                // This is the one failure a stream's own staleness detector
-                // cannot see, because a transport that keeps pinging looks alive
-                // to it. The warning above stands rather than waiting to see
-                // whether the polling recovers — a stream that has to be covered
-                // this way was silently costing a stall window per block, which
-                // is worth saying out loud — but it is said once per wait.
                 // Recruiting a fallback can answer the wait on the spot, from a
-                // height it already knew. Nothing below is for a wait that is
-                // over — least of all arming another timer, which the cleanup
-                // that just ran can no longer reach.
+                // height it already knew.
+                fallbackSources->Array.forEach(
+                  sourceState =>
+                    if !settled.contents {
+                      sourceState->watch
+                    },
+                )
+
+                // A fallback recruited here can be holding a live stream of its
+                // own, and a live stream is not polled behind. It has to inherit
+                // the verdict the primaries already earned — this wait has heard
+                // nothing for a whole window — or it would sit silent behind its
+                // own stream until the next spread poke. The primaries are past
+                // theirs by now, and poking a waiter that already is one does
+                // nothing, so this reaches the new ones only.
                 if !settled.contents {
                   watched->Array.forEach(subscription => subscription.poke())
-
-                  // Spread the repeats: every indexer on one provider stalls in
-                  // the same instant, and a fixed period would keep them polling
-                  // in lockstep for as long as the chain stays quiet.
-                  armStallTimeout(~recruitFallbacks=false, ~delay=Utils.jitter(stallTimeout))
                 }
               }
-            }, delay),
-          )
+            }, stallTimeout))
 
-      // The first one waits exactly what it was configured to: newBlockStallTimeout
-      // is a promise to the operator about when they hear about a quiet chain,
-      // and spreading that would report it early. The repeats carry the spread
-      // instead, which is where indexers would otherwise stay in lockstep.
-      armStallTimeout(~recruitFallbacks=true, ~delay=stallTimeout)
+      armPokeTimeout()
+      armStallTimeout()
     }
   })
 }

@@ -39,15 +39,6 @@ let maxRetryMillis = 60_000
 // tells them apart. A fixed floor can't do it: one low enough to clear on a
 // healthy connection is one a connection that dies seconds in clears too.
 let provenStaleFraction = 4
-// A transport reports a stream that ended without an error as `closedReason`.
-// Whether that was a rotation or a server in trouble is not something either
-// transport can tell, so the driver decides it from how long the connection
-// lasted — the same measure the backoff already trusts.
-let closedReason = "closed"
-let rotatedReason = "rotated"
-// A stream whose frames the transport could not read. Unlike the other reasons
-// this one never heals on its own, so its consumer says so out loud.
-let unreadableReason = "unreadable"
 // A frame nobody could read ends up in a log line, so cap what a provider can
 // put there.
 let maxDetailLength = 200
@@ -94,13 +85,7 @@ let subscribe = (
   let liveAt = ref(None)
   let minProvenMillis = staleTimeout / provenStaleFraction
 
-  let clearPendingTimeout = () => {
-    switch timeoutId.contents {
-    | Some(id) => clearTimeout(id)
-    | None => ()
-    }
-    timeoutId := None
-  }
+  let clearPendingTimeout = () => timeoutId->Utils.clearTimeoutRef
 
   // A transport that throws while closing must not be able to stop the retry
   // that follows, nor escape a timer callback and take the process down. Every
@@ -126,7 +111,7 @@ let subscribe = (
           // Distinguishes a provider whose message shape we don't understand
           // from a chain that simply has nothing to report.
           switch unreadableDetail.contents {
-          | Some(detail) => fail(~reason=unreadableReason, ~detail)
+          | Some(detail) => fail(~reason=Source.unreadableReason, ~detail)
           | None => fail(~reason="stale")
           }
         }, staleTimeout))
@@ -152,8 +137,7 @@ let subscribe = (
     // reads. Judging a connection by the step of the ramp it was born on is
     // conservative in the same direction every time.
     let provenMillis = Pervasives.max(retryDelayFor(failureCount.contents), minProvenMillis)
-    failureCount :=
-      if servedMillis >= provenMillis {
+    failureCount := if servedMillis >= provenMillis {
         1
       } else {
         failureCount.contents + 1
@@ -165,7 +149,9 @@ let subscribe = (
     // and worth telling apart from the same clean end arriving early, which is a
     // server dropping connections it should be serving.
     let reason =
-      reason === closedReason && servedMillis >= provenMillis ? rotatedReason : reason
+      reason === Source.closedReason && servedMillis >= provenMillis
+        ? Source.rotatedReason
+        : reason
 
     // Scheduled before reporting, so a consumer that throws can't be what makes
     // the stream give up.
@@ -174,7 +160,7 @@ let subscribe = (
           start()
         }, retryMillis))
 
-    onStatus(Down({reason, detail: ?detail->Option.map(truncateDetail)}))
+    onStatus(Down({reason, detail: ?(detail->Option.map(truncateDetail))}))
   }
   and start = () => {
     generation := generation.contents + 1
@@ -239,20 +225,22 @@ let subscribe = (
 
     // A transport constructor can throw on a malformed url. Left to escape it
     // would reach a timer callback on the next retry and take the process down.
-    let closeCurrentConnection = try Some(connect(driver)) catch {
-    | _ => None
+    // What it says is the only account of why the url can't be connected to, and
+    // this retries forever, so it goes out as the failure's detail.
+    let connected = try Ok(connect(driver)) catch {
+    | exn => Error(exn)
     }
 
-    switch closeCurrentConnection {
-    | Some(closeCurrentConnection) =>
+    switch connected {
+    | Ok(closeCurrentConnection) =>
       if isCurrent() {
         closeConnectionRef := Some(closeCurrentConnection)
       } else {
         closeSafely(closeCurrentConnection)
       }
-    | None =>
+    | Error(exn) =>
       if isCurrent() {
-        fail(~reason="connect-failed")
+        fail(~reason="connect-failed", ~detail=?exn->Utils.exnMessage)
       }
     }
   }
