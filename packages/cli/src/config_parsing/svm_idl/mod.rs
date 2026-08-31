@@ -365,9 +365,12 @@ fn collect_instructions<T>(
                 continue;
             }
         };
-        match layout_of(entry, discriminator.clone(), carried) {
+        // Colliding flattened names are this instruction's defect, like any
+        // other layout defect: the rest of the program stays indexable.
+        let parsed = layout_of(entry, discriminator.clone(), carried)
+            .and_then(|ix| reject_duplicate_account_names(&ix.accounts).map(|()| ix));
+        match parsed {
             Ok(ix) => {
-                reject_duplicate_account_names(&ix.accounts)?;
                 out.insert(name, ix);
             }
             Err(e) => {
@@ -408,7 +411,7 @@ fn collect_named<T>(
     Ok((out, unusable))
 }
 
-pub(super) fn reject_duplicate_account_names(accounts: &[IdlAccount]) -> Result<()> {
+fn reject_duplicate_account_names(accounts: &[IdlAccount]) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
     for account in accounts {
         if !seen.insert(account.name.as_str()) {

@@ -236,11 +236,36 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "instruction shadowed by one of an undispatchable width: swap set aside: its discriminator 0x0102 is a prefix of 'swapV2''s 0x010203, so 'swapV2' takes every call that would have matched it; swapV2 set aside: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8",
             "codama discriminator argument out of declaration order: swap set aside: the discriminator reads [\"tag\"], but the arguments begin [\"amount\"]; their offsets and their declaration order disagree",
             "duplicate type name: fatal: IDL declares type 'Fee' more than once",
-            "duplicate account name: fatal: IDL declares account 'vault' more than once",
+            "duplicate account name: swap set aside: IDL declares account 'vault' more than once",
             "codama argument reusing a discriminator name: swap set aside: IDL declares argument 'tag' more than once",
             "codama discriminator offset that is not a byte position: swap set aside: discriminators: expected a non-negative integer 'offset', got -1",
             "anchor composite group whose 'accounts' is not an array: swap set aside: accounts: expected an array of accounts, got null",
         ]
+    );
+}
+
+/// Two Anchor composite groups may nest the same inner name — in the program's
+/// source they are separate namespaces. Flattening collides them, but that is
+/// one instruction's defect: every other per-instruction defect leaves the rest
+/// of the program indexable, and this one used to fail the whole file.
+#[test]
+fn demotes_an_instruction_whose_flattened_accounts_collide() {
+    let idl = parse_idl(
+        r#"{ "instructions": [
+             { "name": "swap", "discriminator": [1], "accounts": [
+               { "name": "from", "accounts": [{ "name": "authority" }] },
+               { "name": "to", "accounts": [{ "name": "authority" }] }] },
+             { "name": "deposit", "discriminator": [2],
+               "accounts": [{ "name": "vault" }] }] }"#,
+        "Program",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        render(&idl),
+        "address: -\n\
+         instruction deposit 0x02 (vault) ()\n\
+         unusable instruction swap: IDL declares account 'authority' more than once\n"
     );
 }
 
