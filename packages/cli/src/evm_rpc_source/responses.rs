@@ -187,12 +187,11 @@ pub(crate) fn check_transaction(tx: &Transaction, selection: &[TransactionField]
     if missing.is_empty() {
         Ok(())
     } else {
-        Err(missing_error("transaction", &missing))
+        Err(ResponseError::Unservable(missing_message(
+            "transaction",
+            &missing,
+        )))
     }
-}
-
-fn missing_error(kind: &str, missing: &[&str]) -> ResponseError {
-    ResponseError::Unservable(missing_message(kind, missing))
 }
 
 fn missing_message(kind: &str, missing: &[&str]) -> anyhow::Error {

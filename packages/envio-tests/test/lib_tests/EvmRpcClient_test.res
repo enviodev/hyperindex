@@ -2,13 +2,18 @@ open Vitest
 
 let syncConfig = EvmChain.getSyncConfig({})
 
-let heightCall = (~reply, ~headers=?) =>
-  MockRpcServer.expectCall(
-    ~method="eth_blockNumber",
-    ~params=JSON.Array([]),
-    ~reply,
+let makeClient = (~url, ~headers=?, ~eventRegistrations=?, ~addressStore=?) =>
+  EvmRpcClient.make(
+    ~url,
+    ~checksumAddresses=false,
+    ~syncConfig,
     ~headers?,
+    ~eventRegistrations?,
+    ~addressStore=addressStore->Option.getOr(TestAddresses.makeStore()),
   )
+
+let heightCall = (~reply, ~headers=?) =>
+  MockRpcServer.expectCall(~method="eth_blockNumber", ~params=JSON.Array([]), ~reply, ~headers?)
 
 // A failed poll carries its timing out in a structured envelope, so the
 // provider's own message is read back out of it rather than off the error.
@@ -20,18 +25,24 @@ let getHeightErrorMessage = async (client: EvmRpcClient.t) =>
   | exn => (exn->Source.unpackNativeRequestFailure).message
   }
 
+// The request a failed poll made still counts towards the source's metrics,
+// which is the whole reason the envelope exists rather than a plain error.
+let getHeightErrorStats = async (client: EvmRpcClient.t) =>
+  try {
+    let _ = await client.getHeight()
+    []
+  } catch {
+  | exn =>
+    (exn->Source.unpackNativeRequestFailure).requestStats->Array.map(({Source.method: m}) => m)
+  }
+
 describe("EvmRpcClient - getHeight via napi", () => {
   Async.it("Parses hex result and sends a JSON-RPC request", async t => {
     let height = await MockRpcServer.withScenario(
       ~name="getHeight request contract",
       ~calls=[heightCall(~reply=RpcResult(JSON.String("0x1b4")))],
       async mock => {
-        let client = EvmRpcClient.make(
-        ~url=mock.url,
-        ~checksumAddresses=false,
-        ~syncConfig,
-        ~addressStore=TestAddresses.makeStore(),
-      )
+        let client = makeClient(~url=mock.url)
         let (height, requestStats) = await client.getHeight()
         (height, requestStats->Array.map(({Source.method: method}) => method))
       },
@@ -44,22 +55,28 @@ describe("EvmRpcClient - getHeight via napi", () => {
     let error = await MockRpcServer.withScenario(
       ~name="structured JSON-RPC error",
       ~calls=[
-        heightCall(
-          ~reply=RpcError({code: -32005, message: "limited to a 1000 blocks range"}),
-        ),
+        heightCall(~reply=RpcError({code: -32005, message: "limited to a 1000 blocks range"})),
       ],
       async mock => {
-        let client = EvmRpcClient.make(
-        ~url=mock.url,
-        ~checksumAddresses=false,
-        ~syncConfig,
-        ~addressStore=TestAddresses.makeStore(),
-      )
+        let client = makeClient(~url=mock.url)
         await getHeightErrorMessage(client)
       },
     )
 
     t.expect(error).toEqual(Some("JSON-RPC error -32005: limited to a 1000 blocks range"))
+  })
+
+  Async.it("Counts the request a failed poll made", async t => {
+    let methods = await MockRpcServer.withScenario(
+      ~name="failed poll still counts its request",
+      ~calls=[heightCall(~reply=RpcError({code: -32005, message: "boom"}))],
+      async mock => {
+        let client = makeClient(~url=mock.url)
+        await getHeightErrorStats(client)
+      },
+    )
+
+    t.expect(methods).toEqual(["eth_blockNumber"])
   })
 
   Async.it("Parses JSON-RPC error body even with a non-200 status", async t => {
@@ -74,12 +91,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
         ),
       ],
       async mock => {
-        let client = EvmRpcClient.make(
-        ~url=mock.url,
-        ~checksumAddresses=false,
-        ~syncConfig,
-        ~addressStore=TestAddresses.makeStore(),
-      )
+        let client = makeClient(~url=mock.url)
         await getHeightErrorMessage(client)
       },
     )
@@ -92,12 +104,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
       ~name="non-JSON upstream response",
       ~calls=[heightCall(~reply=RawHttp({status: 502, body: "upstream exploded"}))],
       async mock => {
-        let client = EvmRpcClient.make(
-        ~url=mock.url,
-        ~checksumAddresses=false,
-        ~syncConfig,
-        ~addressStore=TestAddresses.makeStore(),
-      )
+        let client = makeClient(~url=mock.url)
         await getHeightErrorMessage(client)
       },
     )
@@ -110,16 +117,9 @@ describe("EvmRpcClient - getHeight via napi", () => {
   Async.it("Fails when the response has neither result nor error", async t => {
     let message = await MockRpcServer.withScenario(
       ~name="missing result and error",
-      ~calls=[
-        heightCall(~reply=RawHttp({status: 200, body: `{"jsonrpc":"2.0","id":1}`})),
-      ],
+      ~calls=[heightCall(~reply=RawHttp({status: 200, body: `{"jsonrpc":"2.0","id":1}`}))],
       async mock => {
-        let client = EvmRpcClient.make(
-        ~url=mock.url,
-        ~checksumAddresses=false,
-        ~syncConfig,
-        ~addressStore=TestAddresses.makeStore(),
-      )
+        let client = makeClient(~url=mock.url)
         await getHeightErrorMessage(client)
       },
     )
@@ -134,12 +134,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
       ~name="null height result",
       ~calls=[heightCall(~reply=RpcResult(JSON.Null))],
       async mock => {
-        let client = EvmRpcClient.make(
-        ~url=mock.url,
-        ~checksumAddresses=false,
-        ~syncConfig,
-        ~addressStore=TestAddresses.makeStore(),
-      )
+        let client = makeClient(~url=mock.url)
         await getHeightErrorMessage(client)
       },
     )
@@ -157,12 +152,9 @@ describe("EvmRpcClient - getHeight via napi", () => {
         ),
       ],
       async mock => {
-        let client = EvmRpcClient.make(
+        let client = makeClient(
           ~url=mock.url,
-          ~checksumAddresses=false,
-          ~syncConfig,
           ~headers=Dict.fromArray([("Authorization", "Bearer test-token")]),
-          ~addressStore=TestAddresses.makeStore(),
         )
         let (height, _) = await client.getHeight()
         t.expect(height).toBe(436)
@@ -172,12 +164,9 @@ describe("EvmRpcClient - getHeight via napi", () => {
 
   it("Rejects an invalid header value at construction with a clear error", t => {
     let message = try {
-      let _ = EvmRpcClient.make(
+      let _ = makeClient(
         ~url="http://127.0.0.1:1",
-        ~checksumAddresses=false,
-        ~syncConfig,
         ~headers=Dict.fromArray([("Authorization", "Bearer bad\nvalue")]),
-        ~addressStore=TestAddresses.makeStore(),
       )
       None
     } catch {
@@ -291,10 +280,8 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       ],
       async mock => {
         let addressStore = makeAddressStore()
-        let client = EvmRpcClient.make(
+        let client = makeClient(
           ~url=mock.url,
-          ~checksumAddresses=false,
-          ~syncConfig,
           ~eventRegistrations=[makeRegistration()],
           ~addressStore,
         )
@@ -308,26 +295,28 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         let {EvmRpcClient.items: items, toBlock} = result
         (
           toBlock,
-          items->Array.map(({
-            blockNumber,
-            transactionIndex,
-            logIndex,
-            srcAddress,
-            onEventRegistrationIndex,
-            params,
-          }) => {
-            let decoded = params->(Utils.magic: Internal.eventParams => {..})
-            {
-              "onEventRegistrationIndex": onEventRegistrationIndex,
-              "blockNumber": blockNumber,
-              "transactionIndex": transactionIndex,
-              "logIndex": logIndex,
-              "srcAddress": srcAddress->Address.toString,
-              "from": decoded["from"],
-              "to": decoded["to"],
-              "value": decoded["value"]->BigInt.toString,
-            }
-          }),
+          items->Array.map(
+            ({
+              blockNumber,
+              transactionIndex,
+              logIndex,
+              srcAddress,
+              onEventRegistrationIndex,
+              params,
+            }) => {
+              let decoded = params->(Utils.magic: Internal.eventParams => {..})
+              {
+                "onEventRegistrationIndex": onEventRegistrationIndex,
+                "blockNumber": blockNumber,
+                "transactionIndex": transactionIndex,
+                "logIndex": logIndex,
+                "srcAddress": srcAddress->Address.toString,
+                "from": decoded["from"],
+                "to": decoded["to"],
+                "value": decoded["value"]->BigInt.toString,
+              }
+            },
+          ),
         )
       },
     )
@@ -368,10 +357,8 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       ],
       async mock => {
         let addressStore = makeAddressStore()
-        let client = EvmRpcClient.make(
+        let client = makeClient(
           ~url=mock.url,
-          ~checksumAddresses=false,
-          ~syncConfig,
           ~eventRegistrations=[makeRegistration()],
           ~addressStore,
         )
@@ -408,10 +395,8 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       ],
       async mock => {
         let addressStore = makeAddressStore()
-        let client = EvmRpcClient.make(
+        let client = makeClient(
           ~url=mock.url,
-          ~checksumAddresses=false,
-          ~syncConfig,
           ~eventRegistrations=[
             makeRegistration(
               ~index=0,
@@ -429,7 +414,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~indexes=[0],
           ~addressSet=addressStore->AddressStore.emptySet,
         )
-        (result.kind, result.errorMessage, result.retryToBlock)
+        (result.kind, result.providerMessage, result.retryToBlock)
       },
     )
 

@@ -29,7 +29,7 @@ type nextPageResult = {
   toBlock: int,
   items: array<EvmEventItem.t>,
   message: option<string>,
-  errorMessage: option<string>,
+  providerMessage: option<string>,
   blockNumber: option<int>,
   retryToBlock: option<int>,
   backoffMillis: option<int>,
@@ -44,9 +44,7 @@ type blockHashResult = {
 
 type t = {
   getHeight: unit => promise<(int, array<Source.requestStat>)>,
-  // The chain's stores are passed in so a block or transaction another
-  // partition already read is not read again; the returned stores are this
-  // page's own, to be merged by the caller.
+  // The stores it returns are this page's own, for the caller to merge.
   getNextPage: (
     nextPageParams,
     AddressSet.t,

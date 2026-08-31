@@ -10,9 +10,8 @@ type options = {
   lowercaseAddresses: bool,
   // The chain's address index; the client reads it while routing.
   addressStore: AddressStore.t,
-  // The chain's stores as they stand. The client reads them to skip a block or
-  // transaction another partition already fetched for the same fields; the
-  // pages it returns are separate and the caller merges them.
+  // Read by the client while planning; the pages it returns are separate, and
+  // the caller merges them.
   blockStore: BlockStore.t,
   transactionStore: TransactionStore.t,
   ws?: string,
@@ -97,17 +96,17 @@ let make = (
     )
     let pageFetchTime = pageFetchTimeRef->Performance.secondsSince
 
-    let failedGettingItems = (retry): exn => Source.GetItemsError(
+    let failedGettingItems = (decision): exn => Source.GetItemsError(
       FailedGettingItems({
         requestStats: result.requestStats,
         // The provider's own message travels as a real error so it still
         // reaches the logs, and so callers have one place to read it from.
-        exn: switch result.errorMessage {
+        exn: switch result.providerMessage {
         | Some(message) => JsError.make(message)->JsExn.anyToExnInternal
         | None => %raw(`null`)
         },
         attemptedToBlock: result.toBlock,
-        retry,
+        retry: decision,
       }),
     )
 
@@ -173,8 +172,6 @@ let make = (
     {
       parsedQueueItems,
       transactionStore: Some(pageTransactionStore),
-      // Carries the blocks this range read, its boundary blocks, and every
-      // log's own block hash, all assembled on the Rust side.
       blockStore: pageBlockStore,
       latestFetchedBlockNumber: result.toBlock,
       stats: {
@@ -187,7 +184,7 @@ let make = (
     }
   }
 
-  let getBlockHashes = async (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
+  let getBlockHashes = async (~blockNumbers, ~logger as _) => {
     let (result, pageBlockStore) = await rpcClient.getBlockHashes(blockNumbers)
     {
       Source.result: switch result.message {

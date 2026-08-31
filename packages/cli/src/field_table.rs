@@ -606,7 +606,13 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
     /// adds coverage to a key's existing row. Keys need not be sorted or
     /// unique within the batch. `fetched` records the fields the batch looked
     /// up beyond those it carries values for.
-    pub(crate) fn merge_batch(
+    pub(crate) fn merge_batch(&mut self, keys: Vec<K>, cols: Vec<Option<AnyCol>>) {
+        self.merge_batch_covering(keys, cols, Coverage::STORED);
+    }
+
+    /// As `merge_batch`, for a batch that looked up more fields than it carries
+    /// values for.
+    pub(crate) fn merge_batch_covering(
         &mut self,
         keys: Vec<K>,
         cols: Vec<Option<AnyCol>>,
@@ -624,6 +630,8 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
                     }
                 }
             }
+            // ORing `present` in is what keeps coverage a superset of it, and
+            // so what makes `Coverage::STORED` mean "exactly what is stored".
             self.coverage[slot] |= fetched.for_row(row) | self.present[slot];
         }
     }
@@ -664,7 +672,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
             })
             .collect();
         let fetched: Vec<u64> = slots.iter().map(|&s| other.coverage[s as usize]).collect();
-        self.merge_batch(live_keys, cols, Coverage::PerRow(&fetched));
+        self.merge_batch_covering(live_keys, cols, Coverage::PerRow(&fetched));
         other.clear();
     }
 
@@ -1206,7 +1214,7 @@ mod tests {
     fn merge_batch_and_gather_roundtrip() {
         let mut table = Table::new(2);
         let (keys, cols) = u64_batch(&[(1, Some(10), None), (2, Some(20), None)]);
-        table.merge_batch(keys, cols, Coverage::STORED);
+        table.merge_batch(keys, cols);
         assert_eq!(
             gathered_u64(&table, &[1, 2, 9]),
             vec![Some(10), Some(20), None]
@@ -1217,9 +1225,9 @@ mod tests {
     fn prune_drops_rows_and_frees_slots_for_reuse() {
         let mut table = Table::new(2);
         let (keys, cols) = u64_batch(&[(1, Some(10), None), (2, Some(20), None)]);
-        table.merge_batch(keys, cols, Coverage::STORED);
+        table.merge_batch(keys, cols);
         let (keys, cols) = u64_batch(&[(3, Some(30), None), (4, Some(40), None)]);
-        table.merge_batch(keys, cols, Coverage::STORED);
+        table.merge_batch(keys, cols);
 
         table.prune(2);
         assert_eq!(
@@ -1230,7 +1238,7 @@ mod tests {
 
         // The two freed slots are reused rather than growing the table further.
         let (keys, cols) = u64_batch(&[(5, Some(50), None), (6, Some(60), None)]);
-        table.merge_batch(keys, cols, Coverage::STORED);
+        table.merge_batch(keys, cols);
         assert_eq!(table.len, 4);
         assert_eq!(gathered_u64(&table, &[5, 6]), vec![Some(50), Some(60)]);
     }
@@ -1239,9 +1247,9 @@ mod tests {
     fn rollback_drops_rows_above_target() {
         let mut table = Table::new(2);
         let (keys, cols) = u64_batch(&[(1, Some(10), None), (5, Some(50), None)]);
-        table.merge_batch(keys, cols, Coverage::STORED);
+        table.merge_batch(keys, cols);
         let (keys, cols) = u64_batch(&[(6, Some(60), None)]);
-        table.merge_batch(keys, cols, Coverage::STORED);
+        table.merge_batch(keys, cols);
 
         table.rollback(4);
         assert_eq!(gathered_u64(&table, &[1, 5, 6]), vec![Some(10), None, None]);
@@ -1254,18 +1262,10 @@ mod tests {
         // the num field. Both must resolve on read.
         let mut var = VarCol::new();
         var.push(Some(b"hash"));
-        table.merge_batch(
-            vec![7],
-            vec![None, Some(AnyCol::Var(var))],
-            Coverage::STORED,
-        );
+        table.merge_batch(vec![7], vec![None, Some(AnyCol::Var(var))]);
         let mut num = NumCol::new();
         num.push(Some(70));
-        table.merge_batch(
-            vec![7],
-            vec![Some(AnyCol::U64(num)), None],
-            Coverage::STORED,
-        );
+        table.merge_batch(vec![7], vec![Some(AnyCol::U64(num)), None]);
 
         let keys = vec![Some(7u64)];
         let masks = vec![0b11u64];
@@ -1290,16 +1290,12 @@ mod tests {
         let mut table = Table::new(1);
         let mut first = VarCol::new();
         first.push(Some(b"first-input"));
-        table.merge_batch(vec![1u64], vec![Some(AnyCol::Var(first))], Coverage::STORED);
+        table.merge_batch(vec![1u64], vec![Some(AnyCol::Var(first))]);
         assert_eq!(table.len, 1);
 
         let mut second = VarCol::new();
         second.push(Some(b"second-input"));
-        table.merge_batch(
-            vec![1u64],
-            vec![Some(AnyCol::Var(second))],
-            Coverage::STORED,
-        );
+        table.merge_batch(vec![1u64], vec![Some(AnyCol::Var(second))]);
 
         // Still exactly one slot, holding the newest value: the key
         // deduplicated instead of growing the table, and overwriting dropped
@@ -1318,7 +1314,7 @@ mod tests {
     fn gather_respects_selection_and_misses() {
         let mut table = Table::new(2);
         let (keys, cols) = u64_batch(&[(1, Some(10), None), (2, Some(20), None)]);
-        table.merge_batch(keys, cols, Coverage::STORED);
+        table.merge_batch(keys, cols);
 
         let keys = vec![Some(1u64), Some(2), Some(9)];
         let masks = vec![1u64, 0, 1];
@@ -1339,21 +1335,13 @@ mod tests {
         let mut page1 = Table::new(1);
         let mut first = NumCol::new();
         first.push(Some(100u64));
-        page1.merge_batch(
-            vec![20u64],
-            vec![Some(AnyCol::U64(first))],
-            Coverage::STORED,
-        );
+        page1.merge_batch(vec![20u64], vec![Some(AnyCol::U64(first))]);
         persistent.append_from(&mut page1);
 
         let mut page2 = Table::new(1);
         let mut second = NumCol::new();
         second.push(Some(200u64));
-        page2.merge_batch(
-            vec![20u64],
-            vec![Some(AnyCol::U64(second))],
-            Coverage::STORED,
-        );
+        page2.merge_batch(vec![20u64], vec![Some(AnyCol::U64(second))]);
         persistent.append_from(&mut page2);
 
         assert_eq!(gathered_u64(&persistent, &[20]), vec![Some(200)]);
@@ -1367,25 +1355,16 @@ mod tests {
         let key = |account: &str| (5u64, 0u32, Box::<str>::from(account));
         let mut mint_a = VarCol::new();
         mint_a.push(Some(b"mintA"));
-        table.merge_batch(
-            vec![key("acctA")],
-            vec![Some(AnyCol::Var(mint_a))],
-            Coverage::STORED,
-        );
+        table.merge_batch(vec![key("acctA")], vec![Some(AnyCol::Var(mint_a))]);
         let mut mint_b = VarCol::new();
         mint_b.push(Some(b"mintB"));
-        table.merge_batch(
-            vec![key("acctB")],
-            vec![Some(AnyCol::Var(mint_b))],
-            Coverage::STORED,
-        );
+        table.merge_batch(vec![key("acctB")], vec![Some(AnyCol::Var(mint_b))]);
         // A different transaction in the same slot must not leak into the range.
         let mut mint_c = VarCol::new();
         mint_c.push(Some(b"mintC"));
         table.merge_batch(
             vec![(5u64, 1u32, Box::<str>::from("acctC"))],
             vec![Some(AnyCol::Var(mint_c))],
-            Coverage::STORED,
         );
 
         let rows: Vec<(String, Vec<u8>)> = table
@@ -1408,7 +1387,7 @@ mod tests {
         // "never fetched", so a check driven by it refetches the row forever.
         let mut table = Table::new(2);
         let (keys, cols) = u64_batch(&[(1, None, Some(b"v"))]);
-        table.merge_batch(keys, cols, Coverage::All(0b11));
+        table.merge_batch_covering(keys, cols, Coverage::All(0b11));
         assert_eq!(
             (
                 table.covers(&1, 0b11),
@@ -1426,7 +1405,7 @@ mod tests {
         // reporting a stored field as unfetched.
         let mut table = Table::new(2);
         let (keys, cols) = u64_batch(&[(1, Some(10), None)]);
-        table.merge_batch(keys, cols, Coverage::STORED);
+        table.merge_batch(keys, cols);
         assert_eq!(
             (table.covers(&1, 0b01), table.covers(&1, 0b10)),
             (true, false)
@@ -1441,7 +1420,7 @@ mod tests {
         let mut persistent = Table::new(2);
         let mut page = Table::new(2);
         let (keys, cols) = u64_batch(&[(1, Some(10), None), (2, None, None)]);
-        page.merge_batch(keys, cols, Coverage::All(0b11));
+        page.merge_batch_covering(keys, cols, Coverage::All(0b11));
         persistent.append_from(&mut page);
         assert_eq!(
             (
@@ -1460,7 +1439,7 @@ mod tests {
         // pruned value as if it were stored.
         let mut table = Table::new(2);
         let (keys, cols) = u64_batch(&[(1, Some(10), Some(b"hash"))]);
-        table.merge_batch(keys, cols, Coverage::All(0b11));
+        table.merge_batch_covering(keys, cols, Coverage::All(0b11));
         table.prune_keeping_field(1, 0, 1);
         assert_eq!(
             (table.covers(&1, 0b10), table.covers(&1, 0b01)),
@@ -1476,10 +1455,10 @@ mod tests {
         // without exercising reuse at all.
         let mut table = Table::new(2);
         let (keys, cols) = u64_batch(&[(1, Some(10), None)]);
-        table.merge_batch(keys, cols, Coverage::All(0b11));
+        table.merge_batch_covering(keys, cols, Coverage::All(0b11));
         table.prune(1);
         let (keys, cols) = u64_batch(&[(2, Some(20), None)]);
-        table.merge_batch(keys, cols, Coverage::STORED);
+        table.merge_batch(keys, cols);
         assert_eq!(
             (
                 table.free.len(),
@@ -1494,7 +1473,7 @@ mod tests {
     fn clear_drops_all_rows_and_resets_growth() {
         let mut table = Table::new(2);
         let (keys, cols) = u64_batch(&[(1, Some(10), None), (2, Some(20), None)]);
-        table.merge_batch(keys, cols, Coverage::STORED);
+        table.merge_batch(keys, cols);
 
         table.clear();
         assert_eq!(
@@ -1505,7 +1484,7 @@ mod tests {
         // The table is fully usable afterwards, growing fresh from slot 0
         // rather than carrying over any pre-clear state.
         let (keys, cols) = u64_batch(&[(9, Some(90), None)]);
-        table.merge_batch(keys, cols, Coverage::STORED);
+        table.merge_batch(keys, cols);
         assert_eq!((table.len, gathered_u64(&table, &[9])), (1, vec![Some(90)]));
     }
 }

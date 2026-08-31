@@ -60,9 +60,6 @@ describe("RpcSource - getHeightOrThrow", () => {
   })
 })
 
-// The chain's stores. In production `ChainState` creates them before the
-// source, which reads them to skip a block or transaction another partition
-// already fetched.
 let makeStores = (~lowercaseAddresses=true) => (
   BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=!lowercaseAddresses),
   TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=!lowercaseAddresses),
@@ -72,18 +69,17 @@ let chainId = 1->ChainId.fromInt
 
 // A block response carrying the reorg fields the client reads for every block,
 // whatever the selection is.
-let blockJsonAt = number =>
-  JSON.Object(
-    Dict.fromArray([
-      ("number", JSON.String(number)),
-      ("timestamp", JSON.String("0x64")),
-      ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-      (
-        "parentHash",
-        JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
-      ),
-    ]),
-  )
+let blockJsonAt = number => JSON.Object(
+  Dict.fromArray([
+    ("number", JSON.String(number)),
+    ("timestamp", JSON.String("0x64")),
+    ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+    (
+      "parentHash",
+      JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+    ),
+  ]),
+)
 
 // A block response has to be the block that was asked for, so echo the
 // requested number back rather than answering with a fixed one.
@@ -647,7 +643,6 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
     async t => {
       let eventConfig = {...EventRegistration.evmOnEventRegistration(~id=sighash), index: 0}
 
-
       // Only the first eth_getLogs is too dense; the rest fit, so the interval
       // shrinks once then re-adapts upward via acceleration.
       let getLogsCount = ref(0)
@@ -798,36 +793,15 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
       ),
     )
 
-  // Real `eth_getLogs` error messages providers return today (see the regex
-  // comments in packages/cli/src/evm_rpc_source/classify.rs), fed through a
-  // mock JSON-RPC server so each assertion exercises the actual napi boundary
-  // instead of a hand-built exception.
+  // Which message maps to which interval is pinned without I/O in
+  // `classify.rs`; what this exercises is that a classified message survives
+  // the napi boundary as the retry the source manager acts on.
   [
     (
       "an unknown provider's suggested range",
       "query exceeds max results 20000, retry with the range 6000000-6000509",
       510,
     ),
-    (
-      "evm-rpc.sei-apis.com's max-allowed-blocks",
-      "block range too large (2000), maximum allowed is 1000 blocks",
-      1000,
-    ),
-    ("1RPC's block range limit", "eth_getLogs is limited to a 1000 blocks range", 1000),
-    (
-      "Alchemy's block range",
-      "You can make eth_getLogs requests with up to a 500 block range. Based on your parameters, this block range should work: [0x3d7773, 0x3d7966]",
-      500,
-    ),
-    ("Cloudflare's max range", "Max range: 3500", 3500),
-    ("Thirdweb's max requested blocks", "Maximum allowed number of requested blocks is 3500", 3500),
-    ("BlockPI's limited-to range", "limited to 2000 block", 2000),
-    ("Base's fixed range", "block range too large", 2000),
-    ("Blast's paid-plan range", "exceeds the range allowed for your plan (5000 > 3000)", 3000),
-    ("Chainstack's fixed range", "Block range limit exceeded.", 10000),
-    ("Coinbase's at-most range", "please limit the query to at most 1000 blocks", 1000),
-    ("PublicNode's max block range", "maximum block range: 2000", 2000),
-    ("Hyperliquid's max block range", "query exceeds max block range 1000", 1000),
   ]->Array.forEach(((name, message, suggestedInterval)) => {
     Async.it(
       `Resizes to the suggested interval for ${name}`,

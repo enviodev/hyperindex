@@ -46,8 +46,6 @@ let makeSources = (
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
   ~addressStore,
-  // The chain's stores. The RPC source reads them to skip a block or
-  // transaction another partition already fetched.
   ~blockStore,
   ~transactionStore,
 ) => {

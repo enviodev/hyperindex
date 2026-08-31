@@ -136,9 +136,7 @@ pub struct NextPageParams {
     pub retry: i64,
 }
 
-/// The outcome of a page read. Every outcome a caller is expected to handle is
-/// a value rather than an exception, so nothing has to be recovered by parsing
-/// an error message; a thrown error from `get_next_page` is a genuine bug.
+/// The outcome of a page read.
 #[napi(object)]
 pub struct NextPageResult {
     /// Which outcome this is, and so which of the fields below are set.
@@ -153,9 +151,9 @@ pub struct NextPageResult {
     /// What to say about a failure: on "backoff" the line the retry logs, on
     /// "fieldSelection" why the selection cannot be served.
     pub message: Option<String>,
-    /// The provider's own words, when it gave any — what a failure logs as its
-    /// cause, alongside `message`.
-    pub error_message: Option<String>,
+    /// The provider's own words, when it gave any — logged as the cause
+    /// alongside `message`.
+    pub provider_message: Option<String>,
     /// "fieldSelection" only: the block it happened on, which is the one thing
     /// that makes an unservable selection diagnosable.
     pub block_number: Option<i64>,
@@ -176,8 +174,7 @@ enum Kind {
     SuggestedToBlock,
     /// Wait, then ask for the same range again.
     Backoff,
-    /// The provider cannot serve the selected fields, which retrying will not
-    /// fix.
+    /// The provider cannot serve the selected fields.
     FieldSelection,
 }
 
@@ -202,14 +199,13 @@ impl NextPageResult {
             to_block: to_block as i64,
             items: Vec::new(),
             message: None,
-            error_message: None,
+            provider_message: None,
             block_number: None,
             retry_to_block: None,
             backoff_millis: None,
         }
     }
 
-    /// Wait, then ask for the same range again.
     fn backoff(
         message: String,
         backoff_millis: i64,
@@ -223,7 +219,6 @@ impl NextPageResult {
         }
     }
 
-    /// Ask again for a narrower range, with no wait.
     fn suggested_to_block(
         retry_to_block: u64,
         to_block: u64,
@@ -274,7 +269,6 @@ struct PageQuery<'a> {
     decoder: &'a Arc<SelectionDecoder>,
     known_blocks: &'a BlockStore,
     known_transactions: &'a TransactionStore,
-    should_checksum: bool,
 }
 
 #[napi]
@@ -469,9 +463,7 @@ impl EvmRpcClient {
         let (suggested_interval, source_max) = self
             .intervals
             .suggested_interval(&params.partition_id, &self.sync_config);
-        let to_block = (from_block + suggested_interval - 1)
-            .min(to_block_ceiling)
-            .max(from_block);
+        let to_block = (from_block + suggested_interval - 1).min(to_block_ceiling);
 
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
@@ -500,7 +492,6 @@ impl EvmRpcClient {
             decoder: &selection_decoder,
             known_blocks,
             known_transactions,
-            should_checksum,
         };
         let stats = Stats::default();
         let timeout = Duration::from_millis(self.sync_config.query_timeout_millis);
@@ -552,7 +543,7 @@ impl EvmRpcClient {
                 NextPageResult {
                     // The symptom is its own explanation here, so it is both
                     // what the retry logs and the cause logged beside it.
-                    error_message: Some(message.clone()),
+                    provider_message: Some(message.clone()),
                     // A drifting node catches up in its own time, so the wait
                     // ramps with the attempt instead of using the configured
                     // backoff, which is tuned for a provider erroring outright.
@@ -582,10 +573,7 @@ impl EvmRpcClient {
                     "Query took longer than {}ms",
                     self.sync_config.query_timeout_millis
                 );
-                (
-                    self.retry_result(&query, Some(&message), message.clone(), stats.take()),
-                    None,
-                )
+                (self.retry_result(&query, None, message, stats.take()), None)
             }
         };
 
@@ -634,13 +622,13 @@ impl EvmRpcClient {
                         entry.item.on_event_registration_index
                     ),
                 })?;
-            let transaction_index =
-                u32::try_from(entry.item.transaction_index).map_err(|_| {
-                    EnrichError::Transient(format!(
-                        "the RPC reported transaction index {} in block {}, which no block can                          hold",
-                        entry.item.transaction_index, entry.item.block_number,
-                    ))
-                })?;
+            let transaction_index = u32::try_from(entry.item.transaction_index).map_err(|_| {
+                EnrichError::Transient(format!(
+                    "the RPC reported transaction index {} in block {}, which no block can \
+                         hold",
+                    entry.item.transaction_index, entry.item.block_number,
+                ))
+            })?;
             refs.add(
                 entry.item.block_number as u64,
                 transaction_index,
@@ -667,7 +655,7 @@ impl EvmRpcClient {
                 refs,
                 known_blocks: query.known_blocks,
                 known_transactions: query.known_transactions,
-                should_checksum: query.should_checksum,
+                should_checksum: self.should_checksum,
             },
         )
         .await?;
@@ -680,7 +668,7 @@ impl EvmRpcClient {
         &self,
         query: &PageQuery<'_>,
         provider_message: Option<&str>,
-        error_message: String,
+        logged_message: String,
         request_stats: Vec<RequestStat>,
     ) -> NextPageResult {
         let PageQuery {
@@ -739,7 +727,7 @@ impl EvmRpcClient {
         };
 
         NextPageResult {
-            error_message: Some(error_message),
+            provider_message: Some(logged_message),
             ..result
         }
     }

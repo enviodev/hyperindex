@@ -937,8 +937,7 @@ impl BlockStore {
         self.insert_evm_blocks_covering(blocks, 0);
     }
 
-    /// Whether this block was already fetched for every field in `mask` — the
-    /// check that lets one partition skip a block another already read.
+    /// Whether this block was already fetched for every field in `mask`.
     pub(crate) fn covers(&self, block_number: u64, mask: u64) -> bool {
         self.inner.lock().unwrap().table.covers(&block_number, mask)
     }
@@ -963,18 +962,18 @@ impl BlockStore {
             .iter()
             .map(|&f| evm_block_col(f, &blocks))
             .collect();
-        self.insert_watching_hash(keys, cols, covering);
+        self.insert_watching_hash(keys, cols, Coverage::All(covering));
     }
 
     /// Merge a batch, first recording any hash conflict it introduces (against
     /// the table or within the batch itself), keeping the lowest block number.
-    fn insert_watching_hash(&self, keys: Vec<u64>, cols: Vec<Option<AnyCol>>, covering: u64) {
+    fn insert_watching_hash(&self, keys: Vec<u64>, cols: Vec<Option<AnyCol>>, fetched: Coverage) {
         let field = self.hash_field();
         let mut inner = self.inner.lock().unwrap();
         let conflict = inner
             .table
             .detect_field_conflict(&keys, cols[field].as_ref(), field);
-        inner.table.merge_batch(keys, cols, Coverage::All(covering));
+        inner.table.merge_batch_covering(keys, cols, fetched);
         if let Some((key, stored, received)) = conflict {
             record_conflict(
                 &mut inner.page.conflict,
@@ -1004,7 +1003,7 @@ impl BlockStore {
             .iter()
             .map(|&f| svm_block_col(f, &blocks))
             .collect();
-        self.insert_watching_hash(keys, cols, 0);
+        self.insert_watching_hash(keys, cols, Coverage::STORED);
     }
 
     /// Merge a response's rollback-guard blocks into the page as hash-only
@@ -1049,7 +1048,7 @@ impl BlockStore {
             .iter()
             .map(|&f| fuel_block_col(f, &blocks))
             .collect();
-        self.insert_watching_hash(keys, cols, 0);
+        self.insert_watching_hash(keys, cols, Coverage::STORED);
     }
 
     /// Merge sparse JS SVM blocks into the table, keyed by slot.
@@ -1075,7 +1074,7 @@ impl BlockStore {
                 }
             })
             .collect();
-        self.insert_watching_hash(keys, cols, 0);
+        self.insert_watching_hash(keys, cols, Coverage::STORED);
         Ok(())
     }
 }

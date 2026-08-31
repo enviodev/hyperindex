@@ -128,8 +128,6 @@ let startServer = state =>
     }
   })
 
-// The chain's stores are created before its source, as in production: the
-// source reads them to skip a block another partition already fetched.
 let makeStores = () => (
   BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),

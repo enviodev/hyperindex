@@ -261,9 +261,7 @@ let makeInternal = (
     }
   })
 
-  // The chain's stores are created before its sources: a source that fetches
-  // block and transaction data per item reads them to skip what another
-  // partition already fetched.
+  // Before the sources, which are constructed holding them.
   let blockStore = BlockStore.make(
     ~ecosystem=config.ecosystem.name,
     ~shouldChecksum=!lowercaseAddresses,

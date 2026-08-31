@@ -144,6 +144,10 @@ let materializePageItems: (
   ~transactionStore: TransactionStore.t,
   ~blockStore: BlockStore.t,
 ) => promise<unit>
+// Merges the page's blocks into the chain's store as it checks them: the check
+// is the merge's own conflict report, so a page that passes is already applied.
+// Its transactions are a separate page, merged by the caller once this returns
+// no reorg.
 let registerReorgGuard: (
   t,
   ~blockStore: BlockStore.t,

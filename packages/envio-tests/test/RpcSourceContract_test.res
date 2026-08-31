@@ -77,7 +77,7 @@ let makeAddressStore = (~registration: Internal.evmOnEventRegistration) =>
     ~shouldChecksum=false,
   )
 
-let makeSource = (~url, ~registration: Internal.evmOnEventRegistration) => {
+let makeSource = (~url, ~registration: Internal.evmOnEventRegistration, ~syncConfig=syncConfig) => {
   let options: RpcSource.options = {
     url,
     chainId,
@@ -396,6 +396,58 @@ describe("RPC source public contract", () => {
     t.expect(error).toEqual((expected(100), expected(1_000)))
   })
 
+  // A page reads its blocks and its transactions at once, and they can fail
+  // differently. Reporting whichever failed first would make the outcome a
+  // race: the same unservable selection would disable the source on the
+  // attempts where the receipt happened to answer and be swallowed as a backoff
+  // on the ones where it did not. The delayed block reply forces the transient
+  // miss to settle first, which is the order that gets it wrong.
+  Async.it("pins the unservable selection winning over a concurrent transient miss", async t => {
+    let error = await MockRpcServer.withScenario(
+      ~name="unservable selection racing a null receipt",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~params=getLogsParams(),
+          ~reply=RpcResult(JSON.Array([log(~logIndex="0x2")])),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~params=blockParams("0x64"),
+          // No gasUsed, which the selection needs and no retry will conjure.
+          ~reply=Delayed({
+            millis: 50,
+            reply: RpcResult(
+              JSON.parseOrThrow(`{"number":"0x64","timestamp":"0x64","hash":"0x0000000000000000000000000000000000000000000000000000000000000b64","parentHash":"0x0000000000000000000000000000000000000000000000000000000000000b63"}`),
+            ),
+          }),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getTransactionReceipt",
+          ~params=JSON.Array([JSON.String(transactionHash)]),
+          ~reply=RpcResult(JSON.Null),
+        ),
+      ],
+      async mock => {
+        let registration = makeRegistration(~receiptOnly=true)
+        let source = makeSource(~url=mock.url, ~registration)
+        switch await RpcSourcePins.capture(() => source->invoke(~registration)) {
+        | Error(error) => error
+        | Ok(_) => JsError.throwWithMessage("Expected the page to fail")
+        }
+      },
+    )
+
+    t.expect(
+      switch error {
+      | RpcSourcePins.FailedGettingFieldSelection({message}) =>
+        message->String.includes("gasUsed") ? "unservable" : message
+      | FailedGettingItems(_) => "reported the transient miss instead"
+      | UnsupportedSelection(message) => message
+      },
+    ).toEqual("unservable")
+  })
+
   Async.it("pins consecutive response-too-large interval shrinking", async t => {
     let defaultSyncConfig = EvmChain.getSyncConfig({})
     let errors = await MockRpcServer.withScenario(
@@ -561,11 +613,17 @@ describe("RPC source public contract", () => {
         ),
       ],
       async mock => {
-        let source = makeSource(~url=mock.url, ~registration)
+        // A real paging interval, so the range the cursor advances over is the
+        // whole query rather than the one block a ceiling of 1 would allow.
+        let source = makeSource(
+          ~url=mock.url,
+          ~registration,
+          ~syncConfig=EvmChain.getSyncConfig({}),
+        )
         switch await RpcSourcePins.capture(
           () =>
             source.getItemsOrThrow(
-              ~fromBlock=100,
+              ~fromBlock=0,
               ~toBlock=Some(100),
               ~addressSet=makeAddressStore(~registration)->AddressStore.emptySet,
               ~knownHeight=100,
@@ -602,7 +660,6 @@ describe("RPC source public contract", () => {
     let addressA = addressAString->Address.unsafeFromString
     let addressB = addressBString->Address.unsafeFromString
     let filterA = "0x000000000000000000000000000000000000000000000000000000000000000a"
-    let filterB = "0x000000000000000000000000000000000000000000000000000000000000000b"
     let selectionFor = filter => [
       {
         Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
@@ -618,11 +675,15 @@ describe("RPC source public contract", () => {
       ~paramsMetadata=addressParam,
       ~eventFilters=selectionFor(filterA),
     )
+    // ContractB filters on nothing but the signature, so its query is a
+    // superset of ContractA's and its response carries a log holding A's
+    // filtered topic1 value. Only the address scoping keeps that log off
+    // ContractA — routing re-checks both, per registration.
     let eventB = makeRoutingRegistration(
       ~index=1,
       ~contractName="ContractB",
       ~paramsMetadata=addressParam,
-      ~eventFilters=selectionFor(filterB),
+      ~eventFilters=[topicSelection],
     )
     // A real provider's log for a topic1-filtered request carries that
     // contract's filtered topic1 value; routing re-checks it per registration.
@@ -648,10 +709,10 @@ describe("RPC source public contract", () => {
           ~label="ContractB logs",
           ~method="eth_getLogs",
           ~params=JSON.parseOrThrow(
-            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filterB}"]],"address":["${addressBString}"]}]`,
+            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"]],"address":["${addressBString}"]}]`,
           ),
           ~reply=RpcResult(
-            JSON.Array([logFor(~address=addressBString, ~topic1=filterB, ~logIndex="0x3")]),
+            JSON.Array([logFor(~address=addressBString, ~topic1=filterA, ~logIndex="0x3")]),
           ),
         ),
         MockRpcServer.expectCall(

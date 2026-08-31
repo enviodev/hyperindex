@@ -796,9 +796,7 @@ impl TransactionStore {
         self.insert_evm_txs_covering(txs, 0);
     }
 
-    /// Whether this transaction was already fetched for every field in `mask` —
-    /// the check that lets one partition skip a transaction another already
-    /// read.
+    /// Whether this transaction was already fetched for every field in `mask`.
     pub(crate) fn covers(&self, key: (u64, u32), mask: u64) -> bool {
         self.inner.lock().unwrap().txs.covers(&key, mask)
     }
@@ -831,7 +829,7 @@ impl TransactionStore {
             .lock()
             .unwrap()
             .txs
-            .merge_batch(keys, cols, Coverage::All(covering));
+            .merge_batch_covering(keys, cols, Coverage::All(covering));
     }
 
     /// Merge one response's SVM transactions into the table, keyed by
@@ -857,11 +855,7 @@ impl TransactionStore {
             .iter()
             .map(|&f| svm_tx_col(f, &txs))
             .collect();
-        self.inner
-            .lock()
-            .unwrap()
-            .txs
-            .merge_batch(keys, cols, Coverage::STORED);
+        self.inner.lock().unwrap().txs.merge_batch(keys, cols);
     }
 
     /// Merge one response's SVM account activity into the companion table,
@@ -916,7 +910,7 @@ impl TransactionStore {
             .lock()
             .unwrap()
             .account_activity
-            .merge_batch(keys, cols, Coverage::STORED);
+            .merge_batch(keys, cols);
     }
 }
 

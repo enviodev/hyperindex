@@ -31,11 +31,7 @@ type pinnedRetry =
 
 type pinnedError =
   | UnsupportedSelection(string)
-  | FailedGettingItems({
-      attemptedToBlock: int,
-      providerMessage: option<string>,
-      retry: pinnedRetry,
-    })
+  | FailedGettingItems({attemptedToBlock: int, providerMessage: option<string>, retry: pinnedRetry})
   | FailedGettingFieldSelection({
       blockNumber: int,
       logIndex: int,
@@ -168,7 +164,9 @@ let normalizeError = error =>
       blockNumber,
       logIndex,
       message,
-      causeMessage: exn->jsExnMessage,
+      // A field-selection failure carries no provider error of its own, so the
+      // cause is null rather than a JS error.
+      causeMessage: exn->providerMessage,
     })
   }
 

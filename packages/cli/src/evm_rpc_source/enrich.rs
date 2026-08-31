@@ -1,23 +1,18 @@
 //! Fills a page's block and transaction stores for the logs a query returned.
+//! `plan_blocks` and `plan_transactions` decide what that costs in requests.
 //!
-//! Three rules decide what is requested:
+//! Serving a field from the store rather than refetching it is safe wherever
+//! reorgs are handled at all: every log's own `blockHash` enters the page as an
+//! observation, so a stored row belonging to a dead fork disagrees with this
+//! response and the merge reports a reorg before any event is materialised.
+//! Where the merge proceeds regardless — detect-only mode, or a fork deeper
+//! than the configured reorg window — the hash is corrected but the row's other
+//! fields keep the dead fork's values until the row is pruned. Both are already
+//! "reorgs not handled"; this is one more way that shows.
 //!
-//! * A block or transaction is fetched only for the fields the items that
-//!   reference it actually selected, unioned per key.
-//! * A field the persistent store already holds for that key is not fetched
-//!   again, which is what stops several partitions scanning the same block from
-//!   each fetching it. Coverage is read from the store's fetched-field mask, so
-//!   a field that came back null counts as fetched.
-//! * The range's own boundary blocks are always fetched fresh, never served
-//!   from the store. They are the reorg observations: the store holds the view
-//!   an earlier response took of them, which is exactly the view a fork would
-//!   invalidate. Concurrent partitions still share one request for them,
-//!   because deduplication is by request rather than by stored result.
-//!
-//! Serving a field from the store cannot smuggle in an orphaned fork's data:
-//! every log's own `blockHash` enters the page as an observation, so a stored
-//! row belonging to a dead fork disagrees with this response and the merge
-//! reports a reorg before any event is materialised.
+//! What the store must never answer is the range's own boundary blocks — they
+//! are the observations that comparison rests on, and the store holds only an
+//! earlier response's view of them.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -359,15 +354,26 @@ pub(crate) async fn page(
     let block_plan = plan_blocks(&refs, from_block, to_block, known_blocks);
     let tx_plan = plan_transactions(&refs, known_transactions);
 
-    // Fail-fast: the first side to fail decides the page, and waiting for the
-    // other would let one stalled request turn a verdict the caller can act on
-    // into the timeout wrapping the whole read. A cancelled sibling costs no
-    // timing — dropping its last waiter cancels the request itself.
-    let (blocks, transactions) = futures_util::future::try_join(
+    // Both sides are awaited, then judged together. Taking whichever failed
+    // first would make the verdict a race: an unservable selection on the block
+    // side would be reported on the attempts where the transactions happened to
+    // answer and swallowed as a backoff on the ones where they did not. The
+    // page as a whole is still bounded by the caller's query timeout.
+    let (blocks, transactions) = futures_util::future::join(
         fetch_blocks(client, inflight, stats, &block_plan),
         fetch_transactions(client, inflight, stats, &tx_plan),
     )
-    .await?;
+    .await;
+    let (blocks, transactions) = match (blocks, transactions) {
+        (Ok(blocks), Ok(transactions)) => (blocks, transactions),
+        (blocks, transactions) => {
+            return Err([blocks.err(), transactions.err()]
+                .into_iter()
+                .flatten()
+                .max_by_key(EnrichError::severity)
+                .expect("one of the two sides failed"))
+        }
+    };
 
     let page_blocks = BlockStore::new_evm(should_checksum);
     let page_transactions = TransactionStore::new_evm(should_checksum);
