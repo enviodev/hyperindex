@@ -122,11 +122,15 @@ let make = (
         Source.GetItemsError(
           FailedGettingFieldSelection({
             requestStats: result.requestStats,
-            message: result.message->Option.getOr(
-              "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
-            ),
+            message: switch result.message {
+            | Some(message) => message
+            | None => missing("message")
+            },
             exn: %raw(`null`),
-            blockNumber: result.blockNumber->Option.getOr(result.toBlock),
+            blockNumber: switch result.blockNumber {
+            | Some(blockNumber) => blockNumber
+            | None => missing("blockNumber")
+            },
             // The failure is about a field of the block or its transactions,
             // not about one log within it.
             logIndex: 0,
@@ -148,7 +152,10 @@ let make = (
       throw(
         failedGettingItems(
           WithBackoff({
-            message: result.message->Option.getOr("Retrying the block range."),
+            message: switch result.message {
+            | Some(message) => message
+            | None => missing("message")
+            },
             backoffMillis: switch result.backoffMillis {
             | Some(backoffMillis) => backoffMillis
             | None => missing("backoffMillis")

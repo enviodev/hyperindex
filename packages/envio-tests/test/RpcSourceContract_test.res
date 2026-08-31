@@ -77,7 +77,10 @@ let makeAddressStore = (~registration: Internal.evmOnEventRegistration) =>
     ~shouldChecksum=false,
   )
 
+// One store per source, as in production: the client routes against it and the
+// query's address set is cut from that same store.
 let makeSource = (~url, ~registration: Internal.evmOnEventRegistration, ~syncConfig=syncConfig) => {
+  let addressStore = makeAddressStore(~registration)
   let options: RpcSource.options = {
     url,
     chainId,
@@ -85,18 +88,23 @@ let makeSource = (~url, ~registration: Internal.evmOnEventRegistration, ~syncCon
     sourceFor: Sync,
     syncConfig,
     lowercaseAddresses: true,
-    addressStore: makeAddressStore(~registration),
+    addressStore,
     blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
     transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   }
-  RpcSource.make(options)
+  (RpcSource.make(options), addressStore)
 }
 
-let invoke = (source: Source.t, ~registration: Internal.evmOnEventRegistration, ~retry=0) => {
+let invoke = (
+  source: Source.t,
+  ~registration: Internal.evmOnEventRegistration,
+  ~addressStore,
+  ~retry=0,
+) => {
   source.getItemsOrThrow(
     ~fromBlock=100,
     ~toBlock=Some(100),
-    ~addressSet=makeAddressStore(~registration)->AddressStore.makeSet(
+    ~addressSet=addressStore->AddressStore.makeSet(
       ~contractName=registration.eventConfig.contractName,
     ),
     ~knownHeight=100,
@@ -221,8 +229,8 @@ describe("RPC source public contract", () => {
       ~calls=successfulCalls(),
       async mock => {
         let registration = makeRegistration()
-        let source = makeSource(~url=mock.url, ~registration)
-        switch await RpcSourcePins.capture(() => source->invoke(~registration)) {
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
+        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
         | Ok(page) => page
         | Error(_) => JsError.throwWithMessage("Expected the pinned RPC page to succeed")
         }
@@ -332,11 +340,11 @@ describe("RPC source public contract", () => {
       ~calls=successfulCalls(~times=2, ~logs=[log(~logIndex="0x2")]),
       async mock => {
         let registration = makeRegistration()
-        let source = makeSource(~url=mock.url, ~registration)
-        let _ = await source->invoke(~registration)
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
+        let _ = await source->invoke(~registration, ~addressStore)
         let onReorg = source.onReorg->Option.getOrThrow(~message="RPC source must expose onReorg")
         onReorg()
-        let _ = await source->invoke(~registration)
+        let _ = await source->invoke(~registration, ~addressStore)
         mock.transcript()->Array.filterMap(
           entry => entry.request.method === "eth_getLogs" ? Some(entry.request.params) : None,
         )
@@ -373,9 +381,11 @@ describe("RPC source public contract", () => {
       ],
       async mock => {
         let registration = makeRegistration(~receiptOnly=true)
-        let source = makeSource(~url=mock.url, ~registration)
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
         let call = async (~retry) =>
-          switch await RpcSourcePins.capture(() => source->invoke(~registration, ~retry)) {
+          switch await RpcSourcePins.capture(
+            () => source->invoke(~registration, ~addressStore, ~retry),
+          ) {
           | Error(error) => error
           | Ok(_) => JsError.throwWithMessage("Expected missing receipt data to be retryable")
           }
@@ -430,8 +440,8 @@ describe("RPC source public contract", () => {
       ],
       async mock => {
         let registration = makeRegistration(~receiptOnly=true)
-        let source = makeSource(~url=mock.url, ~registration)
-        switch await RpcSourcePins.capture(() => source->invoke(~registration)) {
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
+        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
         | Error(error) => error
         | Ok(_) => JsError.throwWithMessage("Expected the page to fail")
         }
@@ -584,8 +594,8 @@ describe("RPC source public contract", () => {
         ),
       ],
       async mock => {
-        let source = makeSource(~url=mock.url, ~registration)
-        switch await RpcSourcePins.capture(() => source->invoke(~registration)) {
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
+        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
         | Ok(page) => page
         | Error(_) => JsError.throwWithMessage("Expected the OR-filter page to succeed")
         }
@@ -615,7 +625,7 @@ describe("RPC source public contract", () => {
       async mock => {
         // A real paging interval, so the range the cursor advances over is the
         // whole query rather than the one block a ceiling of 1 would allow.
-        let source = makeSource(
+        let (source, addressStore) = makeSource(
           ~url=mock.url,
           ~registration,
           ~syncConfig=EvmChain.getSyncConfig({}),
@@ -625,7 +635,7 @@ describe("RPC source public contract", () => {
             source.getItemsOrThrow(
               ~fromBlock=0,
               ~toBlock=Some(100),
-              ~addressSet=makeAddressStore(~registration)->AddressStore.emptySet,
+              ~addressSet=addressStore->AddressStore.emptySet,
               ~knownHeight=100,
               ~partitionId="skip-all",
               ~selection={

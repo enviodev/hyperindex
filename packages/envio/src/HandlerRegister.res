@@ -565,7 +565,6 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
           }
         })
 
-
         registrationsByChainId->Dict.set(
           key,
           {

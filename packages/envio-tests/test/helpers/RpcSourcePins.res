@@ -88,6 +88,12 @@ let storedBlockHashes = (blockStore: BlockStore.t): array<ReorgDetection.blockDa
     }
   )
 
+// A chain's pair of EVM stores, as `ChainState` builds them.
+let makeStores = (~shouldChecksum=false) => (
+  BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum),
+  TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum),
+)
+
 // Resolve a page's items the way the indexer does: both of its stores merge
 // into the chain's, and materialisation reads those. Production splits the two
 // merges across `registerReorgGuard` and `ChainFetching`, so keeping them in one
@@ -173,8 +179,7 @@ let normalizeError = error =>
 // Each pin drives a single fetch, so the chain's stores start empty and the
 // page's own rows are all there is to materialise from.
 let capture = async getPage => {
-  let blockStore = BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
-  let transactionStore = TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
+  let (blockStore, transactionStore) = makeStores()
   try Ok(await (await getPage())->normalizePage(~blockStore, ~transactionStore)) catch {
   | Source.GetItemsError(error) => Error(error->normalizeError)
   }

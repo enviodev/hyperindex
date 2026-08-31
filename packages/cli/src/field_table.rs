@@ -604,19 +604,18 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
     /// Merge one batch's rows into the table, per field: a field the batch
     /// has no valid cell for is left untouched, so a sparser batch only ever
     /// adds coverage to a key's existing row. Keys need not be sorted or
-    /// unique within the batch. `fetched` records the fields the batch looked
-    /// up beyond those it carries values for.
+    /// unique within the batch.
     pub(crate) fn merge_batch(&mut self, keys: Vec<K>, cols: Vec<Option<AnyCol>>) {
         self.merge_batch_covering(keys, cols, Coverage::STORED);
     }
 
-    /// As `merge_batch`, for a batch that looked up more fields than it carries
-    /// values for.
+    /// As `merge_batch`, where `covering` records the fields the batch looked
+    /// up beyond those it carries values for.
     pub(crate) fn merge_batch_covering(
         &mut self,
         keys: Vec<K>,
         cols: Vec<Option<AnyCol>>,
-        fetched: Coverage,
+        covering: Coverage,
     ) {
         debug_assert_eq!(cols.len(), self.n_fields);
         for (row, key) in keys.into_iter().enumerate() {
@@ -632,7 +631,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
             }
             // ORing `present` in is what keeps coverage a superset of it, and
             // so what makes `Coverage::STORED` mean "exactly what is stored".
-            self.coverage[slot] |= fetched.for_row(row) | self.present[slot];
+            self.coverage[slot] |= covering.for_row(row) | self.present[slot];
         }
     }
 
@@ -671,8 +670,8 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
                 })
             })
             .collect();
-        let fetched: Vec<u64> = slots.iter().map(|&s| other.coverage[s as usize]).collect();
-        self.merge_batch_covering(live_keys, cols, Coverage::PerRow(&fetched));
+        let covering: Vec<u64> = slots.iter().map(|&s| other.coverage[s as usize]).collect();
+        self.merge_batch_covering(live_keys, cols, Coverage::PerRow(&covering));
         other.clear();
     }
 

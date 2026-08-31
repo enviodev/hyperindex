@@ -20,16 +20,8 @@ let makeRpcRoute = (method: string, paramsSchema, resultSchema) => {
   })
 }
 
-type hex = string
-let makeHexSchema = fromStr =>
-  S.string->S.transform(s => {
-    parser: str =>
-      switch str->fromStr {
-      | Some(v) => v
-      | None => s.fail("The string is not valid hex")
-      },
-    serializer: value => value->Viem.toHex->(Utils.magic: EvmTypes.Hex.t => 'a),
-  })
-
 external number: string => int = "Number"
-let hexIntSchema: S.schema<int> = makeHexSchema(v => v->number->Some)
+let hexIntSchema: S.schema<int> = S.string->S.transform(_ => {
+  parser: str => str->number,
+  serializer: value => value->Viem.toHex->(Utils.magic: EvmTypes.Hex.t => 'a),
+})

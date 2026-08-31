@@ -110,7 +110,7 @@ pub(crate) enum EnrichError {
     /// Retrying asks the same question of the same chain, so the block it
     /// happened on is the one thing that makes it diagnosable.
     FieldSelection {
-        block_number: Option<u64>,
+        block_number: u64,
         error: anyhow::Error,
     },
 }
@@ -143,7 +143,7 @@ impl EnrichError {
     fn from_response(block_number: u64, error: ResponseError) -> Self {
         match error {
             ResponseError::Unservable(error) => EnrichError::FieldSelection {
-                block_number: Some(block_number),
+                block_number,
                 error,
             },
             ResponseError::Malformed(error) => EnrichError::Transient(format!(
@@ -263,12 +263,12 @@ pub(crate) struct EnrichedPage {
 /// `Transient` rather than an absence to be handled.
 async fn require(
     client: &Arc<JsonRpcClient>,
-    inflight: &Fetches,
+    fetches: &Fetches,
     stats: &Stats,
     key: FetchKey,
 ) -> Result<Arc<Json>, EnrichError> {
     let method = key.method();
-    let (result, timing) = inflight
+    let (result, timing) = fetches
         .get(key, || {
             let client = client.clone();
             let params = key.params();
@@ -338,7 +338,7 @@ impl TxReads {
 
 pub(crate) async fn page(
     client: &Arc<JsonRpcClient>,
-    inflight: &Fetches,
+    fetches: &Fetches,
     stats: &Stats,
     request: EnrichRequest<'_>,
 ) -> Result<EnrichedPage, EnrichError> {
@@ -360,8 +360,8 @@ pub(crate) async fn page(
     // answer and swallowed as a backoff on the ones where they did not. The
     // page as a whole is still bounded by the caller's query timeout.
     let (blocks, transactions) = futures_util::future::join(
-        fetch_blocks(client, inflight, stats, &block_plan),
-        fetch_transactions(client, inflight, stats, &tx_plan),
+        fetch_blocks(client, fetches, stats, &block_plan),
+        fetch_transactions(client, fetches, stats, &tx_plan),
     )
     .await;
     let (blocks, transactions) = match (blocks, transactions) {
@@ -566,7 +566,7 @@ fn plan_transactions(refs: &PageRefs, known: &TransactionStore) -> Vec<TxGroup> 
 /// hash-conflict check.
 pub(crate) async fn fetch_block_hashes(
     client: &Arc<JsonRpcClient>,
-    inflight: &Fetches,
+    fetches: &Fetches,
     stats: &Stats,
     block_numbers: &[u64],
     should_checksum: bool,
@@ -577,7 +577,7 @@ pub(crate) async fn fetch_block_hashes(
         selected: Vec::new(),
         numbers: block_numbers.to_vec(),
     }];
-    let blocks = fetch_blocks(client, inflight, stats, &groups).await?;
+    let blocks = fetch_blocks(client, fetches, stats, &groups).await?;
 
     let page = BlockStore::new_evm(should_checksum);
     fill_block_page(&page, Vec::new(), blocks);
@@ -588,13 +588,13 @@ pub(crate) async fn fetch_block_hashes(
 /// concurrently, keeping each group's rows together for a single insert.
 async fn fetch_blocks(
     client: &Arc<JsonRpcClient>,
-    inflight: &Fetches,
+    fetches: &Fetches,
     stats: &Stats,
     groups: &[BlockGroup],
 ) -> Result<Vec<(u64, Vec<Block>)>, EnrichError> {
     let fetches = groups.iter().map(|group| async move {
         let blocks = join_all(group.numbers.iter().map(|&number| async move {
-            let response = require(client, inflight, stats, FetchKey::Block(number)).await?;
+            let response = require(client, fetches, stats, FetchKey::Block(number)).await?;
             responses::build_block(&response, number, &group.fields, &group.selected)
                 .map_err(|error| EnrichError::from_response(number, error))
         }))
@@ -607,7 +607,7 @@ async fn fetch_blocks(
 
 async fn fetch_transactions(
     client: &Arc<JsonRpcClient>,
-    inflight: &Fetches,
+    fetches: &Fetches,
     stats: &Stats,
     groups: &[TxGroup],
 ) -> Result<Vec<(u64, Vec<Transaction>)>, EnrichError> {
@@ -619,7 +619,7 @@ async fn fetch_transactions(
                     let (transaction, receipt) = futures_util::future::try_join(
                         read_opt(
                             client,
-                            inflight,
+                            fetches,
                             stats,
                             group
                                 .reads
@@ -628,7 +628,7 @@ async fn fetch_transactions(
                         ),
                         read_opt(
                             client,
-                            inflight,
+                            fetches,
                             stats,
                             group.reads.receipt.then_some(FetchKey::Receipt(key)),
                         ),
@@ -653,7 +653,7 @@ async fn fetch_transactions(
                         let transaction = match transaction {
                             Some(transaction) => transaction,
                             None => {
-                                require(client, inflight, stats, FetchKey::Transaction(key)).await?
+                                require(client, fetches, stats, FetchKey::Transaction(key)).await?
                             }
                         };
                         responses::fill_effective_gas_price(&mut tx, &transaction)
@@ -676,13 +676,13 @@ async fn fetch_transactions(
 /// Read a response only if the selection needs one.
 async fn read_opt(
     client: &Arc<JsonRpcClient>,
-    inflight: &Fetches,
+    fetches: &Fetches,
     stats: &Stats,
     key: Option<FetchKey>,
 ) -> Result<Option<Arc<Json>>, EnrichError> {
     match key {
         None => Ok(None),
-        Some(key) => require(client, inflight, stats, key).await.map(Some),
+        Some(key) => require(client, fetches, stats, key).await.map(Some),
     }
 }
 

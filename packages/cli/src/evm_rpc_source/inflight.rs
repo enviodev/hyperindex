@@ -75,8 +75,7 @@ impl<K: Eq + Hash + Clone, V: Clone> Inflight<K, V> {
 
     /// Forget every in-flight request. Waiters already holding a future still
     /// receive its result; what changes is that nothing new joins them, so a
-    /// request issued after this point observes the chain afresh. Called on a
-    /// reorg, where an in-flight response may describe an orphaned fork.
+    /// request issued after this point starts its own.
     pub(crate) fn clear(&self) {
         self.pending.lock().unwrap().clear();
     }

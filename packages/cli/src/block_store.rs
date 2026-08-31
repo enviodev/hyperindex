@@ -967,13 +967,13 @@ impl BlockStore {
 
     /// Merge a batch, first recording any hash conflict it introduces (against
     /// the table or within the batch itself), keeping the lowest block number.
-    fn insert_watching_hash(&self, keys: Vec<u64>, cols: Vec<Option<AnyCol>>, fetched: Coverage) {
+    fn insert_watching_hash(&self, keys: Vec<u64>, cols: Vec<Option<AnyCol>>, covering: Coverage) {
         let field = self.hash_field();
         let mut inner = self.inner.lock().unwrap();
         let conflict = inner
             .table
             .detect_field_conflict(&keys, cols[field].as_ref(), field);
-        inner.table.merge_batch_covering(keys, cols, fetched);
+        inner.table.merge_batch_covering(keys, cols, covering);
         if let Some((key, stored, received)) = conflict {
             record_conflict(
                 &mut inner.page.conflict,

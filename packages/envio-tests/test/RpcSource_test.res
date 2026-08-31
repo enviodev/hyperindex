@@ -19,36 +19,42 @@ let makeAddressStore = (
     ~addresses,
   )
 
+let chainId = 1->ChainId.fromInt
+
+let makeSource = (
+  ~url,
+  ~chainId=chainId,
+  ~onEventRegistrations=[],
+  ~addressStore=TestAddresses.makeStore(),
+  ~syncConfig=EvmChain.getSyncConfig({}),
+  ~lowercaseAddresses=false,
+  ~stores=?,
+) => {
+  let (blockStore, transactionStore) =
+    stores->Option.getOr(RpcSourcePins.makeStores(~shouldChecksum=!lowercaseAddresses))
+  RpcSource.make({
+    url,
+    chainId,
+    onEventRegistrations,
+    sourceFor: Sync,
+    syncConfig,
+    lowercaseAddresses,
+    addressStore,
+    blockStore,
+    transactionStore,
+  })
+}
+
 describe("RpcSource - name", () => {
   it("Returns the name of the source including sanitized rpc url", t => {
-    let source = RpcSource.make({
-      url: "https://eth.rpc.hypersync.xyz?api_key=123",
-      chainId: 1337->ChainId.fromInt,
-      onEventRegistrations: [],
-      sourceFor: Sync,
-      syncConfig: EvmChain.getSyncConfig({}),
-      lowercaseAddresses: false,
-      addressStore: TestAddresses.makeStore(),
-      blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=true),
-      transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=true),
-    })
+    let source = makeSource(~url="https://eth.rpc.hypersync.xyz?api_key=123")
     t.expect(source.name).toBe("RPC (eth.rpc.hypersync.xyz)")
   })
 })
 
 describe("RpcSource - getHeightOrThrow", () => {
   Async.itWithOptions("Returns the current height of the chain", {retry: 3}, async t => {
-    let source = RpcSource.make({
-      url: `https://eth.rpc.hypersync.xyz/${testApiToken}`,
-      chainId: 1337->ChainId.fromInt,
-      onEventRegistrations: [],
-      sourceFor: Sync,
-      syncConfig: EvmChain.getSyncConfig({}),
-      lowercaseAddresses: false,
-      addressStore: TestAddresses.makeStore(),
-      blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=true),
-      transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=true),
-    })
+    let source = makeSource(~url=`https://eth.rpc.hypersync.xyz/${testApiToken}`)
     let {height} = await source.getHeightOrThrow()
     t.expect({
       "aboveLowerBound": height > 21994218,
@@ -59,13 +65,6 @@ describe("RpcSource - getHeightOrThrow", () => {
     })
   })
 })
-
-let makeStores = (~lowercaseAddresses=true) => (
-  BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=!lowercaseAddresses),
-  TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=!lowercaseAddresses),
-)
-
-let chainId = 1->ChainId.fromInt
 
 // A block response carrying the reorg fields the client reads for every block,
 // whatever the selection is.
@@ -162,18 +161,15 @@ describe("RpcSource - field selection end to end", () => {
         },
       ],
     )
-    let (blockStore, transactionStore) = stores->Option.getOr(makeStores(~lowercaseAddresses))
-    let source = RpcSource.make({
-      url: mock.url,
-      chainId,
-      onEventRegistrations: [registration],
-      sourceFor: Sync,
-      syncConfig: EvmChain.getSyncConfig({}),
-      lowercaseAddresses,
-      addressStore,
-      blockStore,
-      transactionStore,
-    })
+    let (blockStore, transactionStore) =
+      stores->Option.getOr(RpcSourcePins.makeStores(~shouldChecksum=!lowercaseAddresses))
+    let source = makeSource(
+      ~url=mock.url,
+      ~onEventRegistrations=[registration],
+      ~addressStore,
+      ~lowercaseAddresses,
+      ~stores=(blockStore, transactionStore),
+    )
     let response = await source.getItemsOrThrow(
       ~fromBlock=100,
       ~toBlock=Some(100),
@@ -538,7 +534,7 @@ describe("RpcSource - field selection end to end", () => {
   // The reason the source consults the chain's stores at all: partitions are
   // address slices, not range slices, so several of them scan the same blocks.
   Async.it("Does not re-read a block or transaction the stores already cover", async t => {
-    let stores = makeStores()
+    let stores = RpcSourcePins.makeStores()
     let first = await startProvider()
     let _ = await fetchPayloads(
       ~mock=first,
@@ -578,7 +574,7 @@ describe("RpcSource - field selection end to end", () => {
   Async.it("Does not re-read a field whose value came back null", async t => {
     // `to` is null on a contract creation. Judged by stored values alone the
     // row would look unfetched and be requested again on every later page.
-    let stores = makeStores()
+    let stores = RpcSourcePins.makeStores()
     let first = await startProvider()
     let _ = await fetchPayloads(~mock=first, ~transactionFieldNames=[To], ~stores)
     first.close()
@@ -597,17 +593,7 @@ describe("RpcSource - field selection end to end", () => {
 
 describe("RpcSource - empty selection", () => {
   Async.it("Throws UnsupportedSelection when the selection has no event configs", async t => {
-    let source = RpcSource.make({
-      url: "http://localhost:1",
-      chainId,
-      onEventRegistrations: [],
-      sourceFor: Sync,
-      syncConfig: EvmChain.getSyncConfig({}),
-      lowercaseAddresses: false,
-      addressStore: TestAddresses.makeStore(),
-      blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=true),
-      transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=true),
-    })
+    let source = makeSource(~url="http://localhost:1")
 
     let caught = try {
       let _ = await source.getItemsOrThrow(
@@ -690,18 +676,8 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
           },
         ],
       )
-      let source = RpcSource.make({
-        url: mock.url,
-        chainId,
-        onEventRegistrations: [eventConfig],
-        sourceFor: Sync,
-        // initialBlockInterval=ceiling=10000, backoffMultiplicative=0.8, accelerationAdditive=500
-        syncConfig: EvmChain.getSyncConfig({}),
-        lowercaseAddresses: false,
-        addressStore,
-        blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-        transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-      })
+      // initialBlockInterval=ceiling=10000, backoffMultiplicative=0.8, accelerationAdditive=500
+      let source = makeSource(~url=mock.url, ~onEventRegistrations=[eventConfig], ~addressStore)
 
       let call = async () =>
         try {
@@ -796,88 +772,70 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
   // Which message maps to which interval is pinned without I/O in
   // `classify.rs`; what this exercises is that a classified message survives
   // the napi boundary as the retry the source manager acts on.
-  [
-    (
-      "an unknown provider's suggested range",
-      "query exceeds max results 20000, retry with the range 6000000-6000509",
-      510,
-    ),
-  ]->Array.forEach(((name, message, suggestedInterval)) => {
-    Async.it(
-      `Resizes to the suggested interval for ${name}`,
-      async t => {
-        let mock = await MockRpcServer.start(
-          ~handler=requestBody => {
-            let method =
-              requestBody
-              ->JSON.parseOrThrow
-              ->JSON.Decode.object
-              ->Option.flatMap(Dict.get(_, "method"))
-              ->Option.flatMap(JSON.Decode.string)
-              ->Option.getOr("")
-            switch method {
-            | "eth_getLogs" => (200, jsonRpcError(message))
-            | _ => (200, jsonRpcResult(blockJson))
-            }
-          },
-        )
+  let message = "query exceeds max results 20000, retry with the range 6000000-6000509"
+  let suggestedInterval = 510
 
-        let addressStore = makeAddressStore(
-          ~onEventRegistrations=[eventConfig],
-          ~addresses=[
-            {
-              address: mockAddress,
-              contractName: eventConfig.eventConfig.contractName,
-              registrationBlock: -1,
-            },
-          ],
-        )
-        let source = RpcSource.make({
-          url: mock.url,
-          chainId,
-          onEventRegistrations: [eventConfig],
-          sourceFor: Sync,
-          syncConfig: EvmChain.getSyncConfig({}),
-          lowercaseAddresses: false,
-          addressStore,
-          blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-          transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-        })
-
-        let retry = try {
-          let result = try {
-            let _ = await source.getItemsOrThrow(
-              ~fromBlock=0,
-              ~toBlock=Some(1_000_000),
-              ~addressSet=addressStore->AddressStore.makeSet(
-                ~contractName=eventConfig.eventConfig.contractName,
-              ),
-              ~knownHeight=1_000_000,
-              ~partitionId="0",
-              ~selection={
-                dependsOnAddresses: true,
-                onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
-              },
-              ~itemsTarget=Some(5000),
-              ~retry=0,
-              ~logger=Logging.createChild(~params={"test": "RpcSource classify " ++ name}),
-            )
-            None
-          } catch {
-          | Source.GetItemsError(FailedGettingItems({retry})) => Some(retry)
-          | Source.GetItemsError(_) => None
-          }
-          mock.close()
-          result
-        } catch {
-        | exn =>
-          mock.close()
-          throw(exn)
+  Async.it("Resizes to the interval a provider's message suggested", async t => {
+    let mock = await MockRpcServer.start(
+      ~handler=requestBody => {
+        let method =
+          requestBody
+          ->JSON.parseOrThrow
+          ->JSON.Decode.object
+          ->Option.flatMap(Dict.get(_, "method"))
+          ->Option.flatMap(JSON.Decode.string)
+          ->Option.getOr("")
+        switch method {
+        | "eth_getLogs" => (200, jsonRpcError(message))
+        | _ => (200, jsonRpcResult(blockJson))
         }
-
-        t.expect(retry).toEqual(Some(WithSuggestedToBlock({toBlock: suggestedInterval - 1})))
       },
     )
+
+    let addressStore = makeAddressStore(
+      ~onEventRegistrations=[eventConfig],
+      ~addresses=[
+        {
+          address: mockAddress,
+          contractName: eventConfig.eventConfig.contractName,
+          registrationBlock: -1,
+        },
+      ],
+    )
+    let source = makeSource(~url=mock.url, ~onEventRegistrations=[eventConfig], ~addressStore)
+
+    let retry = try {
+      let result = try {
+        let _ = await source.getItemsOrThrow(
+          ~fromBlock=0,
+          ~toBlock=Some(1_000_000),
+          ~addressSet=addressStore->AddressStore.makeSet(
+            ~contractName=eventConfig.eventConfig.contractName,
+          ),
+          ~knownHeight=1_000_000,
+          ~partitionId="0",
+          ~selection={
+            dependsOnAddresses: true,
+            onEventRegistrations: [(eventConfig :> Internal.onEventRegistration)],
+          },
+          ~itemsTarget=Some(5000),
+          ~retry=0,
+          ~logger=Logging.createChild(~params={"test": "RpcSource classify"}),
+        )
+        None
+      } catch {
+      | Source.GetItemsError(FailedGettingItems({retry})) => Some(retry)
+      | Source.GetItemsError(_) => None
+      }
+      mock.close()
+      result
+    } catch {
+    | exn =>
+      mock.close()
+      throw(exn)
+    }
+
+    t.expect(retry).toEqual(Some(WithSuggestedToBlock({toBlock: suggestedInterval - 1})))
   })
 })
 
@@ -965,17 +923,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
         },
       ],
     )
-    let source = RpcSource.make({
-      url: mock.url,
-      chainId,
-      onEventRegistrations: allRegistrations,
-      sourceFor: Sync,
-      syncConfig: EvmChain.getSyncConfig({}),
-      lowercaseAddresses: false,
-      addressStore,
-      blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-      transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-    })
+    let source = makeSource(~url=mock.url, ~onEventRegistrations=allRegistrations, ~addressStore)
 
     let (page, filters) = try {
       let page = await source.getItemsOrThrow(

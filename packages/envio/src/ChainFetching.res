@@ -198,12 +198,13 @@ let rec onQueryResponse = async (
       // Advances synchronously to FindingReorgDepth, so a concurrent rollback
       // kick (eg from the processing loop quiescing) collapses into this one.
       scheduleRollback()
+    // No rollback: either the guard found no reorg, or it found one and this
+    // chain only reports them. Either way the guard has merged the blocks, so
+    // the transactions follow. A source that reads the chain store to decide
+    // what to fetch leaves out what the store already holds, so its page alone
+    // does not cover its own items — only the merged store does, and contract
+    // registers read it below.
     | None =>
-      // The page survived the reorg guard, so its transactions join the chain
-      // store here, beside the blocks the guard already merged. A source that
-      // reads the chain store to decide what to fetch leaves out what the store
-      // already holds, so its page alone does not cover its own items — only
-      // the merged store does, and contract registers read it below.
       switch transactionStore {
       | Some(page) => chainState->ChainState.transactionStore->TransactionStore.merge(page)
       | None => ()

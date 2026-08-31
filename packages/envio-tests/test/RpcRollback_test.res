@@ -128,11 +128,6 @@ let startServer = state =>
     }
   })
 
-let makeStores = () => (
-  BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-  TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
-)
-
 let makeSource = (~url, ~blockStore, ~transactionStore) =>
   RpcSource.make({
     url,
@@ -205,7 +200,7 @@ describe("Rollback against a real RPC server", () => {
   Async.it("detects a reorg from fetched hashes and finds the rollback depth", async t => {
     let state = {height: 105, forkFrom: 999}
     let mock = await startServer(state)
-    let (blockStore, transactionStore) = makeStores()
+    let (blockStore, transactionStore) = RpcSourcePins.makeStores()
     let source = makeSource(~url=mock.url, ~blockStore, ~transactionStore)
     let chainState = makeChainState(~source, ~knownHeight=state.height, ~blockStore)
 
@@ -258,7 +253,7 @@ describe("Rollback against a real RPC server", () => {
   Async.it("searches past the blocks whose stored hashes the fork invalidated", async t => {
     let state = {height: 105, forkFrom: 999}
     let mock = await startServer(state)
-    let (blockStore, transactionStore) = makeStores()
+    let (blockStore, transactionStore) = RpcSourcePins.makeStores()
     let source = makeSource(~url=mock.url, ~blockStore, ~transactionStore)
     let chainState = makeChainState(~source, ~knownHeight=state.height, ~blockStore)
 
@@ -292,7 +287,7 @@ describe("Rollback against a real RPC server", () => {
   Async.it("detects a reorg on a block it served from the store", async t => {
     let state = {height: 110, forkFrom: 999}
     let mock = await startServer(state)
-    let (blockStore, transactionStore) = makeStores()
+    let (blockStore, transactionStore) = RpcSourcePins.makeStores()
     let source = makeSource(~url=mock.url, ~blockStore, ~transactionStore)
     let chainState = makeChainState(~source, ~knownHeight=state.height, ~blockStore)
 

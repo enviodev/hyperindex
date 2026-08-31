@@ -151,8 +151,8 @@ pub struct NextPageResult {
     /// What to say about a failure: on "backoff" the line the retry logs, on
     /// "fieldSelection" why the selection cannot be served.
     pub message: Option<String>,
-    /// The provider's own words, when it gave any — logged as the cause
-    /// alongside `message`.
+    /// The cause logged beside `message`: the provider's own words where it
+    /// gave any, ours where it did not.
     pub provider_message: Option<String>,
     /// "fieldSelection" only: the block it happened on, which is the one thing
     /// that makes an unservable selection diagnosable.
@@ -419,7 +419,10 @@ impl EvmRpcClient {
         // A poll that failed still cost a request; carry its timing out with
         // the error so the source's metrics count it.
         let height = result.map_err(|err| {
-            crate::request_stats::error_with_request_stats(rpc_error_to_napi(err), &request_stats)
+            crate::request_stats::error_with_request_stats(
+                napi::Error::from_reason(err.to_string()),
+                &request_stats,
+            )
         })?;
         let height: i64 = height
             .try_into()
@@ -522,16 +525,13 @@ impl EvmRpcClient {
                     Some(page),
                 )
             }
-            // The provider answered, but cannot serve the selected fields.
-            // Retrying asks the same question of the same chain, so the caller
-            // is told to stop rather than to wait.
             Ok(Err(EnrichError::FieldSelection {
                 block_number,
                 error,
             })) => (
                 NextPageResult {
                     message: Some(format!("{error:#}")),
-                    block_number: block_number.map(|number| number as i64),
+                    block_number: Some(block_number as i64),
                     ..NextPageResult::new(Kind::FieldSelection, to_block, stats.take())
                 },
                 None,
@@ -616,7 +616,7 @@ impl EvmRpcClient {
                 .registration_fields
                 .get(&entry.item.on_event_registration_index)
                 .ok_or_else(|| EnrichError::FieldSelection {
-                    block_number: Some(entry.item.block_number as u64),
+                    block_number: entry.item.block_number as u64,
                     error: anyhow::anyhow!(
                         "no field selection for registration {}",
                         entry.item.on_event_registration_index
@@ -867,15 +867,6 @@ impl EvmRpcClient {
         })?
         .map_err(RpcError::Other)
     }
-}
-
-/// A JSON-RPC failure as a plain message. The provider's code is part of the
-/// text rather than a separate channel: nothing recovers from it
-/// programmatically, and one readable message beats a payload every reader has
-/// to decode first.
-#[allow(clippy::needless_pass_by_value)]
-fn rpc_error_to_napi(e: RpcError) -> napi::Error {
-    napi::Error::from_reason(e.to_string())
 }
 
 fn map_err(e: anyhow::Error) -> napi::Error {
