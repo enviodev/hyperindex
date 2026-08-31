@@ -160,6 +160,30 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
                  "accounts": [{ "name": "vault" }, { "name": "vault" }] }] }"#,
         ),
+        (
+            // The trailing `tag` is wire-encoded like any other argument. Read
+            // as part of the discriminator it would vanish, and `amount` would
+            // then decode one byte short of where the program wrote it.
+            "codama argument reusing a discriminator name",
+            r#"{ "kind": "rootNode", "program": { "instructions": [{
+                 "kind": "instructionNode", "name": "swap",
+                 "arguments": [
+                   { "name": "tag", "type": { "kind": "numberTypeNode", "format": "u8" },
+                     "defaultValue": { "kind": "numberValueNode", "number": 3 } },
+                   { "name": "amount", "type": { "kind": "numberTypeNode", "format": "u64" } },
+                   { "name": "tag", "type": { "kind": "numberTypeNode", "format": "u8" } }],
+                 "discriminators": [{ "kind": "fieldDiscriminatorNode",
+                                      "name": "tag", "offset": 0 }] }] } }"#,
+        ),
+        (
+            // Coerced to 0 it tiles from the head and the instruction is
+            // accepted carrying a prefix the program encodes elsewhere.
+            "codama discriminator offset that is not a byte position",
+            r#"{ "kind": "rootNode", "program": { "instructions": [{
+                 "name": "swap",
+                 "discriminators": [{ "kind": "constantDiscriminatorNode", "offset": -1,
+                   "constant": { "value": { "kind": "bytesValueNode", "data": "03" } } }] }] } }"#,
+        ),
     ];
 
     let reported: Vec<String> = cases
@@ -205,6 +229,8 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "codama discriminator argument out of declaration order: swap set aside: the discriminator reads [\"tag\"], but the arguments begin [\"amount\"]; their offsets and their declaration order disagree",
             "duplicate type name: fatal: IDL declares type 'Fee' more than once",
             "duplicate account name: fatal: IDL declares account 'vault' more than once",
+            "codama argument reusing a discriminator name: swap set aside: IDL declares argument 'tag' more than once",
+            "codama discriminator offset that is not a byte position: swap set aside: discriminators: expected a non-negative integer 'offset', got -1",
         ]
     );
 }

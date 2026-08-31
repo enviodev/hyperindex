@@ -5,7 +5,7 @@
 //! regular argument singled out by name, or several such fields packed
 //! together — none of which Anchor's fixed 8-byte prefix can express.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
@@ -91,7 +91,15 @@ fn parse_discriminators(ix: &Value) -> Result<(Vec<u8>, Vec<String>)> {
     let mut parts: Vec<(u64, Vec<u8>, Option<String>)> = Vec::with_capacity(arr.len());
     for d in arr {
         let kind = required_str(d, "kind")?;
-        let offset = d.get("offset").and_then(Value::as_u64).unwrap_or(0);
+        // Absent means Codama's default of 0. Present but unreadable is not:
+        // coerced to 0 it would tile from the head of the data and pass the
+        // contiguity check below carrying a prefix encoded somewhere else.
+        let offset = match d.get("offset") {
+            None => 0,
+            Some(offset) => offset
+                .as_u64()
+                .ok_or_else(|| anyhow!("expected a non-negative integer 'offset', got {offset}"))?,
+        };
         match kind {
             "constantDiscriminatorNode" | "byteDiscriminatorNode" => {
                 let constant = d
@@ -254,23 +262,31 @@ fn parse_arguments(node: Option<&Value>, encoded_arg_names: &[String]) -> Result
         );
     }
 
-    let mut out = Vec::with_capacity(arr.len());
+    // Names are matched by position from here on, so two arguments sharing one
+    // would leave which of them the discriminator consumed undecidable.
+    let mut seen = HashSet::new();
     for a in arr {
-        let name = required_str(a, "name").context("arguments")?.to_string();
-        if encoded_arg_names.contains(&name) {
-            continue;
+        let name = required_str(a, "name").context("arguments")?;
+        if !seen.insert(name) {
+            bail!("IDL declares argument '{name}' more than once");
         }
-        let path = format!("args.{name}");
-        reject_unmodelled_keys(a, &path, &FIELD_KEYS)?;
-        let ty = a
-            .get("type")
-            .ok_or_else(|| anyhow!("{path}: argument has no 'type'"))?;
-        out.push(NamedField {
-            ty: parse_type(ty, &path)?,
-            name,
-        });
     }
-    Ok(out)
+
+    arr.iter()
+        .skip(encoded_arg_names.len())
+        .map(|a| {
+            let name = required_str(a, "name")?.to_string();
+            let path = format!("args.{name}");
+            reject_unmodelled_keys(a, &path, &FIELD_KEYS)?;
+            let ty = a
+                .get("type")
+                .ok_or_else(|| anyhow!("{path}: argument has no 'type'"))?;
+            Ok(NamedField {
+                ty: parse_type(ty, &path)?,
+                name,
+            })
+        })
+        .collect()
 }
 
 /// Keys any node may carry without changing a single decoded byte. `display`
