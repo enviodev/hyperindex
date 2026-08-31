@@ -31,7 +31,7 @@ impl ProjectEnv {
                 Err(err) => {
                     match err {
                         dotenv::Error::Io(_, _) => (),
-                        _ => println!(
+                        _ => eprintln!(
                             "Warning: Failed loading .env file with unexpected error: {err}"
                         ),
                     };
