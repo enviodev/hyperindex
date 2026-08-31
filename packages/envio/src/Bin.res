@@ -83,6 +83,22 @@ let run = async args => {
         applyEnv(env)
         switch mode {
         | "manifest" => await ResolverProcess.writeManifest(~config=Config.load(), ~projectRoot=cwd)
+        | "metadata" =>
+          let handlerUrl = switch Env.Resolvers.publicUrl() {
+          | Some(url) => url
+          | None =>
+            JsError.throwWithMessage(
+              "ENVIO_RESOLVERS_PUBLIC_URL is not set. It is the URL Hasura posts to and is baked into every action, so the metadata cannot be printed without it.",
+            )
+          }
+          let metadata = await ResolverProcess.metadataJson(
+            ~config=Config.load(),
+            ~projectRoot=cwd,
+            ~handlerUrl,
+          )
+          // stdout, so it pipes into `hasura metadata apply` or `jq` rather
+          // than being buried in the log stream.
+          Console.log(JSON.stringify(metadata, ~space=2))
         // Serving keeps the event loop alive on its own, so returning here
         // leaves the process running rather than exiting.
         | _ =>

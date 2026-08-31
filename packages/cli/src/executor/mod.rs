@@ -48,7 +48,8 @@ pub enum Command {
         config: serde_json::Value,
     },
     /// The resolver process. `manifest` writes the artefacts the image carries
-    /// and exits; `serve` answers envio-serve's `/resolve` until stopped.
+    /// and exits, `metadata` prints the Hasura metadata and exits, and `serve`
+    /// answers Hasura's actions until stopped.
     Resolvers {
         mode: ResolversMode,
         cwd: String,
@@ -62,6 +63,7 @@ pub enum Command {
 pub enum ResolversMode {
     Serve,
     Manifest,
+    Metadata,
 }
 
 /// `envio_package_dir` is only consumed by `get_envio_version` on dev builds
@@ -239,6 +241,7 @@ pub fn build_start_command(
 pub fn resolvers_mode(args: &ResolversArgs) -> ResolversMode {
     match args.subcommand {
         Some(ResolversSubcommand::Manifest) => ResolversMode::Manifest,
+        Some(ResolversSubcommand::Metadata) => ResolversMode::Metadata,
         None | Some(ResolversSubcommand::Serve) => ResolversMode::Serve,
     }
 }
@@ -290,11 +293,13 @@ mod tests {
                 mode_of(&["envio", "resolvers"]),
                 mode_of(&["envio", "resolvers", "serve"]),
                 mode_of(&["envio", "resolvers", "manifest"]),
+                mode_of(&["envio", "resolvers", "metadata"]),
             ),
             (
                 ResolversMode::Serve,
                 ResolversMode::Serve,
-                ResolversMode::Manifest
+                ResolversMode::Manifest,
+                ResolversMode::Metadata
             )
         );
     }
@@ -305,7 +310,7 @@ mod tests {
         // `mode` the two things this one does.
         assert_eq!(
             serde_json::to_value(Command::Resolvers {
-                mode: ResolversMode::Manifest,
+                mode: ResolversMode::Metadata,
                 cwd: "/project".to_string(),
                 env: std::iter::once(("ENVIO_CONFIG".to_string(), "config.yaml".into())).collect(),
                 config: serde_json::json!({ "name": "gmx" }),
@@ -313,7 +318,7 @@ mod tests {
             .unwrap(),
             serde_json::json!({
                 "kind": "resolvers",
-                "mode": "manifest",
+                "mode": "metadata",
                 "cwd": "/project",
                 "env": { "ENVIO_CONFIG": "config.yaml" },
                 "config": { "name": "gmx" },
