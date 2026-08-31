@@ -252,7 +252,6 @@ describe("HeightFeed stream state", () => {
 
     // A push that advances is the stream proving it carries heights again.
     mock.triggerHeightSubscription(101)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(101)
     await Utils.delay(20)
 
@@ -312,7 +311,6 @@ describe("HeightFeed stream state", () => {
     // height already known. It is still the stream delivering, which is all the
     // poke was ever complaining it did not do.
     mock.triggerHeightSubscription(100)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
     subscription.unsubscribe()
@@ -374,7 +372,6 @@ describe("HeightFeed stream state", () => {
     // Answered by a height learned elsewhere — a query response, or a sibling
     // source settling the wait — so no push ever comes to take the poke back.
     feed->HeightFeed.recordHeight(101)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
 

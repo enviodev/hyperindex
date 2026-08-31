@@ -3153,7 +3153,6 @@ describe("SourceManager height subscription", () => {
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
     // The catch-up the connect fired, answered at the height we already know so
     // the wait stays in flight.
     mock.resolveGetHeightOrThrow(100)
@@ -3376,7 +3375,6 @@ describe("SourceManager height subscription", () => {
     mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
 
     // Keep answering at an unchanged height so a loop that has not stopped
     // issues a fresh call every polling interval instead of blocking on one.
@@ -3453,7 +3451,6 @@ describe("SourceManager height subscription", () => {
     mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
 
     // The chain moved to 102 while the stream was down. A WebSocket newHeads
     // subscription would only deliver 103, so without the catch-up poll the
@@ -3536,7 +3533,6 @@ describe("SourceManager height subscription", () => {
 
     mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(105)
     await Utils.delay(0)
 
@@ -3574,7 +3570,6 @@ describe("SourceManager height subscription", () => {
     mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(101)
 
     let resolved = ref(false)
@@ -3647,7 +3642,6 @@ describe("SourceManager height subscription", () => {
     mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
 
     // The catch-up's continuation is queued first, then the push drains the
     // waiters and queues the race continuation behind it. The catch-up's 105
@@ -3682,7 +3676,6 @@ describe("SourceManager height subscription", () => {
     // A reconnect ends the fallback loop, so the wait takes the polled 105 even
     // though the stream itself is still only caught up to 101.
     mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(105)
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
@@ -3846,7 +3839,6 @@ describe("SourceManager height subscription", () => {
       )
     await Utils.delay(stallTimeout + 20)
     fallback.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
     fallback.resolveGetHeightOrThrow(100)
     await Utils.delay(10)
     fallback.triggerHeightSubscription(101)
@@ -3904,7 +3896,6 @@ describe("SourceManager height subscription", () => {
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Down({reason: "rotated"}))
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(102)
     let _ = await waiting
 
@@ -3969,7 +3960,6 @@ describe("SourceManager height subscription", () => {
     let samplesWhileDown = sourceManager->SourceManager.getHeightStreamSamples
 
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(101)
     let _ = await waiting
 
@@ -4019,7 +4009,6 @@ describe("SourceManager height subscription", () => {
       )
     await Utils.delay(0)
     stuckMock.setHeightSubscriptionStatus(Down({reason: "closed"}))
-    await Utils.delay(0)
 
     // The other source decides the wait while the stuck one is mid-poll.
     fastMock.resolveGetHeightOrThrow(102)
