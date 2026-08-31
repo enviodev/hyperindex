@@ -35,19 +35,21 @@ use super::fields::{
 };
 use super::inflight::Inflight;
 use super::responses;
+use crate::evm_hypersync_source::query::{BlockField, TransactionField};
 use crate::block_store::BlockStore;
 use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 
 pub(crate) type FetchCache = Inflight<FetchKey, Arc<Json>, RpcError>;
 
-/// One outstanding JSON-RPC read, as the deduplication map keys it. The hash is
-/// kept in the hex form the request sends so a key needs no re-encoding.
-#[derive(Clone, PartialEq, Eq, Hash)]
+/// One outstanding JSON-RPC read, as the deduplication map keys it. A hash is
+/// held as its bytes — the one canonical form — and rendered where the request
+/// is built.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum FetchKey {
     Block(u64),
-    Transaction(Box<str>),
-    Receipt(Box<str>),
+    Transaction([u8; 32]),
+    Receipt([u8; 32]),
 }
 
 impl FetchKey {
@@ -63,16 +65,23 @@ impl FetchKey {
         match self {
             // `false`: transaction hashes only. The logs already name every
             // transaction this page cares about.
-            FetchKey::Block(number) => json!([format!("0x{number:x}"), false]),
-            FetchKey::Transaction(hash) | FetchKey::Receipt(hash) => json!([hash]),
+            FetchKey::Block(number) => json!([format!("0x{number:x}")  , false]),
+            FetchKey::Transaction(hash) | FetchKey::Receipt(hash) => {
+                json!([format::Hash::from(*hash).encode_hex()])
+            }
         }
     }
 
     fn describe(&self) -> String {
         match self {
             FetchKey::Block(number) => format!("block {number}"),
-            FetchKey::Transaction(hash) => format!("transaction {hash}"),
-            FetchKey::Receipt(hash) => format!("the receipt of transaction {hash}"),
+            FetchKey::Transaction(hash) => {
+                format!("transaction {}", format::Hash::from(*hash).encode_hex())
+            }
+            FetchKey::Receipt(hash) => format!(
+                "the receipt of transaction {}",
+                format::Hash::from(*hash).encode_hex()
+            ),
         }
     }
 }
@@ -244,12 +253,12 @@ async fn require(
 /// both come from the transaction unless only the receipt is being read
 /// anyway, so a selection never pays for two requests where one would do.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct TxPlan {
+struct TxReads {
     transaction: bool,
     receipt: bool,
 }
 
-impl TxPlan {
+impl TxReads {
     fn for_mask(mask: u64) -> Self {
         let mut transaction = false;
         let mut receipt = false;
@@ -269,7 +278,7 @@ impl TxPlan {
         if either && !receipt {
             transaction = true;
         }
-        TxPlan {
+        TxReads {
             transaction,
             receipt,
         }
@@ -320,21 +329,18 @@ pub(crate) async fn enrich(
             ..Default::default()
         })
         .collect();
-    for (number, _, block) in &blocks {
-        if *number > 0 {
-            if let Some(parent_hash) = block.parent_hash.clone() {
-                observations.push(Block {
-                    number: Some(number - 1),
-                    hash: Some(parent_hash),
-                    ..Default::default()
-                });
-            }
-        }
-    }
+    observations.extend(blocks.iter().flat_map(|(_, blocks)| blocks).filter_map(|block| {
+        let number = block.number.filter(|&number| number > 0)?;
+        Some(Block {
+            number: Some(number - 1),
+            hash: Some(block.parent_hash.clone()?),
+            ..Default::default()
+        })
+    }));
     page_blocks.insert_evm_blocks(observations);
 
-    for (_, covering, block) in blocks {
-        page_blocks.insert_evm_blocks_covering(vec![block], covering);
+    for (covering, blocks) in blocks {
+        page_blocks.insert_evm_blocks_covering(blocks, covering);
     }
 
     // Every referenced transaction gets its log-derived row even when nothing
@@ -352,8 +358,8 @@ pub(crate) async fn enrich(
         .collect();
     page_transactions.insert_evm_txs(log_rows);
 
-    for (_, covering, tx) in transactions {
-        page_transactions.insert_evm_txs_covering(vec![tx], covering);
+    for (covering, txs) in transactions {
+        page_transactions.insert_evm_txs_covering(txs, covering);
     }
 
     Ok(EnrichedPage {
@@ -374,6 +380,23 @@ fn boundary_blocks(from_block: u64, to_block: u64) -> Vec<u64> {
     blocks
 }
 
+/// A set of keys to read for one field selection. The rows of a page almost
+/// always want the same fields, so resolving the selection per group rather
+/// than per row does it once, and lets the group's results merge into the store
+/// in a single batch instead of one locked insert per row.
+struct BlockGroup {
+    covering: u64,
+    fields: Vec<BlockField>,
+    numbers: Vec<u64>,
+}
+
+struct TxGroup {
+    covering: u64,
+    fields: Vec<TransactionField>,
+    reads: TxReads,
+    entries: Vec<((u64, u32), format::Hash)>,
+}
+
 /// Which blocks to read, and for which fields. A referenced block is skipped
 /// when the store was already asked for everything this page needs of it; a
 /// boundary block never is.
@@ -382,44 +405,69 @@ fn plan_blocks(
     from_block: u64,
     to_block: u64,
     known: &BlockStore,
-) -> Vec<(u64, u64)> {
+) -> Vec<BlockGroup> {
     let boundary = boundary_blocks(from_block, to_block);
-    refs.blocks
-        .iter()
-        .filter_map(|(&number, block_ref)| {
-            let wanted = block_ref.mask & !BLOCK_KEY_MASK;
-            if !boundary.contains(&number) && (wanted == 0 || known.covers(number, wanted)) {
-                return None;
-            }
-            // Every fetched block is read for the reorg fields too: they come
-            // in the same response, and holding them lets a later partition
-            // skip the block entirely.
-            Some((number, wanted | BLOCK_OBSERVATION_MASK))
+    let mut by_covering: HashMap<u64, Vec<u64>> = HashMap::new();
+    for (&number, block_ref) in &refs.blocks {
+        let wanted = block_ref.mask & !BLOCK_KEY_MASK;
+        if !boundary.contains(&number) && (wanted == 0 || known.covers(number, wanted)) {
+            continue;
+        }
+        // Every fetched block is read for the reorg fields too: they come in
+        // the same response, and holding them lets a later partition skip the
+        // block entirely.
+        by_covering
+            .entry(wanted | BLOCK_OBSERVATION_MASK)
+            .or_default()
+            .push(number);
+    }
+    for &number in &boundary {
+        if !refs.blocks.contains_key(&number) {
+            by_covering
+                .entry(BLOCK_OBSERVATION_MASK)
+                .or_default()
+                .push(number);
+        }
+    }
+    by_covering
+        .into_iter()
+        .map(|(covering, numbers)| BlockGroup {
+            covering,
+            fields: block_fields_in(covering),
+            numbers,
         })
-        .chain(
-            boundary
-                .iter()
-                .filter(|number| !refs.blocks.contains_key(number))
-                .map(|&number| (number, BLOCK_OBSERVATION_MASK)),
-        )
         .collect()
 }
 
 /// Which transactions to read, and for which fields. A transaction whose
 /// selected fields all come off the log, or which the store already covers,
 /// needs no request at all.
-fn plan_transactions(
-    refs: &PageRefs,
-    known: &TransactionStore,
-) -> Vec<((u64, u32), u64, Box<str>)> {
-    refs.transactions
-        .iter()
-        .filter_map(|(&key, tx_ref)| {
-            let wanted = tx_ref.mask & !TX_LOG_MASK;
-            if wanted == 0 || TxPlan::for_mask(wanted).is_empty() || known.covers(key, wanted) {
+fn plan_transactions(refs: &PageRefs, known: &TransactionStore) -> Vec<TxGroup> {
+    let mut by_covering: HashMap<u64, Vec<((u64, u32), format::Hash)>> = HashMap::new();
+    for (&key, tx_ref) in &refs.transactions {
+        let wanted = tx_ref.mask & !TX_LOG_MASK;
+        if wanted == 0 || known.covers(key, wanted) {
+            continue;
+        }
+        by_covering
+            .entry(wanted)
+            .or_default()
+            .push((key, tx_ref.hash.clone()));
+    }
+    by_covering
+        .into_iter()
+        .filter_map(|(covering, entries)| {
+            let reads = TxReads::for_mask(covering);
+            // Nothing to ask a provider for: every selected field is on the log.
+            if reads.is_empty() {
                 return None;
             }
-            Some((key, wanted, tx_ref.hash.encode_hex().into_boxed_str()))
+            Some(TxGroup {
+                covering,
+                fields: tx_fields_in(covering),
+                reads,
+                entries,
+            })
         })
         .collect()
 }
@@ -436,44 +484,50 @@ pub(crate) async fn fetch_block_hashes(
     block_numbers: &[u64],
     should_checksum: bool,
 ) -> Result<BlockStore, EnrichError> {
-    let plan: Vec<(u64, u64)> = block_numbers
-        .iter()
-        .map(|&number| (number, BLOCK_OBSERVATION_MASK))
-        .collect();
-    let blocks = fetch_blocks(client, cache, stats, &plan).await?;
+    let groups = [BlockGroup {
+        covering: BLOCK_OBSERVATION_MASK,
+        fields: block_fields_in(BLOCK_OBSERVATION_MASK),
+        numbers: block_numbers.to_vec(),
+    }];
+    let blocks = fetch_blocks(client, cache, stats, &groups).await?;
 
     let page = BlockStore::new_evm(should_checksum);
-    let mut parents = Vec::new();
-    for (number, _, block) in &blocks {
-        if *number > 0 {
-            if let Some(parent_hash) = block.parent_hash.clone() {
-                parents.push(Block {
-                    number: Some(number - 1),
-                    hash: Some(parent_hash),
-                    ..Default::default()
-                });
-            }
-        }
-    }
+    let parents: Vec<Block> = blocks
+        .iter()
+        .flat_map(|(_, blocks)| blocks)
+        .filter_map(|block| {
+            let number = block.number.filter(|&number| number > 0)?;
+            Some(Block {
+                number: Some(number - 1),
+                hash: Some(block.parent_hash.clone()?),
+                ..Default::default()
+            })
+        })
+        .collect();
     page.insert_evm_blocks(parents);
-    for (_, covering, block) in blocks {
-        page.insert_evm_blocks_covering(vec![block], covering);
+    for (covering, blocks) in blocks {
+        page.insert_evm_blocks_covering(blocks, covering);
     }
     Ok(page)
 }
 
-/// Fetch and decode each planned block, returning it with the mask it covers.
+/// Fetch and decode every planned block, one group at a time but all
+/// concurrently, keeping each group's rows together for a single insert.
 async fn fetch_blocks(
     client: &Arc<JsonRpcClient>,
     cache: &FetchCache,
     stats: &Stats,
-    plan: &[(u64, u64)],
-) -> Result<Vec<(u64, u64, Block)>, EnrichError> {
-    let fetches = plan.iter().map(|&(number, covering)| async move {
-        let response = require(client, cache, stats, FetchKey::Block(number)).await?;
-        let block = responses::build_block(&response, &block_fields_in(covering))
-            .map_err(EnrichError::FieldSelection)?;
-        Ok((number, covering, block))
+    groups: &[BlockGroup],
+) -> Result<Vec<(u64, Vec<Block>)>, EnrichError> {
+    let fetches = groups.iter().map(|group| async move {
+        let blocks = join_all(group.numbers.iter().map(|&number| async move {
+            let response = require(client, cache, stats, FetchKey::Block(number)).await?;
+            responses::build_block(&response, &group.fields).map_err(EnrichError::FieldSelection)
+        }))
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, EnrichError>>()?;
+        Ok((group.covering, blocks))
     });
     join_all(fetches).await.into_iter().collect()
 }
@@ -482,54 +536,55 @@ async fn fetch_transactions(
     client: &Arc<JsonRpcClient>,
     cache: &FetchCache,
     stats: &Stats,
-    plan: &[((u64, u32), u64, Box<str>)],
-) -> Result<Vec<((u64, u32), u64, Transaction)>, EnrichError> {
-    let fetches = plan.iter().map(
-        |((block_number, transaction_index), covering, hash)| async move {
-            let selection = tx_fields_in(*covering);
-            let plan = TxPlan::for_mask(*covering);
-            let (transaction, receipt) = futures_util::future::try_join(
-                read_if(plan.transaction, client, cache, stats, || {
-                    FetchKey::Transaction(hash.clone())
-                }),
-                read_if(plan.receipt, client, cache, stats, || {
-                    FetchKey::Receipt(hash.clone())
-                }),
-            )
-            .await?;
+    groups: &[TxGroup],
+) -> Result<Vec<(u64, Vec<Transaction>)>, EnrichError> {
+    let fetches = groups.iter().map(|group| async move {
+        let txs = join_all(group.entries.iter().map(|((block_number, transaction_index), hash)| {
+            let key = ***hash;
+            async move {
+                let (transaction, receipt) = futures_util::future::try_join(
+                    read_if(group.reads.transaction, client, cache, stats, || {
+                        FetchKey::Transaction(key)
+                    }),
+                    read_if(group.reads.receipt, client, cache, stats, || {
+                        FetchKey::Receipt(key)
+                    }),
+                )
+                .await?;
 
-            let tx_ref = refs_hash(hash)?;
-            let mut tx = responses::build_transaction(
-                *block_number,
-                *transaction_index,
-                &tx_ref,
-                transaction.as_deref(),
-                receipt.as_deref(),
-                &selection,
-            )
-            .map_err(EnrichError::FieldSelection)?;
+                let mut tx = responses::build_transaction(
+                    *block_number,
+                    *transaction_index,
+                    hash,
+                    transaction.as_deref(),
+                    receipt.as_deref(),
+                    &group.fields,
+                )
+                .map_err(EnrichError::FieldSelection)?;
 
-            if responses::needs_effective_gas_price(&tx, &selection) {
-                // The receipt came back without it, so this chain predates
-                // EIP-1559 and the transaction's own gasPrice is the answer.
-                let transaction = match transaction {
-                    Some(transaction) => transaction,
-                    None => {
-                        require(client, cache, stats, FetchKey::Transaction(hash.clone())).await?
-                    }
-                };
-                responses::fill_effective_gas_price(&mut tx, &transaction)
+                if responses::needs_effective_gas_price(&tx, &group.fields) {
+                    // The receipt came back without it, so this chain predates
+                    // EIP-1559 and the transaction's own gasPrice is the answer.
+                    // Only a selection that did not already read the transaction
+                    // pays for a request here.
+                    let transaction = match transaction {
+                        Some(transaction) => transaction,
+                        None => require(client, cache, stats, FetchKey::Transaction(key)).await?,
+                    };
+                    responses::fill_effective_gas_price(&mut tx, &transaction)
+                        .map_err(EnrichError::FieldSelection)?;
+                }
+
+                responses::check_transaction(&tx, &group.fields)
                     .map_err(EnrichError::FieldSelection)?;
+                Ok(tx)
             }
-
-            responses::check_transaction(&tx, &selection).map_err(EnrichError::FieldSelection)?;
-            Ok((
-                (*block_number, *transaction_index),
-                *covering | TX_LOG_MASK,
-                tx,
-            ))
-        },
-    );
+        }))
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, EnrichError>>()?;
+        Ok((group.covering | TX_LOG_MASK, txs))
+    });
     join_all(fetches).await.into_iter().collect()
 }
 
@@ -544,11 +599,6 @@ async fn read_if(
         return Ok(None);
     }
     require(client, cache, stats, key()).await.map(Some)
-}
-
-fn refs_hash(hash: &str) -> Result<format::Hash, EnrichError> {
-    format::Hash::decode_hex(hash)
-        .map_err(|e| EnrichError::FieldSelection(anyhow::anyhow!("transaction hash {hash}: {e}")))
 }
 
 #[cfg(test)]
@@ -586,10 +636,22 @@ mod tests {
         refs
     }
 
-    fn planned_numbers(plan: &[(u64, u64)]) -> Vec<u64> {
-        let mut numbers: Vec<u64> = plan.iter().map(|&(number, _)| number).collect();
+    fn planned_numbers(groups: &[BlockGroup]) -> Vec<u64> {
+        let mut numbers: Vec<u64> = groups
+            .iter()
+            .flat_map(|group| group.numbers.iter().copied())
+            .collect();
         numbers.sort_unstable();
         numbers
+    }
+
+    fn planned_keys(groups: &[TxGroup]) -> Vec<(u64, u32)> {
+        let mut keys: Vec<(u64, u32)> = groups
+            .iter()
+            .flat_map(|group| group.entries.iter().map(|(key, _)| *key))
+            .collect();
+        keys.sort_unstable();
+        keys
     }
 
     #[test]
@@ -677,7 +739,7 @@ mod tests {
             tx_bit(EvmTxField::Hash) | tx_bit(EvmTxField::TransactionIndex),
         );
         let plan = plan_transactions(&refs, &TransactionStore::new_evm(false));
-        assert!(plan.is_empty(), "planned {} requests", plan.len());
+        assert!(plan.is_empty(), "planned {} groups", plan.len());
     }
 
     #[test]
@@ -693,7 +755,7 @@ mod tests {
             wanted,
         );
         let plan = plan_transactions(&refs_for(50, 0, wanted), &known);
-        assert!(plan.is_empty(), "planned {} requests", plan.len());
+        assert!(plan.is_empty(), "planned {} groups", plan.len());
     }
 
     #[test]
@@ -712,7 +774,7 @@ mod tests {
             wanted,
         );
         let plan = plan_transactions(&refs_for(50, 0, wanted), &known);
-        assert!(plan.is_empty(), "planned {} requests", plan.len());
+        assert!(plan.is_empty(), "planned {} groups", plan.len());
     }
 
     #[test]
@@ -741,34 +803,58 @@ mod tests {
             },
         );
         let plan = plan_transactions(&refs, &TransactionStore::new_evm(false));
-        assert_eq!(
-            plan.iter().map(|(key, _, _)| *key).collect::<Vec<_>>(),
-            vec![(50, 1)]
-        );
+        assert_eq!(planned_keys(&plan), vec![(50, 1)]);
+    }
+
+    #[test]
+    fn rows_wanting_the_same_fields_are_planned_as_one_group() {
+        // Grouping is what keeps the per-row work off the hot path: the field
+        // list is resolved once per group and the rows merge in one batch.
+        let mut refs = PageRefs::default();
+        let gas = tx_bit(EvmTxField::Gas);
+        let input = tx_bit(EvmTxField::Input);
+        for (index, mask) in [(0u32, gas), (1, gas), (2, input)] {
+            refs.add(
+                50,
+                index,
+                &hash(0xbb),
+                &hash(0xc0 + index as u8),
+                ItemFields {
+                    block_mask: 0,
+                    tx_mask: mask,
+                },
+            );
+        }
+        let mut sizes: Vec<usize> = plan_transactions(&refs, &TransactionStore::new_evm(false))
+            .iter()
+            .map(|group| group.entries.len())
+            .collect();
+        sizes.sort_unstable();
+        assert_eq!(sizes, vec![1, 2]);
     }
 
     #[test]
     fn the_carrier_of_the_selected_fields_decides_which_responses_are_read() {
         let plans = (
             // Transaction-only.
-            TxPlan::for_mask(tx_bit(EvmTxField::Input)),
+            TxReads::for_mask(tx_bit(EvmTxField::Input)),
             // Receipt-only.
-            TxPlan::for_mask(tx_bit(EvmTxField::GasUsed)),
+            TxReads::for_mask(tx_bit(EvmTxField::GasUsed)),
             // One of each.
-            TxPlan::for_mask(tx_bit(EvmTxField::Input) | tx_bit(EvmTxField::GasUsed)),
+            TxReads::for_mask(tx_bit(EvmTxField::Input) | tx_bit(EvmTxField::GasUsed)),
             // Carried by both, so the transaction alone answers it.
-            TxPlan::for_mask(tx_bit(EvmTxField::From)),
+            TxReads::for_mask(tx_bit(EvmTxField::From)),
             // Carried by both, alongside a receipt-only field: no second request.
-            TxPlan::for_mask(tx_bit(EvmTxField::From) | tx_bit(EvmTxField::GasUsed)),
+            TxReads::for_mask(tx_bit(EvmTxField::From) | tx_bit(EvmTxField::GasUsed)),
         );
         assert_eq!(
             plans,
             (
-                TxPlan { transaction: true, receipt: false },
-                TxPlan { transaction: false, receipt: true },
-                TxPlan { transaction: true, receipt: true },
-                TxPlan { transaction: true, receipt: false },
-                TxPlan { transaction: false, receipt: true },
+                TxReads { transaction: true, receipt: false },
+                TxReads { transaction: false, receipt: true },
+                TxReads { transaction: true, receipt: true },
+                TxReads { transaction: true, receipt: false },
+                TxReads { transaction: false, receipt: true },
             )
         );
     }
