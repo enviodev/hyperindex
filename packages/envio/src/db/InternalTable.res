@@ -568,6 +568,10 @@ module Checkpoints = {
   )
 
   let makeGetReorgCheckpointsQuery = (~pgSchema): string => {
+    // Ordered by id, which within a chain is block order: both consumers of
+    // these rows — the safe-checkpoint scan and the block-store seed — read them
+    // as ascending. Physical row order can't stand in for that, since a rollback
+    // frees space that later checkpoints are written back into.
     // Use CTE to pre-filter chains and compute safe_block once per chain
     // This is faster because:
     // 1. Chains table is small, so filtering it first is cheap
@@ -590,7 +594,8 @@ FROM "${pgSchema}"."${table.tableName}" cp
 INNER JOIN reorg_chains rc 
   ON cp."${(#chain_id: field :> string)}" = rc.id
 WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
-  AND cp."${(#block_number: field :> string)}" >= rc.safe_block;` // Include safe_block checkpoint to use it for safe checkpoint tracking
+  AND cp."${(#block_number: field :> string)}" >= rc.safe_block
+ORDER BY cp."${(#id: field :> string)}";` // Include safe_block checkpoint to use it for safe checkpoint tracking
   }
 
   let makeCommitedCheckpointIdQuery = (~pgSchema) => {

@@ -128,22 +128,26 @@ and executeRollback = async (
   }
 
   // The diff computed here replaces a pending one rather than merging with it,
-  // so its deletes have to cover everything that one would have deleted. A
-  // lower target covers a higher one within the same scope, but two scopes
-  // naming different chains only meet at Global. The flush above leaves a
-  // pending diff only when no batch has come along to carry it.
+  // so its deletes have to cover everything that one would have deleted. A lower
+  // target covers a higher one within the same scope, but two scopes naming
+  // different chains only meet at Global. The flush above leaves a diff pending
+  // only when no batch has come along to carry it.
   let (scope, rollbackTargetCheckpointId) = {
-    let scope = (state->IndexerState.config).isIsolatedMultichain
-      ? RollbackScope.Isolated(reorgChain)
-      : Global
+    let scope: RollbackScope.t =
+      (state->IndexerState.config).isIsolatedMultichain ? Isolated(reorgChain) : Global
     switch state->IndexerState.pendingRollback {
     | None => (scope, rollbackTargetCheckpointId)
-    | Some({scope: pendingScope, targetCheckpointId: pendingTargetCheckpointId}) => (
-        scope == pendingScope ? scope : Global,
-        rollbackTargetCheckpointId < pendingTargetCheckpointId
-          ? rollbackTargetCheckpointId
-          : pendingTargetCheckpointId,
-      )
+    | Some({scope: pendingScope, targetCheckpointId: pendingTarget}) =>
+      let target =
+        rollbackTargetCheckpointId < pendingTarget ? rollbackTargetCheckpointId : pendingTarget
+      if scope == pendingScope {
+        (scope, target)
+      } else {
+        logger->Logging.childInfo(
+          "Widening the rollback to every chain: another chain's rollback is still unwritten",
+        )
+        (Global, target)
+      }
     }
   }
 
