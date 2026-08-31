@@ -12,7 +12,7 @@ let makeClickHouseEntitySchema = (table: Table.table, ~skipColumn: option<string
           | Date => {
               let dateSchema = Utils.Schema.clickHouseDate->S.toUnknown
               if f.isNullable {
-                S.null(dateSchema)->S.toUnknown
+                Utils.Schema.nullTolerant(dateSchema)->S.toUnknown
               } else if f.isArray {
                 S.array(dateSchema)->S.toUnknown
               } else {

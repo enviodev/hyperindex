@@ -51,7 +51,7 @@ let make = (~configYaml, ~schema=?, ~env=?, ~files=?, ~handlers=?, ~unsupported=
   // file down before the skip could apply.
   let configYaml = switch IndexerRunner.selectedBackend {
   | #clickhouse if !isUnsupported => configYaml->withClickHouseStorage
-  | #clickhouse | #memory | #postgres => configYaml
+  | #clickhouse | #postgres => configYaml
   }
 
   let withIndexerTypes = handlers->Option.isSome

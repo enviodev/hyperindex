@@ -450,7 +450,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
           | BigInt => Utils.BigInt.schema->S.toUnknown
           | Option(child)
           | Null(child) =>
-            S.null(child->coerceSchema)->S.toUnknown
+            Utils.Schema.nullTolerant(child->coerceSchema)->S.toUnknown
           | Array(child) => {
               hasArrayField := true
               S.array(child->coerceSchema)->S.toUnknown
