@@ -9,11 +9,8 @@ open Vitest
 // Registration only derives types and never reaches the server, so none of this
 // needs a ClickHouse behind it.
 
-let enumConfig: Table.enumConfig<Table.enum> = {
-  name: "TestEnum",
-  variants: ["A", "B"]->(Utils.magic: array<string> => array<Table.enum>),
-  schema: S.string->(Utils.magic: S.t<string> => S.t<Table.enum>),
-}
+let enumConfig =
+  Table.makeEnumConfig(~name="TestEnum", ~variants=["A", "B"])->Table.fromGenericEnumConfig
 
 // Built from an exhaustive switch rather than a hand-kept list: a new
 // `Table.fieldType` constructor fails to compile here instead of reaching a
@@ -64,10 +61,9 @@ let fieldTypes =
 // ClickHouse has no `Nullable(Array(...))`, which the next test pins.
 let everyColumn =
   fieldTypes->Array.flatMap(fieldType =>
-    [(false, false), (true, false), (false, true)]->Array.map(((
-      isNullable,
-      isArray,
-    )) => ClickHouse.makeColumnSpec(~name="c", ~fieldType, ~isNullable, ~isArray))
+    [(false, false), (true, false), (false, true)]->Array.map(((isNullable, isArray)) =>
+      ClickHouse.makeColumnSpec(~name="c", ~fieldType, ~isNullable, ~isArray)
+    )
   )
 
 let sink = ClickHouse.makeSink(

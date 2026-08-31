@@ -139,19 +139,6 @@ let kindOfOrdinal = ordinal =>
   | unknown => JsError.throwWithMessage(`Unknown ClickHouse column kind ${unknown->Int.toString}`)
   }
 
-type column = {name: string, kind: kind, isNullable: bool}
-type table = {handle: int, name: string, columns: array<column>}
-
-let makeTable = (~name, {handle, names, kinds, nullable}: registeredTable) => {
-  handle,
-  name,
-  columns: names->Array.mapWithIndex((name, index) => {
-    name,
-    kind: kinds->Array.getUnsafe(index)->kindOfOrdinal,
-    isNullable: nullable->Array.getUnsafe(index),
-  }),
-}
-
 external asString: unknown => string = "%identity"
 @val external toNumber: unknown => float = "Number"
 @val external toBigInt: unknown => bigint = "BigInt"
@@ -181,6 +168,22 @@ external asString: unknown => string = "%identity"
       }
 )
 
+// A column keeps the replacer it was registered with: it closes over nothing
+// but the column's name, and a batch has as many rows as the sink can hold.
+type column = {name: string, kind: kind, isNullable: bool, replacer: JSON.replacer}
+type table = {handle: int, name: string, columns: array<column>}
+
+let makeTable = (~name, {handle, names, kinds, nullable}: registeredTable) => {
+  handle,
+  name,
+  columns: names->Array.mapWithIndex((name, index) => {
+    name,
+    kind: kinds->Array.getUnsafe(index)->kindOfOrdinal,
+    isNullable: nullable->Array.getUnsafe(index),
+    replacer: Replacer(jsonSafe(~column=name)),
+  }),
+}
+
 let toText = (value: unknown, ~replacer) =>
   switch value->typeof {
   | #string => value->asString
@@ -205,7 +208,7 @@ type builder = {
 %%private(let noUnsigned = BigUint64Array.fromLength(0))
 %%private(let noSigned = BigInt64Array.fromLength(0))
 
-let makeBuilder = ({name, kind, isNullable}: column, ~rows) => {
+let makeBuilder = ({name, kind, isNullable, replacer}: column, ~rows) => {
   name,
   kind,
   isNullable,
@@ -213,7 +216,7 @@ let makeBuilder = ({name, kind, isNullable}: column, ~rows) => {
   unsigned: kind === U64 ? BigUint64Array.fromLength(rows) : noUnsigned,
   signed: kind === I64 ? BigInt64Array.fromLength(rows) : noSigned,
   texts: kind === Text ? Array.make(~length=rows, "") : [],
-  replacer: Replacer(jsonSafe(~column=name)),
+  replacer,
   nulls: None,
   rows,
 }

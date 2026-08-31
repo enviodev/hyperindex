@@ -1,9 +1,8 @@
 open Vitest
 
-// A column the handler set nothing for used to be stored as the type's zero:
-// RowBinary carries no "absent", so the encoder wrote the default ClickHouse
-// would have substituted. That is a number the handler never chose, and nothing
-// downstream can tell it from one it did. The write has to refuse it instead.
+// RowBinary carries no "absent", so a column the handler set nothing for has
+// nowhere to go but the type's zero — a number the handler never chose, and one
+// nothing downstream can tell from a number it did. The write refuses it.
 
 let scenario = Scenario.make(
   ~configYaml=`
@@ -90,7 +89,11 @@ describe("ClickHouse refuses a required column the handler left unset", () => {
         failure->Option.map(((message, _)) => message),
         failure->Option.mapOr(false, ((_, reason)) => reason->String.includes("amount")),
         stored->String.trim,
-      )).toEqual((Some("Failed to convert items for ClickHouse table \"envio_history_Counted\""), true, "0"))
+      )).toEqual((
+        Some("Failed to convert items for ClickHouse table \"envio_history_Counted\""),
+        true,
+        "0",
+      ))
     },
   )
 })

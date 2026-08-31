@@ -9,8 +9,7 @@ use tokio::net::TcpStream;
 
 pub struct Request {
     /// The request line and headers verbatim, for a test that asserts on what
-    /// was sent rather than on what it meant. Only the ClickHouse mock reads it,
-    /// and only under `cfg(test)`.
+    /// was sent rather than on what it meant.
     #[cfg_attr(not(test), allow(dead_code))]
     pub head: String,
     pub method: String,

@@ -946,7 +946,11 @@ enum Retry {
 }
 
 /// Conditions a smaller batch is answered differently by, because what ran out
-/// was proportional to the batch's size.
+/// was proportional to the batch's size. Resending is safe for a table in one
+/// partition, where an insert commits a single part or none; an entity with its
+/// own `partitionBy` writes a part per partition, and one of those already
+/// committed would be sent again — the entity view's `LIMIT 1 BY` reads past the
+/// duplicate, a direct query of the history table does not.
 const HALVED_ERROR_CODES: &[u32] = &[
     173, // CANNOT_ALLOCATE_MEMORY
     241, // MEMORY_LIMIT_EXCEEDED

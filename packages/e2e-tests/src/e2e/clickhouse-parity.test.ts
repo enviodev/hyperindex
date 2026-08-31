@@ -96,62 +96,43 @@ describe.skipIf(!reachable)("E2E: ClickHouse mirrors Postgres", () => {
   // own collation, where en_US largely ignores `-` at the primary level and ids
   // like `1-…` and `137-…` interleave differently than ClickHouse puts them,
   // failing the row-for-row comparison on data that actually matches.
-  it("Transfer matches column for column", async () => {
-    const [pg, ch] = await Promise.all([
-      pgRows(
-        `SELECT "id", "from", "to", "value", "block_number", "transaction_hash"
-         FROM "${PG_SCHEMA}"."Transfer" ORDER BY "id" COLLATE "C"`
-      ),
-      chRows(
-        `SELECT id, \`from\`, \`to\`, value, blockNumber, transactionHash
-         FROM ${CH_DATABASE}.\`Transfer\` ORDER BY id`
-      ),
-    ]);
+  const expectParity = async (pgQuery: string, chQuery: string) => {
+    const [pg, ch] = await Promise.all([pgRows(pgQuery), chRows(chQuery)]);
     expect({ hasRows: pg.length > 0, rows: ch }).toEqual({
       hasRows: true,
       rows: asText(pg),
     });
-  });
+  };
+
+  it("Transfer matches column for column", async () =>
+    expectParity(
+      `SELECT "id", "from", "to", "value", "block_number", "transaction_hash"
+       FROM "${PG_SCHEMA}"."Transfer" ORDER BY "id" COLLATE "C"`,
+      `SELECT id, \`from\`, \`to\`, value, blockNumber, transactionHash
+       FROM ${CH_DATABASE}.\`Transfer\` ORDER BY id`
+    ));
 
   // A per-chain entity carries the chain id in its primary key, spelled
   // `chain_id` in Postgres and `chainId` in ClickHouse.
-  it("ChainTransfer matches, chain id included", async () => {
-    const [pg, ch] = await Promise.all([
-      pgRows(
-        `SELECT "id", "from", "value", "chain_id"
-         FROM "${PG_SCHEMA}"."ChainTransfer" ORDER BY "chain_id", "id" COLLATE "C"`
-      ),
-      chRows(
-        `SELECT id, \`from\`, value, chainId
-         FROM ${CH_DATABASE}.\`ChainTransfer\` ORDER BY chainId, id`
-      ),
-    ]);
-    expect({ hasRows: pg.length > 0, rows: ch }).toEqual({
-      hasRows: true,
-      rows: asText(pg),
-    });
-  });
+  it("ChainTransfer matches, chain id included", async () =>
+    expectParity(
+      `SELECT "id", "from", "value", "chain_id"
+       FROM "${PG_SCHEMA}"."ChainTransfer" ORDER BY "chain_id", "id" COLLATE "C"`,
+      `SELECT id, \`from\`, value, chainId
+       FROM ${CH_DATABASE}.\`ChainTransfer\` ORDER BY chainId, id`
+    ));
 
   // The one entity written repeatedly under the same id, and deleted on some
   // events. Postgres holds one upserted row per id; ClickHouse holds every
   // change and its view has to resolve to the same answer — the highest
   // checkpoint per id, with deletes dropped.
-  it("Holder matches after repeated writes and deletes", async () => {
-    const [pg, ch] = await Promise.all([
-      pgRows(
-        `SELECT "id", "last_block", "last_value"
-         FROM "${PG_SCHEMA}"."Holder" ORDER BY "id" COLLATE "C"`
-      ),
-      chRows(
-        `SELECT id, lastBlock, lastValue
-         FROM ${CH_DATABASE}.\`Holder\` ORDER BY id`
-      ),
-    ]);
-    expect({ hasRows: pg.length > 0, rows: ch }).toEqual({
-      hasRows: true,
-      rows: asText(pg),
-    });
-  });
+  it("Holder matches after repeated writes and deletes", async () =>
+    expectParity(
+      `SELECT "id", "last_block", "last_value"
+       FROM "${PG_SCHEMA}"."Holder" ORDER BY "id" COLLATE "C"`,
+      `SELECT id, lastBlock, lastValue
+       FROM ${CH_DATABASE}.\`Holder\` ORDER BY id`
+    ));
 
   it("Holder deletes leave no row in either backend", async () => {
     // The handler sets this id and deletes it again within the same event, so a

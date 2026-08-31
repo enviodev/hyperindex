@@ -42,7 +42,6 @@ export async function closePg(): Promise<void> {
   }
 }
 
-/** True when Postgres accepts a connection. */
 export async function isPgReachable(): Promise<boolean> {
   try {
     await pg().unsafe("SELECT 1");

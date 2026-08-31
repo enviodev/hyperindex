@@ -68,23 +68,15 @@ impl MockClickHouse {
     }
 
     async fn serving(state: State) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
         let state = Arc::new(Mutex::new(state));
-
         let accept_state = state.clone();
-        tokio::spawn(async move {
-            loop {
-                let Ok((stream, _)) = listener.accept().await else {
-                    return;
-                };
-                let state = accept_state.clone();
-                tokio::spawn(async move {
-                    let _ = serve(stream, state).await;
-                });
-            }
-        });
-
+        let url = listening(move |stream| {
+            let state = accept_state.clone();
+            tokio::spawn(async move {
+                let _ = serve(stream, state).await;
+            });
+        })
+        .await;
         Self { url, state }
     }
 
@@ -92,17 +84,8 @@ impl MockClickHouse {
     /// a server or load balancer that black-holes an established connection.
     /// Nothing short of a client-side timeout ends a request against this.
     pub async fn start_unresponsive() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        tokio::spawn(async move {
-            let mut held = Vec::new();
-            loop {
-                let Ok((stream, _)) = listener.accept().await else {
-                    return;
-                };
-                held.push(stream);
-            }
-        });
+        let mut held = Vec::new();
+        let url = listening(move |stream| held.push(stream)).await;
         Self {
             url,
             state: Arc::new(Mutex::new(State::default())),
@@ -155,6 +138,19 @@ impl MockClickHouse {
     pub fn accepted_strings(&self) -> Vec<String> {
         self.accepted_batches().into_iter().flatten().collect()
     }
+}
+
+/// Binds a port and hands every connection to `handle`, answering with the URL
+/// the mock is reachable at.
+async fn listening(mut handle: impl FnMut(TcpStream) + Send + 'static) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            handle(stream);
+        }
+    });
+    url
 }
 
 async fn serve(mut stream: TcpStream, state: Arc<Mutex<State>>) -> std::io::Result<()> {
