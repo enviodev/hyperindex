@@ -28,6 +28,15 @@ let recordRequestStats = (sourceState: sourceState, requestStats: array<Source.r
   })
 }
 
+// A failed call still made its requests; count them, like every other failure
+// path does. Returns the unpacked failure so a caller can log the provider's
+// own message rather than the envelope carrying it.
+let recordFailedRequest = (sourceState: sourceState, exn) => {
+  let failure = exn->Source.unpackNativeRequestFailure
+  sourceState->recordRequestStats(failure.requestStats)
+  failure
+}
+
 // Flattened (source, method) aggregates for Metrics.renderSourceRequests to
 // inline into the /metrics response.
 type requestStatSample = {
@@ -469,9 +478,7 @@ let getSourceNewHeight = async (
             sourceState->recordRequestStats(res.requestStats)
             h := res.height
           } catch {
-          | exn =>
-            let failure = exn->Source.unpackNativeRequestFailure
-            sourceState->recordRequestStats(failure.requestStats)
+          | exn => sourceState->recordFailedRequest(exn)->ignore
           }
           if h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
             await Utils.delay(source.pollingInterval)
@@ -529,11 +536,7 @@ let getSourceNewHeight = async (
         }
       } catch {
       | exn =>
-        // A failed poll still made a request; count it, like every other
-        // failure path does. The provider's own message is inside the envelope,
-        // so log the unpacked cause rather than the envelope itself.
-        let failure = exn->Source.unpackNativeRequestFailure
-        sourceState->recordRequestStats(failure.requestStats)
+        let failure = sourceState->recordFailedRequest(exn)
         let retryInterval = sourceManager.getHeightRetryInterval(~retry=retry.contents)
         logger->Logging.childTrace({
           "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,

@@ -74,10 +74,15 @@ impl IntervalState {
     }
 
     /// A provider reported a structural, source-wide cap — tighten (never
-    /// loosen) the ceiling and return the resulting value.
-    pub fn tighten_source_max(&self, current_source_max: u64, interval: u64) -> u64 {
-        let capped = current_source_max.min(interval);
-        *self.source_max.lock().unwrap() = Some(capped);
+    /// loosen) the ceiling and return the resulting value. The current ceiling
+    /// is read under the same lock that writes it: partitions fail
+    /// concurrently, and one holding a copy read before another's write would
+    /// otherwise raise a cap that was just lowered. `ceiling` is only the
+    /// configured default, for when nothing has capped the source yet.
+    pub fn tighten_source_max(&self, ceiling: u64, interval: u64) -> u64 {
+        let mut source_max = self.source_max.lock().unwrap();
+        let capped = source_max.unwrap_or(ceiling).min(interval);
+        *source_max = Some(capped);
         capped
     }
 }
@@ -130,6 +135,25 @@ mod tests {
         assert_eq!(
             (capped, state.suggested_interval("0", &cfg).0),
             (10_000, 9_900)
+        );
+    }
+
+    #[test]
+    fn tighten_source_max_never_loosens_under_a_stale_read() {
+        // Partitions of one chain fail concurrently, so both read the ceiling
+        // before either wrote. The later write must not raise a cap the earlier
+        // one already lowered — the caller's copy is stale by then.
+        let state = IntervalState::new();
+        let cfg = test_config();
+        let (_, first_read) = state.suggested_interval("a", &cfg);
+        let (_, second_read) = state.suggested_interval("b", &cfg);
+        state.tighten_source_max(first_read, 1_000);
+        assert_eq!(
+            (
+                state.tighten_source_max(second_read, 5_000),
+                state.suggested_interval("a", &cfg).1
+            ),
+            (1_000, 1_000)
         );
     }
 

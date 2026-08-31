@@ -356,25 +356,31 @@ describe("RPC source public contract", () => {
           ~method="eth_getLogs",
           ~params=getLogsParams(),
           ~reply=RpcResult(JSON.Array([log(~logIndex="0x2")])),
+          ~times=2,
         ),
         MockRpcServer.expectCall(
           ~method="eth_getBlockByNumber",
           ~params=blockParams("0x64"),
           ~reply=RpcResult(block100),
+          ~times=2,
         ),
         MockRpcServer.expectCall(
           ~method="eth_getTransactionReceipt",
           ~params=JSON.Array([JSON.String(transactionHash)]),
           ~reply=RpcResult(JSON.Null),
+          ~times=2,
         ),
       ],
       async mock => {
         let registration = makeRegistration(~receiptOnly=true)
         let source = makeSource(~url=mock.url, ~registration)
-        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~retry=2)) {
-        | Error(error) => error
-        | Ok(_) => JsError.throwWithMessage("Expected missing receipt data to be retryable")
-        }
+        let call = async (~retry) =>
+          switch await RpcSourcePins.capture(() => source->invoke(~registration, ~retry)) {
+          | Error(error) => error
+          | Ok(_) => JsError.throwWithMessage("Expected missing receipt data to be retryable")
+          }
+        // The wait ramps with the attempt, so the two are read together.
+        (await call(~retry=0), await call(~retry=2))
       },
     )
 
@@ -382,16 +388,12 @@ describe("RPC source public contract", () => {
     // retry and says which receipt was missing, on both the retry decision
     // the source manager reads and the error the logs carry.
     let notFoundMessage = `The RPC returned null for the receipt of transaction ${transactionHash}. The provider may be load-balanced between nodes that drift from the head independently; indexing continues correctly once the query is retried.`
-    t.expect(error).toEqual(
-      RpcSourcePins.FailedGettingItems({
-        attemptedToBlock: 100,
-        providerMessage: Some(notFoundMessage),
-        retry: Backoff({
-          message: notFoundMessage,
-          backoffMillis: 1_000,
-        }),
-      }),
-    )
+    let expected = backoffMillis => RpcSourcePins.FailedGettingItems({
+      attemptedToBlock: 100,
+      providerMessage: Some(notFoundMessage),
+      retry: Backoff({message: notFoundMessage, backoffMillis}),
+    })
+    t.expect(error).toEqual((expected(100), expected(1_000)))
   })
 
   Async.it("pins consecutive response-too-large interval shrinking", async t => {

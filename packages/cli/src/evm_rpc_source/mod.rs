@@ -269,9 +269,6 @@ struct PageQuery<'a> {
     partition_id: &'a str,
     from_block: u64,
     to_block: u64,
-    /// The structural cap on this source's range, which a provider's own
-    /// "limited to N blocks" may only tighten.
-    source_max: u64,
     selections: &'a [BuiltLogSelection],
     set_cache: &'a Arc<SetCache>,
     decoder: &'a Arc<SelectionDecoder>,
@@ -498,7 +495,6 @@ impl EvmRpcClient {
             partition_id: &params.partition_id,
             from_block,
             to_block,
-            source_max,
             selections: &built.log_selections,
             set_cache: &set_cache,
             decoder: &selection_decoder,
@@ -691,7 +687,6 @@ impl EvmRpcClient {
             partition_id,
             from_block,
             to_block,
-            source_max,
             ..
         } = *query;
         let executed_interval = to_block - from_block + 1;
@@ -701,7 +696,9 @@ impl EvmRpcClient {
         let result = match provider_message.and_then(suggested_block_interval_from_message) {
             // "limited to N blocks" — a structural cap on the whole source; only tighten.
             Some((suggested, true)) => {
-                let capped = self.intervals.tighten_source_max(source_max, suggested);
+                let capped = self
+                    .intervals
+                    .tighten_source_max(self.sync_config.interval_ceiling, suggested);
                 NextPageResult::suggested_to_block(from_block + capped - 1, to_block, request_stats)
             }
             // A one-off suggested range ("retry with the range X-Y") — apply to this partition.
