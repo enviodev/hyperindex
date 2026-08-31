@@ -7,9 +7,6 @@ type requestStatAgg = {mutable count: int, mutable seconds: float}
 
 type sourceState = {
   source: Source.t,
-  // Everything about this source's current height: the stream when one is
-  // connected, the polling that covers it when one isn't, and the counters
-  // describing both.
   feed: HeightFeed.t,
   mutable disabled: bool,
   // Timestamp (ms) when this source last failed during executeQuery.
@@ -127,10 +124,8 @@ let getSourceHeightSamples = (sourceManager: t): array<sourceHeightSample> => {
 }
 
 // Per-source height subscription health for envio_source_height_stream_*.
-// Every source that can subscribe is reported, including one that has never
-// connected — that is a stream nothing else would say anything about. A source
-// that cannot subscribe is skipped, so a chain that only ever polls renders
-// none of it rather than sitting at zero on it.
+// Includes a stream that has never connected — nothing else would say anything
+// about it.
 type heightStreamSample = {
   sourceName: string,
   chainId: ChainId.t,
@@ -748,14 +743,10 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
 
     let watch = (sourceState: sourceState) => {
       if isRealtime {
-        // Lazy and explicit: a source that can push heights subscribes when a
-        // realtime wait starts wanting them, and not before.
         sourceState.feed->HeightFeed.enableStream
       }
       let subscription = sourceState.feed->HeightFeed.onHeightAbove(
         ~knownHeight,
-        // Read per poll rather than captured, so a wait that goes on to stall
-        // slows its own polling down without anything having to restart it.
         ~interval=() =>
           if reducedPolling {
             sourceManager.reducedPollingInterval
@@ -780,11 +771,6 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
       // still being registered. Those are attached now, so take them back off.
       cleanup()
     } else {
-      // A window of silence from a stream that says it is connected: stop taking
-      // its word for it and poll alongside it. This is the one failure a
-      // stream's own staleness detector cannot see, because a transport that
-      // keeps pinging looks alive to it.
-      //
       // Spread across the window, and re-spread on every repeat: every indexer
       // on one provider goes quiet in the same instant that provider does, and
       // putting them all on one schedule is how a quiet chain becomes a

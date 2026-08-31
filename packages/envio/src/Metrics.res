@@ -98,8 +98,6 @@ type sourceHeightMetrics = {
   height: int,
 }
 
-// Only sources that have a height subscription appear, so an indexer with none
-// renders none of it.
 type sourceHeightStreamMetrics = {
   source: string,
   chainId: ChainId.t,
