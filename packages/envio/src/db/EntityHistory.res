@@ -173,7 +173,7 @@ let backfillHistory = (
   ~ids: array<EntityId.t>,
 ) => {
   let idPgType = table->Table.getIdPgFieldType(~pgSchema)
-  let chainIdColumn = table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
+  let chainIdColumn = table->Table.getPgChainIdColumn
   let params = [table->Table.encodeIdsToJson(ids)->(Utils.magic: JSON.t => unknown)]
   sql
   ->Postgres.preparedUnsafe(

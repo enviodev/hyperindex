@@ -1027,11 +1027,6 @@ let executeSet = (
   }
 }
 
-// The column a rollback narrows to when it is isolated to one chain. None for a
-// cross-chain entity, which the isolated path never sees.
-let rollbackChainIdColumn = (entityConfig: Internal.entityConfig) =>
-  entityConfig.table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
-
 let rec writeBatch = async (
   sql,
   ~batch: Batch.t,
@@ -1319,7 +1314,7 @@ let rec writeBatch = async (
                 ~pgSchema,
                 ~entityName=entityConfig.name,
                 ~entityIndex=entityConfig.index,
-                ~chainIdColumn=rollbackChainIdColumn(entityConfig),
+                ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
                 ~scope,
                 ~rollbackTargetCheckpointId,
               )
@@ -1530,7 +1525,7 @@ let makeGetRollbackPreTargetRowsQuery = (
   `SELECT DISTINCT ON (${keyColumnsCommaSeparated}) ${dataFieldsCommaSeparated}, "${EntityHistory.changeFieldName}"
   FROM "${pgSchema}"."${historyTableName}"
   WHERE "${EntityHistory.checkpointIdFieldName}" <= $1${scope->RollbackScope.predicate(
-      ~chainIdColumn=rollbackChainIdColumn(entityConfig),
+      ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
     )}
     AND EXISTS (
       SELECT 1
@@ -1561,7 +1556,7 @@ let makeGetRollbackRemovedIdsQuery = (
   `SELECT DISTINCT ${keyColumns->Array.map(c => `"${c}"`)->Array.joinUnsafe(", ")}
   FROM "${pgSchema}"."${historyTableName}"
   WHERE "${EntityHistory.checkpointIdFieldName}" > $1${scope->RollbackScope.predicate(
-      ~chainIdColumn=rollbackChainIdColumn(entityConfig),
+      ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
     )}
     AND NOT EXISTS (
       SELECT 1
