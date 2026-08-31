@@ -20,6 +20,7 @@
 //! reports a reorg before any event is materialised.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -35,12 +36,18 @@ use super::fields::{
 };
 use super::inflight::Inflight;
 use super::responses;
-use crate::evm_hypersync_source::query::{BlockField, TransactionField};
 use crate::block_store::BlockStore;
+use crate::evm_hypersync_source::query::{BlockField, TransactionField};
 use crate::request_stats::RequestStat;
 use crate::transaction_store::TransactionStore;
 
-pub(crate) type FetchCache = Inflight<FetchKey, Arc<Json>, RpcError>;
+/// What a shared read hands to every waiter: the response, how long the
+/// request took, and a claim flag so exactly one waiter records that timing —
+/// a waiter that is by definition still running, unlike the call that happened
+/// to create the request.
+type Fetched = (Arc<Json>, f64, Arc<AtomicBool>);
+
+pub(crate) type FetchCache = Inflight<FetchKey, Fetched, RpcError>;
 
 /// One outstanding JSON-RPC read, as the deduplication map keys it. A hash is
 /// held as its bytes — the one canonical form — and rendered where the request
@@ -65,7 +72,7 @@ impl FetchKey {
         match self {
             // `false`: transaction hashes only. The logs already name every
             // transaction this page cares about.
-            FetchKey::Block(number) => json!([format!("0x{number:x}")  , false]),
+            FetchKey::Block(number) => json!([format!("0x{number:x}"), false]),
             FetchKey::Transaction(hash) | FetchKey::Receipt(hash) => {
                 json!([format::Hash::from(*hash).encode_hex()])
             }
@@ -99,9 +106,10 @@ pub(crate) enum EnrichError {
     FieldSelection(anyhow::Error),
 }
 
-/// Per-request timings, attributed to the call that issued them: a loader
-/// records into the collector of whichever call created it, and a call that
-/// joins an in-flight request records nothing because it made no request.
+/// Per-request timings. One request contributes exactly one entry, recorded by
+/// whichever call is first to observe the finished read — a call still running,
+/// so the timing always lands in a collector someone will drain. A page that
+/// only joined requests others issued therefore reports none of its own.
 #[derive(Clone, Default)]
 pub(crate) struct Stats(Arc<Mutex<Vec<RequestStat>>>);
 
@@ -133,9 +141,11 @@ pub(crate) struct ItemFields {
 
 struct BlockRef {
     mask: u64,
-    /// The hash the logs in this block reported, which enters the page as an
-    /// observation whether or not the block itself is fetched.
-    log_hash: format::Hash,
+    /// Every distinct hash the logs of this block reported. Each enters the
+    /// page as its own observation, so two selections whose `eth_getLogs`
+    /// responses straddle a fork disagree inside the page and are caught,
+    /// rather than the second hash being dropped as a duplicate.
+    log_hashes: Vec<format::Hash>,
 }
 
 struct TxRef {
@@ -160,13 +170,14 @@ impl PageRefs {
         transaction_hash: &format::Hash,
         fields: ItemFields,
     ) {
-        self.blocks
-            .entry(block_number)
-            .and_modify(|existing| existing.mask |= fields.block_mask)
-            .or_insert_with(|| BlockRef {
-                mask: fields.block_mask,
-                log_hash: block_hash.clone(),
-            });
+        let block = self.blocks.entry(block_number).or_insert_with(|| BlockRef {
+            mask: 0,
+            log_hashes: Vec::new(),
+        });
+        block.mask |= fields.block_mask;
+        if !block.log_hashes.contains(block_hash) {
+            block.log_hashes.push(block_hash.clone());
+        }
         self.transactions
             .entry((block_number, transaction_index))
             .and_modify(|existing| existing.mask |= fields.tx_mask)
@@ -200,33 +211,25 @@ async fn read(
     stats: &Stats,
     key: FetchKey,
 ) -> Result<Option<Arc<Json>>, EnrichError> {
-    let value = cache
+    let method = key.method();
+    let (value, seconds, unclaimed) = cache
         .get(key.clone(), || {
             let client = client.clone();
-            let stats = stats.clone();
-            let method = key.method();
             let params = key.params();
             async move {
                 let started = Instant::now();
                 let result = client.request::<Json>(method, params).await;
-                stats.record(method, started.elapsed().as_secs_f64());
-                result.map(Arc::new)
+                let seconds = started.elapsed().as_secs_f64();
+                result.map(|value| (Arc::new(value), seconds, Arc::new(AtomicBool::new(false))))
             }
         })
         .await
-        .map_err(|err| match Arc::try_unwrap(err) {
-            Ok(err) => EnrichError::Rpc(err),
-            // Another waiter still holds the error; describe it rather than
-            // cloning a type that cannot be cloned.
-            Err(shared) => EnrichError::Rpc(RpcError::Other(anyhow::anyhow!(
-                "{}",
-                match &*shared {
-                    RpcError::JsonRpc { code, message } =>
-                        format!("JSON-RPC error {code}: {message}"),
-                    RpcError::Other(e) => format!("{e:#}"),
-                }
-            ))),
-        })?;
+        .map_err(|err| EnrichError::Rpc((*err).clone()))?;
+
+    // One request, one timing, recorded by whichever waiter gets there first.
+    if !unclaimed.swap(true, Ordering::SeqCst) {
+        stats.record(method, seconds);
+    }
     Ok((!value.is_null()).then_some(value))
 }
 
@@ -323,20 +326,27 @@ pub(crate) async fn enrich(
     let mut observations: Vec<Block> = refs
         .blocks
         .iter()
-        .map(|(&number, block_ref)| Block {
-            number: Some(number),
-            hash: Some(block_ref.log_hash.clone()),
-            ..Default::default()
+        .flat_map(|(&number, block_ref)| {
+            block_ref.log_hashes.iter().map(move |hash| Block {
+                number: Some(number),
+                hash: Some(hash.clone()),
+                ..Default::default()
+            })
         })
         .collect();
-    observations.extend(blocks.iter().flat_map(|(_, blocks)| blocks).filter_map(|block| {
-        let number = block.number.filter(|&number| number > 0)?;
-        Some(Block {
-            number: Some(number - 1),
-            hash: Some(block.parent_hash.clone()?),
-            ..Default::default()
-        })
-    }));
+    observations.extend(
+        blocks
+            .iter()
+            .flat_map(|(_, blocks)| blocks)
+            .filter_map(|block| {
+                let number = block.number.filter(|&number| number > 0)?;
+                Some(Block {
+                    number: Some(number - 1),
+                    hash: Some(block.parent_hash.clone()?),
+                    ..Default::default()
+                })
+            }),
+    );
     page_blocks.insert_evm_blocks(observations);
 
     for (covering, blocks) in blocks {
@@ -522,7 +532,8 @@ async fn fetch_blocks(
     let fetches = groups.iter().map(|group| async move {
         let blocks = join_all(group.numbers.iter().map(|&number| async move {
             let response = require(client, cache, stats, FetchKey::Block(number)).await?;
-            responses::build_block(&response, &group.fields).map_err(EnrichError::FieldSelection)
+            responses::build_block(&response, number, &group.fields)
+                .map_err(EnrichError::FieldSelection)
         }))
         .await
         .into_iter()
@@ -539,47 +550,51 @@ async fn fetch_transactions(
     groups: &[TxGroup],
 ) -> Result<Vec<(u64, Vec<Transaction>)>, EnrichError> {
     let fetches = groups.iter().map(|group| async move {
-        let txs = join_all(group.entries.iter().map(|((block_number, transaction_index), hash)| {
-            let key = ***hash;
-            async move {
-                let (transaction, receipt) = futures_util::future::try_join(
-                    read_if(group.reads.transaction, client, cache, stats, || {
-                        FetchKey::Transaction(key)
-                    }),
-                    read_if(group.reads.receipt, client, cache, stats, || {
-                        FetchKey::Receipt(key)
-                    }),
-                )
-                .await?;
+        let txs = join_all(group.entries.iter().map(
+            |((block_number, transaction_index), hash)| {
+                let key = ***hash;
+                async move {
+                    let (transaction, receipt) = futures_util::future::try_join(
+                        read_if(group.reads.transaction, client, cache, stats, || {
+                            FetchKey::Transaction(key)
+                        }),
+                        read_if(group.reads.receipt, client, cache, stats, || {
+                            FetchKey::Receipt(key)
+                        }),
+                    )
+                    .await?;
 
-                let mut tx = responses::build_transaction(
-                    *block_number,
-                    *transaction_index,
-                    hash,
-                    transaction.as_deref(),
-                    receipt.as_deref(),
-                    &group.fields,
-                )
-                .map_err(EnrichError::FieldSelection)?;
-
-                if responses::needs_effective_gas_price(&tx, &group.fields) {
-                    // The receipt came back without it, so this chain predates
-                    // EIP-1559 and the transaction's own gasPrice is the answer.
-                    // Only a selection that did not already read the transaction
-                    // pays for a request here.
-                    let transaction = match transaction {
-                        Some(transaction) => transaction,
-                        None => require(client, cache, stats, FetchKey::Transaction(key)).await?,
-                    };
-                    responses::fill_effective_gas_price(&mut tx, &transaction)
-                        .map_err(EnrichError::FieldSelection)?;
-                }
-
-                responses::check_transaction(&tx, &group.fields)
+                    let mut tx = responses::build_transaction(
+                        *block_number,
+                        *transaction_index,
+                        hash,
+                        transaction.as_deref(),
+                        receipt.as_deref(),
+                        &group.fields,
+                    )
                     .map_err(EnrichError::FieldSelection)?;
-                Ok(tx)
-            }
-        }))
+
+                    if responses::needs_effective_gas_price(&tx, &group.fields) {
+                        // The receipt came back without it, so this chain predates
+                        // EIP-1559 and the transaction's own gasPrice is the answer.
+                        // Only a selection that did not already read the transaction
+                        // pays for a request here.
+                        let transaction = match transaction {
+                            Some(transaction) => transaction,
+                            None => {
+                                require(client, cache, stats, FetchKey::Transaction(key)).await?
+                            }
+                        };
+                        responses::fill_effective_gas_price(&mut tx, &transaction)
+                            .map_err(EnrichError::FieldSelection)?;
+                    }
+
+                    responses::check_transaction(&tx, &group.fields)
+                        .map_err(EnrichError::FieldSelection)?;
+                    Ok(tx)
+                }
+            },
+        ))
         .await
         .into_iter()
         .collect::<Result<Vec<_>, EnrichError>>()?;
@@ -807,6 +822,28 @@ mod tests {
     }
 
     #[test]
+    fn two_logs_disagreeing_on_a_blocks_hash_both_reach_the_page() {
+        // One `eth_getLogs` per selection means a page's responses can straddle
+        // a reorg. Keeping only the first hash would let the two forks' items
+        // merge into one accepted page; keeping both makes the page conflict
+        // with itself, which is what forces the retry.
+        let mut refs = PageRefs::default();
+        for (index, block_hash) in [(0u32, hash(0xaa)), (1, hash(0xbb)), (2, hash(0xaa))] {
+            refs.add(
+                50,
+                index,
+                &block_hash,
+                &hash(0xcc),
+                ItemFields {
+                    block_mask: 0,
+                    tx_mask: 0,
+                },
+            );
+        }
+        assert_eq!(refs.blocks[&50].log_hashes, vec![hash(0xaa), hash(0xbb)]);
+    }
+
+    #[test]
     fn rows_wanting_the_same_fields_are_planned_as_one_group() {
         // Grouping is what keeps the per-row work off the hot path: the field
         // list is resolved once per group and the rows merge in one batch.
@@ -850,11 +887,26 @@ mod tests {
         assert_eq!(
             plans,
             (
-                TxReads { transaction: true, receipt: false },
-                TxReads { transaction: false, receipt: true },
-                TxReads { transaction: true, receipt: true },
-                TxReads { transaction: true, receipt: false },
-                TxReads { transaction: false, receipt: true },
+                TxReads {
+                    transaction: true,
+                    receipt: false
+                },
+                TxReads {
+                    transaction: false,
+                    receipt: true
+                },
+                TxReads {
+                    transaction: true,
+                    receipt: true
+                },
+                TxReads {
+                    transaction: true,
+                    receipt: false
+                },
+                TxReads {
+                    transaction: false,
+                    receipt: true
+                },
             )
         );
     }

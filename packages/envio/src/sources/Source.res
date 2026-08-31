@@ -77,12 +77,12 @@ type blockRangeFetchResponse = {
   parsedQueueItems: array<Internal.item>,
   // Page of transactions for this response's items, keyed by (blockNumber,
   // transactionIndex); merged into the chain's store on apply. `None` for
-  // sources that keep the transaction inline on the payload (RPC/Fuel/Simulate).
+  // sources that keep the transaction inline on the payload (Fuel/Simulate).
   transactionStore: option<TransactionStore.t>,
   // Page of blocks observed while fetching this range, keyed by block number;
   // merged into the chain's store on apply, where its hashes drive reorg
-  // detection. Sources that keep the block inline on the payload (RPC/Simulate)
-  // contribute hash-only rows built from the block hashes they saw.
+  // detection. A source that keeps the block inline on the payload (Simulate)
+  // contributes hash-only rows built from the block hashes it saw.
   blockStore: BlockStore.t,
   latestFetchedBlockNumber: int,
   stats: blockRangeFetchStats,
@@ -120,12 +120,33 @@ type getItemsRetry =
 type rateLimited = {resetMs: int, requestStats: array<requestStat>}
 exception RateLimited(rateLimited)
 
+// The two failures that can follow requests carry their timings, so a page
+// that ends in a retry still counts towards the source's metrics — the same
+// contract `RateLimited` and `SourceBehindHead` keep.
 type getItemsError =
   | UnsupportedSelection({message: string})
-  | FailedGettingFieldSelection({exn: exn, blockNumber: int, logIndex: int, message: string})
-  | FailedGettingItems({exn: exn, attemptedToBlock: int, retry: getItemsRetry})
+  | FailedGettingFieldSelection({
+      exn: exn,
+      blockNumber: int,
+      logIndex: int,
+      message: string,
+      requestStats: array<requestStat>,
+    })
+  | FailedGettingItems({
+      exn: exn,
+      attemptedToBlock: int,
+      retry: getItemsRetry,
+      requestStats: array<requestStat>,
+    })
 
 exception GetItemsError(getItemsError)
+
+let getItemsErrorRequestStats = (error: getItemsError) =>
+  switch error {
+  // Raised before anything is requested.
+  | UnsupportedSelection(_) => []
+  | FailedGettingFieldSelection({requestStats}) | FailedGettingItems({requestStats}) => requestStats
+  }
 
 type sourceFor = Sync | Fallback | Realtime
 

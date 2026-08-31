@@ -93,18 +93,30 @@ let storedBlockHashes = (blockStore: BlockStore.t): array<ReorgDetection.blockDa
   )
 
 // The page's own stores back `block` and `transaction`, so the pin resolves
-// them the way batch prep does before reading the payload.
-let normalizePage = async (response: Source.blockRangeFetchResponse): pinnedPage => {
+// them the way the indexer does: the pages merge into the chain's stores, and
+// materialisation reads those.
+let normalizePage = async (
+  response: Source.blockRangeFetchResponse,
+  ~blockStore: BlockStore.t,
+  ~transactionStore: TransactionStore.t,
+): pinnedPage => {
+  blockStore->BlockStore.merge(response.blockStore, ~fromBlock=0, ~reportOnly=false)->ignore
+  switch response.transactionStore {
+  | Some(page) => transactionStore->TransactionStore.merge(page)
+  | None => ()
+  }
   await ChainState.materializePageItems(
     ~items=response.parsedQueueItems,
-    ~transactionStore=response.transactionStore,
-    ~blockStore=response.blockStore,
+    ~transactionStore,
+    ~blockStore,
   )
   {
     knownHeight: response.knownHeight,
     latestFetchedBlockNumber: response.latestFetchedBlockNumber,
     events: response.parsedQueueItems->Array.map(normalizeEvent),
-    blockHashes: response.blockStore->storedBlockHashes,
+    // Read from the merged store: merging moves the page's rows into it, so
+    // the page is empty by now.
+    blockHashes: blockStore->storedBlockHashes,
     requestCounts: response.requestStats->countRequests,
   }
 }
@@ -149,7 +161,12 @@ let normalizeError = error =>
     })
   }
 
-let capture = async getPage =>
-  try Ok(await (await getPage())->normalizePage) catch {
+// Each pin drives a single fetch, so the chain's stores start empty and the
+// page's own rows are all there is to materialise from.
+let capture = async getPage => {
+  let blockStore = BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
+  let transactionStore = TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false)
+  try Ok(await (await getPage())->normalizePage(~blockStore, ~transactionStore)) catch {
   | Source.GetItemsError(error) => Error(error->normalizeError)
   }
+}

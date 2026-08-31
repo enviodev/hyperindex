@@ -164,6 +164,7 @@ let make = (
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
+            requestStats: [],
             exn,
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: WithBackoff({

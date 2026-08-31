@@ -171,6 +171,44 @@ pub struct NextPageResult {
     pub retry: Option<RetryDecision>,
 }
 
+impl NextPageResult {
+    /// The shape every outcome shares: no items, nothing to say, nothing to
+    /// retry. Each arm fills in what its own kind means.
+    fn new(kind: &str, to_block: u64, request_stats: Vec<RequestStat>) -> Self {
+        NextPageResult {
+            kind: kind.to_string(),
+            request_stats,
+            to_block: to_block as i64,
+            items: Vec::new(),
+            message: None,
+            error_message: None,
+            retry: None,
+        }
+    }
+}
+
+impl RetryDecision {
+    /// Wait, then ask for the same range again.
+    fn backoff(message: String, backoff_millis: i64) -> Self {
+        RetryDecision {
+            tag: "backoff".to_string(),
+            to_block: None,
+            message: Some(message),
+            backoff_millis: Some(backoff_millis),
+        }
+    }
+
+    /// Ask again for a narrower range, with no wait.
+    fn suggested_to_block(to_block: u64) -> Self {
+        RetryDecision {
+            tag: "suggestedToBlock".to_string(),
+            to_block: Some(to_block as i64),
+            message: None,
+            backoff_millis: None,
+        }
+    }
+}
+
 /// Outcome of a rollback-depth block-hash read. `message` is set when the read
 /// failed, in which case the page returned alongside it is empty.
 #[napi(object)]
@@ -214,14 +252,18 @@ impl From<EnrichError> for PageError {
     }
 }
 
+fn describe_rpc_error(err: &RpcError) -> String {
+    match err {
+        RpcError::JsonRpc { code, message } => format!("JSON-RPC error {code}: {message}"),
+        RpcError::Other(err) => format!("{err:#}"),
+    }
+}
+
 fn describe(err: &EnrichError) -> String {
     match err {
         EnrichError::NotFound(message) => message.clone(),
         EnrichError::FieldSelection(err) => format!("{err:#}"),
-        EnrichError::Rpc(RpcError::JsonRpc { code, message }) => {
-            format!("JSON-RPC error {code}: {message}")
-        }
-        EnrichError::Rpc(RpcError::Other(err)) => format!("{err:#}"),
+        EnrichError::Rpc(err) => describe_rpc_error(err),
     }
 }
 
@@ -445,14 +487,9 @@ impl EvmRpcClient {
         )
         .await;
 
-        let empty = || {
-            (
-                BlockStore::new_evm(should_checksum),
-                TransactionStore::new_evm(should_checksum),
-            )
-        };
-
-        match outcome {
+        // Only a page that was read has stores; every other outcome returns
+        // empty ones, so the match decides the result and the stores follow.
+        let (result, page) = match outcome {
             Ok(Ok((items, page))) => {
                 let executed_interval = to_block - from_block + 1;
                 // Grow this partition's interval only when the full suggested range
@@ -467,91 +504,60 @@ impl EvmRpcClient {
                         source_max,
                     );
                 }
-                Ok((
+                (
                     NextPageResult {
-                        kind: "ok".to_string(),
-                        request_stats: stats.take(),
-                        to_block: to_block as i64,
                         items,
-                        message: None,
-                        error_message: None,
-                        retry: None,
+                        ..NextPageResult::new("ok", to_block, stats.take())
                     },
-                    page.blocks,
-                    page.transactions,
-                ))
+                    Some(page),
+                )
             }
             // The provider answered, but not with the selected fields. Retrying
             // asks the same question of the same chain, so the caller is told to
             // stop rather than to wait.
-            Ok(Err(PageError::FieldSelection(err))) => {
-                let (blocks, transactions) = empty();
-                Ok((
-                    NextPageResult {
-                        kind: "fieldSelection".to_string(),
-                        request_stats: stats.take(),
-                        to_block: to_block as i64,
-                        items: Vec::new(),
-                        message: Some(format!("{err:#}")),
-                        error_message: None,
-                        retry: None,
-                    },
-                    blocks,
-                    transactions,
-                ))
-            }
+            Ok(Err(PageError::FieldSelection(err))) => (
+                NextPageResult {
+                    message: Some(format!("{err:#}")),
+                    ..NextPageResult::new("fieldSelection", to_block, stats.take())
+                },
+                None,
+            ),
             // A row that should exist was not there. The range is fine, so the
             // interval is left alone and only the wait grows with the attempt.
-            Ok(Err(PageError::NotFound(message))) => {
-                let backoff = match params.retry {
-                    0 => 100,
-                    retry => 500 * retry,
-                };
-                let (blocks, transactions) = empty();
-                Ok((
-                    NextPageResult {
-                        kind: "retry".to_string(),
-                        request_stats: stats.take(),
-                        to_block: to_block as i64,
-                        items: Vec::new(),
-                        message: Some(message.clone()),
-                        error_message: Some(message.clone()),
-                        retry: Some(RetryDecision {
-                            tag: "backoff".to_string(),
-                            to_block: None,
-                            // The reason the wait exists travels with it, so a
-                            // retry is explained where it is acted on.
-                            message: Some(message),
-                            backoff_millis: Some(backoff),
-                        }),
-                    },
-                    blocks,
-                    transactions,
-                ))
-            }
+            Ok(Err(PageError::NotFound(message))) => (
+                NextPageResult {
+                    message: Some(message.clone()),
+                    error_message: Some(message.clone()),
+                    retry: Some(RetryDecision::backoff(
+                        // The reason the wait exists travels with it, so a
+                        // retry is explained where it is acted on.
+                        message,
+                        params.retry.saturating_mul(500).max(100),
+                    )),
+                    ..NextPageResult::new("retry", to_block, stats.take())
+                },
+                None,
+            ),
             Ok(Err(PageError::Rpc(err))) => {
-                let message = match &err {
-                    RpcError::JsonRpc { message, .. } => Some(message.clone()),
-                    RpcError::Other(err) => Some(format!("{err:#}")),
-                };
                 let provider_message = match &err {
-                    RpcError::JsonRpc { message, .. } => Some(message.as_str()),
+                    RpcError::JsonRpc { message, .. } => Some(message.clone()),
                     RpcError::Other(_) => None,
                 };
-                let (blocks, transactions) = empty();
-                Ok((
+                let message = provider_message
+                    .clone()
+                    .unwrap_or_else(|| describe_rpc_error(&err));
+                (
                     self.retry_result(
                         &params.partition_id,
                         from_block,
                         to_block,
                         source_max,
-                        provider_message,
+                        provider_message.as_deref(),
                         message,
                         stats.take(),
                     ),
-                    blocks,
-                    transactions,
-                ))
+                    None,
+                )
             }
             // Dropping the timed-out future cancels the in-flight requests.
             Err(_elapsed) => {
@@ -559,22 +565,29 @@ impl EvmRpcClient {
                     "Query took longer than {}ms",
                     self.sync_config.query_timeout_millis
                 );
-                let (blocks, transactions) = empty();
-                Ok((
+                (
                     self.retry_result(
                         &params.partition_id,
                         from_block,
                         to_block,
                         source_max,
-                        Some(&message.clone()),
-                        Some(message),
+                        Some(&message),
+                        message.clone(),
                         stats.take(),
                     ),
-                    blocks,
-                    transactions,
-                ))
+                    None,
+                )
             }
-        }
+        };
+
+        let (blocks, transactions) = match page {
+            Some(page) => (page.blocks, page.transactions),
+            None => (
+                BlockStore::new_evm(should_checksum),
+                TransactionStore::new_evm(should_checksum),
+            ),
+        };
+        Ok((result, blocks, transactions))
     }
 
     /// Reads the logs, then everything the routed items need to be materialised.
@@ -656,30 +669,23 @@ impl EvmRpcClient {
         to_block: u64,
         source_max: u64,
         provider_message: Option<&str>,
-        error_message: Option<String>,
+        error_message: String,
         request_stats: Vec<RequestStat>,
     ) -> NextPageResult {
         let executed_interval = to_block - from_block + 1;
         let shrunk_interval =
             interval::shrink(executed_interval, self.sync_config.backoff_multiplicative);
 
-        let suggested_to_block = |to_block: u64| RetryDecision {
-            tag: "suggestedToBlock".to_string(),
-            to_block: Some(to_block as i64),
-            message: None,
-            backoff_millis: None,
-        };
-
         let retry = match provider_message.and_then(suggested_block_interval_from_message) {
             // "limited to N blocks" — a structural cap on the whole source; only tighten.
             Some((suggested, true)) => {
                 let capped = self.intervals.tighten_source_max(source_max, suggested);
-                suggested_to_block(from_block + capped - 1)
+                RetryDecision::suggested_to_block(from_block + capped - 1)
             }
             // A one-off suggested range ("retry with the range X-Y") — apply to this partition.
             Some((suggested, false)) => {
                 self.intervals.set_partition(partition_id, suggested);
-                suggested_to_block(from_block + suggested - 1)
+                RetryDecision::suggested_to_block(from_block + suggested - 1)
             }
             // Density cap with no suggested number (too many logs / response too large):
             // shrink THIS partition and retry immediately (no wait); acceleration
@@ -689,32 +695,25 @@ impl EvmRpcClient {
                 && provider_message.is_some_and(is_response_too_large_message) =>
             {
                 self.intervals.set_partition(partition_id, shrunk_interval);
-                suggested_to_block(from_block + shrunk_interval - 1)
+                RetryDecision::suggested_to_block(from_block + shrunk_interval - 1)
             }
             // Transient/unknown (including a timeout) — shrink this partition and back off.
             None => {
                 self.intervals.set_partition(partition_id, shrunk_interval);
-                RetryDecision {
-                    tag: "backoff".to_string(),
-                    to_block: None,
-                    message: Some(
-                        "Failed getting data for the block range. Will try smaller block \
-                         range for the next attempt."
-                            .to_string(),
-                    ),
-                    backoff_millis: Some(self.sync_config.backoff_millis as i64),
-                }
+                RetryDecision::backoff(
+                    "Failed getting data for the block range. Will try smaller block range \
+                     for the next attempt."
+                        .to_string(),
+                    self.sync_config.backoff_millis as i64,
+                )
             }
         };
 
         NextPageResult {
-            kind: "retry".to_string(),
-            request_stats,
-            to_block: to_block as i64,
-            items: Vec::new(),
             message: retry.message.clone(),
-            error_message,
+            error_message: Some(error_message),
             retry: Some(retry),
+            ..NextPageResult::new("retry", to_block, request_stats)
         }
     }
 

@@ -177,7 +177,7 @@ describe("RpcSource - field selection end to end", () => {
     }
     await ChainState.materializePageItems(
       ~items=response.parsedQueueItems,
-      ~transactionStore=Some(transactionStore),
+      ~transactionStore,
       ~blockStore,
     )
     response.parsedQueueItems->Array.map(item =>
@@ -458,14 +458,33 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
     async t => {
       let eventConfig = {...EventRegistration.evmOnEventRegistration(~id=sighash), index: 0}
 
-      let blockJson = JSON.Object(
-        Dict.fromArray([
-          ("number", JSON.String("0x2710")),
-          ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
-        ]),
-      )
+      // A block response has to be the block that was asked for, so echo the
+      // requested number back rather than answering with a fixed one.
+      let blockJson = requestBody => {
+        let number =
+          requestBody
+          ->JSON.parseOrThrow
+          ->JSON.Decode.object
+          ->Option.flatMap(Dict.get(_, "params"))
+          ->Option.flatMap(JSON.Decode.array)
+          ->Option.flatMap(params => params->Array.get(0))
+          ->Option.flatMap(JSON.Decode.string)
+          ->Option.getOr("0x2710")
+        JSON.Object(
+          Dict.fromArray([
+            ("number", JSON.String(number)),
+            ("timestamp", JSON.String("0x64")),
+            (
+              "hash",
+              JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+            ),
+            (
+              "parentHash",
+              JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+            ),
+          ]),
+        )
+      }
 
       // eth_getLogs always trips the 50k-log cap; blocks resolve normally.
       let mock = await MockRpcServer.start(~handler=requestBody => {
@@ -489,7 +508,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
                 Dict.fromArray([
                   ("jsonrpc", JSON.String("2.0")),
                   ("id", JSON.Number(1.)),
-                  ("result", blockJson),
+                  ("result", blockJson(requestBody)),
                 ]),
               ),
             ),
@@ -591,14 +610,33 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
     async t => {
       let eventConfig = {...EventRegistration.evmOnEventRegistration(~id=sighash), index: 0}
 
-      let blockJson = JSON.Object(
-        Dict.fromArray([
-          ("number", JSON.String("0x2710")),
-          ("timestamp", JSON.String("0x64")),
-          ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-          ("parentHash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63")),
-        ]),
-      )
+      // A block response has to be the block that was asked for, so echo the
+      // requested number back rather than answering with a fixed one.
+      let blockJson = requestBody => {
+        let number =
+          requestBody
+          ->JSON.parseOrThrow
+          ->JSON.Decode.object
+          ->Option.flatMap(Dict.get(_, "params"))
+          ->Option.flatMap(JSON.Decode.array)
+          ->Option.flatMap(params => params->Array.get(0))
+          ->Option.flatMap(JSON.Decode.string)
+          ->Option.getOr("0x2710")
+        JSON.Object(
+          Dict.fromArray([
+            ("number", JSON.String(number)),
+            ("timestamp", JSON.String("0x64")),
+            (
+              "hash",
+              JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
+            ),
+            (
+              "parentHash",
+              JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+            ),
+          ]),
+        )
+      }
 
       // Only the first eth_getLogs is too dense; the rest fit, so the interval
       // shrinks once then re-adapts upward via acceleration.
@@ -628,7 +666,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
                 Dict.fromArray([
                   ("jsonrpc", JSON.String("2.0")),
                   ("id", JSON.Number(1.)),
-                  ("result", blockJson),
+                  ("result", blockJson(requestBody)),
                 ]),
               ),
             ),

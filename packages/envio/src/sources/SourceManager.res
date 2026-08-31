@@ -985,6 +985,9 @@ let executeQuery = async (
       retryRef := retryRef.contents + 1
 
     | Source.GetItemsError(error) =>
+      // A page that ends in a retry still made requests; count them, as the
+      // rate-limit and behind-head arms above do.
+      sourceState->recordRequestStats(error->Source.getItemsErrorRequestStats)
       switch error {
       | UnsupportedSelection(_)
       | FailedGettingFieldSelection(_) => {

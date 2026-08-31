@@ -243,9 +243,19 @@ describe("HyperSync source contract", () => {
       let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
       server->MockHyperSyncServer.pushResponse(page)
       let page = await source->fetch(~addressSet)
+      // The chain's stores are what materialisation reads; a response's pages
+      // reach them by merging, as the indexer does once the reorg guard passes.
+      let transactionStore = TransactionStore.make(
+        ~ecosystem=Ecosystem.Evm,
+        ~shouldChecksum=false,
+      )
+      switch page.transactionStore {
+      | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
+      | None => ()
+      }
       await ChainState.materializePageItems(
         ~items=page.parsedQueueItems,
-        ~transactionStore=page.transactionStore,
+        ~transactionStore,
         ~blockStore=page.blockStore,
       )
       page.parsedQueueItems
@@ -516,9 +526,17 @@ describe("HyperSync source responses", () => {
       )
       server->MockHyperSyncServer.pushResponse(page)
       let response = await source->fetch(~addressSet)
+      let transactionStore = TransactionStore.make(
+        ~ecosystem=Ecosystem.Evm,
+        ~shouldChecksum=true,
+      )
+      switch response.transactionStore {
+      | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
+      | None => ()
+      }
       await ChainState.materializePageItems(
         ~items=response.parsedQueueItems,
-        ~transactionStore=response.transactionStore,
+        ~transactionStore,
         ~blockStore=response.blockStore,
       )
       let summary = response.parsedQueueItems->Array.map(eventSummary)->Array.getUnsafe(0)

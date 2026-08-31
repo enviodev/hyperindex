@@ -31,8 +31,15 @@ fn unsupported(kind: &str, field: impl std::fmt::Debug) -> anyhow::Error {
 }
 
 /// Build a block row from an `eth_getBlockByNumber` response. `number` is
-/// always read: it keys the row, whether or not the user selected it.
-pub(crate) fn build_block(response: &Json, selection: &[BlockField]) -> Result<Block> {
+/// always read: it keys the row, whether or not the user selected it, and it
+/// must be the block that was asked for — a row keyed by some other number
+/// would leave the requested block silently absent from the page, and with it
+/// a hole in the chain of reorg checkpoints.
+pub(crate) fn build_block(
+    response: &Json,
+    requested: u64,
+    selection: &[BlockField],
+) -> Result<Block> {
     let mut block = Block::default();
     let number = present(response, "number")
         .ok_or_else(|| anyhow!("block response carries no \"number\""))?;
@@ -41,6 +48,12 @@ pub(crate) fn build_block(response: &Json, selection: &[BlockField]) -> Result<B
         crate::block_store::EvmBlockField::Number,
         number,
     )?;
+    if block.number != Some(requested) {
+        return Err(anyhow!(
+            "asked the RPC for block {requested} and it answered with block {}",
+            block.number.map_or_else(|| "none".to_string(), |n| n.to_string()),
+        ));
+    }
 
     for &requested in selection {
         let field = block_field_column(requested).ok_or_else(|| unsupported("block", requested))?;
@@ -162,7 +175,7 @@ mod tests {
             "hash": "0x".to_string() + &"11".repeat(32),
             "gasUsed": "0x30",
         });
-        let block = build_block(&response, &[BlockField::Timestamp]).unwrap();
+        let block = build_block(&response, 16, &[BlockField::Timestamp]).unwrap();
         assert_eq!(
             (
                 block.number,
@@ -179,7 +192,7 @@ mod tests {
         // The provider answered, but not with what the selection needs; serving
         // undefined for it would surface as a silently empty handler field.
         let response = json!({ "number": "0x10" });
-        let err = build_block(&response, &[BlockField::Timestamp])
+        let err = build_block(&response, 16, &[BlockField::Timestamp])
             .unwrap_err()
             .to_string();
         assert!(err.contains("timestamp"), "{err}");
@@ -190,8 +203,20 @@ mod tests {
         // Pre-London blocks have no baseFeePerGas; that is the chain's answer,
         // not a broken provider.
         let response = json!({ "number": "0x10", "baseFeePerGas": Json::Null });
-        let block = build_block(&response, &[BlockField::BaseFeePerGas]).unwrap();
+        let block = build_block(&response, 16, &[BlockField::BaseFeePerGas]).unwrap();
         assert_eq!((block.number, block.base_fee_per_gas), (Some(16), None));
+    }
+
+    #[test]
+    fn a_block_response_for_another_number_is_rejected() {
+        // A node answering with a different block would key the row elsewhere,
+        // leaving the requested block absent from the page while the range
+        // still advanced past it.
+        let response = json!({ "number": "0x11", "timestamp": "0x20" });
+        let err = build_block(&response, 16, &[BlockField::Timestamp])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("block 16") && err.contains("block 17"), "{err}");
     }
 
     #[test]

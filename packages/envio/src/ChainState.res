@@ -444,6 +444,7 @@ let makeFromDbState = (
 
 let logger = (cs: t) => cs.logger
 let blockStore = (cs: t) => cs.blockStore
+let transactionStore = (cs: t) => cs.transactionStore
 let entities = (cs: t) => cs.entities
 
 // Rollback discards every uncommitted change, so this chain's partition is
@@ -773,7 +774,7 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
       let {blockNumber} = eventItem
 
       switch eventItem.payload->Internal.getPayloadTransaction->Nullable.toOption {
-      | Some(_) => () // RPC/simulate/Fuel carry the transaction inline.
+      | Some(_) => () // Fuel and Simulate carry the transaction inline.
       | None =>
         let {transactionIndex} = eventItem
         let mask = eventItem.onEventRegistration.fieldSelection.transactionMask
@@ -800,7 +801,7 @@ let groupBatchItems = (items: array<Internal.item>): (transactionGroups, blockGr
       }
 
       switch eventItem.payload->Internal.getPayloadBlock->Nullable.toOption {
-      | Some(_) => () // RPC/simulate carry the block inline.
+      | Some(_) => () // Simulate carries the block inline.
       | None =>
         let mask = eventItem.onEventRegistration.fieldSelection.blockMask
         let last = blockItemGroups->Array.length - 1
@@ -892,20 +893,18 @@ let materializeBatchItems = async (cs: t, ~items: array<Internal.item>) => {
 }
 
 // Materialise a fetch-response's transactions and blocks onto its items before
-// contract-register handlers read them. Transactions come from the response's
-// page (`None` when kept inline); blocks come from the chain store, which the
-// response's page was already merged into by `registerReorgGuard`.
+// contract-register handlers read them. Both come from the chain stores, which
+// the response's pages were merged into once the reorg guard passed: a source
+// that consults those stores to decide what to fetch leaves out what they
+// already hold, so its page alone does not cover its own items.
 let materializePageItems = async (
   ~items: array<Internal.item>,
-  ~transactionStore: option<TransactionStore.t>,
+  ~transactionStore: TransactionStore.t,
   ~blockStore: BlockStore.t,
 ) => {
   let (txGroups, blockGroups) = items->groupBatchItems
   let _ = await Promise.all2((
-    switch transactionStore {
-    | Some(store) => store->applyTransactionGroups(txGroups)
-    | None => Promise.resolve()
-    },
+    transactionStore->applyTransactionGroups(txGroups),
     blockStore->applyBlockGroups(blockGroups),
   ))
 }
@@ -917,16 +916,7 @@ let handleQueryResult = (
   ~newRegistrations,
   ~latestFetchedBlock: int,
   ~knownHeight,
-  ~transactionStore as txPage: option<TransactionStore.t>,
 ) => {
-  // Merge this response's transaction page into the chain store in lockstep
-  // with appending its items to the buffer. Inline sources contribute no page;
-  // the block page was already merged by `registerReorgGuard`.
-  switch txPage {
-  | Some(page) => cs.transactionStore->TransactionStore.merge(page)
-  | None => ()
-  }
-
   let fs = switch newRegistrations {
   | [] => cs.fetchState
   | _ =>

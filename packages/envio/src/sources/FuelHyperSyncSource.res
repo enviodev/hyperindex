@@ -65,6 +65,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
+            requestStats: [],
             exn: %raw(`null`),
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: ImpossibleForTheQuery({
@@ -79,6 +80,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
+            requestStats: [],
             exn,
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: WithBackoff({

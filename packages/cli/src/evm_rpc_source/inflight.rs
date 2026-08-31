@@ -59,19 +59,17 @@ impl<K: Eq + Hash + Clone, V: Clone, E> Inflight<K, V, E> {
             }
         };
 
-        let result = shared.clone().await;
-
-        // Only retire the entry this call awaited. A later request for the same
-        // key may already have installed its own future, and removing by key
-        // alone would drop that one and let a third request start a duplicate.
-        let mut pending = self.pending.lock().unwrap();
-        if pending
-            .get(&key)
-            .is_some_and(|current| current.ptr_eq(&shared))
-        {
-            pending.remove(&key);
-        }
-        result
+        // Retire on the way out, whichever way that is. Cancellation is routine
+        // — the whole page races a timeout, and one failed read drops its
+        // siblings — and an entry left behind would be joined by the next
+        // request and answered with the cancelled attempt's response, which is
+        // a cache, and one nothing invalidates.
+        let _retire = Retire {
+            pending: &self.pending,
+            key: &key,
+            shared: &shared,
+        };
+        shared.clone().await
     }
 
     /// Forget every in-flight request. Waiters already holding a future still
@@ -80,6 +78,29 @@ impl<K: Eq + Hash + Clone, V: Clone, E> Inflight<K, V, E> {
     /// reorg, where an in-flight response may describe an orphaned fork.
     pub(crate) fn clear(&self) {
         self.pending.lock().unwrap().clear();
+    }
+}
+
+/// Removes an entry once the call that installed it stops waiting on it,
+/// whether it finished or was cancelled.
+struct Retire<'a, K: Eq + Hash, V: Clone, E> {
+    pending: &'a Mutex<HashMap<K, SharedFetch<V, E>>>,
+    key: &'a K,
+    shared: &'a SharedFetch<V, E>,
+}
+
+impl<K: Eq + Hash, V: Clone, E> Drop for Retire<'_, K, V, E> {
+    fn drop(&mut self) {
+        let mut pending = self.pending.lock().unwrap();
+        // Only this call's own entry. A later request may already have
+        // installed its own future for the key, and removing by key alone
+        // would drop that one and let a third request start a duplicate.
+        if pending
+            .get(self.key)
+            .is_some_and(|current| current.ptr_eq(self.shared))
+        {
+            pending.remove(self.key);
+        }
     }
 }
 
@@ -191,6 +212,33 @@ mod tests {
                 calls.load(Ordering::SeqCst)
             ),
             ("boom", "boom", 7, 2)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_cancelled_request_is_retired_rather_than_left_to_be_joined() {
+        // Cancellation is routine here: the whole page races a timeout, and one
+        // failed read drops its siblings. An entry left behind would be joined
+        // by the next request for that key and answered with the cancelled
+        // attempt's response — deduplication silently turned into a cache that
+        // nothing invalidates, holding a view of the chain from before a reorg.
+        let inflight = TestInflight::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let cancelled = tokio::time::timeout(
+            Duration::from_millis(1),
+            inflight.get(1, counting(&calls, 7)),
+        )
+        .await;
+
+        let fresh = inflight.get(1, counting(&calls, 99)).await;
+        assert_eq!(
+            (
+                cancelled.is_err(),
+                inflight.pending.lock().unwrap().len(),
+                fresh.unwrap(),
+                calls.load(Ordering::SeqCst),
+            ),
+            (true, 0, 99, 2)
         );
     }
 

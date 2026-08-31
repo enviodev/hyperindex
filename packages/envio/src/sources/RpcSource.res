@@ -103,6 +103,7 @@ let make = (
       throw(
         Source.GetItemsError(
           FailedGettingFieldSelection({
+            requestStats: result.requestStats,
             message: result.message->Option.getOr(
               "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
             ),
@@ -116,6 +117,7 @@ let make = (
       throw(
         Source.GetItemsError(
           FailedGettingItems({
+            requestStats: result.requestStats,
             // The provider's own message travels as a real error so it still
             // reaches the logs, and so callers have one place to read it from.
             exn: switch result.errorMessage {
@@ -149,8 +151,8 @@ let make = (
     {
       parsedQueueItems,
       transactionStore: Some(pageTransactionStore),
-      // Carries this range's boundary blocks and every log's own block hash,
-      // inserted on the Rust side.
+      // Carries the blocks this range read, its boundary blocks, and every
+      // log's own block hash, all assembled on the Rust side.
       blockStore: pageBlockStore,
       latestFetchedBlockNumber: result.toBlock,
       stats: {

@@ -2496,11 +2496,9 @@ impl Event {
                 sighash,
                 event_signature,
                 field_selection: match event_config.field_selection {
-                    Some(ref selection_config) => {
-                        Some(FieldSelection::try_from_config_field_selection(
-                            selection_config.clone(),
-                        )?)
-                    }
+                    Some(ref selection_config) => Some(
+                        FieldSelection::try_from_config_field_selection(selection_config.clone())?,
+                    ),
                     None => None,
                 },
             })
