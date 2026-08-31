@@ -47,7 +47,8 @@ export function buildHasuraMetadata(manifest, { handlerUrl, publicRole = "public
       case "enum":
         enums.push({
           name: type.name,
-          values: type.values.map((value) => ({ value })),
+          // The manifest names an enum value `name`; Hasura calls it `value`.
+          values: type.values.map(({ name }) => ({ value: name })),
         });
         break;
       case "object":
