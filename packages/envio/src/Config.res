@@ -1148,8 +1148,11 @@ let getPublicConfigJson = () =>
 
 // Drops source URLs from each chain so RPC/hypersync edits don't trigger
 // the resume-time compat check (and don't end up in `envio_info`). Also
-// drops `isDev`, which toggles between `envio dev` and `envio start` and
-// has no bearing on schema/indexing compatibility.
+// drops two fields that have no bearing on schema/indexing compatibility:
+// `isDev`, which toggles between `envio dev` and `envio start`, and
+// `resolvers`, which names where the custom GraphQL resolvers live. Without
+// the latter, adding `resolvers:` to a running indexer reads as an
+// incompatible config change and it refuses to resume.
 let stripSensitiveData = (json: JSON.t): JSON.t => {
   let cloned = json->JSON.stringify->JSON.parseOrThrow
   let stripChains = (ecosystem: option<JSON.t>) =>
@@ -1176,6 +1179,7 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
   switch cloned {
   | Object(obj) => {
       obj->Utils.Dict.deleteInPlace("isDev")
+      obj->Utils.Dict.deleteInPlace("resolvers")
       stripChains(obj->Dict.get("evm"))
       stripChains(obj->Dict.get("fuel"))
       stripChains(obj->Dict.get("svm"))
