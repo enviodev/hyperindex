@@ -374,7 +374,7 @@ fn unbounded_recursion<'a>(
     }
 }
 
-pub(super) type Instructions = (BTreeMap<String, IxIdl>, Unusable, BTreeMap<String, Vec<u8>>);
+type Instructions = (BTreeMap<String, IxIdl>, Unusable, BTreeMap<String, Vec<u8>>);
 
 fn collect_instructions<T>(
     entries: &[Value],
@@ -462,7 +462,7 @@ fn account_array(node: Option<&Value>) -> Result<&[Value]> {
 /// leave it unreadable: defaulting a non-boolean to `false` makes the slot
 /// required, and a transaction that omits it pairs every later pubkey with the
 /// wrong name.
-pub(super) fn account_slot(node: &Value) -> Result<IdlAccount> {
+fn account_slot(node: &Value) -> Result<IdlAccount> {
     let declared = ["optional", "isOptional"]
         .into_iter()
         .find_map(|key| node.get(key).map(|value| (key, value)));
