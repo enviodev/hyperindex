@@ -1,46 +1,46 @@
 import { describe, expect, it } from "vitest";
+import { S } from "envio";
+import {
+  buildRegisteredManifest,
+  createResolver,
+  defineEnum,
+  defineType,
+} from "../../envio/src/resolvers/index.js";
 import { buildHasuraMetadata } from "../../envio/src/resolvers/hasuraMetadata.js";
 
 // The manifest `envio codegen` writes, turned into the metadata Hasura needs to
 // expose each resolver as an action. Pure: manifest in, JSON out, no I/O.
-const manifest = {
-  schemaVersion: 1,
-  resolvers: [
-    {
-      name: "accountPnl",
-      description: "PnL per bucket",
-      args: [
-        { name: "account", type: "String!" },
-        { name: "period", type: "Period" },
-      ],
-      type: "[Bucket!]!",
-      admin: false,
-      cacheTtlMs: 60_000,
-      timeoutMs: 30_000,
-    },
-    {
-      name: "referralCodeUpdates",
-      args: [],
-      type: "String",
-      admin: true,
-      cacheTtlMs: 0,
-      timeoutMs: 5_000,
-    },
-  ],
-  types: [
-    {
-      kind: "object",
-      name: "Bucket",
-      fields: [
-        { name: "label", type: "String!" },
-        { name: "pnl", type: "BigInt!" },
-        { name: "note", type: "String" },
-      ],
-    },
-    { kind: "enum", name: "Period", values: ["Day", "Week"] },
-    { kind: "scalar", name: "BigInt" },
-  ],
-};
+//
+// The manifest here is built from real declarations rather than written by
+// hand. A hand-written one can disagree with what codegen actually emits, and
+// then the metadata is only correct against a manifest that never exists.
+
+const Period = defineEnum("Period", ["Day", "Week"]);
+const Bucket = defineType("Bucket", {
+  label: S.string,
+  pnl: S.bigint,
+  note: S.optional(S.string),
+});
+
+createResolver({
+  name: "accountPnl",
+  description: "PnL per bucket",
+  args: { account: S.string, period: S.optional(Period) },
+  output: S.array(Bucket),
+  timeoutMs: 30_000,
+  cacheTtlMs: 60_000,
+  handler: async () => [],
+});
+
+createResolver({
+  name: "referralCodeUpdates",
+  output: S.optional(S.string),
+  admin: true,
+  timeoutMs: 5_000,
+  handler: async () => undefined,
+});
+
+const { manifest } = buildRegisteredManifest();
 
 describe("manifest -> Hasura metadata", () => {
   it("becomes custom types, actions and permissions", () => {
