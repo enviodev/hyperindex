@@ -374,7 +374,7 @@ fn mutated_fixtures_never_panic() {
 
     let mut state = 0x005E_ED1D_u64;
     for stem in ["jupiter", "kamino"] {
-        let source = read_fixture(stem);
+        let source = read_fixture(&format!("../../scenarios/svm_flow_xray/idls/{stem}.json"));
         let mut fixture: Value = serde_json::from_str(&source).expect("fixture is JSON");
         for _ in 0..150 {
             let seed = state;

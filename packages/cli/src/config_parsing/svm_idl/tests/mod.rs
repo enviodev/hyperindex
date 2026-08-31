@@ -70,12 +70,66 @@ pub(super) fn render_type(ty: &FieldType) -> String {
     }
 }
 
-pub(super) fn read_fixture(file_stem: &str) -> String {
-    let path = format!(
-        "{}/../../scenarios/svm_flow_xray/idls/{file_stem}.json",
-        env!("CARGO_MANIFEST_DIR")
-    );
+/// `path` is relative to the crate root.
+pub(super) fn read_fixture(path: &str) -> String {
+    let path = format!("{}/{path}", env!("CARGO_MANIFEST_DIR"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
+}
+
+/// The published SPL Token and SPL Memo IDLs, unmodified. Both declare
+/// instructions Borsh cannot express, and the point of the pair is that one
+/// such instruction costs only itself: SPL Token keeps the other 26, while
+/// Memo — whose whole payload is a remainder-encoded string — has nothing left
+/// and would fail the program at the layer above.
+#[test]
+fn parses_the_published_spl_idls() {
+    let catalog = |file: &str| {
+        let idl = parse_idl(&read_fixture(&format!("test/idls/{file}")), "Spl").expect("parse");
+        (
+            idl.address,
+            idl.instructions.len(),
+            idl.defined_types.keys().cloned().collect::<Vec<_>>(),
+            idl.unusable,
+        )
+    };
+
+    assert_eq!(
+        [
+            catalog("spl-token.codama.json"),
+            catalog("memo.codama.json")
+        ],
+        [
+            (
+                Some("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string()),
+                26,
+                vec!["accountState".to_string(), "authorityType".to_string()],
+                Unusable::from([
+                    (
+                        "batch".to_string(),
+                        "args.data.item.instructionData.prefix: Borsh needs u32 here, got u8"
+                            .to_string()
+                    ),
+                    (
+                        "uiAmountToAmount".to_string(),
+                        "args.uiAmount: a bare stringTypeNode carries no length; Borsh needs it \
+                         wrapped in a sizePrefixTypeNode with a u32 prefix"
+                            .to_string()
+                    ),
+                ]),
+            ),
+            (
+                Some("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr".to_string()),
+                0,
+                Vec::new(),
+                Unusable::from([(
+                    "addMemo".to_string(),
+                    "args.memo: a bare stringTypeNode carries no length; Borsh needs it wrapped \
+                     in a sizePrefixTypeNode with a u32 prefix"
+                        .to_string()
+                )]),
+            ),
+        ]
+    );
 }
 
 #[test]

@@ -1,9 +1,8 @@
 # IDL fixtures
 
-Real IDLs, unmodified. `packages/envio-tests` loads them through
-`fromUserApi` and asserts event counts (or the all-unusable error), not a
-catalog dump. Scenario projects keep their own under `scenarios/*/idls/`;
-these are here because no scenario indexes them.
+Real IDLs, unmodified, parsed by the `svm_idl` unit tests. Scenario projects
+keep their own under `scenarios/*/idls/`; these are here because no scenario
+indexes them.
 
 | Program | File | Version | Format | Source |
 |---|---|---|---|---|
