@@ -550,6 +550,51 @@ describe("Isolated multichain rollback", () => {
       ).toEqual((progress(~chain100="104", ~chain1337="101"), [102], [105]))
     },
   )
+  // The widened rollback recomputes progress from the checkpoints, and a chain
+  // the superseded diff already moved can land on exactly the block it is
+  // already at. It is still a chain whose stored progress the write has to
+  // correct, so the superseded diff's rows have to survive into this one.
+  scenario->Scenario.it(
+    "Keeps a superseded diff's progress for a chain the new one leaves where it found it",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+
+      // Chain 100 first, so its target (checkpoint 3) is below chain 1337's
+      // (checkpoint 4) and the widened rollback lands on chain 100's own —
+      // leaving chain 100 at the 101 the first diff already took it to.
+      await reorgAtBlock102(~indexer, ~source=source100, ~sibling=source1337)
+      await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
+
+      source1337.resolveGetItemsOrThrow(
+        [setCounter(~block=101, ~count=1337n)],
+        ~filter=MockSource.coveringBlock(101),
+        ~latestFetchedBlockNumber=101,
+      )
+      await indexer.getBatchWritePromise()
+
+      source100.setAutoHeight(300)
+      source1337.setAutoHeight(300)
+      let restarted = await indexer.restart()
+      await Utils.delay(0)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      t.expect(
+        (
+          await progressByChain(restarted),
+          source100.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+          source1337.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+        ),
+        ~message="Chain 100 resumes at the block the first, superseded rollback took it back to",
+      ).toEqual((progress(~chain100="101", ~chain1337="101"), [102], [102]))
+    },
+  )
+
   scenario->Scenario.it(
     "Resumes from the checkpoints an isolated rollback left behind",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],

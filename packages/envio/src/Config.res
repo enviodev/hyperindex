@@ -127,9 +127,11 @@ type t = {
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
-  // With several chains and no cross-chain entity, a reorg on one chain can
-  // never have changed a row another chain owns, so its rollback stays isolated
-  // to that chain instead of dragging every sibling back with it.
+  // With no cross-chain entity, a reorg on one chain can never have changed a
+  // row another chain owns, so its rollback stays isolated to that chain instead
+  // of dragging every sibling back with it. A single chain has no sibling to
+  // spare, and narrowing its rollback would only buy it a predicate that always
+  // holds.
   isIsolatedMultichain: bool,
 }
 
