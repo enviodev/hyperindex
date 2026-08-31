@@ -184,6 +184,14 @@ fn separates_file_level_defects_from_instruction_level_ones() {
                  "discriminators": [{ "kind": "constantDiscriminatorNode", "offset": -1,
                    "constant": { "value": { "kind": "bytesValueNode", "data": "03" } } }] }] } }"#,
         ),
+        (
+            // Read as an empty group its slots vanish, and every account
+            // declared after it answers to the name of the one before.
+            "anchor composite group whose 'accounts' is not an array",
+            r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
+                 "accounts": [{ "name": "group", "accounts": null },
+                              { "name": "vault" }] }] }"#,
+        ),
     ];
 
     let reported: Vec<String> = cases
@@ -231,6 +239,7 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "duplicate account name: fatal: IDL declares account 'vault' more than once",
             "codama argument reusing a discriminator name: swap set aside: IDL declares argument 'tag' more than once",
             "codama discriminator offset that is not a byte position: swap set aside: discriminators: expected a non-negative integer 'offset', got -1",
+            "anchor composite group whose 'accounts' is not an array: swap set aside: accounts: expected an array of accounts, got null",
         ]
     );
 }

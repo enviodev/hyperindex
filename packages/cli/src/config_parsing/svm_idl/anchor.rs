@@ -144,21 +144,25 @@ fn parse_byte_array(node: &Value) -> Result<Vec<u8>> {
 }
 
 /// Composite account groups (`{ name, accounts: [...] }`) flatten into the
-/// parent's list — Anchor inlines them at the call site.
+/// parent's list — Anchor inlines them at the call site. An `accounts` that is
+/// present but not an array is a defect, not an empty group: swallowing it
+/// would drop the group's slots and shift every later account's name.
 fn parse_accounts(node: Option<&Value>) -> Result<Vec<IdlAccount>> {
-    let Some(arr) = node.and_then(Value::as_array) else {
+    let Some(node) = node else {
         return Ok(Vec::new());
     };
+    let arr = node
+        .as_array()
+        .ok_or_else(|| anyhow!("expected an array of accounts, got {node}"))?;
     let mut out = Vec::with_capacity(arr.len());
     for a in arr {
-        if a.get("accounts").is_some() {
-            out.extend(parse_accounts(a.get("accounts"))?);
-            continue;
+        match a.get("accounts") {
+            Some(group) => out.extend(parse_accounts(Some(group))?),
+            None => out.push(IdlAccount {
+                name: required_str(a, "name")?.to_string(),
+                optional: flag(a, "optional", "isOptional")?,
+            }),
         }
-        out.push(IdlAccount {
-            name: required_str(a, "name")?.to_string(),
-            optional: flag(a, "optional", "isOptional")?,
-        });
     }
     Ok(out)
 }
