@@ -20,6 +20,8 @@ const STATUS_BY_CODE = {
 
 const DEFAULT_ERROR_STATUS = 400;
 
+import { selectionFromRequestQuery } from "./graphqlSelection.js";
+
 const isPlainObject = (value) =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -54,7 +56,7 @@ export function toResolveRequest(payload, requestId) {
   return {
     field: payload.action.name,
     args: payload.input ?? {},
-    selection: {},
+    selection: selectionFromRequestQuery(payload.request_query, payload.action.name),
     // Hasura roles are arbitrary strings, and the dispatcher's are not. Only
     // `admin` grants admin, so an unrecognised role is treated as public
     // rather than rejected -- the same answer an anonymous caller would get.
