@@ -25,12 +25,6 @@ type Position {
   reason: String
 }
 `,
-  ~unsupported=[
-    {
-      backend: #memory,
-      reason: "the in-memory store keeps the handler's object as it was set, so it never serializes a nullable column",
-    },
-  ],
 )
 
 type position = {
@@ -102,7 +96,12 @@ describe("Nullable entity fields written to storage", () => {
 
   itWritesPosition(
     "writes nullable fields the handler set to null",
-    {id: "null", withdrawnValue: Nullable.null, sharesReceived: Nullable.null, reason: Nullable.null},
+    {
+      id: "null",
+      withdrawnValue: Nullable.null,
+      sharesReceived: Nullable.null,
+      reason: Nullable.null,
+    },
     ~expected={id: "null", withdrawnValue: None, sharesReceived: None, reason: None},
   )
 })

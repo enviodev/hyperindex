@@ -91,16 +91,7 @@ let snakeCaseScenario = Scenario.make(
 )
 
 // The history prune is asserted through raw SQL against the history tables.
-let pruneScenario = Scenario.make(
-  ~schema,
-  ~configYaml=makeConfigYaml(),
-  ~unsupported=[
-    {
-      Scenario.backend: #memory,
-      reason: "seeds and reads the history tables with raw SQL",
-    },
-  ],
-)
+let pruneScenario = Scenario.make(~schema, ~configYaml=makeConfigYaml())
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
 let reorgMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
@@ -554,7 +545,7 @@ describe("Per-chain history prune", () => {
 
       let globalEntityConfig =
         pruneScenario.config->IndexerRunner.entityConfigByName("GlobalCounter")
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       let historyTable = PgStorage.getEntityHistory(~entityConfig).table.tableName
       let globalHistoryTable = PgStorage.getEntityHistory(
         ~entityConfig=globalEntityConfig,
