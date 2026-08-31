@@ -17,7 +17,7 @@ use super::{
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
 };
-use crate::utils::dotenv::{self, EnvMap};
+use crate::utils::project_env::ProjectEnv;
 use crate::{
     config_parsing::human_config::evm::RpcTransactionField,
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
@@ -36,7 +36,7 @@ use regex::Regex;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env, fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use hypersync_client_solana::decode::{
@@ -59,52 +59,6 @@ pub enum Ecosystem {
     Evm,
     Fuel,
     Svm,
-}
-
-// Allows to get an env var with a lazy loading of .env file
-#[derive(Debug)]
-pub struct EnvState {
-    // Lazy loading of .env file
-    maybe_dotenv: Option<EnvMap>,
-    project_root: PathBuf,
-}
-
-impl EnvState {
-    pub fn new(project_root: &Path) -> Self {
-        EnvState {
-            maybe_dotenv: None,
-            project_root: PathBuf::from(project_root),
-        }
-    }
-
-    pub fn var(&mut self, name: &str) -> Option<String> {
-        match std::env::var(name) {
-            Ok(val) => Some(val),
-            Err(_) => {
-                let result = match &self.maybe_dotenv {
-                    Some(env_map) => env_map.var(name),
-                    None => match dotenv::from_path(self.project_root.join(".env")) {
-                        Ok(env_map) => {
-                            self.maybe_dotenv = Some(env_map.clone());
-                            env_map.var(name)
-                        }
-                        Err(err) => {
-                            match err {
-                                dotenv::Error::Io(_, _) => (),
-                                _ => println!(
-                                    "Warning: Failed loading .env file with unexpected error: \
-                                     {err}"
-                                ),
-                            };
-                            self.maybe_dotenv = Some(EnvMap::new());
-                            Err(err)
-                        }
-                    },
-                };
-                result.ok()
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -134,14 +88,14 @@ trait ConfigSource {
 
 struct FilesystemConfigSource<'a> {
     project_paths: &'a ParsedProjectPaths,
-    env: EnvState,
+    env: ProjectEnv,
 }
 
 impl<'a> FilesystemConfigSource<'a> {
     fn new(project_paths: &'a ParsedProjectPaths) -> Self {
         Self {
             project_paths,
-            env: EnvState::new(&project_paths.project_root),
+            env: ProjectEnv::new(&project_paths.project_root),
         }
     }
 }
