@@ -1,12 +1,20 @@
-// The HTTP surface of the resolver process: one POST that envio-serve calls,
-// and the two probes the Deployment is checked with.
+// The HTTP surface of the resolver process: one POST per caller -- Hasura's
+// action contract and envio-serve's -- and the two probes the Deployment is
+// checked with.
 //
 // Deliberately not a framework. The whole surface is three routes and a JSON
 // body with a size cap, and the one thing that must not drift is the wire
 // contract, which is easier to read as bytes in and bytes out.
 
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { createDispatcher } from "./dispatch.js";
+import {
+  actionErrorBody,
+  badActionRequest,
+  toActionResponse,
+  toResolveRequest,
+} from "./hasuraAction.js";
 import { error as logError } from "../Logging.res.mjs";
 import { Resolvers as ResolversEnv } from "../Env.res.mjs";
 
@@ -92,7 +100,10 @@ export async function startResolverServer(options) {
       return;
     }
 
-    if (request.method !== "POST" || path !== "/resolve") {
+    const isServe = request.method === "POST" && path === "/resolve";
+    const isAction = request.method === "POST" && path === "/hasura-action";
+
+    if (!isServe && !isAction) {
       send(response, 404, wireError(`No route for ${request.method} ${path}`, "NOT_FOUND"));
       return;
     }
@@ -103,9 +114,30 @@ export async function startResolverServer(options) {
         try {
           parsed = JSON.parse(raw);
         } catch {
-          send(response, 400, wireError("Request body is not valid JSON", "BAD_REQUEST"));
+          if (isAction) {
+            send(response, 400, actionErrorBody("Request body is not valid JSON", "BAD_REQUEST"));
+          } else {
+            send(response, 400, wireError("Request body is not valid JSON", "BAD_REQUEST"));
+          }
           return;
         }
+
+        if (isAction) {
+          const invalid = badActionRequest(parsed);
+          if (invalid !== null) {
+            send(
+              response,
+              400,
+              actionErrorBody(`Malformed action request: ${invalid}`, "BAD_REQUEST")
+            );
+            return;
+          }
+          const answer = await dispatch(toResolveRequest(parsed, randomUUID()));
+          const { status, body } = toActionResponse(answer);
+          send(response, status, body);
+          return;
+        }
+
         const answer = await dispatch(parsed);
         // A malformed request is the caller's error and says so in the status;
         // everything a resolver itself produces is a 200 with a GraphQL-shaped
@@ -115,7 +147,11 @@ export async function startResolverServer(options) {
         send(response, isBadRequest ? 400 : 200, answer);
       })
       .catch((error) => {
-        send(response, 400, wireError(error.message, "BAD_REQUEST"));
+        if (isAction) {
+          send(response, 400, actionErrorBody(error.message, "BAD_REQUEST"));
+        } else {
+          send(response, 400, wireError(error.message, "BAD_REQUEST"));
+        }
       });
   });
 
