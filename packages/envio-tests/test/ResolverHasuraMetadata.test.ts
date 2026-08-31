@@ -4,6 +4,7 @@ import {
   buildRegisteredManifest,
   createResolver,
   defineEnum,
+  defineInput,
   defineType,
 } from "../../envio/src/resolvers/index.js";
 import { buildHasuraMetadata } from "../../envio/src/resolvers/hasuraMetadata.js";
@@ -22,10 +23,15 @@ const Bucket = defineType("Bucket", {
   note: S.optional(S.string),
 });
 
+const Where = defineInput("AccountPnlWhereInput", {
+  account: S.string,
+  minCapital: S.optional(S.bigint),
+});
+
 createResolver({
   name: "accountPnl",
   description: "PnL per bucket",
-  args: { account: S.string, period: S.optional(Period) },
+  args: { where: Where, period: S.optional(Period) },
   output: S.array(Bucket),
   timeoutMs: 30_000,
   cacheTtlMs: 60_000,
@@ -50,7 +56,15 @@ describe("manifest -> Hasura metadata", () => {
       customTypes: {
         scalars: [{ name: "BigInt" }],
         enums: [{ name: "Period", values: [{ value: "Day" }, { value: "Week" }] }],
-        input_objects: [],
+        input_objects: [
+          {
+            name: "AccountPnlWhereInput",
+            fields: [
+              { name: "account", type: "String!" },
+              { name: "minCapital", type: "BigInt" },
+            ],
+          },
+        ],
         objects: [
           {
             name: "Bucket",
@@ -70,7 +84,7 @@ describe("manifest -> Hasura metadata", () => {
             kind: "synchronous",
             handler: "http://resolvers:9900/hasura-action",
             arguments: [
-              { name: "account", type: "String!" },
+              { name: "where", type: "AccountPnlWhereInput!" },
               { name: "period", type: "Period" },
             ],
             output_type: "[Bucket!]!",

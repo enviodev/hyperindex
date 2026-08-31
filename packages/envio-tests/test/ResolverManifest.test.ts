@@ -4,6 +4,7 @@ import { S as EnvioS } from "envio";
 import {
   buildManifest,
   defineEnum,
+  defineInput,
   defineScalar,
   defineType,
   toSDL,
@@ -183,8 +184,8 @@ describe("resolver manifest", () => {
   });
 
   it("rejects two different types sharing a name", () => {
-    const A = defineType("Clash", { a: S.string });
-    const B = defineType("Clash", { b: S.string });
+    const A = defineInput("Clash", { a: S.string });
+    const B = defineInput("Clash", { b: S.string });
     expect(() =>
       buildManifest([
         { name: "x", args: { a: A, b: B }, output: S.string, timeoutMs: 1 },
@@ -216,6 +217,99 @@ describe("resolver manifest", () => {
       }
       "
     `);
+  });
+});
+
+// GraphQL splits its type namespace in two: a type that appears in an argument
+// is an `input`, and an object type cannot stand in for one. Nearly every
+// resolver in the reference implementation takes a `where` argument, so this is
+// the ordinary case rather than an advanced one.
+describe("input objects", () => {
+  const Where = defineInput("MarketAprsWhereInput", {
+    periodStart: S.int32,
+    marketAddresses: S.optional(S.array(S.string)),
+  });
+  const CodeTier = defineInput("CodeTierRuleInput", { tier: S.string, share: S.string });
+
+  it("names an object-shaped argument as an input type", () => {
+    const manifest = buildManifest([
+      {
+        name: "marketsAprByPeriod",
+        args: { where: S.optional(Where), codeTiersAsc: S.array(CodeTier) },
+        output: S.string,
+        timeoutMs: 1,
+      },
+    ]);
+    expect({ args: manifest.resolvers[0].args, types: manifest.types }).toEqual({
+      args: [
+        { name: "where", type: "MarketAprsWhereInput" },
+        { name: "codeTiersAsc", type: "[CodeTierRuleInput!]!" },
+      ],
+      types: [
+        {
+          kind: "input_object",
+          name: "CodeTierRuleInput",
+          fields: [
+            { name: "tier", type: "String!" },
+            { name: "share", type: "String!" },
+          ],
+        },
+        {
+          kind: "input_object",
+          name: "MarketAprsWhereInput",
+          fields: [
+            { name: "periodStart", type: "Int!" },
+            { name: "marketAddresses", type: "[String!]" },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("renders SDL as input, not type", () => {
+    expect(
+      toSDL(
+        buildManifest([
+          { name: "x", args: { where: Where }, output: S.string, timeoutMs: 1 },
+        ])
+      )
+    ).toMatchInlineSnapshot(`
+      "input MarketAprsWhereInput {
+        periodStart: Int!
+        marketAddresses: [String!]
+      }
+
+      extend type Query {
+        x(where: MarketAprsWhereInput!): String!
+      }
+      "
+    `);
+  });
+
+  // Both directions are invalid GraphQL, and Hasura would reject the metadata
+  // built from them -- with a message that names neither the resolver nor the
+  // declaration that caused it.
+  it("refuses an output type as an argument, and an input type as a result", () => {
+    const Out = defineType("Bucket", { pnl: S.string });
+    expect(() =>
+      buildManifest([{ name: "x", args: { b: Out }, output: S.string, timeoutMs: 1 }])
+    ).toThrow(/'Bucket'.*defineInput/s);
+    expect(() =>
+      buildManifest([{ name: "x", args: {}, output: Where, timeoutMs: 1 }])
+    ).toThrow(/'MarketAprsWhereInput'.*defineType/s);
+  });
+
+  it("points an anonymous argument object at defineInput", () => {
+    expect(() =>
+      buildManifest([
+        {
+          name: "x",
+          args: { where: S.schema({ a: S.string }) },
+          output: S.string,
+          timeoutMs: 1,
+        },
+      ])
+    ).toThrow(/must be named.*defineInput/s);
   });
 });
 
