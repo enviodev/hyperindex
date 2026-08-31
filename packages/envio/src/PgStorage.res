@@ -438,8 +438,8 @@ let rec makeFilterCondition = (
   // `LoadLayer.scopeFilter` is what puts this filter here, and the value is
   // range-checked to a non-negative safe integer, so it can carry nothing but
   // digits.
-  | Eq({fieldName, fieldValue}) if (getQueryFieldOrThrow(fieldName)).isChainId =>
-    `"${(getQueryFieldOrThrow(fieldName)).pgDbFieldName}" = ${fieldValue
+  | Eq({fieldName, fieldValue}) if getQueryFieldOrThrow(fieldName).isChainId =>
+    `"${getQueryFieldOrThrow(fieldName).pgDbFieldName}" = ${fieldValue
       ->ChainId.normalizeOrThrow
       ->ChainId.toString}`
   | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
@@ -1875,7 +1875,9 @@ let make = (
         idx,
       ): Persistence.initialChainState => {
         id: chainConfig.id,
-        startBlock: chainConfig.startBlock,
+        // Guaranteed resolved: `chainConfigs` came through
+        // `StartBlockResolver.resolveAllOrThrow` in `Persistence.init`.
+        startBlock: chainConfig.startBlock->Config.startBlockToIntExn,
         endBlock: chainConfig.endBlock,
         maxReorgDepth: chainConfig.maxReorgDepth,
         progressBlockNumber: -1,
@@ -2272,7 +2274,13 @@ let make = (
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints, (envioInfo, contractMapping)) = await Promise.all5((
+    let (
+      cache,
+      chains,
+      checkpointIdResult,
+      reorgCheckpoints,
+      (envioInfo, contractMapping),
+    ) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,

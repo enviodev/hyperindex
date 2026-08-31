@@ -272,7 +272,10 @@ module Chains = {
     {
       id: chainConfig.id,
       ecosystem: (chainConfig.ecosystem: Ecosystem.name :> string),
-      startBlock: chainConfig.startBlock,
+      // Guaranteed resolved by this point: `Persistence.init` only reaches
+      // storage.initialize with chainConfigs that went through
+      // `StartBlockResolver.resolveAllOrThrow`.
+      startBlock: chainConfig.startBlock->Config.startBlockToIntExn,
       endBlock: chainConfig.endBlock->Null.fromOption,
       maxReorgDepth: chainConfig.maxReorgDepth,
       blockHeight: 0,

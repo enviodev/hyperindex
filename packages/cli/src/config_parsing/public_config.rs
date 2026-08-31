@@ -320,7 +320,7 @@ struct RpcConfig {
 #[serde(rename_all = "camelCase")]
 struct ChainConfig {
     id: u64,
-    start_block: u64,
+    start_block: human_config::StartBlock,
     #[serde(skip_serializing_if = "Option::is_none")]
     end_block: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]

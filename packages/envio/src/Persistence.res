@@ -220,12 +220,13 @@ let make = (
 let init = {
   async (
     persistence,
-    ~chainConfigs,
+    ~chainConfigs: array<Config.chain>,
     ~contractMapping,
     ~envioInfo,
     ~resetCommand,
     ~runCommand,
     ~reset=false,
+    ~lowercaseAddresses=false,
   ) => {
     try {
       let shouldRun = switch persistence.storageStatus {
@@ -244,6 +245,13 @@ let init = {
         persistence.storageStatus = Initializing(promise)
         if reset || !(await persistence.storage.isInitialized()) {
           Logging.info(`Initializing the indexer storage...`)
+          // Only runs once per schema (this branch is the "first deploy or
+          // reset" gate), which is exactly when a `latest` start block must be
+          // resolved: every later resume reads `envio_chains.start_block` back
+          // verbatim instead of re-running this.
+          let chainConfigs = await chainConfigs->StartBlockResolver.resolveAllOrThrow(
+            ~lowercaseAddresses,
+          )
           let initialState = await persistence.storage.initialize(
             ~entities=persistence.allEntities,
             ~enums=persistence.allEnums,

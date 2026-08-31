@@ -203,7 +203,9 @@ let makeInternal = (
 
   chainConfig.contracts->Array.forEach(contract => {
     switch contract.startBlock {
-    | Some(startBlock) if startBlock < chainConfig.startBlock =>
+    // Compared against the resolved `~startBlock` param (never the raw
+    // `chainConfig.startBlock`, which may still be `Latest` and unresolved).
+    | Some(contractStartBlock) if contractStartBlock < startBlock =>
       JsError.throwWithMessage(
         `The start block for contract "${contract.name}" is less than the chain start block. This is not supported yet.`,
       )
@@ -262,74 +264,12 @@ let makeInternal = (
   })
 
   // Create sources lazily here - this is where API token validation happens
-  let chainId = chainConfig.id
-  let sources = switch chainConfig.sourceConfig {
-  | Config.EvmSourceConfig({hypersync, rpcs}) =>
-    let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
-      let syncConfig = rpc.syncConfig
-      let ws = rpc.ws
-      let headers = rpc.headers
-      {
-        url: rpc.url,
-        sourceFor: rpc.sourceFor,
-        ?syncConfig,
-        ?ws,
-        ?headers,
-      }
-    })
-    EvmChain.makeSources(
-      ~chainId,
-      ~onEventRegistrations=onEventRegistrations->(
-        Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
-      ),
-      ~hyperSync=hypersync,
-      ~rpcs=evmRpcs,
-      ~lowercaseAddresses,
-      ~addressStore,
-    )
-  | Config.FuelSourceConfig({hypersync}) => [
-      FuelHyperSyncSource.make({
-        chainId,
-        endpointUrl: hypersync,
-        apiToken: Env.envioApiToken,
-        onEventRegistrations,
-        addressStore,
-      }),
-    ]
-  | Config.SvmSourceConfig({hypersync, rpc}) =>
-    switch (hypersync, rpc) {
-    | (None, None) =>
-      JsError.throwWithMessage(`Chain ${chainId->ChainId.toString} has no SVM data source`)
-    | (None, Some(rpc)) => [Svm.makeRPCSource(~chainId, ~rpc)]
-    | (Some(hypersyncUrl), _) =>
-      // HyperSync drives instruction sync. A configured RPC is ignored for now
-      // (RPC fallback isn't wired up yet).
-      let apiToken = Env.envioApiToken
-      [
-        SvmHyperSyncSource.make({
-          chainId,
-          endpointUrl: hypersyncUrl,
-          apiToken,
-          onEventRegistrations,
-          clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
-          addressStore,
-        }),
-      ]
-    }
-  | Config.SimulateSourceConfig({items, endBlock, ?transactionStore, ?blockStore}) => [
-      SimulateSource.make(
-        ~items,
-        ~endBlock,
-        ~chainId,
-        ~addressStore,
-        ~ecosystem=config.ecosystem.name,
-        ~transactionStore,
-        ~blockStore,
-      ),
-    ]
-  // For tests: use ready-to-use sources directly
-  | Config.CustomSources(sources) => sources
-  }
+  let sources = ChainSources.make(
+    ~chainConfig,
+    ~onEventRegistrations,
+    ~addressStore,
+    ~lowercaseAddresses,
+  )
 
   let blockStore = BlockStore.make(
     ~ecosystem=config.ecosystem.name,

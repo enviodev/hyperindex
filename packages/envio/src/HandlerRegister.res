@@ -311,13 +311,7 @@ let addOnEventRegistration = (
         ),
       )
     | Svm =>
-      Some(
-        EventConfigBuilder.resolveSvmInlineFieldSelection(
-          fields,
-          ~contractName,
-          ~eventName,
-        ),
-      )
+      Some(EventConfigBuilder.resolveSvmInlineFieldSelection(fields, ~contractName, ~eventName))
     | Fuel =>
       JsError.throwWithMessage(
         `The fields option of the "${eventName}" event registration on contract "${contractName}" is only supported on EVM. Select the fields in your config instead.`,
@@ -783,9 +777,10 @@ let registerOnBlock = (
 
       if shouldRegister {
         matchedAny := true
-        if range._gte->Option.getOr(chainConfig.startBlock) < chainConfig.startBlock {
+        let chainStartBlock = chainConfig.startBlock->Config.startBlockToIntExn
+        if range._gte->Option.getOr(chainStartBlock) < chainStartBlock {
           JsError.throwWithMessage(
-            `The start block for onBlock handler "${name}" is less than the chain start block (${chainConfig.startBlock->Int.toString}). This is not supported yet.`,
+            `The start block for onBlock handler "${name}" is less than the chain start block (${chainStartBlock->Int.toString}). This is not supported yet.`,
           )
         }
         switch chainConfig.endBlock {

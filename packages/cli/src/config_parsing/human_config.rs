@@ -59,6 +59,83 @@ impl JsonSchema for Addresses {
 
 type ChainId = u64;
 
+/// A chain's configured start block: either a concrete block number or the
+/// literal "latest". Config parsing never touches the network, so `Latest`
+/// stays unresolved here — it's resolved once at runtime, right before the
+/// indexer's first-ever persisted state is written, and never re-resolved on
+/// restart (see packages/envio/src/sources/StartBlockResolver.res).
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, JsonSchema)]
+#[serde(untagged)]
+pub enum StartBlock {
+    Number(u64),
+    Tag(StartBlockTag),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum StartBlockTag {
+    Latest,
+}
+
+impl Default for StartBlock {
+    fn default() -> Self {
+        StartBlock::Number(0)
+    }
+}
+
+// A hand-written impl (instead of relying on `#[derive(Deserialize)]` +
+// `#[serde(untagged)]`) so an invalid value gets a specific, actionable error
+// - untagged enums otherwise report only "data did not match any variant",
+// losing the field path and the reason a value was rejected.
+impl<'de> serde::Deserialize<'de> for StartBlock {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct StartBlockVisitor;
+
+        impl serde::de::Visitor<'_> for StartBlockVisitor {
+            type Value = StartBlock;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "u64 or the string \"latest\"")
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(StartBlock::Number(v))
+            }
+
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                u64::try_from(v).map(StartBlock::Number).map_err(|_| {
+                    serde::de::Error::invalid_value(serde::de::Unexpected::Signed(v), &self)
+                })
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v == "latest" {
+                    Ok(StartBlock::Tag(StartBlockTag::Latest))
+                } else {
+                    Err(serde::de::Error::invalid_value(
+                        serde::de::Unexpected::Str(v),
+                        &self,
+                    ))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(StartBlockVisitor)
+    }
+}
+
 /// Base configuration fields shared across all ecosystems
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
 pub struct BaseConfig {
@@ -423,7 +500,7 @@ impl Display for HumanConfig {
 }
 
 pub mod evm {
-    use super::{ChainContract, ChainId, GlobalContract};
+    use super::{ChainContract, ChainId, GlobalContract, StartBlock};
     use crate::config_parsing::human_config::BaseConfig;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -799,8 +876,14 @@ pub mod evm {
                            tip."
         )]
         pub block_lag: Option<u32>,
-        #[schemars(description = "The block at which the indexer should start ingesting data")]
-        pub start_block: u64,
+        #[schemars(
+            description = "The block at which the indexer should start ingesting data, or \
+                           \"latest\" to start from the chain's current head block when the \
+                           indexer is first deployed. Once resolved, the concrete block is \
+                           persisted and reused on every restart, so downtime gets backfilled \
+                           rather than skipped."
+        )]
+        pub start_block: StartBlock,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The block at which the indexer should terminate.")]
         pub end_block: Option<u64>,
@@ -856,7 +939,7 @@ pub mod fuel {
 
     use crate::config_parsing::human_config::BaseConfig;
 
-    use super::{ChainContract, ChainId, GlobalContract};
+    use super::{ChainContract, ChainId, GlobalContract, StartBlock};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use strum::Display;
@@ -930,8 +1013,14 @@ pub mod fuel {
                                   generation is unaffected. For testing, prefer using a test \
                                   framework instead.")]
         pub skip: Option<bool>,
-        #[schemars(description = "The block at which the indexer should start ingesting data")]
-        pub start_block: u64,
+        #[schemars(
+            description = "The block at which the indexer should start ingesting data, or \
+                           \"latest\" to start from the chain's current head block when the \
+                           indexer is first deployed. Once resolved, the concrete block is \
+                           persisted and reused on every restart, so downtime gets backfilled \
+                           rather than skipped."
+        )]
+        pub start_block: StartBlock,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The block at which the indexer should terminate.")]
         pub end_block: Option<u64>,
@@ -1005,7 +1094,7 @@ pub mod fuel {
 pub mod svm {
     use std::fmt::Display;
 
-    use super::BaseConfig;
+    use super::{BaseConfig, StartBlock};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
 
@@ -1088,9 +1177,13 @@ pub mod svm {
         )]
         pub rpc: Option<String>,
         #[schemars(
-            description = "The slot number at which the indexer should start ingesting data"
+            description = "The slot number at which the indexer should start ingesting data, or \
+                           \"latest\" to start from the chain's current slot when the indexer is \
+                           first deployed. Once resolved, the concrete slot is persisted and \
+                           reused on every restart, so downtime gets backfilled rather than \
+                           skipped."
         )]
-        pub start_block: u64,
+        pub start_block: StartBlock,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The slot number at which the indexer should terminate.")]
         pub end_block: Option<u64>,
@@ -1362,7 +1455,7 @@ pub mod svm {
 mod tests {
     use super::{
         evm::{ContractConfig, HumanConfig},
-        ChainContract,
+        ChainContract, StartBlock,
     };
     use crate::{
         config_parsing::human_config::{fuel, BaseConfig},
@@ -1587,6 +1680,21 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     }
 
     #[test]
+    fn evm_human_config_display_does_not_alter_serde_yaml_output_for_latest_start_block() {
+        let yaml = "name: t\nschema: ./s.graphql\ncontracts:\n  - name: C\n    handler: ./h.js\n    events:\n      - event: E\nchains:\n  - id: 1\n    rpc:\n      url: https://x\n    start_block: latest\n    contracts:\n      - name: C\n        address: \"0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\"\n";
+        let cfg: super::evm::HumanConfig = serde_yaml::from_str(yaml).unwrap();
+        let out = cfg.to_string();
+        let raw = serde_yaml::to_string(&cfg).unwrap();
+        let expected =
+            format!("# yaml-language-server: $schema=./node_modules/envio/evm.schema.json\n{raw}");
+        assert_eq!(
+            out, expected,
+            "Display output must remain byte-identical for config_hash stability with a \
+             `latest` start block too."
+        );
+    }
+
+    #[test]
     fn deserializes_fuel_config() {
         let config_path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test/configs/fuel-config.yaml");
@@ -1611,7 +1719,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             chains: vec![fuel::Chain {
                 id: 0,
                 skip: None,
-                start_block: 0,
+                start_block: StartBlock::Number(0),
                 end_block: None,
                 hyperfuel_config: None,
                 max_reorg_depth: None,
@@ -1780,6 +1888,67 @@ chains:
                     ],
                 }
             );
+        }
+    }
+
+    mod start_block_yaml {
+        use super::super::{evm, fuel, svm, StartBlock, StartBlockTag};
+        use pretty_assertions::assert_eq;
+
+        #[test]
+        fn evm_start_block_accepts_number_and_latest_and_round_trips() {
+            let parse = |sb_yaml: &str| -> StartBlock {
+                let yaml = format!("name: x\nchains:\n  - id: 1\n    start_block: {sb_yaml}\n");
+                let mut cfg: evm::HumanConfig = serde_yaml::from_str(&yaml).unwrap();
+                cfg.chains.remove(0).start_block
+            };
+
+            assert_eq!(parse("12345"), StartBlock::Number(12345));
+            assert_eq!(parse("latest"), StartBlock::Tag(StartBlockTag::Latest));
+
+            for start_block in [
+                StartBlock::Number(12345),
+                StartBlock::Tag(StartBlockTag::Latest),
+            ] {
+                let reparsed: StartBlock =
+                    serde_yaml::from_str(&serde_yaml::to_string(&start_block).unwrap()).unwrap();
+                assert_eq!(reparsed, start_block, "round trip for {start_block:?}");
+            }
+        }
+
+        #[test]
+        fn evm_start_block_rejects_unknown_tag() {
+            let yaml = "name: x\nchains:\n  - id: 1\n    start_block: lastest\n";
+            let result: Result<evm::HumanConfig, _> = serde_yaml::from_str(yaml);
+            assert!(result.is_err(), "a typo'd start_block tag must be rejected");
+        }
+
+        #[test]
+        fn fuel_start_block_accepts_number_and_latest() {
+            let parse = |sb_yaml: &str| -> StartBlock {
+                let yaml = format!(
+                    "name: x\necosystem: fuel\nchains:\n  - id: 0\n    start_block: {sb_yaml}\n"
+                );
+                let mut cfg: fuel::HumanConfig = serde_yaml::from_str(&yaml).unwrap();
+                cfg.chains.remove(0).start_block
+            };
+
+            assert_eq!(parse("12345"), StartBlock::Number(12345));
+            assert_eq!(parse("latest"), StartBlock::Tag(StartBlockTag::Latest));
+        }
+
+        #[test]
+        fn svm_start_block_accepts_number_and_latest() {
+            let parse = |sb_yaml: &str| -> StartBlock {
+                let yaml = format!(
+                    "name: x\necosystem: svm\nchains:\n  - id: 42\n    start_block: {sb_yaml}\n"
+                );
+                let mut cfg: svm::HumanConfig = serde_yaml::from_str(&yaml).unwrap();
+                cfg.chains.remove(0).start_block
+            };
+
+            assert_eq!(parse("12345"), StartBlock::Number(12345));
+            assert_eq!(parse("latest"), StartBlock::Tag(StartBlockTag::Latest));
         }
     }
 }

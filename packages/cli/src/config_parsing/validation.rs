@@ -1,5 +1,5 @@
 // use super::chain_helpers;
-use super::human_config::{self, evm::HumanConfig};
+use super::human_config::{self, evm::HumanConfig, StartBlock};
 use crate::constants::reserved_keywords::RESERVED_NAMES;
 use anyhow::{anyhow, Context};
 use regex::Regex;
@@ -114,8 +114,13 @@ impl human_config::evm::Chain {
     }
 
     pub fn validate_endblock_lte_startblock(&self) -> anyhow::Result<()> {
-        if let Some(network_endblock) = self.end_block {
-            if network_endblock < self.start_block {
+        // A `latest` start block isn't known until runtime, so it can't be
+        // checked here - the indexer re-validates once it resolves "latest"
+        // to a concrete block (see StartBlockResolver.res).
+        if let (Some(network_endblock), StartBlock::Number(start_block)) =
+            (self.end_block, self.start_block)
+        {
+            if network_endblock < start_block {
                 return Err(anyhow!(
                     "The config has an end_block smaller than start_block for chain {}. end_block \
                      must be greater than or equal to start_block.",
@@ -353,6 +358,54 @@ pub fn check_schema_enums_are_valid_postgres(enum_names: &Vec<String>) -> Vec<St
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
+
+    fn make_chain(
+        start_block: super::StartBlock,
+        end_block: Option<u64>,
+    ) -> super::human_config::evm::Chain {
+        super::human_config::evm::Chain {
+            id: 1,
+            skip: None,
+            rpc: None,
+            hypersync_config: None,
+            max_reorg_depth: None,
+            block_lag: None,
+            start_block,
+            end_block,
+            contracts: None,
+        }
+    }
+
+    #[test]
+    fn endblock_lte_startblock_rejects_number_start_block_above_end_block() {
+        let chain = make_chain(super::StartBlock::Number(100), Some(50));
+        assert!(chain.validate_endblock_lte_startblock().is_err());
+    }
+
+    #[test]
+    fn endblock_lte_startblock_accepts_number_start_block_at_or_below_end_block() {
+        let chain = make_chain(super::StartBlock::Number(50), Some(100));
+        assert!(chain.validate_endblock_lte_startblock().is_ok());
+    }
+
+    #[test]
+    fn endblock_lte_startblock_cannot_check_latest_statically_so_it_always_passes() {
+        // "latest" isn't known until runtime - the indexer re-validates once
+        // it resolves to a concrete block (see StartBlockResolver.res).
+        let chain = make_chain(
+            super::StartBlock::Tag(super::human_config::StartBlockTag::Latest),
+            Some(1),
+        );
+        assert!(chain.validate_endblock_lte_startblock().is_ok());
+
+        let chain_no_end_block = make_chain(
+            super::StartBlock::Tag(super::human_config::StartBlockTag::Latest),
+            None,
+        );
+        assert!(chain_no_end_block
+            .validate_endblock_lte_startblock()
+            .is_ok());
+    }
 
     #[test]
     fn valid_postgres_db_name() {

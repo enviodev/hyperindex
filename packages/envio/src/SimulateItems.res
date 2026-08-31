@@ -299,7 +299,9 @@ let parse = (
   ~onEventRegistrations: array<Internal.onEventRegistration>,
 ): parseResult => {
   let chainId = chainConfig.id
-  let startBlock = chainConfig.startBlock
+  // Guaranteed resolved: `patchConfig` always sets a concrete `Number` before
+  // calling `parse`.
+  let startBlock = chainConfig.startBlock->Config.startBlockToIntExn
   let currentBlock = ref(startBlock)
   let currentLogIndex = ref(0)
 
@@ -338,11 +340,12 @@ let parse = (
       | None =>
         switch blockJson {
         | Some(bj) =>
-          switch (bj->(Utils.magic: JSON.t => dict<JSON.t>))->Dict.get("slot") {
+          switch bj->(Utils.magic: JSON.t => dict<JSON.t>)->Dict.get("slot") {
           | Some(v) =>
-            v->(Utils.magic: JSON.t => Nullable.t<int>)->Nullable.toOption->Option.getOr(
-              currentBlock.contents,
-            )
+            v
+            ->(Utils.magic: JSON.t => Nullable.t<int>)
+            ->Nullable.toOption
+            ->Option.getOr(currentBlock.contents)
           | None => currentBlock.contents
           }
         | None => currentBlock.contents
@@ -374,10 +377,12 @@ let parse = (
       let data = item.data->Option.getOr(svmEventConfig.discriminator->Option.getOr("0x"))
       let argsJson = item.args->Option.mapOr("{}", args => args->JSON.stringify)
       let logs = item.logs->Option.map(logs =>
-        logs->Array.map((log): SvmHyperSyncClient.EventItems.log => {
-          kind: log.kind->Null.fromOption,
-          message: log.message->Null.fromOption,
-        })
+        logs->Array.map(
+          (log): SvmHyperSyncClient.EventItems.log => {
+            kind: log.kind->Null.fromOption,
+            message: log.message->Null.fromOption,
+          },
+        )
       )
 
       let liveRegistrations = liveRegistrationsFor(~config, ~chainId, ~eventConfig)
@@ -414,13 +419,13 @@ let parse = (
             accountIndex: ?activity.transactionAccountIndex,
             isSigner: ?activity.isSigner,
             isWritable: ?activity.isWritable,
-            preBalance: ?activity.lamports->Option.flatMap(l => l.pre),
-            postBalance: ?activity.lamports->Option.flatMap(l => l.post),
-            mint: ?activity.token->Option.flatMap(t => t.mint),
-            owner: ?activity.token->Option.flatMap(t => t.owner),
-            decimals: ?activity.token->Option.flatMap(t => t.decimals),
-            preAmount: ?activity.token->Option.flatMap(t => t.preAmount),
-            postAmount: ?activity.token->Option.flatMap(t => t.postAmount),
+            preBalance: ?(activity.lamports->Option.flatMap(l => l.pre)),
+            postBalance: ?(activity.lamports->Option.flatMap(l => l.post)),
+            mint: ?(activity.token->Option.flatMap(t => t.mint)),
+            owner: ?(activity.token->Option.flatMap(t => t.owner)),
+            decimals: ?(activity.token->Option.flatMap(t => t.decimals)),
+            preAmount: ?(activity.token->Option.flatMap(t => t.preAmount)),
+            postAmount: ?(activity.token->Option.flatMap(t => t.postAmount)),
           })
           ->ignore
         )
@@ -680,7 +685,7 @@ let patchConfig = (
           let endBlock: int = raw["endBlock"]->(Utils.magic: 'a => int)
           // Parse with the process's startBlock so items default into the range
           // the source will be queried over; the source now filters by range.
-          let chainConfig = {...chainConfig, startBlock, endBlock}
+          let chainConfig = {...chainConfig, startBlock: Config.Number(startBlock), endBlock}
           let {items, transactionStore, blockStore} = parse(
             ~simulateItems,
             ~config,

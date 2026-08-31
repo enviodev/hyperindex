@@ -355,13 +355,17 @@ let parseBlockRange = (
     JsError.throwWithMessage(`Chain ${chainIdStr} is not configured in config.yaml`)
   }
   let configChain = config.chainMap->ChainMap.get(chain)
+  // The test indexer never resolves "latest" against a real chain - treated
+  // as unconstrained (0), so a simulated run can freely pick any explicit
+  // start block.
+  let configChainStartBlock = configChain.startBlock->Config.startBlockToIntOrZero
 
   let startBlock = switch rawChainConfig.startBlock {
   | Some(sb) => sb
   | None =>
     switch progressBlock {
     | Some(prevEndBlock) => prevEndBlock + 1
-    | None => configChain.startBlock
+    | None => configChainStartBlock
     }
   }
 
@@ -378,10 +382,10 @@ let parseBlockRange = (
   | None => None // auto-exit mode: will fetch first block with events and exit
   }
 
-  if startBlock < configChain.startBlock {
+  if startBlock < configChainStartBlock {
     JsError.throwWithMessage(
-      `Invalid block range for chain ${chainIdStr}: startBlock (${startBlock->Int.toString}) is less than config.startBlock (${configChain.startBlock->Int.toString}). ` ++
-      `Either use startBlock >= ${configChain.startBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
+      `Invalid block range for chain ${chainIdStr}: startBlock (${startBlock->Int.toString}) is less than config.startBlock (${configChainStartBlock->Int.toString}). ` ++
+      `Either use startBlock >= ${configChainStartBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
     )
   }
 
@@ -754,7 +758,7 @@ let createTestIndexer = (): t<'processConfig> => {
     ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
     ->Utils.Object.definePropertyWithValue(
       "startBlock",
-      {enumerable: true, value: chainConfig.startBlock},
+      {enumerable: true, value: chainConfig.startBlock->Config.startBlockToIntOrZero},
     )
     ->Utils.Object.definePropertyWithValue(
       "endBlock",

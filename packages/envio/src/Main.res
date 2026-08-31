@@ -126,7 +126,14 @@ let buildChainsObject = (~config: Config.t) => {
         get: () => {
           switch getInitialChainState(~chainId=chainConfig.id) {
           | Some(chainState) => chainState.startBlock
-          | None => chainConfig.startBlock
+          | None =>
+            switch chainConfig.startBlock {
+            | Config.Number(n) => n
+            | Config.Latest =>
+              JsError.throwWithMessage(
+                `Chain ${chainIdStr}'s start_block is "latest" and hasn't been resolved yet - this is only available once the indexer has initialized persistence.`,
+              )
+            }
           }
         },
       },
@@ -589,6 +596,7 @@ let migrate = async (~reset) => {
     ~envioInfo=getEnvioInfo(),
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
+    ~lowercaseAddresses=config.lowercaseAddresses,
   )
   await persistence.storage.close()
 }
@@ -641,7 +649,28 @@ let start = async (
     ~envioInfo=getEnvioInfo(),
     ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
     ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
+    ~lowercaseAddresses=config.lowercaseAddresses,
   )
+
+  // From here on every chain's start block is the concrete, DB-durable value:
+  // freshly resolved on first deploy (see StartBlockResolver), reused as-is on
+  // resume. This only rebinds this in-memory copy of `config` - `Config.load()`
+  // itself (and the raw JSON snapshotted into `envio_info`) still say "latest",
+  // which is what keeps the config-compat check stable across restarts.
+  let initializedState = persistence->Persistence.getInitializedState
+  let config = {
+    ...config,
+    chainMap: config.chainMap->ChainMap.mapWithKey((chainId, chainConfig) =>
+      switch initializedState.chains->Array.find(c => c.id === chainId) {
+      | Some({startBlock}) => {...chainConfig, startBlock: Config.Number(startBlock)}
+      // A chain missing from persisted state: added to config.yaml after the
+      // schema was already initialized. Dynamic chain addition isn't
+      // supported (schema/config changes require a resync from scratch), so
+      // this is left as-is rather than worked around here.
+      | None => chainConfig
+      }
+    ),
+  }
 
   // Loads user handler files, which register handler/contractRegister/where
   // state into the global `HandlerRegister` registry as a side effect; this

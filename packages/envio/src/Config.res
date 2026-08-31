@@ -17,6 +17,29 @@ type contract = {
   startBlock: option<int>,
 }
 
+// A chain's configured start block: either a concrete block number or the
+// unresolved "latest" tag. Only ever `Latest` between `Config.load()` and the
+// point `StartBlockResolver` runs (once, on first deploy) - every consumer
+// downstream of that point can assume `Number`.
+type startBlockConfig = Number(int) | Latest
+
+let startBlockToIntExn = (startBlock: startBlockConfig): int =>
+  switch startBlock {
+  | Number(n) => n
+  | Latest =>
+    JsError.throwWithMessage(
+      "Internal error: start block should already be resolved to a concrete block number at this point.",
+    )
+  }
+
+// The test indexer never resolves "latest" against a real chain - treat it as
+// unconstrained (0) so a simulated run can freely pick any explicit start block.
+let startBlockToIntOrZero = (startBlock: startBlockConfig): int =>
+  switch startBlock {
+  | Number(n) => n
+  | Latest => 0
+  }
+
 // Sources are instantiated lazily in ChainState from this config.
 type evmRpcConfig = {
   url: string,
@@ -46,7 +69,7 @@ type chain = {
   name: string,
   id: ChainId.t,
   ecosystem: Ecosystem.name,
-  startBlock: int,
+  startBlock: startBlockConfig,
   endBlock?: int,
   maxReorgDepth: int,
   blockLag: int,
@@ -157,10 +180,15 @@ let chainContractSchema = S.schema(s =>
   }
 )
 
+let startBlockConfigSchema = S.union([
+  S.int->S.shape(n => Number(n)),
+  S.literal("latest")->S.shape(_ => Latest),
+])
+
 let publicConfigChainSchema = S.schema(s =>
   {
     "id": s.matches(ChainId.schema),
-    "startBlock": s.matches(S.int),
+    "startBlock": s.matches(startBlockConfigSchema),
     "endBlock": s.matches(S.option(S.int)),
     "maxReorgDepth": s.matches(S.option(S.int)),
     "blockLag": s.matches(S.option(S.int)),

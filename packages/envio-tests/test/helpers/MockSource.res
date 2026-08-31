@@ -49,7 +49,11 @@ type mockSourceEvent = {
 // MockSource items choose their callback at response time, after ChainState has
 // already been created. Install one stable registration up front and dispatch
 // through callback metadata carried only by the test payload.
-let makeMockSourceRegistration = (~index, ~contractName, ~isWildcard): Internal.onEventRegistration => {
+let makeMockSourceRegistration = (
+  ~index,
+  ~contractName,
+  ~isWildcard,
+): Internal.onEventRegistration => {
   let handler: Internal.handler = args => {
     let event = args.event->(Utils.magic: Internal.event => mockSourceEvent)
     if args.context.isPreload {
@@ -252,12 +256,13 @@ type t = {
 
 // The chain chunks a range into one query per partition slice, so a test that
 // answers with items at a given block names the slice that covers it.
-let coveringBlock = blockNumber => (query: itemsQuery) =>
-  query["fromBlock"] <= blockNumber &&
-    switch query["toBlock"] {
-    | Some(toBlock) => blockNumber <= toBlock
-    | None => true
-    }
+let coveringBlock = blockNumber =>
+  (query: itemsQuery) =>
+    query["fromBlock"] <= blockNumber &&
+      switch query["toBlock"] {
+      | Some(toBlock) => blockNumber <= toBlock
+      | None => true
+      }
 
 let describeItemsQuery = (query: itemsQuery) =>
   `{p: ${query["p"]}, fromBlock: ${query["fromBlock"]->Int.toString}, toBlock: ${switch query["toBlock"] {
@@ -269,10 +274,11 @@ let ambiguousItemsQueries = calls =>
   `resolveGetItemsOrThrow matches ${calls
     ->Array.length
     ->Int.toString} pending queries, so which one it answers is a guess:\n` ++
-  calls->Array.map((call: getItemsOrThrowCall) =>
-    `  ${call.payload->describeItemsQuery}`
-  )->Array.join("\n") ++
-  "\nNarrow it with ~filter, or use drainItemsQueries to empty-response them all."
+  calls
+  ->Array.map((call: getItemsOrThrowCall) => `  ${call.payload->describeItemsQuery}`)
+  ->Array.join(
+    "\n",
+  ) ++ "\nNarrow it with ~filter, or use drainItemsQueries to empty-response them all."
 
 let make = (
   methods: array<method>,
@@ -280,6 +286,11 @@ let make = (
   ~sourceFor=Source.Sync,
   ~pollingInterval=1000,
   ~isWildcard=false,
+  // Pre-configures the standing height answer at construction time, before
+  // the mock is handed to the indexer - needed for a call that happens during
+  // startup itself (e.g. resolving a `latest` start block), which completes
+  // before a test body would ever get a chance to call `setAutoHeight`.
+  ~autoHeight=?,
 ) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
@@ -301,12 +312,16 @@ let make = (
   let heightSubscriptionCalls = []
   let heightSubscriptionCallbacks: array<int => unit> = []
   let heightSubscriptionUnsubscribed = ref(false)
-  let autoHeight = ref(None)
+  let autoHeight = ref(autoHeight)
   let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
 
   // Answers registered before their call arrived, consumed in order by the
   // source methods below. `site` is only carried for the end-of-run report.
-  let deferredItemsAnswers: array<{"site": string, "match": getItemsOrThrowCall => bool, "respond": getItemsOrThrowCall => unit}> = []
+  let deferredItemsAnswers: array<{
+    "site": string,
+    "match": getItemsOrThrowCall => bool,
+    "respond": getItemsOrThrowCall => unit,
+  }> = []
   let deferredHeightAnswers: array<{"site": string, "height": int}> = []
 
   // With the function we keep only the pending calls,
@@ -408,7 +423,7 @@ let make = (
       let blockStore = BlockStore.fromJs(
         blockHashes->Array.map((block): BlockStore.inputBlock => {
           ...block,
-          blockHash: ?block.blockHash->Option.map(evmBlockHash),
+          blockHash: ?(block.blockHash->Option.map(evmBlockHash)),
         }),
         ~ecosystem=Evm,
         ~shouldChecksum=false,
@@ -488,7 +503,10 @@ let make = (
           ~retry,
           ~logger as _,
         ) => {
-          let promise = keepOnlyPendingCalls(~array=getItemsOrThrowCalls, ~fn=(~resolve, ~reject) => {
+          let promise = keepOnlyPendingCalls(~array=getItemsOrThrowCalls, ~fn=(
+            ~resolve,
+            ~reject,
+          ) => {
             let payload = {
               "fromBlock": fromBlock,
               "toBlock": toBlock,
@@ -556,19 +574,23 @@ let make = (
                 // item came from, so those blocks carry a hash too. Without
                 // them the store only ever learns the range's seam and end,
                 // and reorg detection never sees the blocks events landed on.
-                items->Array.forEach(item => {
-                  if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
-                    observedBlocks->Array.push({
-                      blockNumber: item.blockNumber,
-                      blockHash: mockBlockHash(item.blockNumber),
-                    })
-                  }
-                })
+                items->Array.forEach(
+                  item => {
+                    if !(observedBlocks->Array.some(b => b.blockNumber === item.blockNumber)) {
+                      observedBlocks->Array.push({
+                        blockNumber: item.blockNumber,
+                        blockHash: mockBlockHash(item.blockNumber),
+                      })
+                    }
+                  },
+                )
                 let responseBlockStore = BlockStore.make(~ecosystem=Evm, ~shouldChecksum=false)
-                observedBlocks->Array.forEach(block => {
-                  let page = BlockStore.fromJs([block], ~ecosystem=Evm, ~shouldChecksum=false)
-                  responseBlockStore->BlockStore.appendPage(page)
-                })
+                observedBlocks->Array.forEach(
+                  block => {
+                    let page = BlockStore.fromJs([block], ~ecosystem=Evm, ~shouldChecksum=false)
+                    responseBlockStore->BlockStore.appendPage(page)
+                  },
+                )
                 resolve({
                   Source.knownHeight,
                   parsedQueueItems: items->Array.map(

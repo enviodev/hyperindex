@@ -25,6 +25,11 @@ type sourceMock = {
   // Feed this chain's items through a wildcard registration rather than an
   // address-dependent one, so its partition takes the wildcard path.
   isWildcard?: bool,
+  // Pre-configures the standing height answer before the indexer starts -
+  // needed to answer a height call made during startup itself (e.g.
+  // resolving a `latest` start block), which a test body can't reach in time
+  // via `setAutoHeight` since it only runs once startup has already awaited.
+  autoHeight?: int,
 }
 
 let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow]
@@ -34,7 +39,7 @@ let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrTh
 // patching the parsed config — that way the entities pick up their ClickHouse
 // storage flags through the same parse a user's would.
 let withClickHouseStorage = configYaml =>
-  if configYaml->String.match(%re("/^storage:/m"))->Option.isSome {
+  if configYaml->String.match(/^storage:/m)->Option.isSome {
     // The scenario configures storage itself; leave its choice alone.
     configYaml
   } else {
@@ -104,7 +109,9 @@ let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) =
     ->Array.map(ChainId.toString)
   if missing->Utils.Array.notEmpty {
     JsError.throwWithMessage(
-      `Chains ${missing->Array.join(", ")} are configured but have no mock source. Add them to \`~sources\`, or drop them from the scenario's YAML.`,
+      `Chains ${missing->Array.join(
+          ", ",
+        )} are configured but have no mock source. Add them to \`~sources\`, or drop them from the scenario's YAML.`,
     )
   }
 
@@ -114,7 +121,9 @@ let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) =
     ->Array.map(ChainId.toString)
   if unknown->Utils.Array.notEmpty {
     JsError.throwWithMessage(
-      `Mock sources given for chains ${unknown->Array.join(", ")}, which the scenario's YAML doesn't configure.`,
+      `Mock sources given for chains ${unknown->Array.join(
+          ", ",
+        )}, which the scenario's YAML doesn't configure.`,
     )
   }
 
@@ -165,7 +174,14 @@ let run = async (
   body: (~indexer: IndexerRunner.t, ~source: (int, ~index: int=?) => MockSource.t) => promise<unit>,
 ) => {
   let mocks =
-    sources->Array.map(({chain, ?methods, ?sourceFor, ?pollingInterval, ?isWildcard}) => (
+    sources->Array.map(({
+      chain,
+      ?methods,
+      ?sourceFor,
+      ?pollingInterval,
+      ?isWildcard,
+      ?autoHeight,
+    }) => (
       chain,
       MockSource.make(
         methods->Option.getOr(defaultMethods),
@@ -173,6 +189,7 @@ let run = async (
         ~sourceFor?,
         ~pollingInterval?,
         ~isWildcard?,
+        ~autoHeight?,
       ),
     ))
 
@@ -282,7 +299,7 @@ let it = (
         (~indexer, ~source) => body(~t, ~indexer, ~source),
       )
     switch retry {
-    | Some(retry) => Vitest.Async.itWithOptions(name, {retry, timeout: ?timeout}, runBody)
+    | Some(retry) => Vitest.Async.itWithOptions(name, {retry, ?timeout}, runBody)
     | None => Vitest.Async.it(name, runBody, ~timeout?)
     }
   }

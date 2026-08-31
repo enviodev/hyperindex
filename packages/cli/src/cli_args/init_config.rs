@@ -17,7 +17,7 @@ pub mod evm {
             contract_import::converters::{NetworkKind, SelectedContract},
             human_config::{
                 evm::{Chain, ContractConfig, EventConfig, HumanConfig, RpcSelection},
-                BaseConfig, ChainContract, GlobalContract,
+                BaseConfig, ChainContract, GlobalContract, StartBlock,
             },
             system_config::EvmAbi,
         },
@@ -131,7 +131,9 @@ pub mod evm {
                                 skip: None,
                                 hypersync_config: None,
                                 rpc,
-                                start_block: selected_chain.network.get_start_block(),
+                                start_block: StartBlock::Number(
+                                    selected_chain.network.get_start_block(),
+                                ),
                                 end_block,
                                 max_reorg_depth: None,
                                 block_lag: None,
@@ -215,7 +217,7 @@ pub mod fuel {
     use crate::{
         config_parsing::human_config::{
             fuel::{Chain as ChainConfig, ContractConfig, EcosystemTag, EventConfig, HumanConfig},
-            BaseConfig, ChainContract,
+            BaseConfig, ChainContract, StartBlock,
         },
         fuel::{abi::FuelAbi, address::Address},
     };
@@ -273,7 +275,7 @@ pub mod fuel {
                     Some(contracts) => network_configs.push(ChainConfig {
                         id: network as u64,
                         skip: None,
-                        start_block: 0,
+                        start_block: StartBlock::Number(0),
                         end_block: None,
                         hyperfuel_config: None,
                         max_reorg_depth: None,
