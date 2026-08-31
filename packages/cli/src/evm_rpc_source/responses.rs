@@ -29,8 +29,7 @@ pub(crate) enum ResponseError {
     /// rather than retrying.
     Unservable(anyhow::Error),
     /// The response is not a valid answer to the question that was asked: a
-    /// different block, a value that will not decode. Providers load-balance
-    /// across nodes, so one bad answer says nothing about the next.
+    /// different block, a value that will not decode. Worth asking again.
     Malformed(anyhow::Error),
 }
 
@@ -64,10 +63,17 @@ fn unsupported(kind: &str, field: impl std::fmt::Debug) -> ResponseError {
 /// must be the block that was asked for — a row keyed by some other number
 /// would leave the requested block silently absent from the page, and with it
 /// a hole in the chain of reorg checkpoints.
+///
+/// `selected` names the fields the user actually asked for; the rest of
+/// `selection` is read for the reorg check alone. Only a field the user asked
+/// for can be unservable — every EVM chain has a hash and a parent hash, so a
+/// response missing one is a bad answer, not a selection this chain cannot
+/// serve.
 pub(crate) fn build_block(
     response: &Json,
     requested: u64,
     selection: &[BlockField],
+    selected: &[BlockField],
 ) -> Result<Block> {
     let mut block = Block::default();
     let number = present(response, "number")
@@ -99,7 +105,15 @@ pub(crate) fn build_block(
         .filter_map(|&requested| block_field_missing(&block, requested))
         .collect();
     if !missing.is_empty() {
-        return Err(missing_error("block", &missing));
+        let unservable: Vec<&str> = selected
+            .iter()
+            .filter_map(|&requested| block_field_missing(&block, requested))
+            .collect();
+        return Err(if unservable.is_empty() {
+            ResponseError::Malformed(missing_message("block", &missing))
+        } else {
+            ResponseError::Unservable(missing_message("block", &unservable))
+        });
     }
     Ok(block)
 }
@@ -178,7 +192,11 @@ pub(crate) fn check_transaction(tx: &Transaction, selection: &[TransactionField]
 }
 
 fn missing_error(kind: &str, missing: &[&str]) -> ResponseError {
-    ResponseError::Unservable(anyhow!(
+    ResponseError::Unservable(missing_message(kind, missing))
+}
+
+fn missing_message(kind: &str, missing: &[&str]) -> anyhow::Error {
+    anyhow!(
         "the RPC response is missing the selected {kind} {}: {}. Please double-check your RPC \
          provider returns correct data.",
         if missing.len() == 1 {
@@ -187,7 +205,7 @@ fn missing_error(kind: &str, missing: &[&str]) -> ResponseError {
             "fields"
         },
         missing.join(", "),
-    ))
+    )
 }
 
 #[cfg(test)]
@@ -219,7 +237,13 @@ mod tests {
             "hash": "0x".to_string() + &"11".repeat(32),
             "gasUsed": "0x30",
         });
-        let block = build_block(&response, 16, &[BlockField::Timestamp]).unwrap();
+        let block = build_block(
+            &response,
+            16,
+            &[BlockField::Timestamp],
+            &[BlockField::Timestamp],
+        )
+        .unwrap();
         assert_eq!(
             (
                 block.number,
@@ -236,8 +260,15 @@ mod tests {
         // The provider answered, but not with what the selection needs; serving
         // undefined for it would surface as a silently empty handler field.
         let response = json!({ "number": "0x10" });
-        let (kind, message) =
-            classify(build_block(&response, 16, &[BlockField::Timestamp]).unwrap_err());
+        let (kind, message) = classify(
+            build_block(
+                &response,
+                16,
+                &[BlockField::Timestamp],
+                &[BlockField::Timestamp],
+            )
+            .unwrap_err(),
+        );
         assert_eq!(
             (kind, message.contains("timestamp")),
             ("unservable", true),
@@ -250,7 +281,13 @@ mod tests {
         // Pre-London blocks have no baseFeePerGas; that is the chain's answer,
         // not a broken provider.
         let response = json!({ "number": "0x10", "baseFeePerGas": Json::Null });
-        let block = build_block(&response, 16, &[BlockField::BaseFeePerGas]).unwrap();
+        let block = build_block(
+            &response,
+            16,
+            &[BlockField::BaseFeePerGas],
+            &[BlockField::BaseFeePerGas],
+        )
+        .unwrap();
         assert_eq!((block.number, block.base_fee_per_gas), (Some(16), None));
     }
 
@@ -263,8 +300,15 @@ mod tests {
         // making — classifying it the other way would disable the source on one
         // bad answer.
         let response = json!({ "number": "0x11", "timestamp": "0x20" });
-        let (kind, message) =
-            classify(build_block(&response, 16, &[BlockField::Timestamp]).unwrap_err());
+        let (kind, message) = classify(
+            build_block(
+                &response,
+                16,
+                &[BlockField::Timestamp],
+                &[BlockField::Timestamp],
+            )
+            .unwrap_err(),
+        );
         assert_eq!(
             (
                 kind,
@@ -276,9 +320,58 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_field_the_user_did_not_select_is_rejected_as_retryable() {
+        // `hash` is read for the reorg check whatever the selection is. Every
+        // EVM chain has one, so a response without it is a bad answer rather
+        // than a selection this chain cannot serve — and only the latter is
+        // worth disabling the source over.
+        let response = json!({ "number": "0x10", "gasUsed": "0x30" });
+        let (kind, message) = classify(
+            build_block(
+                &response,
+                16,
+                &[BlockField::GasUsed, BlockField::Hash],
+                &[BlockField::GasUsed],
+            )
+            .unwrap_err(),
+        );
+        assert_eq!(
+            (kind, message.contains("hash")),
+            ("malformed", true),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_missing_field_the_user_did_select_is_still_unservable() {
+        let response = json!({ "number": "0x10", "hash": "0x".to_string() + &"11".repeat(32) });
+        let (kind, message) = classify(
+            build_block(
+                &response,
+                16,
+                &[BlockField::GasUsed, BlockField::Hash],
+                &[BlockField::GasUsed],
+            )
+            .unwrap_err(),
+        );
+        assert_eq!(
+            (kind, message.contains("gasUsed")),
+            ("unservable", true),
+            "{message}"
+        );
+    }
+
+    #[test]
     fn a_block_response_without_a_number_is_rejected_as_retryable() {
-        let (kind, message) =
-            classify(build_block(&json!({}), 16, &[BlockField::Timestamp]).unwrap_err());
+        let (kind, message) = classify(
+            build_block(
+                &json!({}),
+                16,
+                &[BlockField::Timestamp],
+                &[BlockField::Timestamp],
+            )
+            .unwrap_err(),
+        );
         assert_eq!(
             (kind, message.contains("number")),
             ("malformed", true),

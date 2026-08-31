@@ -131,6 +131,17 @@ impl std::fmt::Display for EnrichError {
 }
 
 impl EnrichError {
+    /// How much a failure forecloses. Only the highest disables the source, so
+    /// when a page fails several ways at once this is what decides which one it
+    /// reports.
+    fn severity(&self) -> u8 {
+        match self {
+            EnrichError::Transient(_) => 0,
+            EnrichError::Rpc(_) => 1,
+            EnrichError::FieldSelection { .. } => 2,
+        }
+    }
+
     /// Carry a rejected response's own verdict on whether trying again is worth
     /// anything, rather than treating every unreadable response as a selection
     /// the provider cannot serve.
@@ -146,6 +157,34 @@ impl EnrichError {
                  indexing continues correctly once the query is retried."
             )),
         }
+    }
+}
+
+/// Collect a fan-out's results, keeping the most severe failure rather than
+/// whichever settled first. A page's reads are grouped by field selection in a
+/// `HashMap`, so "first" is not stable between runs — and the choice decides
+/// whether the source is disabled or merely backs off.
+fn collect_worst<T>(
+    results: impl IntoIterator<Item = Result<T, EnrichError>>,
+) -> Result<Vec<T>, EnrichError> {
+    let mut values = Vec::new();
+    let mut worst: Option<EnrichError> = None;
+    for result in results {
+        match result {
+            Ok(value) => values.push(value),
+            Err(error) => {
+                if worst
+                    .as_ref()
+                    .is_none_or(|held| error.severity() > held.severity())
+                {
+                    worst = Some(error);
+                }
+            }
+        }
+    }
+    match worst {
+        Some(error) => Err(error),
+        None => Ok(values),
     }
 }
 
@@ -225,14 +264,14 @@ pub(crate) struct EnrichedPage {
 }
 
 /// Read one JSON-RPC result, sharing an identical request already in flight.
-/// A null result is `None`: for these methods it means "this node does not have
-/// it", which the caller decides how to treat.
-async fn read(
+/// Everything read here is something the chain must have, so a null answer is
+/// `Transient` rather than an absence to be handled.
+async fn require(
     client: &Arc<JsonRpcClient>,
     inflight: &Fetches,
     stats: &Stats,
     key: FetchKey,
-) -> Result<Option<Arc<Json>>, EnrichError> {
+) -> Result<Arc<Json>, EnrichError> {
     let method = key.method();
     let (result, timing) = inflight
         .get(key, || {
@@ -254,26 +293,15 @@ async fn read(
         stats.record(method, seconds);
     }
     let value = result.map_err(EnrichError::Rpc)?;
-    Ok((!value.is_null()).then_some(value))
-}
-
-/// Read something the chain must have. A null answer is the load-balancing
-/// symptom `EnrichError::Transient` describes, so it is reported the same way
-/// for a block, a transaction and a receipt alike.
-async fn require(
-    client: &Arc<JsonRpcClient>,
-    inflight: &Fetches,
-    stats: &Stats,
-    key: FetchKey,
-) -> Result<Arc<Json>, EnrichError> {
-    let description = key.describe();
-    read(client, inflight, stats, key).await?.ok_or_else(|| {
-        EnrichError::Transient(format!(
-            "The RPC returned null for {description}. The provider may be load-balanced between \
-             nodes that drift from the head independently; indexing continues correctly once the \
-             query is retried."
-        ))
-    })
+    if value.is_null() {
+        return Err(EnrichError::Transient(format!(
+            "The RPC returned null for {}. The provider may be load-balanced between nodes that \
+             drift from the head independently; indexing continues correctly once the query is \
+             retried.",
+            key.describe()
+        )));
+    }
+    Ok(value)
 }
 
 /// Which responses a transaction's selected fields need. Fields carried by
@@ -313,7 +341,7 @@ impl TxReads {
     }
 }
 
-pub(crate) async fn enrich(
+pub(crate) async fn page(
     client: &Arc<JsonRpcClient>,
     inflight: &Fetches,
     stats: &Stats,
@@ -331,14 +359,15 @@ pub(crate) async fn enrich(
     let block_plan = plan_blocks(&refs, from_block, to_block, known_blocks);
     let tx_plan = plan_transactions(&refs, known_transactions);
 
-    // Both halves are awaited to completion rather than raced fail-fast, so a
-    // failure on one side still leaves the other's timings to be recorded.
-    let (blocks, transactions) = futures_util::future::join(
+    // Fail-fast: the first side to fail decides the page, and waiting for the
+    // other would let one stalled request turn a verdict the caller can act on
+    // into the timeout wrapping the whole read. A cancelled sibling costs no
+    // timing — dropping its last waiter cancels the request itself.
+    let (blocks, transactions) = futures_util::future::try_join(
         fetch_blocks(client, inflight, stats, &block_plan),
         fetch_transactions(client, inflight, stats, &tx_plan),
     )
-    .await;
-    let (blocks, transactions) = (blocks?, transactions?);
+    .await?;
 
     let page_blocks = BlockStore::new_evm(should_checksum);
     let page_transactions = TransactionStore::new_evm(should_checksum);
@@ -398,6 +427,9 @@ fn fill_block_page(
             .iter()
             .flat_map(|(_, blocks)| blocks)
             .filter_map(|block| {
+                // Genesis has no parent to observe, and its `parentHash` is
+                // zero rather than absent, so it would enter the page as a
+                // hash-only row for block -1 if it were not skipped.
                 let number = block.number.filter(|&number| number > 0)?;
                 Some(Block {
                     number: Some(number - 1),
@@ -431,6 +463,10 @@ fn boundary_blocks(from_block: u64, to_block: u64) -> Vec<u64> {
 struct BlockGroup {
     covering: u64,
     fields: Vec<BlockField>,
+    /// The subset of `fields` the items actually selected. The rest are read
+    /// for the reorg check alone, and a response missing one of those is a bad
+    /// answer rather than a selection the chain cannot serve.
+    selected: Vec<BlockField>,
     numbers: Vec<u64>,
 }
 
@@ -454,7 +490,7 @@ fn plan_blocks(
     let mut by_covering: HashMap<u64, Vec<u64>> = HashMap::new();
     for (&number, block_ref) in &refs.blocks {
         let wanted = block_ref.mask & !BLOCK_KEY_MASK;
-        if !boundary.contains(&number) && (wanted == 0 || known.covers(number, wanted)) {
+        if !boundary.contains(&number) && known.covers(number, wanted) {
             continue;
         }
         // Every fetched block is read for the reorg fields too: they come in
@@ -478,6 +514,7 @@ fn plan_blocks(
         .map(|(covering, numbers)| BlockGroup {
             covering,
             fields: block_fields_in(covering),
+            selected: block_fields_in(covering & !BLOCK_OBSERVATION_MASK),
             numbers,
         })
         .collect()
@@ -490,7 +527,7 @@ fn plan_transactions(refs: &PageRefs, known: &TransactionStore) -> Vec<TxGroup> 
     let mut by_covering: HashMap<u64, Vec<(TxKey, format::Hash)>> = HashMap::new();
     for (&key, tx_ref) in &refs.transactions {
         let wanted = tx_ref.mask & !TX_LOG_MASK;
-        if wanted == 0 || known.covers(key, wanted) {
+        if known.covers(key, wanted) {
             continue;
         }
         by_covering
@@ -531,6 +568,7 @@ pub(crate) async fn fetch_block_hashes(
     let groups = [BlockGroup {
         covering: BLOCK_OBSERVATION_MASK,
         fields: block_fields_in(BLOCK_OBSERVATION_MASK),
+        selected: Vec::new(),
         numbers: block_numbers.to_vec(),
     }];
     let blocks = fetch_blocks(client, inflight, stats, &groups).await?;
@@ -551,15 +589,14 @@ async fn fetch_blocks(
     let fetches = groups.iter().map(|group| async move {
         let blocks = join_all(group.numbers.iter().map(|&number| async move {
             let response = require(client, inflight, stats, FetchKey::Block(number)).await?;
-            responses::build_block(&response, number, &group.fields)
+            responses::build_block(&response, number, &group.fields, &group.selected)
                 .map_err(|error| EnrichError::from_response(number, error))
         }))
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, EnrichError>>()?;
+        .await;
+        let blocks = collect_worst(blocks)?;
         Ok((group.covering, blocks))
     });
-    join_all(fetches).await.into_iter().collect()
+    collect_worst(join_all(fetches).await)
 }
 
 async fn fetch_transactions(
@@ -573,14 +610,15 @@ async fn fetch_transactions(
             |((block_number, transaction_index), hash)| {
                 let key = ***hash;
                 async move {
-                    // Awaited to completion rather than raced fail-fast, so one
-                    // side failing still leaves the other's timing to record.
-                    let (transaction, receipt) = futures_util::future::join(
+                    let (transaction, receipt) = futures_util::future::try_join(
                         read_opt(
                             client,
                             inflight,
                             stats,
-                            group.reads.transaction.then_some(FetchKey::Transaction(key)),
+                            group
+                                .reads
+                                .transaction
+                                .then_some(FetchKey::Transaction(key)),
                         ),
                         read_opt(
                             client,
@@ -589,8 +627,7 @@ async fn fetch_transactions(
                             group.reads.receipt.then_some(FetchKey::Receipt(key)),
                         ),
                     )
-                    .await;
-                    let (transaction, receipt) = (transaction?, receipt?);
+                    .await?;
 
                     let mut tx = responses::build_transaction(
                         *block_number,
@@ -623,12 +660,11 @@ async fn fetch_transactions(
                 }
             },
         ))
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, EnrichError>>()?;
+        .await;
+        let txs = collect_worst(txs)?;
         Ok((group.covering | TX_LOG_MASK, txs))
     });
-    join_all(fetches).await.into_iter().collect()
+    collect_worst(join_all(fetches).await)
 }
 
 /// Read a response only if the selection needs one.
@@ -782,7 +818,7 @@ mod tests {
             tx_bit(EvmTxField::Hash) | tx_bit(EvmTxField::TransactionIndex),
         );
         let plan = plan_transactions(&refs, &TransactionStore::new_evm(false));
-        assert!(plan.is_empty(), "planned {} groups", plan.len());
+        assert_eq!(planned_keys(&plan), Vec::<TxKey>::new());
     }
 
     #[test]
@@ -798,7 +834,7 @@ mod tests {
             wanted,
         );
         let plan = plan_transactions(&refs_for(50, 0, wanted), &known);
-        assert!(plan.is_empty(), "planned {} groups", plan.len());
+        assert_eq!(planned_keys(&plan), Vec::<TxKey>::new());
     }
 
     #[test]
@@ -817,7 +853,7 @@ mod tests {
             wanted,
         );
         let plan = plan_transactions(&refs_for(50, 0, wanted), &known);
-        assert!(plan.is_empty(), "planned {} groups", plan.len());
+        assert_eq!(planned_keys(&plan), Vec::<TxKey>::new());
     }
 
     #[test]

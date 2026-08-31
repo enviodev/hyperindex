@@ -150,7 +150,7 @@ pub fn parse_hex_u64(s: &str) -> Result<u64> {
 
 // HTTP and JSON-RPC envelope behavior (success, error bodies, non-200
 // statuses) is covered end-to-end through the napi layer in
-// scenarios/test_codegen/test/lib_tests/EvmRpcClient_test.res.
+// packages/envio-tests/test/lib_tests/EvmRpcClient_test.res.
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -136,26 +136,12 @@ pub struct NextPageParams {
     pub retry: i64,
 }
 
-/// What to do about a page that could not be read. Mirrors the ReScript
-/// `Source.getItemsRetry` variant.
-#[napi(object)]
-pub struct RetryDecision {
-    /// "suggestedToBlock" — retry the same `fromBlock` up to a narrower
-    /// `toBlock`; or "backoff" — wait `backoffMillis` and retry unchanged.
-    pub tag: String,
-    pub to_block: Option<i64>,
-    pub message: Option<String>,
-    pub backoff_millis: Option<i64>,
-}
-
-/// The outcome of a page read. Every outcome an caller is expected to handle is
+/// The outcome of a page read. Every outcome a caller is expected to handle is
 /// a value rather than an exception, so nothing has to be recovered by parsing
 /// an error message; a thrown error from `get_next_page` is a genuine bug.
 #[napi(object)]
 pub struct NextPageResult {
-    /// "ok" — `items` is the page; "retry" — `retry` says how to try again;
-    /// "fieldSelection" — the provider cannot serve the selected fields, which
-    /// retrying will not fix.
+    /// Which outcome this is, and so which of the fields below are set.
     pub kind: String,
     /// The requests this call issued. A call that joined another's in-flight
     /// request contributes nothing, so per-source totals stay exact.
@@ -164,23 +150,34 @@ pub struct NextPageResult {
     /// succeeded, the block it got as far as otherwise.
     pub to_block: i64,
     pub items: Vec<EventItem>,
-    /// Set on "retry" and "fieldSelection".
+    /// What to say about a failure: on "backoff" the line the retry logs, on
+    /// "fieldSelection" why the selection cannot be served.
     pub message: Option<String>,
-    /// The block a "fieldSelection" failure happened on — the one thing that
-    /// makes an unservable selection diagnosable.
-    pub block_number: Option<i64>,
-    /// The provider's own message, when it gave one. Diagnostics only.
+    /// The provider's own words, when it gave any — what a failure logs as its
+    /// cause, alongside `message`.
     pub error_message: Option<String>,
-    pub retry: Option<RetryDecision>,
+    /// "fieldSelection" only: the block it happened on, which is the one thing
+    /// that makes an unservable selection diagnosable.
+    pub block_number: Option<i64>,
+    /// "suggestedToBlock" only: the narrower end to ask for instead.
+    pub retry_to_block: Option<i64>,
+    /// "backoff" only: how long to wait first.
+    pub backoff_millis: Option<i64>,
 }
 
-/// The outcomes `NextPageResult::kind` discriminates. Napi has no enum to send
-/// them as, so they cross as strings — but only from here, and the ReScript
-/// side rejects any string it does not know.
+/// What a page read can come back as. Napi has no enum to send this as, so it
+/// crosses as a string, written only from here. The two retryable outcomes are
+/// their own kinds rather than a nested decision object: one discriminator
+/// means one place for the ReScript side to reject a value it cannot read.
 #[derive(Clone, Copy)]
 enum Kind {
     Ok,
-    Retry,
+    /// Ask again for a narrower range, with no wait.
+    SuggestedToBlock,
+    /// Wait, then ask for the same range again.
+    Backoff,
+    /// The provider cannot serve the selected fields, which retrying will not
+    /// fix.
     FieldSelection,
 }
 
@@ -188,7 +185,8 @@ impl Kind {
     fn as_str(self) -> &'static str {
         match self {
             Kind::Ok => "ok",
-            Kind::Retry => "retry",
+            Kind::SuggestedToBlock => "suggestedToBlock",
+            Kind::Backoff => "backoff",
             Kind::FieldSelection => "fieldSelection",
         }
     }
@@ -204,31 +202,36 @@ impl NextPageResult {
             to_block: to_block as i64,
             items: Vec::new(),
             message: None,
-            block_number: None,
             error_message: None,
-            retry: None,
+            block_number: None,
+            retry_to_block: None,
+            backoff_millis: None,
         }
     }
-}
 
-impl RetryDecision {
     /// Wait, then ask for the same range again.
-    fn backoff(message: String, backoff_millis: i64) -> Self {
-        RetryDecision {
-            tag: "backoff".to_string(),
-            to_block: None,
+    fn backoff(
+        message: String,
+        backoff_millis: i64,
+        to_block: u64,
+        request_stats: Vec<RequestStat>,
+    ) -> Self {
+        NextPageResult {
             message: Some(message),
             backoff_millis: Some(backoff_millis),
+            ..NextPageResult::new(Kind::Backoff, to_block, request_stats)
         }
     }
 
     /// Ask again for a narrower range, with no wait.
-    fn suggested_to_block(to_block: u64) -> Self {
-        RetryDecision {
-            tag: "suggestedToBlock".to_string(),
-            to_block: Some(to_block as i64),
-            message: None,
-            backoff_millis: None,
+    fn suggested_to_block(
+        retry_to_block: u64,
+        to_block: u64,
+        request_stats: Vec<RequestStat>,
+    ) -> Self {
+        NextPageResult {
+            retry_to_block: Some(retry_to_block as i64),
+            ..NextPageResult::new(Kind::SuggestedToBlock, to_block, request_stats)
         }
     }
 }
@@ -275,32 +278,6 @@ struct PageQuery<'a> {
     known_blocks: &'a BlockStore,
     known_transactions: &'a TransactionStore,
     should_checksum: bool,
-}
-
-/// Why a page could not be read.
-enum PageError {
-    Rpc(Arc<RpcError>),
-    Transient(String),
-    FieldSelection {
-        block_number: Option<u64>,
-        error: anyhow::Error,
-    },
-}
-
-impl From<EnrichError> for PageError {
-    fn from(err: EnrichError) -> Self {
-        match err {
-            EnrichError::Rpc(err) => PageError::Rpc(err),
-            EnrichError::Transient(message) => PageError::Transient(message),
-            EnrichError::FieldSelection {
-                block_number,
-                error,
-            } => PageError::FieldSelection {
-                block_number,
-                error,
-            },
-        }
-    }
 }
 
 #[napi]
@@ -438,24 +415,26 @@ impl EvmRpcClient {
         }
     }
 
+    /// The chain's height, with the timing of the one request it took —
+    /// measured here, like every other method's, rather than around the call.
     #[napi]
-    pub async fn get_height(&self) -> napi::Result<i64> {
+    pub async fn get_height(&self) -> napi::Result<(i64, Vec<RequestStat>)> {
         let started = Instant::now();
-        let height = self.inner.get_height().await.map_err(|err| {
-            // A poll that failed still cost a request; carry its timing out
-            // with the error so the source's metrics count it.
-            crate::request_stats::error_with_request_stats(
-                rpc_error_to_napi(err),
-                &[RequestStat {
-                    method: "eth_blockNumber".to_string(),
-                    seconds: started.elapsed().as_secs_f64(),
-                }],
-            )
+        let result = self.inner.get_height().await;
+        let request_stats = vec![RequestStat {
+            method: "eth_blockNumber".to_string(),
+            seconds: started.elapsed().as_secs_f64(),
+        }];
+        // A poll that failed still cost a request; carry its timing out with
+        // the error so the source's metrics count it.
+        let height = result.map_err(|err| {
+            crate::request_stats::error_with_request_stats(rpc_error_to_napi(err), &request_stats)
         })?;
-        height
+        let height: i64 = height
             .try_into()
             .context("block height exceeds i64::MAX")
-            .map_err(map_err)
+            .map_err(map_err)?;
+        Ok((height, request_stats))
     }
 
     /// Reads one page: decides the actual `toBlock` from this partition's
@@ -493,7 +472,6 @@ impl EvmRpcClient {
         let (suggested_interval, source_max) = self
             .intervals
             .suggested_interval(&params.partition_id, &self.sync_config);
-        // Defensively ensure we never query a target block below fromBlock.
         let to_block = (from_block + suggested_interval - 1)
             .min(to_block_ceiling)
             .max(from_block);
@@ -560,7 +538,7 @@ impl EvmRpcClient {
             // The provider answered, but cannot serve the selected fields.
             // Retrying asks the same question of the same chain, so the caller
             // is told to stop rather than to wait.
-            Ok(Err(PageError::FieldSelection {
+            Ok(Err(EnrichError::FieldSelection {
                 block_number,
                 error,
             })) => (
@@ -574,21 +552,24 @@ impl EvmRpcClient {
             // The answer was unusable but the next one may not be. The range is
             // fine, so the interval is left alone and only the wait grows with
             // the attempt.
-            Ok(Err(PageError::Transient(message))) => (
+            Ok(Err(EnrichError::Transient(message))) => (
                 NextPageResult {
-                    message: Some(message.clone()),
+                    // The symptom is its own explanation here, so it is both
+                    // what the retry logs and the cause logged beside it.
                     error_message: Some(message.clone()),
-                    retry: Some(RetryDecision::backoff(
-                        // The reason the wait exists travels with it, so a
-                        // retry is explained where it is acted on.
+                    // A drifting node catches up in its own time, so the wait
+                    // ramps with the attempt instead of using the configured
+                    // backoff, which is tuned for a provider erroring outright.
+                    ..NextPageResult::backoff(
                         message,
                         params.retry.saturating_mul(500).max(100),
-                    )),
-                    ..NextPageResult::new(Kind::Retry, to_block, stats.take())
+                        to_block,
+                        stats.take(),
+                    )
                 },
                 None,
             ),
-            Ok(Err(PageError::Rpc(err))) => {
+            Ok(Err(EnrichError::Rpc(err))) => {
                 let provider_message = match &*err {
                     RpcError::JsonRpc { message, .. } => Some(message.clone()),
                     RpcError::Other(_) => None,
@@ -627,14 +608,21 @@ impl EvmRpcClient {
         &self,
         query: &PageQuery<'_>,
         stats: &Stats,
-    ) -> Result<(Vec<EventItem>, enrich::EnrichedPage), PageError> {
+    ) -> Result<(Vec<EventItem>, enrich::EnrichedPage), EnrichError> {
         let decoded = self
             .fetch_page(query, stats)
             .await
-            .map_err(|err| PageError::Rpc(Arc::new(err)))?;
+            .map_err(|err| EnrichError::Rpc(Arc::new(err)))?;
 
         let mut refs = PageRefs::default();
         let mut items = Vec::with_capacity(decoded.len());
+        // A log can satisfy more than one selection — an event's `where`
+        // OR-groups, or several registrations sharing a signature — and routing
+        // fans one log out to several registrations, so only exact repeats are
+        // dropped. The repeat's hashes are still recorded: the two `eth_getLogs`
+        // calls ran concurrently and can straddle a fork, and it is the
+        // disagreement between their block hashes that catches it.
+        let mut seen: HashSet<(i64, i64, i64)> = HashSet::new();
         for entry in decoded {
             // A registration the client was not constructed with cannot be
             // routed to, so this is a missing entry rather than an empty
@@ -643,24 +631,37 @@ impl EvmRpcClient {
             let fields = *self
                 .registration_fields
                 .get(&entry.item.on_event_registration_index)
-                .ok_or_else(|| PageError::FieldSelection {
+                .ok_or_else(|| EnrichError::FieldSelection {
                     block_number: Some(entry.item.block_number as u64),
                     error: anyhow::anyhow!(
                         "no field selection for registration {}",
                         entry.item.on_event_registration_index
                     ),
                 })?;
+            let transaction_index =
+                u32::try_from(entry.item.transaction_index).map_err(|_| {
+                    EnrichError::Transient(format!(
+                        "the RPC reported transaction index {} in block {}, which no block can                          hold",
+                        entry.item.transaction_index, entry.item.block_number,
+                    ))
+                })?;
             refs.add(
                 entry.item.block_number as u64,
-                entry.item.transaction_index as u32,
+                transaction_index,
                 &entry.block_hash,
                 &entry.transaction_hash,
                 fields,
             );
-            items.push(entry.item);
+            if seen.insert((
+                entry.item.block_number,
+                entry.item.log_index,
+                entry.item.on_event_registration_index,
+            )) {
+                items.push(entry.item);
+            }
         }
 
-        let page = enrich::enrich(
+        let page = enrich::page(
             &self.inner,
             &self.fetches,
             stats,
@@ -697,16 +698,20 @@ impl EvmRpcClient {
         let shrunk_interval =
             interval::shrink(executed_interval, self.sync_config.backoff_multiplicative);
 
-        let retry = match provider_message.and_then(suggested_block_interval_from_message) {
+        let result = match provider_message.and_then(suggested_block_interval_from_message) {
             // "limited to N blocks" — a structural cap on the whole source; only tighten.
             Some((suggested, true)) => {
                 let capped = self.intervals.tighten_source_max(source_max, suggested);
-                RetryDecision::suggested_to_block(from_block + capped - 1)
+                NextPageResult::suggested_to_block(from_block + capped - 1, to_block, request_stats)
             }
             // A one-off suggested range ("retry with the range X-Y") — apply to this partition.
             Some((suggested, false)) => {
                 self.intervals.set_partition(partition_id, suggested);
-                RetryDecision::suggested_to_block(from_block + suggested - 1)
+                NextPageResult::suggested_to_block(
+                    from_block + suggested - 1,
+                    to_block,
+                    request_stats,
+                )
             }
             // Density cap with no suggested number (too many logs / response too large):
             // shrink THIS partition and retry immediately (no wait); acceleration
@@ -716,36 +721,35 @@ impl EvmRpcClient {
                 && provider_message.is_some_and(is_response_too_large_message) =>
             {
                 self.intervals.set_partition(partition_id, shrunk_interval);
-                RetryDecision::suggested_to_block(from_block + shrunk_interval - 1)
+                NextPageResult::suggested_to_block(
+                    from_block + shrunk_interval - 1,
+                    to_block,
+                    request_stats,
+                )
             }
             // Transient/unknown (including a timeout) — shrink this partition and back off.
             None => {
                 self.intervals.set_partition(partition_id, shrunk_interval);
-                RetryDecision::backoff(
+                NextPageResult::backoff(
                     "Failed getting data for the block range. Will try smaller block range \
                      for the next attempt."
                         .to_string(),
                     self.sync_config.backoff_millis as i64,
+                    to_block,
+                    request_stats,
                 )
             }
         };
 
         NextPageResult {
-            message: retry.message.clone(),
             error_message: Some(error_message),
-            retry: Some(retry),
-            ..NextPageResult::new(Kind::Retry, to_block, request_stats)
+            ..result
         }
     }
 
-    /// Fans out one `eth_getLogs` per selection concurrently, deduping the
-    /// merged results by `(blockNumber, logIndex, registrationIndex)` — a log
-    /// can satisfy more than one selection (an event's `where` OR-groups, or
-    /// several registrations sharing a signature) and routing fans one log out
-    /// to several registrations, so only exact repeats are dropped. Waits for
-    /// every selection to settle (unlike `Promise.all`'s fail-fast) so every
-    /// request's timing is still captured for `requestStats` even when one of
-    /// them errors.
+    /// Fans out one `eth_getLogs` per selection concurrently. Every selection
+    /// is awaited even once one has failed, so each request's timing still
+    /// reaches `requestStats`; the first failure then decides the page.
     async fn fetch_page(
         &self,
         query: &PageQuery<'_>,
@@ -773,21 +777,10 @@ impl EvmRpcClient {
             .await;
 
         let mut items = Vec::new();
-        let mut seen: HashSet<(i64, i64, i64)> = HashSet::new();
         let mut first_err = None;
         for result in results {
             match result {
-                Ok(page_items) => {
-                    for entry in page_items {
-                        if seen.insert((
-                            entry.item.block_number,
-                            entry.item.log_index,
-                            entry.item.on_event_registration_index,
-                        )) {
-                            items.push(entry);
-                        }
-                    }
-                }
+                Ok(page_items) => items.extend(page_items),
                 Err(e) => {
                     if first_err.is_none() {
                         first_err = Some(e);

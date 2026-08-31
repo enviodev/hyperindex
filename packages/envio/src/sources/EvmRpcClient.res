@@ -14,31 +14,14 @@ type nextPageParams = {
   fromBlock: int,
   toBlockCeiling: int,
   partitionId: string,
-  // The partition's registration selection, by chain-scoped index. Log
-  // selections and the routing index are derived on the Rust side from the
-  // registrations passed at construction.
   registrationIndexes: array<int>,
-  // Contract names to fetch address-free even though their registrations
-  // depend on addresses (client-side filtering). None/empty means
-  // every address-dependent contract is filtered server-side.
   clientFilteredContracts: option<array<string>>,
-  // How many times this query has already been retried, which sets how long a
-  // transient miss waits before the next attempt.
   retry: int,
 }
 
-// Rust reports what to do about a page it could not read, rather than throwing
-// it: `tag` picks which of the two shapes below is populated.
-type retryDecision = {
-  tag: string,
-  toBlock: option<int>,
-  message: option<string>,
-  backoffMillis: option<int>,
-}
-
-// `kind` discriminates the outcome: "ok" carries the page, "retry" carries a
-// `retry` decision, and "fieldSelection" reports a selection this provider
-// cannot serve. A thrown error from `getNextPage` is a genuine bug, not an
+// Rust reports what to do about a page it could not read rather than throwing
+// it; see `NextPageResult` in `evm_rpc_source/mod.rs` for which fields each
+// `kind` populates. A thrown error from `getNextPage` is a genuine bug, not an
 // outcome to recover from.
 type nextPageResult = {
   kind: string,
@@ -46,10 +29,10 @@ type nextPageResult = {
   toBlock: int,
   items: array<EvmEventItem.t>,
   message: option<string>,
-  // The block a "fieldSelection" failure happened on.
-  blockNumber: option<int>,
   errorMessage: option<string>,
-  retry: option<retryDecision>,
+  blockNumber: option<int>,
+  retryToBlock: option<int>,
+  backoffMillis: option<int>,
 }
 
 // `message` is set when the read failed, in which case the page returned
@@ -60,7 +43,7 @@ type blockHashResult = {
 }
 
 type t = {
-  getHeight: unit => promise<int>,
+  getHeight: unit => promise<(int, array<Source.requestStat>)>,
   // The chain's stores are passed in so a block or transaction another
   // partition already read is not read again; the returned stores are this
   // page's own, to be merged by the caller.
@@ -108,20 +91,3 @@ let make = (
     ~checksumAddresses,
     ~addressStore,
   )
-
-// Turn Rust's retry decision into the variant the source manager acts on. The
-// client returns exactly these two shapes; anything else is the addon and this
-// module disagreeing, which no backoff recovers from.
-let toSourceRetry = (decision: retryDecision): Source.getItemsRetry =>
-  switch (decision.tag, decision.toBlock, decision.backoffMillis) {
-  | ("suggestedToBlock", Some(toBlock), _) => WithSuggestedToBlock({toBlock: toBlock})
-  | ("backoff", _, Some(backoffMillis)) =>
-    WithBackoff({
-      message: decision.message->Option.getOr("Retrying the block range."),
-      backoffMillis,
-    })
-  | (tag, _, _) =>
-    JsError.throwWithMessage(
-      `The RPC client returned an unrecognised retry decision "${tag}". Please, report to the Envio team.`,
-    )
-  }

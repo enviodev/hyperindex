@@ -97,9 +97,28 @@ let make = (
     )
     let pageFetchTime = pageFetchTimeRef->Performance.secondsSince
 
-    switch (result.kind, result.retry) {
-    | ("ok", _) => ()
-    | ("fieldSelection", _) =>
+    let failedGettingItems = (retry): exn => Source.GetItemsError(
+      FailedGettingItems({
+        requestStats: result.requestStats,
+        // The provider's own message travels as a real error so it still
+        // reaches the logs, and so callers have one place to read it from.
+        exn: switch result.errorMessage {
+        | Some(message) => JsError.make(message)->JsExn.anyToExnInternal
+        | None => %raw(`null`)
+        },
+        attemptedToBlock: result.toBlock,
+        retry,
+      }),
+    )
+
+    let missing = field =>
+      JsError.throwWithMessage(
+        `The RPC client returned a "${result.kind}" outcome without a ${field}. Please, report to the Envio team.`,
+      )
+
+    switch result.kind {
+    | "ok" => ()
+    | "fieldSelection" =>
       throw(
         Source.GetItemsError(
           FailedGettingFieldSelection({
@@ -115,26 +134,32 @@ let make = (
           }),
         ),
       )
-    | ("retry", Some(decision)) =>
+    | "suggestedToBlock" =>
       throw(
-        Source.GetItemsError(
-          FailedGettingItems({
-            requestStats: result.requestStats,
-            // The provider's own message travels as a real error so it still
-            // reaches the logs, and so callers have one place to read it from.
-            exn: switch result.errorMessage {
-            | Some(message) => JsError.make(message)->JsExn.anyToExnInternal
-            | None => %raw(`null`)
+        failedGettingItems(
+          WithSuggestedToBlock({
+            toBlock: switch result.retryToBlock {
+            | Some(toBlock) => toBlock
+            | None => missing("retryToBlock")
             },
-            attemptedToBlock: result.toBlock,
-            retry: decision->EvmRpcClient.toSourceRetry,
           }),
         ),
       )
-    // The client returns exactly these three outcomes, and a retry always
-    // carries its decision. Anything else is the addon and this module
-    // disagreeing, which no retry recovers from.
-    | (kind, _) =>
+    | "backoff" =>
+      throw(
+        failedGettingItems(
+          WithBackoff({
+            message: result.message->Option.getOr("Retrying the block range."),
+            backoffMillis: switch result.backoffMillis {
+            | Some(backoffMillis) => backoffMillis
+            | None => missing("backoffMillis")
+            },
+          }),
+        ),
+      )
+    // Anything else is the addon and this module disagreeing, which no retry
+    // recovers from.
+    | kind =>
       JsError.throwWithMessage(
         `The RPC client returned an unrecognised outcome "${kind}". Please, report to the Envio team.`,
       )
@@ -187,14 +212,8 @@ let make = (
     getBlockHashes,
     onReorg: () => rpcClient.onReorg(),
     getHeightOrThrow: async () => {
-      let timerRef = Performance.now()
-      let height = await rpcClient.getHeight()
-      {
-        height,
-        requestStats: [
-          {Source.method: "eth_blockNumber", seconds: timerRef->Performance.secondsSince},
-        ],
-      }
+      let (height, requestStats) = await rpcClient.getHeight()
+      {height, requestStats}
     },
     getItemsOrThrow,
     ?createHeightSubscription,

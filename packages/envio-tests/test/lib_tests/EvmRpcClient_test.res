@@ -32,11 +32,12 @@ describe("EvmRpcClient - getHeight via napi", () => {
         ~syncConfig,
         ~addressStore=TestAddresses.makeStore(),
       )
-        await client.getHeight()
+        let (height, requestStats) = await client.getHeight()
+        (height, requestStats->Array.map(({Source.method: method}) => method))
       },
     )
 
-    t.expect(height).toBe(436)
+    t.expect(height).toEqual((436, ["eth_blockNumber"]))
   })
 
   Async.it("Reports a JSON-RPC error with its provider code", async t => {
@@ -163,7 +164,7 @@ describe("EvmRpcClient - getHeight via napi", () => {
           ~headers=Dict.fromArray([("Authorization", "Bearer test-token")]),
           ~addressStore=TestAddresses.makeStore(),
         )
-        let height = await client.getHeight()
+        let (height, _) = await client.getHeight()
         t.expect(height).toBe(436)
       },
     )
@@ -428,18 +429,14 @@ describe("EvmRpcClient - getNextPage via napi", () => {
           ~indexes=[0],
           ~addressSet=addressStore->AddressStore.emptySet,
         )
-        (
-          result.kind,
-          result.errorMessage,
-          result.retry->Option.map(EvmRpcClient.toSourceRetry),
-        )
+        (result.kind, result.errorMessage, result.retryToBlock)
       },
     )
 
     t.expect(outcome).toEqual((
-      "retry",
+      "suggestedToBlock",
       Some("eth_getLogs is limited to a 1000 blocks range"),
-      Some(Source.WithSuggestedToBlock({toBlock: 999})),
+      Some(999),
     ))
   })
 })

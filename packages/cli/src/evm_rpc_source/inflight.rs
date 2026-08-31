@@ -2,11 +2,9 @@
 //!
 //! This is deduplication, not caching: an entry lives exactly as long as some
 //! caller is waiting on its request, so a key requested again afterwards is
-//! fetched again.
-//! What a response is worth keeping is decided by the block and transaction
-//! stores, which already own the merge, prune and rollback lifecycle that
-//! decides when data stops being valid — a second cache here would have to
-//! duplicate that lifecycle and could outlive a reorg.
+//! fetched again. What a response is worth keeping is the block and transaction
+//! stores' question — they own the merge, prune and rollback lifecycle that
+//! decides when data stops being valid.
 //!
 //! There is deliberately no concurrency limit. The natural bound is the page
 //! itself, and a provider that cannot keep up answers with an error that the

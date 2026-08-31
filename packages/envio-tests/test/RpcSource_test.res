@@ -337,6 +337,45 @@ describe("RpcSource - field selection end to end", () => {
     t.expect(caught->Option.map(m => m->String.includes("gas"))).toEqual(Some(true))
   })
 
+  // Every fetched block is read for its reorg fields whether or not the user
+  // selected them, so a response missing one says nothing about whether the
+  // selection is servable — every EVM chain has a block hash. Judging it the
+  // same way as a selected field would disable the source over one bad answer
+  // to a question the user never asked.
+  Async.it("Retries when the response omits a field only the reorg check needs", async t => {
+    let mock = await startProvider(
+      ~block=JSON.parseOrThrow(
+        `{"number":"0x64","timestamp":"0x5f5e100","parentHash":"${parentHash}","gasUsed":"0x2a"}`,
+      ),
+    )
+    let caught = try {
+      let _ = await fetchPayloads(~mock, ~blockFieldNames=[GasUsed])
+      None
+    } catch {
+    | Source.GetItemsError(FailedGettingItems({retry: WithBackoff({message})})) =>
+      Some(message->String.includes("hash"))
+    }
+    mock.close()
+    t.expect(caught).toEqual(Some(true))
+  })
+
+  Async.it("Still disables the source when a selected block field is missing", async t => {
+    let mock = await startProvider(
+      ~block=JSON.parseOrThrow(
+        `{"number":"0x64","timestamp":"0x5f5e100","hash":"${blockHash}","parentHash":"${parentHash}"}`,
+      ),
+    )
+    let caught = try {
+      let _ = await fetchPayloads(~mock, ~blockFieldNames=[GasUsed])
+      None
+    } catch {
+    | Source.GetItemsError(FailedGettingFieldSelection({message})) =>
+      Some(message->String.includes("gasUsed"))
+    }
+    mock.close()
+    t.expect(caught).toEqual(Some(true))
+  })
+
   Async.it("Retries rather than disabling the source on a wrong-block response", async t => {
     // A load-balanced provider can answer eth_getBlockByNumber from a node that
     // has drifted, returning the neighbouring block.

@@ -125,10 +125,12 @@ mod tests {
         let state = IntervalState::new();
         let cfg = test_config();
         state.grow("0", 9_800, &cfg, 10_000);
-        assert_eq!(state.suggested_interval("0", &cfg).0, 10_000);
-
+        let capped = state.suggested_interval("0", &cfg).0;
         state.grow("0", 9_400, &cfg, 10_000);
-        assert_eq!(state.suggested_interval("0", &cfg).0, 9_900);
+        assert_eq!(
+            (capped, state.suggested_interval("0", &cfg).0),
+            (10_000, 9_900)
+        );
     }
 
     #[test]

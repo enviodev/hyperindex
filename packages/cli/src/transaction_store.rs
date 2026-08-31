@@ -861,7 +861,7 @@ impl TransactionStore {
             .lock()
             .unwrap()
             .txs
-            .merge_batch(keys, cols, Coverage::All(0));
+            .merge_batch(keys, cols, Coverage::STORED);
     }
 
     /// Merge one response's SVM account activity into the companion table,
@@ -916,7 +916,7 @@ impl TransactionStore {
             .lock()
             .unwrap()
             .account_activity
-            .merge_batch(keys, cols, Coverage::All(0));
+            .merge_batch(keys, cols, Coverage::STORED);
     }
 }
 

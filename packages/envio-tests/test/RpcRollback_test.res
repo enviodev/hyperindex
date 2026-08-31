@@ -7,10 +7,9 @@ open Vitest
 //
 // Detection reads only this range's own responses — the logs' `blockHash` and
 // the `parentHash` of the range's first block — so it sees the new chain as
-// soon as it is served. The depth search that follows does go through the
-// source's block cache, which still holds the abandoned fork, which is why
-// `Rollback.rollback` drops it via `SourceManager.onReorg` before searching;
-// the second case pins what that ordering buys.
+// soon as it is served. The depth search that follows re-reads its hashes
+// straight from the provider, never from the block store, since the stored
+// hashes are the very thing it is checking.
 //
 // Separately, the source only harvests hashes from blocks it has a reason to
 // fetch, so a reorg confined to a range with no logs is not detected at all.
@@ -258,7 +257,7 @@ describe("Rollback against a real RPC server", () => {
     await mock.closeAsync()
   })
 
-  Async.it("drops the source's pre-reorg cache before searching for the fork", async t => {
+  Async.it("searches past the blocks whose stored hashes the fork invalidated", async t => {
     let state = {height: 105, forkFrom: 999}
     let mock = await startServer(state)
     let (blockStore, transactionStore) = makeStores()
@@ -270,15 +269,12 @@ describe("Rollback against a real RPC server", () => {
       chainState->ChainState.registerReorgGuard(~blockStore=page.blockStore, ~knownHeight=105),
     ).toEqual(ReorgDetection.NoReorg)
 
-    // The fork starts at 100. Block 99 was never cached (nothing fetched it),
-    // so the search re-reads it fresh and it still matches; 100 and 101 were
-    // cached while fetching, and that is what the search gets wrong.
+    // The fork starts at 100, so the hashes the first page stored for 100 and
+    // 101 now describe blocks that no longer exist. Answering the search from
+    // those would "confirm" them and stop two blocks short of the real fork;
+    // re-reading each one from the provider is what walks back past them.
     state.forkFrom = 100
 
-    // Answering the depth search from the cache filled while fetching would
-    // "confirm" blocks that no longer exist and stop 2 blocks past the fork.
-    // `getLastKnownValidBlock` drops that cache itself before searching, so a
-    // caller cannot forget to and get the shallow answer.
     let target = await Rollback.getLastKnownValidBlock(
       chainState,
       ~reorgBlockNumber=102,

@@ -190,21 +190,19 @@ mod tests {
 
     #[test]
     fn too_large_classifies_known_providers_and_ignores_unrelated() {
-        assert!(is_response_too_large_message(
-            "More than 50000 logs returned"
-        ));
-        assert!(is_response_too_large_message(
-            "query returned more than 10000 results"
-        ));
-        assert!(is_response_too_large_message("query exceeds max results"));
-        assert!(is_response_too_large_message("backend response too large"));
-        assert!(is_response_too_large_message(
-            "logs matched by query exceeds limit of 10000"
-        ));
-        // Block-range limits are handled by suggested_block_interval_from_message, not here.
-        assert!(!is_response_too_large_message(
-            "eth_getLogs is limited to a 1000 blocks range"
-        ));
-        assert!(!is_response_too_large_message("rate limited"));
+        let messages = [
+            "More than 50000 logs returned",
+            "query returned more than 10000 results",
+            "query exceeds max results",
+            "backend response too large",
+            "logs matched by query exceeds limit of 10000",
+            // Block-range limits belong to suggested_block_interval_from_message.
+            "eth_getLogs is limited to a 1000 blocks range",
+            "rate limited",
+        ];
+        assert_eq!(
+            messages.map(is_response_too_large_message),
+            [true, true, true, true, true, false, false]
+        );
     }
 }

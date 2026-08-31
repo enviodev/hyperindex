@@ -43,8 +43,6 @@ let toInternalItem = (
   })
 }
 
-// Both sources hand back items alongside the registrations they routed to, by
-// chain-scoped index.
 let toInternalItems = (
   items: array<t>,
   ~onEventRegistrations: array<Internal.evmOnEventRegistration>,
