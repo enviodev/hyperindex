@@ -173,11 +173,8 @@ describe("Non-string entity id — end-to-end via the in-process indexer", () =>
     ~sources=[{chain: 1337}],
     async (~t, ~indexer, ~source) => {
       let source = source(1337)
-      await Utils.delay(0)
 
       source.resolveGetHeightOrThrow(300)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       source.resolveGetItemsOrThrow(
         [
@@ -232,7 +229,7 @@ chains:
 
   // The full error a rejected parse throws. `toThrowErrorEqual` asserts the
   // whole message (not a substring). The entity is named "Thing" in every case.
-  let expectedError = "Config parse error: Invalid storage for `Thing`. Its `id` is a BigInt, which ClickHouse stores as a String (sorted lexicographically, not numerically) unless a precision is set. Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with N <= 38 so the id stores as a numeric Decimal, or set `@storage(clickhouse: {orderBy: [...]})` to sort by other fields."
+  let expectedError = "Invalid storage for `Thing`. Its `id` is a BigInt, which ClickHouse stores as a String (sorted lexicographically, not numerically) unless a precision is set. Since `id` is ClickHouse's sorting key, add `@config(precision: N)` with N <= 38 so the id stores as a numeric Decimal, or set `@storage(clickhouse: {orderBy: [...]})` to sort by other fields."
 
   it("rejects an unbounded BigInt id on a clickhouse entity", t => {
     t->toThrowErrorEqual(
@@ -341,6 +338,8 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
       progressBlockByChain: Dict.make(),
       entities: Dict.make(),
       entityConfigs,
+      addresses: AddressRows.Table.make(),
+      contractMapping: ContractMapping.empty,
       processChanges: [],
     }
   }
@@ -348,6 +347,8 @@ describe("Test indexer reports deleted ids with the entity's id type", () => {
   let deletedIdsOf = (~entityConfig: Internal.entityConfig, ~entityId: EntityId.t) => {
     let state = makeState(~entityConfig)
     state->TestIndexer.handleWriteBatch(
+      ~config=idTypesConfig,
+      ~registeredAddresses=[],
       ~updatedEntities=[
         {
           entityConfig,
@@ -437,7 +438,7 @@ type Thing @storage(clickhouse: {orderBy: ["parent"]}) {
   parent: Parent!
 }
 `)->ignore,
-      "Config parse error: Invalid storage for `Thing`. `clickhouse.orderBy` sorts by `parent`, which stores a BigInt that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N)` with N <= 38 to the BigInt it stores so it sorts as a numeric Decimal.",
+      "Invalid storage for `Thing`. `clickhouse.orderBy` sorts by `parent`, which stores a BigInt that ClickHouse keeps as a String (sorted lexicographically, not numerically) unless a precision is set. Add `@config(precision: N)` with N <= 38 to the BigInt it stores so it sorts as a numeric Decimal.",
     )
   })
 

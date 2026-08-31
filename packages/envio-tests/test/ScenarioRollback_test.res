@@ -49,7 +49,6 @@ let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #g
 // Head 300 with maxReorgDepth 200: the pre-threshold query stops at block 100,
 // and the next one reaches the head.
 let enterThresholdAndIndex = async (~indexer: IndexerRunner.t, ~source: MockSource.t) => {
-  await Utils.delay(0)
   source.resolveGetHeightOrThrow(300)
   await Utils.delay(0)
   await Utils.delay(0)
@@ -151,7 +150,6 @@ describe("Scenario rollback and history", () => {
     ~sources=[{chain: 1, methods}],
     async (~t, ~indexer, ~source) => {
       let source = source(1)
-      await Utils.delay(0)
       source.resolveGetHeightOrThrow(300)
       await Utils.delay(0)
       await Utils.delay(0)

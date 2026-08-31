@@ -1082,6 +1082,7 @@ describe("LoadLayer effect scope isolation", () => {
       ~targetCheckpointId=0n,
       ~diffCheckpointId=0n,
       ~progressBlockNumberByChainId=Dict.make(),
+      ~rolledBackAddresses=[],
     )
 
     // The window hasn't elapsed, so the budget must still be spent: the next

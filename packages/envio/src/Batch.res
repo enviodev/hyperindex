@@ -43,6 +43,7 @@ type t = {
   checkpointBlockNumbers: array<int>,
   checkpointBlockHashes: array<Null.t<string>>,
   checkpointEventsProcessed: array<int>,
+  registeredAddresses: array<AddressRows.staged>,
 }
 
 let getProgressedChainsById = {
@@ -326,6 +327,7 @@ let prepareBatch = (
     checkpointBlockNumbers,
     checkpointBlockHashes,
     checkpointEventsProcessed,
+    registeredAddresses: [],
   }
 }
 

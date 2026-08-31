@@ -142,6 +142,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           startBlock: 0,
           endBlock: Some(1000),
           numAddresses: 7,
+          addressesByContract: [("Gravatar", 5), ("NftFactory", 2)],
           isReady: true,
           sourceBlockNumber: 305,
           progressBlockNumber: 200,
@@ -494,9 +495,14 @@ envio_storage_write_seconds{storage="postgres"} 15.25
 # TYPE envio_storage_write_total counter
 envio_storage_write_total{storage="postgres"} 80
 
-# HELP envio_indexing_addresses The number of addresses indexed on chain. Includes both static and dynamic addresses.
+# HELP envio_indexing_addresses The number of address registrations on chain, static and dynamic. An address shared by N contracts counts N times.
 # TYPE envio_indexing_addresses gauge
 envio_indexing_addresses{chainId="1"} 7
+
+# HELP envio_indexing_contract_addresses The number of address registrations per contract on chain, static and dynamic. An address shared by N contracts counts N times.
+# TYPE envio_indexing_contract_addresses gauge
+envio_indexing_contract_addresses{chainId="1",contract="Gravatar"} 5
+envio_indexing_contract_addresses{chainId="1",contract="NftFactory"} 2
 `)
   })
 })

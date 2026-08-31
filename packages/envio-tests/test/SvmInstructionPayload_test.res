@@ -121,6 +121,8 @@ describe("SVM instruction payload assembly", () => {
       accounts: ["Src111111111111111111111111111111111111111", "Dst111111111111111111111111111111111111111"],
       data: "0x09",
       isInner: false,
+      argsJson: "{}",
+      logs: Null.null,
     }
     let instruction = SvmHyperSyncSource.toSvmInstruction(
       item,
@@ -148,7 +150,7 @@ describe("SVM instruction payload assembly", () => {
         accountName: "destination",
         instructionAccountIndex: 1,
       },
-      "args": None,
+      "args": Some(%raw(`{}`)),
       "discriminator": "0x09",
       "path": Some([0]),
       "accountArguments": Some(
@@ -161,7 +163,7 @@ describe("SVM instruction payload assembly", () => {
     })
   })
 
-  it("sets args from a successful decode and leaves them undefined when decode failed", t => {
+  it("parses args from the decoded JSON, and reads an undecoded item as empty args", t => {
     let reg = registrations()->Array.getUnsafe(0)
     let eventConfig =
       reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
@@ -174,25 +176,32 @@ describe("SVM instruction payload assembly", () => {
       accounts: [],
       data: "0x09",
       isInner: false,
+      argsJson: "{}",
+      logs: Null.null,
     }
     let decoded = SvmHyperSyncSource.toSvmInstruction(
-      {...base, decoded: {name: "swap", argsJson: `{"amountIn":"1"}`, accountsJson: "{}", extraAccounts: []}},
+      {...base, argsJson: `{"amountIn":"1"}`},
       ~programName="Swapper",
       ~instructionName="swap",
       ~eventConfig,
       ~fieldSelection=reg.fieldSelection,
     )
-    let failed = SvmHyperSyncSource.toSvmInstruction(
+    let undecoded = SvmHyperSyncSource.toSvmInstruction(
       base,
       ~programName="Swapper",
       ~instructionName="swap",
       ~eventConfig,
       ~fieldSelection=reg.fieldSelection,
     )
-    t.expect((decoded.args, failed.args)).toEqual((Some(%raw(`{"amountIn":"1"}`)), None))
+    t.expect((decoded.args, undecoded.args)).toEqual((
+      Some(%raw(`{"amountIn":"1"}`)),
+      Some(%raw(`{}`)),
+    ))
   })
 
-  it("emits an empty logs array when log fields are selected and none are scoped", t => {
+  // NAPI sends Rust `None` as `null`: an instruction whose logs didn't attach
+  // arrives with `logs: null`, not with the key missing.
+  it("emits an empty logs array when log fields are selected and the logs are null", t => {
     let reg = registrations()->Array.getUnsafe(0)
     let eventConfig =
       reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
@@ -206,6 +215,8 @@ describe("SVM instruction payload assembly", () => {
         accounts: [],
         data: "0x09",
         isInner: false,
+        argsJson: "{}",
+        logs: Null.null,
       },
       ~programName="Swapper",
       ~instructionName="swap",
@@ -229,7 +240,10 @@ describe("SVM instruction payload assembly", () => {
         accounts: [],
         data: "0x09",
         isInner: false,
-        logs: [{kind: "data", message: "hello"}],
+        argsJson: "{}",
+        logs: Null.make([
+          {SvmHyperSyncClient.EventItems.kind: Null.make("data"), message: Null.null},
+        ]),
       },
       ~programName="Swapper",
       ~instructionName="swap",

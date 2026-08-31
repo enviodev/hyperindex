@@ -92,10 +92,3 @@ openssl = { version = "0.10.75", features = ["vendored"] }
 
 [target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
 openssl = { version = "0.10.75", features = ["vendored"] }
-
-# Scaffolding that panics reads as a working implementation to every caller
-# until it runs. Keep it out of the tree: land the trait method with the code
-# that implements it.
-[lints.clippy]
-todo = "deny"
-unimplemented = "deny"

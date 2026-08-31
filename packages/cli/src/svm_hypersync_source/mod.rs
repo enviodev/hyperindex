@@ -24,13 +24,13 @@ use hypersync_client_solana::RateLimitInfo;
 use hypersync_solana_net_types::field_selection::SolanaFieldSelection;
 use hypersync_solana_net_types::query::SolanaQuery;
 
-use crate::address_store::{AddressSet, AddressStore, SetCache, StoreInner};
+use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_store::BlockStore;
 use crate::config_parsing::svm_args::{ArgDef, ArgType};
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
 use crate::transaction_store::TransactionStore;
-use borsh_decoder::{DecodedInstructionJson, InstructionSchemaInput};
+use borsh_decoder::InstructionSchemaInput;
 use config::SvmClientConfig;
 use query::SvmQuery;
 use selection::{route_instruction, SelectionBuilder, SvmOnEventRegistrationInput};
@@ -509,10 +509,13 @@ pub struct EventItem {
     pub program_id: String,
     pub accounts: Vec<String>,
     /// Raw instruction data, `0x`-prefixed hex; decoded params ride on
-    /// `decoded` when the registration carries a Borsh schema.
+    /// `args_json` when the registration carries a Borsh schema.
     pub data: String,
     pub is_inner: bool,
-    pub decoded: Option<DecodedInstructionJson>,
+    /// Borsh-decoded args as a JSON object literal, `{}` when the routed
+    /// registration reads no args or the program carries no schema. An
+    /// instruction the schema rejects never becomes an item at all.
+    pub args_json: String,
     /// Logs scoped to this instruction; `Some` only when the routed
     /// registration selected `fields.log`.
     pub logs: Option<Vec<LogItem>>,
@@ -586,10 +589,10 @@ fn build_event_items(
         }
         let slot = i64::try_from(instr.slot).context("instruction.slot overflow")?;
         let program_key = instr.executing_account.as_bytes();
-        let address = selection::InstructionAddress {
+        let address = Emitter {
             key: program_key,
-            contract_name: set_cache.owner_of(program_key),
-            slot,
+            owners: set_cache.owners_of(program_key),
+            block: slot,
         };
         let routed = route_instruction(
             &built.registrations,
@@ -602,9 +605,18 @@ fn build_event_items(
             continue;
         }
         let decoded = if routed.iter().any(|reg| reg.selects_args) {
-            schemas
-                .get(&instr.executing_account)
-                .and_then(|schema| borsh_decoder::decode_with_schema(schema, raw))
+            match schemas.get(&instr.executing_account) {
+                Some(schema) => match borsh_decoder::decode_with_schema(schema, raw) {
+                    Some(decoded) => Some(decoded),
+                    // Args were asked for and the schema rejected the data, so
+                    // there is nothing truthful to hand a handler. Drop the
+                    // instruction rather than run it with empty args - for
+                    // every registration it routed to, not just the ones
+                    // reading args.
+                    None => continue,
+                },
+                None => None,
+            }
         } else {
             None
         };
@@ -633,10 +645,9 @@ fn build_event_items(
                 accounts: instr.account_arguments.clone(),
                 data: to_hex(&instr.data),
                 is_inner: instr.is_inner,
-                decoded: if reg.selects_args {
-                    decoded.clone()
-                } else {
-                    None
+                args_json: match &decoded {
+                    Some(decoded) if reg.selects_args => decoded.args_json.clone(),
+                    _ => "{}".to_string(),
                 },
                 logs: if !reg.log_columns.is_empty() {
                     logs.as_deref()
@@ -972,6 +983,48 @@ mod tests {
         );
     }
 
+    // Ignored: this is the standing reproduction of a gap that is still open -
+    // there is no fix to assert yet, and the only key left to join on
+    // (program_id) attaches a log to every invocation of that program in the
+    // transaction, which is a semantic call the payload spec has to make.
+    #[test]
+    #[ignore = "logs of a null-instruction_address range never reach the instruction"]
+    fn logs_without_an_instruction_address_still_reach_the_instruction() {
+        // SQD/RPC-ingested ranges - which is what the head of Solana is served
+        // from - return log rows with a null `instruction_address`, so the
+        // (slot, transactionIndex, path) key matches nothing and the handler
+        // gets no logs at all. Verified against solana.hypersync.xyz: at slot
+        // ~441_370_000 not one log row carries the column.
+        let (store, set) = fixture(&["TokenMetadata"]);
+        let built = SelectionBuilder::from_registrations(
+            &[reg_input(0, "0x21", true)],
+            &store.handle().read().unwrap(),
+        )
+        .unwrap()
+        .build(&[0])
+        .unwrap();
+        let instr = committed_instruction(&[0x21]);
+        let log = simple::Log {
+            slot: Some(42),
+            transaction_index: Some(7),
+            instruction_address: None,
+            kind: Some(simple::LogKind::Log),
+            message: Some("Instruction: Swap".to_string()),
+            ..Default::default()
+        };
+        let items = route(&store, &set, &[instr], vec![log], &built).unwrap();
+        assert_eq!(
+            items[0].logs.as_ref().map(|logs| logs
+                .iter()
+                .map(|l| (l.kind.clone(), l.message.clone()))
+                .collect::<Vec<_>>()),
+            Some(vec![(
+                Some("log".to_string()),
+                Some("Instruction: Swap".to_string())
+            )])
+        );
+    }
+
     #[test]
     fn kind_only_log_selection_omits_message() {
         let (store, set) = fixture(&["TokenMetadata"]);
@@ -1039,9 +1092,48 @@ mod tests {
         .unwrap();
         let decoded = items
             .iter()
-            .map(|item| (item.on_event_registration_index, item.decoded.is_some()))
+            .map(|item| (item.on_event_registration_index, item.args_json.as_str()))
             .collect::<Vec<_>>();
-        assert_eq!(decoded, vec![(0, true), (1, false)]);
+        assert_eq!(decoded, vec![(0, r#"{"amount":"1"}"#), (1, "{}")]);
+    }
+
+    #[test]
+    fn an_instruction_the_schema_cannot_decode_is_dropped() {
+        let (store, set) = fixture(&["TokenMetadata", "Other"]);
+        let mut with_args = reg_input(0, "0x21", false);
+        with_args.instruction_fields = vec!["args".to_string()];
+        with_args.args_json = Some(r#"[{"name":"amount","type":"u64"}]"#.to_string());
+        // Fans out to a second registration that reads no args: the whole
+        // instruction goes, not just the args-reading half of it.
+        let mut without_args = with_args.clone();
+        without_args.index = 1;
+        without_args.instruction_name = "I1".to_string();
+        without_args.instruction_fields = vec![];
+        without_args.contract_name = "Other".to_string();
+        let schemas = build_schemas(&[with_args.clone(), without_args.clone()]).unwrap();
+        let built = SelectionBuilder::from_registrations(
+            &[with_args, without_args],
+            &store.handle().read().unwrap(),
+        )
+        .unwrap()
+        .build(&[0, 1])
+        .unwrap();
+        // A u64 arg needs eight bytes after the discriminator; this carries one.
+        let mut truncated = committed_instruction(&[0x21, 1]);
+        truncated.account_arguments = Some(vec![]);
+        let address_store = store.handle();
+        let address_store = address_store.read().unwrap();
+        let items = build_event_items(
+            std::slice::from_ref(&truncated),
+            vec![],
+            &built,
+            &schemas,
+            set.cache(),
+            &Default::default(),
+            &address_store,
+        )
+        .unwrap();
+        assert_eq!(items.len(), 0);
     }
 
     #[test]

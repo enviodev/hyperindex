@@ -158,21 +158,24 @@ and executeRollback = async (
   }
 
   let rolledBackChains = []
+  let rolledBackAddresses = []
   state
   ->IndexerState.chainStates
   ->Utils.Dict.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
     let fromBlock = cs->ChainState.committedProgressBlockNumber
-    cs->ChainState.rollback(
-      ~newProgressBlockNumber=newProgressBlockNumberPerChain->ChainId.Dict.dangerouslyGetNonOption(
-        chainId,
-      ),
-      ~eventsProcessedDiff=eventsProcessedDiffByChain->ChainId.Dict.dangerouslyGetNonOption(
-        chainId,
-      ),
-      ~rollbackTargetBlockNumber,
-      ~isReorgChain=chainId === reorgChain,
-    )
+    let killedAddresses =
+      cs->ChainState.rollback(
+        ~newProgressBlockNumber=newProgressBlockNumberPerChain->ChainId.Dict.dangerouslyGetNonOption(
+          chainId,
+        ),
+        ~eventsProcessedDiff=eventsProcessedDiffByChain->ChainId.Dict.dangerouslyGetNonOption(
+          chainId,
+        ),
+        ~rollbackTargetBlockNumber,
+        ~isReorgChain=chainId === reorgChain,
+      )
+    rolledBackAddresses->Array.pushMany(killedAddresses)->ignore
     let toBlock = cs->ChainState.committedProgressBlockNumber
     if fromBlock !== toBlock {
       rolledBackChains
@@ -192,6 +195,7 @@ and executeRollback = async (
     ~rollbackTargetCheckpointId,
     ~rollbackDiffCheckpointId=state->IndexerState.committedCheckpointId->BigInt.add(1n),
     ~progressBlockNumberByChainId=newProgressBlockNumberPerChain,
+    ~rolledBackAddresses,
   )
 
   rolledBackChains->Array.forEach(rolledBack => {

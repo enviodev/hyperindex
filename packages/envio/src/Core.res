@@ -47,6 +47,22 @@ type addon = {
   addressStore: addressStoreCtor,
   @as("MockHyperSyncServer")
   mockHyperSyncServer: mockHyperSyncServerCtor,
+  encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
+  renderAddresses: (
+    ~ecosystem: string,
+    ~shouldChecksum: bool,
+    ~bytes: NodeJs.Buffer.t,
+    ~lengths: array<int>,
+  ) => array<Address.t>,
+  renderContractAddresses: (
+    ~ecosystem: string,
+    ~shouldChecksum: bool,
+    ~bytes: NodeJs.Buffer.t,
+    ~lengths: array<int>,
+    ~contractIds: array<int>,
+    ~contractId: int,
+  ) => array<Address.t>,
+  canonicalContractNames: array<string> => array<string>,
   // Ordered transaction-field names exposed for the field-code contract test
   // (the ReScript `transactionFields` arrays must match the Rust ordinals).
   evmTransactionFieldNames: unit => array<string>,
@@ -83,6 +99,10 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   var cp = Nodechild_process;
   var path = Nodepath;
   var fs = Nodefs;
+
+  // Vitest test.env points workers at the addon globalSetup already built.
+  var preBuilt = process.env.ENVIO_DEV_ADDON;
+  if (preBuilt && fs.existsSync(preBuilt)) return req(preBuilt);
 
   var repoRoot = null;
   var dir = path.resolve(envioDir);
