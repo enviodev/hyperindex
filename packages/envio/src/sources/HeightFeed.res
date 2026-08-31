@@ -149,9 +149,6 @@ let fireWaiters = (feed: t, height) => {
   }
 }
 
-// Takes back every waiter's complaint that its stream had gone silent. The
-// reason differs at each call site; the effect is always that polling alongside
-// the stream is no longer owed.
 let clearPokes = (feed: t) => feed.waiters->Array.forEach(waiter => waiter.poked = false)
 
 let recordHeight = (feed: t, height) =>
