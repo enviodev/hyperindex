@@ -10,12 +10,14 @@ let heightCall = (~reply, ~headers=?) =>
     ~headers?,
   )
 
+// A failed poll carries its timing out in a structured envelope, so the
+// provider's own message is read back out of it rather than off the error.
 let getHeightErrorMessage = async (client: EvmRpcClient.t) =>
   try {
     let _ = await client.getHeight()
     None
   } catch {
-  | JsExn(e) => e->JsExn.message
+  | exn => (exn->Source.unpackNativeRequestFailure).message
   }
 
 describe("EvmRpcClient - getHeight via napi", () => {

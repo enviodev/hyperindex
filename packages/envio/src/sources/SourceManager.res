@@ -469,7 +469,9 @@ let getSourceNewHeight = async (
             sourceState->recordRequestStats(res.requestStats)
             h := res.height
           } catch {
-          | _ => ()
+          // A failed poll still made a request; count it, like every other
+          // failure path does.
+          | exn => sourceState->recordRequestStats((exn->Source.unpackNativeRequestFailure).requestStats)
           }
           if h.contents <= knownHeight && !(newHeight.contents > initialHeight) {
             await Utils.delay(source.pollingInterval)
@@ -527,6 +529,9 @@ let getSourceNewHeight = async (
         }
       } catch {
       | exn =>
+        // A failed poll still made a request; count it, like every other
+        // failure path does.
+        sourceState->recordRequestStats((exn->Source.unpackNativeRequestFailure).requestStats)
         let retryInterval = sourceManager.getHeightRetryInterval(~retry=retry.contents)
         logger->Logging.childTrace({
           "msg": `Height retrieval from ${source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,

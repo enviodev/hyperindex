@@ -427,7 +427,18 @@ impl EvmRpcClient {
 
     #[napi]
     pub async fn get_height(&self) -> napi::Result<i64> {
-        let height = self.inner.get_height().await.map_err(rpc_error_to_napi)?;
+        let started = Instant::now();
+        let height = self.inner.get_height().await.map_err(|err| {
+            // A poll that failed still cost a request; carry its timing out
+            // with the error so the source's metrics count it.
+            crate::request_stats::error_with_request_stats(
+                rpc_error_to_napi(err),
+                &[RequestStat {
+                    method: "eth_blockNumber".to_string(),
+                    seconds: started.elapsed().as_secs_f64(),
+                }],
+            )
+        })?;
         height
             .try_into()
             .context("block height exceeds i64::MAX")

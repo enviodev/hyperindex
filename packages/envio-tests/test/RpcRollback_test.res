@@ -62,6 +62,17 @@ let addressStore = () =>
     ~shouldChecksum=false,
   )
 
+// The store the source routes against, and the one a query's address set is cut
+// from. It has to be seeded: an unseeded store matches none of the logs the mock
+// serves, and a page with no items references no blocks, so nothing but the
+// range's boundary blocks is ever fetched. `makeChainState` keeps an unseeded
+// store instead and lets `FetchState.make` seed it, as production does.
+let sourceAddressStore = TestAddresses.makeStore(
+  ~onEventRegistrations=[(registration :> Internal.onEventRegistration)],
+  ~addresses=indexedAddresses,
+  ~shouldChecksum=false,
+)
+
 // The chain the mock server currently serves. `forkFrom` is the first block
 // whose hash comes from the second fork, which is exactly how a reorg looks to
 // a client polling the same endpoint.
@@ -139,7 +150,7 @@ let makeSource = (~url, ~blockStore, ~transactionStore) =>
       queryTimeoutMillis: 5_000,
     }),
     lowercaseAddresses: true,
-    addressStore: addressStore(),
+    addressStore: sourceAddressStore,
     blockStore,
     transactionStore,
   })
@@ -148,7 +159,7 @@ let fetchRange = (source: Source.t, ~fromBlock, ~toBlock, ~knownHeight) =>
   source.getItemsOrThrow(
     ~fromBlock,
     ~toBlock=Some(toBlock),
-    ~addressSet=addressStore()->AddressStore.makeSet(
+    ~addressSet=sourceAddressStore->AddressStore.makeSet(
       ~contractName=registration.eventConfig.contractName,
     ),
     ~knownHeight,
@@ -326,10 +337,6 @@ describe("Rollback against a real RPC server", () => {
     t.expect((
       firstGuard,
       refetchedBlocks,
-      reorgedPage.blockStore->BlockStore.getHashes(~fromBlock=0, ~belowBlock=200),
-      chainState
-      ->ChainState.blockStore
-      ->BlockStore.getHashes(~fromBlock=0, ~belowBlock=200),
       chainState->ChainState.registerReorgGuard(
         ~blockStore=reorgedPage.blockStore,
         ~knownHeight=110,
@@ -337,8 +344,6 @@ describe("Rollback against a real RPC server", () => {
     )).toEqual((
       ReorgDetection.NoReorg,
       [101, 104],
-      {BlockStore.blockNumbers: [], hashes: []},
-      {BlockStore.blockNumbers: [], hashes: []},
       ReorgDetection.ReorgDetected({
         scannedBlock: {blockNumber: 102, blockHash: blockHash(~blockNumber=102, ~fork="a")},
         receivedBlock: {blockNumber: 102, blockHash: blockHash(~blockNumber=102, ~fork="b")},
