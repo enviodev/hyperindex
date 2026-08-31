@@ -30,7 +30,6 @@ type PostgresNumericPrecisionEntityTester {
 }
 `,
   ~unsupported=[
-    {backend: #memory, reason: "asserts Postgres column types and numeric precision"},
     {backend: #clickhouse, reason: "the schema's nullable arrays have no ClickHouse equivalent"},
   ],
 )
@@ -40,7 +39,7 @@ describe("Postgres Numeric Precision Entity Tester Migrations", () => {
     "should have the correct columns and data types in 'PostgresNumericPrecisionEntityTester' table",
     ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
     async (~t, ~indexer, ~source as _) => {
-      let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+      let {sql, pgSchema} = indexer.pg
       //  This SQL is quite a beast, but it does work 🙏
       let columnsRes: array<{
         "column_name": string,
