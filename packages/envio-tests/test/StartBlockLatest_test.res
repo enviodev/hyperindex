@@ -1,7 +1,8 @@
 open Vitest
 
 // `start_block: latest` must resolve once, against the chain's head at first
-// deploy, and then never again - a restart reuses the persisted value even if
+// deploy, and then never again - `indexer.restart()` (a normal resume, not
+// the CLI's `-r`/`--restart` reset flag) reuses the persisted value even if
 // the chain's head has moved on, so any downtime gets backfilled rather than
 // skipped.
 //

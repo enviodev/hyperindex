@@ -62,8 +62,11 @@ type ChainId = u64;
 /// A chain's configured start block: either a concrete block number or the
 /// literal "latest". Config parsing never touches the network, so `Latest`
 /// stays unresolved here — it's resolved once at runtime, right before the
-/// indexer's first-ever persisted state is written, and never re-resolved on
-/// restart (see packages/envio/src/sources/StartBlockResolver.res).
+/// indexer's first-ever persisted state is written, and never re-resolved
+/// on a normal resume (see packages/envio/src/sources/StartBlockResolver.res).
+/// Note: this repo's `-r`/`--restart` CLI flag wipes the DB and re-deploys
+/// from scratch, so it re-resolves "latest" too — "resume" here means the
+/// opposite: recovering from a crash or process restart without `-r`.
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, JsonSchema)]
 #[serde(untagged)]
 pub enum StartBlock {
@@ -880,8 +883,11 @@ pub mod evm {
             description = "The block at which the indexer should start ingesting data, or \
                            \"latest\" to start from the chain's current head block when the \
                            indexer is first deployed. Once resolved, the concrete block is \
-                           persisted and reused on every restart, so downtime gets backfilled \
-                           rather than skipped."
+                           persisted and reused every time the indexer resumes normally (for \
+                           example recovering from a crash), so downtime is backfilled instead \
+                           of skipped. Running `envio start`/`dev` with -r (--restart) resets \
+                           this like any other config change: \"latest\" resolves again, \
+                           against the head at that time."
         )]
         pub start_block: StartBlock,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1017,8 +1023,11 @@ pub mod fuel {
             description = "The block at which the indexer should start ingesting data, or \
                            \"latest\" to start from the chain's current head block when the \
                            indexer is first deployed. Once resolved, the concrete block is \
-                           persisted and reused on every restart, so downtime gets backfilled \
-                           rather than skipped."
+                           persisted and reused every time the indexer resumes normally (for \
+                           example recovering from a crash), so downtime is backfilled instead \
+                           of skipped. Running `envio start`/`dev` with -r (--restart) resets \
+                           this like any other config change: \"latest\" resolves again, \
+                           against the head at that time."
         )]
         pub start_block: StartBlock,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1178,10 +1187,13 @@ pub mod svm {
         pub rpc: Option<String>,
         #[schemars(
             description = "The slot number at which the indexer should start ingesting data, or \
-                           \"latest\" to start from the chain's current slot when the indexer is \
-                           first deployed. Once resolved, the concrete slot is persisted and \
-                           reused on every restart, so downtime gets backfilled rather than \
-                           skipped."
+                           \"latest\" to start from the chain's current slot when the indexer \
+                           is first deployed. Once resolved, the concrete slot is persisted and \
+                           reused every time the indexer resumes normally (for example \
+                           recovering from a crash), so downtime is backfilled instead of \
+                           skipped. Running `envio start`/`dev` with -r (--restart) resets this \
+                           like any other config change: \"latest\" resolves again, against the \
+                           head at that time."
         )]
         pub start_block: StartBlock,
         #[serde(skip_serializing_if = "Option::is_none")]

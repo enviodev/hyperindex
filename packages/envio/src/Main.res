@@ -656,7 +656,8 @@ let start = async (
   // freshly resolved on first deploy (see StartBlockResolver), reused as-is on
   // resume. This only rebinds this in-memory copy of `config` - `Config.load()`
   // itself (and the raw JSON snapshotted into `envio_info`) still say "latest",
-  // which is what keeps the config-compat check stable across restarts.
+  // which is what keeps the config-compat check stable across normal resumes
+  // (a `-r`/`--restart` deploy is a fresh one, and resolves "latest" again).
   let initializedState = persistence->Persistence.getInitializedState
   let config = {
     ...config,
