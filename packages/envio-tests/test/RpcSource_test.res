@@ -70,6 +70,34 @@ let makeStores = (~lowercaseAddresses=true) => (
 
 let chainId = 1->ChainId.fromInt
 
+// A block response carrying the reorg fields the client reads for every block,
+// whatever the selection is.
+let blockJsonAt = number =>
+  JSON.Object(
+    Dict.fromArray([
+      ("number", JSON.String(number)),
+      ("timestamp", JSON.String("0x64")),
+      ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
+      (
+        "parentHash",
+        JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
+      ),
+    ]),
+  )
+
+// A block response has to be the block that was asked for, so echo the
+// requested number back rather than answering with a fixed one.
+let echoedBlockJson = requestBody =>
+  requestBody
+  ->JSON.parseOrThrow
+  ->JSON.Decode.object
+  ->Option.flatMap(Dict.get(_, "params"))
+  ->Option.flatMap(JSON.Decode.array)
+  ->Option.flatMap(params => params->Array.get(0))
+  ->Option.flatMap(JSON.Decode.string)
+  ->Option.getOr("0x2710")
+  ->blockJsonAt
+
 // Field selection is exercised through the source rather than through a parser:
 // what a handler ends up seeing is the product of the request the client
 // chooses to make, what it stores, and what materialisation reads back, and
@@ -166,18 +194,7 @@ describe("RpcSource - field selection end to end", () => {
       ~retry=0,
       ~logger=Logging.createChild(~params={"test": "RpcSource field selection"}),
     )
-    // The page's rows have to reach the chain's stores before materialisation
-    // reads them, exactly as `registerReorgGuard` and `handleQueryResult` do.
-    blockStore->BlockStore.merge(response.blockStore, ~fromBlock=0, ~reportOnly=false)->ignore
-    switch response.transactionStore {
-    | Some(page) => transactionStore->TransactionStore.merge(page)
-    | None => ()
-    }
-    await ChainState.materializePageItems(
-      ~items=response.parsedQueueItems,
-      ~transactionStore,
-      ~blockStore,
-    )
+    await response->RpcSourcePins.applyPage(~blockStore, ~transactionStore)
     response.parsedQueueItems->Array.map(item =>
       switch item {
       | Internal.Event({payload}) => payload->Evm.toPayload
@@ -630,33 +647,6 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
     async t => {
       let eventConfig = {...EventRegistration.evmOnEventRegistration(~id=sighash), index: 0}
 
-      // A block response has to be the block that was asked for, so echo the
-      // requested number back rather than answering with a fixed one.
-      let blockJson = requestBody => {
-        let number =
-          requestBody
-          ->JSON.parseOrThrow
-          ->JSON.Decode.object
-          ->Option.flatMap(Dict.get(_, "params"))
-          ->Option.flatMap(JSON.Decode.array)
-          ->Option.flatMap(params => params->Array.get(0))
-          ->Option.flatMap(JSON.Decode.string)
-          ->Option.getOr("0x2710")
-        JSON.Object(
-          Dict.fromArray([
-            ("number", JSON.String(number)),
-            ("timestamp", JSON.String("0x64")),
-            (
-              "hash",
-              JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64"),
-            ),
-            (
-              "parentHash",
-              JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
-            ),
-          ]),
-        )
-      }
 
       // Only the first eth_getLogs is too dense; the rest fit, so the interval
       // shrinks once then re-adapts upward via acceleration.
@@ -686,7 +676,7 @@ describe("RpcSource - getItemsOrThrow on response-too-large", () => {
                   Dict.fromArray([
                     ("jsonrpc", JSON.String("2.0")),
                     ("id", JSON.Number(1.)),
-                    ("result", blockJson(requestBody)),
+                    ("result", echoedBlockJson(requestBody)),
                   ]),
                 ),
               ),
@@ -779,17 +769,7 @@ describe("RpcSource - getItemsOrThrow classifies real provider block-range error
   let mockAddress = Envio.TestHelpers.Addresses.mockAddresses[0]->Option.getOrThrow
   let eventConfig = {...EventRegistration.evmOnEventRegistration(~id=sighash), index: 0}
 
-  let blockJson = JSON.Object(
-    Dict.fromArray([
-      ("number", JSON.String("0x2710")),
-      ("timestamp", JSON.String("0x64")),
-      ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-      (
-        "parentHash",
-        JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
-      ),
-    ]),
-  )
+  let blockJson = blockJsonAt("0x2710")
 
   let jsonRpcError = message =>
     JSON.stringify(
@@ -992,17 +972,7 @@ describe("RpcSource - builds partition log selections end to end", () => {
     let allRegistrations = [addressBound, wildcardA, wildcardB, wildcardByAddress, excluded]
     let selectedRegistrations = [addressBound, wildcardA, wildcardB, wildcardByAddress]
 
-    let blockJson = JSON.Object(
-      Dict.fromArray([
-        ("number", JSON.String("0x64")),
-        ("timestamp", JSON.String("0x64")),
-        ("hash", JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b64")),
-        (
-          "parentHash",
-          JSON.String("0x0000000000000000000000000000000000000000000000000000000000000b63"),
-        ),
-      ]),
-    )
+    let blockJson = blockJsonAt("0x64")
     let mock = await MockRpcServer.make(
       ~getResult=method =>
         switch method {

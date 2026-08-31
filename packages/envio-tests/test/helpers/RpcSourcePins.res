@@ -92,14 +92,15 @@ let storedBlockHashes = (blockStore: BlockStore.t): array<ReorgDetection.blockDa
     }
   )
 
-// The page's own stores back `block` and `transaction`, so the pin resolves
-// them the way the indexer does: the pages merge into the chain's stores, and
-// materialisation reads those.
-let normalizePage = async (
+// Resolve a page's items the way the indexer does: both of its stores merge
+// into the chain's, and materialisation reads those. Production splits the two
+// merges across `registerReorgGuard` and `ChainFetching`, so keeping them in one
+// place here is what stops a test drifting from that order.
+let applyPage = async (
   response: Source.blockRangeFetchResponse,
   ~blockStore: BlockStore.t,
   ~transactionStore: TransactionStore.t,
-): pinnedPage => {
+) => {
   blockStore->BlockStore.merge(response.blockStore, ~fromBlock=0, ~reportOnly=false)->ignore
   switch response.transactionStore {
   | Some(page) => transactionStore->TransactionStore.merge(page)
@@ -110,6 +111,16 @@ let normalizePage = async (
     ~transactionStore,
     ~blockStore,
   )
+}
+
+// The page's own stores back `block` and `transaction`, so the pin resolves
+// them from the chain's stores once the page has been applied to them.
+let normalizePage = async (
+  response: Source.blockRangeFetchResponse,
+  ~blockStore: BlockStore.t,
+  ~transactionStore: TransactionStore.t,
+): pinnedPage => {
+  await response->applyPage(~blockStore, ~transactionStore)
   {
     knownHeight: response.knownHeight,
     latestFetchedBlockNumber: response.latestFetchedBlockNumber,
