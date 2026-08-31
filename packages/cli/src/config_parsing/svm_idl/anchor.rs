@@ -10,6 +10,9 @@
 //! Both shapes are accepted for every divergent field, so no format toggle is
 //! needed. An IDL is legacy precisely when its instructions lack an inline
 //! `discriminator`, and only then is one derived from the name.
+//!
+//! Shank (Metaplex's generator) emits the same top-level shape and is read
+//! here too, but it dispatches on `discriminant`, never on a hashed name.
 
 use std::collections::BTreeMap;
 
@@ -68,12 +71,23 @@ fn parse_instructions(root: &Map<String, Value>) -> Result<Instructions> {
         .get("instructions")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("IDL has no 'instructions' array"))?;
+    let shank = root
+        .get("metadata")
+        .and_then(|m| m.get("origin"))
+        .and_then(Value::as_str)
+        == Some("shank");
     collect_instructions(
         arr,
         |name, ix| {
-            let bytes = match ix.get("discriminator") {
-                Some(node) => parse_byte_array(node).context("discriminator")?,
-                None => hashed_discriminator("global:", &to_snake_case(name)),
+            let bytes = match (ix.get("discriminator"), ix.get("discriminant")) {
+                (Some(node), _) => parse_byte_array(node).context("discriminator")?,
+                (None, Some(node)) => discriminant_bytes(node).context("discriminant")?,
+                (None, None) if shank => bail!(
+                    "discriminant: this Shank IDL declares no 'discriminant' for the \
+                     instruction, and a hashed Anchor discriminator is not what a Shank program \
+                     dispatches on"
+                ),
+                (None, None) => hashed_discriminator("global:", &to_snake_case(name)),
             };
             Ok((bytes, ()))
         },
@@ -92,6 +106,27 @@ fn hashed_discriminator(prefix: &str, name: &str) -> Vec<u8> {
     hasher.update(prefix.as_bytes());
     hasher.update(name.as_bytes());
     hasher.finalize()[..8].to_vec()
+}
+
+/// Shank's `{"type": "u8", "value": 12}`: the tag the program reads off the
+/// head of the data, little-endian at the width its type declares.
+fn discriminant_bytes(node: &Value) -> Result<Vec<u8>> {
+    let format = required_str(node, "type")?;
+    let width = match format {
+        "u8" => 1,
+        "u16" => 2,
+        "u32" => 4,
+        "u64" => 8,
+        other => bail!("unsupported discriminant type '{other}'"),
+    };
+    let value = node
+        .get("value")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("expected a non-negative integer 'value', got {node}"))?;
+    if width < 8 && value >= 1 << (width * 8) {
+        bail!("discriminant value {value} does not fit in {format}");
+    }
+    Ok(value.to_le_bytes()[..width].to_vec())
 }
 
 fn parse_byte_array(node: &Value) -> Result<Vec<u8>> {

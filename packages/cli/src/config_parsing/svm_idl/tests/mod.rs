@@ -460,5 +460,46 @@ fn parses_codama_spl_token_idl() {
     );
 }
 
+/// Shank IDLs (Metaplex's published format) share Anchor's top-level shape but
+/// carry the real dispatch byte in `discriminant`. Hashing `global:<name>` for
+/// one yields eight bytes the program never encodes, so codegen succeeds and
+/// the indexer then matches nothing.
+#[test]
+fn reads_shank_discriminants_instead_of_hashing_the_name() {
+    let idl = parse_idl(
+        r#"{
+          "version": "1.13.2",
+          "name": "mpl_token_metadata",
+          "metadata": {
+            "origin": "shank",
+            "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+          },
+          "instructions": [
+            { "name": "createMetadataAccount",
+              "accounts": [{ "name": "metadata", "isMut": true }],
+              "args": [{ "name": "isMutable", "type": "bool" }],
+              "discriminant": { "type": "u8", "value": 0 } },
+            { "name": "burnNft",
+              "accounts": [],
+              "args": [],
+              "discriminant": { "type": "u8", "value": 29 } },
+            { "name": "undispatchable", "accounts": [], "args": [] }
+          ]
+        }"#,
+        "TokenMetadata",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        render(&idl),
+        "address: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n\
+         instruction burnNft 0x1d () ()\n\
+         instruction createMetadataAccount 0x00 (metadata) (isMutable: bool)\n\
+         unusable instruction undispatchable: discriminant: this Shank IDL declares no \
+         'discriminant' for the instruction, and a hashed Anchor discriminator is not what a \
+         Shank program dispatches on\n"
+    );
+}
+
 mod layout;
 mod validate;
