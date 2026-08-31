@@ -788,6 +788,13 @@ impl TransactionStore {
         self.insert_evm_txs_covering(txs, 0);
     }
 
+    /// Whether this transaction was already fetched for every field in `mask` —
+    /// the check that lets one partition skip a transaction another already
+    /// read.
+    pub(crate) fn covers(&self, key: (u64, u32), mask: u64) -> bool {
+        self.inner.lock().unwrap().txs.covered(&key, mask)
+    }
+
     /// Merge transactions fetched for a known field selection. `covering` marks
     /// every field the fetch asked for, so one the transaction genuinely has no
     /// value for (a null `to` on a contract creation) still reads as fetched

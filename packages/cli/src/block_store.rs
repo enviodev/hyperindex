@@ -937,6 +937,16 @@ impl BlockStore {
         self.insert_evm_blocks_covering(blocks, 0);
     }
 
+    /// Whether this block was already fetched for every field in `mask` — the
+    /// check that lets one partition skip a block another already read.
+    pub(crate) fn covers(&self, block_number: u64, mask: u64) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .table
+            .covered(&block_number, mask)
+    }
+
     /// Merge blocks fetched for a known field selection. `covering` marks every
     /// field the fetch asked for, so one the block genuinely has no value for
     /// still reads as fetched and is not requested again. Rows carrying only

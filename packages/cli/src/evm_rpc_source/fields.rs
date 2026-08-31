@@ -141,12 +141,54 @@ pub(crate) fn tx_field_column(field: TransactionField) -> Option<EvmTxField> {
 }
 
 /// Selection mask over store field ordinals.
-pub(crate) fn block_mask(fields: &[EvmBlockField]) -> u64 {
-    fields.iter().fold(0, |acc, &f| acc | 1u64 << (f as u32))
+pub(crate) fn block_mask(fields: &[BlockField]) -> u64 {
+    fields
+        .iter()
+        .filter_map(|&f| block_field_column(f))
+        .fold(0, |acc, f| acc | 1u64 << (f as u32))
 }
 
-pub(crate) fn tx_mask(fields: &[EvmTxField]) -> u64 {
-    fields.iter().fold(0, |acc, &f| acc | 1u64 << (f as u32))
+pub(crate) fn tx_mask(fields: &[TransactionField]) -> u64 {
+    fields
+        .iter()
+        .filter_map(|&f| tx_field_column(f))
+        .fold(0, |acc, f| acc | 1u64 << (f as u32))
+}
+
+/// The block field the store derives from its key, so a row always has it.
+pub(crate) const BLOCK_KEY_MASK: u64 = 1u64 << (EvmBlockField::Number as u32);
+
+/// The transaction fields the referencing log already carries, so they cost no
+/// request and a row always has them.
+pub(crate) const TX_LOG_MASK: u64 =
+    (1u64 << (EvmTxField::TransactionIndex as u32)) | (1u64 << (EvmTxField::Hash as u32));
+
+/// The reorg-detection fields every fetched block carries, whatever the user
+/// selected: the key, the timestamp the indexer reports progress with, and the
+/// two hashes a fork is detected by.
+pub(crate) const BLOCK_OBSERVATION_MASK: u64 = BLOCK_KEY_MASK
+    | (1u64 << (EvmBlockField::Timestamp as u32))
+    | (1u64 << (EvmBlockField::Hash as u32))
+    | (1u64 << (EvmBlockField::ParentHash as u32));
+
+/// The requested fields a selection mask stands for — the inverse of
+/// `block_mask`, for turning an accumulated need back into a fetch.
+pub(crate) fn block_fields_in(mask: u64) -> Vec<BlockField> {
+    use strum::VariantArray;
+    BlockField::VARIANTS
+        .iter()
+        .copied()
+        .filter(|&f| block_field_column(f).is_some_and(|c| mask & (1u64 << (c as u32)) != 0))
+        .collect()
+}
+
+pub(crate) fn tx_fields_in(mask: u64) -> Vec<TransactionField> {
+    use strum::VariantArray;
+    TransactionField::VARIANTS
+        .iter()
+        .copied()
+        .filter(|&f| tx_field_column(f).is_some_and(|c| mask & (1u64 << (c as u32)) != 0))
+        .collect()
 }
 
 /// Decode a hex-string response value into one of the format newtypes. Every

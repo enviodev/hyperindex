@@ -36,7 +36,11 @@ pub(crate) fn build_block(response: &Json, selection: &[BlockField]) -> Result<B
     let mut block = Block::default();
     let number = present(response, "number")
         .ok_or_else(|| anyhow!("block response carries no \"number\""))?;
-    set_block_field(&mut block, crate::block_store::EvmBlockField::Number, number)?;
+    set_block_field(
+        &mut block,
+        crate::block_store::EvmBlockField::Number,
+        number,
+    )?;
 
     for &requested in selection {
         let field = block_field_column(requested).ok_or_else(|| unsupported("block", requested))?;
@@ -131,7 +135,11 @@ fn missing_error(kind: &str, missing: &[&str]) -> anyhow::Error {
     anyhow!(
         "the RPC response is missing the selected {kind} {}: {}. Please double-check your RPC \
          provider returns correct data.",
-        if missing.len() == 1 { "field" } else { "fields" },
+        if missing.len() == 1 {
+            "field"
+        } else {
+            "fields"
+        },
         missing.join(", "),
     )
 }
@@ -195,11 +203,7 @@ mod tests {
                 tx.transaction_index.map(u64::from),
                 tx.hash.as_ref().map(Hex::encode_hex),
             ),
-            (
-                Some(7),
-                Some(3),
-                Some(format!("0x{}", "ab".repeat(32)))
-            )
+            (Some(7), Some(3), Some(format!("0x{}", "ab".repeat(32))))
         );
     }
 
@@ -268,8 +272,7 @@ mod tests {
     fn a_null_to_is_accepted_as_the_contract_creation_it_marks() {
         let transaction = json!({ "to": Json::Null, "gas": "0x1" });
         let selection = [TransactionField::To, TransactionField::Gas];
-        let tx =
-            build_transaction(1, 0, &hash(1), Some(&transaction), None, &selection).unwrap();
+        let tx = build_transaction(1, 0, &hash(1), Some(&transaction), None, &selection).unwrap();
         check_transaction(&tx, &selection).unwrap();
         assert_eq!((tx.to.is_some(), tx.gas.is_some()), (false, true));
     }
