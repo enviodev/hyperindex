@@ -46,6 +46,8 @@ type nextPageResult = {
   toBlock: int,
   items: array<EvmEventItem.t>,
   message: option<string>,
+  // The block a "fieldSelection" failure happened on.
+  blockNumber: option<int>,
   errorMessage: option<string>,
   retry: option<retryDecision>,
 }
@@ -107,7 +109,9 @@ let make = (
     ~addressStore,
   )
 
-// Turn Rust's retry decision into the variant the source manager acts on.
+// Turn Rust's retry decision into the variant the source manager acts on. The
+// client returns exactly these two shapes; anything else is the addon and this
+// module disagreeing, which no backoff recovers from.
 let toSourceRetry = (decision: retryDecision): Source.getItemsRetry =>
   switch (decision.tag, decision.toBlock, decision.backoffMillis) {
   | ("suggestedToBlock", Some(toBlock), _) => WithSuggestedToBlock({toBlock: toBlock})
@@ -116,9 +120,8 @@ let toSourceRetry = (decision: retryDecision): Source.getItemsRetry =>
       message: decision.message->Option.getOr("Retrying the block range."),
       backoffMillis,
     })
-  | _ =>
-    WithBackoff({
-      message: `The RPC client returned an unrecognised retry decision ${decision.tag}. Please, report to the Envio team.`,
-      backoffMillis: 1000,
-    })
+  | (tag, _, _) =>
+    JsError.throwWithMessage(
+      `The RPC client returned an unrecognised retry decision "${tag}". Please, report to the Envio team.`,
+    )
   }

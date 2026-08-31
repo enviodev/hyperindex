@@ -166,6 +166,9 @@ pub struct NextPageResult {
     pub items: Vec<EventItem>,
     /// Set on "retry" and "fieldSelection".
     pub message: Option<String>,
+    /// The block a "fieldSelection" failure happened on — the one thing that
+    /// makes an unservable selection diagnosable.
+    pub block_number: Option<i64>,
     /// The provider's own message, when it gave one. Diagnostics only.
     pub error_message: Option<String>,
     pub retry: Option<RetryDecision>,
@@ -181,6 +184,7 @@ impl NextPageResult {
             to_block: to_block as i64,
             items: Vec::new(),
             message: None,
+            block_number: None,
             error_message: None,
             retry: None,
         }
@@ -262,7 +266,10 @@ struct Attempt<'a> {
 enum PageError {
     Rpc(RpcError),
     NotFound(String),
-    FieldSelection(anyhow::Error),
+    FieldSelection {
+        block_number: Option<u64>,
+        error: anyhow::Error,
+    },
 }
 
 impl From<EnrichError> for PageError {
@@ -270,7 +277,13 @@ impl From<EnrichError> for PageError {
         match err {
             EnrichError::Rpc(err) => PageError::Rpc(err),
             EnrichError::NotFound(message) => PageError::NotFound(message),
-            EnrichError::FieldSelection(err) => PageError::FieldSelection(err),
+            EnrichError::FieldSelection {
+                block_number,
+                error,
+            } => PageError::FieldSelection {
+                block_number,
+                error,
+            },
         }
     }
 }
@@ -285,7 +298,7 @@ fn describe_rpc_error(err: &RpcError) -> String {
 fn describe(err: &EnrichError) -> String {
     match err {
         EnrichError::NotFound(message) => message.clone(),
-        EnrichError::FieldSelection(err) => format!("{err:#}"),
+        EnrichError::FieldSelection { error, .. } => format!("{error:#}"),
         EnrichError::Rpc(err) => describe_rpc_error(err),
     }
 }
@@ -551,9 +564,13 @@ impl EvmRpcClient {
             // The provider answered, but not with the selected fields. Retrying
             // asks the same question of the same chain, so the caller is told to
             // stop rather than to wait.
-            Ok(Err(PageError::FieldSelection(err))) => (
+            Ok(Err(PageError::FieldSelection {
+                block_number,
+                error,
+            })) => (
                 NextPageResult {
-                    message: Some(format!("{err:#}")),
+                    message: Some(format!("{error:#}")),
+                    block_number: block_number.map(|number| number as i64),
                     ..NextPageResult::new("fieldSelection", to_block, stats.take())
                 },
                 None,
@@ -631,11 +648,12 @@ impl EvmRpcClient {
             let fields = *self
                 .registration_fields
                 .get(&entry.item.on_event_registration_index)
-                .ok_or_else(|| {
-                    PageError::FieldSelection(anyhow::anyhow!(
+                .ok_or_else(|| PageError::FieldSelection {
+                    block_number: Some(entry.item.block_number as u64),
+                    error: anyhow::anyhow!(
                         "no field selection for registration {}",
                         entry.item.on_event_registration_index
-                    ))
+                    ),
                 })?;
             refs.add(
                 entry.item.block_number as u64,

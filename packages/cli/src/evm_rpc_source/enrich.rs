@@ -105,8 +105,21 @@ pub(crate) enum EnrichError {
     /// Transport or JSON-RPC failure.
     Rpc(RpcError),
     /// The provider answered, but not with the fields the selection needs.
-    /// Retrying cannot fix a chain or provider that does not serve them.
-    FieldSelection(anyhow::Error),
+    /// Retrying cannot fix a chain or provider that does not serve them, so
+    /// the block it happened on is the one thing that makes it diagnosable.
+    FieldSelection {
+        block_number: Option<u64>,
+        error: anyhow::Error,
+    },
+}
+
+impl EnrichError {
+    fn field_selection(block_number: u64, error: anyhow::Error) -> Self {
+        EnrichError::FieldSelection {
+            block_number: Some(block_number),
+            error,
+        }
+    }
 }
 
 /// Per-request timings. One request contributes exactly one entry, recorded by
@@ -541,7 +554,7 @@ async fn fetch_blocks(
         let blocks = join_all(group.numbers.iter().map(|&number| async move {
             let response = require(client, cache, stats, FetchKey::Block(number)).await?;
             responses::build_block(&response, number, &group.fields)
-                .map_err(EnrichError::FieldSelection)
+                .map_err(|error| EnrichError::field_selection(number, error))
         }))
         .await
         .into_iter()
@@ -580,7 +593,7 @@ async fn fetch_transactions(
                         receipt.as_deref(),
                         &group.fields,
                     )
-                    .map_err(EnrichError::FieldSelection)?;
+                    .map_err(|error| EnrichError::field_selection(*block_number, error))?;
 
                     if responses::needs_effective_gas_price(&tx, &group.fields) {
                         // The receipt came back without it, so this chain predates
@@ -594,11 +607,11 @@ async fn fetch_transactions(
                             }
                         };
                         responses::fill_effective_gas_price(&mut tx, &transaction)
-                            .map_err(EnrichError::FieldSelection)?;
+                            .map_err(|error| EnrichError::field_selection(*block_number, error))?;
                     }
 
                     responses::check_transaction(&tx, &group.fields)
-                        .map_err(EnrichError::FieldSelection)?;
+                        .map_err(|error| EnrichError::field_selection(*block_number, error))?;
                     Ok(tx)
                 }
             },

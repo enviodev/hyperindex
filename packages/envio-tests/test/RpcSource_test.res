@@ -310,10 +310,13 @@ describe("RpcSource - field selection end to end", () => {
       let _ = await fetchPayloads(~mock, ~transactionFieldNames=[Gas])
       None
     } catch {
-    | Source.GetItemsError(FailedGettingFieldSelection({message})) => Some(message)
+    | Source.GetItemsError(FailedGettingFieldSelection({message, blockNumber})) =>
+      // The block it happened on is what makes an unservable selection
+      // diagnosable, so it names the block rather than the range's end.
+      Some((message->String.includes("gas"), blockNumber))
     }
     mock.close()
-    t.expect(caught->Option.map(m => m->String.includes("gas"))).toEqual(Some(true))
+    t.expect(caught).toEqual(Some((true, 100)))
   })
 
   Async.it("Reports a field value it cannot decode", async t => {

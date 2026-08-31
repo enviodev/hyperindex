@@ -97,9 +97,9 @@ let make = (
     )
     let pageFetchTime = pageFetchTimeRef->Performance.secondsSince
 
-    switch result.kind {
-    | "ok" => ()
-    | "fieldSelection" =>
+    switch (result.kind, result.retry) {
+    | ("ok", _) => ()
+    | ("fieldSelection", _) =>
       throw(
         Source.GetItemsError(
           FailedGettingFieldSelection({
@@ -108,12 +108,14 @@ let make = (
               "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
             ),
             exn: %raw(`null`),
-            blockNumber: result.toBlock,
+            blockNumber: result.blockNumber->Option.getOr(result.toBlock),
+            // The failure is about a field of the block or its transactions,
+            // not about one log within it.
             logIndex: 0,
           }),
         ),
       )
-    | _ =>
+    | ("retry", Some(decision)) =>
       throw(
         Source.GetItemsError(
           FailedGettingItems({
@@ -125,21 +127,16 @@ let make = (
             | None => %raw(`null`)
             },
             attemptedToBlock: result.toBlock,
-            retry: switch result.retry {
-            | Some(decision) => decision->EvmRpcClient.toSourceRetry
-            | None =>
-              WithBackoff({
-                message: result.message->Option.getOr(
-                  "Unexpected issue while fetching events from the RPC client. Attempt a retry.",
-                ),
-                backoffMillis: switch retry {
-                | 0 => 500
-                | _ => 1000 * retry
-                },
-              })
-            },
+            retry: decision->EvmRpcClient.toSourceRetry,
           }),
         ),
+      )
+    // The client returns exactly these three outcomes, and a retry always
+    // carries its decision. Anything else is the addon and this module
+    // disagreeing, which no retry recovers from.
+    | (kind, _) =>
+      JsError.throwWithMessage(
+        `The RPC client returned an unrecognised outcome "${kind}". Please, report to the Envio team.`,
       )
     }
 
