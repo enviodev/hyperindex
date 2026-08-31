@@ -33,9 +33,6 @@ type Gravatar {
   owner: String!
 }
 `,
-  ~unsupported=[
-    {backend: #memory, reason: "reproduces a Postgres json_agg decoding limit"},
-  ],
 )
 
 describe("Dynamic contracts startup size", () => {
@@ -45,7 +42,7 @@ describe("Dynamic contracts startup size", () => {
       await scenario->Scenario.run(
         ~sources=[{chain: 1337, methods: [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]}],
         async (~indexer, ~source as _) => {
-          let {sql, pgSchema} = indexer->IndexerRunner.pgOrThrow
+          let {sql, pgSchema} = indexer.pg
 
           let chainId = 1337->ChainId.fromInt
           let rowCount = 30_000_000
