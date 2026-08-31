@@ -237,6 +237,20 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             r#"{ "kind": "rootNode", "program": { "instructions": [],
                  "definedTypes": null } }"#,
         ),
+        (
+            // Whichever spelling wins decides whether the slot may be left out,
+            // and the wrong answer shifts every later account name.
+            "anchor account whose optional spellings disagree",
+            r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
+                 "accounts": [{ "name": "vault",
+                                "optional": true, "isOptional": false }] }] }"#,
+        ),
+        (
+            "anchor account whose second optional spelling is unreadable",
+            r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
+                 "accounts": [{ "name": "vault",
+                                "optional": true, "isOptional": "yes" }] }] }"#,
+        ),
     ];
 
     let reported: Vec<String> = cases
@@ -291,6 +305,8 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "anchor enum whose 'variants' is not an array: swap set aside: it reaches type 'Side', which cannot be decoded: type 'Side' variants: expected an array, got null",
             "anchor 'types' that is not an array: fatal: types: expected an array, got null",
             "codama 'definedTypes' that is not an array: fatal: definedTypes: expected an array, got null",
+            "anchor account whose optional spellings disagree: swap set aside: accounts: 'optional' and 'isOptional' disagree on account 'vault'",
+            "anchor account whose second optional spelling is unreadable: swap set aside: accounts: 'isOptional' must be a boolean, got \"yes\"",
         ]
     );
 }
@@ -486,7 +502,9 @@ fn resolves_shared_type_graphs_without_blowing_up() {
             idl.instructions.keys().collect::<Vec<_>>(),
             started.elapsed() < std::time::Duration::from_secs(5)
         ),
-        (vec![&"swap".to_string()], true)
+        (vec![&"swap".to_string()], true),
+        "resolving the shared graph took {:?}",
+        started.elapsed()
     );
 }
 
@@ -529,7 +547,9 @@ fn settles_a_long_chain_of_unresolvable_types_in_one_pass() {
             idl.unusable.keys().map(String::as_str).collect::<Vec<_>>(),
             started.elapsed() < std::time::Duration::from_secs(2),
         ),
-        (depth, true, vec!["walk"], true)
+        (depth, true, vec!["walk"], true),
+        "settling {depth} unresolvable types took {:?}",
+        started.elapsed()
     );
 }
 

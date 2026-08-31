@@ -460,21 +460,28 @@ fn declared_array(node: Option<&Value>) -> Result<&[Value]> {
 }
 
 /// One account slot. The dialects spell the optional flag differently — Anchor
-/// 0.30 `optional`, legacy Anchor and Codama `isOptional` — but neither may
-/// leave it unreadable: defaulting a non-boolean to `false` makes the slot
-/// required, and a transaction that omits it pairs every later pubkey with the
-/// wrong name.
+/// 0.30 `optional`, legacy Anchor and Codama `isOptional` — so both are read,
+/// and every spelling the node declares has to agree and be readable. Settling
+/// this quietly, by defaulting a non-boolean to `false` or by letting one
+/// spelling outrank the other, makes the slot required on a guess, and a
+/// transaction that omits it pairs every later pubkey with the wrong name.
 fn account_slot(node: &Value) -> Result<IdlAccount> {
-    let declared = ["optional", "isOptional"]
-        .into_iter()
-        .find_map(|key| node.get(key).map(|value| (key, value)));
+    let name = required_str(node, "name")?;
+    let mut optional = None;
+    for key in ["optional", "isOptional"] {
+        let declared = match node.get(key) {
+            None => continue,
+            Some(Value::Bool(declared)) => *declared,
+            Some(other) => bail!("'{key}' must be a boolean, got {other}"),
+        };
+        if optional.is_some_and(|earlier| earlier != declared) {
+            bail!("'optional' and 'isOptional' disagree on account '{name}'");
+        }
+        optional = Some(declared);
+    }
     Ok(IdlAccount {
-        name: required_str(node, "name")?.to_string(),
-        optional: match declared {
-            None => false,
-            Some((_, Value::Bool(optional))) => *optional,
-            Some((key, other)) => bail!("'{key}' must be a boolean, got {other}"),
-        },
+        name: name.to_string(),
+        optional: optional.unwrap_or(false),
     })
 }
 
