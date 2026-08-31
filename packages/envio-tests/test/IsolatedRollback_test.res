@@ -191,9 +191,270 @@ let reindexBlock102 = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~
   await indexer.getBatchWritePromise()
 }
 
-let blockHash = blockNumber => Js.Null.Value(MockSource.evmBlockHash(`0x0${blockNumber}`))
+// The three shapes every assertion below is made of, so a case reads as the
+// rows it expects rather than as the records that spell them.
+let checkpoint = (~id, ~chain, ~block, ~events): InternalTable.Checkpoints.t => {
+  id,
+  chainId: chain->ChainId.fromInt,
+  blockNumber: block,
+  blockHash: Js.Null.Value(MockSource.evmBlockHash(`0x0${block->Int.toString}`)),
+  eventsProcessed: events,
+}
+
+let counterSet = (~checkpointId, ~chain, ~count): Change.t<counter> => Set({
+  checkpointId,
+  entityId: "total"->EntityId.unsafeOfString,
+  entity: {id: "total", count, chainId: chain},
+})
+
+let progress = (~chain100, ~chain1337): array<IndexerRunner.metric> => [
+  {value: chain100, labels: Dict.fromArray([("chainId", "100")])},
+  {value: chain1337, labels: Dict.fromArray([("chainId", "1337")])},
+]
 
 describe("Isolated multichain rollback", () => {
+  scenario->Scenario.it(
+    "Rolls back the reorg chain alone and leaves its sibling untouched",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+
+      t.expect(
+        await Promise.all4((
+          indexer.queryCheckpoints(),
+          counters(indexer),
+          counterHistory(indexer),
+          progressByChain(indexer),
+        )),
+        ~message="Both chains reached block 102, with their checkpoints interleaved",
+      ).toEqual((
+        [
+          checkpoint(~id=3n, ~chain=100, ~block=101, ~events=1),
+          checkpoint(~id=4n, ~chain=1337, ~block=101, ~events=1),
+          checkpoint(~id=5n, ~chain=1337, ~block=102, ~events=1),
+          checkpoint(~id=6n, ~chain=100, ~block=102, ~events=1),
+        ],
+        [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 13372n, chainId: 1337}],
+        [
+          counterSet(~checkpointId=3n, ~chain=100, ~count=100n),
+          counterSet(~checkpointId=4n, ~chain=1337, ~count=1337n),
+          counterSet(~checkpointId=5n, ~chain=1337, ~count=13372n),
+          counterSet(~checkpointId=6n, ~chain=100, ~count=1002n),
+        ],
+        progress(~chain100="102", ~chain1337="102"),
+      ))
+
+      await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
+
+      t.expect(
+        (
+          await progressByChain(indexer),
+          // The lowest block chain 100 is asked for once it re-issues the
+          // queries the rollback dropped: it kept block 102, so it never goes
+          // back below 103.
+          source100.getItemsOrThrowCalls
+          ->Array.map(call => call.payload["fromBlock"])
+          ->Array.toSorted(Int.compare)
+          ->Array.get(0),
+        ),
+        ~message="Only chain 1337 lost progress",
+      ).toEqual((progress(~chain100="102", ~chain1337="101"), Some(103)))
+
+      await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
+
+      t.expect(
+        await Promise.all4((
+          indexer.queryCheckpoints(),
+          counters(indexer),
+          counterHistory(indexer),
+          progressByChain(indexer),
+        )),
+        ~message="Chain 1337 re-indexed above chain 100's untouched rows",
+      ).toEqual((
+        [
+          checkpoint(~id=3n, ~chain=100, ~block=101, ~events=1),
+          checkpoint(~id=4n, ~chain=1337, ~block=101, ~events=1),
+          checkpoint(~id=6n, ~chain=100, ~block=102, ~events=1),
+          checkpoint(~id=8n, ~chain=1337, ~block=102, ~events=1),
+        ],
+        [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
+        [
+          counterSet(~checkpointId=3n, ~chain=100, ~count=100n),
+          counterSet(~checkpointId=4n, ~chain=1337, ~count=1337n),
+          counterSet(~checkpointId=6n, ~chain=100, ~count=1002n),
+          counterSet(~checkpointId=8n, ~chain=1337, ~count=999n),
+        ],
+        progress(~chain100="102", ~chain1337="102"),
+      ))
+    },
+  )
+  crossChainScenario->Scenario.it(
+    "Falls back to a global rollback when one entity is cross-chain",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveBothChainsToBlock102(
+        ~t,
+        ~indexer,
+        ~source100,
+        ~source1337,
+        ~item=setCounterAndTotal,
+      )
+      await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
+
+      // Chain 100 has to give back block 102 as well: its own write to `Total`
+      // sat on top of the chain-1337 write the reorg took away.
+      t.expect(
+        (
+          await progressByChain(indexer),
+          source100.getItemsOrThrowCalls->Array.some(call => call.payload["fromBlock"] === 102),
+        ),
+        ~message="Both chains lost block 102",
+      ).toEqual((progress(~chain100="101", ~chain1337="101"), true))
+
+      source100.resolveGetItemsOrThrow(
+        [setCounterAndTotal(~block=102, ~count=1002n)],
+        ~filter=MockSource.coveringBlock(102),
+        ~latestFetchedBlockNumber=102,
+      )
+      await indexer.getBatchWritePromise()
+      source1337.resolveGetItemsOrThrow(
+        [setCounterAndTotal(~block=102, ~count=999n)],
+        ~filter=MockSource.coveringBlock(102),
+        ~latestFetchedBlockNumber=102,
+      )
+      await indexer.getBatchWritePromise()
+
+      t.expect(
+        await Promise.all3((
+          indexer.queryCheckpoints(),
+          counters(indexer),
+          (indexer.query("Total"): promise<array<total>>),
+        )),
+        ~message="Every checkpoint above the target went, on both chains",
+      ).toEqual((
+        [
+          checkpoint(~id=3n, ~chain=100, ~block=101, ~events=1),
+          checkpoint(~id=4n, ~chain=1337, ~block=101, ~events=1),
+          checkpoint(~id=8n, ~chain=100, ~block=102, ~events=1),
+          checkpoint(~id=9n, ~chain=1337, ~block=102, ~events=1),
+        ],
+        [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
+        [{id: "total", count: 999n}],
+      ))
+    },
+  )
+  // The second rollback's target sits below checkpoints the first one's chain
+  // has since re-indexed. Deleting by checkpoint id alone would take those with
+  // it; only the reorg chain's rows may go.
+  scenario->Scenario.it(
+    "Keeps a sibling's re-indexed rows when a later reorg targets a lower checkpoint",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
+      await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
+
+      await reorgAtBlock102(~indexer, ~source=source100, ~sibling=source1337)
+      await reindexBlock102(~indexer, ~source=source100, ~count=1003n)
+
+      t.expect(
+        await Promise.all4((
+          indexer.queryCheckpoints(),
+          counters(indexer),
+          counterHistory(indexer),
+          progressByChain(indexer),
+        )),
+        ~message="Chain 1337's re-indexed rows outlived chain 100's rollback to a lower checkpoint",
+      ).toEqual((
+        [
+          checkpoint(~id=3n, ~chain=100, ~block=101, ~events=1),
+          checkpoint(~id=4n, ~chain=1337, ~block=101, ~events=1),
+          checkpoint(~id=8n, ~chain=1337, ~block=102, ~events=1),
+          checkpoint(~id=10n, ~chain=100, ~block=102, ~events=1),
+        ],
+        [{id: "total", count: 1003n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
+        [
+          counterSet(~checkpointId=3n, ~chain=100, ~count=100n),
+          counterSet(~checkpointId=4n, ~chain=1337, ~count=1337n),
+          counterSet(~checkpointId=8n, ~chain=1337, ~count=999n),
+          counterSet(~checkpointId=10n, ~chain=100, ~count=1003n),
+        ],
+        progress(~chain100="102", ~chain1337="102"),
+      ))
+    },
+  )
+  // Two isolated rollbacks can't be merged: the second diff replaces the first,
+  // and its deletes only reach its own chain. Widening to a global rollback is
+  // what keeps the first one's rows from being stranded above their target.
+  scenario->Scenario.it(
+    "Widens to a global rollback when a second reorg lands before the first is written",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+
+      // No batch progresses in between, so the first diff is still unwritten
+      // when the second reorg computes its own.
+      await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
+      await reorgAtBlock102(~indexer, ~source=source100, ~sibling=source1337)
+
+      t.expect(
+        await progressByChain(indexer),
+        ~message="Both chains went back past the lower of the two targets",
+      ).toEqual(progress(~chain100="101", ~chain1337="100"))
+
+      source100.resolveGetItemsOrThrow(
+        [setCounter(~block=102, ~count=1003n)],
+        ~filter=MockSource.coveringBlock(102),
+        ~latestFetchedBlockNumber=102,
+      )
+      await indexer.getBatchWritePromise()
+      source1337.resolveGetItemsOrThrow(
+        [setCounter(~block=101, ~count=1337n), setCounter(~block=102, ~count=999n)],
+        ~filter=MockSource.coveringBlock(101),
+        ~latestFetchedBlockNumber=102,
+      )
+      await indexer.getBatchWritePromise()
+
+      t.expect(
+        await Promise.all3((
+          indexer.queryCheckpoints(),
+          counters(indexer),
+          counterHistory(indexer),
+        )),
+        ~message="Nothing above the lower target survived on either chain",
+      ).toEqual((
+        [
+          checkpoint(~id=3n, ~chain=100, ~block=101, ~events=1),
+          checkpoint(~id=8n, ~chain=100, ~block=102, ~events=1),
+          checkpoint(~id=9n, ~chain=1337, ~block=101, ~events=1),
+          checkpoint(~id=10n, ~chain=1337, ~block=102, ~events=1),
+        ],
+        [{id: "total", count: 1003n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
+        [
+          counterSet(~checkpointId=3n, ~chain=100, ~count=100n),
+          counterSet(~checkpointId=8n, ~chain=100, ~count=1003n),
+          counterSet(~checkpointId=9n, ~chain=1337, ~count=1337n),
+          counterSet(~checkpointId=10n, ~chain=1337, ~count=999n),
+        ],
+      ))
+    },
+  )
   // The diff rides on the next batch whatever produced it, and a sibling that
   // never stopped indexing produces one long before the reorg chain has
   // re-fetched anything. That batch has no progress of its own for the reorg
@@ -236,17 +497,13 @@ describe("Isolated multichain rollback", () => {
       ).toEqual((
         (
           [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 1337n, chainId: 1337}],
-          [
-            {value: "104", labels: Dict.fromArray([("chainId", "100")])},
-            {value: "101", labels: Dict.fromArray([("chainId", "1337")])},
-          ],
+          progress(~chain100="104", ~chain1337="101"),
         ),
         [102],
         [105],
       ))
     },
   )
-
   // Same write, with the reorg chain's sibling rolled back too: it is in the
   // rollback's progress rows *and* in the batch's, so the batch's later value
   // has to be the one that stands.
@@ -290,471 +547,9 @@ describe("Isolated multichain rollback", () => {
           source100.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
         ),
         ~message="Chain 100 resumes from what its batch reached, chain 1337 from where the rollback left it",
-      ).toEqual((
-        [
-          {value: "104", labels: Dict.fromArray([("chainId", "100")])},
-          {value: "101", labels: Dict.fromArray([("chainId", "1337")])},
-        ],
-        [102],
-        [105],
-      ))
+      ).toEqual((progress(~chain100="104", ~chain1337="101"), [102], [105]))
     },
   )
-
-  scenario->Scenario.it(
-    "Rolls back the reorg chain alone and leaves its sibling untouched",
-    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
-    ~reorgThresholdReadyTolerance=0,
-    async (~t, ~indexer, ~source) => {
-      let source100 = source(100)
-      let source1337 = source(1337)
-
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
-
-      t.expect(
-        await Promise.all4((
-          indexer.queryCheckpoints(),
-          counters(indexer),
-          counterHistory(indexer),
-          progressByChain(indexer),
-        )),
-        ~message="Both chains reached block 102, with their checkpoints interleaved",
-      ).toEqual((
-        [
-          {
-            id: 3n,
-            chainId: 100->ChainId.fromInt,
-            blockNumber: 101,
-            blockHash: blockHash("101"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 4n,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 101,
-            blockHash: blockHash("101"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 5n,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 102,
-            blockHash: blockHash("102"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 6n,
-            chainId: 100->ChainId.fromInt,
-            blockNumber: 102,
-            blockHash: blockHash("102"),
-            eventsProcessed: 1,
-          },
-        ],
-        [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 13372n, chainId: 1337}],
-        [
-          Set({
-            checkpointId: 3n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 100n, chainId: 100},
-          }),
-          Set({
-            checkpointId: 4n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 1337n, chainId: 1337},
-          }),
-          Set({
-            checkpointId: 5n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 13372n, chainId: 1337},
-          }),
-          Set({
-            checkpointId: 6n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 1002n, chainId: 100},
-          }),
-        ],
-        [
-          {value: "102", labels: Dict.fromArray([("chainId", "100")])},
-          {value: "102", labels: Dict.fromArray([("chainId", "1337")])},
-        ],
-      ))
-
-      await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
-
-      t.expect(
-        (
-          await progressByChain(indexer),
-          // The lowest block chain 100 is asked for once it re-issues the
-          // queries the rollback dropped: it kept block 102, so it never goes
-          // back below 103.
-          source100.getItemsOrThrowCalls
-          ->Array.map(call => call.payload["fromBlock"])
-          ->Array.toSorted(Int.compare)
-          ->Array.get(0),
-        ),
-        ~message="Only chain 1337 lost progress",
-      ).toEqual((
-        [
-          {value: "102", labels: Dict.fromArray([("chainId", "100")])},
-          {value: "101", labels: Dict.fromArray([("chainId", "1337")])},
-        ],
-        Some(103),
-      ))
-
-      await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
-
-      t.expect(
-        await Promise.all4((
-          indexer.queryCheckpoints(),
-          counters(indexer),
-          counterHistory(indexer),
-          progressByChain(indexer),
-        )),
-        ~message="Chain 1337 re-indexed above chain 100's untouched rows",
-      ).toEqual((
-        [
-          {
-            id: 3n,
-            chainId: 100->ChainId.fromInt,
-            blockNumber: 101,
-            blockHash: blockHash("101"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 4n,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 101,
-            blockHash: blockHash("101"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 6n,
-            chainId: 100->ChainId.fromInt,
-            blockNumber: 102,
-            blockHash: blockHash("102"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 8n,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 102,
-            blockHash: blockHash("102"),
-            eventsProcessed: 1,
-          },
-        ],
-        [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
-        [
-          Set({
-            checkpointId: 3n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 100n, chainId: 100},
-          }),
-          Set({
-            checkpointId: 4n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 1337n, chainId: 1337},
-          }),
-          Set({
-            checkpointId: 6n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 1002n, chainId: 100},
-          }),
-          Set({
-            checkpointId: 8n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 999n, chainId: 1337},
-          }),
-        ],
-        [
-          {value: "102", labels: Dict.fromArray([("chainId", "100")])},
-          {value: "102", labels: Dict.fromArray([("chainId", "1337")])},
-        ],
-      ))
-    },
-  )
-
-  crossChainScenario->Scenario.it(
-    "Falls back to a global rollback when one entity is cross-chain",
-    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
-    ~reorgThresholdReadyTolerance=0,
-    async (~t, ~indexer, ~source) => {
-      let source100 = source(100)
-      let source1337 = source(1337)
-
-      await driveBothChainsToBlock102(
-        ~t,
-        ~indexer,
-        ~source100,
-        ~source1337,
-        ~item=setCounterAndTotal,
-      )
-      await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
-
-      // Chain 100 has to give back block 102 as well: its own write to `Total`
-      // sat on top of the chain-1337 write the reorg took away.
-      t.expect(
-        (
-          await progressByChain(indexer),
-          source100.getItemsOrThrowCalls->Array.some(call => call.payload["fromBlock"] === 102),
-        ),
-        ~message="Both chains lost block 102",
-      ).toEqual((
-        [
-          {value: "101", labels: Dict.fromArray([("chainId", "100")])},
-          {value: "101", labels: Dict.fromArray([("chainId", "1337")])},
-        ],
-        true,
-      ))
-
-      source100.resolveGetItemsOrThrow(
-        [setCounterAndTotal(~block=102, ~count=1002n)],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=102,
-      )
-      await indexer.getBatchWritePromise()
-      source1337.resolveGetItemsOrThrow(
-        [setCounterAndTotal(~block=102, ~count=999n)],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=102,
-      )
-      await indexer.getBatchWritePromise()
-
-      t.expect(
-        await Promise.all3((
-          indexer.queryCheckpoints(),
-          counters(indexer),
-          (indexer.query("Total"): promise<array<total>>),
-        )),
-        ~message="Every checkpoint above the target went, on both chains",
-      ).toEqual((
-        [
-          {
-            id: 3n,
-            chainId: 100->ChainId.fromInt,
-            blockNumber: 101,
-            blockHash: blockHash("101"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 4n,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 101,
-            blockHash: blockHash("101"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 8n,
-            chainId: 100->ChainId.fromInt,
-            blockNumber: 102,
-            blockHash: blockHash("102"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 9n,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 102,
-            blockHash: blockHash("102"),
-            eventsProcessed: 1,
-          },
-        ],
-        [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
-        [{id: "total", count: 999n}],
-      ))
-    },
-  )
-
-  // The second rollback's target sits below checkpoints the first one's chain
-  // has since re-indexed. Deleting by checkpoint id alone would take those with
-  // it; only the reorg chain's rows may go.
-  scenario->Scenario.it(
-    "Keeps a sibling's re-indexed rows when a later reorg targets a lower checkpoint",
-    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
-    ~reorgThresholdReadyTolerance=0,
-    async (~t, ~indexer, ~source) => {
-      let source100 = source(100)
-      let source1337 = source(1337)
-
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
-      await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
-      await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
-
-      await reorgAtBlock102(~indexer, ~source=source100, ~sibling=source1337)
-      await reindexBlock102(~indexer, ~source=source100, ~count=1003n)
-
-      t.expect(
-        await Promise.all4((
-          indexer.queryCheckpoints(),
-          counters(indexer),
-          counterHistory(indexer),
-          progressByChain(indexer),
-        )),
-        ~message="Chain 1337's re-indexed rows outlived chain 100's rollback to a lower checkpoint",
-      ).toEqual((
-        [
-          {
-            id: 3n,
-            chainId: 100->ChainId.fromInt,
-            blockNumber: 101,
-            blockHash: blockHash("101"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 4n,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 101,
-            blockHash: blockHash("101"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 8n,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 102,
-            blockHash: blockHash("102"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 10n,
-            chainId: 100->ChainId.fromInt,
-            blockNumber: 102,
-            blockHash: blockHash("102"),
-            eventsProcessed: 1,
-          },
-        ],
-        [{id: "total", count: 1003n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
-        [
-          Set({
-            checkpointId: 3n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 100n, chainId: 100},
-          }),
-          Set({
-            checkpointId: 4n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 1337n, chainId: 1337},
-          }),
-          Set({
-            checkpointId: 8n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 999n, chainId: 1337},
-          }),
-          Set({
-            checkpointId: 10n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 1003n, chainId: 100},
-          }),
-        ],
-        [
-          {value: "102", labels: Dict.fromArray([("chainId", "100")])},
-          {value: "102", labels: Dict.fromArray([("chainId", "1337")])},
-        ],
-      ))
-    },
-  )
-
-  // Two isolated rollbacks can't be merged: the second diff replaces the first,
-  // and its deletes only reach its own chain. Widening to a global rollback is
-  // what keeps the first one's rows from being stranded above their target.
-  scenario->Scenario.it(
-    "Widens to a global rollback when a second reorg lands before the first is written",
-    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
-    ~reorgThresholdReadyTolerance=0,
-    async (~t, ~indexer, ~source) => {
-      let source100 = source(100)
-      let source1337 = source(1337)
-
-      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
-
-      // No batch progresses in between, so the first diff is still unwritten
-      // when the second reorg computes its own.
-      await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
-      await reorgAtBlock102(~indexer, ~source=source100, ~sibling=source1337)
-
-      t.expect(
-        await progressByChain(indexer),
-        ~message="Both chains went back past the lower of the two targets",
-      ).toEqual([
-        {value: "101", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "100", labels: Dict.fromArray([("chainId", "1337")])},
-      ])
-
-      source100.resolveGetItemsOrThrow(
-        [setCounter(~block=102, ~count=1003n)],
-        ~filter=MockSource.coveringBlock(102),
-        ~latestFetchedBlockNumber=102,
-      )
-      await indexer.getBatchWritePromise()
-      source1337.resolveGetItemsOrThrow(
-        [setCounter(~block=101, ~count=1337n), setCounter(~block=102, ~count=999n)],
-        ~filter=MockSource.coveringBlock(101),
-        ~latestFetchedBlockNumber=102,
-      )
-      await indexer.getBatchWritePromise()
-
-      t.expect(
-        await Promise.all3((
-          indexer.queryCheckpoints(),
-          counters(indexer),
-          counterHistory(indexer),
-        )),
-        ~message="Nothing above the lower target survived on either chain",
-      ).toEqual((
-        [
-          {
-            id: 3n,
-            chainId: 100->ChainId.fromInt,
-            blockNumber: 101,
-            blockHash: blockHash("101"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 8n,
-            chainId: 100->ChainId.fromInt,
-            blockNumber: 102,
-            blockHash: blockHash("102"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 9n,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 101,
-            blockHash: blockHash("101"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 10n,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 102,
-            blockHash: blockHash("102"),
-            eventsProcessed: 1,
-          },
-        ],
-        [{id: "total", count: 1003n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
-        [
-          Set({
-            checkpointId: 3n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 100n, chainId: 100},
-          }),
-          Set({
-            checkpointId: 8n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 1003n, chainId: 100},
-          }),
-          Set({
-            checkpointId: 9n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 1337n, chainId: 1337},
-          }),
-          Set({
-            checkpointId: 10n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 999n, chainId: 1337},
-          }),
-        ],
-      ))
-    },
-  )
-
   scenario->Scenario.it(
     "Resumes from the checkpoints an isolated rollback left behind",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
@@ -784,17 +579,13 @@ describe("Isolated multichain rollback", () => {
       ).toEqual((
         (
           [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
-          [
-            {value: "102", labels: Dict.fromArray([("chainId", "100")])},
-            {value: "102", labels: Dict.fromArray([("chainId", "1337")])},
-          ],
+          progress(~chain100="102", ~chain1337="102"),
         ),
         [103],
         [103],
       ))
     },
   )
-
   fullHistoryScenario->Scenario.it(
     "Keeps the sibling's full history when save_full_history is on",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
@@ -816,76 +607,23 @@ describe("Isolated multichain rollback", () => {
         ~message="Chain 100 kept every history row and checkpoint it ever wrote",
       ).toEqual((
         [
-          Set({
-            checkpointId: 3n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 100n, chainId: 100},
-          }),
-          Set({
-            checkpointId: 4n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 1337n, chainId: 1337},
-          }),
-          Set({
-            checkpointId: 6n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 1002n, chainId: 100},
-          }),
-          Set({
-            checkpointId: 8n,
-            entityId: "total"->EntityId.unsafeOfString,
-            entity: {id: "total", count: 999n, chainId: 1337},
-          }),
+          counterSet(~checkpointId=3n, ~chain=100, ~count=100n),
+          counterSet(~checkpointId=4n, ~chain=1337, ~count=1337n),
+          counterSet(~checkpointId=6n, ~chain=100, ~count=1002n),
+          counterSet(~checkpointId=8n, ~chain=1337, ~count=999n),
         ],
         [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
         [
-          {
-            id: 1n,
-            chainId: 100->ChainId.fromInt,
-            blockNumber: 100,
-            blockHash: blockHash("100"),
-            eventsProcessed: 0,
-          },
-          {
-            id: 2n,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 100,
-            blockHash: blockHash("100"),
-            eventsProcessed: 0,
-          },
-          {
-            id: 3n,
-            chainId: 100->ChainId.fromInt,
-            blockNumber: 101,
-            blockHash: blockHash("101"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 4n,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 101,
-            blockHash: blockHash("101"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 6n,
-            chainId: 100->ChainId.fromInt,
-            blockNumber: 102,
-            blockHash: blockHash("102"),
-            eventsProcessed: 1,
-          },
-          {
-            id: 8n,
-            chainId: 1337->ChainId.fromInt,
-            blockNumber: 102,
-            blockHash: blockHash("102"),
-            eventsProcessed: 1,
-          },
+          checkpoint(~id=1n, ~chain=100, ~block=100, ~events=0),
+          checkpoint(~id=2n, ~chain=1337, ~block=100, ~events=0),
+          checkpoint(~id=3n, ~chain=100, ~block=101, ~events=1),
+          checkpoint(~id=4n, ~chain=1337, ~block=101, ~events=1),
+          checkpoint(~id=6n, ~chain=100, ~block=102, ~events=1),
+          checkpoint(~id=8n, ~chain=1337, ~block=102, ~events=1),
         ],
       ))
     },
   )
-
   clickHouseScenario->Scenario.it(
     "Mirrors the isolated rollback into the ClickHouse sink",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
