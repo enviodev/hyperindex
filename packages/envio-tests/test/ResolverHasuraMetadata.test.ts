@@ -81,6 +81,9 @@ describe("manifest -> Hasura metadata", () => {
           name: "accountPnl",
           comment: "PnL per bucket",
           definition: {
+            // A Hasura action is a mutation unless it says otherwise, and the
+            // manifest's SDL says `extend type Query`.
+            type: "query",
             kind: "synchronous",
             handler: "http://resolvers:9900/hasura-action",
             arguments: [
@@ -94,6 +97,7 @@ describe("manifest -> Hasura metadata", () => {
         {
           name: "referralCodeUpdates",
           definition: {
+            type: "query",
             kind: "synchronous",
             handler: "http://resolvers:9900/hasura-action",
             arguments: [],
