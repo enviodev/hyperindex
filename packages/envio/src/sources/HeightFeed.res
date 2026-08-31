@@ -238,21 +238,40 @@ let timedOut = () =>
 // at all — while the caller is released at the bound to back off and ask again.
 let heightWithin = async (feed: t, ~generation) => {
   let timeoutId = ref(None)
-  let outcome = await Promise.race([
-    feed.source.getHeightOrThrow()
-    ->Promise.thenResolve(res => {
+  let abandoned = ref(false)
+  let request = feed.source.getHeightOrThrow()
+
+  // Registered before the race below, so on the path where the answer arrives in
+  // time this has already declined it and the caller records it, in the caller's
+  // own turn. Only an answer its caller has given up on is recorded here.
+  request
+  ->Promise.thenResolve(res =>
+    if abandoned.contents {
       feed->recordAnswer(~generation, res)
-      Ok()
-    })
-    ->Promise.catch(exn => Promise.resolve(Error(exn))),
+    }
+  )
+  // A rejection this late is one the caller was already told about, or one it
+  // stopped waiting for. Either way it is accounted for; left unhandled it would
+  // be an unhandled rejection.
+  ->Promise.catch(_ => Promise.resolve())
+  ->Promise.ignore
+
+  let answered = try await Promise.race([
+    request->Promise.thenResolve(res => Some(res)),
     Promise.make((resolve, _reject) => {
-      timeoutId := Some(setTimeout(() => resolve(Error(timedOut())), pollTimeoutMillis))
+      timeoutId := Some(setTimeout(() => resolve(None), pollTimeoutMillis))
     }),
-  ])
+  ]) catch {
+  | exn =>
+    timeoutId->Utils.clearTimeoutRef
+    throw(exn)
+  }
   timeoutId->Utils.clearTimeoutRef
-  switch outcome {
-  | Ok() => ()
-  | Error(exn) => throw(exn)
+  switch answered {
+  | Some(res) => res
+  | None =>
+    abandoned := true
+    throw(timedOut())
   }
 }
 
@@ -268,7 +287,8 @@ let nextRetryInterval = (feed: t) => {
 let pollOnce = async (feed: t) => {
   let generation = feed.connectionGeneration
   try {
-    await feed->heightWithin(~generation)
+    let res = await feed->heightWithin(~generation)
+    feed->recordAnswer(~generation, res)
     feed->currentInterval
   } catch {
   | exn =>
@@ -320,7 +340,10 @@ let recordDisconnect = (feed: t, ~reason) => feed.disconnects->Utils.Dict.increm
 // request this module makes with nobody waiting — a chain that reconnects while
 // idle would otherwise sit on a stale head until the next block is mined.
 let catchUp = async (feed: t, ~generation) =>
-  try await feed->heightWithin(~generation) catch {
+  try {
+    let res = await feed->heightWithin(~generation)
+    feed->recordAnswer(~generation, res)
+  } catch {
   | exn =>
     // Deliberately leaves the stream unproven, and deliberately does not advance
     // the poll ramp: nothing else is fetching the height, so the loop has to

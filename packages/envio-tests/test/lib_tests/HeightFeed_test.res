@@ -606,6 +606,24 @@ describe("HeightFeed poll failures", () => {
     t.expect((pollsBefore, pollsAfter > pollsBefore)).toStrictEqual((1, true))
   })
 
+  Async.it("Polls at once for a waiter that arrives while the last loop is unwinding", async t => {
+    let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
+    let (feed, _stats) = makeFeed(mock)
+    let (heights, _subscription) = feed->watch(~knownHeight=100, ~interval=() => 60_000)
+
+    // The answer settles the wait, and whoever was waiting registers the next one
+    // straight away — before the loop that answered it has finished unwinding, so
+    // it still holds `polling` and no new loop can start. That loop does pick the
+    // waiter up, but it was already on its way to a sleep chosen without it: left
+    // there, the next poll is a whole interval away rather than now.
+    mock.resolveGetHeightOrThrowAt(~index=0, 101)
+    await Utils.delay(0)
+    let (_next, _nextSubscription) = feed->watch(~knownHeight=101, ~interval=() => 60_000)
+    await Utils.delay(20)
+
+    t.expect((heights, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual(([101], 2))
+  })
+
   Async.it(
     "Records a poll answer that arrives after the bound rather than dropping it",
     async t => {
