@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import {
   buildRegisteredManifest,
   createResolver,
@@ -336,6 +336,78 @@ describe("applying resolver metadata", () => {
       },
       last: metadata.customTypes,
     });
+  });
+
+  // A Hasura that sends headers and then stops writing leaves `response.json()`
+  // pending forever. Unbounded, that leaves `applyResolverMetadata` pending
+  // too, and the re-assert loop's own guard against overlapping applies then
+  // skips every later tick: the service stops healing and never says why.
+  it("gives up on a Hasura that answers with headers and then stalls", async () => {
+    const stalled: ServerResponse[] = [];
+    const stalling = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      // Headers only. No body, no end.
+      response.write("");
+      stalled.push(response);
+    });
+    await new Promise<void>((resolve) => stalling.listen(0, "127.0.0.1", () => resolve()));
+    const address = stalling.address();
+    const stallingEndpoint = `http://127.0.0.1:${
+      typeof address === "object" && address ? address.port : 0
+    }/v1/metadata`;
+
+    const errors: string[] = [];
+    const stop = startMetadataReassert({
+      endpoint: stallingEndpoint,
+      adminSecret: "testing",
+      metadata,
+      intervalMs: 20,
+      timeoutMs: 60,
+      onApplied: () => {},
+      onError: (error: Error) => errors.push(error.name),
+    });
+    try {
+      const deadline = Date.now() + 5_000;
+      while (errors.length < 2 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    } finally {
+      stop();
+      for (const response of stalled) response.destroy();
+      await new Promise<void>((resolve) => stalling.close(() => resolve()));
+    }
+
+    // Twice, not once: the first give-up has to release the loop's guard so a
+    // later tick tries again.
+    expect(errors.length >= 2).toBe(true);
+  });
+
+  // The dangerous shape of the same failure: a 2xx nobody can parse used to
+  // become `null`, which reads exactly like a Hasura holding no actions at all
+  // -- so the very next step would recreate every action over a Hasura that
+  // already had them.
+  it("treats a 2xx it cannot parse as a failure, not as an empty Hasura", async () => {
+    const garbage = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("<html>gateway</html>");
+    });
+    await new Promise<void>((resolve) => garbage.listen(0, "127.0.0.1", () => resolve()));
+    const address = garbage.address();
+    const garbageEndpoint = `http://127.0.0.1:${
+      typeof address === "object" && address ? address.port : 0
+    }/v1/metadata`;
+
+    const outcome = await applyResolverMetadata({
+      endpoint: garbageEndpoint,
+      adminSecret: "testing",
+      metadata,
+    }).then(
+      () => "applied",
+      (error: Error) => error.message
+    );
+    await new Promise<void>((resolve) => garbage.close(() => resolve()));
+
+    expect(outcome).toMatch(/could not be read/);
   });
 
   it("leaves a newer deployment's metadata alone rather than reverting it", async () => {
