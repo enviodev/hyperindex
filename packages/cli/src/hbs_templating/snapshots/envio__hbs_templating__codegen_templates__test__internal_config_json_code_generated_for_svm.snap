@@ -33,7 +33,6 @@ expression: json
             "kind": "svmInstruction",
             "svm": {
               "discriminator": "0x21",
-              "discriminatorByteLen": 1,
               "accounts": [
                 "metadata",
                 "mint",
@@ -71,7 +70,6 @@ expression: json
             "kind": "svmInstruction",
             "svm": {
               "discriminator": "0x0f",
-              "discriminatorByteLen": 1,
               "accounts": [
                 "metadata",
                 "update_authority"

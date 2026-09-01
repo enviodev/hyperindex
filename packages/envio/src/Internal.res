@@ -573,10 +573,6 @@ type svmInstructionEventConfig = {
   programId: SvmTypes.Pubkey.t,
   /** Hex-encoded discriminator. `None` matches every instruction in the program. */
   discriminator: option<string>,
-  /** Length of the discriminator in bytes (0 / 1 / 2 / 4 / 8). Drives the
-   `dN` selector at query time and the dispatch-key precomputation in the
-   router. */
-  discriminatorByteLen: int,
   /** Positional account names from the Borsh schema, in declared order.
    `[]` means no schema is attached for this instruction. */
   accounts: array<string>,

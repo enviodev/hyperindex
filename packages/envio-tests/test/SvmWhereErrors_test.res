@@ -170,6 +170,17 @@ describe("SVM onInstruction where", () => {
     );
   });
 
+  it("rejects a filter value that is not a base58 pubkey", (t) => {
+    t.expect(() =>
+      indexer.onInstruction(
+        { program: "Swapper", instruction: "swap", where: { accounts: { source: ["not a pubkey"] } } },
+        async () => {},
+      ),
+    ).toThrowError(
+      \`Invalid where configuration for the "swap" instruction on program "Swapper". The "source" filter value "not a pubkey" is not a base58 SVM pubkey.\`,
+    );
+  });
+
   it("rejects an empty pubkey list", (t) => {
     t.expect(() =>
       indexer.onInstruction(
@@ -178,6 +189,28 @@ describe("SVM onInstruction where", () => {
       ),
     ).toThrowError(
       \`Invalid where configuration for the "swap" instruction on program "Swapper". The "source" filter must list at least one pubkey.\`,
+    );
+  });
+
+  it("names the program when it is not configured", (t) => {
+    t.expect(() =>
+      indexer.onInstruction(
+        { program: "Swaper" as never, instruction: "swap", where: {} },
+        async () => {},
+      ),
+    ).toThrowError(
+      \`Program "Swaper" is not configured on any chain, so its handler for "swap" would never run. Add it to your config, or remove the registration. Configured programs: "Swapper".\`,
+    );
+  });
+
+  it("names the instruction when it is not configured on the program", (t) => {
+    t.expect(() =>
+      indexer.onInstruction(
+        { program: "Swapper", instruction: "swep" as never, where: {} },
+        async () => {},
+      ),
+    ).toThrowError(
+      \`Instruction "swep" is not configured on program "Swapper", so its handler would never run. Add it to your config, or remove the registration. Configured instructions on "Swapper": "bare", "swap", "wide".\`,
     );
   });
 

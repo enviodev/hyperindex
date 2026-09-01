@@ -77,6 +77,8 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   blockTimestampName: "timestamp",
   blockHashName: "hash",
   onBlockMethodName: "onBlock",
+  contractNoun: "contract",
+  eventNoun: "event",
   // EVM filter shape: `{block: {number: {_gte?, _lte?, _every?}}}`.
   // The inner range chunk is returned as raw `S.unknown` and parsed a
   // second time in `Main.res` by the shared `blockRangeSchema`.

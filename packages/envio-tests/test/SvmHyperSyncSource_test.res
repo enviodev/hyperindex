@@ -29,7 +29,6 @@ let makeEventConfig = (
     simulateParamsSchema: %raw(`null`),
     programId: metaplexProgramId->SvmTypes.Pubkey.fromStringUnsafe,
     discriminator: Some("0x21"),
-    discriminatorByteLen: 1,
     fieldSelection: Internal.makeFieldSelection(
       ~blockFields=Utils.Set.fromArray(
         selectedBlockFields->(Utils.magic: array<Internal.svmBlockField> => array<string>),
@@ -99,8 +98,6 @@ let makeMockClient = (~response=mockResponse): SvmHyperSyncClient.t => {
   getHeight: () => Promise.resolve(slot + 1000),
   getBlockHashes: (~blockNumbers as _) =>
     JsError.throwWithMessage("getBlockHashes should not be used in these tests"),
-  get: (~query as _) =>
-    JsError.throwWithMessage("get should only be used for block-data queries in tests"),
   getEventItems: (~query, ~addressSet as _) => {
     capturedQueries->Array.push(query)
     // The real Rust client builds the stores from raw transactions/blocks; the

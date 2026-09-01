@@ -317,9 +317,6 @@ let svmSelectionKinds = ["instruction", "transaction", "accountActivity", "block
 // typo, and an unrecognised key would read as an empty selection — silently
 // dropping every field `config.yaml` selected. Rejected here so the option is
 // held to the same shape whether or not the project type-checks it.
-let quotedJoin = (names: array<string>) =>
-  names->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
-
 let validateFieldsShapeOrThrow = (
   fields: unknown,
   ~registration: string,
@@ -337,7 +334,7 @@ let validateFieldsShapeOrThrow = (
   ->Array.forEach(key =>
     if !(validKeys->Array.includes(key)) {
       JsError.throwWithMessage(
-        `Invalid "${key}" key in the fields option of ${registration}. Valid keys: ${quotedJoin(
+        `Invalid "${key}" key in the fields option of ${registration}. Valid keys: ${Utils.Array.quotedJoin(
             validKeys,
           )}.`,
       )
@@ -373,7 +370,7 @@ let parseFieldsOrThrow = (
   fields->Array.forEach(name => {
     if !(valid->Utils.Set.has(name)) {
       JsError.throwWithMessage(
-        `Invalid "${name}" field in the fields.${kind} option of ${registration}. Valid ${kind} fields: ${quotedJoin(
+        `Invalid "${name}" field in the fields.${kind} option of ${registration}. Valid ${kind} fields: ${Utils.Array.quotedJoin(
           valid->Utils.Set.toArray,
         )}.`,
       )
@@ -577,7 +574,7 @@ let resolveSvmInlineFieldSelection = (
   ~contractName: string,
   ~eventName: string,
 ): Internal.fieldSelection => {
-  let registration = `the "${eventName}" event registration on contract "${contractName}"`
+  let registration = `the "${eventName}" instruction on program "${contractName}"`
   validateFieldsShapeOrThrow(
     fields,
     ~registration,
@@ -638,7 +635,6 @@ let buildSvmInstructionEventConfig = (
   ~instructionName: string,
   ~programId: SvmTypes.Pubkey.t,
   ~discriminator: option<string>,
-  ~discriminatorByteLen: int,
   ~accounts: array<string>=[],
   ~args: JSON.t=JSON.Null,
   ~definedTypes: JSON.t=JSON.Null,
@@ -665,7 +661,6 @@ let buildSvmInstructionEventConfig = (
     simulateParamsSchema: paramsSchema,
     programId,
     discriminator,
-    discriminatorByteLen,
     fieldSelection,
     accounts,
     args,
@@ -717,7 +712,7 @@ let resolveSvmWhereOrThrow = (
   }
   obj->Utils.Dict.forEachWithKey((_, key) =>
     if !(validSvmWhereKeys->Array.includes(key)) {
-      invalid(`Unknown field "${key}". Valid fields: ${quotedJoin(validSvmWhereKeys)}.`)
+      invalid(`Unknown field "${key}". Valid fields: ${Utils.Array.quotedJoin(validSvmWhereKeys)}.`)
     }
   )
 
@@ -738,7 +733,7 @@ let resolveSvmWhereOrThrow = (
         )
       | -1 =>
         invalid(
-          `The instruction has no account named "${name}" to filter on. Named accounts: ${quotedJoin(
+          `The instruction has no account named "${name}" to filter on. Named accounts: ${Utils.Array.quotedJoin(
               accountNames,
             )}.`,
         )
@@ -756,7 +751,10 @@ let resolveSvmWhereOrThrow = (
         Internal.position,
         values: values->Array.map(value =>
           switch value {
-          | JSON.String(pubkey) => pubkey->SvmTypes.Pubkey.fromStringUnsafe
+          | JSON.String(pubkey) if Core.getAddon().isSvmPubkey(~value=pubkey) =>
+            pubkey->SvmTypes.Pubkey.fromStringUnsafe
+          | JSON.String(pubkey) =>
+            invalid(`The "${name}" filter value "${pubkey}" is not a base58 SVM pubkey.`)
           | _ => invalid(`The "${name}" filter must list base58 pubkeys as strings.`)
           }
         ),

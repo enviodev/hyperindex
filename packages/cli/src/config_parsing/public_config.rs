@@ -417,7 +417,6 @@ struct ContractEventItem {
 struct SvmEventItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     discriminator: Option<String>,
-    discriminator_byte_len: u8,
     /// Positional account names, in the order the on-chain program expects.
     /// `[]` means the runtime won't expose `decoded.accounts.<name>`; the
     /// raw `instruction.accounts[i]` array is still available.
@@ -616,7 +615,6 @@ impl SystemConfig {
                                 EventKind::Svm(svm_kind) => {
                                     let svm_item = SvmEventItem {
                                         discriminator: svm_kind.discriminator.clone(),
-                                        discriminator_byte_len: svm_kind.discriminator_byte_len,
                                         accounts: svm_kind.accounts.clone(),
                                         args: svm_kind
                                             .args

@@ -1403,22 +1403,16 @@ impl SystemConfig {
                             .instructions
                             .iter()
                             .map(|instr| -> Result<Event> {
-                                let (normalized_discriminator, byte_len) =
-                                    match &instr.discriminator {
-                                        Some(d) => {
-                                            let hex = d.strip_prefix("0x").unwrap_or(d);
-                                            let byte_len = (hex.len() / 2) as u8;
-                                            (Some(format!("0x{hex}")), byte_len)
-                                        }
-                                        None => (None, 0u8),
-                                    };
+                                let normalized_discriminator = instr
+                                    .discriminator
+                                    .as_deref()
+                                    .map(|d| format!("0x{}", d.strip_prefix("0x").unwrap_or(d)));
                                 let (accounts, args) = resolve_instruction_layout(instr, &svm_abi)
                                     .with_context(|| {
                                         format!("Layout for instruction '{}'", instr.name)
                                     })?;
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
-                                    discriminator_byte_len: byte_len,
                                     accounts,
                                     args,
                                 };
@@ -2283,10 +2277,6 @@ pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
     /// instruction in the program.
     pub discriminator: Option<String>,
-    /// Length of the decoded discriminator in bytes (0 / 1 / 2 / 4 / 8). The
-    /// router precomputes a per-program ordering on this so dispatch tries
-    /// longest first.
-    pub discriminator_byte_len: u8,
     /// Positional account names. Empty when the user supplied no schema and
     /// no bundled/IDL schema applies; in that case `decoded.accounts` is `{}`.
     pub accounts: Vec<String>,
@@ -3819,19 +3809,15 @@ type Foo {
                 .events
                 .iter()
                 .map(|e| match &e.kind {
-                    EventKind::Svm(k) => (
-                        e.name.as_str(),
-                        k.discriminator.as_deref(),
-                        k.discriminator_byte_len,
-                    ),
+                    EventKind::Svm(k) => (e.name.as_str(), k.discriminator.as_deref()),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
                 })
                 .collect();
             assert_eq!(
                 kinds,
                 vec![
-                    ("CreateMetadataAccountV3", Some("0x21"), 1),
-                    ("UpdateMetadataAccountV2", Some("0x0f"), 1),
+                    ("CreateMetadataAccountV3", Some("0x21")),
+                    ("UpdateMetadataAccountV2", Some("0x0f")),
                 ],
             );
 

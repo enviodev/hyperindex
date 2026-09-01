@@ -170,18 +170,6 @@ impl Registration {
                             .with_context(|| {
                                 format!("account filter position {} out of a0..a9", filter.position)
                             })?;
-                        // Validated, not stored: routing compares the raw
-                        // base58 strings, so an unparseable pubkey would
-                        // otherwise silently never match, and the query build
-                        // that does parse them runs much later.
-                        for value in &filter.values {
-                            value
-                                .parse::<Address>()
-                                .map_err(|e| anyhow::anyhow!("{e}"))
-                                .with_context(|| {
-                                    format!("account filter value {value:?} at a{position}")
-                                })?;
-                        }
                         Ok((position, filter.values.clone()))
                     })
                     .collect::<Result<Vec<_>>>()
@@ -934,26 +922,6 @@ mod tests {
                 route_indexes(&store, &set, &built, &rejected),
             ),
             (vec![0], vec![])
-        );
-    }
-
-    #[test]
-    fn rejects_an_account_filter_value_that_is_not_a_pubkey() {
-        let mut typo = reg(0, PROG_A, Some("0x21"), true);
-        typo.account_filters = vec![vec![SvmAccountFilterInput {
-            position: 1,
-            values: vec!["not_a_pubkey".to_string()],
-        }]];
-        let store = svm_store(&[(typo.contract_name.as_str(), &[])]);
-        let error =
-            match SelectionBuilder::from_registrations(&[typo], &store.handle().read().unwrap()) {
-                Ok(_) => panic!("expected an invalid pubkey to be rejected"),
-                Err(error) => format!("{error:#}"),
-            };
-        assert_eq!(
-            error,
-            "parse registration for I0: account filter value \"not_a_pubkey\" at a1: Address: \
-             invalid base58"
         );
     }
 

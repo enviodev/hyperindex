@@ -177,7 +177,6 @@ let publicConfigChainSchema = S.schema(s =>
 let svmEventDescriptorSchema = S.schema(s =>
   {
     "discriminator": s.matches(S.option(S.string)),
-    "discriminatorByteLen": s.matches(S.int),
     "accounts": s.matches(S.option(S.array(S.string))),
     "args": s.matches(S.option(S.json(~validate=false))),
   }
@@ -736,7 +735,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               Utils.magic: _ => {
                 "svm": option<{
                   "discriminator": option<string>,
-                  "discriminatorByteLen": int,
                   "accounts": option<array<string>>,
                   "args": option<JSON.t>,
                 }>,
@@ -754,7 +752,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~instructionName=eventName,
             ~programId,
             ~discriminator=svm["discriminator"],
-            ~discriminatorByteLen=svm["discriminatorByteLen"],
             ~accounts=svm["accounts"]->Option.getOr([]),
             ~args=svm["args"]->Option.getOr(JSON.Null),
             ~definedTypes=svmDefinedTypes,
