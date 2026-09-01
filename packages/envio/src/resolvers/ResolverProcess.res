@@ -395,9 +395,14 @@ let serve = async (
 
   // Read before the socket opens. It is a misconfiguration, not a runtime
   // failure, so it should stop the process before anything can route to it.
+  // The interval belongs here for the same reason, and for one more: read
+  // after the bind, a malformed one throws from a `serve` that has already
+  // opened a port and a pool and returns neither, so nothing can close them.
   let hasuraTargetOrNone = hasuraTarget()
   switch hasuraTargetOrNone {
-  | Ok(_) => handlerUrlOrThrow()->ignore
+  | Ok(_) =>
+    handlerUrlOrThrow()->ignore
+    Env.Resolvers.metadataIntervalMs()->ignore
   | Error(_) => ()
   }
 
