@@ -57,11 +57,13 @@ export function createResolver(options) {
 
   const resolver = {
     name,
+    // Passed through so `buildManifest` below refuses it with a message that
+    // names the resolver, rather than it being silently dropped here.
+    cacheTtlMs: options.cacheTtlMs,
     description: options.description,
     args: options.args ?? {},
     output,
     admin: options.admin === true,
-    cacheTtlMs: options.cacheTtlMs ?? 0,
     timeoutMs,
     handler,
   };

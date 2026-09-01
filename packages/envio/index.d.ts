@@ -2444,12 +2444,8 @@ export function createResolver<
   /** Register the field on the admin schema only: it stays out of public
    *  introspection and is unexecutable without the admin secret. */
   readonly admin?: boolean;
-  /** Cache responses in envio-serve for this long, keyed by role, field and
-   *  arguments. Defaults to 0 — off. */
-  readonly cacheTtlMs?: number;
   /** The `statement_timeout` every query this resolver runs is bounded by.
-   *  Required: the resolver process connects around PgBouncer, so nothing
-   *  else bounds a runaway query. */
+   *  Required: it is the only thing bounding a runaway query. */
   readonly timeoutMs: number;
   readonly handler: (args: ResolverHandlerArgs<A>) => Promise<R>;
 }): Resolver<A, O>;

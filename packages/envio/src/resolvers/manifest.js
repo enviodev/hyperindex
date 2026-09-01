@@ -292,6 +292,15 @@ export function buildManifest(resolvers) {
       throw new Error(`Duplicate resolver '${name}'`);
     }
     seen.add(name);
+    // Refused rather than ignored. It was carried through the manifest and read
+    // by nothing, so a resolver author could set it, see no error, and believe
+    // an expensive query was being cached.
+    if (resolver.cacheTtlMs !== undefined) {
+      throw new Error(
+        `Resolver '${name}' sets cacheTtlMs, which is not implemented -- nothing caches resolver ` +
+          `responses today. Remove it; it would otherwise read as caching that is not happening.`
+      );
+    }
     if (!resolver.timeoutMs || resolver.timeoutMs <= 0) {
       throw new Error(
         `Resolver '${name}' must set a positive timeoutMs. It becomes the statement_timeout on every query the resolver makes, which is the only thing bounding a runaway one.`
@@ -312,7 +321,6 @@ export function buildManifest(resolvers) {
       }),
       type: toGraphQLType(resolver.output, types, `${name} result`),
       admin: resolver.admin === true,
-      cacheTtlMs: resolver.cacheTtlMs ?? 0,
       timeoutMs: resolver.timeoutMs,
     });
   }
