@@ -379,13 +379,31 @@ let serve = async (
       )
     }
     let metadata = buildHasuraMetadata(manifest, {handlerUrl: handlerUrl})
-    let {applied, reasons} = await applyResolverMetadata({endpoint, adminSecret, metadata})
-    Logging.info(
-      applied
-        ? `Registered custom resolvers with Hasura: ${reasons->Array.join("; ")}`
-        : "Hasura already publishes these custom resolvers; nothing to register",
-    )
     let intervalMs = Env.Resolvers.metadataIntervalMs()
+
+    // Best effort, deliberately. Replicas rolling out together all find the
+    // same empty Hasura and all try to create the actions; the losers are told
+    // `already-exists`. That is a race to converge out of, not a reason to
+    // exit -- a process that dies here crash-loops through the rollout, while
+    // the metadata it wanted is already correct. Serving continues either way:
+    // until the metadata lands, Hasura simply sends nothing here.
+    switch await applyResolverMetadata({endpoint, adminSecret, metadata}) {
+    | {applied, reasons} =>
+      Logging.info(
+        applied
+          ? `Registered custom resolvers with Hasura: ${reasons->Array.join("; ")}`
+          : "Hasura already publishes these custom resolvers; nothing to register",
+      )
+    | exception exn =>
+      Logging.error(
+        `Failed to register the custom resolvers with Hasura, so Hasura will not route to this process yet: ${exn
+          ->Utils.prettifyExn
+          ->Obj.magic}. ${intervalMs === 0
+            ? "ENVIO_RESOLVERS_METADATA_INTERVAL_MS is 0, so this will not be retried."
+            : `Retrying every ${intervalMs->Int.toString}ms.`}`,
+      )
+    }
+
     if intervalMs === 0 {
       () => ()
     } else {
