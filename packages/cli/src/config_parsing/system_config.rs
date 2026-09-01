@@ -4001,6 +4001,43 @@ type Foo {
         /// hand-computed `sha256("global:<snake_case>")[..8]` per instruction —
         /// the one value in an SVM config that cannot be checked by reading it.
         #[test]
+        /// The type registry an IDL brings has to reach the runtime, which
+        /// resolves `Defined` references against it once per program at
+        /// startup. It travels in the public config, so a program whose types
+        /// stop being written there decodes every nominal field as unresolved.
+        #[test]
+        fn carries_the_idl_type_registry_into_the_public_config() {
+            let config = program_reading_idl(
+                r#"{
+                  "instructions": [{ "name": "swap", "discriminator": [1], "accounts": [],
+                    "args": [{ "name": "side", "type": { "defined": "Side" } }] }],
+                  "types": [{ "name": "Side", "type": { "kind": "enum",
+                    "variants": [{ "name": "Buy" }, { "name": "Sell" }] } }]
+                }"#,
+                "            - name: swap\n",
+            )
+            .expect("config");
+
+            let public: serde_json::Value =
+                serde_json::from_str(&config.to_public_config_json(false).expect("public config"))
+                    .expect("json");
+            let contract = &public["svm"]["programs"]["Pool"];
+
+            assert_eq!(
+                (
+                    contract["svmAbi"]["source"].clone(),
+                    contract["svmAbi"]["definedTypes"].clone(),
+                    contract["events"][0]["svm"]["args"].clone(),
+                ),
+                (
+                    serde_json::json!("anchorIdl"),
+                    serde_json::json!({ "Side": { "enum": [{ "name": "Buy" }, { "name": "Sell" }] } }),
+                    serde_json::json!([{ "name": "side", "type": { "defined": "Side" } }]),
+                )
+            );
+        }
+
+        #[test]
         fn takes_the_discriminator_from_the_idl_the_config_names() {
             let config = program_reading_idl(
                 LEGACY_ANCHOR_IDL,
