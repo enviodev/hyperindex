@@ -636,11 +636,11 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),
-  getRollbackProgressDiff: async (~rollbackTargetCheckpointId as _) =>
+  getRollbackProgressDiff: async (~scope as _, ~rollbackTargetCheckpointId as _) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),
-  getRollbackData: async (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
+  getRollbackData: async (~entityConfig as _, ~scope as _, ~rollbackTargetCheckpointId as _) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),
