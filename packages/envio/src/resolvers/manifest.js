@@ -353,6 +353,11 @@ export function toSDL(manifest) {
       lines.push("}", "");
     }
   }
+  // A project with no resolvers gets no Query extension at all: an empty
+  // `extend type Query { }` block is not valid SDL.
+  if (manifest.resolvers.length === 0) {
+    return lines.join("\n");
+  }
   lines.push("extend type Query {");
   for (const r of manifest.resolvers) {
     const args = r.args.length
