@@ -1,3 +1,4 @@
+use hypersync_client_solana::decode::schema_from_anchor_idl_json;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 
@@ -460,6 +461,78 @@ fn reads_the_published_kamino_composite_instructions() {
                 "debtFarmsAccountsReserveFarmState",
                 "debtFarmsAccountsObligationFarmUserState",
             ],
+        )
+    );
+}
+
+/// The upstream Anchor parser is what an `idl:` config goes through today, and
+/// this module is what replaces it. Anything the two read differently reaches
+/// users as a changed discriminator or a shifted argument on a config that
+/// already works, so the scenario IDLs are read by both and compared.
+///
+/// Account names are the one intended divergence: a slot inside a composite
+/// group is named for the group, where upstream flattens to a bare name and
+/// lets two of them collide.
+#[test]
+fn reads_the_scenario_idls_as_the_upstream_parser_does() {
+    fn qualifies(ours: &str, upstream: &str) -> bool {
+        let mut chars = upstream.chars();
+        let capitalized = match chars.next() {
+            None => return false,
+            Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+        };
+        ours.ends_with(&capitalized)
+    }
+
+    let mut divergences: Vec<String> = Vec::new();
+    let mut catalog = Vec::new();
+    for stem in ["jupiter", "kamino", "drift"] {
+        let source = read_fixture(&format!("../../scenarios/svm_flow_xray/idls/{stem}.json"));
+        let ours = parse_idl(&source, stem).expect("parse");
+        let upstream = schema_from_anchor_idl_json(&source).expect("upstream parse");
+        let upstream: BTreeMap<&str, _> = upstream
+            .instructions
+            .values()
+            .map(|ix| (ix.name.as_str(), ix))
+            .collect();
+
+        for name in upstream.keys() {
+            if !ours.instructions.contains_key(*name) {
+                divergences.push(format!("{stem}/{name}: read upstream, missing here"));
+            }
+        }
+        for (name, ix) in &ours.instructions {
+            let Some(theirs) = upstream.get(name.as_str()) else {
+                divergences.push(format!("{stem}/{name}: read here, missing upstream"));
+                continue;
+            };
+            if ix.discriminator != theirs.discriminator {
+                divergences.push(format!("{stem}/{name}: discriminator"));
+            }
+            if ix.args != theirs.args {
+                divergences.push(format!("{stem}/{name}: args"));
+            }
+            if ix.accounts.len() != theirs.accounts.len() {
+                divergences.push(format!("{stem}/{name}: account count"));
+                continue;
+            }
+            for (ours, theirs) in ix.accounts.iter().zip(&theirs.accounts) {
+                if ours.name != theirs.name && !qualifies(&ours.name, &theirs.name) {
+                    divergences.push(format!(
+                        "{stem}/{name}: account '{}' is not upstream's '{}'",
+                        ours.name, theirs.name
+                    ));
+                }
+            }
+        }
+        catalog.push((stem, ours.instructions.len(), ours.unusable.len()));
+    }
+
+    assert_eq!(
+        (divergences, catalog),
+        (
+            Vec::new(),
+            vec![("jupiter", 44, 0), ("kamino", 51, 0), ("drift", 249, 0)]
         )
     );
 }
