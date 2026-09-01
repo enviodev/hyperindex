@@ -96,6 +96,15 @@ fn decimal_or_string(precision: Option<u32>, scale: u32) -> ChType {
     }
 }
 
+/// Whether a bounded numeric field lands in a `String` column rather than a
+/// `Decimal` — the case that sorts lexicographically instead of numerically, so
+/// sorting-key validation has to refuse it. Shares [`decimal_or_string`] with
+/// the type derivation, which is what keeps the two from disagreeing about a
+/// precision neither bound mentions.
+pub fn stored_as_string(precision: Option<u32>, scale: u32) -> bool {
+    matches!(decimal_or_string(precision, scale), ChType::String)
+}
+
 impl FieldSpec {
     pub fn ch_type(&self, chain_id_mode: ChainIdMode) -> Result<ChType> {
         let base = match self.field_type.as_str() {
@@ -431,6 +440,33 @@ mod tests {
                 "String",
                 "String",
             ]
+        );
+    }
+
+    /// The sorting-key validator refuses what stores as a String, so the two
+    /// have to agree on every precision — including the ones outside
+    /// `decimal_bytes`, which a plain `precision <= 38` bound reads as numeric.
+    #[test]
+    fn the_sorting_key_predicate_agrees_with_the_column_it_renders() {
+        let cases = [
+            (Some(38), 0),
+            (Some(39), 0),
+            (Some(0), 0),
+            (None, 0),
+            (Some(10), 8),
+            (Some(10), 11),
+        ];
+        let rendered_as_string = cases.map(|(precision, scale)| {
+            rendered(&FieldSpec {
+                precision,
+                scale: Some(scale),
+                ..field("BigDecimal")
+            }) == "String"
+        });
+
+        assert_eq!(
+            cases.map(|(precision, scale)| stored_as_string(precision, scale)),
+            rendered_as_string
         );
     }
 

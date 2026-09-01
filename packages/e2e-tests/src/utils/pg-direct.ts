@@ -20,8 +20,6 @@ export function pg() {
       username: config.pgUser,
       password: config.pgPassword,
       database: config.pgDatabase,
-      // Values are compared against ClickHouse's text output, so keep whatever
-      // the driver gives and stringify at the comparison site.
       max: 2,
       onnotice: () => {},
     });

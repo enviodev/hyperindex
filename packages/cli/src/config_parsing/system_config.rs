@@ -17,6 +17,7 @@ use super::{
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
 };
+use crate::clickhouse::ch_type;
 use crate::utils::dotenv::{self, EnvMap};
 use crate::{
     config_parsing::human_config::evm::RpcTransactionField,
@@ -711,27 +712,23 @@ fn precision_fix(stored: &GqlScalar) -> String {
 
 /// ClickHouse stores a BigInt or BigDecimal whose precision is unset (or
 /// outside what its `Decimal` can express) as a String, which sorts
-/// lexicographically — wrong for anything in the sorting key. See the BigInt and
-/// BigDecimal branches of `getClickHouseFieldType` in ClickHouse.res.
+/// lexicographically — wrong for anything in the sorting key.
 ///
 /// Which column that applies to depends on `@storage(clickhouse: {orderBy})`:
-/// without it the sorting key is `id`, with it the listed columns replace `id`
-/// (see `makeCreateHistoryTableQuery`). Runs on the resolved schema, so a
-/// relation in the sorting key resolves to the id it actually stores.
+/// without it the sorting key is `id`, with it the listed columns replace `id`.
+/// Runs on the resolved schema, so a relation in the sorting key resolves to
+/// the id it actually stores.
 pub fn validate_clickhouse_sorting_key_scalars(
     storage: &Storage,
     schema: &Schema,
 ) -> anyhow::Result<()> {
     let clickhouse_default = storage.clickhouse.is_some_and(|b| b.entity_default);
-    // Mirrors getClickHouseFieldType: only a Decimal that fits keeps numeric
-    // ordering, and a BigDecimal's scale has to fit inside its precision.
     let stored_as_string = |scalar: &GqlScalar| match scalar {
-        GqlScalar::BigInt(precision) => {
-            !precision.is_some_and(|p| p <= CLICKHOUSE_DECIMAL_MAX_PRECISION)
-        }
-        GqlScalar::BigDecimal(config) => !config.is_some_and(|(precision, scale)| {
-            precision <= CLICKHOUSE_DECIMAL_MAX_PRECISION && scale <= precision
-        }),
+        GqlScalar::BigInt(precision) => ch_type::stored_as_string(*precision, 0),
+        GqlScalar::BigDecimal(config) => match config {
+            Some((precision, scale)) => ch_type::stored_as_string(Some(*precision), *scale),
+            None => true,
+        },
         _ => false,
     };
 

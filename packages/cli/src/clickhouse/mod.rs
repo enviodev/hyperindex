@@ -45,6 +45,13 @@ const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
 /// `idle_socket_ttl` to 2.5s for the same reason.
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_millis(2_500);
 const MAX_RETRY_DELAY: Duration = Duration::from_millis(1_000);
+/// How long one batch may spend on the whole retry ladder. Halving turns a
+/// failure into two more attempts, so a range that keeps failing costs
+/// exponentially many requests — cheap when each is refused in milliseconds,
+/// hours when each one first has to reach [`REQUEST_TIMEOUT`] against a peer
+/// that accepts the connection and then goes silent. `retries` bounds how deep
+/// a single range may go; this bounds what the batch as a whole may cost.
+const RETRY_BUDGET: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Copy)]
 struct Tuning {
@@ -52,6 +59,7 @@ struct Tuning {
     statement_timeout: Duration,
     max_retry_delay: Duration,
     request_timeout: Duration,
+    retry_budget: Duration,
 }
 
 impl Default for Tuning {
@@ -61,6 +69,7 @@ impl Default for Tuning {
             max_retry_delay: MAX_RETRY_DELAY,
             request_timeout: REQUEST_TIMEOUT,
             statement_timeout: STATEMENT_TIMEOUT,
+            retry_budget: RETRY_BUDGET,
         }
     }
 }
@@ -860,21 +869,29 @@ impl ClickHouseSink {
         encoded: &EncodedRows,
     ) -> Result<()> {
         let mut failures = 0usize;
+        let started = std::time::Instant::now();
         let mut pending = vec![(0usize, encoded.rows(), self.tuning.retries)];
         while let Some((start, end, retries)) = pending.pop() {
             match self.post_rows(query, encoded.slice(start, end)).await {
                 Ok(()) => continue,
-                Err(failure)
-                    if retries == 0 || matches!(failure.retry, Retry::Never | Retry::Ambiguous) =>
-                {
-                    return Err(match failures {
-                        0 => failure.error,
-                        n => failure
-                            .error
-                            .context(format!("after {n} failed attempt(s)")),
-                    });
-                }
                 Err(failure) => {
+                    let spent = started.elapsed();
+                    let out_of_budget = spent >= self.tuning.retry_budget;
+                    if retries == 0
+                        || out_of_budget
+                        || matches!(failure.retry, Retry::Never | Retry::Ambiguous)
+                    {
+                        return Err(match (failures, out_of_budget) {
+                            (0, _) => failure.error,
+                            (n, false) => failure
+                                .error
+                                .context(format!("after {n} failed attempt(s)")),
+                            (n, true) => failure.error.context(format!(
+                                "after {n} failed attempt(s) over {spent:.1?}, which is all the \
+                                 time one batch may spend retrying"
+                            )),
+                        });
+                    }
                     failures += 1;
                     let rows = end - start;
                     (self.warn)(&format!(
@@ -951,17 +968,23 @@ enum Retry {
 /// own `partitionBy` writes a part per partition, and one of those already
 /// committed would be sent again — the entity view's `LIMIT 1 BY` reads past the
 /// duplicate, a direct query of the history table does not.
+/// A resend can leave the same rows in the history table twice: insert dedup is
+/// off on purpose (see `Topology::settings`) so trim-then-replay recovery works.
+/// Duplicates cost storage, not correctness — the serving view collapses them
+/// with `LIMIT 1 BY`, and a resent row repeats the id, checkpoint id and values
+/// of the one it duplicates. So a verdict answers whether sending again has a
+/// mechanism to go differently, not whether the rows could already have landed:
+/// a batch that outran a deadline or a memory limit fits once it is smaller.
 const HALVED_ERROR_CODES: &[u32] = &[
     173, // CANNOT_ALLOCATE_MEMORY
     241, // MEMORY_LIMIT_EXCEEDED
-];
-
-/// Error codes where ClickHouse may already have committed the block. Resending
-/// would double-write: `replicated_deduplication_window = 0` and default
-/// MergeTree has no insert dedup.
-const AMBIGUOUS_ERROR_CODES: &[u32] = &[
     159, // TIMEOUT_EXCEEDED
     209, // SOCKET_TIMEOUT
+];
+
+/// Failures that say nothing about size or reachability, so a resend is only the
+/// same request again for the same likely answer.
+const AMBIGUOUS_ERROR_CODES: &[u32] = &[
     210, // NETWORK_ERROR
     319, // UNKNOWN_STATUS_OF_INSERT
 ];
@@ -989,11 +1012,15 @@ const NEVER_ERROR_CODES: &[u32] = &[
 ];
 
 /// A request that never reached the server carries no risk of a double write, so
-/// it is resent. Anything that failed after the body went out — a timeout, a
-/// socket that died waiting for the answer — leaves the same unknown as 319.
+/// it is resent whole. A timeout is resent smaller: the deadline is the one
+/// thing a halved batch meets differently, whether it ran out mid-upload or
+/// waiting on the server to finish. Anything else that failed after the body
+/// went out leaves the same unknown as 319.
 fn retry_for_send_error(err: &reqwest::Error) -> Retry {
     if err.is_connect() {
         Retry::SameRows
+    } else if err.is_timeout() {
+        Retry::Halved
     } else {
         Retry::Ambiguous
     }
@@ -1743,16 +1770,30 @@ mod tests {
         );
     }
 
+    /// The row counts each warning reports, in order — the shape of the retry
+    /// ladder a batch walked before giving up.
+    fn retried_row_counts(sink: &TestSink) -> Vec<String> {
+        sink.warnings()
+            .iter()
+            .filter_map(|warning| {
+                let rest = warning.strip_prefix("ClickHouse insert of ")?;
+                let (count, _) = rest.split_once(" row(s)")?;
+                Some(count.to_string())
+            })
+            .collect()
+    }
+
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_request_that_never_reaches_a_verdict_is_not_resent() {
+    async fn a_request_that_times_out_is_retried_as_halves() {
         let server = mock_server::MockClickHouse::start_unresponsive().await;
         let sink = sink_with(
             &server,
             Tuning {
-                retries: 4,
+                retries: 3,
                 max_retry_delay: Duration::ZERO,
                 request_timeout: Duration::from_millis(150),
                 statement_timeout: Duration::from_millis(150),
+                ..Tuning::default()
             },
         );
         let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
@@ -1761,11 +1802,40 @@ mod tests {
 
         assert_eq!(
             (
+                retried_row_counts(&sink),
                 err.reason.contains("operation timed out"),
-                sink.warnings().len(),
             ),
-            (true, 0),
-            "expected a single attempt, got: {}",
+            (
+                vec!["4".to_string(), "2".to_string(), "1".to_string()],
+                true
+            ),
+            "expected the batch to be halved on the way down, got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_batch_stops_retrying_once_it_is_out_of_time() {
+        let sink = sink_at(
+            refused_url().await,
+            Tuning {
+                retries: 8,
+                max_retry_delay: Duration::ZERO,
+                retry_budget: Duration::ZERO,
+                ..Tuning::default()
+            },
+        );
+        let handle = stage_ids(&sink, &["a", "b", "c", "d"]);
+
+        let err = write(&sink, handle).await.unwrap_err();
+
+        assert_eq!(
+            (
+                retried_row_counts(&sink),
+                err.reason.contains("ClickHouse insert request failed"),
+            ),
+            (Vec::<String>::new(), true),
+            "expected the first failure to end the batch, got: {}",
             err.reason
         );
     }
@@ -1780,6 +1850,7 @@ mod tests {
                 max_retry_delay: Duration::ZERO,
                 request_timeout: Duration::from_millis(150),
                 statement_timeout: Duration::from_millis(150),
+                ..Tuning::default()
             },
         );
         let handle = stage_ids(&sink, &["a"]);
