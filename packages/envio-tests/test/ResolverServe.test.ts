@@ -337,7 +337,7 @@ describe("resolver /resolve", () => {
   });
 
   it("is live but not ready when the database is unreachable", async () => {
-    // Ready has to mean the database answers. A pod that is up and cannot
+    // Ready has to mean the database answers. A process that is up and cannot
     // reach Postgres has nothing to serve, and taking traffic is worse than
     // being restarted.
     const brokenPool = createResolverPool({

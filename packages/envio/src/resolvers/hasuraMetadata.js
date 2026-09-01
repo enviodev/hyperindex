@@ -18,7 +18,7 @@ const BUILTIN_SCALARS = new Set(["String", "Int", "Float", "Boolean", "ID"]);
  * @param handlerUrl the URL *Hasura* posts to -- reachable from Hasura, which
  *   is not necessarily the address the service binds
  * @param publicRole the role a non-admin caller runs as (Hasura's
- *   `unauthorized_role`, "public" on the hosted service)
+ *   `unauthorized_role`)
  */
 export function buildHasuraMetadata(manifest, { handlerUrl, publicRole = "public" }) {
   if (!handlerUrl) {

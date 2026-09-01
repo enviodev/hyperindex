@@ -48,8 +48,7 @@ export function createResolver(options) {
   }
   if (typeof timeoutMs !== "number" || timeoutMs <= 0) {
     throw new Error(
-      `Resolver '${name}' requires a positive \`timeoutMs\`. The resolver process connects ` +
-        `around PgBouncer, so statement_timeout is the only bound on a runaway query.`
+      `Resolver '${name}' requires a positive \`timeoutMs\`. It becomes the statement_timeout on every query the resolver makes, which is the only thing bounding a runaway one.`
     );
   }
   if (registry.some((r) => r.name === name)) {

@@ -1,9 +1,9 @@
 open Vitest
 
 // A resolver process answers a database it did not come from with silence, not
-// with wrong numbers. `envio resolvers` is pointed at a deployment by hand, so
-// nothing but this check stands between "the image is a build behind" and a
-// dashboard reading plausible figures from columns that mean something else.
+// with wrong numbers. `envio resolvers` is pointed at a database by hand, so
+// nothing but this check stands between "the build is behind" and a dashboard
+// reading plausible figures from columns that mean something else.
 
 @module("node:fs") external mkdirSync: (string, {..}) => unit = "mkdirSync"
 @module("node:fs") external writeFileSync: (string, string) => unit = "writeFileSync"
@@ -108,7 +108,7 @@ describe("resolver readiness", () => {
     let matching = await probe(url)
 
     // The indexer is redeployed with a different config underneath a resolver
-    // pod that keeps running: readiness has to notice, not just startup.
+    // process that keeps running: readiness has to notice, not just startup.
     let drifted = envioInfo->JSON.stringify->JSON.parseOrThrow
     switch drifted {
     | Object(dict) => dict->Dict.set("name", JSON.Encode.string("something-else"))

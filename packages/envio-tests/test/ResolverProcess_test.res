@@ -236,12 +236,11 @@ extend type Query {
     ).toEqual(Some((true, true)))
   })
 
-  // `envio dev` must not host the resolver server itself. On the hosted service
-  // the resolvers are their own Deployment running `envio resolvers` from the
-  // same image, and dev only exercises that seam -- the HTTP hop, the pool of
-  // its own, the drain -- if it spawns the same command here. It is also what
-  // lets a resolver edit be a restart of that process alone, with the indexer
-  // keeping its place.
+  // `envio dev` must not host the resolver server itself. Deployed, the
+  // resolvers are their own service running `envio resolvers`, and dev only
+  // exercises that seam -- the HTTP hop, the pool of its own, the drain -- if
+  // it spawns the same command here. It is also what lets a resolver edit be a
+  // restart of that process alone, with the indexer keeping its place.
   Async.it("spawns `envio resolvers` as its own process rather than serving in-process", async t => {
     processEnv->Dict.set("ENVIO_RESOLVERS_PORT", "9917")
     let dev = (await ResolverProcess.startForDev(~config, ~projectRoot))->Option.getOrThrow
