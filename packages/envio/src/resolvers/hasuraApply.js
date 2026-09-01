@@ -82,14 +82,15 @@ export function planApply(metadata, exported, { healOnly = false } = {}) {
 
   if (healOnly) {
     const wanted = metadata.actions;
-    // Every action still present means nothing was deleted. Whatever else has
-    // changed belongs to someone with a newer manifest than ours.
-    if (wanted.length === 0 || wanted.every((action) => current.has(action.name))) {
+    // Only a Hasura holding *none* of ours is the `clear_metadata` this heals.
+    // Some present and some not is what a newer deployment looks like mid-roll:
+    // it renamed one, and restoring our whole set over it would trade the
+    // published schema back and forth for the length of the rollout. A single
+    // action dropped by hand is therefore not healed until the next start,
+    // which is the price of never fighting a deployment that is ahead of us.
+    if (wanted.length === 0 || wanted.some((action) => current.has(action.name))) {
       return { bulk: null, reasons: [] };
     }
-    // Something is gone -- the `clear_metadata` this loop exists for. Fall
-    // through and restore the whole set, since a wipe takes the custom types
-    // and permissions with it.
   }
 
   const desired = new Map(metadata.actions.map((action) => [action.name, action]));

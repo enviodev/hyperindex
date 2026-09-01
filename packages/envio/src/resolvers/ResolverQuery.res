@@ -1,5 +1,3 @@
-// SQL for the resolver `db` handle's typed entity loaders.
-//
 // Written against the entity table definitions rather than raw rows, so the
 // resolver path reads entities the way the indexer writes them: column names
 // come from the table's own field mapping, filter values are serialized with
