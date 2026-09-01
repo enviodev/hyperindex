@@ -177,11 +177,24 @@ module Resolvers = {
       return v === undefined || v === "" ? undefined : v;
     }`)
 
+    // `Int.fromString` is `parseInt`: it takes the leading digits and drops the
+    // rest, so "60s" reads as 60 and "1e3" as 1. For a duration that is a
+    // thousandfold error in the quiet direction -- "60s" meaning a minute
+    // becomes a 60ms loop -- so the parse only accepts what it can write back
+    // unchanged.
+    let parseWhole = raw => {
+      let trimmed = raw->String.trim
+      switch trimmed->Int.fromString {
+      | Some(value) if trimmed === value->Int.toString => Some(value)
+      | _ => None
+      }
+    }
+
     let readInt = (key, ~fallback) =>
       switch read(key) {
       | None => fallback
       | Some(raw) =>
-        switch raw->Int.fromString {
+        switch raw->parseWhole {
         | Some(value) if value > 0 => value
         | _ =>
           JsError.throwWithMessage(
@@ -238,7 +251,7 @@ module Resolvers = {
     switch read("ENVIO_RESOLVERS_METADATA_INTERVAL_MS") {
     | None => 60_000
     | Some(raw) =>
-      switch raw->Int.fromString {
+      switch raw->parseWhole {
       | Some(value) if value >= 0 => value
       | _ =>
         JsError.throwWithMessage(
