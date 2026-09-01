@@ -3033,6 +3033,72 @@ mod test {
         );
     }
 
+    const ABI_CONFIG: &str = r#"
+name: abi-test
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Comptroller
+        abi_file_path: ./abis/Comptroller.json
+        address: "0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b"
+        handler: ./src/handlers.ts
+        events:
+          - event: Failure(string action)
+"#;
+
+    fn parse_with_abi(abi: &str) -> anyhow::Result<SystemConfig> {
+        let files = HashMap::from([("abis/Comptroller.json".to_string(), abi.to_string())]);
+        SystemConfig::parse_yaml(
+            ABI_CONFIG,
+            Some("type T @entity { id: ID! }"),
+            &HashMap::new(),
+            &files,
+            false,
+        )
+    }
+
+    // The ABI spec lets an event that is not anonymous say so by omission, and
+    // hand-written ABI files do.
+    #[test]
+    fn indexes_a_contract_whose_abi_leaves_out_what_the_spec_lets_it() {
+        let config = parse_with_abi(
+            r#"[{"type": "event", "name": "Failure", "inputs": [{"name": "action", "type": "string"}]}]"#,
+        )
+        .expect("config");
+
+        assert_eq!(
+            config
+                .get_contract(&"Comptroller".to_string())
+                .expect("contract")
+                .events
+                .iter()
+                .map(|event| event.name.clone())
+                .collect::<Vec<_>>(),
+            vec!["Failure"]
+        );
+    }
+
+    #[test]
+    fn reports_which_entry_of_which_abi_file_is_unreadable() {
+        let err = parse_with_abi(
+            r#"[{"type": "event", "name": "Failure", "inputs": [{"name": "action", "type": "string"}]},
+                {"type": "wormhole", "name": "Warp"}]"#,
+        )
+        .expect_err("unreadable ABI");
+
+        assert_eq!(
+            format!("{err:#}"),
+            "Failed parsing abi types for events in contract Comptroller on network 1: Failed to \
+             decode ABI file at \"./abis/Comptroller.json\": entry 1 \"Warp\" \
+             (wormhole) is not a valid ABI entry: unknown variant \"wormhole\", expected one of \
+             \"constructor\", \"fallback\", \"receive\", \"function\", \"event\", \"error\". Fix \
+             that entry in the ABI file, or re-export the ABI from the contract build - for \
+             example \"forge inspect <Contract> abi\", or the \"abi\" field of a Hardhat artifact \
+             under \"artifacts/\"."
+        );
+    }
+
     #[test]
     fn test_get_contract_abi() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
