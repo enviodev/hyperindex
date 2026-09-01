@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::json;
 use serde_json::value::RawValue;
 use std::collections::HashMap;
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 /// JSON-RPC level errors are kept separate from transport/parse failures:
 /// provider error messages carry block-range hints the caller inspects.
@@ -49,6 +50,11 @@ struct JsonRpcResponse {
 pub struct JsonRpcClient {
     http: reqwest::Client,
     url: String,
+    /// Bounds the requests this source has in flight at once. The block,
+    /// transaction and receipt reads a page fans out to scale with how many logs
+    /// its range holds, which no block interval can express: a single dense
+    /// block plans thousands of reads.
+    permits: Semaphore,
 }
 
 impl JsonRpcClient {
@@ -56,9 +62,25 @@ impl JsonRpcClient {
         120_000
     }
 
+    /// High enough to keep a healthy provider's pipe full, low enough that the
+    /// burst above stays a queue rather than a stampede.
+    pub const fn default_max_concurrent_requests() -> usize {
+        50
+    }
+
+    /// Waits for this source's turn to call the provider. Queueing is not part
+    /// of how long a request took, so callers acquire before they start timing.
+    pub async fn acquire(&self) -> SemaphorePermit<'_> {
+        self.permits
+            .acquire()
+            .await
+            .expect("the request semaphore is never closed")
+    }
+
     pub fn new(
         url: String,
         http_req_timeout_millis: u64,
+        max_concurrent_requests: usize,
         headers: Option<HashMap<String, String>>,
     ) -> Result<Self> {
         let mut builder = reqwest::Client::builder()
@@ -75,11 +97,18 @@ impl JsonRpcClient {
             builder = builder.default_headers(header_map);
         }
         let http = builder.build().context("build http client")?;
-        Ok(Self { http, url })
+        Ok(Self {
+            http,
+            url,
+            permits: Semaphore::new(max_concurrent_requests),
+        })
     }
 
+    /// The caller's turn lasts exactly as long as the provider is working on
+    /// the request.
     pub async fn request<T: DeserializeOwned>(
         &self,
+        permit: SemaphorePermit<'_>,
         method: &str,
         params: serde_json::Value,
     ) -> Result<T, RpcError> {
@@ -104,6 +133,9 @@ impl JsonRpcClient {
             .await
             .with_context(|| format!("read {method} response body"))
             .map_err(RpcError::Other)?;
+        // Decoding what came back is this process's work, not the provider's,
+        // so the next queued request gets the turn before it starts.
+        drop(permit);
 
         // Providers report JSON-RPC errors under non-200 statuses too (e.g.
         // 429/400), so parse the body first and fall back to the HTTP status
@@ -134,8 +166,8 @@ impl JsonRpcClient {
         }
     }
 
-    pub async fn get_height(&self) -> Result<u64, RpcError> {
-        let result: String = self.request("eth_blockNumber", json!([])).await?;
+    pub async fn get_height(&self, permit: SemaphorePermit<'_>) -> Result<u64, RpcError> {
+        let result: String = self.request(permit, "eth_blockNumber", json!([])).await?;
         parse_hex_u64(&result).map_err(RpcError::Other)
     }
 }

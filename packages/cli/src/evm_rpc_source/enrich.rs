@@ -273,8 +273,9 @@ async fn require(
             let client = client.clone();
             let params = key.params();
             async move {
+                let permit = client.acquire().await;
                 let started = Instant::now();
-                let result = client.request::<Json>(method, params).await;
+                let result = client.request::<Json>(permit, method, params).await;
                 let seconds = started.elapsed().as_secs_f64();
                 (
                     result.map(Arc::new).map_err(Arc::new),

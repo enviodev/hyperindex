@@ -1635,6 +1635,130 @@ describe("SourceManager.executeQuery", () => {
     t.expect((await p).parsedQueueItems).toEqual([])
   })
 
+  // A stall is reported by the level it is logged at, so pinning it means
+  // holding the logger the manager writes to.
+  let captureErrorLogs = async (body: unit => promise<unit>) => {
+    let errors = []
+    let ignoreMessage = (_: Pino.pinoMessageBlob) => ()
+    // `child` is a method rather than a field of `Pino.t`, and every child logs
+    // to the same array, so it answers with another one of these.
+    let rec capturing = (): Pino.t =>
+      {
+        "trace": ignoreMessage,
+        "debug": ignoreMessage,
+        "info": ignoreMessage,
+        "warn": ignoreMessage,
+        "error": blob =>
+          errors
+          ->Array.push((blob->(Utils.magic: Pino.pinoMessageBlob => {"msg": string}))["msg"])
+          ->ignore,
+        "fatal": ignoreMessage,
+        "child": _ => capturing(),
+      }->(Utils.magic: {..} => Pino.t)
+
+    let previous = Logging.getLogger()
+    Logging.setLogger(capturing())
+    let failure = try {
+      await body()
+      None
+    } catch {
+    | exn => Some(exn)
+    }
+    Logging.setLogger(previous)
+    switch failure {
+    | Some(exn) => throw(exn)
+    | None => errors
+    }
+  }
+
+  Async.it("Reports a query every source has failed for minutes as an error", async t => {
+    let sourceMock = MockSource.make([#getItemsOrThrow])
+    let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+
+    let errors = await captureErrorLogs(
+      async () => {
+        let p =
+          sourceManager->SourceManager.executeQuery(
+            ~query=mockQuery(),
+            ~isRealtime=false,
+            ~knownHeight=100,
+          )
+        let withBackoff = Source.GetItemsError(
+          FailedGettingItems({
+            requestStats: [],
+            exn: %raw(`null`),
+            attemptedToBlock: 100,
+            retry: WithBackoff({
+              message: "Failed getting data for the block range.",
+              backoffMillis: 0,
+            }),
+          }),
+        )
+        // Every attempt up to and including the one that crosses the threshold.
+        for _retry in 0 to SourceManager.stallRetries {
+          switch sourceMock.getItemsOrThrowCalls {
+          | [call] => call.reject(withBackoff)
+          | _ => JsError.throwWithMessage("Should have one pending call to the source")
+          }
+          await Promise.resolve()
+          await Utils.delay(0)
+        }
+        (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).resolve([])
+        let _ = await p
+      },
+    )
+
+    t.expect(errors).toEqual([
+      "Failed getting data for the block range. No source available to this chain has served this query on any attempt since, so indexing has stopped making progress.",
+    ])
+  })
+
+  Async.it(
+    "Waits and counts a suggested toBlock that doesn't narrow the attempted range",
+    async t => {
+      let sourceMock = MockSource.make([#getItemsOrThrow])
+      let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
+      let p =
+        sourceManager->SourceManager.executeQuery(
+          ~query=mockQuery(),
+          ~isRealtime=false,
+          ~knownHeight=100,
+        )
+
+      // The provider reports a cap it doesn't apply: what it suggests is the
+      // range it just refused, so retrying that suggestion makes no progress.
+      (sourceMock.getItemsOrThrowCalls->Utils.Array.firstUnsafe).reject(
+        Source.GetItemsError(
+          FailedGettingItems({
+            requestStats: [],
+            exn: %raw(`null`),
+            attemptedToBlock: 100,
+            retry: WithSuggestedToBlock({toBlock: 100}),
+          }),
+        ),
+      )
+      await Promise.resolve() // Wait for microtask, so the rejection is caught
+      let retriedWithoutWaiting = sourceMock.getItemsOrThrowCalls->Array.length
+
+      await Utils.delay(200)
+      let afterTheWait = switch sourceMock.getItemsOrThrowCalls {
+      | [call] => {
+          call.resolve([])
+          Some(call.payload)
+        }
+      | _ => None
+      }
+
+      t.expect((retriedWithoutWaiting, afterTheWait)).toEqual((
+        0,
+        // The suggestion isn't applied, and the attempt counts towards the
+        // failover schedule instead of restarting it.
+        Some({"fromBlock": 0, "toBlock": None, "retry": 1, "p": "0"}),
+      ))
+      t.expect((await p).parsedQueueItems).toEqual([])
+    },
+  )
+
   Async.it(
     "Retries on same source twice before switching, then alternates every second retry",
     async t => {

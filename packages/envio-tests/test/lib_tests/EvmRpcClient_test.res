@@ -2,12 +2,19 @@ open Vitest
 
 let syncConfig = EvmChain.getSyncConfig({})
 
-let makeClient = (~url, ~headers=?, ~eventRegistrations=?, ~addressStore=?) =>
+let makeClient = (
+  ~url,
+  ~headers=?,
+  ~eventRegistrations=?,
+  ~addressStore=?,
+  ~maxConcurrentRequests=?,
+) =>
   EvmRpcClient.make(
     ~url,
     ~checksumAddresses=false,
     ~syncConfig,
     ~headers?,
+    ~maxConcurrentRequests?,
     ~eventRegistrations?,
     ~addressStore=addressStore->Option.getOr(TestAddresses.makeStore()),
   )
@@ -192,6 +199,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     ~dependsOnAddresses=true,
     ~startBlock=None,
     ~params=transferParams,
+    ~blockFields=[],
   ): HyperSyncClient.Registration.input => {
     index,
     sighash: transferSighash,
@@ -210,23 +218,21 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         topic3: Some([]),
       },
     ],
-    blockFields: [],
+    blockFields,
     transactionFields: [],
   }
+
+  let blockResult = (~number, ~gasUsed="0x5208") =>
+    JSON.parseOrThrow(
+      `{"number":"${number}","timestamp":"0x1","gasUsed":"${gasUsed}","hash":"0x${"b1"->String.repeat(
+          32,
+        )}","parentHash":"0x${"b0"->String.repeat(32)}"}`,
+    )
 
   // The client reads the range's last block for its reorg observation, whatever
   // the field selection is.
   let blockReply = (~number) =>
-    MockRpcServer.expectCall(
-      ~method="eth_getBlockByNumber",
-      ~reply=RpcResult(
-        JSON.parseOrThrow(
-          `{"number":"${number}","timestamp":"0x1","hash":"0x${"b1"->String.repeat(
-              32,
-            )}","parentHash":"0x${"b0"->String.repeat(32)}"}`,
-        ),
-      ),
-    )
+    MockRpcServer.expectCall(~method="eth_getBlockByNumber", ~reply=RpcResult(blockResult(~number)))
 
   let callNextPage = (client: EvmRpcClient.t, ~fromBlock, ~toBlockCeiling, ~indexes, ~addressSet) =>
     client.getNextPage(
@@ -423,5 +429,86 @@ describe("EvmRpcClient - getNextPage via napi", () => {
       Some("eth_getLogs is limited to a 1000 blocks range"),
       Some(999),
     ))
+  })
+
+  Async.it("Holds the block reads a page fans out to at the configured limit", async t => {
+    // How many requests a page makes follows from how many logs the range
+    // holds, which no block interval bounds: a selection over ten blocks plans
+    // ten block reads at once. The client is what keeps that burst from
+    // reaching the provider all at once.
+    let blockCount = 10
+    let maxConcurrentRequests = 3
+    let firstBlock = 100
+
+    let inFlight = ref(0)
+    let peakInFlight = ref(0)
+
+    let requestedBlock = (request: MockRpcServer.rpcRequest) =>
+      request.params
+      ->JSON.Decode.array
+      ->Option.flatMap(params => params->Array.get(0))
+      ->Option.flatMap(JSON.Decode.string)
+      ->Option.getOr("0x0")
+
+    // One log per block, so the page plans one block read per log.
+    let logsReply = Array.fromInitializer(
+      ~length=blockCount,
+      offset => {
+        let block = (firstBlock + offset)->Int.toString(~radix=16)
+        let hash = "0x" ++ offset->Int.toString->String.padStart(64, "a")
+        `{"address":"${contractAddress}","topics":["${transferSighash}","0x0000000000000000000000000000000000000000000000000000000000000001","0x0000000000000000000000000000000000000000000000000000000000000002"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8","blockNumber":"0x${block}","transactionHash":"${hash}","transactionIndex":"0x1","blockHash":"0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0","logIndex":"0x2","removed":false}`
+      },
+    )
+
+    let peak = await MockRpcServer.withScenario(
+      ~name="page block reads held at the request limit",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~reply=RpcResult(JSON.parseOrThrow("[" ++ logsReply->Array.join(",") ++ "]")),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~times=blockCount,
+          // Counted as the request arrives and released as its answer is
+          // written, so what this observes can only lag the client's own
+          // count of what it holds open - never overstate it.
+          ~reply=Dynamic(
+            request => {
+              inFlight := inFlight.contents + 1
+              peakInFlight := Pervasives.max(peakInFlight.contents, inFlight.contents)
+              Delayed({
+                millis: 20,
+                reply: Dynamic(
+                  _ => {
+                    inFlight := inFlight.contents - 1
+                    RpcResult(blockResult(~number=requestedBlock(request)))
+                  },
+                ),
+              })
+            },
+          ),
+        ),
+      ],
+      async mock => {
+        let addressStore = makeAddressStore()
+        let client = makeClient(
+          ~url=mock.url,
+          ~eventRegistrations=[makeRegistration(~blockFields=["GasUsed"])],
+          ~addressStore,
+          ~maxConcurrentRequests,
+        )
+
+        let (result, _, _) = await client->callNextPage(
+          ~fromBlock=firstBlock,
+          ~toBlockCeiling=firstBlock + blockCount - 1,
+          ~indexes=[3],
+          ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+        )
+        (result.kind, result.items->Array.length, peakInFlight.contents)
+      },
+    )
+
+    t.expect(peak).toEqual(("ok", blockCount, maxConcurrentRequests))
   })
 })

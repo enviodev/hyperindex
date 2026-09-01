@@ -6,10 +6,8 @@
 //! stores' question — they own the merge, prune and rollback lifecycle that
 //! decides when data stops being valid.
 //!
-//! There is deliberately no concurrency limit. The natural bound is the page
-//! itself, and a provider that cannot keep up answers with an error that the
-//! caller's adaptive block interval reacts to by narrowing the range — which
-//! regulates the load at the layer that knows what the load is for.
+//! Coalescing is not a bound on how much a page asks for: what survives it is
+//! still one request per distinct key, so pacing belongs elsewhere.
 
 use std::collections::HashMap;
 use std::future::Future;

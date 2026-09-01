@@ -1,6 +1,7 @@
 type cfg = {
   url: string,
   httpReqTimeoutMillis?: int,
+  maxConcurrentRequests?: int,
   headers?: dict<string>,
   initialBlockInterval: int,
   backoffMultiplicative: float,
@@ -69,6 +70,7 @@ let make = (
   ~checksumAddresses,
   ~syncConfig: Config.sourceSync,
   ~httpReqTimeoutMillis=?,
+  ~maxConcurrentRequests=?,
   ~headers=?,
   ~eventRegistrations=[],
   ~addressStore,
@@ -77,6 +79,7 @@ let make = (
     {
       url,
       ?httpReqTimeoutMillis,
+      ?maxConcurrentRequests,
       ?headers,
       initialBlockInterval: syncConfig.initialBlockInterval,
       backoffMultiplicative: syncConfig.backoffMultiplicative,

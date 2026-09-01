@@ -5,6 +5,7 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 mod classify;
 mod client;
@@ -34,6 +35,7 @@ use interval::{IntervalState, SyncConfig};
 pub struct EvmRpcClientConfig {
     pub url: String,
     pub http_req_timeout_millis: Option<i64>,
+    pub max_concurrent_requests: Option<i64>,
     pub headers: Option<HashMap<String, String>>,
     // Sync-tuning knobs for the paging AIMD state (see `interval::SyncConfig`).
     // Resolved (defaulted, env-overridden) by ReScript's `EvmChain.getSyncConfig`
@@ -286,8 +288,19 @@ impl EvmRpcClient {
             .map_or(JsonRpcClient::default_http_req_timeout_millis(), |v| {
                 v as u64
             });
-        let inner =
-            JsonRpcClient::new(cfg.url, http_req_timeout_millis, cfg.headers).map_err(map_err)?;
+        let max_concurrent_requests = cfg
+            .max_concurrent_requests
+            .filter(|v| *v > 0)
+            .map_or(JsonRpcClient::default_max_concurrent_requests(), |v| {
+                (v as usize).min(Semaphore::MAX_PERMITS)
+            });
+        let inner = JsonRpcClient::new(
+            cfg.url,
+            http_req_timeout_millis,
+            max_concurrent_requests,
+            cfg.headers,
+        )
+        .map_err(map_err)?;
         let decoder =
             Decoder::from_registrations(&event_registrations, checksum_addresses, address_store)
                 .context("build decoder")
@@ -410,8 +423,9 @@ impl EvmRpcClient {
     /// measured here, like every other method's, rather than around the call.
     #[napi]
     pub async fn get_height(&self) -> napi::Result<(i64, Vec<RequestStat>)> {
+        let permit = self.inner.acquire().await;
         let started = Instant::now();
-        let result = self.inner.get_height().await;
+        let result = self.inner.get_height(permit).await;
         let request_stats = vec![RequestStat {
             method: "eth_blockNumber".to_string(),
             seconds: started.elapsed().as_secs_f64(),
@@ -746,9 +760,11 @@ impl EvmRpcClient {
 
         let results =
             futures_util::future::join_all(query.selections.iter().map(|selection| async {
+                let permit = self.inner.acquire().await;
                 let started = Instant::now();
                 let result = self
                     .fetch_logs_raw(
+                        permit,
                         query.from_block as i64,
                         query.to_block as i64,
                         selection,
@@ -781,6 +797,7 @@ impl EvmRpcClient {
 
     async fn fetch_logs_raw(
         &self,
+        permit: SemaphorePermit<'_>,
         from_block: i64,
         to_block: i64,
         selection: &BuiltLogSelection,
@@ -812,7 +829,10 @@ impl EvmRpcClient {
             filter["address"] = json!(selection.addresses);
         }
 
-        let raw_logs: Vec<RawLog> = self.inner.request("eth_getLogs", json!([filter])).await?;
+        let raw_logs: Vec<RawLog> = self
+            .inner
+            .request(permit, "eth_getLogs", json!([filter]))
+            .await?;
 
         // Decoding is CPU-bound ABI work; keep it off the libuv async thread.
         tokio::task::spawn_blocking(move || {

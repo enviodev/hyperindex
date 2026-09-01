@@ -714,10 +714,20 @@ let retryBehindHead = async (
   )
 }
 
-// A source that keeps contradicting itself is not mid-reorg, it is broken, and
-// no amount of retrying moves the chain forward. Roughly five minutes of the
-// backoff schedule below.
-let inconsistentResponseStallRetries = 13
+// A query that has failed this many times running has outlived every failover
+// the schedule above can offer: it has rotated through the chain's sources
+// several times over and none of them answered. Whatever the reported cause,
+// the chain is no longer making progress and the operator has to hear about it.
+let stallRetries = 13
+
+// Which level a retry is reported at, and what it says once the retries have
+// outlasted the rotation.
+let stalledLog = (~retry, ~warnAfter, ~msg, ~stalled) =>
+  if retry >= stallRetries {
+    (Logging.childError, msg ++ stalled)
+  } else {
+    (retry >= warnAfter ? Logging.childWarn : Logging.childTrace, msg)
+  }
 
 // The response contradicted itself (the same block twice with different hashes,
 // or a requested hash missing). It may be a reorg mid-request, so refetch before
@@ -734,14 +744,12 @@ let retryInconsistentResponse = async (
 ) => {
   let backoffMillis = retry->retryBackoffMillis
   let msg = `Received a partial indicator of a possible reorg from the ${sourceState.source.name} source while fetching ${method}. Retrying the request to better identify whether a reorg happened.`
-  let (log, msg) = if retry >= inconsistentResponseStallRetries {
-    (
-      Logging.childError,
-      msg ++ " It has disagreed with itself on every attempt for several minutes now, so this chain has stopped making progress - the endpoint is likely serving blocks and logs from nodes on different chains.",
-    )
-  } else {
-    (retry >= 2 ? Logging.childWarn : Logging.childTrace, msg)
-  }
+  let (log, msg) = stalledLog(
+    ~retry,
+    ~warnAfter=2,
+    ~msg,
+    ~stalled=" It has disagreed with itself on every attempt for several minutes now, so this chain has stopped making progress - the endpoint is likely serving blocks and logs from nodes on different chains.",
+  )
   logger->log({
     "msg": msg,
     "method": method,
@@ -759,6 +767,45 @@ let retryInconsistentResponse = async (
     ~isRealtime,
     ~backoffMillis,
     ~minBackoffMillis=minRecoverableBackoffMillis,
+    ~excludedSources?,
+  )
+}
+
+// The source could not serve the page and reported nothing that changes the
+// query, so the only move left is to wait and let the schedule try another
+// source. Escalates once the retries have outlasted every failover.
+let retryFailedPage = async (
+  sourceManager: t,
+  sourceState: sourceState,
+  ~retry,
+  ~isRealtime,
+  ~logger: Pino.t,
+  ~msg: string,
+  ~attemptedToBlock: int,
+  ~backoffMillis: int,
+  ~minBackoffMillis=0,
+  ~err: exn,
+  ~excludedSources=?,
+) => {
+  let (log, msg) = stalledLog(
+    ~retry,
+    ~warnAfter=4,
+    ~msg,
+    ~stalled=" No source available to this chain has served this query on any attempt since, so indexing has stopped making progress.",
+  )
+  logger->log({
+    "msg": msg,
+    "toBlock": attemptedToBlock,
+    "backOffMilliseconds": backoffMillis,
+    "retry": retry,
+    "err": err->Utils.prettifyExn,
+  })
+  await sourceManager->backoffBeforeRetry(
+    sourceState,
+    ~retry,
+    ~isRealtime,
+    ~backoffMillis,
+    ~minBackoffMillis,
     ~excludedSources?,
   )
 }
@@ -1023,6 +1070,26 @@ let executeQuery = async (
 
           retryRef := 0
         }
+      // A suggestion that doesn't narrow the range asks for the query that just
+      // failed. Retrying it unchanged and without a wait makes no progress and
+      // never counts against the source, so pace it like any other failure and
+      // let the schedule move on to one that can answer.
+      | FailedGettingItems({exn, attemptedToBlock, retry: WithSuggestedToBlock({toBlock})})
+        if toBlock >= attemptedToBlock =>
+        await sourceManager->retryFailedPage(
+          sourceState,
+          ~retry,
+          ~isRealtime,
+          ~logger,
+          ~msg=`The ${source.name} source rejected the block range and suggested #${toBlock->Int.toString}, which is no narrower than the #${attemptedToBlock->Int.toString} it just refused.`,
+          ~attemptedToBlock,
+          ~backoffMillis=retry->retryBackoffMillis,
+          ~minBackoffMillis=minRecoverableBackoffMillis,
+          ~err=exn,
+          ~excludedSources=?excludedSourcesRef.contents,
+        )
+        retryRef := retryRef.contents + 1
+
       | FailedGettingItems({attemptedToBlock, retry: WithSuggestedToBlock({toBlock})}) =>
         logger->Logging.childTrace({
           "msg": "Failed getting data for the block range. Immediately retrying with the suggested block range from response.",
@@ -1030,6 +1097,8 @@ let executeQuery = async (
           "suggestedToBlock": toBlock,
         })
         toBlockRef := Some(toBlock)
+        // The next attempt asks a strictly smaller question, so it starts a
+        // fresh schedule rather than continuing this one.
         retryRef := 0
       | FailedGettingItems({exn, attemptedToBlock, retry: ImpossibleForTheQuery({message})}) =>
         // Don't set lastFailedAt - the source isn't broken, the query just can't work on it
@@ -1050,20 +1119,15 @@ let executeQuery = async (
         retryRef := 0
 
       | FailedGettingItems({exn, attemptedToBlock, retry: WithBackoff({message, backoffMillis})}) =>
-        // Start displaying warnings after 4 failures
-        let log = retry >= 4 ? Logging.childWarn : Logging.childTrace
-        logger->log({
-          "msg": message,
-          "toBlock": attemptedToBlock,
-          "backOffMilliseconds": backoffMillis,
-          "retry": retry,
-          "err": exn->Utils.prettifyExn,
-        })
-        await sourceManager->backoffBeforeRetry(
+        await sourceManager->retryFailedPage(
           sourceState,
           ~retry,
           ~isRealtime,
+          ~logger,
+          ~msg=message,
+          ~attemptedToBlock,
           ~backoffMillis,
+          ~err=exn,
           ~excludedSources=?excludedSourcesRef.contents,
         )
         retryRef := retryRef.contents + 1
