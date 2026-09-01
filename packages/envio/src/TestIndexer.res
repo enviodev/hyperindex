@@ -625,11 +625,12 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   dumpEffectCache: async () => (),
   reset: async () => (),
   setChainMeta: async _ => Obj.magic(),
-  pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
+  pruneStaleCheckpoints: async (~chainId as _, ~safeCheckpointId as _) => (),
   pruneStaleEntityHistory: async (
     ~entityName as _,
     ~entityIndex as _,
     ~chainIdColumn as _,
+    ~chainId as _,
     ~safeCheckpointId as _,
   ) => (),
   getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>

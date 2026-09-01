@@ -355,7 +355,8 @@ let getChainState = (state: t, ~chainId: ChainId.t): ChainState.t =>
     )
   }
 
-let getSafeCheckpointId = (state: t) => state.crossChainState->CrossChainState.getSafeCheckpointId
+let getSafeCheckpointIdByChain = (state: t) =>
+  state.crossChainState->CrossChainState.getSafeCheckpointIdByChain
 
 let createBatch = (
   state: t,

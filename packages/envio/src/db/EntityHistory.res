@@ -91,10 +91,34 @@ let makeKeyMatch = (~chainIdColumn, ~left, ~right) =>
   ->Array.map(column => `${left}.${column} = ${right}.${column}`)
   ->Array.joinUnsafe(" AND ")
 
-let makePruneStaleEntityHistoryQuery = (~entityName, ~entityIndex, ~pgSchema, ~chainIdColumn) => {
+let makePruneStaleEntityHistoryQuery = (
+  ~entityName,
+  ~entityIndex,
+  ~pgSchema,
+  ~chainIdColumn,
+  ~chainId: option<ChainId.t>,
+) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   let keyColumns = makeKeyColumns(~chainIdColumn)
   let anchorKeys = keyColumns->Array.map(column => `t.${column}`)->Array.joinUnsafe(", ")
+
+  // Narrows the prune to the one chain whose safe checkpoint bounds it. Written
+  // into the SQL rather than bound, for the same reason as the backfill above:
+  // the planner can only prune the chain's partition when the column is compared
+  // against a constant.
+  let chainCondition = switch (chainIdColumn, chainId) {
+  | (Some(column), Some(chainId)) =>
+    Some(alias => `${alias}."${column}" = ${chainId->ChainId.toString}`)
+  | _ => None
+  }
+  let anchorFilter = switch chainCondition {
+  | Some(condition) => `\n  WHERE ${condition("t")}`
+  | None => ""
+  }
+  let deleteFilter = switch chainCondition {
+  | Some(condition) => `\n  AND ${condition("d")}`
+  | None => ""
+  }
 
   // Whether a key still has a row above the safe checkpoint is an aggregate
   // over the same groups as the anchor, so it's computed in the one pass
@@ -105,12 +129,12 @@ let makePruneStaleEntityHistoryQuery = (~entityName, ~entityIndex, ~pgSchema, ~c
   SELECT ${anchorKeys},
     MAX(t.${checkpointIdFieldName}) FILTER (WHERE t.${checkpointIdFieldName} <= $1) AS keep_checkpoint_id,
     bool_or(t.${checkpointIdFieldName} > $1) AS has_above
-  FROM ${historyTableRef} t
+  FROM ${historyTableRef} t${anchorFilter}
   GROUP BY ${anchorKeys}
 )
 DELETE FROM ${historyTableRef} d
 USING anchors a
-WHERE ${makeKeyMatch(~chainIdColumn, ~left="d", ~right="a")}
+WHERE ${makeKeyMatch(~chainIdColumn, ~left="d", ~right="a")}${deleteFilter}
   AND d.${checkpointIdFieldName} <= $1
   AND (d.${checkpointIdFieldName} < a.keep_checkpoint_id OR NOT a.has_above);`
 }
@@ -121,10 +145,17 @@ let pruneStaleEntityHistory = (
   ~entityIndex,
   ~pgSchema,
   ~chainIdColumn,
+  ~chainId,
   ~safeCheckpointId,
 ): promise<unit> => {
   sql->Postgres.preparedUnsafe(
-    makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema, ~chainIdColumn),
+    makePruneStaleEntityHistoryQuery(
+      ~entityName,
+      ~entityIndex,
+      ~pgSchema,
+      ~chainIdColumn,
+      ~chainId,
+    ),
     [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
   )
 }

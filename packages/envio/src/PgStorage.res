@@ -2376,16 +2376,23 @@ let make = (
       %raw(`undefined`)
     )
 
-  let pruneStaleCheckpoints = (~safeCheckpointId) =>
-    InternalTable.Checkpoints.pruneStaleCheckpoints(sql, ~pgSchema, ~safeCheckpointId)
+  let pruneStaleCheckpoints = (~chainId, ~safeCheckpointId) =>
+    InternalTable.Checkpoints.pruneStaleCheckpoints(sql, ~pgSchema, ~chainId, ~safeCheckpointId)
 
-  let pruneStaleEntityHistory = (~entityName, ~entityIndex, ~chainIdColumn, ~safeCheckpointId) =>
+  let pruneStaleEntityHistory = (
+    ~entityName,
+    ~entityIndex,
+    ~chainIdColumn,
+    ~chainId,
+    ~safeCheckpointId,
+  ) =>
     EntityHistory.pruneStaleEntityHistory(
       sql,
       ~pgSchema,
       ~entityName,
       ~entityIndex,
       ~chainIdColumn,
+      ~chainId,
       ~safeCheckpointId,
     )
 

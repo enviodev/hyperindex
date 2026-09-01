@@ -16,6 +16,7 @@ let toNames = (targets: PruneStaleHistory.targets) => {
 
 let intervalMillis = 1000.
 let nowMillis = 100_000.
+let safeCheckpoints = PruneStaleHistory.EveryChain(100n)
 
 describe("PruneStaleHistory.selectFrom", () => {
   it("Selects up to 5 overdue entities oldest-first, excluding ones written in the batch", t => {
@@ -37,15 +38,15 @@ describe("PruneStaleHistory.selectFrom", () => {
       ~isRollback=false,
       ~nowMillis,
       ~intervalMillis,
-      ~safeCheckpointId=100n,
+      ~safeCheckpoints,
     )
 
     t.expect({
-      "safeCheckpointId": targets.safeCheckpointId,
+      "safeCheckpoints": targets.safeCheckpoints,
       "concurrent": (targets->toNames)["concurrent"],
       "forced": (targets->toNames)["forced"],
     }).toEqual({
-      "safeCheckpointId": 100n,
+      "safeCheckpoints": safeCheckpoints,
       "concurrent": ["never", "oldA", "oldB", "oldC", "oldD"],
       "forced": [],
     })
@@ -71,7 +72,7 @@ describe("PruneStaleHistory.selectFrom", () => {
       ~isRollback=false,
       ~nowMillis,
       ~intervalMillis,
-      ~safeCheckpointId=100n,
+      ~safeCheckpoints,
     )
 
     t.expect(targets->toNames).toEqual({
@@ -100,7 +101,7 @@ describe("PruneStaleHistory.selectFrom", () => {
       ~isRollback=true,
       ~nowMillis,
       ~intervalMillis,
-      ~safeCheckpointId=100n,
+      ~safeCheckpoints,
     )
 
     t.expect(targets->toNames).toEqual({
@@ -120,7 +121,7 @@ describe("PruneStaleHistory.selectFrom", () => {
       ~isRollback=false,
       ~nowMillis,
       ~intervalMillis,
-      ~safeCheckpointId=100n,
+      ~safeCheckpoints,
     )
 
     t.expect(targets->toNames).toEqual({

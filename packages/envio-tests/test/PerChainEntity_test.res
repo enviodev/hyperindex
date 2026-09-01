@@ -581,6 +581,7 @@ describe("Per-chain history prune", () => {
           ~chainIdColumn=entityConfig.table
           ->Table.getChainIdField
           ->Option.map(Table.getPgDbFieldName),
+          ~chainId=None,
           ~safeCheckpointId=30n,
         )
       await prune(entityConfig)

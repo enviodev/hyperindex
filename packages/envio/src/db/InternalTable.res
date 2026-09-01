@@ -660,14 +660,19 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
     ->Utils.Promise.ignoreValue
   }
 
-  let makePruneStaleCheckpointsQuery = (~pgSchema) => {
-    `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" < $1;`
+  let makePruneStaleCheckpointsQuery = (~pgSchema, ~chainId: option<ChainId.t>) => {
+    // Inlined for the same reason as the entity history prune it runs beside.
+    let chainFilter = switch chainId {
+    | Some(chainId) => ` AND "${(#chain_id: field :> string)}" = ${chainId->ChainId.toString}`
+    | None => ""
+    }
+    `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" < $1${chainFilter};`
   }
 
-  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpointId: bigint) => {
+  let pruneStaleCheckpoints = (sql, ~pgSchema, ~chainId, ~safeCheckpointId: bigint) => {
     sql
     ->Postgres.preparedUnsafe(
-      makePruneStaleCheckpointsQuery(~pgSchema),
+      makePruneStaleCheckpointsQuery(~pgSchema, ~chainId),
       [safeCheckpointId->BigInt.toString]->Obj.magic,
     )
     ->Utils.Promise.ignoreValue

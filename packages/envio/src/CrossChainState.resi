@@ -21,7 +21,7 @@ let targetBufferSize: t => int
 
 // Derived (pure).
 let nextItemIsNone: t => bool
-let getSafeCheckpointId: t => option<Internal.checkpointId>
+let getSafeCheckpointIdByChain: t => array<(ChainId.t, Internal.checkpointId)>
 
 // Cross-chain transitions.
 let createBatch: (
