@@ -106,7 +106,7 @@ let start = (~config: Config.t, ~getMetrics: unit => Metrics.t) => {
     version: Utils.EnvioPackage.value.version,
     projectDir: NodeJs.Process.cwd(),
     startTime: metrics.startTime->Date.getTime,
-    graphqlUrl: Env.Hasura.url,
+    graphqlUrl: Env.Hasura.url(),
     graphqlPassword: Env.Hasura.secret === "testing" ? Some("testing") : None,
     devConsoleUrl: config.isDev ? Some(`${Env.envioAppUrl}/console`) : None,
     clickhouseUrl: switch (config.storage.clickhouse, Env.ClickHouse.host()) {
