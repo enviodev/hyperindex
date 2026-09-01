@@ -659,6 +659,11 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
       )
     }
 
+    // Rewritten first: the copy below hands serve whatever `.envio/resolvers.json`
+    // holds, and that is whatever the last codegen left. A resolver edited since
+    // then would be served against a manifest describing the previous shape.
+    await writeManifest(~config, ~projectRoot)
+
     let serveDir = NodeJs.Path.resolve([projectRoot, ".envio", "serve-project"])
     await NodeJs.Fs.Promises.mkdir(~path=serveDir, ~options={recursive: true})
     let envioDir = NodeJs.Path.resolve([projectRoot, ".envio"])->NodeJs.Path.toString
