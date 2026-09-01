@@ -421,6 +421,12 @@ fn collect_defined_names<'a>(ty: &'a FieldType, out: &mut BTreeSet<&'a str>) {
 /// while each node in it stays shallow enough that serde's own nesting limit
 /// never sees it. Far below what either stack can afford, far above the
 /// handful of levels a real program's types nest.
+///
+/// A type this far down is refused rather than walked, and near the limit that
+/// verdict depends on what else the file declares: another type reaching the
+/// same chain lower down leaves its tail proven in `terminates`, and the walk
+/// then reaches the end within the budget. Both answers are safe — one
+/// decodes, the other declines to — and no real IDL comes close to the limit.
 const MAX_REFERENCE_DEPTH: usize = 256;
 
 /// Why the walk stopped. Reported against the type the walk started from,
