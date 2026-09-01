@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 
 /// Either spelling of the prefix, so the same notation is read the same way
 /// wherever it arrives.
-fn strip_prefix(s: &str) -> Option<&str> {
+pub(crate) fn strip_prefix(s: &str) -> Option<&str> {
     s.strip_prefix("0x").or_else(|| s.strip_prefix("0X"))
 }
 

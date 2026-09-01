@@ -147,6 +147,25 @@ fn separates_file_level_defects_from_instruction_level_ones() {
                                       "name": "tag", "offset": 0 }] }] } }"#,
         ),
         (
+            // A count is a number off the file, so the running total of
+            // argument widths is checked rather than trusted: unchecked it
+            // overflows and takes the CLI down with it.
+            "codama argument whose declared width overruns the address space",
+            r#"{ "kind": "rootNode", "program": { "instructions": [{
+                 "kind": "instructionNode", "name": "swap",
+                 "arguments": [
+                   { "kind": "instructionArgumentNode", "name": "tag",
+                     "type": { "kind": "numberTypeNode", "format": "u8" } },
+                   { "kind": "instructionArgumentNode", "name": "big",
+                     "type": { "kind": "arrayTypeNode",
+                               "item": { "kind": "numberTypeNode", "format": "u8" },
+                               "count": { "kind": "fixedCountNode",
+                                          "value": 18446744073709551615 } } }],
+                 "discriminators": [{ "kind": "constantDiscriminatorNode", "offset": 0,
+                   "constant": { "value": { "kind": "bytesValueNode",
+                                            "data": "0c02" } } }] }] } }"#,
+        ),
+        (
             "duplicate type name",
             r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
                  "args": [{ "name": "fee", "type": { "defined": "Fee" } }] }],
@@ -293,7 +312,8 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "size-only discriminator does not poison a sibling: sized set aside: discriminators: dispatch matches a fixed-width prefix of the data, not its length, so a sizeDiscriminatorNode cannot be honoured",
             "one discriminator a prefix of several others: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferAll set aside: its discriminator 0x0c03 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead; transferChecked set aside: its discriminator 0x0c02 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead",
             "instruction shadowed by one of an undispatchable width: swap set aside: its discriminator 0x0102 is a prefix of 'swapV2''s 0x010203, so 'swapV2' takes every call that would have matched it; swapV2 set aside: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8",
-            "codama discriminator argument out of declaration order: swap set aside: the discriminator reads argument 'tag' at byte 0, but the arguments begin with 'amount'",
+            "codama discriminator argument out of declaration order: swap set aside: the 1-byte discriminator stops inside argument 'amount', which starts at byte 0 and is 8 bytes wide",
+            "codama argument whose declared width overruns the address space: swap set aside: the 2-byte discriminator stops inside argument 'big', which starts at byte 1 and is 18446744073709551615 bytes wide",
             "duplicate type name: fatal: IDL declares type 'Fee' more than once",
             "duplicate account name: swap set aside: IDL declares account 'vault' more than once",
             "codama argument reusing a discriminator name: swap set aside: IDL declares argument 'tag' more than once",

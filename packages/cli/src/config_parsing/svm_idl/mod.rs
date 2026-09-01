@@ -37,6 +37,12 @@ pub fn trailing_optional_mask(accounts: &[IdlAccount]) -> Vec<bool> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct IxIdl {
     pub discriminator: Vec<u8>,
+    /// The bytes were derived from the instruction's name rather than read off
+    /// the file. Only legacy Anchor does this, and only because such a file
+    /// leaves them implicit — but an IDL is Anchor-shaped whether or not the
+    /// program dispatches on an Anchor hash, so a config that disagrees with a
+    /// derived value may well be the one that is right.
+    pub derived: bool,
     pub accounts: Vec<IdlAccount>,
     pub args: Vec<NamedField>,
 }
@@ -75,12 +81,12 @@ impl ProgramIdl {
     /// goes through the same checks, so a bundled schema cannot carry a
     /// collision or a discriminator width the router never probes for.
     pub fn compiled_in(
-        address: Option<String>,
+        address: String,
         instructions: BTreeMap<String, IxIdl>,
         defined_types: BTreeMap<String, FieldType>,
     ) -> Self {
         let mut idl = ProgramIdl {
-            address,
+            address: Some(address),
             instructions,
             defined_types,
             ..Default::default()
@@ -498,47 +504,61 @@ fn unbounded_recursion<'a>(
     }
 }
 
-type Instructions = (BTreeMap<String, IxIdl>, Unusable, BTreeMap<String, Vec<u8>>);
+/// What an instruction dispatches on, before its body has been read.
+pub(super) struct Dispatch {
+    pub bytes: Vec<u8>,
+    pub derived: bool,
+}
 
-fn collect_instructions<T>(
+/// The instructions of one program: the ones that can be indexed, the reasons
+/// for the ones that cannot, and the bytes of those whose layout failed after
+/// their discriminator was read — kept so a collision can still name them.
+fn collect_instructions(
     entries: &[Value],
-    mut discriminator_of: impl FnMut(&str, &Value) -> Result<(Vec<u8>, T)>,
-    mut layout_of: impl FnMut(&Value, Vec<u8>, T) -> Result<IxIdl>,
-) -> Result<Instructions> {
-    let mut out = BTreeMap::new();
-    let mut unusable = Unusable::new();
-    let mut discriminators = BTreeMap::new();
+    mut dispatch_of: impl FnMut(&str, &Value) -> Result<Dispatch>,
+    mut layout_of: impl FnMut(&Value, &Dispatch) -> Result<(Vec<IdlAccount>, Vec<NamedField>)>,
+) -> Result<ProgramIdl> {
+    let mut idl = ProgramIdl::default();
     for entry in entries {
         let name = required_str(entry, "name")
             .context("instructions[].name")?
             .to_string();
-        if out.contains_key(&name) || unusable.contains_key(&name) {
+        if idl.instructions.contains_key(&name) || idl.unusable.contains_key(&name) {
             bail!("IDL declares instruction '{name}' more than once");
         }
-        let (discriminator, carried) = match discriminator_of(&name, entry) {
-            Ok(parsed) => parsed,
+        let dispatch = match dispatch_of(&name, entry) {
+            Ok(dispatch) => dispatch,
             Err(e) => {
-                unusable.insert(name, format!("{e:#}"));
+                idl.unusable.insert(name, format!("{e:#}"));
                 continue;
             }
         };
         // Colliding flattened names are this instruction's defect, like any
         // other layout defect: the rest of the program stays indexable.
-        let parsed = layout_of(entry, discriminator.clone(), carried)
-            .and_then(|ix| reject_duplicate_account_names(&ix.accounts).map(|()| ix));
+        let parsed = layout_of(entry, &dispatch).and_then(|(accounts, args)| {
+            reject_duplicate_account_names(&accounts).map(|()| (accounts, args))
+        });
         match parsed {
-            Ok(ix) => {
-                out.insert(name, ix);
+            Ok((accounts, args)) => {
+                idl.instructions.insert(
+                    name,
+                    IxIdl {
+                        discriminator: dispatch.bytes,
+                        derived: dispatch.derived,
+                        accounts,
+                        args,
+                    },
+                );
             }
             Err(e) => {
-                unusable.insert(name.clone(), format!("{e:#}"));
-                if !discriminator.is_empty() {
-                    discriminators.insert(name, discriminator);
+                idl.unusable.insert(name.clone(), format!("{e:#}"));
+                if !dispatch.bytes.is_empty() {
+                    idl.declared_discriminators.insert(name, dispatch.bytes);
                 }
             }
         }
     }
-    Ok((out, unusable, discriminators))
+    Ok(idl)
 }
 
 fn collect_named<T>(

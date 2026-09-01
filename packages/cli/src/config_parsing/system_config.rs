@@ -1411,10 +1411,9 @@ impl SystemConfig {
                                 } = resolve_instruction(instr, &svm_abi).with_context(|| {
                                     format!("Layout for instruction '{}'", instr.name)
                                 })?;
-                                let byte_len = discriminator
-                                    .as_deref()
-                                    .map_or(0, |d| (d.len().saturating_sub(2) / 2) as u8);
-                                let normalized_discriminator = discriminator;
+                                let byte_len = discriminator.as_ref().map_or(0, Vec::len) as u8;
+                                let normalized_discriminator =
+                                    discriminator.map(|d| format!("0x{}", crate::hex::encode(&d)));
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,
@@ -1919,16 +1918,6 @@ fn resolve_program_schema(
             .read_project_relative_file(idl_path)
             .with_context(|| format!("reading IDL at '{idl_path}'"))?;
         let idl = svm_idl::parse_idl(&resolved.raw, &program.name)?;
-        // A file whose every instruction is unusable would otherwise codegen
-        // into a program that quietly indexes nothing at all.
-        if idl.instructions.is_empty() && !idl.unusable.is_empty() {
-            return Err(anyhow!(
-                "the IDL declares {} instruction{} and none of them can be indexed: {}",
-                idl.unusable.len(),
-                if idl.unusable.len() == 1 { "" } else { "s" },
-                describe_unusable(&idl.unusable),
-            ));
-        }
         return Ok(SvmAbi {
             program_id: program.program_id.clone(),
             idl,
@@ -1945,7 +1934,7 @@ fn resolve_program_schema(
         {
             return Ok(SvmAbi {
                 program_id: program.program_id.clone(),
-                idl: program_idl_from_upstream(getter()),
+                idl: program_idl_from_upstream(getter())?,
                 source: SvmSchemaSource::Bundled { name },
             });
         }
@@ -1958,35 +1947,26 @@ fn resolve_program_schema(
     })
 }
 
-/// Instructions the schema set aside that the config did not ask for. Naming
-/// one is an error where the reason is the answer; the rest are worth a word
-/// each, since the file plainly declares them and the indexer will not see them.
+/// Instructions the schema set aside. Asking for one is an error carrying the
+/// same reason, so anything reaching here is one the config left alone — worth
+/// a word each, since the file plainly declares them and the indexer will not
+/// see them.
 fn warn_about_unindexable(program: &human_config::svm::Program, abi: &SvmAbi) {
     for (name, reason) in &abi.idl.unusable {
-        if program.instructions.iter().any(|i| i.name == *name) {
-            continue;
-        }
         eprintln!(
-            "Warning: program '{}' cannot index the instruction '{name}' its IDL declares: \
+            "Warning: program '{}' cannot index the instruction '{name}' its schema declares: \
              {reason}",
             program.name
         );
     }
 }
 
-fn describe_unusable(unusable: &svm_idl::Unusable) -> String {
-    unusable
-        .iter()
-        .map(|(name, reason)| format!("{name}: {reason}"))
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
 /// A bundled `ProgramSchema` read into the shape the rest of config parsing
 /// uses. Upstream keys instructions by discriminator; everything here keys them
-/// by name, which is what a config names.
-fn program_idl_from_upstream(schema: &SvmProgramSchema) -> ProgramIdl {
-    let instructions = schema
+/// by name, which is what a config names. Two upstream instructions sharing a
+/// name would collapse into one, so the count is checked rather than assumed.
+fn program_idl_from_upstream(schema: &SvmProgramSchema) -> Result<ProgramIdl> {
+    let instructions: BTreeMap<String, svm_idl::IxIdl> = schema
         .instructions
         .values()
         .map(|ix| {
@@ -1994,6 +1974,7 @@ fn program_idl_from_upstream(schema: &SvmProgramSchema) -> ProgramIdl {
                 ix.name.clone(),
                 svm_idl::IxIdl {
                     discriminator: ix.discriminator.clone(),
+                    derived: false,
                     accounts: ix
                         .accounts
                         .iter()
@@ -2007,17 +1988,23 @@ fn program_idl_from_upstream(schema: &SvmProgramSchema) -> ProgramIdl {
             )
         })
         .collect();
-    ProgramIdl::compiled_in(
-        Some(schema.program_id.clone()),
+    if instructions.len() != schema.instructions.len() {
+        return Err(anyhow!(
+            "the bundled schema for {} declares two instructions of the same name",
+            schema.program_id
+        ));
+    }
+    Ok(ProgramIdl::compiled_in(
+        schema.program_id.clone(),
         instructions,
         schema.defined_types.clone(),
-    )
+    ))
 }
 
 /// What one configured instruction dispatches on and decodes into.
 struct ResolvedInstruction {
-    /// Hex, `0x`-prefixed. `None` matches every instruction of the program.
-    discriminator: Option<String>,
+    /// `None` matches every instruction of the program.
+    discriminator: Option<Vec<u8>>,
     accounts: Vec<String>,
     args: Vec<SvmNamedField>,
 }
@@ -2034,17 +2021,11 @@ fn resolve_instruction(
     instr: &human_config::svm::Instruction,
     abi: &SvmAbi,
 ) -> Result<ResolvedInstruction> {
-    // Lowercased, since the config schema takes hex in either case and every
-    // discriminator this compares against or hands on is written lowercase.
-    let declared = instr.discriminator.as_deref().map(|d| {
-        format!(
-            "0x{}",
-            d.strip_prefix("0x")
-                .or_else(|| d.strip_prefix("0X"))
-                .unwrap_or(d)
-                .to_ascii_lowercase()
-        )
-    });
+    let declared = instr
+        .discriminator
+        .as_deref()
+        .map(|d| crate::hex::decode_optionally_prefixed(d, "discriminator"))
+        .transpose()?;
 
     if let (Some(accounts), Some(args)) = (&instr.accounts, &instr.args) {
         return Ok(ResolvedInstruction {
@@ -2067,40 +2048,58 @@ fn resolve_instruction(
     // asked for the instruction reads them.
     if let Some(reason) = abi.idl.unusable.get(&instr.name) {
         return Err(anyhow!(
-            "the IDL declares it, but it cannot be indexed: {reason}"
+            "the schema declares it, but it cannot be indexed: {reason}"
         ));
     }
 
+    let layout = |ix: &svm_idl::IxIdl, discriminator| ResolvedInstruction {
+        discriminator,
+        accounts: ix.accounts.iter().map(|a| a.name.clone()).collect(),
+        args: ix.args.clone(),
+    };
+
     if let Some(ix) = abi.idl.instructions.get(&instr.name) {
-        let from_idl = format!("0x{}", crate::hex::encode(&ix.discriminator));
-        if let Some(declared) = declared.filter(|declared| *declared != from_idl) {
-            return Err(anyhow!(
-                "the config gives discriminator {declared}, but the IDL declares '{}' as \
-                 {from_idl}",
-                instr.name
-            ));
+        match declared.filter(|declared| *declared != ix.discriminator) {
+            None => return Ok(layout(ix, Some(ix.discriminator.clone()))),
+            // A derived value is this parser's reading of a file that left the
+            // bytes implicit, and a file is Anchor-shaped whether or not the
+            // program dispatches on an Anchor hash. Where the config disagrees
+            // with one, the config is what the program was matched on.
+            Some(declared) if ix.derived => {
+                eprintln!(
+                    "Warning: instruction '{}' is dispatched on 0x{}, as the config gives, not on \
+                     the 0x{} derived from its name in the IDL.",
+                    instr.name,
+                    crate::hex::encode(&declared),
+                    crate::hex::encode(&ix.discriminator),
+                );
+                return Ok(layout(ix, Some(declared)));
+            }
+            Some(declared) => {
+                return Err(anyhow!(
+                    "the config gives discriminator 0x{}, but the IDL declares '{}' as 0x{}",
+                    crate::hex::encode(&declared),
+                    instr.name,
+                    crate::hex::encode(&ix.discriminator),
+                ))
+            }
         }
-        return Ok(ResolvedInstruction {
-            discriminator: Some(from_idl),
-            accounts: ix.accounts.iter().map(|a| a.name.clone()).collect(),
-            args: ix.args.clone(),
-        });
     }
 
-    if let Some(bytes) = disc_to_bytes(declared.as_deref())? {
-        if let Some(ix) = abi.idl.dispatched_by(&bytes) {
-            return Ok(ResolvedInstruction {
-                discriminator: declared,
-                accounts: ix.accounts.iter().map(|a| a.name.clone()).collect(),
-                args: ix.args.clone(),
-            });
-        }
+    if let Some(ix) = declared.as_deref().and_then(|d| abi.idl.dispatched_by(d)) {
+        return Ok(layout(ix, declared));
     }
 
     if abi.source != SvmSchemaSource::Inline {
+        let dispatch = match &declared {
+            Some(_) => "It will be dispatched on its discriminator",
+            None => {
+                "It carries no discriminator, so it will match every instruction of the program"
+            }
+        };
         eprintln!(
-            "Warning: instruction '{}' is not declared by the schema for program '{}'. It will \
-             be dispatched on its discriminator with no decoded accounts or arguments.",
+            "Warning: instruction '{}' is not declared by the schema for program '{}'. {dispatch}, \
+             with no decoded accounts or arguments.",
             instr.name, abi.program_id
         );
     }
@@ -2109,19 +2108,6 @@ fn resolve_instruction(
         accounts: Vec::new(),
         args: Vec::new(),
     })
-}
-
-fn disc_to_bytes(disc: Option<&str>) -> Result<Option<Vec<u8>>> {
-    let Some(s) = disc else { return Ok(None) };
-    let hex = s.strip_prefix("0x").unwrap_or(s);
-    let bytes = (0..hex.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&hex[i..i + 2], 16)
-                .with_context(|| format!("invalid hex byte at offset {i} in discriminator '{s}'"))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok(Some(bytes))
 }
 
 fn yaml_arg_to_named_field(arg: &human_config::svm::ArgDef) -> Result<SvmNamedField> {
@@ -4002,12 +3988,6 @@ type Foo {
           ]
         }"#;
 
-        /// A legacy Anchor IDL leaves its discriminators implicit, and a config
-        /// that carries them carries a hand-computed
-        /// `sha256("global:<snake_case>")[..8]` — the one value in an SVM config
-        /// that cannot be checked by reading it. Naming the instruction the IDL
-        /// declares is enough.
-        #[test]
         /// The type registry an IDL brings has to reach the runtime, which
         /// resolves `Defined` references against it once per program at
         /// startup. It travels in the public config, so a program whose types
@@ -4044,6 +4024,11 @@ type Foo {
             );
         }
 
+        /// A legacy Anchor IDL leaves its discriminators implicit, and a config
+        /// that carries them carries a hand-computed
+        /// `sha256("global:<snake_case>")[..8]` — the one value in an SVM config
+        /// that cannot be checked by reading it. Naming the instruction the IDL
+        /// declares is enough.
         #[test]
         fn takes_the_discriminator_from_the_idl_the_config_names() {
             let config = program_reading_idl(
@@ -4096,13 +4081,15 @@ type Foo {
             );
         }
 
-        /// A discriminator written by hand that disagrees with the IDL is the
-        /// failure the derivation exists to prevent: the indexer starts and
-        /// matches nothing, with no error anywhere pointing at the config.
+        /// Where the file spells the bytes out, a config that disagrees is
+        /// describing an instruction the program does not have: the indexer
+        /// would start and match nothing, with no error pointing at the config.
         #[test]
         fn refuses_a_configured_discriminator_the_idl_contradicts() {
             let err = program_reading_idl(
-                LEGACY_ANCHOR_IDL,
+                r#"{ "instructions": [{ "name": "swap",
+                     "discriminator": [1, 2, 3, 4, 5, 6, 7, 8],
+                     "accounts": [], "args": [] }] }"#,
                 "            - name: swap\n              discriminator: \"0xdeadbeefdeadbeef\"\n",
             )
             .expect_err("contradiction");
@@ -4110,7 +4097,32 @@ type Foo {
             assert_eq!(
                 format!("{err:#}"),
                 "Layout for instruction 'swap': the config gives discriminator \
-                 0xdeadbeefdeadbeef, but the IDL declares 'swap' as 0xf8c69e91e17587c8"
+                 0xdeadbeefdeadbeef, but the IDL declares 'swap' as 0x0102030405060708"
+            );
+        }
+
+        /// A legacy Anchor file leaves its bytes implicit, so what this parser
+        /// reports for one is a derivation — and an IDL is Anchor-shaped
+        /// whether or not the program dispatches on an Anchor hash. A config
+        /// that spells out different bytes is describing what it matched on,
+        /// and is the side to believe.
+        #[test]
+        fn keeps_a_configured_discriminator_over_one_derived_from_a_name() {
+            let config = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: swap\n              discriminator: \"0x09\"\n",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![(
+                    "swap".to_string(),
+                    Some("0x09".to_string()),
+                    1,
+                    vec!["payer".to_string(), "pool".to_string()],
+                    vec!["amount".to_string()],
+                )]
             );
         }
 
@@ -4131,8 +4143,8 @@ type Foo {
 
             assert_eq!(
                 format!("{err:#}"),
-                "Layout for instruction 'swap': the IDL declares it, but it cannot be indexed: \
-                 its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8"
+                "Layout for instruction 'swap': the schema declares it, but it cannot be \
+                 indexed: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8"
             );
         }
 
@@ -4177,7 +4189,6 @@ type Foo {
             );
         }
 
-        /// The scenario config is the real one, over three published IDLs. It
         /// The real config, over three published IDLs. It pins the bytes each
         /// of its eleven IDL-backed instructions derives, against the
         /// hand-computed sha256 prefixes they were dispatched on. The three
@@ -4251,24 +4262,29 @@ type Foo {
             );
         }
 
-        /// An IDL with nothing left to dispatch fails the program rather than
-        /// producing a contract that silently indexes nothing. SPL Memo is the
-        /// real one: its whole payload is a remainder-encoded string.
+        /// A program keeps working over the instructions its config actually
+        /// asks for, even when the schema sets others aside. Failing the whole
+        /// program on an instruction nobody named would cost a config that has
+        /// no stake in it.
         #[test]
-        fn fails_a_program_whose_idl_leaves_no_instruction_standing() {
-            let err = program_reading_idl(
-                r#"{ "instructions": [{ "name": "addMemo", "discriminator": [1, 2, 3],
-                     "accounts": [], "args": [] }] }"#,
-                "            - name: addMemo\n",
+        fn keeps_a_program_whose_schema_sets_other_instructions_aside() {
+            let config = program_reading_idl(
+                r#"{ "instructions": [
+                     { "name": "swap", "discriminator": [1], "accounts": [], "args": [] },
+                     { "name": "wide", "discriminator": [9, 9, 9], "accounts": [], "args": [] }] }"#,
+                "            - name: swap\n",
             )
-            .expect_err("nothing left");
+            .expect("config");
 
             assert_eq!(
-                format!("{err:#}"),
-                "Resolving Borsh schema for program 'Pool' \
-                 (TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA): the IDL declares 1 instruction \
-                 and none of them can be indexed: addMemo: its discriminator is 3 bytes, and \
-                 dispatch matches only 1, 2, 4, or 8"
+                svm_events(&config),
+                vec![(
+                    "swap".to_string(),
+                    Some("0x01".to_string()),
+                    1,
+                    Vec::new(),
+                    Vec::new(),
+                )]
             );
         }
 

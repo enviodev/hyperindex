@@ -17,24 +17,20 @@ use serde_json::{Map, Value};
 
 use super::{
     account_slot, collect_instructions, collect_named, declared_array, le_bytes, required_str,
-    IdlAccount, Instructions, IxIdl, ProgramIdl, Unusable,
+    Dispatch, IdlAccount, ProgramIdl, Unusable,
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
     let program = codama_program(root)?;
     let (defined_types, unusable_types) = parse_defined_types(program)?;
-    let (instructions, unusable, declared_discriminators) = parse_instructions(program)?;
-
     Ok(ProgramIdl {
         address: program
             .get("publicKey")
             .and_then(Value::as_str)
             .map(str::to_string),
-        instructions,
         defined_types,
-        unusable,
         unusable_types,
-        declared_discriminators,
+        ..parse_instructions(program)?
     })
 }
 
@@ -63,22 +59,28 @@ fn parse_defined_types(
     })
 }
 
-fn parse_instructions(program: &Map<String, Value>) -> Result<Instructions> {
+fn parse_instructions(program: &Map<String, Value>) -> Result<ProgramIdl> {
     let arr = program
         .get("instructions")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("Codama program has no 'instructions' array"))?;
     collect_instructions(
         arr,
-        |_name, ix| parse_discriminators(ix).context("discriminators"),
-        |ix, discriminator, named_parts| {
+        |_name, ix| {
+            Ok(Dispatch {
+                bytes: parse_discriminators(ix).context("discriminators")?.0,
+                derived: false,
+            })
+        },
+        |ix, dispatch| {
             let accounts = parse_accounts(ix.get("accounts")).context("accounts")?;
             reject_ambiguous_optional_accounts(ix, &accounts)?;
-            Ok(IxIdl {
-                discriminator: discriminator.clone(),
-                accounts,
-                args: parse_arguments(ix.get("arguments"), discriminator.len(), &named_parts)?,
-            })
+            // Re-read rather than carried through: two nodes at most, and the
+            // alternative is a value threaded across both closures for the one
+            // dialect that has anything to thread.
+            let named = parse_discriminators(ix).context("discriminators")?.1;
+            let args = parse_arguments(ix.get("arguments"), dispatch.bytes.len(), &named)?;
+            Ok((accounts, args))
         },
     )
 }
@@ -156,6 +158,11 @@ fn parse_discriminators(ix: &Value) -> Result<(Vec<u8>, Vec<NamedPart>)> {
                  ends at {}; dispatch needs one contiguous prefix from offset 0",
                 bytes.len()
             );
+        }
+        // A part contributing nothing has no offset to be at, and sorting it
+        // against a real one would decide the outcome by declaration order.
+        if part.is_empty() {
+            bail!("discriminator part at offset {offset} contributes no bytes");
         }
         if let Some(field) = field {
             named.push((offset, field));
@@ -267,24 +274,10 @@ fn parse_arguments(
         }
     }
 
-    // The argument a discriminator reads at byte 0 is the one the data starts
-    // with. Naming that contradiction beats describing where the prefix happens
-    // to land inside whatever argument was declared in its place.
-    if let Some((_, field)) = named_parts.iter().find(|(offset, _)| *offset == 0) {
-        let first = arr.first().map(|a| required_str(a, "name")).transpose()?;
-        if first != Some(field.as_str()) {
-            bail!(
-                "the discriminator reads argument '{field}' at byte 0, but the arguments begin \
-                 with '{}'",
-                first.unwrap_or("nothing")
-            );
-        }
-    }
-
-    let mut covered: Vec<(u64, &str)> = Vec::new();
-    let mut offset = 0u64;
+    let mut covered: Vec<(usize, &str)> = Vec::new();
+    let mut offset = 0usize;
     for a in arr {
-        if offset >= prefix_len as u64 {
+        if offset >= prefix_len {
             break;
         }
         let name = required_str(a, "name").context("arguments")?;
@@ -295,28 +288,51 @@ fn parse_arguments(
             .ok_or_else(|| anyhow!("{path}: argument has no 'type'"))?;
         let width = super::encoded_width(&parse_type(ty, &path)?).ok_or_else(|| {
             anyhow!(
-                "argument '{name}' is under the {prefix_len}-byte discriminator but its width is \
-                 decided by the bytes themselves, so where the body starts cannot be told"
+                "argument '{name}' is under the {prefix_len}-byte discriminator, and its width is \
+                 not fixed, so where the body starts cannot be told"
             )
-        })? as u64;
-        if offset + width > prefix_len as u64 {
-            bail!(
-                "the {prefix_len}-byte discriminator stops inside argument '{name}', which starts \
-                 at byte {offset} and is {width} bytes wide"
-            );
-        }
+        })?;
+        // A count comes off the file, so the running total is checked rather
+        // than trusted: it reaches the end of the prefix or it stops here.
+        let end = offset
+            .checked_add(width)
+            .filter(|end| *end <= prefix_len)
+            .ok_or_else(|| {
+                anyhow!(
+                    "the {prefix_len}-byte discriminator stops inside argument '{name}', which \
+                     starts at byte {offset} and is {width} bytes wide"
+                )
+            })?;
         covered.push((offset, name));
-        offset += width;
+        offset = end;
+    }
+    // The discriminator matches bytes the arguments encode, so where there are
+    // arguments it has to land on exactly those: short of that the file
+    // describes a layout this reading does not fit, and the rest of the
+    // arguments would decode from the wrong offset. An instruction declaring
+    // none is the one case with nothing to get wrong — no argument can be
+    // mistaken for the prefix, and the body is empty either way.
+    if offset != prefix_len && !arr.is_empty() {
+        bail!(
+            "the discriminator is {prefix_len} bytes, and the arguments account for {offset} of \
+             them; its bytes are part of the instruction's data, not a prefix in front of it"
+        );
     }
 
     // An argument a field discriminator names has to be the one the offsets put
     // there. Otherwise the offsets and the declaration order disagree, and where
     // the body starts is a guess.
     for (offset, field) in named_parts {
-        if !covered.contains(&(*offset, field.as_str())) {
+        let offset = *offset as usize;
+        if !covered.contains(&(offset, field.as_str())) {
+            let found = covered
+                .iter()
+                .find(|(at, _)| *at == offset)
+                .map(|(_, name)| *name);
             bail!(
-                "the discriminator reads argument '{field}' at byte {offset}, which is not where \
-                 the arguments put it"
+                "the discriminator reads argument '{field}' at byte {offset}, where the arguments \
+                 put {}",
+                found.map_or("nothing".to_string(), |name| format!("'{name}'"))
             );
         }
     }

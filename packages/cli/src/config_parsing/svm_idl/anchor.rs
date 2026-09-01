@@ -25,30 +25,24 @@ use crate::config_parsing::field_types::to_snake_case;
 
 use super::{
     account_slot, collect_instructions, collect_named, declared_array, declared_optional, le_bytes,
-    required_str, IdlAccount, Instructions, IxIdl, ProgramIdl, Unusable,
+    required_str, Dispatch, IdlAccount, ProgramIdl, Unusable,
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
-    let address = root
-        .get("address")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            root.get("metadata")
-                .and_then(|m| m.get("address"))
-                .and_then(Value::as_str)
-        })
-        .map(str::to_string);
-
     let (defined_types, unusable_types) = parse_defined_types(root)?;
-    let (instructions, unusable, declared_discriminators) = parse_instructions(root)?;
-
     Ok(ProgramIdl {
-        address,
-        instructions,
+        address: root
+            .get("address")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                root.get("metadata")
+                    .and_then(|m| m.get("address"))
+                    .and_then(Value::as_str)
+            })
+            .map(str::to_string),
         defined_types,
-        unusable,
         unusable_types,
-        declared_discriminators,
+        ..parse_instructions(root)?
     })
 }
 
@@ -64,7 +58,7 @@ fn parse_defined_types(
     })
 }
 
-fn parse_instructions(root: &Map<String, Value>) -> Result<Instructions> {
+fn parse_instructions(root: &Map<String, Value>) -> Result<ProgramIdl> {
     let arr = root
         .get("instructions")
         .and_then(Value::as_array)
@@ -76,32 +70,38 @@ fn parse_instructions(root: &Map<String, Value>) -> Result<Instructions> {
         == Some("shank");
     collect_instructions(
         arr,
-        |name, ix| {
-            let bytes = match (ix.get("discriminator"), ix.get("discriminant")) {
-                (Some(node), _) => parse_byte_array(node).context("discriminator")?,
-                (None, Some(node)) => discriminant_bytes(node).context("discriminant")?,
-                (None, None) if shank => bail!(
-                    "discriminant: this Shank IDL declares none, and a hashed Anchor \
-                     discriminator is not what a Shank program dispatches on"
-                ),
-                (None, None) => hashed_discriminator("global:", &to_snake_case(name)),
-            };
-            Ok((bytes, ()))
+        |name, ix| match (ix.get("discriminator"), ix.get("discriminant")) {
+            (Some(node), _) => Ok(Dispatch {
+                bytes: parse_byte_array(node).context("discriminator")?,
+                derived: false,
+            }),
+            (None, Some(node)) => Ok(Dispatch {
+                bytes: discriminant_bytes(node).context("discriminant")?,
+                derived: false,
+            }),
+            (None, None) if shank => bail!(
+                "discriminant: this Shank IDL declares none, and a hashed Anchor \
+                 discriminator is not what a Shank program dispatches on"
+            ),
+            (None, None) => Ok(Dispatch {
+                bytes: hashed_discriminator(&to_snake_case(name)),
+                derived: true,
+            }),
         },
-        |ix, discriminator, ()| {
-            Ok(IxIdl {
-                discriminator,
-                accounts: parse_accounts(ix.get("accounts")).context("accounts")?,
-                args: parse_named_fields(ix.get("args"), "args")?,
-            })
+        |ix, _| {
+            Ok((
+                parse_accounts(ix.get("accounts")).context("accounts")?,
+                parse_named_fields(ix.get("args"), "args")?,
+            ))
         },
     )
 }
 
-fn hashed_discriminator(prefix: &str, name: &str) -> Vec<u8> {
+/// Anchor's pre-0.30 discriminator: `sha256("global:<snake_case>")[..8]`.
+fn hashed_discriminator(snake_case_name: &str) -> Vec<u8> {
     let mut hasher = Sha256::new();
-    hasher.update(prefix.as_bytes());
-    hasher.update(name.as_bytes());
+    hasher.update(b"global:");
+    hasher.update(snake_case_name.as_bytes());
     hasher.finalize()[..8].to_vec()
 }
 
