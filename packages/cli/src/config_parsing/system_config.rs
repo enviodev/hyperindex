@@ -2012,10 +2012,10 @@ struct ResolvedInstruction {
 
 /// Resolved from, in order:
 /// 1. YAML per-instruction `accounts`/`args` overrides.
-/// 2. The IDL instruction of the same name — its discriminator included, so a
+/// 2. The IDL instruction the YAML discriminator dispatches — the calls that
+///    arrive are that instruction's, whatever the config called it.
+/// 3. The IDL instruction of the same name, its discriminator included, so a
 ///    config that names an instruction does not also have to carry the bytes.
-/// 3. The IDL instruction the YAML discriminator dispatches, for a config that
-///    names an instruction differently from the IDL.
 /// 4. Nothing, leaving an untyped handler dispatched by whatever the config
 ///    declared.
 fn resolve_instruction(
