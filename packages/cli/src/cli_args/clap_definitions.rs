@@ -96,6 +96,9 @@ pub enum ResolversSubcommand {
     ///Print the Hasura metadata these resolvers become, then exit. Needs
     ///ENVIO_RESOLVERS_PUBLIC_URL, which is baked into every action.
     Metadata,
+    ///Update a running indexer's Hasura metadata to match these resolvers,
+    ///then exit. Does not start a server and does not touch the database.
+    Migrate,
     ///Answer Hasura's actions over HTTP until stopped (the default)
     Serve,
 }
