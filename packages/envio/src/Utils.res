@@ -253,6 +253,10 @@ module Array = {
 
   let immutableEmpty: array<unknown> = []
 
+  /** Render names for an error message: `"a", "b"`. */
+  let quotedJoin = (names: array<string>) =>
+    names->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
+
   @send
   external forEachAsync: (array<'a>, 'a => promise<unit>) => unit = "forEach"
 

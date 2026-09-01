@@ -177,24 +177,6 @@ let publicConfigChainSchema = S.schema(s =>
 let svmEventDescriptorSchema = S.schema(s =>
   {
     "discriminator": s.matches(S.option(S.string)),
-    "discriminatorByteLen": s.matches(S.int),
-    // An array of AND-groups OR-ed together: the CLI normalizes both the flat
-    // and `any_of` YAML shapes to `Vec<Vec<SvmAccountFilterJson>>`.
-    "accountFilters": s.matches(
-      S.option(
-        S.array(
-          S.array(
-            S.schema(s =>
-              {
-                "position": s.matches(S.int),
-                "values": s.matches(S.array(S.string)),
-              }
-            ),
-          ),
-        ),
-      ),
-    ),
-    "isInner": s.matches(S.option(S.bool)),
     "accounts": s.matches(S.option(S.array(S.string))),
     "args": s.matches(S.option(S.json(~validate=false))),
   }
@@ -753,11 +735,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               Utils.magic: _ => {
                 "svm": option<{
                   "discriminator": option<string>,
-                  "discriminatorByteLen": int,
-                  "accountFilters": option<
-                    array<array<{"position": int, "values": array<string>}>>,
-                  >,
-                  "isInner": option<bool>,
                   "accounts": option<array<string>>,
                   "args": option<JSON.t>,
                 }>,
@@ -770,25 +747,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               `SVM instruction ${contractName}.${eventName} is missing the "svm" descriptor in internal config`,
             )
           }
-          let accountFilters =
-            svm["accountFilters"]
-            ->Option.getOr([])
-            ->Array.map(group =>
-              group->Array.map(
-                af => {
-                  Internal.position: af["position"],
-                  values: af["values"]->SvmTypes.Pubkey.fromStringsUnsafe,
-                },
-              )
-            )
           (EventConfigBuilder.buildSvmInstructionEventConfig(
             ~contractName,
             ~instructionName=eventName,
             ~programId,
             ~discriminator=svm["discriminator"],
-            ~discriminatorByteLen=svm["discriminatorByteLen"],
-            ~accountFilters,
-            ~isInner=svm["isInner"],
             ~accounts=svm["accounts"]->Option.getOr([]),
             ~args=svm["args"]->Option.getOr(JSON.Null),
             ~definedTypes=svmDefinedTypes,
@@ -1069,6 +1032,14 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     allEnums,
   }
 }
+
+// With no cross-chain entity, a reorg on one chain can never have changed a row
+// another chain owns, so its rollback stays isolated to that chain instead of
+// dragging every sibling back with it. A single chain has no sibling to spare,
+// and narrowing its rollback would only buy it a predicate that always holds.
+let isIsolatedMultichain = (config: t) =>
+  config.chainMap->ChainMap.keys->Array.length > 1 &&
+    config.userEntities->Array.every(entityConfig => !entityConfig.crossChain)
 
 // Canonicalize a user-provided address to the configured casing so it matches
 // addresses parsed from config.yaml during routing. HyperSync/RPC data arrives

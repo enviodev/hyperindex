@@ -158,8 +158,8 @@ let runOneWrite = async (state: IndexerState.t) => {
     state->IndexerState.markCommitted(~upToCheckpointId)
 
     switch rollback {
-    | Some({progressBlockNumberByChainId}) if RollbackCommit.callbacks->Utils.Array.notEmpty =>
-      await RollbackCommit.fire(~progressBlockNumberByChainId)
+    | Some({progressedChains}) if RollbackCommit.callbacks->Utils.Array.notEmpty =>
+      await RollbackCommit.fire(~progressedChains)
     | _ => ()
     }
 

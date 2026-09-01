@@ -182,7 +182,7 @@ let backfillHistory = (
   ~ids: array<EntityId.t>,
 ) => {
   let idPgType = table->Table.getIdPgFieldType(~pgSchema)
-  let chainIdColumn = table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
+  let chainIdColumn = table->Table.getPgChainIdColumn
   let params = [table->Table.encodeIdsToJson(ids)->(Utils.magic: JSON.t => unknown)]
   sql
   ->Postgres.preparedUnsafe(
@@ -204,6 +204,8 @@ let rollback = (
   ~pgSchema,
   ~entityName,
   ~entityIndex,
+  ~chainIdColumn,
+  ~scope: RollbackScope.t,
   ~rollbackTargetCheckpointId: Internal.checkpointId,
 ) => {
   sql
@@ -211,8 +213,8 @@ let rollback = (
     `DELETE FROM "${pgSchema}"."${historyTableName(
         ~entityName,
         ~entityIndex,
-      )}" WHERE "${checkpointIdFieldName}" > $1;`,
-    [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+      )}" WHERE "${checkpointIdFieldName}" > $1${scope->RollbackScope.predicate(~chainIdColumn)};`,
+    scope->RollbackScope.params(~targetCheckpointId=rollbackTargetCheckpointId),
   )
   ->Utils.Promise.ignoreValue
 }

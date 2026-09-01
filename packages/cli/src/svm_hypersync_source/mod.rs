@@ -34,7 +34,7 @@ use borsh_decoder::InstructionSchemaInput;
 use config::SvmClientConfig;
 use query::SvmQuery;
 use selection::{route_instruction, SelectionBuilder, SvmOnEventRegistrationInput};
-use types::{to_hex, QueryResponse};
+use types::to_hex;
 
 /// Move the response's transactions and account activity into a
 /// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept in Rust so
@@ -245,37 +245,6 @@ impl SvmHyperSyncClient {
         i64::try_from(h)
             .with_context(|| format!("height {} does not fit in i64", h))
             .map_err(map_err)
-    }
-
-    /// Single-window query (no client-side pagination), used for block-hash
-    /// range queries. The hyperindex source layer paginates by chunking the
-    /// slot range itself, so the napi binding must NOT call `collect` (which
-    /// spins up parallel batched requests under `StreamConfig::default()` and
-    /// can DoS the server on multi-day windows).
-    #[napi]
-    pub async fn get(
-        &self,
-        query: SvmQuery,
-    ) -> napi::Result<(QueryResponse, TransactionStore, BlockStore)> {
-        let mut resp = self.get_raw(query).await?;
-
-        // Retain raw transactions + account activity in Rust; the store
-        // materialises the parent transaction (selected fields only) at batch
-        // prep. A raw query's rows are the caller's own selection, so all of
-        // them are kept.
-        let store = build_svm_store(
-            std::mem::take(&mut resp.transactions),
-            std::mem::take(&mut resp.account_activity),
-            None,
-        );
-
-        let (block_headers, block_store) = take_blocks(&mut resp, None).map_err(map_err)?;
-
-        let mut out = QueryResponse::try_from(resp)
-            .context("convert solana response")
-            .map_err(map_err)?;
-        out.data.blocks = block_headers;
-        Ok((out, store, block_store))
     }
 
     /// Fetch the inclusive range spanning `block_numbers` into one response
@@ -646,7 +615,7 @@ fn build_event_items(
                 data: to_hex(&instr.data),
                 is_inner: instr.is_inner,
                 args_json: match &decoded {
-                    Some(decoded) if reg.selects_args => decoded.args_json.clone(),
+                    Some(args_json) if reg.selects_args => args_json.clone(),
                     _ => "{}".to_string(),
                 },
                 logs: if !reg.log_columns.is_empty() {
@@ -754,22 +723,22 @@ mod tests {
             ..Default::default()
         };
 
-        // Transactions are moved into the store, so `resp.data.transactions` is
-        // empty here by design.
-        let (resp, _store, _block_store) = client.get(q).await.expect("collect");
+        let resp = client.get_raw(q).await.expect("collect");
         eprintln!(
             "got {} instructions / next_slot={}",
-            resp.data.instruction_calls.len(),
+            resp.instruction_calls.len(),
             resp.next_slot
         );
         assert!(
-            !resp.data.instruction_calls.is_empty(),
+            !resp.instruction_calls.is_empty(),
             "expected at least one Token Metadata instruction"
         );
-        for ix in resp.data.instruction_calls.iter().take(3) {
-            assert_eq!(ix.executing_account, TOKEN_METADATA_PROGRAM);
-            assert!(ix.data.starts_with("0x"));
-            assert!(ix.data.len() > 2, "data should not be empty hex");
+        for ix in resp.instruction_calls.iter().take(3) {
+            assert_eq!(
+                ix.executing_account.as_ref().map(ToString::to_string),
+                Some(TOKEN_METADATA_PROGRAM.to_string())
+            );
+            assert!(!ix.data.as_deref().unwrap_or_default().is_empty());
         }
     }
 

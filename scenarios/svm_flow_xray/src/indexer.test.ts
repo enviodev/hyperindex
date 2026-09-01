@@ -14,7 +14,9 @@ describe("Flow X-Ray indexer (live)", () => {
     "indexes a multi-protocol CPI window into flat flow rows",
     async () => {
       const indexer = createTestIndexer();
-      const result = await indexer.process({ chains: { 0: {} } });
+      // Without an explicit endBlock `process` auto-exits at the first slot
+      // carrying events, which would leave most of the pinned window unread.
+      const result = await indexer.process({ chains: { 7565164: { endBlock: END_SLOT } } });
 
       const nodes: any[] = [];
       const deltas: any[] = [];

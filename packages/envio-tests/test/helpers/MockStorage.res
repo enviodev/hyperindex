@@ -164,9 +164,9 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
       ) => (),
       getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
         JsError.throwWithMessage("Not implemented"),
-      getRollbackProgressDiff: (~rollbackTargetCheckpointId as _) =>
+      getRollbackProgressDiff: (~scope as _, ~rollbackTargetCheckpointId as _) =>
         JsError.throwWithMessage("Not implemented"),
-      getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
+      getRollbackData: (~entityConfig as _, ~scope as _, ~rollbackTargetCheckpointId as _) =>
         JsError.throwWithMessage("Not implemented"),
       writeBatch: (
         ~batch as _,

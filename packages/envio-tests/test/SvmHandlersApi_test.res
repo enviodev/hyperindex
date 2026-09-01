@@ -91,7 +91,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`The fields.accountActivity option of the "swap" event registration on contract "Swapper" must list at least one field.\`,
+      \`The fields.accountActivity option of the "swap" instruction on program "Swapper" must list at least one field.\`,
     );
   });
 
@@ -102,7 +102,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`The fields.log option of the "swap" event registration on contract "Swapper" must list at least one field.\`,
+      \`The fields.log option of the "swap" instruction on program "Swapper" must list at least one field.\`,
     );
   });
 
@@ -113,7 +113,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "logs" key in the fields option of the "swap" event registration on contract "Swapper". Valid keys: "instruction", "transaction", "accountActivity", "block", "log".\`,
+      \`Invalid "logs" key in the fields option of the "swap" instruction on program "Swapper". Valid keys: "instruction", "transaction", "accountActivity", "block", "log".\`,
     );
   });
 
@@ -128,7 +128,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "accountActivities" field in the fields.transaction option of the "swap" event registration on contract "Swapper". Valid transaction fields: "transactionIndex", "signature", "feePayer", "success", "err", "fee", "computeUnitsConsumed", "accountKeys", "recentBlockhash", "version", "allSignatures".\`,
+      \`Invalid "accountActivities" field in the fields.transaction option of the "swap" instruction on program "Swapper". Valid transaction fields: "transactionIndex", "signature", "feePayer", "success", "err", "fee", "computeUnitsConsumed", "accountKeys", "recentBlockhash", "version", "allSignatures".\`,
     );
   });
 
@@ -143,7 +143,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "token" field in the fields.accountActivity option of the "swap" event registration on contract "Swapper". Valid accountActivity fields: "address", "transactionAccountIndex", "isSigner", "isWritable", "lamports.pre", "lamports.post", "token.mint", "token.owner", "token.decimals", "token.preAmount", "token.postAmount".\`,
+      \`Invalid "token" field in the fields.accountActivity option of the "swap" instruction on program "Swapper". Valid accountActivity fields: "address", "transactionAccountIndex", "isSigner", "isWritable", "lamports.pre", "lamports.post", "token.mint", "token.owner", "token.decimals", "token.preAmount", "token.postAmount".\`,
     );
   });
 
@@ -158,7 +158,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "params" field in the fields.instruction option of the "swap" event registration on contract "Swapper". Valid instruction fields: "args", "accounts", "accountArguments", "programId", "data", "path", "isInner".\`,
+      \`Invalid "params" field in the fields.instruction option of the "swap" instruction on program "Swapper". Valid instruction fields: "args", "accounts", "accountArguments", "programId", "data", "path", "isInner".\`,
     );
   });
 
@@ -173,7 +173,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "discriminator" field in the fields.instruction option of the "swap" event registration on contract "Swapper". Valid instruction fields: "args", "accounts", "accountArguments", "programId", "data", "path", "isInner".\`,
+      \`Invalid "discriminator" field in the fields.instruction option of the "swap" instruction on program "Swapper". Valid instruction fields: "args", "accounts", "accountArguments", "programId", "data", "path", "isInner".\`,
     );
   });
 });

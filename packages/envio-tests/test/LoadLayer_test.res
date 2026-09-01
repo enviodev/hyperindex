@@ -1081,7 +1081,8 @@ describe("LoadLayer effect scope isolation", () => {
     indexerState->IndexerState.beginRollbackDiff(
       ~targetCheckpointId=0n,
       ~diffCheckpointId=0n,
-      ~progressBlockNumberByChainId=Dict.make(),
+      ~scope=Global,
+      ~progressedChains=[],
       ~rolledBackAddresses=[],
     )
 

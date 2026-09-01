@@ -288,6 +288,9 @@ let getChainIdField = (table): option<field> =>
     }
   )
 
+// None for a cross-chain entity, whose rows no single chain owns.
+let getPgChainIdColumn = table => table->getChainIdField->Option.map(getPgDbFieldName)
+
 let getFieldByName = (table, fieldName) =>
   table.fields->Array.find(field => field->getUserDefinedFieldName === fieldName)
 

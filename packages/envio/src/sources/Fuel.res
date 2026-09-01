@@ -40,6 +40,8 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   blockTimestampName: "time",
   blockHashName: "id",
   onBlockMethodName: "onBlock",
+  contractNoun: "contract",
+  eventNoun: "event",
   // Fuel filter shape: `{block: {height: {_gte?, _lte?, _every?}}}`.
   // Inner range chunk parsed by `blockRangeSchema` in `Main.res`.
   onBlockFilterSchema: S.object(s =>

@@ -127,15 +127,17 @@ let dropCommittedEffects = (
 
 let prepareRollbackDiff = async (
   state: IndexerState.t,
+  ~rollbackScope: RollbackScope.t,
   ~rollbackTargetCheckpointId,
   ~rollbackDiffCheckpointId,
-  ~progressBlockNumberByChainId,
+  ~progressedChains,
   ~rolledBackAddresses,
 ) => {
   state->IndexerState.beginRollbackDiff(
     ~targetCheckpointId=rollbackTargetCheckpointId,
     ~diffCheckpointId=rollbackDiffCheckpointId,
-    ~progressBlockNumberByChainId,
+    ~scope=rollbackScope,
+    ~progressedChains,
     ~rolledBackAddresses,
   )
   let persistence = state->IndexerState.persistence
@@ -152,6 +154,7 @@ let prepareRollbackDiff = async (
   ->Array.map(async entityConfig => {
     let (removals, restoredEntities) = await persistence.storage.getRollbackData(
       ~entityConfig,
+      ~scope=rollbackScope,
       ~rollbackTargetCheckpointId,
     )
 

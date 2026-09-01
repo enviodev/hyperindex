@@ -1166,20 +1166,6 @@ pub mod svm {
         pub discriminator: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Filter on inner-vs-outer instructions. None / absent matches both."
-        )]
-        pub is_inner: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional positional account filters. Two shapes are accepted: a flat \
-                           list of `{position, values}` entries (AND across positions, OR within \
-                           `values`); or `{any_of: [[...]] }`, a list of AND-groups that are \
-                           OR-ed together. Positions must be in 0..=5; positions 6..=9 are \
-                           reserved for a future extension."
-        )]
-        pub account_filters: Option<AccountFilters>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
             description = "Optional positional account names. The Nth entry names account slot N \
                            on the dispatched instruction; surfaces as \
                            `instruction.accounts.<name>` when `fields.instruction` includes \
@@ -1282,45 +1268,6 @@ pub mod svm {
         /// 1-byte tag), but the distinction is preserved for round-tripping.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub fields: Option<Vec<ArgDef>>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct AccountFilter {
-        #[schemars(description = "Account position within the instruction (0..=5).")]
-        pub position: u8,
-        #[schemars(description = "Allowed base58 pubkeys for this account position.")]
-        pub values: Vec<String>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct AnyOfAccountFilters {
-        #[schemars(
-            description = "A non-empty list of AND-groups. Each group is itself a non-empty list \
-                           of `{position, values}` entries that must all match the same \
-                           instruction. An instruction matches `any_of` when any one group \
-                           matches."
-        )]
-        pub any_of: Vec<Vec<AccountFilter>>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(untagged)]
-    pub enum AccountFilters {
-        Flat(Vec<AccountFilter>),
-        AnyOf(AnyOfAccountFilters),
-    }
-
-    impl AccountFilters {
-        pub fn groups(&self) -> Vec<&[AccountFilter]> {
-            match self {
-                AccountFilters::Flat(entries) => vec![entries.as_slice()],
-                AccountFilters::AnyOf(any_of) => {
-                    any_of.any_of.iter().map(|g| g.as_slice()).collect()
-                }
-            }
-        }
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -1691,9 +1638,6 @@ chains:
               discriminator: "0x21"
             - name: UpdateMetadataAccountV2
               discriminator: "0x0f"
-              account_filters:
-                - position: 0
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
 "#;
 
         #[test]
@@ -1759,21 +1703,12 @@ chains:
                         Instruction {
                             name: "CreateMetadataAccountV3".to_string(),
                             discriminator: Some("0x21".to_string()),
-                            is_inner: None,
-                            account_filters: None,
                             accounts: None,
                             args: None,
                         },
                         Instruction {
                             name: "UpdateMetadataAccountV2".to_string(),
                             discriminator: Some("0x0f".to_string()),
-                            is_inner: None,
-                            account_filters: Some(AccountFilters::Flat(vec![AccountFilter {
-                                position: 0,
-                                values: vec![
-                                    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
-                                ],
-                            }])),
                             accounts: None,
                             args: None,
                         },
