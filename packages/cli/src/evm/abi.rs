@@ -11,13 +11,6 @@ pub enum AbiOrNestedAbi {
     NestedAbi { abi: JsonAbi },
 }
 
-const FIX_THE_ENTRY: &str = "Fix that entry in the ABI file, or re-export the ABI from the \
-                             contract build - for example \"forge inspect <Contract> abi\", or \
-                             the \"abi\" field of a Hardhat artifact under \"artifacts/\".";
-const FIX_THE_FILE: &str = "Point the config at a contract ABI file, or re-export one from the \
-                            contract build - for example \"forge inspect <Contract> abi\", or the \
-                            \"abi\" field of a Hardhat artifact under \"artifacts/\".";
-
 fn items_mut(abi: &mut Value) -> Option<&mut Vec<Value>> {
     match abi {
         Value::Array(items) => Some(items),
@@ -79,26 +72,74 @@ fn repair(text: &str) -> Option<String> {
     serde_json::to_string(&parsed).ok()
 }
 
-/// serde quotes with backticks and names its own machinery; an ABI file is
-/// written by hand as often as it is generated, so its reader says what is
-/// wrong in the file's own terms.
-fn readable(err: &serde_json::Error) -> String {
-    err.to_string().replace('`', "\"")
+const ENTRY_TYPES: [&str; 6] = [
+    "constructor",
+    "fallback",
+    "receive",
+    "function",
+    "event",
+    "error",
+];
+
+fn quoted(types: &[&str]) -> String {
+    types
+        .iter()
+        .map(|kind| format!("\"{kind}\""))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn locate(index: usize, item: &Map<String, Value>) -> String {
+    match item.get("name").and_then(Value::as_str) {
+        Some(name) => format!("entry {index} \"{name}\""),
+        None => match item.get("type").and_then(Value::as_str) {
+            Some(kind) => format!("entry {index} ({kind})"),
+            None => format!("entry {index}"),
+        },
+    }
+}
+
+/// The parameter alloy could not read. Checking one at a time is what lets the
+/// message name it, rather than repeating serde's account of the whole entry.
+fn bad_parameter(item: &Map<String, Value>, is_event: bool) -> Option<String> {
+    let params = ["inputs", "outputs"]
+        .iter()
+        .filter_map(|key| item.get(*key))
+        .filter_map(Value::as_array)
+        .flatten();
+    for param in params {
+        let valid = if is_event {
+            serde_json::from_value::<alloy_json_abi::EventParam>(param.clone()).is_ok()
+        } else {
+            serde_json::from_value::<alloy_json_abi::Param>(param.clone()).is_ok()
+        };
+        if valid {
+            continue;
+        }
+        let name = param.get("name").and_then(Value::as_str).unwrap_or("");
+        return Some(match param.get("type").and_then(Value::as_str) {
+            Some(kind) => format!("parameter \"{name}\" has an invalid type \"{kind}\""),
+            None => format!("parameter \"{name}\" has no \"type\""),
+        });
+    }
+    None
 }
 
 fn describe(index: usize, item: &Map<String, Value>, err: &serde_json::Error) -> anyhow::Error {
-    let kind = item
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let named = match item.get("name").and_then(Value::as_str) {
-        Some(name) => format!("entry {index} \"{name}\" ({kind})"),
-        None => format!("entry {index} ({kind})"),
-    };
-    anyhow!(
-        "{named} is not a valid ABI entry: {}. {FIX_THE_ENTRY}",
-        readable(err)
-    )
+    let at = locate(index, item);
+    let kind = item.get("type").and_then(Value::as_str).unwrap_or_default();
+    if !ENTRY_TYPES.contains(&kind) {
+        return anyhow!(
+            "{at} has an unknown type \"{kind}\". Expected one of {}.",
+            quoted(&ENTRY_TYPES)
+        );
+    }
+    match bad_parameter(item, kind == "event") {
+        Some(problem) => anyhow!("{at}: {problem}."),
+        // serde quotes with backticks and names its own machinery, so the rare
+        // error this does not recognise is at least quoted like the file is.
+        None => anyhow!("{at} is invalid: {}.", err.to_string().replace('`', "\"")),
+    }
 }
 
 /// `AbiOrNestedAbi` is untagged, so serde reports only that the file matched no
@@ -106,26 +147,23 @@ fn describe(index: usize, item: &Map<String, Value>, err: &serde_json::Error) ->
 /// at a time says which entry the file has to fix.
 fn explain(text: &str, err: &serde_json::Error) -> anyhow::Error {
     let Ok(mut parsed) = serde_json::from_str::<Value>(text) else {
-        return anyhow!(
-            "The file is not valid JSON: {}. {FIX_THE_FILE}",
-            readable(err)
-        );
+        return anyhow!("The file is not valid JSON: {err}.");
     };
     let Some(items) = entries(&mut parsed) else {
         return anyhow!(
-            "An ABI file holds a JSON array of ABI entries, or an object with an \"abi\" field \
-             holding that array. {FIX_THE_FILE}"
+            "The file must hold a JSON array of ABI entries, or an object with an \"abi\" field \
+             holding one. Check the \"abi_file_path\" in your config."
         );
     };
     for (index, item) in items.iter().enumerate() {
         let Some(object) = item.as_object() else {
-            return anyhow!("entry {index} is not a JSON object. {FIX_THE_ENTRY}");
+            return anyhow!("entry {index} is not a JSON object.");
         };
         if let Err(entry_err) = serde_json::from_value::<AbiItem>(item.clone()) {
             return describe(index, object, &entry_err);
         }
     }
-    anyhow!("{}. {FIX_THE_FILE}", readable(err))
+    anyhow!("{}.", err.to_string().replace('`', "\""))
 }
 
 /// Reads an ABI file, filling in what its writer left out.
@@ -248,26 +286,28 @@ mod tests {
     fn names_the_entry_whose_type_is_not_an_abi_entry_type() {
         assert_eq!(
             error(
-                r#"[{"anonymous": false, "inputs": [], "name": "Failure", "type": "event"}, {"type": "wormhole", "name": "Warp"}]"#
+                r#"[{"name": "Failure", "type": "event"}, {"type": "wormhole", "name": "Warp"}]"#
             ),
-            "entry 1 \"Warp\" (wormhole) is not a valid ABI entry: unknown variant \"wormhole\", \
-             expected one of \"constructor\", \"fallback\", \"receive\", \"function\", \"event\", \
-             \"error\". Fix that entry in the ABI file, or re-export the ABI from the contract \
-             build - for example \"forge inspect <Contract> abi\", or the \"abi\" field of a \
-             Hardhat artifact under \"artifacts/\"."
+            "entry 1 \"Warp\" has an unknown type \"wormhole\". Expected one of \"constructor\", \
+             \"fallback\", \"receive\", \"function\", \"event\", \"error\"."
         );
     }
 
     #[test]
-    fn names_the_entry_whose_parameter_is_malformed() {
+    fn names_the_parameter_whose_type_is_malformed() {
         assert_eq!(
             error(
-                r#"[{"name": "Transfer", "type": "event", "inputs": [{"name": "a", "type": "uint256["}]}]"#
+                r#"[{"name": "Transfer", "type": "event", "inputs": [{"name": "to", "type": "address"}, {"name": "value", "type": "uint256["}]}]"#
             ),
-            "entry 0 \"Transfer\" (event) is not a valid ABI entry: invalid value: string \
-             \"uint256[\", expected a valid Solidity type specifier. Fix that entry in the ABI \
-             file, or re-export the ABI from the contract build - for example \"forge inspect \
-             <Contract> abi\", or the \"abi\" field of a Hardhat artifact under \"artifacts/\"."
+            "entry 0 \"Transfer\": parameter \"value\" has an invalid type \"uint256[\"."
+        );
+    }
+
+    #[test]
+    fn names_the_parameter_that_has_no_type() {
+        assert_eq!(
+            error(r#"[{"name": "transfer", "type": "function", "inputs": [{"name": "to"}]}]"#),
+            "entry 0 \"transfer\": parameter \"to\" has no \"type\"."
         );
     }
 
@@ -275,10 +315,7 @@ mod tests {
     fn says_when_the_file_is_not_json() {
         assert_eq!(
             error("not json"),
-            "The file is not valid JSON: expected ident at line 1 column 2. Point the config at a \
-             contract ABI file, or re-export one from the contract build - for example \"forge \
-             inspect <Contract> abi\", or the \"abi\" field of a Hardhat artifact under \
-             \"artifacts/\"."
+            "The file is not valid JSON: expected ident at line 1 column 2."
         );
     }
 
@@ -286,10 +323,8 @@ mod tests {
     fn says_when_the_file_holds_no_abi() {
         assert_eq!(
             error(r#"{"contractName": "Comptroller", "bytecode": "0x60806040"}"#),
-            "An ABI file holds a JSON array of ABI entries, or an object with an \"abi\" field \
-             holding that array. Point the config at a contract ABI file, or re-export one from \
-             the contract build - for example \"forge inspect <Contract> abi\", or the \"abi\" \
-             field of a Hardhat artifact under \"artifacts/\"."
+            "The file must hold a JSON array of ABI entries, or an object with an \"abi\" field \
+             holding one. Check the \"abi_file_path\" in your config."
         );
     }
 }

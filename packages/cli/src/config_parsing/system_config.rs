@@ -3080,12 +3080,9 @@ chains:
         assert_eq!(
             format!("{err:#}"),
             "Failed parsing abi types for events in contract Comptroller on network 1: Failed to \
-             decode ABI file at \"./abis/Comptroller.json\": entry 1 \"Warp\" \
-             (wormhole) is not a valid ABI entry: unknown variant \"wormhole\", expected one of \
-             \"constructor\", \"fallback\", \"receive\", \"function\", \"event\", \"error\". Fix \
-             that entry in the ABI file, or re-export the ABI from the contract build - for \
-             example \"forge inspect <Contract> abi\", or the \"abi\" field of a Hardhat artifact \
-             under \"artifacts/\"."
+             decode ABI file at \"./abis/Comptroller.json\": entry 1 \"Warp\" has an unknown type \
+             \"wormhole\". Expected one of \"constructor\", \"fallback\", \"receive\", \"function\", \
+             \"event\", \"error\"."
         );
     }
 
