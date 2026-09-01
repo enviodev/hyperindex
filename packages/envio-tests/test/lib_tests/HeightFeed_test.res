@@ -224,25 +224,26 @@ describe("HeightFeed unsubscribe", () => {
 })
 
 describe("HeightFeed stream state", () => {
-  Async.it("Polls alongside a live stream once poked, until a push proves it", async t => {
+  Async.it("Polls alongside a live stream once distrusted, until a push proves it", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
       ~pollingInterval=10_000,
     )
     let (feed, _stats) = makeFeed(mock)
     feed->HeightFeed.enableStream
-    let (heights, subscription) = feed->watch(~knownHeight=100)
-
+    // Connected and proven before anyone waits, so the wait starts against a
+    // stream that has already accounted for the head it came up on.
     mock.setHeightSubscriptionStatus(Live)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
-    // Live and proven by its catch-up: nothing polls beside it.
+
+    let (heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
     let pollsWhileProven = mock.getHeightOrThrowCalls->Array.length
     await Utils.delay(20)
     let pollsAfterWaiting = mock.getHeightOrThrowCalls->Array.length
 
-    subscription.poke()
-    let pollsAfterPoke = mock.getHeightOrThrowCalls->Array.length
+    subscription.distrustStream()
+    let pollsAfterDistrust = mock.getHeightOrThrowCalls->Array.length
 
     // A push that advances is the stream proving it carries heights again.
     mock.triggerHeightSubscription(101)
@@ -253,30 +254,30 @@ describe("HeightFeed stream state", () => {
     t.expect((
       pollsWhileProven,
       pollsAfterWaiting,
-      pollsAfterPoke,
+      pollsAfterDistrust,
       heights,
       mock.getHeightOrThrowCalls->Array.length,
-    )).toStrictEqual((2, 2, 3, [101], 3))
+    )).toStrictEqual((1, 1, 2, [101], 2))
   })
 
-  Async.it("Takes a poke back on any push, even of a height it already knew", async t => {
+  Async.it("Takes a distrust back on any push, even of a height it already knew", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
       ~pollingInterval=10_000,
     )
     let (feed, _stats) = makeFeed(mock)
     feed->HeightFeed.enableStream
-    let (_heights, subscription) = feed->watch(~knownHeight=100)
     mock.setHeightSubscriptionStatus(Live)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
 
-    subscription.poke()
-    let pollsAfterPoke = mock.getHeightOrThrowCalls->Array.length
+    let (_heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+    subscription.distrustStream()
+    let pollsAfterDistrust = mock.getHeightOrThrowCalls->Array.length
 
     // The poll beat the stream to the head, so what the stream pushes next is a
     // height already known. It is still the stream delivering, which is all the
-    // poke was ever complaining it did not do.
+    // distrust was ever complaining it did not do.
     mock.triggerHeightSubscription(100)
     await Utils.delay(0)
     mock.resolveGetHeightOrThrow(100)
@@ -285,94 +286,95 @@ describe("HeightFeed stream state", () => {
     await Utils.delay(0)
 
     // Nothing for the next wait to inherit: the stream is live and delivering.
-    let (_later, _unsubscribeLater) = feed->watch(~knownHeight=100)
+    let (_later, _unsubscribeLater) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
     await Utils.delay(10)
 
-    t.expect((pollsAfterPoke, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((3, 3))
+    t.expect((pollsAfterDistrust, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((2, 2))
   })
 
-  Async.it("Lets a poll close the gap a failed catch-up left", async t => {
+  Async.it("Keeps polling a new connection until a poll accounts for its head", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
       ~pollingInterval=10_000,
     )
     let (feed, _stats) = makeFeed(mock, ~getHeightRetryInterval=(~retry as _) => 1)
     feed->HeightFeed.enableStream
-    let (_heights, subscription) = feed->watch(~knownHeight=100)
+    let (_heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 1)
 
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
-    // The catch-up fails, so nothing has accounted for the head this connection
-    // came up on.
-    mock.rejectGetHeightOrThrow(JsError.make("catch-up failed"))
+    // A request older than this connection saw a head from before it existed, so
+    // it says nothing about the gap the connect left.
+    mock.rejectGetHeightOrThrow(JsError.make("no"))
     await Utils.delay(10)
-    // A poll fetches exactly that head, which is the same gap closed by other
-    // means.
+    // This one was made after the connection came up, and fetches exactly that
+    // head.
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(10)
-    let pollsOnceClosed = mock.getHeightOrThrowCalls->Array.length
+    let pollsOnceAccounted = mock.getHeightOrThrowCalls->Array.length
 
     subscription.unsubscribe()
     await Utils.delay(0)
-    let (_later, _unsubscribeLater) = feed->watch(~knownHeight=100)
+    let (_later, _unsubscribeLater) = feed->watch(~knownHeight=100, ~interval=() => 1)
     await Utils.delay(20)
 
     // Nothing left for the next wait to cover: the stream is live and the head
     // it connected on is accounted for.
-    t.expect(mock.getHeightOrThrowCalls->Array.length).toEqual(pollsOnceClosed)
+    t.expect(mock.getHeightOrThrowCalls->Array.length).toEqual(pollsOnceAccounted)
   })
 
-  Async.it("Drops a poke when the wait that made it ends", async t => {
+  Async.it("Drops a distrust when the wait that made it ends", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
       ~pollingInterval=10_000,
     )
     let (feed, _stats) = makeFeed(mock)
     feed->HeightFeed.enableStream
-    let (_heights, subscription) = feed->watch(~knownHeight=100)
     mock.setHeightSubscriptionStatus(Live)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
 
-    subscription.poke()
-    let pollsWhilePoked = mock.getHeightOrThrowCalls->Array.length
+    let (_heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+    subscription.distrustStream()
+    let pollsWhileDistrusted = mock.getHeightOrThrowCalls->Array.length
 
     // Answered by a height learned elsewhere — a query response, or a sibling
-    // source settling the wait — so no push ever comes to take the poke back.
+    // source settling the wait — so no push ever comes to take the distrust back.
     feed->HeightFeed.recordHeight(101)
     await Utils.delay(0)
-    mock.resolveGetHeightOrThrow(100)
+    mock.resolveGetHeightOrThrow(101)
     await Utils.delay(0)
 
     // The complaint belonged to a wait that is over. The next one starts on a
     // stream that is live and delivering, and polls nothing.
-    let (_later, _unsubscribeLater) = feed->watch(~knownHeight=101)
+    let (_later, _unsubscribeLater) = feed->watch(~knownHeight=101, ~interval=() => 10_000)
     await Utils.delay(10)
 
-    t.expect((pollsWhilePoked, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((3, 3))
+    t.expect((pollsWhileDistrusted, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((2, 2))
   })
 
-  Async.it("Ignores a poke for a waiter that has already gone", async t => {
+  Async.it("Ignores a distrust for a waiter that has already gone", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
       ~pollingInterval=10_000,
     )
     let (feed, _stats) = makeFeed(mock)
     feed->HeightFeed.enableStream
-    let (_heights, subscription) = feed->watch(~knownHeight=100)
     mock.setHeightSubscriptionStatus(Live)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
+
+    let (_heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
     subscription.unsubscribe()
     let pollsBefore = mock.getHeightOrThrowCalls->Array.length
 
     // Its wait is over, so there is nobody to poll for. Acting on it anyway
     // would leave the complaint for a later waiter to act on.
-    subscription.poke()
-    let (_later, _laterSubscription) = feed->watch(~knownHeight=100)
+    subscription.distrustStream()
+    let (_later, _laterSubscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
     await Utils.delay(10)
 
-    t.expect((pollsBefore, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((2, 2))
+    t.expect((pollsBefore, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((1, 1))
   })
 
   Async.it("Ignores a push that does not clear the height it already knows", async t => {
@@ -422,7 +424,7 @@ describe("HeightFeed stream state", () => {
       1,
       Some({
         HeightFeed.connectCount: 1,
-        disconnects: [("unsubscribed", 1)],
+        disconnectsByReason: [("unsubscribed", 1)],
       }),
     ))
   })
@@ -434,18 +436,18 @@ describe("HeightFeed stream state", () => {
     )
     let (feed, _stats) = makeFeed(mock)
     feed->HeightFeed.enableStream
-    let (_heights, _unsubscribe) = feed->watch(~knownHeight=100)
-
     mock.setHeightSubscriptionStatus(Live)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
+
+    let (_heights, _unsubscribe) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
     let pollsWhileLive = mock.getHeightOrThrowCalls->Array.length
 
     feed->HeightFeed.stop
 
     // Being benched is a capability verdict, not an outage: the source can still
     // answer a height poll, and until another source answers it is what there is.
-    t.expect((pollsWhileLive, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((2, 3))
+    t.expect((pollsWhileLive, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((1, 2))
   })
 
   Async.it("Polls straight away when a live connection drops mid-interval", async t => {
@@ -455,24 +457,23 @@ describe("HeightFeed stream state", () => {
     )
     let (feed, _stats) = makeFeed(mock)
     feed->HeightFeed.enableStream
-    let (_heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
-
     mock.setHeightSubscriptionStatus(Live)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
 
-    // Poked, so a loop runs beside the live stream. Its poll answers below the
-    // floor and it settles in for an interval chosen while that connection was
-    // still the thing covering this source.
-    subscription.poke()
+    // Distrusted, so a loop runs beside the live stream. Its poll answers below
+    // the floor and it settles in for an interval chosen while that connection
+    // was still the thing covering this source.
+    let (_heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+    subscription.distrustStream()
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
     let pollsWhileSleeping = mock.getHeightOrThrowCalls->Array.length
 
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
 
-    t.expect((pollsWhileSleeping, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((3, 4))
+    t.expect((pollsWhileSleeping, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((2, 3))
   })
 
   Async.it("Sits out the backoff when the stream drops while polls are failing", async t => {
@@ -485,18 +486,18 @@ describe("HeightFeed stream state", () => {
     let (_heights, _unsubscribe) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
 
     mock.setHeightSubscriptionStatus(Live)
-    // Both the catch-up and the loop's poll fail, so the loop is sleeping off
-    // the backoff the endpoint earned rather than a polling interval.
+    // The loop's poll fails, so it is sleeping off the backoff the endpoint
+    // earned rather than a polling interval.
     mock.rejectGetHeightOrThrow(JsError.make("down"))
     await Utils.delay(0)
     let pollsWhileBackingOff = mock.getHeightOrThrowCalls->Array.length
 
     // The stream dropping is usually the same endpoint's doing, so it is no
     // reason to ask again ahead of schedule.
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
 
-    t.expect((pollsWhileBackingOff, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((2, 2))
+    t.expect((pollsWhileBackingOff, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((1, 1))
   })
 
   Async.it("Keeps polling when a replaced connection's catch-up lands late", async t => {
@@ -508,7 +509,7 @@ describe("HeightFeed stream state", () => {
     feed->HeightFeed.enableStream
 
     mock.setHeightSubscriptionStatus(Live)
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     // The connection now in place, with a catch-up of its own outstanding.
     mock.setHeightSubscriptionStatus(Live)
     let (_heights, _unsubscribe) = feed->watch(~knownHeight=100, ~interval=() => 1)
@@ -535,17 +536,17 @@ describe("HeightFeed stream state", () => {
 
     // Never connected: the retries are attempts at a connection that never
     // existed, so there is nothing to have disconnected.
-    mock.setHeightSubscriptionStatus(Down({reason: "connect-failed"}))
-    mock.setHeightSubscriptionStatus(Down({reason: "connect-failed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: ConnectFailed}))
+    mock.setHeightSubscriptionStatus(Down({reason: ConnectFailed}))
     let whileNeverConnected = feed->HeightFeed.sample
 
     mock.setHeightSubscriptionStatus(Live)
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
-    mock.setHeightSubscriptionStatus(Down({reason: "connect-failed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
+    mock.setHeightSubscriptionStatus(Down({reason: ConnectFailed}))
 
     t.expect((whileNeverConnected, feed->HeightFeed.sample)).toStrictEqual((
-      Some({HeightFeed.connectCount: 0, disconnects: []}),
-      Some({HeightFeed.connectCount: 1, disconnects: [("closed", 1)]}),
+      Some({HeightFeed.connectCount: 0, disconnectsByReason: []}),
+      Some({HeightFeed.connectCount: 1, disconnectsByReason: [("closed", 1)]}),
     ))
   })
 
@@ -677,7 +678,6 @@ describe("HeightFeed poll failures", () => {
   })
 
   Async.it("Resets the poll ramp when a push recovers the stream after failed polls", async t => {
-    Vi.useFakeTimers()
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
       ~pollingInterval=10_000,
@@ -687,39 +687,31 @@ describe("HeightFeed poll failures", () => {
       mock,
       ~getHeightRetryInterval=(~retry) => {
         retries->Array.push(retry)->ignore
-        10_000
+        1
       },
     )
     feed->HeightFeed.enableStream
-    let (_heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+    let (_heights, _subscription) = feed->watch(~knownHeight=100, ~interval=() => 1)
 
     mock.rejectGetHeightOrThrow(JsError.make("no"))
-    await Vi.advanceTimersByTimeAsync(1)
+    await Utils.delay(10)
     mock.rejectGetHeightOrThrow(JsError.make("no again"))
-    await Vi.advanceTimersByTimeAsync(1)
+    await Utils.delay(10)
+    let retriesBeforeRecovery = retries->Array.copy
 
-    // Loop is sleeping off the 10s ramp, so the only in-flight request after
-    // Live is the catch-up. A push answers the waiter; a failed catch-up must
-    // not leave that ramp for the next outage.
+    // The stream comes up and delivers a height. The source is answering after
+    // all, so the wait its failed polls earned is no longer owed, and the poll
+    // still in flight escalates from the bottom of the ramp rather than the top.
     mock.setHeightSubscriptionStatus(Live)
-    await Vi.advanceTimersByTimeAsync(1)
     mock.triggerHeightSubscription(101)
-    await Vi.advanceTimersByTimeAsync(1)
-    mock.rejectGetHeightOrThrow(JsError.make("catch-up failed"))
-    await Vi.advanceTimersByTimeAsync(1)
-    subscription.unsubscribe()
-
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
-    let retriesAfterRecovery = retries->Array.length
-    let (_later, _laterSubscription) = feed->watch(~knownHeight=101, ~interval=() => 10_000)
+    await Utils.delay(0)
     mock.rejectGetHeightOrThrow(JsError.make("dropped again"))
-    await Vi.advanceTimersByTimeAsync(1)
-    Vi.useRealTimers()
+    await Utils.delay(10)
 
-    t.expect(retries->Array.getUnsafe(retriesAfterRecovery)).toEqual(0)
+    t.expect((retriesBeforeRecovery, retries)).toStrictEqual(([0, 1], [0, 1, 0]))
   })
 
-  Async.it("Wakes a backoff sleep when a reconnect's catch-up fails", async t => {
+  Async.it("Keeps the backoff a failing endpoint earned when its stream flaps", async t => {
     Vi.useFakeTimers()
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
@@ -729,15 +721,97 @@ describe("HeightFeed poll failures", () => {
     feed->HeightFeed.enableStream
     let (_heights, _subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
 
+    // The endpoint's height calls are failing, so the loop is sleeping off the
+    // ramp that earned.
     mock.rejectGetHeightOrThrow(JsError.make("no"))
     await Vi.advanceTimersByTimeAsync(1)
+    let pollsInBackoff = mock.getHeightOrThrowCalls->Array.length
+
+    // Its stream connects and drops again without ever delivering. Claiming to
+    // be connected is not the endpoint answering, so neither edge buys back the
+    // wait the failures earned — it is the same endpoint in both cases.
     mock.setHeightSubscriptionStatus(Live)
     await Vi.advanceTimersByTimeAsync(1)
-    mock.rejectGetHeightOrThrow(JsError.make("catch-up failed"))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Vi.advanceTimersByTimeAsync(1)
-    let pollsAfterFailedCatchUp = mock.getHeightOrThrowCalls->Array.length
     Vi.useRealTimers()
 
-    t.expect(pollsAfterFailedCatchUp).toBeGreaterThanOrEqual(3)
+    t.expect((pollsInBackoff, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((1, 1))
+  })
+
+  Async.it("Asks once, not twice, when a stream reconnects while polling", async t => {
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let (feed, _stats) = makeFeed(mock, ~getHeightRetryInterval=(~retry as _) => 10_000)
+    feed->HeightFeed.enableStream
+    let (_heights, _subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+
+    // A poll answered below the floor, so the loop is sleeping off a polling
+    // interval rather than a backoff.
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+    let pollsBeforeConnect = mock.getHeightOrThrowCalls->Array.length
+
+    // The connection a load balancer rotation replaces. The loop covering this
+    // waiter is already going to fetch the head, and asking twice does not make
+    // the endpoint answer sooner.
+    mock.setHeightSubscriptionStatus(Live)
+    await Utils.delay(0)
+
+    t.expect((pollsBeforeConnect, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((1, 2))
+  })
+
+  Async.it("Drops the backoff when a push shows the source answering after all", async t => {
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let (feed, _stats) = makeFeed(mock, ~getHeightRetryInterval=(~retry as _) => 60_000)
+    feed->HeightFeed.enableStream
+    let (_heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+
+    mock.setHeightSubscriptionStatus(Live)
+    mock.rejectGetHeightOrThrow(JsError.make("no"))
+    await Utils.delay(0)
+    let pollsInBackoff = mock.getHeightOrThrowCalls->Array.length
+
+    // The stream delivers, which answers this wait and shows the source is up.
+    mock.triggerHeightSubscription(101)
+    await Utils.delay(0)
+    subscription.unsubscribe()
+
+    // The next wait starts and the connection goes away under it. The minute the
+    // failed polls earned was owed by an endpoint that has since answered, so
+    // the fallback starts now rather than a minute from now.
+    let (_later, _laterSubscription) = feed->watch(~knownHeight=101, ~interval=() => 10_000)
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
+    await Utils.delay(0)
+
+    t.expect((pollsInBackoff, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((1, 2))
+  })
+
+  Async.it("Uses a height that answers after the loop gave up waiting for it", async t => {
+    Vi.useFakeTimers()
+    let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
+    let (feed, _stats) = makeFeed(mock, ~getHeightRetryInterval=(~retry as _) => 10_000)
+    let (heights, _subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+
+    await Vi.advanceTimersByTimeAsync(HeightFeed.pollTimeoutMillis + 1)
+    let heightsAfterTimeout = heights->Array.copy
+
+    // The endpoint was slower than the loop was willing to wait, but the head it
+    // came back with is real. Throwing it away would leave the wait asking again
+    // for something it has already been told.
+    mock.resolveGetHeightOrThrowAt(~index=0, 101)
+    await Vi.advanceTimersByTimeAsync(1)
+    Vi.useRealTimers()
+
+    t.expect((heightsAfterTimeout, heights, feed->HeightFeed.knownHeight)).toStrictEqual((
+      [],
+      [101],
+      101,
+    ))
   })
 })

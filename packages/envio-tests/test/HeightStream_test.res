@@ -4,6 +4,7 @@ let statusLabel = (status: Source.heightSubscriptionStatus) =>
   switch status {
   | Live => "live"
   | Down({reason} as down) =>
+    let reason = reason->Source.downReasonLabel
     switch down.detail {
     | Some(detail) => `down:${reason}:${detail}`
     | None => `down:${reason}`
@@ -15,7 +16,7 @@ let statusLabel = (status: Source.heightSubscriptionStatus) =>
 let reasonLabel = (status: Source.heightSubscriptionStatus) =>
   switch status {
   | Live => "live"
-  | Down({reason}) => `down:${reason}`
+  | Down({reason}) => `down:${reason->Source.downReasonLabel}`
   }
 
 type harness = {
@@ -105,9 +106,11 @@ describe("HeightStream reconnect driver", () => {
 
     let connectsAroundRetry = []
     for attempt in 0 to schedule->Array.length - 1 {
-      (harness->driverAt(attempt)).onFailure(~reason="closed")
+      (harness->driverAt(attempt)).onFailure(~reason=Source.Closed)
       connectsAroundRetry
-      ->Array.push(await harness->advanceThroughRetryWindow(~delay=schedule->Array.getUnsafe(attempt)))
+      ->Array.push(
+        await harness->advanceThroughRetryWindow(~delay=schedule->Array.getUnsafe(attempt)),
+      )
       ->ignore
     }
     harness.unsubscribe()
@@ -122,16 +125,16 @@ describe("HeightStream reconnect driver", () => {
     // on a slow chain, and every one of them was worth making, so what it
     // delivered must not be what decides this.
     let harness = makeHarness(~staleTimeout=60_000)
-    (harness->driverAt(0)).onFailure(~reason="closed")
+    (harness->driverAt(0)).onFailure(~reason=Source.Closed)
     await Vi.advanceTimersByTimeAsync(250)
-    (harness->driverAt(1)).onFailure(~reason="closed")
+    (harness->driverAt(1)).onFailure(~reason=Source.Closed)
     await Vi.advanceTimersByTimeAsync(500)
 
     let rotated = harness->driverAt(2)
     rotated.onConnected()
     await Vi.advanceTimersByTimeAsync(20_000)
     rotated.onHeight(101)
-    rotated.onFailure(~reason="closed")
+    rotated.onFailure(~reason=Source.Closed)
 
     let window = await harness->advanceThroughRetryWindow(~delay=250)
     harness.unsubscribe()
@@ -153,9 +156,11 @@ describe("HeightStream reconnect driver", () => {
       driver.onConnected()
       driver.onHeight(100 + attempt)
       await Vi.advanceTimersByTimeAsync(300)
-      driver.onFailure(~reason="closed")
+      driver.onFailure(~reason=Source.Closed)
       connectsAroundRetry
-      ->Array.push(await harness->advanceThroughRetryWindow(~delay=schedule->Array.getUnsafe(attempt)))
+      ->Array.push(
+        await harness->advanceThroughRetryWindow(~delay=schedule->Array.getUnsafe(attempt)),
+      )
       ->ignore
     }
     harness.unsubscribe()
@@ -175,9 +180,11 @@ describe("HeightStream reconnect driver", () => {
     let connectsAroundRetry = []
     for attempt in 0 to schedule->Array.length - 1 {
       await Vi.advanceTimersByTimeAsync(2_000)
-      (harness->driverAt(attempt)).onFailure(~reason="502")
+      (harness->driverAt(attempt)).onFailure(~reason=Source.Http(502))
       connectsAroundRetry
-      ->Array.push(await harness->advanceThroughRetryWindow(~delay=schedule->Array.getUnsafe(attempt)))
+      ->Array.push(
+        await harness->advanceThroughRetryWindow(~delay=schedule->Array.getUnsafe(attempt)),
+      )
       ->ignore
     }
     harness.unsubscribe()
@@ -199,9 +206,11 @@ describe("HeightStream reconnect driver", () => {
       let driver = harness->driverAt(attempt)
       driver.onConnected()
       await Vi.advanceTimersByTimeAsync(3_000)
-      driver.onFailure(~reason="closed")
+      driver.onFailure(~reason=Source.Closed)
       connectsAroundRetry
-      ->Array.push(await harness->advanceThroughRetryWindow(~delay=schedule->Array.getUnsafe(attempt)))
+      ->Array.push(
+        await harness->advanceThroughRetryWindow(~delay=schedule->Array.getUnsafe(attempt)),
+      )
       ->ignore
     }
     harness.unsubscribe()
@@ -222,7 +231,7 @@ describe("HeightStream reconnect driver", () => {
     let young = harness->driverAt(0)
     young.onConnected()
     await Vi.advanceTimersByTimeAsync(10_000)
-    young.onFailure(~reason=HeightStream.closedReason)
+    young.onFailure(~reason=Source.Closed)
     await Vi.advanceTimersByTimeAsync(250)
 
     // Served well past it, then the stream ended without an error, which is
@@ -230,7 +239,7 @@ describe("HeightStream reconnect driver", () => {
     let rotated = harness->driverAt(1)
     rotated.onConnected()
     await Vi.advanceTimersByTimeAsync(30_000)
-    rotated.onFailure(~reason=HeightStream.closedReason)
+    rotated.onFailure(~reason=Source.Closed)
     harness.unsubscribe()
 
     t.expect(harness.statuses).toStrictEqual([
@@ -249,7 +258,7 @@ describe("HeightStream reconnect driver", () => {
     await Vi.advanceTimersByTimeAsync(30_000)
     // Staleness and errors are named after what happened, so only an end with
     // nothing wrong with it can become a rotation.
-    driver.onFailure(~reason="error")
+    driver.onFailure(~reason=Source.TransportError)
     harness.unsubscribe()
 
     t.expect(harness.statuses).toStrictEqual(["live", "down:error"])
@@ -257,7 +266,7 @@ describe("HeightStream reconnect driver", () => {
 
   Async.it("Trims a failure detail that would flood the log", async t => {
     let harness = makeHarness()
-    (harness->driverAt(0)).onFailure(~reason="subscribe-rejected", ~detail=String.repeat("y", 500))
+    (harness->driverAt(0)).onFailure(~reason=Source.SubscribeRejected, ~detail=String.repeat("y", 500))
 
     await Vi.advanceTimersByTimeAsync(250)
     harness.unsubscribe()
@@ -271,8 +280,8 @@ describe("HeightStream reconnect driver", () => {
     let harness = makeHarness()
     let driver = harness->driverAt(0)
     driver.onConnected()
-    driver.onFailure(~reason="error")
-    driver.onFailure(~reason="closed")
+    driver.onFailure(~reason=Source.TransportError)
+    driver.onFailure(~reason=Source.Closed)
 
     await Vi.advanceTimersByTimeAsync(250)
     harness.unsubscribe()
@@ -391,7 +400,7 @@ describe("HeightStream reconnect driver", () => {
     let harness = makeHarness(~throwOnClose=true)
     let driver = harness->driverAt(0)
     driver.onConnected()
-    driver.onFailure(~reason="closed")
+    driver.onFailure(~reason=Source.Closed)
 
     await Vi.advanceTimersByTimeAsync(250)
     harness.unsubscribe()
@@ -406,7 +415,7 @@ describe("HeightStream reconnect driver", () => {
     // connect fails before it returns, so its socket is already superseded by
     // the time the driver gets the close function back. start() runs from the
     // retry timer, so a throw on that path is an uncaught exception.
-    let harness = makeHarness(~failOnConnect="closed", ~throwOnClose=true)
+    let harness = makeHarness(~failOnConnect=Source.Closed, ~throwOnClose=true)
 
     await Vi.advanceTimersByTimeAsync(250)
     harness.unsubscribe()
@@ -424,7 +433,7 @@ describe("HeightStream reconnect driver", () => {
     harness.unsubscribe()
 
     driver.onHeight(7)
-    driver.onFailure(~reason="closed")
+    driver.onFailure(~reason=Source.Closed)
     driver.onConnected()
     await Vi.advanceTimersByTimeAsync(60_000)
 
@@ -468,7 +477,7 @@ describe("HeightStream reconnect driver", () => {
   })
 
   Async.it("Retries rather than waits for staleness when connect fails immediately", async t => {
-    let harness = makeHarness(~failOnConnect="401")
+    let harness = makeHarness(~failOnConnect=Source.Http(401))
 
     let (beforeRetry, afterRetry) = await harness->advanceThroughRetryWindow(~delay=250)
     harness.unsubscribe()
@@ -476,7 +485,7 @@ describe("HeightStream reconnect driver", () => {
     t.expect((beforeRetry, afterRetry, harness.statuses)).toStrictEqual((
       1,
       2,
-      ["down:401", "down:401"],
+      ["down:http-401", "down:http-401"],
     ))
   })
 })
@@ -542,7 +551,7 @@ describe("HyperSyncSSE", () => {
     unsubscribe()
     await Promise.make((resolve, _reject) => server->MockRpcServer.close(() => resolve()))
 
-    t.expect((statuses, detailed)).toStrictEqual((["down:401"], [true]))
+    t.expect((statuses, detailed)).toStrictEqual((["down:http-401"], [true]))
   })
 
   Async.it("Delivers heights and reports a clean stream end as closed", async t => {
@@ -697,5 +706,104 @@ describe("EvmRpcWs", () => {
     await Promise.make((resolve, _reject) => server->WsServer.close(() => resolve()))
 
     t.expect(statuses).toStrictEqual(["down:subscribe-rejected", "down:subscribe-rejected"])
+  })
+
+  Async.it("Reports a rejection the provider answered with a null id", async t => {
+    // JSON-RPC answers a request it could not parse with an explicit null id.
+    // The subscribe is the only request this socket ever sends, so an error
+    // naming no id is still that subscription being refused.
+    let (server, url) = await listenWs(
+      socket =>
+        socket->WsServer.onMessage(
+          _data =>
+            socket->WsServer.send(`{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse error"}}`),
+        ),
+    )
+    let statuses = []
+    let unsubscribe = EvmRpcWs.subscribe(
+      ~wsUrl=url,
+      ~onHeight=_ => (),
+      ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
+    )
+
+    await Scenario.waitUntil(() => statuses->Array.length > 1, ~message="the height stream")
+    unsubscribe()
+    await Promise.make((resolve, _reject) => server->WsServer.close(() => resolve()))
+
+    t.expect(statuses).toStrictEqual(["down:subscribe-rejected", "down:subscribe-rejected"])
+  })
+
+  Async.it("Reads a subscription whose id the provider echoed as a string", async t => {
+    // JSON-RPC ids are any scalar, and gateways do echo an int id back as a
+    // string. Failing to match one costs the whole stale window before the
+    // rejection is reported, under a reason the provider never gave.
+    let (server, url) = await listenWs(
+      socket =>
+        socket->WsServer.onMessage(
+          _data =>
+            socket->WsServer.send(`{"jsonrpc":"2.0","id":"1","error":{"code":-32601,"message":"not supported"}}`),
+        ),
+    )
+    let statuses = []
+    let unsubscribe = EvmRpcWs.subscribe(
+      ~wsUrl=url,
+      ~onHeight=_ => (),
+      ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
+    )
+
+    await Scenario.waitUntil(() => statuses->Array.length > 1, ~message="the height stream")
+    unsubscribe()
+    await Promise.make((resolve, _reject) => server->WsServer.close(() => resolve()))
+
+    t.expect(statuses).toStrictEqual(["down:subscribe-rejected", "down:subscribe-rejected"])
+  })
+
+  Async.it("Confirms a subscription whose id came back as a string", async t => {
+    let (server, url) = await listenWs(
+      socket =>
+        socket->WsServer.onMessage(
+          data =>
+            if data->WsServer.toString->String.includes("eth_subscribe") {
+              socket->WsServer.send(`{"jsonrpc":"2.0","id":"1","result":"0xsub"}`)
+              socket->WsServer.send(`{"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"0xsub","result":{"number":"0x2a"}}}`)
+            },
+        ),
+    )
+    let statuses = []
+    let heights = []
+    let unsubscribe = EvmRpcWs.subscribe(
+      ~wsUrl=url,
+      ~onHeight=height => heights->Array.push(height)->ignore,
+      ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
+    )
+
+    await Scenario.waitUntil(() => heights->Array.length > 0, ~message="the height stream")
+    unsubscribe()
+    await Promise.make((resolve, _reject) => server->WsServer.close(() => resolve()))
+
+    t.expect((statuses, heights)).toStrictEqual((["live"], [42]))
+  })
+
+  Async.it("Ignores a success frame that answers no request this socket made", async t => {
+    // A stray success frame is not the subscribe being confirmed, and taking it
+    // for one reports a stream that is live while nothing was ever subscribed.
+    let (server, url) = await listenWs(
+      socket =>
+        socket->WsServer.onMessage(
+          _data => socket->WsServer.send(`{"jsonrpc":"2.0","id":7,"result":"0xsomethingelse"}`),
+        ),
+    )
+    let statuses = []
+    let unsubscribe = EvmRpcWs.subscribe(
+      ~wsUrl=url,
+      ~onHeight=_ => (),
+      ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
+    )
+
+    await Utils.delay(200)
+    unsubscribe()
+    await Promise.make((resolve, _reject) => server->WsServer.close(() => resolve()))
+
+    t.expect(statuses).toStrictEqual([])
   })
 })

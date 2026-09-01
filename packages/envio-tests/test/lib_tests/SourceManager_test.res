@@ -142,7 +142,8 @@ describe("SourceManager creation", () => {
       () => {
         SourceManager.make(~isRealtime=false, ~sources=[])
       },
-     "Invalid configuration, no data-source for historical sync provided")
+      "Invalid configuration, no data-source for historical sync provided",
+    )
     t->toThrowErrorEqual(
       () => {
         SourceManager.make(
@@ -150,7 +151,8 @@ describe("SourceManager creation", () => {
           ~sources=[MockSource.make([], ~sourceFor=Fallback).source],
         )
       },
-     "Invalid configuration, no data-source for historical sync provided")
+      "Invalid configuration, no data-source for historical sync provided",
+    )
   })
 })
 
@@ -300,14 +302,8 @@ describe("SourceManager source priority with Live sources", () => {
     "During isRealtime=true with Live source: recovery from secondary goes to Live (not Sync)",
     async t => {
       let syncMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow])
-      let liveMock = MockSource.make(
-        [#getHeightOrThrow, #getItemsOrThrow],
-        ~sourceFor=Realtime,
-      )
-      let fallbackMock = MockSource.make(
-        [#getHeightOrThrow, #getItemsOrThrow],
-        ~sourceFor=Fallback,
-      )
+      let liveMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Realtime)
+      let fallbackMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
       let newBlockStallTimeoutRealtime = 0
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
@@ -1309,14 +1305,13 @@ describe("SourceManager wait for new blocks", () => {
           ~reducedPolling=false,
         )
 
-      t.expect(
+      // The poll already in flight for sync answers the new wait rather than
+      // being stacked on, and the fallback is secondary so the new wait does not
+      // reach for it.
+      t.expect((
         sync.getHeightOrThrowCalls->Array.length,
-        ~message="A poll is already in flight for sync, and it answers the new wait rather than being stacked on",
-      ).toEqual(3)
-      t.expect(
         fallback.getHeightOrThrowCalls->Array.length,
-        ~message="Fallback is secondary, not polled immediately on next waitForNewBlock",
-      ).toEqual(2)
+      )).toStrictEqual((3, 2))
 
       sync.resolveGetHeightOrThrow(102)
 
@@ -1484,11 +1479,12 @@ describe("SourceManager.executeQuery", () => {
   Async.it("calls source.onReorg before retrying an inconsistent response", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
-    let p = sourceManager->SourceManager.executeQuery(
-      ~query={...mockQuery(), fromBlock: 10},
-      ~isRealtime=false,
-      ~knownHeight=100,
-    )
+    let p =
+      sourceManager->SourceManager.executeQuery(
+        ~query={...mockQuery(), fromBlock: 10},
+        ~isRealtime=false,
+        ~knownHeight=100,
+      )
 
     t.expect(sourceMock.reorgCallCount()).toEqual(0)
     switch sourceMock.getItemsOrThrowCalls {
@@ -1511,11 +1507,12 @@ describe("SourceManager.executeQuery", () => {
   Async.it("Retries a source that hasn't reached the queried block yet", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
-    let p = sourceManager->SourceManager.executeQuery(
-      ~query={...mockQuery(), fromBlock: 10},
-      ~isRealtime=false,
-      ~knownHeight=100,
-    )
+    let p =
+      sourceManager->SourceManager.executeQuery(
+        ~query={...mockQuery(), fromBlock: 10},
+        ~isRealtime=false,
+        ~knownHeight=100,
+      )
 
     // Every ecosystem's source raises this instead of building its own backoff,
     // so the retry cadence lives in one place.
@@ -1534,11 +1531,12 @@ describe("SourceManager.executeQuery", () => {
   Async.it("counts the requests a failed getItems still made", async t => {
     let sourceMock = MockSource.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[sourceMock.source])
-    let p = sourceManager->SourceManager.executeQuery(
-      ~query={...mockQuery(), fromBlock: 10},
-      ~isRealtime=false,
-      ~knownHeight=100,
-    )
+    let p =
+      sourceManager->SourceManager.executeQuery(
+        ~query={...mockQuery(), fromBlock: 10},
+        ~isRealtime=false,
+        ~knownHeight=100,
+      )
 
     // The native client reports the timings of the requests it made before
     // giving up, so a source failing under load still shows up in its metrics.
@@ -1748,10 +1746,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     "When switching to secondary via waitForNewBlock, immediately recovers to primary since it never failed",
     async t => {
       let syncMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow])
-      let fallbackMock = MockSource.make(
-        [#getHeightOrThrow, #getItemsOrThrow],
-        ~sourceFor=Fallback,
-      )
+      let fallbackMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
       let newBlockStallTimeout = 0
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
@@ -1806,10 +1801,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     "After primary fails in executeQuery, waits for recovery timeout before retrying it",
     async t => {
       let syncMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow])
-      let fallbackMock = MockSource.make(
-        [#getHeightOrThrow, #getItemsOrThrow],
-        ~sourceFor=Fallback,
-      )
+      let fallbackMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
       let recoveryTimeout = 5.0
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
@@ -1974,14 +1966,8 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     "When switching to secondary via waitForNewBlock in live mode, immediately recovers to live primary",
     async t => {
       let syncMock = MockSource.make([#getHeightOrThrow])
-      let liveMock = MockSource.make(
-        [#getHeightOrThrow, #getItemsOrThrow],
-        ~sourceFor=Realtime,
-      )
-      let fallbackMock = MockSource.make(
-        [#getHeightOrThrow, #getItemsOrThrow],
-        ~sourceFor=Fallback,
-      )
+      let liveMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Realtime)
+      let fallbackMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Fallback)
       let newBlockStallTimeoutRealtime = 0
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
@@ -2773,10 +2759,7 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
     {retry: 3},
     async t => {
       let syncMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow])
-      let liveMock = MockSource.make(
-        [#getHeightOrThrow, #getItemsOrThrow],
-        ~sourceFor=Realtime,
-      )
+      let liveMock = MockSource.make([#getHeightOrThrow, #getItemsOrThrow], ~sourceFor=Realtime)
       let newBlockStallTimeoutRealtime = 5
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
@@ -2885,11 +2868,9 @@ describe("SourceManager height subscription", () => {
         ~knownHeight=101,
         ~reducedPolling=false,
       )
-    t.expect(
-      mock.getHeightOrThrowCalls->Array.length,
-      ~message="Should only have the poll covering the stream until it connected, and the catch-up on connect",
-    ).toEqual(2)
-    t.expect(await p2, ~message="Should immediately return cached height").toEqual(105)
+    // Only the poll that covered the source until the stream connected: the
+    // push that followed accounted for the head, so nothing asked again.
+    t.expect((mock.getHeightOrThrowCalls->Array.length, await p2)).toStrictEqual((1, 105))
   })
 
   Async.it(
@@ -2918,14 +2899,12 @@ describe("SourceManager height subscription", () => {
           ~knownHeight=101,
           ~reducedPolling=false,
         )
-      t.expect(
-        mock.getHeightOrThrowCalls->Array.length,
-        ~message="Should only have the poll covering the stream until it connected, and the catch-up on connect",
-      ).toEqual(2)
+      // Only the poll that covered the source until the stream connected.
+      let pollsWhileLive = mock.getHeightOrThrowCalls->Array.length
 
       // Trigger new height
       mock.triggerHeightSubscription(102)
-      t.expect(await p2, ~message="Should wait for and resolve with new height").toEqual(102)
+      t.expect((pollsWhileLive, await p2)).toStrictEqual((1, 102))
     },
   )
 
@@ -3009,10 +2988,7 @@ describe("SourceManager height subscription", () => {
   Async.it("Stale SSE heights do not multiply concurrent /height polls (#1270)", async t => {
     let stallTimeout = 200
     let pollingInterval = 100
-    let mock = MockSource.make(
-      [#getHeightOrThrow, #createHeightSubscription],
-      ~pollingInterval,
-    )
+    let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[mock.source],
@@ -3141,8 +3117,10 @@ describe("SourceManager height subscription", () => {
         {
           SourceManager.sourceName: "MockSource",
           chainId: 1->ChainId.fromInt,
-          connectCount: 1,
-          disconnects: [("unsubscribed", 1)],
+          stream: {
+            HeightFeed.connectCount: 1,
+            disconnectsByReason: [("unsubscribed", 1)],
+          },
         },
       ],
     ))
@@ -3218,7 +3196,7 @@ describe("SourceManager height subscription", () => {
     await Utils.delay(0)
     let pollsWhileLive = mock.getHeightOrThrowCalls->Array.length - pollsBefore
 
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     let pollsAfterDown = mock.getHeightOrThrowCalls->Array.length - pollsBefore
 
@@ -3231,10 +3209,7 @@ describe("SourceManager height subscription", () => {
 
   Async.it("Polls at the source's interval while the subscription has never connected", async t => {
     let pollingInterval = 10
-    let mock = MockSource.make(
-      [#getHeightOrThrow, #createHeightSubscription],
-      ~pollingInterval,
-    )
+    let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[mock.source],
@@ -3267,10 +3242,7 @@ describe("SourceManager height subscription", () => {
 
   Async.it("Runs a single poll loop no matter how often the stream reports down", async t => {
     let pollingInterval = 10_000
-    let mock = MockSource.make(
-      [#getHeightOrThrow, #createHeightSubscription],
-      ~pollingInterval,
-    )
+    let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[mock.source],
@@ -3287,7 +3259,7 @@ describe("SourceManager height subscription", () => {
       )
     await Utils.delay(0)
     for _retry in 1 to 5 {
-      mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+      mock.setHeightSubscriptionStatus(Down({reason: Closed}))
       await Utils.delay(0)
     }
 
@@ -3301,10 +3273,7 @@ describe("SourceManager height subscription", () => {
 
   Async.it("Stops the fallback poll loop once the subscription reconnects", async t => {
     let pollingInterval = 10
-    let mock = MockSource.make(
-      [#getHeightOrThrow, #createHeightSubscription],
-      ~pollingInterval,
-    )
+    let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[mock.source],
@@ -3319,7 +3288,7 @@ describe("SourceManager height subscription", () => {
         ~reducedPolling=false,
       )
     await Utils.delay(0)
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
@@ -3345,10 +3314,7 @@ describe("SourceManager height subscription", () => {
   Async.it("Backs the fallback off when the source keeps failing", async t => {
     let pollingInterval = 10
     let retryInterval = 300
-    let mock = MockSource.make(
-      [#getHeightOrThrow, #createHeightSubscription],
-      ~pollingInterval,
-    )
+    let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[mock.source],
@@ -3364,7 +3330,7 @@ describe("SourceManager height subscription", () => {
         ~reducedPolling=false,
       )
     await Utils.delay(0)
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     let pollsBefore = mock.getHeightOrThrowCalls->Array.length
 
@@ -3399,7 +3365,7 @@ describe("SourceManager height subscription", () => {
       )
     await Utils.delay(0)
 
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
@@ -3458,7 +3424,7 @@ describe("SourceManager height subscription", () => {
         ~reducedPolling=true,
       )
     await Utils.delay(0)
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     let pollsAfterDown = mock.getHeightOrThrowCalls->Array.length - pollsBefore
 
@@ -3483,7 +3449,7 @@ describe("SourceManager height subscription", () => {
     )
     await subscribeAndGoLive(mock, sourceManager, ~knownHeight=100)
 
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
     mock.resolveGetHeightOrThrow(105)
@@ -3521,7 +3487,7 @@ describe("SourceManager height subscription", () => {
         ~reducedPolling=false,
       )
     await Utils.delay(0)
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
@@ -3538,10 +3504,7 @@ describe("SourceManager height subscription", () => {
 
   Async.it("Keeps the fallback polling when the reconnect catch-up fails", async t => {
     let pollingInterval = 20
-    let mock = MockSource.make(
-      [#getHeightOrThrow, #createHeightSubscription],
-      ~pollingInterval,
-    )
+    let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[mock.source],
@@ -3559,7 +3522,7 @@ describe("SourceManager height subscription", () => {
         ~reducedPolling=false,
       )
     await Utils.delay(0)
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
@@ -3597,7 +3560,7 @@ describe("SourceManager height subscription", () => {
         ~reducedPolling=false,
       )
     await Utils.delay(0)
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
@@ -3614,10 +3577,7 @@ describe("SourceManager height subscription", () => {
 
   Async.it("Runs one poll loop when a push settles a wait without advancing it", async t => {
     let pollingInterval = 20
-    let mock = MockSource.make(
-      [#getHeightOrThrow, #createHeightSubscription],
-      ~pollingInterval,
-    )
+    let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval)
     let sourceManager = SourceManager.make(
       ~isRealtime=true,
       ~sources=[mock.source],
@@ -3637,7 +3597,7 @@ describe("SourceManager height subscription", () => {
 
     // A reconnect ends the fallback loop, so the wait takes the polled 105 even
     // though the stream itself is still only caught up to 101.
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     mock.resolveGetHeightOrThrow(105)
     await Utils.delay(0)
@@ -3646,7 +3606,7 @@ describe("SourceManager height subscription", () => {
     // reached, which the wait takes even though the stream is still at 101.
     await Utils.delay(pollingInterval * 2)
 
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     // A load-balanced backend can report a head behind the one a poll saw. It
     // settles this wait without moving it forward, which must still retire the
@@ -3749,7 +3709,7 @@ describe("SourceManager height subscription", () => {
 
     // A reconnect part way through the wait, whose catch-up succeeds: that takes
     // the stream at its word again, and it goes quiet in exactly the same way.
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
     mock.resolveGetHeightOrThrow(100)
@@ -3767,10 +3727,13 @@ describe("SourceManager height subscription", () => {
     )).toStrictEqual((true, true, 101))
   })
 
-  Async.it("Polls a recruited fallback whose own stream has gone quiet", async t => {
-    // Long enough that the re-armed stall timer cannot fire again while the
-    // first wait is being driven to its answer.
-    let stallTimeout = 200
+  Async.it("Recruits a stalled wait's fallback to poll, without opening its stream", async t => {
+    // A stream outlives the wait that asked for it and nothing takes it back
+    // off, so a fallback that subscribed on the strength of one stall would hold
+    // a connection — or, for an unreachable url, a reconnect loop — for the life
+    // of the process, long after the primary recovered. Recruiting is for
+    // polling, which is what answers the wait either way.
+    let stallTimeout = 50
     let sync = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
     let fallback = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
@@ -3783,42 +3746,23 @@ describe("SourceManager height subscription", () => {
       ~newBlockStallTimeoutRealtime=stallTimeout,
     )
 
-    // A first wait stalls, recruits the fallback, and its stream connects and
-    // proves itself — which is what leaves it holding a live stream next time.
-    let first =
+    let waiting =
       sourceManager->SourceManager.waitForNewBlock(
         ~isRealtime=true,
         ~knownHeight=100,
         ~reducedPolling=false,
       )
-    await Utils.delay(stallTimeout + 20)
-    fallback.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
-    fallback.resolveGetHeightOrThrow(100)
-    await Utils.delay(10)
-    fallback.triggerHeightSubscription(101)
-    t.expect(await first).toEqual(101)
-    let pollsAfterFirst = fallback.getHeightOrThrowCalls->Array.length
-
-    // The next wait stalls too, and recruits it again. Its stream still claims
-    // to be live, and a whole window has passed with nothing heard from it —
-    // exactly the claim a primary's stall stops taking at face value.
-    let second =
-      sourceManager->SourceManager.waitForNewBlock(
-        ~isRealtime=true,
-        ~knownHeight=101,
-        ~reducedPolling=false,
-      )
     let pollsBeforeStall = fallback.getHeightOrThrowCalls->Array.length
     await Utils.delay(stallTimeout + 20)
     let pollsAfterStall = fallback.getHeightOrThrowCalls->Array.length
-    fallback.resolveGetHeightOrThrow(102)
+    fallback.resolveGetHeightOrThrow(101)
 
     t.expect((
-      pollsBeforeStall === pollsAfterFirst,
-      pollsAfterStall > pollsBeforeStall,
-      await second,
-    )).toStrictEqual((true, true, 102))
+      pollsBeforeStall,
+      pollsAfterStall > 0,
+      fallback.heightSubscriptionCalls->Array.length,
+      await waiting,
+    )).toStrictEqual((0, true, 0, 101))
   })
 
   Async.it("Reports height stream connects and disconnects as metrics", async t => {
@@ -3828,8 +3772,9 @@ describe("SourceManager height subscription", () => {
       ~sources=[mock.source],
       ~newBlockStallTimeoutRealtime=2_000,
     )
-    // Reported from the start: the source can subscribe, and a stream that has
-    // not come up yet is exactly what zero connects says.
+    // Nothing until a wait asks for a stream. A source that can subscribe but
+    // has not been asked to is not a stream failing to connect, and reporting it
+    // as zero connects would read as one for the whole of a backfill.
     let samplesBeforeSubscribing = sourceManager->SourceManager.getHeightStreamSamples
     await subscribeAndGoLive(mock, sourceManager, ~knownHeight=100)
     let samplesWhileHealthy = sourceManager->SourceManager.getHeightStreamSamples
@@ -3844,12 +3789,12 @@ describe("SourceManager height subscription", () => {
     // One outage per connection lost, whatever the stream does while it is down:
     // the 401 and the second `closed` are retries that failed, not connections
     // that dropped.
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
-    mock.setHeightSubscriptionStatus(Down({reason: "401"}))
-    mock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
+    mock.setHeightSubscriptionStatus(Down({reason: Http(401)}))
+    mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
-    mock.setHeightSubscriptionStatus(Down({reason: "rotated"}))
+    mock.setHeightSubscriptionStatus(Down({reason: Rotated}))
     mock.setHeightSubscriptionStatus(Live)
     await Utils.delay(0)
     mock.resolveGetHeightOrThrow(102)
@@ -3860,30 +3805,27 @@ describe("SourceManager height subscription", () => {
       samplesWhileHealthy,
       sourceManager->SourceManager.getHeightStreamSamples,
     )).toStrictEqual((
+      [],
       [
         {
           SourceManager.sourceName: "MockSource",
           chainId: 1->ChainId.fromInt,
-          connectCount: 0,
-          disconnects: [],
+          stream: {
+            HeightFeed.connectCount: 1,
+            disconnectsByReason: [],
+          },
         },
       ],
       [
         {
           SourceManager.sourceName: "MockSource",
           chainId: 1->ChainId.fromInt,
-          connectCount: 1,
-          disconnects: [],
-        },
-      ],
-      [
-        {
-          SourceManager.sourceName: "MockSource",
-          chainId: 1->ChainId.fromInt,
-          // Three connects against two disconnects: the stream is up, which is
-          // what the pair says without a gauge to say it.
-          connectCount: 3,
-          disconnects: [("closed", 1), ("rotated", 1)],
+          stream: {
+            // Three connects against two disconnects: the stream is up, which is
+            // what the pair says without a gauge to say it.
+            HeightFeed.connectCount: 3,
+            disconnectsByReason: [("closed", 1), ("rotated", 1)],
+          },
         },
       ],
     ))
@@ -3910,8 +3852,8 @@ describe("SourceManager height subscription", () => {
     // retries are attempts at a connection that never existed, so there is
     // nothing to have disconnected, and the connect count is the only thing
     // that says the stream is down.
-    mock.setHeightSubscriptionStatus(Down({reason: "connect-failed"}))
-    mock.setHeightSubscriptionStatus(Down({reason: "connect-failed"}))
+    mock.setHeightSubscriptionStatus(Down({reason: ConnectFailed}))
+    mock.setHeightSubscriptionStatus(Down({reason: ConnectFailed}))
     await Utils.delay(0)
     let samplesWhileDown = sourceManager->SourceManager.getHeightStreamSamples
 
@@ -3925,16 +3867,20 @@ describe("SourceManager height subscription", () => {
         {
           SourceManager.sourceName: "MockSource",
           chainId: 1->ChainId.fromInt,
-          connectCount: 0,
-          disconnects: [],
+          stream: {
+            HeightFeed.connectCount: 0,
+            disconnectsByReason: [],
+          },
         },
       ],
       [
         {
           SourceManager.sourceName: "MockSource",
           chainId: 1->ChainId.fromInt,
-          connectCount: 1,
-          disconnects: [],
+          stream: {
+            HeightFeed.connectCount: 1,
+            disconnectsByReason: [],
+          },
         },
       ],
     ))
@@ -3962,7 +3908,7 @@ describe("SourceManager height subscription", () => {
         ~reducedPolling=false,
       )
     await Utils.delay(0)
-    stuckMock.setHeightSubscriptionStatus(Down({reason: "closed"}))
+    stuckMock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
 
     // The other source decides the wait while the stuck one is mid-poll.

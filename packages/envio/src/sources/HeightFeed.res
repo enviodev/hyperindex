@@ -3,6 +3,11 @@ The current height of one source, however it arrives: pushed by a height stream
 while one is connected, polled while one isn't. Callers register interest and get
 called back; they never learn which path answered.
 
+One invariant carries the module: while anybody is waiting, either a stream
+connection this has seen deliver is covering the source, or the poll loop is
+running. `shouldPoll` states it, and `syncPolling` is the only thing that acts on
+it, so no caller has to work out which of its changes needs a loop started.
+
 A waiter that loses a race has to be removed, and a promise reaction cannot be.
 */
 
@@ -18,15 +23,52 @@ type waiter = {
   // a stream that says it is connected. It belongs to the waiter rather than the
   // feed because two waits can overlap on one source after a rollback, and one
   // of them giving up on the stream is not the other one doing so.
-  mutable poked: bool,
+  mutable distrustsStream: bool,
 }
 
 // What a waiter's own wait can do to it afterwards. Both are inert once the
 // waiter is gone, which is what makes them safe to hold past the answer.
 type subscription = {
   unsubscribe: unit => unit,
-  poke: unit => unit,
+  // Stop taking a connected stream's word for it and poll alongside it until it
+  // delivers something. A transport that keeps its keep-alives flowing while its
+  // heights stop is the one failure its own staleness detector cannot see.
+  distrustStream: unit => unit,
 }
+
+// What this feed knows about its source's height stream. `Connected` is the
+// transport's claim; `proven` is this module having seen that connection account
+// for the head it came up on. A connect only ever delivers the *next* block, so
+// until a height arrives on it, or a request made after it came up answers, the
+// head it connected above is unaccounted for and polling has to stay.
+type streamState =
+  // Never asked for — the source cannot push heights, or its chain has not
+  // reached realtime yet. Nothing about it is worth reporting, because nothing
+  // about it is failing.
+  | NeverEnabled
+  | Disconnected
+  | Connected({proven: bool})
+
+// Why the poll loop is sleeping, which is what decides whether anything may cut
+// the sleep short. A cadence is a choice about how often to ask a working
+// endpoint, so anything that needs an answer sooner is free to end it. A backoff
+// is the wait a failing endpoint earned, and ending it early is how a provider
+// already in trouble gets asked harder by the very events its trouble causes —
+// its own stream dropping, most of all.
+type pollSleep = Cadence | Backoff
+
+// Mutable because a sleep can stop being a backoff while it is being slept: the
+// endpoint answering is what the wait was ever about, and it can answer through
+// the stream rather than through the poll the loop is backing off from.
+type sleeping = {mutable kind: pollSleep, wake: unit => unit}
+
+type pollOutcome =
+  | Answered(Source.getHeightResponse)
+  | Failed(exn)
+  // The source did not answer inside the window. One loop covers this feed and
+  // it waits on one request at a time, so a call that never settles would stop
+  // the height moving for the rest of the process rather than for one poll.
+  | TimedOut
 
 type t = {
   source: Source.t,
@@ -35,25 +77,18 @@ type t = {
   getHeightRetryInterval: (~retry: int) => int,
   mutable knownHeight: int,
   mutable waiters: array<waiter>,
-  mutable unsubscribe: option<unit => unit>,
-  mutable streamLive: bool,
-  // The stream connected but has not shown yet that it closed the gap the
-  // connect left: a connect only ever delivers the *next* block, so until its
-  // catch-up lands or a height arrives, the head it connected on is unaccounted
-  // for.
-  mutable connectionUnproven: bool,
+  mutable stream: streamState,
+  // Bumped whenever the stream changes hands. A height request made for one
+  // connection can land after another has replaced it, and what it said about
+  // the connection that asked is no longer about the one in place.
+  mutable generation: int,
+  mutable closeStream: option<unit => unit>,
   mutable polling: bool,
-  // Ends the poll loop's sleep early, so a waiter arriving mid-interval doesn't
-  // wait out a sleep that started for someone else.
-  mutable wakePoll: option<unit => unit>,
+  mutable sleeping: option<sleeping>,
   // Outlives a single wait on purpose. Waits come and go once a block, and
   // restarting the ramp with each one would keep an endpoint that fails every
   // time pinned near the base delay forever. A poll that answers clears it.
   mutable pollRetry: int,
-  // Bumped whenever the connection in place changes hands. A request made for
-  // one connection can land after another has replaced it, and what it says
-  // about the connection that asked is no longer about the one in place.
-  mutable connectionGeneration: int,
   mutable connects: int,
   disconnects: dict<int>,
   // A stopped feed never subscribes again: `stop` is the capability verdict that
@@ -71,69 +106,80 @@ let make = (~source: Source.t, ~recordRequestStats, ~getHeightRetryInterval): t 
   getHeightRetryInterval,
   knownHeight: 0,
   waiters: [],
-  unsubscribe: None,
-  streamLive: false,
-  connectionUnproven: false,
+  stream: NeverEnabled,
+  generation: 0,
+  closeStream: None,
   polling: false,
-  wakePoll: None,
+  sleeping: None,
   pollRetry: 0,
-  connectionGeneration: 0,
   connects: 0,
   disconnects: Dict.make(),
   stopped: false,
   unreadableWarned: false,
 }
 
-type streamSample = {connectCount: int, disconnects: array<(string, int)>}
+type streamSample = {connectCount: int, disconnectsByReason: array<(string, int)>}
 
 let knownHeight = (feed: t) => feed.knownHeight
 
-// None for a source that cannot subscribe at all, so a chain that only ever
-// polls renders none of the height stream families rather than sitting at zero
-// on them.
+// None until this feed has asked for a stream, so a chain that only ever polls —
+// because its source cannot subscribe, or because it is still backfilling and
+// nothing has wanted a stream yet — renders none of the height stream families
+// rather than sitting at a flat zero on them, which reads as a stream that
+// cannot connect. Once asked for, a stream that never came up is exactly what
+// these counters are for.
 let sample = (feed: t): option<streamSample> =>
-  switch feed.source.createHeightSubscription {
-  | Some(_) =>
+  switch feed.stream {
+  | NeverEnabled => None
+  | Disconnected | Connected(_) =>
     Some({
       connectCount: feed.connects,
-      // Sorted because a dict orders integer-like keys (HTTP statuses) ahead of
-      // the named reasons, which would make the rendered order depend on which
-      // reasons a stream happened to hit.
-      disconnects: feed.disconnects
+      // Sorted so the rendered order doesn't depend on which reasons a stream
+      // happened to hit in which order.
+      disconnectsByReason: feed.disconnects
       ->Dict.toArray
       ->Array.toSorted(((a, _), (b, _)) => String.compare(a, b)),
     })
-  | None => None
   }
 
+// What this feed owes, in one place. Everything else here exists to keep it true.
 let shouldPoll = (feed: t) =>
   feed.waiters->Array.length > 0 &&
-    (!feed.streamLive ||
-    feed.connectionUnproven ||
-    feed.waiters->Array.some(waiter => waiter.poked))
+    switch feed.stream {
+    | NeverEnabled | Disconnected => true
+    | Connected({proven}) => !proven || feed.waiters->Array.some(waiter => waiter.distrustsStream)
+    }
 
-let wake = (feed: t) =>
-  switch feed.wakePoll {
-  | Some(wakePoll) => wakePoll()
+// Ends a sleep that is only a cadence, and leaves a backoff alone. Safe to call
+// from anywhere, including from things that have just made the loop's job
+// smaller: the loop re-reads `shouldPoll` when it wakes and stops if there is
+// nothing left to do.
+let wakeCadence = (feed: t) =>
+  switch feed.sleeping {
+  | Some({kind: Cadence, wake}) => wake()
+  | Some({kind: Backoff}) | None => ()
+  }
+
+// The source answered, so the wait its failures earned is no longer owed —
+// including one already being slept. Without this a source that recovers through
+// its stream, and then loses the stream again, would sit out the rest of a
+// backoff earned before any of that, with nothing covering it.
+let clearBackoff = (feed: t) => {
+  feed.pollRetry = 0
+  switch feed.sleeping {
+  | Some(sleeping) => sleeping.kind = Cadence
   | None => ()
   }
-
-// The loop sleeps between polls, so anything that takes away its reason to run
-// has to wake it. Left asleep it would hold `polling`, and the next thing that
-// needs a poll — a stream dropping, a source being benched — would sit out an
-// interval that was scheduled before any of it happened.
-let wakeIfIdle = (feed: t) =>
-  if !(feed->shouldPoll) {
-    feed->wake
-  }
+}
 
 // Collect before firing: a callback is free to cancel waiters — the wait above
 // cancels all of its own the moment one answers — and iterating the live array
 // while it changes underneath is how that goes wrong.
 let fireWaiters = (feed: t, height) => {
-  let satisfied = feed.waiters->Array.filter(waiter => height > waiter.knownHeight)
+  let isSatisfied = (waiter: waiter) => height > waiter.knownHeight
+  let satisfied = feed.waiters->Array.filter(isSatisfied)
   if satisfied->Array.length > 0 {
-    feed.waiters = feed.waiters->Array.filter(waiter => height <= waiter.knownHeight)
+    feed.waiters = feed.waiters->Array.filter(waiter => !isSatisfied(waiter))
     satisfied->Array.forEach(waiter =>
       try waiter.onHeight(height) catch {
       | exn =>
@@ -145,7 +191,7 @@ let fireWaiters = (feed: t, height) => {
     )
     // Answering the last waiter is one of the ways the loop stops being needed,
     // and the callbacks just run may have cancelled others.
-    feed->wakeIfIdle
+    feed->wakeCadence
   }
 }
 
@@ -155,19 +201,94 @@ let recordHeight = (feed: t, height) =>
     feed->fireWaiters(height)
   }
 
-let sleep = (feed: t, millis) =>
+// What an answer means for the feed, whoever asked for it. The poll loop and a
+// connect's catch-up both reach this, and an answer is worth the same from
+// either: the endpoint responded, and it responded with the head.
+let recordAnswer = (feed: t, ~generation, res: Source.getHeightResponse) => {
+  feed.recordRequestStats(res.requestStats)
+  feed->clearBackoff
+  // Fetching the head is the whole job a connect's catch-up exists to do, so any
+  // answer closes that gap too — as long as it was asked for after the
+  // connection in place came up. A request older than the connection saw a head
+  // from before it existed, and a catch-up that lands after its own connection
+  // was replaced would otherwise retire the polling covering a replacement that
+  // has delivered nothing.
+  switch feed.stream {
+  | Connected(_) if generation === feed.generation => feed.stream = Connected({proven: true})
+  | _ => ()
+  }
+  feed->recordHeight(res.height)
+  // Answering may have been the last of the loop's reasons to run. Costs nothing
+  // when the loop itself is the caller: it only sleeps after this returns.
+  feed->wakeCadence
+}
+
+// An answer that arrived after the loop stopped waiting for it. The height is
+// real and the request was paid for either way, so recording it saves asking
+// again for something already known — but it does not clear the retry ramp the
+// way a timely answer does, because taking longer than the whole timeout is the
+// endpoint being unwell rather than well.
+let recordLateAnswer = (feed: t, res: Source.getHeightResponse) => {
+  feed.recordRequestStats(res.requestStats)
+  feed->recordHeight(res.height)
+}
+
+// A source that has not answered in this long is not going to. Far longer than
+// any healthy getHeight, so a merely slow endpoint answers first and nothing
+// here fires in normal running.
+let pollTimeoutMillis = 60_000
+
+// One height request, with a bound on how long the caller waits for it. The
+// request itself is not cancelled and a late answer is not thrown away: it is
+// still the head the endpoint had. Only the waiting is bounded, so an endpoint
+// that never settles costs one request rather than the loop waiting on it — or,
+// on the catch-up path that nothing waits on, a promise per connect that is
+// never released.
+let heightWithin = (feed: t, ~millis): promise<pollOutcome> => {
+  let timeoutId = ref(None)
+  let timedOut = ref(false)
+  let request = feed.source.getHeightOrThrow()
+
+  request
+  ->Promise.thenResolve(res =>
+    if timedOut.contents {
+      feed->recordLateAnswer(res)
+    }
+  )
+  ->Promise.catch(_ => Promise.resolve())
+  ->Promise.ignore
+
+  Promise.race([
+    request
+    ->Promise.thenResolve(res => Answered(res))
+    ->Promise.catch(exn => Promise.resolve(Failed(exn))),
+    Promise.make((resolve, _reject) => timeoutId := Some(setTimeout(() => {
+            timedOut := true
+            resolve(TimedOut)
+          }, millis))),
+  ])->Promise.thenResolve(outcome => {
+    switch timeoutId.contents {
+    | Some(id) => clearTimeout(id)
+    | None => ()
+    }
+    outcome
+  })
+}
+
+let sleep = (feed: t, ~kind, millis) =>
   Promise.make((resolve, _reject) => {
     let timeoutId = setTimeout(() => {
-      feed.wakePoll = None
+      feed.sleeping = None
       resolve()
     }, millis)
-    feed.wakePoll = Some(
-      () => {
+    feed.sleeping = Some({
+      kind,
+      wake: () => {
         clearTimeout(timeoutId)
-        feed.wakePoll = None
+        feed.sleeping = None
         resolve()
       },
-    )
+    })
   })
 
 let currentInterval = (feed: t) =>
@@ -176,164 +297,90 @@ let currentInterval = (feed: t) =>
   | None => feed.source.pollingInterval
   }
 
-// A source that has not answered in this long is not going to. One loop covers
-// the feed, and it waits on one request at a time, so an unbounded call — a
-// source with no timeout of its own, or a socket that died without saying so —
-// would stop the height moving for the rest of the process rather than for one
-// poll. Far longer than any healthy getHeight, so a merely slow endpoint answers
-// first and nothing here fires in normal running.
-let pollTimeoutMillis = 60_000
-
-// Bounds a height request. A call that never settles then costs one request
-// rather than the loop that is waiting on it, or — on the catch-up path, which
-// nothing waits on — a promise per connect that is never released.
-let heightWithin = async (feed: t, ~millis) => {
-  let timeoutId = ref(None)
-  let clearRequestTimeout = () =>
-    switch timeoutId.contents {
-    | Some(id) => clearTimeout(id)
-    | None => ()
-    }
-  try {
-    let answered = await Promise.race([
-      feed.source.getHeightOrThrow()->Promise.thenResolve(res => Some(res)),
-      Promise.make((resolve, _reject) => {
-        timeoutId := Some(setTimeout(() => resolve(None), millis))
-      }),
-    ])
-    clearRequestTimeout()
-    answered
-  } catch {
-  | exn =>
-    clearRequestTimeout()
-    throw(exn)
-  }
-}
-
 let nextRetryInterval = (feed: t) => {
   let retryInterval = feed.getHeightRetryInterval(~retry=feed.pollRetry)
   feed.pollRetry = feed.pollRetry + 1
   retryInterval
 }
 
-// What an answer means for the feed, whoever asked for it. The poll loop and a
-// connect's catch-up both reach this, and an answer is worth the same from
-// either: the endpoint responded, and it responded with the head.
-let recordAnswer = (feed: t, ~generation, res: Source.getHeightResponse) => {
-  feed.recordRequestStats(res.requestStats)
-  feed.pollRetry = 0
-  // Fetching the head is the whole job a connect's catch-up exists to do, so any
-  // answer closes that gap too — as long as it was asked for the connection
-  // still in place. Without this a stream whose delivery lags the polling
-  // interval would never clear the flag: the poll would reach each head first,
-  // and the push behind it would arrive already known. A catch-up that lands
-  // after its connection was replaced would otherwise retire the polling
-  // covering a replacement that has delivered nothing.
-  if generation === feed.connectionGeneration {
-    feed.connectionUnproven = false
-  }
-  feed->recordHeight(res.height)
-  // Answering may have been the last of the loop's reasons to run. Costs nothing
-  // when the loop itself is the caller: it only sleeps after this returns.
-  feed->wakeIfIdle
-}
-
-// One poll, with the escalating backoff a failing endpoint earns: it is usually
-// the same endpoint whose stream just dropped, so asking again at the polling
-// interval would lean on something already in trouble.
+// One poll, and what the loop should wait before the next: the source's own
+// cadence after an answer, or the escalating backoff a failing endpoint earns.
+// It is usually the same endpoint whose stream just dropped, so asking again at
+// the polling interval would lean on something already in trouble.
 let pollOnce = async (feed: t) => {
-  let generation = feed.connectionGeneration
-  try {
-    switch await feed->heightWithin(~millis=pollTimeoutMillis) {
-    | None =>
-      let retryInterval = feed->nextRetryInterval
-      feed.logger->Logging.childTrace({
-        "msg": `Height retrieval from ${feed.source.name} source did not answer within ${(pollTimeoutMillis /
-            1000)->Int.toString}s. Retrying in ${retryInterval->Int.toString}ms.`,
-      })
-      retryInterval
-    | Some(res) =>
-      feed->recordAnswer(~generation, res)
-      feed->currentInterval
-    }
-  } catch {
-  | exn =>
+  let generation = feed.generation
+  switch await feed->heightWithin(~millis=pollTimeoutMillis) {
+  | Answered(res) =>
+    feed->recordAnswer(~generation, res)
+    (feed->currentInterval, Cadence)
+  | TimedOut =>
+    let retryInterval = feed->nextRetryInterval
+    feed.logger->Logging.childTrace({
+      "msg": `Height retrieval from ${feed.source.name} source did not answer within ${(pollTimeoutMillis / 1000)
+          ->Int.toString}s. Retrying in ${retryInterval->Int.toString}ms.`,
+    })
+    (retryInterval, Backoff)
+  | Failed(exn) =>
     let retryInterval = feed->nextRetryInterval
     feed.logger->Logging.childTrace({
       "msg": `Height retrieval from ${feed.source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
       "err": exn->Utils.prettifyExn,
     })
-    retryInterval
+    (retryInterval, Backoff)
   }
 }
 
 let runPollLoop = async (feed: t) => {
-  // Nothing inside is meant to throw — a poll's failure is a value, and a
-  // waiter's is caught where it fires — but the flag has to come back down
-  // whatever happens. Left up it says a loop is running when none is, and this
-  // source is never polled again.
-  try {
-    while feed->shouldPoll {
-      let interval = await feed->pollOnce
-      if feed->shouldPoll {
-        await feed->sleep(interval)
-      }
+  while feed->shouldPoll {
+    // A poll cannot end the loop: its failure is a value, and a waiter's is
+    // caught where it fires. Anything else in here throwing would leave coverage
+    // owed with nothing providing it — the one state this module must never be
+    // in — so the loop keeps that promise itself rather than trusting everything
+    // it calls to be total.
+    let (interval, kind) = try await feed->pollOnce catch {
+    | exn =>
+      feed.logger->Logging.childError({
+        "msg": "The height poll cycle threw. Backing off and carrying on rather than leaving the source uncovered.",
+        "err": exn->Utils.prettifyExn,
+      })
+      (feed->nextRetryInterval, Backoff)
     }
-  } catch {
-  | exn =>
-    feed.logger->Logging.childError({
-      "msg": "The height poll loop threw. Stopping it rather than leaving the source looking covered.",
-      "err": exn->Utils.prettifyExn,
-    })
+    if feed->shouldPoll {
+      await feed->sleep(~kind, interval)
+    }
   }
   feed.polling = false
 }
 
-let startPolling = (feed: t) =>
+// The only thing that acts on `shouldPoll`. Everything that changes what this
+// feed owes ends here, so no caller has to know which changes need a loop
+// started, which need a sleep chosen before them cut short, and which need
+// neither.
+let syncPolling = (feed: t) =>
   if feed->shouldPoll && !feed.polling {
     feed.polling = true
     feed->runPollLoop->Promise.ignore
+  } else {
+    // Either there is now less to do and the loop should notice, or there is
+    // more and it should stop sleeping through it.
+    feed->wakeCadence
   }
 
-// Counted per reason so envio_source_height_stream_disconnects_total shows what
-// ended each connection: a rotation, or the kind of trouble a flapping stream is
-// in. Only a connection that was delivering can be lost, which is what
-// `markStreamDown` checks before reaching here.
-let recordDisconnect = (feed: t, ~reason) => feed.disconnects->Utils.Dict.incrementBy(reason, 1)
-
-// One poll on every connect, closing the gap left by heights emitted before this
-// connection existed: eth_subscribe only ever delivers the *next* block. The one
-// request this module makes with nobody waiting — a chain that reconnects while
-// idle would otherwise sit on a stale head until the next block is mined.
-let catchUp = async (feed: t, ~generation) =>
-  try {
-    switch await feed->heightWithin(~millis=pollTimeoutMillis) {
-    | None =>
-      // Same as a failure: nothing else is fetching the height, so the poll loop
-      // has to keep covering the connection this was meant to prove.
-      feed.logger->Logging.childTrace({
-        "msg": `Height stream catch-up from ${feed.source.name} source did not answer within ${(pollTimeoutMillis /
-            1000)->Int.toString}s. Polling continues until the stream delivers.`,
-      })
-      feed->wake
-      feed->startPolling
-    | Some(res) => feed->recordAnswer(~generation, res)
-    }
-  } catch {
-  | exn =>
-    // Deliberately leaves the stream unproven, and deliberately does not advance
-    // the poll ramp: nothing else is fetching the height, so the loop has to
-    // keep covering it, and it is running alongside this against the same
-    // endpoint. Two failures in one round is still one round. Wake a loop that
-    // is sleeping off that ramp, otherwise the remainder of the backoff is a
-    // coverage gap the catch-up was meant to close.
-    feed.logger->Logging.childTrace({
-      "msg": `Height stream catch-up from ${feed.source.name} source failed. Polling continues until the stream delivers.`,
-      "err": exn->Utils.prettifyExn,
-    })
-    feed->wake
-    feed->startPolling
+// The one height request this module makes with nobody waiting for it, closing
+// the gap left by heights emitted before this connection existed. A chain that
+// reconnects while idle would otherwise sit on a stale head until the next block
+// is mined. With a waiter there is a loop doing this already, and asking twice
+// does not make the endpoint answer sooner.
+let catchUpWhileIdle = async (feed: t) => {
+  let generation = feed.generation
+  switch await feed->heightWithin(~millis=pollTimeoutMillis) {
+  | Answered(res) => feed->recordAnswer(~generation, res)
+  // Nobody is waiting, so nothing is owed and there is nothing to retry: the
+  // next wait polls on its own, and the next height the stream pushes lands
+  // whatever happened here.
+  | Failed(_) | TimedOut => ()
   }
+}
 
 let handlePushedHeight = (feed: t, height) => {
   let advances = height > feed.knownHeight
@@ -342,63 +389,63 @@ let handlePushedHeight = (feed: t, height) => {
   ])
 
   // A height that advances accounts for the gap a connect leaves. One that does
-  // not is the head a stream re-emits on reconnect, which its catch-up is
-  // already fetching — but either way it is the stream delivering, which is all
-  // the silence behind a poke ever claimed otherwise.
-  feed.pollRetry = 0
-  if advances {
-    feed.connectionUnproven = false
+  // not is the head a stream re-emits on reconnect — but either way it is the
+  // stream delivering, which is all the silence behind a distrusting wait ever
+  // claimed otherwise — and the source answering at all, which is what any
+  // backoff beside it was waiting to find out.
+  feed->clearBackoff
+  switch feed.stream {
+  | Connected(_) if advances => feed.stream = Connected({proven: true})
+  | _ => ()
   }
-  feed.waiters->Array.forEach(waiter => waiter.poked = false)
+  feed.waiters->Array.forEach(waiter => waiter.distrustsStream = false)
   feed->recordHeight(height)
-  feed->wakeIfIdle
+  // Never more to do than before: a delivering stream only takes work away.
+  feed->wakeCadence
 }
 
-// Everything a connection going away means for the feed. The stream reporting
-// it and this module closing it leave the same state behind, so they share it:
+// Everything a connection going away means for the feed. The stream reporting it
+// and this module closing it leave the same state behind, so they share it:
 // nothing is pushing, nothing is proven, and what the waiters concluded about
 // the connection that is gone says nothing about the one that replaces it.
 let markStreamDown = (feed: t, ~reason) => {
-  // A stream that is down stays down through every failed retry, and each of
-  // those reports Down again. Counting them would make the total measure how
-  // long an outage lasted rather than how many there were, and would leave a
-  // stream that has never connected disconnecting without ever connecting.
-  let lostConnection = feed.streamLive
-  if lostConnection {
-    feed->recordDisconnect(~reason)
+  switch feed.stream {
+  // Only a connection that existed can be lost. A stream that is down stays down
+  // through every failed retry, and each of those reports Down again; counting
+  // them would make the total measure how long an outage lasted rather than how
+  // many there were, and would leave a stream that has never connected
+  // disconnecting without ever having connected.
+  | Connected(_) => feed.disconnects->Utils.Dict.incrementBy(reason->Source.downReasonLabel, 1)
+  | NeverEnabled | Disconnected => ()
   }
-  feed.streamLive = false
-  feed.connectionUnproven = false
+  feed.stream = Disconnected
+  feed.generation = feed.generation + 1
   // The connection they gave up on is gone; the one that replaces it starts with
-  // a catch-up of its own to prove it.
-  feed.waiters->Array.forEach(waiter => waiter.poked = false)
-  feed.connectionGeneration = feed.connectionGeneration + 1
-  // A loop already running may be sleeping off an interval chosen while that
-  // connection was still covering this source. Not while polls are failing,
-  // though: that sleep is the backoff a struggling endpoint earned, and the
-  // stream dropping is usually the same endpoint's doing.
-  if lostConnection && feed.pollRetry === 0 {
-    feed->wake
-  }
-  feed->startPolling
+  // a head of its own to account for.
+  feed.waiters->Array.forEach(waiter => waiter.distrustsStream = false)
+  feed->syncPolling
 }
 
 let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
   switch status {
   | Live =>
-    if !feed.streamLive {
-      feed.streamLive = true
-      feed.connectionGeneration = feed.connectionGeneration + 1
+    switch feed.stream {
+    // A transport re-reporting a connection this already has.
+    | Connected(_) => ()
+    | NeverEnabled | Disconnected =>
+      feed.stream = Connected({proven: false})
+      feed.generation = feed.generation + 1
       feed.connects = feed.connects + 1
-      feed.pollRetry = 0
 
       // Live is a claim, not a delivery: polling keeps covering the source until
-      // the catch-up lands or a height arrives.
-      feed.connectionUnproven = true
-      // Whoever was waiting is already being polled for — the loop cannot have
-      // stopped while a waiter sat behind a stream that was not live — so the
-      // catch-up is all this moment adds.
-      feed->catchUp(~generation=feed.connectionGeneration)->Promise.ignore
+      // the head this connection came up above is accounted for. A loop already
+      // running is the thing that will account for it, and one sleeping off a
+      // backoff stays asleep — the endpoint that just accepted a socket is the
+      // one whose height calls are failing.
+      feed->syncPolling
+      if !feed.polling {
+        feed->catchUpWhileIdle->Promise.ignore
+      }
     }
   | Down({reason} as down) =>
     feed->markStreamDown(~reason)
@@ -410,15 +457,16 @@ let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
     // not parse never heals on its own, and silently polling forever against a
     // stream that could be working is worth one line an operator can see. Once:
     // it repeats every staleness window for as long as the shape is wrong.
-    let log = if reason === HeightStream.unreadableReason && !feed.unreadableWarned {
+    let log = switch reason {
+    | Unreadable if !feed.unreadableWarned =>
       feed.unreadableWarned = true
       Logging.childWarn
-    } else {
-      Logging.childTrace
+    | _ => Logging.childTrace
     }
+    let label = reason->Source.downReasonLabel
     feed.logger->log({
-      "msg": `Height subscription for ${feed.source.name} source went down (${reason}). Polling for the height until it reconnects.`,
-      "reason": reason,
+      "msg": `Height subscription for ${feed.source.name} source went down (${label}). Polling for the height until it reconnects.`,
+      "reason": label,
       "detail": down.detail,
     })
   }
@@ -429,9 +477,15 @@ let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
 // would overwrite the first one's close function, leaving a socket nothing can
 // close, still pushing heights and still retrying, for the life of the process.
 let enableStream = (feed: t) =>
-  switch (feed.source.createHeightSubscription, feed.unsubscribe) {
+  switch (feed.source.createHeightSubscription, feed.closeStream) {
   | (Some(createSubscription), None) if !feed.stopped =>
-    feed.unsubscribe = Some(
+    // Before connecting, so a transport that fails inside `createSubscription`
+    // reports against a feed that already has a stream to report on.
+    switch feed.stream {
+    | NeverEnabled => feed.stream = Disconnected
+    | Disconnected | Connected(_) => ()
+    }
+    feed.closeStream = Some(
       createSubscription(
         ~onHeight=height => feed->handlePushedHeight(height),
         ~onStatus=status => feed->handleStatus(status),
@@ -442,10 +496,10 @@ let enableStream = (feed: t) =>
 
 let stop = (feed: t) => {
   feed.stopped = true
-  switch feed.unsubscribe {
-  | Some(unsubscribe) =>
-    unsubscribe()
-    feed.unsubscribe = None
+  switch feed.closeStream {
+  | Some(closeStream) =>
+    closeStream()
+    feed.closeStream = None
 
     // Counted as a disconnect like any other: leaving it out would leave the
     // source reporting one more connect than disconnects — a stream still
@@ -453,7 +507,7 @@ let stop = (feed: t) => {
     // verdict, not an outage, so whoever is still waiting keeps being polled
     // for: the source can still answer a height poll, and until another source
     // answers the wait it is what there is.
-    feed->markStreamDown(~reason="unsubscribed")
+    feed->markStreamDown(~reason=Unsubscribed)
   | None => ()
   }
 }
@@ -466,32 +520,27 @@ let onHeightAbove = (feed: t, ~knownHeight, ~interval, ~onHeight): subscription 
     // Already past it: a wait that starts after a query moved the head has
     // nothing to wait for.
     onHeight(feed.knownHeight)
-    {unsubscribe: () => (), poke: () => ()}
+    {unsubscribe: () => (), distrustStream: () => ()}
   } else {
-    let waiter = {knownHeight, onHeight, interval, poked: false}
+    let waiter = {knownHeight, onHeight, interval, distrustsStream: false}
     feed.waiters->Array.push(waiter)->ignore
-    // Both self-guarding, and between them they cover either state: a loop
-    // sleeping off an interval started for someone else ends it here rather than
-    // making this waiter sit out the remainder, and no loop at all starts one.
-    feed->wake
-    feed->startPolling
+    feed->syncPolling
     {
       unsubscribe: () => {
         // Removing by reference is what makes this idempotent, including from
         // inside onHeight where the waiter has already been taken out.
         feed.waiters = feed.waiters->Array.filter(w => w !== waiter)
         // The loop's reason to run may have just left with it.
-        feed->wakeIfIdle
+        feed->wakeCadence
       },
-      // Its wait sat through a whole stall window without hearing from a stream
-      // that claims to be connected. Poll alongside it until the stream shows
-      // otherwise: a transport that keeps pinging while its heights stop is the
-      // one failure its own staleness detector cannot see. A waiter already
-      // answered is no longer in the list, so this does nothing for it.
-      poke: () =>
-        if feed.streamLive && !waiter.poked {
-          waiter.poked = true
-          feed->startPolling
+      distrustStream: () =>
+        switch feed.stream {
+        | Connected(_) if !waiter.distrustsStream =>
+          waiter.distrustsStream = true
+          feed->syncPolling
+        // Nothing to distrust, or already distrusted. A waiter that has been
+        // answered is no longer in the list, so this does nothing for it either.
+        | _ => ()
         },
     }
   }

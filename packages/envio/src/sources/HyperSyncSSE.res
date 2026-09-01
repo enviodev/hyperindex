@@ -2,13 +2,16 @@
 // connection as dead.
 let staleTimeout = 15_000
 
-let failure = (error: EventSource.errorEvent) =>
+let failure = (error: EventSource.errorEvent): (
+  Source.heightSubscriptionDownReason,
+  option<string>,
+) =>
   switch (error.code, error.message) {
-  | (Some(code), message) => (code->Int.toString, message)
-  | (None, Some(message)) => ("error", Some(message))
+  | (Some(code), message) => (Http(code), message)
+  | (None, Some(message)) => (TransportError, Some(message))
   // The stream ended without an HTTP error, which is how a load balancer
   // rotating connections shows up.
-  | (None, None) => (HeightStream.closedReason, None)
+  | (None, None) => (Closed, None)
   }
 
 let subscribe = (~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>
@@ -18,14 +21,12 @@ let subscribe = (~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>
       ~url=`${hyperSyncUrl}/height/sse`,
       ~options={
         fetch: (url, ~args) => {
-          let headers = Dict.make()
-          switch args.headers {
-          | Some(existing) =>
-            existing->Dict.toArray->Array.forEach(((key, value)) => headers->Dict.set(key, value))
-          | None => ()
-          }
-          headers->Dict.set("Authorization", `Bearer ${apiToken}`)
-          headers->Dict.set("User-Agent", userAgent)
+          let headers =
+            args.headers
+            ->Option.getOr(Dict.make())
+            ->Utils.Dict.merge(
+              Dict.fromArray([("Authorization", `Bearer ${apiToken}`), ("User-Agent", userAgent)]),
+            )
           EventSource.Fetch.fetch(url, ~args={...args, headers: headers})
         },
       },

@@ -128,27 +128,25 @@ let getSourceHeightSamples = (sourceManager: t): array<sourceHeightSample> => {
 }
 
 // Per-source height subscription health for envio_source_height_stream_*.
-// Every source that can subscribe is reported, including one that has never
-// connected — that is a stream nothing else would say anything about. A source
-// that cannot subscribe is skipped, so a chain that only ever polls renders
-// none of it rather than sitting at zero on it.
+// Every source a wait has asked for a stream is reported, including one whose
+// stream has never come up — that is a stream nothing else would say anything
+// about. A source that was never asked is skipped, so a chain that only ever
+// polls renders none of it rather than sitting at zero on it.
 type heightStreamSample = {
   sourceName: string,
   chainId: ChainId.t,
-  connectCount: int,
-  disconnects: array<(string, int)>,
+  stream: HeightFeed.streamSample,
 }
 
 let getHeightStreamSamples = (sourceManager: t): array<heightStreamSample> => {
   let samples = []
   sourceManager.sourcesState->Array.forEach(sourceState =>
     switch sourceState.feed->HeightFeed.sample {
-    | Some({connectCount, disconnects}) =>
+    | Some(stream) =>
       samples->Array.push({
         sourceName: sourceState.source.name,
         chainId: sourceState.source.chainId,
-        connectCount,
-        disconnects,
+        stream,
       })
     | None => ()
     }
@@ -750,14 +748,23 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
         resolve(height)
       }
 
-    let watch = (sourceState: sourceState) => {
-      if isRealtime {
-        // Lazy and explicit: a source that can push heights subscribes when a
-        // realtime wait starts wanting them, and not before.
-        sourceState.feed->HeightFeed.enableStream
-      }
-      let subscription =
-        sourceState.feed->HeightFeed.onHeightAbove(
+    // Registering can answer the wait on the spot, from a height the source
+    // already knew, so every site has to cope with the wait being over — either
+    // before it got here, or because of its own call. Handled once here rather
+    // than at each place that registers.
+    let watch = (sourceState: sourceState, ~withStream) =>
+      if !settled.contents {
+        if withStream {
+          // Lazy and explicit: a source that can push heights subscribes when a
+          // realtime wait starts wanting them, and not before. A stream outlives
+          // the wait that asked for it and nothing takes it back off, so only
+          // the sources this wait was built on ask for one — a source recruited
+          // because another stalled is here to poll, and would otherwise keep a
+          // connection open for the life of the process on the strength of one
+          // stall.
+          sourceState.feed->HeightFeed.enableStream
+        }
+        let subscription = sourceState.feed->HeightFeed.onHeightAbove(
           ~knownHeight,
           // Read per poll rather than captured, so a wait that goes on to stall
           // slows its own polling down without anything having to restart it.
@@ -771,25 +778,23 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
             },
           ~onHeight=height => settle(sourceState.source, height),
         )
-      watched->Array.push(subscription)->ignore
-    }
-
-    mainSources->Array.forEach(sourceState =>
-      if !settled.contents {
-        sourceState->watch
+        if settled.contents {
+          // This registration is what answered the wait, and the cleanup that
+          // ran inside it could not reach a subscription it had not returned
+          // yet.
+          subscription.unsubscribe()
+        } else {
+          watched->Array.push(subscription)->ignore
+        }
       }
-    )
 
-    if settled.contents {
-      // A source answered from a height it already knew while the rest were
-      // still being registered. Those are attached now, so take them back off.
-      cleanup()
-    } else {
-      // Re-armed every time it fires. Poking a stream is a one-shot — the next
-      // height it delivers, or the catch-up of a reconnect part way through this
-      // wait, takes it back at its word — and the silence that earned the poke
-      // can come straight back. Left un-armed, one such recovery would retire
-      // the polling for the rest of the wait, and a stream that keeps its
+    mainSources->Array.forEach(sourceState => sourceState->watch(~withStream=isRealtime))
+
+    if !settled.contents {
+      // Re-armed every time it fires. Distrusting a stream is a one-shot — the
+      // next height it delivers takes it back at its word — and the silence that
+      // earned it can come straight back. Left un-armed, one such recovery would
+      // retire the polling for the rest of the wait, and a stream that keeps its
       // keep-alives flowing while it stops sending heights would hang it
       // indefinitely, since its own staleness detector never trips.
       let rec armStallTimeout = (~recruitFallbacks, ~delay) =>
@@ -829,10 +834,8 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
                     )
                   }
 
-                  fallbackSources->Array.forEach(sourceState =>
-                    if !settled.contents {
-                      sourceState->watch
-                    }
+                  fallbackSources->Array.forEach(
+                    sourceState => sourceState->watch(~withStream=false),
                   )
                 }
 
@@ -849,7 +852,7 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
                 // over — least of all arming another timer, which the cleanup
                 // that just ran can no longer reach.
                 if !settled.contents {
-                  watched->Array.forEach(subscription => subscription.poke())
+                  watched->Array.forEach(subscription => subscription.distrustStream())
 
                   // Spread the repeats: every indexer on one provider stalls in
                   // the same instant, and a fixed period would keep them polling

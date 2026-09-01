@@ -1,5 +1,32 @@
 open Vitest
 
+// Everything off, so each test below shows only the fields it is actually about.
+let emptyMetrics: Metrics.t = {
+  startTime: Date.fromTime(0.),
+  metricTime: Date.fromTime(0.),
+  elapsedSeconds: 0.,
+  targetBufferSize: 0,
+  isInReorgThreshold: false,
+  rollbackEnabled: false,
+  maxBatchSize: 0,
+  preloadSeconds: 0.,
+  processingSeconds: 0.,
+  processingStalledOnFetchSeconds: 0.,
+  processingStalledOnStorageWriteSeconds: 0.,
+  rollbackSeconds: 0.,
+  rollbackCount: 0,
+  rollbackEventsCount: 0.,
+  chains: [],
+  handlers: [],
+  effects: [],
+  storageLoads: [],
+  storageWrites: [],
+  historyPrunes: [],
+  sourceRequests: [],
+  sourceHeights: [],
+  sourceHeightStreams: [],
+}
+
 describe("Metrics rendering helpers", () => {
   it("Renders metrics separated by a blank line, keeping 3 decimals after the point", t => {
     let b: Metrics.builder = {out: ""}
@@ -63,27 +90,13 @@ describe("Metrics.collect", () => {
     t.expect(Metrics.collect(~metrics=None)).toBe(`# HELP envio_info Information about the indexer
 # TYPE envio_info gauge
 envio_info{version="${Utils.EnvioPackage.value.version}"} 1
-`)
+`,
+    )
   })
 
   it("Escapes both the effect and the scope label values", t => {
     let metrics: Metrics.t = {
-      startTime: Date.fromTime(0.),
-      metricTime: Date.fromTime(0.),
-      elapsedSeconds: 0.,
-      targetBufferSize: 0,
-      isInReorgThreshold: false,
-      rollbackEnabled: false,
-      maxBatchSize: 0,
-      preloadSeconds: 0.,
-      processingSeconds: 0.,
-      processingStalledOnFetchSeconds: 0.,
-      processingStalledOnStorageWriteSeconds: 0.,
-      rollbackSeconds: 0.,
-      rollbackCount: 0,
-      rollbackEventsCount: 0.,
-      chains: [],
-      handlers: [],
+      ...emptyMetrics,
       effects: [
         {
           effect: `a",b=c`,
@@ -98,12 +111,6 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
           cacheCount: None,
         },
       ],
-      storageLoads: [],
-      storageWrites: [],
-      historyPrunes: [],
-      sourceRequests: [],
-      sourceHeights: [],
-      sourceHeightStreams: [],
     }
 
     t.expect(
@@ -114,61 +121,14 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
   })
 
   it("Omits the height stream families entirely when no source subscribes", t => {
-    let metrics: Metrics.t = {
-      startTime: Date.fromTime(0.),
-      metricTime: Date.fromTime(0.),
-      elapsedSeconds: 0.,
-      targetBufferSize: 0,
-      isInReorgThreshold: false,
-      rollbackEnabled: false,
-      maxBatchSize: 0,
-      preloadSeconds: 0.,
-      processingSeconds: 0.,
-      processingStalledOnFetchSeconds: 0.,
-      processingStalledOnStorageWriteSeconds: 0.,
-      rollbackSeconds: 0.,
-      rollbackCount: 0,
-      rollbackEventsCount: 0.,
-      chains: [],
-      handlers: [],
-      effects: [],
-      storageLoads: [],
-      storageWrites: [],
-      historyPrunes: [],
-      sourceRequests: [],
-      sourceHeights: [],
-      sourceHeightStreams: [],
-    }
-
     t.expect(
-      Metrics.collect(~metrics=Some(metrics))->String.includes("envio_source_height_stream"),
+      Metrics.collect(~metrics=Some(emptyMetrics))->String.includes("envio_source_height_stream"),
     ).toBe(false)
   })
 
   it("Renders a stream that has never connected as zero connects", t => {
     let metrics: Metrics.t = {
-      startTime: Date.fromTime(0.),
-      metricTime: Date.fromTime(0.),
-      elapsedSeconds: 0.,
-      targetBufferSize: 0,
-      isInReorgThreshold: false,
-      rollbackEnabled: false,
-      maxBatchSize: 0,
-      preloadSeconds: 0.,
-      processingSeconds: 0.,
-      processingStalledOnFetchSeconds: 0.,
-      processingStalledOnStorageWriteSeconds: 0.,
-      rollbackSeconds: 0.,
-      rollbackCount: 0,
-      rollbackEventsCount: 0.,
-      chains: [],
-      handlers: [],
-      effects: [],
-      storageLoads: [],
-      storageWrites: [],
-      historyPrunes: [],
-      sourceRequests: [],
-      sourceHeights: [],
+      ...emptyMetrics,
       sourceHeightStreams: [
         {
           source: "RPC (rpc.example.com)",
@@ -179,9 +139,10 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       ],
     }
 
-    // Nothing has disconnected, because nothing ever connected. Without the
-    // zero there is no series at all, and a ws url the node will never accept
-    // reads exactly like a chain that was never asked to stream.
+    // Nothing has disconnected, because nothing ever connected. Without the zero
+    // there is no series at all, and a ws url the node will never accept would
+    // go unreported — a sample only exists once a stream has been asked for, so
+    // zero connects here says the stream is down rather than absent.
     t.expect(
       Metrics.collect(~metrics=Some(metrics))
       ->String.split("\n")
@@ -191,28 +152,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
   it("Aggregates height stream samples that share a source name and chain", t => {
     let metrics: Metrics.t = {
-      startTime: Date.fromTime(0.),
-      metricTime: Date.fromTime(0.),
-      elapsedSeconds: 0.,
-      targetBufferSize: 0,
-      isInReorgThreshold: false,
-      rollbackEnabled: false,
-      maxBatchSize: 0,
-      preloadSeconds: 0.,
-      processingSeconds: 0.,
-      processingStalledOnFetchSeconds: 0.,
-      processingStalledOnStorageWriteSeconds: 0.,
-      rollbackSeconds: 0.,
-      rollbackCount: 0,
-      rollbackEventsCount: 0.,
-      chains: [],
-      handlers: [],
-      effects: [],
-      storageLoads: [],
-      storageWrites: [],
-      historyPrunes: [],
-      sourceRequests: [],
-      sourceHeights: [],
+      ...emptyMetrics,
       // Two RPC urls on the same host share a source name, and duplicate
       // samples would make Prometheus reject the whole scrape.
       sourceHeightStreams: [
@@ -650,6 +590,7 @@ envio_indexing_addresses{chainId="1"} 7
 # TYPE envio_indexing_contract_addresses gauge
 envio_indexing_contract_addresses{chainId="1",contract="Gravatar"} 5
 envio_indexing_contract_addresses{chainId="1",contract="NftFactory"} 2
-`)
+`,
+    )
   })
 })

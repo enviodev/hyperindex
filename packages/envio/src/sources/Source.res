@@ -130,17 +130,55 @@ exception GetItemsError(getItemsError)
 
 type sourceFor = Sync | Fallback | Realtime
 
+// Why a height subscription's connection ended. Closed, so a consumer decides
+// what a failure means by matching on it rather than by recognising a string,
+// and so every transport describes an outage in the same words.
+type heightSubscriptionDownReason =
+  // Ended cleanly after serving long enough to have been worth making: a load
+  // balancer moving a connection, and routine.
+  | Rotated
+  // Ended cleanly without having served: a server dropping connections it
+  // ought to be keeping.
+  | Closed
+  // Delivered nothing at all for a whole staleness window.
+  | Stale
+  // Sent frames the transport could not read. Alone among these it never heals
+  // on its own, which is why consumers tell an operator about it.
+  | Unreadable
+  // No connection was established to begin with.
+  | ConnectFailed
+  // The provider refused the subscription.
+  | SubscribeRejected
+  // The socket itself reported an error.
+  | TransportError
+  // Refused with an HTTP status, which is the whole of what an SSE stream is
+  // told about a refusal.
+  | Http(int)
+  // The consumer gave the source up. Not an outage, but the connection is gone
+  // and a count that omitted it would leave the source looking connected.
+  | Unsubscribed
+
+// Bounded, so it is safe as a metric label. Whatever the provider said about
+// one failure belongs in `detail` and in a log line, never here.
+let downReasonLabel = reason =>
+  switch reason {
+  | Rotated => "rotated"
+  | Closed => "closed"
+  | Stale => "stale"
+  | Unreadable => "unreadable"
+  | ConnectFailed => "connect-failed"
+  | SubscribeRejected => "subscribe-rejected"
+  | TransportError => "error"
+  | Http(code) => `http-${code->Int.toString}`
+  | Unsubscribed => "unsubscribed"
+  }
+
 // Connection state of a height subscription, reported by every transport.
 // `Down` repeats on each failed retry while the stream stays broken, and `Live`
 // fires on every (re)connect, so consumers must treat both as idempotent.
-// `reason` is pre-bucketed for use as a metric label. The shipped transports
-// report an HTTP status, or "error", "connect-failed", "stale", "unreadable" or
-// "subscribe-rejected"; a connection that ends cleanly arrives as "rotated" or
-// "closed", depending on whether it had served long enough to be worth making.
-// `detail` is whatever the provider said
-// for this one failure — an error message, or the frame nobody could read — so
-// it belongs in a log line and never in a label.
-type heightSubscriptionStatus = Live | Down({reason: string, detail?: string})
+// `detail` is whatever the provider said for this one failure — an error
+// message, or the frame nobody could read.
+type heightSubscriptionStatus = Live | Down({reason: heightSubscriptionDownReason, detail?: string})
 
 type t = {
   name: string,

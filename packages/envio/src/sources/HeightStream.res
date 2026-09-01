@@ -21,7 +21,7 @@ type driver = {
   // useful, so a stream of them goes quiet and fails as "unreadable", carrying
   // the frame that started it.
   onUnreadable: (~detail: string) => unit,
-  onFailure: (~reason: string, ~detail: string=?) => unit,
+  onFailure: (~reason: Source.heightSubscriptionDownReason, ~detail: string=?) => unit,
 }
 
 // While a stream is down its consumer polls instead, so the retry delay is what
@@ -39,15 +39,6 @@ let maxRetryMillis = 60_000
 // tells them apart. A fixed floor can't do it: one low enough to clear on a
 // healthy connection is one a connection that dies seconds in clears too.
 let provenStaleFraction = 4
-// A transport reports a stream that ended without an error as `closedReason`.
-// Whether that was a rotation or a server in trouble is not something either
-// transport can tell, so the driver decides it from how long the connection
-// lasted — the same measure the backoff already trusts.
-let closedReason = "closed"
-let rotatedReason = "rotated"
-// A stream whose frames the transport could not read. Unlike the other reasons
-// this one never heals on its own, so its consumer says so out loud.
-let unreadableReason = "unreadable"
 // A frame nobody could read ends up in a log line, so cap what a provider can
 // put there.
 let maxDetailLength = 200
@@ -126,12 +117,12 @@ let subscribe = (
           // Distinguishes a provider whose message shape we don't understand
           // from a chain that simply has nothing to report.
           switch unreadableDetail.contents {
-          | Some(detail) => fail(~reason=unreadableReason, ~detail)
-          | None => fail(~reason="stale")
+          | Some(detail) => fail(~reason=Source.Unreadable, ~detail)
+          | None => fail(~reason=Source.Stale)
           }
         }, staleTimeout))
   }
-  and fail = (~reason, ~detail=?) => {
+  and fail = (~reason: Source.heightSubscriptionDownReason, ~detail=?) => {
     generation := generation.contents + 1
     clearPendingTimeout()
     closeConnection()
@@ -163,9 +154,13 @@ let subscribe = (
 
     // A clean end to a connection that had proven itself is a rotation: routine,
     // and worth telling apart from the same clean end arriving early, which is a
-    // server dropping connections it should be serving.
-    let reason =
-      reason === closedReason && servedMillis >= provenMillis ? rotatedReason : reason
+    // server dropping connections it should be serving. Neither transport can
+    // tell which it was, so the driver decides from how long the connection
+    // lasted — the same measure the backoff already trusts.
+    let reason: Source.heightSubscriptionDownReason = switch reason {
+    | Closed if servedMillis >= provenMillis => Rotated
+    | reason => reason
+    }
 
     // Scheduled before reporting, so a consumer that throws can't be what makes
     // the stream give up.
@@ -174,7 +169,7 @@ let subscribe = (
           start()
         }, retryMillis))
 
-    onStatus(Down({reason, detail: ?detail->Option.map(truncateDetail)}))
+    onStatus(Down({reason, detail: ?(detail->Option.map(truncateDetail))}))
   }
   and start = () => {
     generation := generation.contents + 1
@@ -252,7 +247,7 @@ let subscribe = (
       }
     | None =>
       if isCurrent() {
-        fail(~reason="connect-failed")
+        fail(~reason=ConnectFailed)
       }
     }
   }

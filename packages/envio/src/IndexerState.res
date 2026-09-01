@@ -545,8 +545,8 @@ let toMetrics = (state: t): Metrics.t => {
       sourceHeightStreams->Array.push({
         Metrics.source: s.sourceName,
         chainId: s.chainId,
-        connectCount: s.connectCount,
-        disconnectsByReason: s.disconnects,
+        connectCount: s.stream.connectCount,
+        disconnectsByReason: s.stream.disconnectsByReason,
       })
     )
   })
