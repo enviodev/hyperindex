@@ -3080,7 +3080,7 @@ chains:
         assert_eq!(
             format!("{err:#}"),
             "Failed parsing abi types for events in contract Comptroller on network 1: Failed to \
-             decode ABI file at \"./abis/Comptroller.json\": entry 1 \"Warp\" has an unknown type \
+             decode ABI file at \"./abis/Comptroller.json\": abi[1] \"Warp\" has an unknown type \
              \"wormhole\". Expected one of \"constructor\", \"fallback\", \"receive\", \"function\", \
              \"event\", \"error\"."
         );

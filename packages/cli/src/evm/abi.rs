@@ -89,14 +89,17 @@ fn quoted(types: &[&str]) -> String {
         .join(", ")
 }
 
+/// Where in the file to look: the entry's position in the ABI array, which is
+/// the one locator every entry has, and its name when it has one.
 fn locate(index: usize, item: &Map<String, Value>) -> String {
-    match item.get("name").and_then(Value::as_str) {
-        Some(name) => format!("entry {index} \"{name}\""),
+    let named = match item.get("name").and_then(Value::as_str) {
+        Some(name) => format!(" \"{name}\""),
         None => match item.get("type").and_then(Value::as_str) {
-            Some(kind) => format!("entry {index} ({kind})"),
-            None => format!("entry {index}"),
+            Some(kind) => format!(" ({kind})"),
+            None => String::new(),
         },
-    }
+    };
+    format!("abi[{index}]{named}")
 }
 
 /// The parameter alloy could not read. Checking one at a time is what lets the
@@ -157,7 +160,7 @@ fn explain(text: &str, err: &serde_json::Error) -> anyhow::Error {
     };
     for (index, item) in items.iter().enumerate() {
         let Some(object) = item.as_object() else {
-            return anyhow!("entry {index} is not a JSON object.");
+            return anyhow!("abi[{index}] is not a JSON object.");
         };
         if let Err(entry_err) = serde_json::from_value::<AbiItem>(item.clone()) {
             return describe(index, object, &entry_err);
@@ -288,7 +291,7 @@ mod tests {
             error(
                 r#"[{"name": "Failure", "type": "event"}, {"type": "wormhole", "name": "Warp"}]"#
             ),
-            "entry 1 \"Warp\" has an unknown type \"wormhole\". Expected one of \"constructor\", \
+            "abi[1] \"Warp\" has an unknown type \"wormhole\". Expected one of \"constructor\", \
              \"fallback\", \"receive\", \"function\", \"event\", \"error\"."
         );
     }
@@ -299,7 +302,7 @@ mod tests {
             error(
                 r#"[{"name": "Transfer", "type": "event", "inputs": [{"name": "to", "type": "address"}, {"name": "value", "type": "uint256["}]}]"#
             ),
-            "entry 0 \"Transfer\": parameter \"value\" has an invalid type \"uint256[\"."
+            "abi[0] \"Transfer\": parameter \"value\" has an invalid type \"uint256[\"."
         );
     }
 
@@ -307,7 +310,7 @@ mod tests {
     fn names_the_parameter_that_has_no_type() {
         assert_eq!(
             error(r#"[{"name": "transfer", "type": "function", "inputs": [{"name": "to"}]}]"#),
-            "entry 0 \"transfer\": parameter \"to\" has no \"type\"."
+            "abi[0] \"transfer\": parameter \"to\" has no \"type\"."
         );
     }
 
