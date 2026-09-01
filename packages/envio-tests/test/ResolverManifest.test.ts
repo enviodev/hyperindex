@@ -120,15 +120,9 @@ describe("resolver manifest", () => {
   // Nullability is inverted relative to Sury: GraphQL fields are non-null
   // unless the schema is optional.
   it("maps scalars, lists and optionality", () => {
-    const types = new Map();
     const t = (schema: unknown) =>
-      // @ts-expect-error -- exercising the JS surface directly
-      toGraphQLTypeFor(schema, types);
-    function toGraphQLTypeFor(schema: unknown, types: Map<string, unknown>) {
-      return buildManifest([
-        { name: "probe", args: {}, output: schema, timeoutMs: 1 },
-      ]).resolvers[0].type;
-    }
+      buildManifest([{ name: "probe", args: {}, output: schema, timeoutMs: 1 }])
+        .resolvers[0].type;
     expect([
       t(S.string),
       t(S.int32),

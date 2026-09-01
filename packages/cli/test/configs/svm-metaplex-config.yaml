@@ -1,6 +1,7 @@
 # yaml-language-server: $schema=../../../envio/svm.schema.json
 name: Solana indexer
 ecosystem: svm
+resolvers: src/Resolvers.ts
 chains:
   - id: solana
     start_block: 200000000

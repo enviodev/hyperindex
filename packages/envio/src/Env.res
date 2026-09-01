@@ -206,8 +206,16 @@ module Resolvers = {
   // and the message can carry a connection string.
   let exposeErrors = () =>
     switch read("ENVIO_RESOLVERS_EXPOSE_ERRORS") {
+    | None
+    | Some("false") => false
     | Some("true") => true
-    | _ => false
+    | Some(other) =>
+      // Refused rather than read as false: a typo here silently keeps a
+      // resolver's own error messages off the wire, which is the opposite of
+      // what the person who set it wanted, and nothing would say so.
+      JsError.throwWithMessage(
+        `Invalid ENVIO_RESOLVERS_EXPOSE_ERRORS value: "${other}". Expected "true" or "false".`,
+      )
     }
 
   // The URL *Hasura* posts to, which is not the address this process binds:
