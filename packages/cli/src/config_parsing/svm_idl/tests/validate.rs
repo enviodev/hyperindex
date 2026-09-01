@@ -290,10 +290,10 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "instruction shadowed by one set aside for its args: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferChecked set aside: args.amount: `coption` is not Borsh-compatible and cannot be decoded",
             "instruction whose discriminator cannot be read: sub set aside: discriminator: expected a byte (0-255), got 999",
             "instruction declaring no discriminator at all: raw set aside: its discriminator is 0 bytes, and dispatch matches only 1, 2, 4, or 8",
-            "size-only discriminator does not poison a sibling: sized set aside: its discriminator is 0 bytes, and dispatch matches only 1, 2, 4, or 8",
+            "size-only discriminator does not poison a sibling: sized set aside: discriminators: dispatch matches a fixed-width prefix of the data, not its length, so a sizeDiscriminatorNode cannot be honoured",
             "one discriminator a prefix of several others: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferAll set aside: its discriminator 0x0c03 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead; transferChecked set aside: its discriminator 0x0c02 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead",
             "instruction shadowed by one of an undispatchable width: swap set aside: its discriminator 0x0102 is a prefix of 'swapV2''s 0x010203, so 'swapV2' takes every call that would have matched it; swapV2 set aside: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8",
-            "codama discriminator argument out of declaration order: swap set aside: the discriminator reads [\"tag\"], but the arguments begin [\"amount\"]; their offsets and their declaration order disagree",
+            "codama discriminator argument out of declaration order: swap set aside: the discriminator reads argument 'tag' at byte 0, but the arguments begin with 'amount'",
             "duplicate type name: fatal: IDL declares type 'Fee' more than once",
             "duplicate account name: swap set aside: IDL declares account 'vault' more than once",
             "codama argument reusing a discriminator name: swap set aside: IDL declares argument 'tag' more than once",
@@ -363,17 +363,19 @@ fn demotes_omitted_strategy_instructions_with_a_middle_optional() {
     );
 }
 
-/// Two Anchor composite groups may nest the same inner name — in the program's
-/// source they are separate namespaces. Flattening collides them, but that is
-/// one instruction's defect: every other per-instruction defect leaves the rest
-/// of the program indexable, and this one used to fail the whole file.
+/// Two Anchor composite groups routinely nest the same inner name — in the
+/// program's source they are separate namespaces, and Anchor's own clients
+/// address them through the group. Flattening them to bare names collides two
+/// valid slots, so a member is named for the group that declares it.
 #[test]
-fn demotes_an_instruction_whose_flattened_accounts_collide() {
+fn names_a_grouped_account_for_the_group_that_declares_it() {
     let idl = parse_idl(
         r#"{ "instructions": [
              { "name": "swap", "discriminator": [1], "accounts": [
                { "name": "from", "accounts": [{ "name": "authority" }] },
-               { "name": "to", "accounts": [{ "name": "authority" }] }] },
+               { "name": "to", "accounts": [
+                 { "name": "authority" },
+                 { "name": "inner", "accounts": [{ "name": "mint" }] }] }] },
              { "name": "deposit", "discriminator": [2],
                "accounts": [{ "name": "vault" }] }] }"#,
         "Program",
@@ -384,7 +386,81 @@ fn demotes_an_instruction_whose_flattened_accounts_collide() {
         render(&idl),
         "address: -\n\
          instruction deposit 0x02 (vault) ()\n\
-         unusable instruction swap: IDL declares account 'authority' more than once\n"
+         instruction swap 0x01 (fromAuthority, toAuthority, toInnerMint) ()\n"
+    );
+}
+
+/// A group stands in for its members, so a program that may leave the whole
+/// group out leaves out every slot in it. Reading the members as required makes
+/// the slot after the group inherit a pubkey that belongs to the group.
+#[test]
+fn carries_an_optional_group_down_to_its_members() {
+    let idl = parse_idl(
+        r#"{ "instructions": [
+             { "name": "swap", "discriminator": [1], "accounts": [
+               { "name": "payer" },
+               { "name": "farms", "optional": true, "accounts": [
+                 { "name": "state" }, { "name": "program" }] }] }] }"#,
+        "Program",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        render(&idl),
+        "address: -\n\
+         instruction swap 0x01 (payer, farmsState:?, farmsProgram:?) ()\n"
+    );
+}
+
+/// Kamino's published IDL nests two lending contexts in one instruction, each
+/// carrying its own `owner`, `obligation` and `lendingMarket`. Reading it is the
+/// case the group naming exists for: bare names would collide and cost the three
+/// instructions that do this, the largest ones in the file.
+#[test]
+fn reads_the_published_kamino_composite_instructions() {
+    let idl = parse_idl(
+        &read_fixture("../../scenarios/svm_flow_xray/idls/kamino.json"),
+        "Kamino",
+    )
+    .expect("parse");
+
+    let accounts = |name: &str| {
+        idl.instructions[name]
+            .accounts
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        (
+            idl.instructions.len(),
+            idl.unusable.len(),
+            accounts("depositAndWithdraw")
+                .into_iter()
+                .take(4)
+                .collect::<Vec<_>>(),
+            accounts("liquidateObligationAndRedeemReserveCollateralV2")
+                .into_iter()
+                .rev()
+                .take(3)
+                .collect::<Vec<_>>(),
+        ),
+        (
+            51,
+            0,
+            vec![
+                "depositAccountsOwner",
+                "depositAccountsObligation",
+                "depositAccountsLendingMarket",
+                "depositAccountsLendingMarketAuthority",
+            ],
+            vec![
+                "farmsProgram",
+                "debtFarmsAccountsReserveFarmState",
+                "debtFarmsAccountsObligationFarmUserState",
+            ],
+        )
     );
 }
 
@@ -621,6 +697,81 @@ fn resolves_self_referential_types() {
                 .collect::<Vec<_>>(),
         ),
         (vec!["walk"], Vec::new(), Vec::new())
+    );
+}
+
+/// The reference walk recurses one frame per link, and a chain of defined types
+/// is as deep as the file makes it — each type node shallow enough that serde's
+/// own nesting limit never sees it. A depth this walk cannot afford has to
+/// arrive as a demotion, not as the stack running out under the whole CLI.
+#[test]
+fn demotes_a_type_chain_too_deep_to_walk() {
+    let depth = 40_000;
+    let types = (0..depth)
+        .map(|i| {
+            format!(
+                r#"{{ "name": "T{i}", "type": {{ "kind": "struct", "fields": [
+                     {{ "name": "next", "type": {{ "defined": "T{}" }} }}] }} }}"#,
+                i + 1
+            )
+        })
+        .chain([format!(
+            r#"{{ "name": "T{depth}", "type": {{ "kind": "struct",
+                 "fields": [{{ "name": "x", "type": "u8" }}] }} }}"#
+        )])
+        .collect::<Vec<_>>()
+        .join(",");
+    let idl = parse_idl(
+        &format!(
+            r#"{{ "instructions": [{{ "name": "go", "discriminator": [1],
+                 "args": [{{ "name": "head", "type": {{ "defined": "T0" }} }}] }}],
+                 "types": [{types}] }}"#
+        ),
+        "Program",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        (
+            idl.instructions.is_empty(),
+            idl.unusable
+                .get("go")
+                .map(|r| r.contains("nested too deeply")),
+        ),
+        (true, Some(true))
+    );
+}
+
+/// A type that merely names a broken one is not itself recursive. Reporting the
+/// cycle's own reason against it sends the reader to the wrong declaration.
+#[test]
+fn blames_the_cycle_rather_than_the_type_that_reaches_it() {
+    let idl = parse_idl(
+        r#"{ "instructions": [{ "name": "go", "discriminator": [1],
+             "args": [{ "name": "c", "type": { "defined": "C" } }] }],
+             "types": [
+               { "name": "A", "type": { "kind": "struct", "fields": [
+                 { "name": "b", "type": { "defined": "B" } }] } },
+               { "name": "B", "type": { "kind": "struct", "fields": [
+                 { "name": "a", "type": { "defined": "A" } }] } },
+               { "name": "C", "type": { "kind": "struct", "fields": [
+                 { "name": "a", "type": { "defined": "A" } }] } }] }"#,
+        "Program",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        (
+            idl.unusable_types.get("A").map(String::as_str),
+            idl.unusable_types.get("C").map(String::as_str),
+        ),
+        (
+            Some("it recursively contains itself without an option or vec to terminate decoding"),
+            Some(
+                "it reaches type 'A', which cannot be decoded: it recursively contains itself \
+                 without an option or vec to terminate decoding"
+            ),
+        )
     );
 }
 

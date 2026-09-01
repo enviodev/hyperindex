@@ -12,8 +12,8 @@ use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 
 use super::{
-    account_slot, collect_instructions, collect_named, declared_array, required_str, IdlAccount,
-    Instructions, IxIdl, ProgramIdl, Unusable,
+    account_slot, collect_instructions, collect_named, declared_array, le_bytes, required_str,
+    IdlAccount, Instructions, IxIdl, ProgramIdl, Unusable,
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
@@ -67,29 +67,30 @@ fn parse_instructions(program: &Map<String, Value>) -> Result<Instructions> {
     collect_instructions(
         arr,
         |_name, ix| parse_discriminators(ix).context("discriminators"),
-        |ix, discriminator, encoded_arg_names| {
+        |ix, discriminator, named_parts| {
             let accounts = parse_accounts(ix.get("accounts")).context("accounts")?;
             reject_ambiguous_optional_accounts(ix, &accounts)?;
             Ok(IxIdl {
-                discriminator,
+                discriminator: discriminator.clone(),
                 accounts,
-                args: parse_arguments(ix.get("arguments"), &encoded_arg_names)?,
+                args: parse_arguments(ix.get("arguments"), discriminator.len(), &named_parts)?,
             })
         },
     )
 }
 
-/// Returns the instruction's discriminator bytes plus the names of the
-/// arguments consumed by field discriminators, which the Borsh runtime must
-/// not decode again — it starts reading after the discriminator prefix.
-fn parse_discriminators(ix: &Value) -> Result<(Vec<u8>, Vec<String>)> {
-    let Some(arr) = ix.get("discriminators").and_then(Value::as_array) else {
-        return Ok((Vec::new(), Vec::new()));
-    };
+/// One discriminator part that names an argument, and the byte offset it
+/// claims — checked against where that argument actually starts.
+type NamedPart = (u64, String);
+
+/// The instruction's discriminator bytes, plus the parts that named an
+/// argument rather than spelling a constant.
+fn parse_discriminators(ix: &Value) -> Result<(Vec<u8>, Vec<NamedPart>)> {
+    let arr = declared_array(ix.get("discriminators"))?;
     // Packed discriminators are declared in any order but encode at their
     // offsets, so byte order follows `offset`, not declaration order.
     let mut parts: Vec<(u64, Vec<u8>, Option<String>)> = Vec::with_capacity(arr.len());
-    for d in arr {
+    for d in arr.iter() {
         let kind = required_str(d, "kind")?;
         // Absent means Codama's default of 0. Present but unreadable is not:
         // coerced to 0 it would tile from the head of the data and pass the
@@ -127,9 +128,13 @@ fn parse_discriminators(ix: &Value) -> Result<(Vec<u8>, Vec<String>)> {
                     .ok_or_else(|| anyhow!("argument '{field}' has no 'type'"))?;
                 parts.push((offset, number_bytes(default, ty)?, Some(field)));
             }
-            // A size discriminator matches on data length, not on a prefix,
-            // so it contributes no bytes.
-            "sizeDiscriminatorNode" => {}
+            // Dropping it quietly would leave two instructions the IDL does
+            // tell apart looking like a plain collision, and the reason the
+            // user reads would name a prefix they never wrote.
+            "sizeDiscriminatorNode" => bail!(
+                "dispatch matches a fixed-width prefix of the data, not its length, so a \
+                 sizeDiscriminatorNode cannot be honoured"
+            ),
             other => bail!("unsupported discriminator kind '{other}'"),
         }
     }
@@ -139,7 +144,7 @@ fn parse_discriminators(ix: &Value) -> Result<(Vec<u8>, Vec<String>)> {
     // actually encodes.
     parts.sort_by_key(|(offset, _, _)| *offset);
     let mut bytes: Vec<u8> = Vec::new();
-    let mut field_names = Vec::new();
+    let mut named = Vec::new();
     for (offset, part, field) in parts {
         if offset != bytes.len() as u64 {
             bail!(
@@ -148,10 +153,12 @@ fn parse_discriminators(ix: &Value) -> Result<(Vec<u8>, Vec<String>)> {
                 bytes.len()
             );
         }
+        if let Some(field) = field {
+            named.push((offset, field));
+        }
         bytes.extend(part);
-        field_names.extend(field);
     }
-    Ok((bytes, field_names))
+    Ok((bytes, named))
 }
 
 fn constant_bytes(constant: &Value) -> Result<Vec<u8>> {
@@ -181,9 +188,10 @@ fn constant_bytes(constant: &Value) -> Result<Vec<u8>> {
     }
 }
 
-/// Little-endian encoding of a `numberValueNode` at the width its
-/// `numberTypeNode` declares. Solana encodes multi-byte discriminators
-/// little-endian, same as Borsh.
+/// Little-endian encoding of a `numberValueNode` at the width its type node
+/// declares. The type goes through `parse_type`, so a node dressed as a number
+/// but carrying a layout key the runtime cannot honour is refused here rather
+/// than silently encoding at the width its `format` advertises.
 fn number_bytes(value: &Value, ty: &Value) -> Result<Vec<u8>> {
     // Widened to i128 so the top half of the u64 range stays representable
     // alongside negative signed values.
@@ -195,28 +203,7 @@ fn number_bytes(value: &Value, ty: &Value) -> Result<Vec<u8>> {
                 .or_else(|| n.as_u64().map(i128::from))
         })
         .ok_or_else(|| anyhow!("expected an integer 'number', got {value}"))?;
-    let format = ty
-        .get("format")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("expected a number type, got {ty}"))?;
-    require_little_endian(ty, "discriminator")?;
-    // Signed formats are encoded two's-complement at their own width, so the
-    // range check has to be per-format rather than "does it fit in u64".
-    let (width, min, max): (usize, i128, i128) = match format {
-        "u8" => (1, 0, u8::MAX as i128),
-        "u16" => (2, 0, u16::MAX as i128),
-        "u32" => (4, 0, u32::MAX as i128),
-        "u64" => (8, 0, u64::MAX as i128),
-        "i8" => (1, i8::MIN as i128, i8::MAX as i128),
-        "i16" => (2, i16::MIN as i128, i16::MAX as i128),
-        "i32" => (4, i32::MIN as i128, i32::MAX as i128),
-        "i64" => (8, i64::MIN as i128, i64::MAX as i128),
-        other => bail!("unsupported discriminator number format '{other}'"),
-    };
-    if number < min || number > max {
-        bail!("discriminator value {number} does not fit in {format}");
-    }
-    Ok(number.to_le_bytes()[..width].to_vec())
+    le_bytes(&parse_type(ty, "discriminator")?, number)
 }
 
 fn parse_accounts(node: Option<&Value>) -> Result<Vec<IdlAccount>> {
@@ -250,32 +237,24 @@ fn reject_ambiguous_optional_accounts(ix: &Value, accounts: &[IdlAccount]) -> Re
     Ok(())
 }
 
-fn parse_arguments(node: Option<&Value>, encoded_arg_names: &[String]) -> Result<Vec<NamedField>> {
+/// The instruction's body: the arguments left once the discriminator prefix has
+/// been accounted for.
+///
+/// Codama builds an instruction's data out of its arguments alone and treats
+/// every discriminator — a literal constant no differently from a named field —
+/// as a match against those same bytes at an offset. Dispatch here works the
+/// other way round: it reads a prefix and the runtime decodes the body after it.
+/// So the arguments the prefix covers are already spent, and decoding them again
+/// would read every later field one argument too early.
+fn parse_arguments(
+    node: Option<&Value>,
+    prefix_len: usize,
+    named_parts: &[NamedPart],
+) -> Result<Vec<NamedField>> {
     let arr = declared_array(node).context("arguments")?;
-    // Codama encodes arguments in declaration order, so the ones a field
-    // discriminator consumes have to be the leading ones, in the order their
-    // offsets put them. Otherwise the offsets and the declaration disagree and
-    // the body's starting position is a guess — the honest spelling of the
-    // same layout is already rejected for not tiling from offset 0.
-    let leading: Vec<&str> = arr
-        .iter()
-        .take(encoded_arg_names.len())
-        .filter_map(|a| a.get("name").and_then(Value::as_str))
-        .collect();
-    if leading
-        != encoded_arg_names
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-    {
-        bail!(
-            "the discriminator reads {encoded_arg_names:?}, but the arguments begin {leading:?}; \
-             their offsets and their declaration order disagree"
-        );
-    }
 
     // Names are matched by position from here on, so two arguments sharing one
-    // would leave which of them the discriminator consumed undecidable.
+    // would leave which of them the discriminator covered undecidable.
     let mut seen = HashSet::new();
     for a in arr {
         let name = required_str(a, "name").context("arguments")?;
@@ -284,8 +263,62 @@ fn parse_arguments(node: Option<&Value>, encoded_arg_names: &[String]) -> Result
         }
     }
 
+    // The argument a discriminator reads at byte 0 is the one the data starts
+    // with. Naming that contradiction beats describing where the prefix happens
+    // to land inside whatever argument was declared in its place.
+    if let Some((_, field)) = named_parts.iter().find(|(offset, _)| *offset == 0) {
+        let first = arr.first().map(|a| required_str(a, "name")).transpose()?;
+        if first != Some(field.as_str()) {
+            bail!(
+                "the discriminator reads argument '{field}' at byte 0, but the arguments begin \
+                 with '{}'",
+                first.unwrap_or("nothing")
+            );
+        }
+    }
+
+    let mut covered: Vec<(u64, &str)> = Vec::new();
+    let mut offset = 0u64;
+    for a in arr {
+        if offset >= prefix_len as u64 {
+            break;
+        }
+        let name = required_str(a, "name").context("arguments")?;
+        let path = format!("args.{name}");
+        reject_unmodelled_keys(a, &path, &FIELD_KEYS)?;
+        let ty = a
+            .get("type")
+            .ok_or_else(|| anyhow!("{path}: argument has no 'type'"))?;
+        let width = super::encoded_width(&parse_type(ty, &path)?).ok_or_else(|| {
+            anyhow!(
+                "argument '{name}' is under the {prefix_len}-byte discriminator but its width is \
+                 decided by the bytes themselves, so where the body starts cannot be told"
+            )
+        })? as u64;
+        if offset + width > prefix_len as u64 {
+            bail!(
+                "the {prefix_len}-byte discriminator stops inside argument '{name}', which starts \
+                 at byte {offset} and is {width} bytes wide"
+            );
+        }
+        covered.push((offset, name));
+        offset += width;
+    }
+
+    // An argument a field discriminator names has to be the one the offsets put
+    // there. Otherwise the offsets and the declaration order disagree, and where
+    // the body starts is a guess.
+    for (offset, field) in named_parts {
+        if !covered.contains(&(*offset, field.as_str())) {
+            bail!(
+                "the discriminator reads argument '{field}' at byte {offset}, which is not where \
+                 the arguments put it"
+            );
+        }
+    }
+
     arr.iter()
-        .skip(encoded_arg_names.len())
+        .skip(covered.len())
         .map(|a| {
             let name = required_str(a, "name")?.to_string();
             let path = format!("args.{name}");
@@ -404,13 +437,25 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
             reject_unmodelled_keys(node, path, &[])?;
             Ok(FieldType::Pubkey)
         }
+        // A link carrying a `program` names a type another program declares.
+        // Resolution here is against the registry of the program being parsed,
+        // where the same name is a different type — and decoding against it
+        // would be right only by coincidence.
         "definedTypeLinkNode" => {
             reject_unmodelled_keys(node, path, &["name", "program"])?;
-            Ok(FieldType::Defined(
-                required_str(node, "name")
-                    .with_context(|| path.to_string())?
-                    .to_string(),
-            ))
+            let name = required_str(node, "name").with_context(|| path.to_string())?;
+            if let Some(program) = node.get("program") {
+                let program = program
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("another program");
+                bail!(
+                    "{path}: '{name}' is defined by program '{program}', and this parser resolves \
+                     type links against the program it is parsing, where the name means something \
+                     else"
+                );
+            }
+            Ok(FieldType::Defined(name.to_string()))
         }
         // Borsh tags an option with one byte, which is Codama's default
         // prefix. A wider prefix decodes at the wrong offset.

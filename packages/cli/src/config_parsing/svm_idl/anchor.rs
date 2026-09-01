@@ -24,8 +24,8 @@ use sha2::{Digest, Sha256};
 use crate::config_parsing::field_types::to_snake_case;
 
 use super::{
-    account_slot, collect_instructions, collect_named, declared_array, required_str, IdlAccount,
-    Instructions, IxIdl, ProgramIdl, Unusable,
+    account_slot, collect_instructions, collect_named, declared_array, declared_optional, le_bytes,
+    required_str, IdlAccount, Instructions, IxIdl, ProgramIdl, Unusable,
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
@@ -109,21 +109,13 @@ fn hashed_discriminator(prefix: &str, name: &str) -> Vec<u8> {
 /// head of the data, little-endian at the width its type declares.
 fn discriminant_bytes(node: &Value) -> Result<Vec<u8>> {
     let format = required_str(node, "type")?;
-    let width = match format {
-        "u8" => 1,
-        "u16" => 2,
-        "u32" => 4,
-        "u64" => 8,
-        other => bail!("unsupported discriminant type '{other}'"),
-    };
+    let ty = super::numeric_field_type(format)
+        .ok_or_else(|| anyhow!("unsupported discriminant type '{format}'"))?;
     let value = node
         .get("value")
         .and_then(Value::as_u64)
         .ok_or_else(|| anyhow!("expected a non-negative integer 'value', got {node}"))?;
-    if width < 8 && value >= 1 << (width * 8) {
-        bail!("discriminant value {value} does not fit in {format}");
-    }
-    Ok(value.to_le_bytes()[..width].to_vec())
+    le_bytes(&ty, value.into())
 }
 
 fn parse_byte_array(node: &Value) -> Result<Vec<u8>> {
@@ -141,17 +133,61 @@ fn parse_byte_array(node: &Value) -> Result<Vec<u8>> {
 }
 
 /// Composite account groups (`{ name, accounts: [...] }`) flatten into the
-/// parent's list — Anchor inlines them at the call site.
+/// parent's list — Anchor inlines them at the call site. A group is a namespace
+/// in the program's source, and two of them nesting the same inner name is
+/// ordinary: Kamino's `depositAccounts` and `withdrawAccounts` each carry an
+/// `owner`. So a member is named for the group that declares it, the way
+/// Anchor's own clients address it, rather than by a bare name that would
+/// collide and cost the instruction.
+///
+/// A group may itself be optional, and then every slot it holds is: reading its
+/// members as required makes the account after the group inherit a pubkey that
+/// belongs to it.
 fn parse_accounts(node: Option<&Value>) -> Result<Vec<IdlAccount>> {
-    let arr = declared_array(node)?;
-    let mut out = Vec::with_capacity(arr.len());
-    for a in arr {
-        match a.get("accounts") {
-            Some(group) => out.extend(parse_accounts(Some(group))?),
-            None => out.push(account_slot(a)?),
+    fn flatten(
+        node: Option<&Value>,
+        prefix: &str,
+        optional: bool,
+        out: &mut Vec<IdlAccount>,
+    ) -> Result<()> {
+        for a in declared_array(node)? {
+            let optional = optional || declared_optional(a)?;
+            match a.get("accounts") {
+                Some(group) => {
+                    let name = required_str(a, "name")?;
+                    flatten(Some(group), &qualify(prefix, name), optional, out)?;
+                }
+                None => {
+                    let slot = account_slot(a)?;
+                    out.push(IdlAccount {
+                        name: qualify(prefix, &slot.name),
+                        optional: optional || slot.optional,
+                    });
+                }
+            }
         }
+        Ok(())
     }
+
+    let mut out = Vec::new();
+    flatten(node, "", false, &mut out)?;
     Ok(out)
+}
+
+/// `depositAccounts` + `owner` reads back as `depositAccountsOwner`, keeping
+/// the flattened list in the lowerCamelCase the rest of an IDL's names use.
+fn qualify(prefix: &str, name: &str) -> String {
+    if prefix.is_empty() {
+        return name.to_string();
+    }
+    let mut out = String::with_capacity(prefix.len() + name.len());
+    out.push_str(prefix);
+    let mut chars = name.chars();
+    if let Some(first) = chars.next() {
+        out.extend(first.to_uppercase());
+        out.push_str(chars.as_str());
+    }
+    out
 }
 
 /// Present but not an array is a defect, not an empty list: read as empty, an

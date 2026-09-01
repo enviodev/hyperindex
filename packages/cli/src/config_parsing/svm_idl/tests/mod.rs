@@ -329,7 +329,7 @@ fn parses_anchor_030_idl() {
     assert_eq!(
         render(&idl),
         "address: MyProgram1111111111111111111111111111111111\n\
-         instruction initialize 0xafaf6d1f0d989bed (payer, config, optionalAuthority:?, systemProgram) (seed: [u8; 32], authority: pubkey, config: @Config)\n\
+         instruction initialize 0xafaf6d1f0d989bed (payer, config, optionalAuthority:?, nestedSystemProgram) (seed: [u8; 32], authority: pubkey, config: @Config)\n\
          type Alias = pubkey\n\
          type Config = {fee: u16}\n\
          type Initialized = {slot: u64, label: string}\n"
@@ -511,6 +511,172 @@ fn parses_codama_spl_token_idl() {
          instruction transferChecked 0x0c01 (source) (amount: u64)\n\
          type accountState = enum {uninitialized, frozen(since: u64), initialized(_0: bool, _1: pubkey)}\n\
          type multisig = {m: u8, signers: [pubkey; 11], memo: string, history: Vec<@accountState>}\n"
+    );
+}
+
+/// Codama encodes an instruction's data from its arguments alone and matches a
+/// discriminator against those same bytes at an offset — a literal constant no
+/// differently from a named field. Dispatch here reads a prefix and decodes the
+/// body after it, so an argument the prefix covers is already spent: decoding it
+/// again reads every later field one argument too early.
+#[test]
+fn a_constant_discriminator_spends_the_argument_it_covers() {
+    let idl = parse_idl(
+        r#"{
+          "kind": "programNode",
+          "instructions": [{
+            "kind": "instructionNode",
+            "name": "transferChecked",
+            "arguments": [
+              { "kind": "instructionArgumentNode", "name": "tag",
+                "type": { "kind": "numberTypeNode", "format": "u8" },
+                "defaultValue": { "kind": "numberValueNode", "number": 12 } },
+              { "kind": "instructionArgumentNode", "name": "amount",
+                "type": { "kind": "numberTypeNode", "format": "u64" } }
+            ],
+            "discriminators": [{
+              "kind": "constantDiscriminatorNode", "offset": 0,
+              "constant": { "kind": "constantValueNode",
+                            "type": { "kind": "bytesTypeNode" },
+                            "value": { "kind": "bytesValueNode", "data": "0c",
+                                       "encoding": "base16" } }
+            }]
+          }]
+        }"#,
+        "SplToken",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        render(&idl),
+        "address: -\ninstruction transferChecked 0x0c () (amount: u64)\n"
+    );
+}
+
+/// A prefix that stops partway into an argument has no honest reading: the
+/// runtime would start the body at that argument's second byte.
+#[test]
+fn demotes_a_discriminator_that_stops_inside_an_argument() {
+    let idl = parse_idl(
+        r#"{
+          "kind": "programNode",
+          "instructions": [{
+            "kind": "instructionNode",
+            "name": "transfer",
+            "arguments": [
+              { "kind": "instructionArgumentNode", "name": "amount",
+                "type": { "kind": "numberTypeNode", "format": "u64" } }
+            ],
+            "discriminators": [{
+              "kind": "constantDiscriminatorNode", "offset": 0,
+              "constant": { "kind": "constantValueNode",
+                            "type": { "kind": "bytesTypeNode" },
+                            "value": { "kind": "bytesValueNode", "data": "0c",
+                                       "encoding": "base16" } }
+            }]
+          }]
+        }"#,
+        "SplToken",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        render(&idl),
+        "address: -\n\
+         unusable instruction transfer: the 1-byte discriminator stops inside argument \
+         'amount', which starts at byte 0 and is 8 bytes wide\n"
+    );
+}
+
+/// A size discriminator matches on the data's length, and dispatch here reads a
+/// fixed-width prefix. Dropping it quietly leaves two instructions the IDL
+/// distinguishes looking like a plain collision, so the reason names the reason.
+#[test]
+fn names_the_size_dispatch_it_cannot_honour() {
+    let idl = parse_idl(
+        r#"{
+          "kind": "programNode",
+          "instructions": [{
+            "kind": "instructionNode", "name": "closeAccount", "arguments": [],
+            "discriminators": [{ "kind": "sizeDiscriminatorNode", "size": 1 }]
+          }]
+        }"#,
+        "SplToken",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        render(&idl),
+        "address: -\n\
+         unusable instruction closeAccount: discriminators: dispatch matches a fixed-width \
+         prefix of the data, not its length, so a sizeDiscriminatorNode cannot be honoured\n"
+    );
+}
+
+/// A `program` on a type link names another program's type. Resolution here is
+/// against this program's own registry, so a local type of the same name would
+/// decode in its place — and with no local name at all the honest report is the
+/// link, not "undefined type".
+#[test]
+fn rejects_a_type_link_into_another_program() {
+    let idl = parse_idl(
+        r#"{
+          "kind": "programNode",
+          "instructions": [{
+            "kind": "instructionNode", "name": "mint", "arguments": [
+              { "kind": "instructionArgumentNode", "name": "meta",
+                "type": { "kind": "definedTypeLinkNode", "name": "tokenMetadata",
+                          "program": { "kind": "programLinkNode", "name": "mplTokenMetadata" } } }
+            ],
+            "discriminators": [{
+              "kind": "constantDiscriminatorNode", "offset": 0,
+              "constant": { "kind": "constantValueNode",
+                            "type": { "kind": "bytesTypeNode" },
+                            "value": { "kind": "bytesValueNode", "data": "07",
+                                       "encoding": "base16" } } }]
+          }],
+          "definedTypes": [{
+            "kind": "definedTypeNode", "name": "tokenMetadata",
+            "type": { "kind": "structTypeNode", "fields": [
+              { "kind": "structFieldTypeNode", "name": "supply",
+                "type": { "kind": "numberTypeNode", "format": "u64" } }] }
+          }]
+        }"#,
+        "Minter",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        render(&idl),
+        "address: -\n\
+         type tokenMetadata = {supply: u64}\n\
+         unusable instruction mint: args.meta: 'tokenMetadata' is defined by program \
+         'mplTokenMetadata', and this parser resolves type links against the program it is \
+         parsing, where the name means something else\n"
+    );
+}
+
+/// A present-but-unreadable `discriminators` is a defect, not an absent list:
+/// read as absent it leaves an empty prefix, and the instruction is then set
+/// aside for a width problem the file does not have.
+#[test]
+fn rejects_a_discriminator_list_that_is_not_an_array() {
+    let idl = parse_idl(
+        r#"{
+          "kind": "programNode",
+          "instructions": [{
+            "kind": "instructionNode", "name": "transfer", "arguments": [],
+            "discriminators": {}
+          }]
+        }"#,
+        "SplToken",
+    )
+    .expect("parse");
+
+    assert_eq!(
+        render(&idl),
+        "address: -\n\
+         unusable instruction transfer: discriminators: expected an array, got {}\n"
     );
 }
 

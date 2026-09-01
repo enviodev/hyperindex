@@ -3,18 +3,23 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
-/// A Codama IDL with one instruction whose only argument has the given type:
-/// the smallest shape that puts a type node in front of the parser on the path
-/// a config actually takes.
+/// A Codama IDL with one instruction whose body is a single argument of the
+/// given type: the smallest shape that puts a type node in front of the parser
+/// on the path a config actually takes. The leading `tag` argument carrying the
+/// dispatch byte is how a real Codama IDL spells a discriminator — the bytes
+/// are part of the encoded arguments, not a prefix in front of them.
 fn codama_type(type_node: &str) -> String {
     format!(
         r#"{{ "kind": "rootNode", "program": {{ "instructions": [{{
              "kind": "instructionNode", "name": "probe",
-             "discriminators": [{{ "kind": "constantDiscriminatorNode", "offset": 0,
-               "constant": {{ "value": {{ "kind": "bytesValueNode", "data": "01",
-                                          "encoding": "base16" }} }} }}],
-             "arguments": [{{ "kind": "instructionArgumentNode", "name": "probed",
-                              "type": {type_node} }}] }}] }} }}"#
+             "discriminators": [{{ "kind": "fieldDiscriminatorNode",
+                                   "name": "tag", "offset": 0 }}],
+             "arguments": [
+               {{ "kind": "instructionArgumentNode", "name": "tag",
+                  "type": {{ "kind": "numberTypeNode", "format": "u8" }},
+                  "defaultValue": {{ "kind": "numberValueNode", "number": 1 }} }},
+               {{ "kind": "instructionArgumentNode", "name": "probed",
+                  "type": {type_node} }}] }}] }} }}"#
     )
 }
 
@@ -274,12 +279,12 @@ fn decodes_instruction_data_through_the_parsed_schema() {
               "kind": "instructionNode",
               "name": "probe",
               "discriminators": [{
-                "kind": "constantDiscriminatorNode",
-                "offset": 0,
-                "constant": { "value": {
-                  "kind": "bytesValueNode", "data": "01", "encoding": "base16" } }
+                "kind": "fieldDiscriminatorNode", "name": "tag", "offset": 0
               }],
               "arguments": [
+                { "kind": "instructionArgumentNode", "name": "tag",
+                  "type": { "kind": "numberTypeNode", "format": "u8" },
+                  "defaultValue": { "kind": "numberValueNode", "number": 1 } },
                 { "kind": "instructionArgumentNode", "name": "amount",
                   "type": { "kind": "numberTypeNode", "format": "u64", "endian": "le" } },
                 { "kind": "instructionArgumentNode", "name": "flag",
