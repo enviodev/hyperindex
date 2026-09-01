@@ -4,6 +4,7 @@ type t = {
   resume: (
     ~checkpointId: Internal.checkpointId,
     ~chains: array<Persistence.initialChainState>,
+    ~entities: array<Internal.entityConfig>,
   ) => promise<unit>,
   writeBatch: (
     ~batch: Batch.t,
@@ -26,8 +27,8 @@ let makeClickHouse = (
     initialize: (~entities) => {
       ClickHouse.initialize(sink, ~entities)
     },
-    resume: (~checkpointId, ~chains) => {
-      ClickHouse.resume(sink, ~checkpointId, ~chains)
+    resume: (~checkpointId, ~chains, ~entities) => {
+      ClickHouse.resume(sink, ~checkpointId, ~chains, ~entities)
     },
     writeBatch: async (~batch, ~updatedEntities) => {
       // Staging reads JS values, so it holds the isolate and runs here. The

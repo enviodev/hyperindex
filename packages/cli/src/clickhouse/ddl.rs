@@ -344,6 +344,39 @@ pub fn insert_query(
 /// resume would report a rewind it has only asked for. Waiting for every
 /// replica (`2`) is what makes the storage actually be at the checkpoint by the
 /// time the indexer starts writing again.
+/// One read that answers, for every table a resume could trim, how many rows sit
+/// above the checkpoint it trims to. A table answering zero needs no mutation,
+/// and on a clean restart every one of them does — which is what keeps a resume
+/// from scheduling a part rewrite per entity for nothing.
+pub fn rows_above_checkpoint(
+    database: &str,
+    history_tables: &[String],
+    history: &HistorySchema,
+    checkpoint_id: &str,
+) -> String {
+    let branch = |table: &str, column: &str| {
+        format!(
+            "SELECT {} AS `name`, count() AS `above` FROM {}.{} WHERE {} > {checkpoint_id}",
+            literal(table),
+            quoted(database),
+            quoted(table),
+            quoted(column)
+        )
+    };
+    let branches: Vec<String> = history_tables
+        .iter()
+        .map(|table| branch(table, &history.checkpoint_id_column))
+        .chain(std::iter::once(branch(
+            &history.checkpoints_table,
+            &history.id_column,
+        )))
+        .collect();
+    format!(
+        "SELECT `name`, `above` FROM ({}) FORMAT TabSeparated",
+        branches.join(" UNION ALL ")
+    )
+}
+
 pub fn trim_history_table(
     database: &str,
     table: &str,

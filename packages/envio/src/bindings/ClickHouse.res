@@ -378,12 +378,22 @@ let resume = async (
   sink,
   ~checkpointId: Internal.checkpointId,
   ~chains: array<Persistence.initialChainState>,
+  ~entities: array<Internal.entityConfig>,
 ) => {
   let chainProgress = chains->Array.map(chain => {
     ClickHouseSink.chainId: chain.id->ChainId.toString,
     progressBlockNumber: chain.progressBlockNumber,
   })
-  try await sink->ClickHouseSink.resume(checkpointId->BigInt.toString, chainProgress) catch {
+  // The tables this schema owns. One left behind by an older schema is not ours
+  // to trim, and a schema change means a resync.
+  let historyTables = entities->Array.map(entityConfig =>
+    EntityHistory.historyTableName(~entityName=entityConfig.name, ~entityIndex=entityConfig.index)
+  )
+  try await sink->ClickHouseSink.resume(
+    checkpointId->BigInt.toString,
+    chainProgress,
+    historyTables,
+  ) catch {
   | exn => {
       Logging.errorWithExn(exn, "Failed to resume ClickHouse storage")
       throw(

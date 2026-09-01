@@ -2300,7 +2300,7 @@ let make = (
     }
   }
 
-  let resumeInitialState = async (): Persistence.initialState => {
+  let resumeInitialState = async (~entities): Persistence.initialState => {
     let (cache, chains, checkpointIdResult, reorgCheckpoints, (envioInfo, contractMapping)) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
@@ -2363,7 +2363,12 @@ let make = (
 
     // Resume sink if present - needed to rollback any reorg changes
     switch sink {
-    | Some(sink) => await sink.resume(~checkpointId, ~chains)
+    | Some(sink) =>
+      await sink.resume(
+        ~checkpointId,
+        ~chains,
+        ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.clickhouse),
+      )
     | None => ()
     }
 
