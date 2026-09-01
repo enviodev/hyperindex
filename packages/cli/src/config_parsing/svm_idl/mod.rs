@@ -24,7 +24,7 @@ pub struct IdlAccount {
 /// The first optional slot with a required one after it, if any. Names are
 /// paired to accounts by position, so a slot like that shifts every name after
 /// it when the transaction leaves it out.
-pub(crate) fn optional_before_a_required_slot(accounts: &[IdlAccount]) -> Option<&IdlAccount> {
+fn optional_before_a_required_slot(accounts: &[IdlAccount]) -> Option<&IdlAccount> {
     let last_required = accounts.iter().rposition(|a| !a.optional)?;
     accounts[..last_required].iter().find(|a| a.optional)
 }
@@ -49,9 +49,9 @@ pub struct ProgramIdl {
     pub address: Option<String>,
     pub instructions: BTreeMap<String, IxIdl>,
     pub defined_types: BTreeMap<String, FieldType>,
-    /// Declared instructions this runtime cannot decode or dispatch. They are
-    /// omitted from the catalog; if none remain, the program fails with these
-    /// reasons.
+    /// Declared instructions this runtime cannot decode or dispatch, and why.
+    /// They are out of the catalog, so a config naming one is answered with the
+    /// reason rather than a silent miss.
     pub unusable: Unusable,
     pub unusable_types: Unusable,
     /// Known non-empty prefixes of set-aside instructions. Prefix collision
@@ -274,20 +274,20 @@ fn le_bytes(ty: &FieldType, value: i128) -> Result<Vec<u8>> {
         FieldType::I16 => (2, i16::MIN as i128, i16::MAX as i128),
         FieldType::I32 => (4, i32::MIN as i128, i32::MAX as i128),
         FieldType::I64 => (8, i64::MIN as i128, i64::MAX as i128),
-        other => bail!("a {} is not a discriminator width", render_primitive(other)),
+        other => bail!("a discriminator is a whole number, and this one is typed {other:?}"),
     };
     if value < min || value > max {
         bail!(
             "discriminator value {value} does not fit in {}",
-            render_primitive(ty)
+            render_integer(ty)
         );
     }
     Ok(value.to_le_bytes()[..width].to_vec())
 }
 
-/// The IDL spelling of a primitive, for error messages that name what the file
+/// The IDL spelling of an integer type, for a message naming what the file
 /// declared rather than the runtime's own type.
-fn render_primitive(ty: &FieldType) -> String {
+fn render_integer(ty: &FieldType) -> String {
     format!("{ty:?}").to_lowercase()
 }
 
@@ -519,9 +519,9 @@ fn unbounded_recursion<'a>(
 }
 
 /// What an instruction dispatches on, before its body has been read.
-pub(super) struct Dispatch {
-    pub bytes: Vec<u8>,
-    pub derived: bool,
+struct Dispatch {
+    bytes: Vec<u8>,
+    derived: bool,
 }
 
 /// The instructions of one program: the ones that can be indexed, the reasons
@@ -584,33 +584,22 @@ fn parse_defined_types(
     key: &str,
     mut parse_one: impl FnMut(&str, &Value) -> Result<FieldType>,
 ) -> Result<(BTreeMap<String, FieldType>, Unusable)> {
-    let arr = declared_array(node).with_context(|| key.to_string())?;
-    collect_named(arr, "type", &format!("{key}[].name"), |name, t| {
-        let node = t
-            .get("type")
-            .ok_or_else(|| anyhow!("type '{name}' has no 'type'"))?;
-        parse_one(name, node)
-    })
-}
-
-fn collect_named<T>(
-    entries: &[Value],
-    noun: &str,
-    name_context: &str,
-    mut parse_one: impl FnMut(&str, &Value) -> Result<T>,
-) -> Result<(BTreeMap<String, T>, Unusable)> {
     let mut out = BTreeMap::new();
     let mut unusable = Unusable::new();
-    for entry in entries {
+    for entry in declared_array(node).with_context(|| key.to_string())? {
         let name = required_str(entry, "name")
-            .with_context(|| name_context.to_string())?
+            .with_context(|| format!("{key}[].name"))?
             .to_string();
         if out.contains_key(&name) || unusable.contains_key(&name) {
-            bail!("IDL declares {noun} '{name}' more than once");
+            bail!("IDL declares type '{name}' more than once");
         }
-        match parse_one(&name, entry) {
-            Ok(parsed) => {
-                out.insert(name, parsed);
+        let parsed = entry
+            .get("type")
+            .ok_or_else(|| anyhow!("type '{name}' has no 'type'"))
+            .and_then(|node| parse_one(&name, node));
+        match parsed {
+            Ok(ty) => {
+                out.insert(name, ty);
             }
             Err(e) => {
                 unusable.insert(name, format!("{e:#}"));

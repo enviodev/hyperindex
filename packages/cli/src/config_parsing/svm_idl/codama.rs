@@ -54,8 +54,9 @@ fn parse_instructions(program: &Map<String, Value>) -> Result<ProgramIdl> {
     collect_instructions(
         arr,
         |_name, ix| {
+            let (bytes, _) = parse_discriminators(ix).context("discriminators")?;
             Ok(Dispatch {
-                bytes: parse_discriminators(ix).context("discriminators")?.0,
+                bytes,
                 derived: false,
             })
         },
@@ -65,7 +66,7 @@ fn parse_instructions(program: &Map<String, Value>) -> Result<ProgramIdl> {
             // Re-read rather than carried through: two nodes at most, and the
             // alternative is a value threaded across both closures for the one
             // dialect that has anything to thread.
-            let named = parse_discriminators(ix).context("discriminators")?.1;
+            let (_, named) = parse_discriminators(ix).context("discriminators")?;
             let args = parse_arguments(ix.get("arguments"), dispatch.bytes.len(), &named)?;
             Ok((accounts, args))
         },
@@ -248,9 +249,38 @@ fn parse_arguments(
     named_parts: &[NamedPart],
 ) -> Result<Vec<NamedField>> {
     let arr = declared_array(node).context("arguments")?;
+    reject_duplicate_argument_names(arr)?;
+    let covered = arguments_under_prefix(arr, prefix_len)?;
+    reject_misplaced_named_parts(&covered, named_parts)?;
 
-    // Names are matched by position from here on, so two arguments sharing one
-    // would leave which of them the discriminator covered undecidable.
+    arr.iter()
+        .skip(covered.len())
+        .map(|a| {
+            let (name, ty) = argument_field(a)?;
+            Ok(NamedField {
+                name: name.to_string(),
+                ty,
+            })
+        })
+        .collect()
+}
+
+/// An argument's name and the type it encodes. Every key on the node is
+/// modelled or the argument is refused, since one that is not could be
+/// deciding the layout.
+fn argument_field(a: &Value) -> Result<(&str, FieldType)> {
+    let name = required_str(a, "name").context("arguments")?;
+    let path = format!("args.{name}");
+    reject_unmodelled_keys(a, &path, &FIELD_KEYS)?;
+    let ty = a
+        .get("type")
+        .ok_or_else(|| anyhow!("{path}: argument has no 'type'"))?;
+    Ok((name, parse_type(ty, &path)?))
+}
+
+/// Names are matched by position from here on, so two arguments sharing one
+/// would leave which of them the discriminator covered undecidable.
+fn reject_duplicate_argument_names(arr: &[Value]) -> Result<()> {
     let mut seen = HashSet::new();
     for a in arr {
         let name = required_str(a, "name").context("arguments")?;
@@ -258,20 +288,21 @@ fn parse_arguments(
             bail!("IDL declares argument '{name}' more than once");
         }
     }
+    Ok(())
+}
 
-    let mut covered: Vec<(usize, &str)> = Vec::new();
+/// The leading arguments whose bytes the discriminator covers, each with the
+/// offset it starts at. They are spent: the runtime starts the body after the
+/// prefix, so decoding them again reads every later field one argument early.
+fn arguments_under_prefix(arr: &[Value], prefix_len: usize) -> Result<Vec<(usize, &str)>> {
+    let mut covered = Vec::new();
     let mut offset = 0usize;
     for a in arr {
         if offset >= prefix_len {
             break;
         }
-        let name = required_str(a, "name").context("arguments")?;
-        let path = format!("args.{name}");
-        reject_unmodelled_keys(a, &path, &FIELD_KEYS)?;
-        let ty = a
-            .get("type")
-            .ok_or_else(|| anyhow!("{path}: argument has no 'type'"))?;
-        let width = super::encoded_width(&parse_type(ty, &path)?).ok_or_else(|| {
+        let (name, ty) = argument_field(a)?;
+        let width = super::encoded_width(&ty).ok_or_else(|| {
             anyhow!(
                 "argument '{name}' is under the {prefix_len}-byte discriminator, and its width is \
                  not fixed, so where the body starts cannot be told"
@@ -303,10 +334,16 @@ fn parse_arguments(
              them; its bytes are part of the instruction's data, not a prefix in front of it"
         );
     }
+    Ok(covered)
+}
 
-    // An argument a field discriminator names has to be the one the offsets put
-    // there. Otherwise the offsets and the declaration order disagree, and where
-    // the body starts is a guess.
+/// An argument a field discriminator names has to be the one the offsets put
+/// there. Otherwise the offsets and the declaration order disagree, and where
+/// the body starts is a guess.
+fn reject_misplaced_named_parts(
+    covered: &[(usize, &str)],
+    named_parts: &[NamedPart],
+) -> Result<()> {
     for (offset, field) in named_parts {
         let offset = *offset as usize;
         if !covered.contains(&(offset, field.as_str())) {
@@ -321,22 +358,7 @@ fn parse_arguments(
             );
         }
     }
-
-    arr.iter()
-        .skip(covered.len())
-        .map(|a| {
-            let name = required_str(a, "name")?.to_string();
-            let path = format!("args.{name}");
-            reject_unmodelled_keys(a, &path, &FIELD_KEYS)?;
-            let ty = a
-                .get("type")
-                .ok_or_else(|| anyhow!("{path}: argument has no 'type'"))?;
-            Ok(NamedField {
-                ty: parse_type(ty, &path)?,
-                name,
-            })
-        })
-        .collect()
+    Ok(())
 }
 
 /// Keys any node may carry without changing a single decoded byte. `display`

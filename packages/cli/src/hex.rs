@@ -16,8 +16,8 @@ fn decode_digits(digits: &str, source: &str, name: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Strictly decode a `0x`-prefixed even-length hex string; anything else (e.g.
-/// an arbitrary marker string) is a validation error.
+/// Strictly decode a prefixed even-length hex string; anything else (e.g. an
+/// arbitrary marker string) is a validation error.
 pub(crate) fn decode_prefixed(s: &str, name: &str) -> Result<Vec<u8>> {
     let digits = strip_prefix(s)
         .with_context(|| format!("{name} '{s}' must be a 0x-prefixed hex string"))?;

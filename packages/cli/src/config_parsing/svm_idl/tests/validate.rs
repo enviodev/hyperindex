@@ -5,7 +5,7 @@ use serde_json::Value;
 use super::*;
 
 #[test]
-fn separates_file_level_defects_from_instruction_level_ones() {
+fn records_each_defect_against_what_carries_it() {
     let cases: Vec<(&str, &str)> = vec![
         ("neither dialect", r#"{ "name": "mystery" }"#),
         (
@@ -558,7 +558,6 @@ fn reads_the_scenario_idls_as_the_upstream_parser_does() {
 /// Deterministic mutation fuzzing over the real fixtures. `parse_idl` takes
 /// untrusted JSON, so no input may panic — every rejection has to arrive as an
 /// `Err`. A seeded walk keeps a failure reproducible from the printed seed.
-///
 #[test]
 fn mutated_fixtures_never_panic() {
     // xorshift64*, so the sequence is fixed across platforms and runs.
@@ -830,11 +829,15 @@ fn demotes_a_type_chain_too_deep_to_walk() {
     assert_eq!(
         (
             idl.instructions.is_empty(),
-            idl.unusable
-                .get("go")
-                .map(|r| r.contains("nested too deeply")),
+            idl.unusable.get("go").map(String::as_str),
         ),
-        (true, Some(true))
+        (
+            true,
+            Some(
+                "it reaches type 'T0', which cannot be decoded: its references are nested too \
+                 deeply to decode: the walk stops after 256 levels"
+            )
+        )
     );
 }
 
@@ -876,62 +879,41 @@ fn blames_the_cycle_rather_than_the_type_that_reaches_it() {
 /// stack overflows.
 #[test]
 fn demotes_unbounded_recursive_types() {
-    let alias = parse_idl(
-        r#"{ "instructions": [{ "name": "go", "discriminator": [1],
-             "args": [{ "name": "loop", "type": { "defined": "Loop" } }] }],
-             "types": [{ "name": "Loop", "type": { "kind": "type", "alias": { "defined": "Loop" } } }] }"#,
-        "Program",
-    )
-    .expect("parse");
-    let nested = parse_idl(
-        r#"{ "instructions": [{ "name": "go", "discriminator": [1],
-             "args": [{ "name": "box", "type": { "defined": "Box" } }] }],
-             "types": [{ "name": "Box", "type": { "kind": "struct", "fields": [
-               { "name": "inner", "type": { "defined": "Box" } }] } }] }"#,
-        "Program",
-    )
-    .expect("parse");
+    let program = |types: &str, arg: &str| {
+        parse_idl(
+            &format!(
+                r#"{{ "instructions": [{{ "name": "go", "discriminator": [1],
+                     "args": [{{ "name": "field", "type": {{ "defined": "{arg}" }} }}] }}],
+                     "types": [{types}] }}"#
+            ),
+            "Program",
+        )
+        .expect("parse")
+    };
+    let cycles = "it recursively contains itself without an option or vec to terminate decoding";
 
     assert_eq!(
-        (
-            (
-                alias
-                    .instructions
-                    .keys()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
-                alias
-                    .unusable
-                    .keys()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
-                alias
-                    .unusable_types
-                    .get("Loop")
-                    .map(|r| r.contains("recursively"))
-                    .unwrap_or(false),
+        [
+            render(&program(
+                r#"{ "name": "Loop", "type": { "kind": "type",
+                     "alias": { "defined": "Loop" } } }"#,
+                "Loop",
+            )),
+            render(&program(
+                r#"{ "name": "Box", "type": { "kind": "struct", "fields": [
+                     { "name": "inner", "type": { "defined": "Box" } }] } }"#,
+                "Box",
+            )),
+        ],
+        [
+            format!(
+                "address: -\nunusable instruction go: it reaches type 'Loop', which cannot be \
+                 decoded: {cycles}\nunusable type Loop: {cycles}\n"
             ),
-            (
-                nested
-                    .instructions
-                    .keys()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
-                nested
-                    .unusable
-                    .keys()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
-                nested
-                    .unusable_types
-                    .get("Box")
-                    .map(|r| r.contains("recursively"))
-                    .unwrap_or(false),
+            format!(
+                "address: -\nunusable instruction go: it reaches type 'Box', which cannot be \
+                 decoded: {cycles}\nunusable type Box: {cycles}\n"
             ),
-        ),
-        (
-            (Vec::new(), vec!["go"], true),
-            (Vec::new(), vec!["go"], true),
-        )
+        ]
     );
 }

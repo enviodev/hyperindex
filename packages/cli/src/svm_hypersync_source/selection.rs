@@ -151,7 +151,8 @@ impl Registration {
                 anyhow::ensure!(
                     crate::config_parsing::svm_idl::DISPATCHABLE_DISCRIMINATOR_LENS
                         .contains(&bytes.len()),
-                    "discriminator must be 1/2/4/8 bytes, got {} bytes",
+                    "discriminator must be {} bytes, got {}",
+                    crate::config_parsing::svm_idl::describe_dispatchable_lens(),
                     bytes.len(),
                 );
                 bytes.len()
@@ -978,6 +979,9 @@ mod tests {
         )
         .err()
         .unwrap();
-        assert!(format!("{err:#}").contains("discriminator must be 1/2/4/8 bytes"));
+        assert_eq!(
+            format!("{err:#}"),
+            "parse registration for I0: discriminator must be 1, 2, 4, or 8 bytes, got 3"
+        );
     }
 }

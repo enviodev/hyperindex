@@ -2060,8 +2060,15 @@ fn resolve_instruction(
         args: ix.args.clone(),
     };
 
+    // Bytes identify an instruction more exactly than a name does: whatever the
+    // config called it, these are the calls that will arrive, so this is the
+    // layout that decodes them.
+    if let Some(ix) = declared.as_deref().and_then(|d| abi.idl.dispatched_by(d)) {
+        return Ok(layout(ix, declared));
+    }
+
     if let Some(ix) = abi.idl.instructions.get(&instr.name) {
-        match declared.filter(|declared| *declared != ix.discriminator) {
+        match declared {
             None => return Ok(layout(ix, Some(ix.discriminator.clone()))),
             // A derived value is this parser's reading of a file that left the
             // bytes implicit, and a file is Anchor-shaped whether or not the
@@ -2086,10 +2093,6 @@ fn resolve_instruction(
                 ))
             }
         }
-    }
-
-    if let Some(ix) = declared.as_deref().and_then(|d| abi.idl.dispatched_by(d)) {
-        return Ok(layout(ix, declared));
     }
 
     if abi.source != SvmSchemaSource::Inline {
@@ -4023,6 +4026,36 @@ type Foo {
                     serde_json::json!({ "Side": { "enum": [{ "name": "Buy" }, { "name": "Sell" }] } }),
                     serde_json::json!([{ "name": "side", "type": { "defined": "Side" } }]),
                 )
+            );
+        }
+
+        /// Bytes name an instruction more exactly than a name does, and a
+        /// config carrying another declared instruction's discriminator is
+        /// dispatching on that instruction — so its layout is the one that
+        /// decodes the calls that arrive.
+        #[test]
+        fn follows_the_discriminator_to_the_instruction_it_dispatches() {
+            let config = program_reading_idl(
+                r#"{ "version": "0.1.0", "name": "pool", "instructions": [
+                     { "name": "swap", "accounts": [{ "name": "payer" }],
+                       "args": [{ "name": "amount", "type": "u64" }] },
+                     { "name": "swapV2",
+                       "accounts": [{ "name": "payer" }, { "name": "pool" }],
+                       "args": [{ "name": "amountIn", "type": "u64" },
+                                { "name": "minOut", "type": "u64" }] }] }"#,
+                "            - name: swap\n              discriminator: \"0x2b04ed0b1ac91e62\"\n",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![(
+                    "swap".to_string(),
+                    Some("0x2b04ed0b1ac91e62".to_string()),
+                    8,
+                    vec!["payer".to_string(), "pool".to_string()],
+                    vec!["amountIn".to_string(), "minOut".to_string()],
+                )]
             );
         }
 

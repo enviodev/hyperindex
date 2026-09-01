@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
-pub(super) fn render(idl: &ProgramIdl) -> String {
+fn render(idl: &ProgramIdl) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "address: {}", idl.address.as_deref().unwrap_or("-"));
     for (name, ix) in &idl.instructions {
@@ -40,7 +40,7 @@ pub(super) fn render(idl: &ProgramIdl) -> String {
     out
 }
 
-pub(super) fn render_fields(fields: &[NamedField]) -> String {
+fn render_fields(fields: &[NamedField]) -> String {
     fields
         .iter()
         .map(|f| format!("{}: {}", f.name, render_type(&f.ty)))
@@ -48,7 +48,7 @@ pub(super) fn render_fields(fields: &[NamedField]) -> String {
         .join(", ")
 }
 
-pub(super) fn render_type(ty: &FieldType) -> String {
+fn render_type(ty: &FieldType) -> String {
     match ty {
         FieldType::Option(inner) => format!("Option<{}>", render_type(inner)),
         FieldType::Vec(inner) => format!("Vec<{}>", render_type(inner)),
@@ -71,16 +71,16 @@ pub(super) fn render_type(ty: &FieldType) -> String {
 }
 
 /// `path` is relative to the crate root.
-pub(super) fn read_fixture(path: &str) -> String {
+fn read_fixture(path: &str) -> String {
     let path = format!("{}/{path}", env!("CARGO_MANIFEST_DIR"));
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"))
 }
 
 /// The published SPL Token and SPL Memo IDLs, unmodified. Both declare
-/// instructions Borsh cannot express, and the point of the pair is that one
-/// such instruction costs only itself: SPL Token keeps the other 26, while
-/// Memo — whose whole payload is a remainder-encoded string — has nothing left
-/// and would fail the program at the layer above.
+/// instructions Borsh cannot express, and the point of the pair is that such an
+/// instruction costs only itself: SPL Token keeps the other 26, while Memo —
+/// whose whole payload is a remainder-encoded string — has only the one and is
+/// left with an empty catalog.
 #[test]
 fn parses_the_published_spl_idls() {
     let catalog = |file: &str| {
