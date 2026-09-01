@@ -2037,7 +2037,7 @@ chains:
       t,
       ~files=Dict.fromArray([("abis/Token.json", "not json")]),
       evmYaml,
-      "Failed parsing abi types for events in contract Token on network 1: Failed to decode ABI file at \"abis/Token.json\": expected ident at line 1 column 2",
+      "Failed parsing abi types for events in contract Token on network 1: Failed to decode ABI file at \"abis/Token.json\": The file is not valid JSON: expected ident at line 1 column 2.",
     )
   })
 
