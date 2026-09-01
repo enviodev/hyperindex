@@ -127,6 +127,20 @@ export async function startResolverServer(options) {
       return;
     }
 
+    // Both routes take the caller's role from the request body -- `/resolve` as
+    // a field, `/hasura-action` in `session_variables` -- so on an open socket
+    // either is a way to assert `admin`. The gate belongs in front of both, and
+    // ahead of reading the body at all.
+    if (actionSecret !== undefined && !presentedSecret(request, actionSecret)) {
+      const refusal = "This resolver service requires its shared secret on every request.";
+      send(
+        response,
+        403,
+        isAction ? actionErrorBody(refusal, "FORBIDDEN") : wireError(refusal, "FORBIDDEN")
+      );
+      return;
+    }
+
     readBody(request, MAX_REQUEST_BYTES)
       .then(async (raw) => {
         let parsed;
@@ -142,20 +156,6 @@ export async function startResolverServer(options) {
         }
 
         if (isAction) {
-          // Checked before anything is parsed or dispatched. Without it the
-          // handler believes whatever role the body claims, so `admin: true`
-          // stops anyone reaching Hasura and nobody reaching the socket.
-          if (actionSecret !== undefined && !presentedSecret(request, actionSecret)) {
-            send(
-              response,
-              403,
-              actionErrorBody(
-                "This resolver service requires the shared secret Hasura is configured to send.",
-                "FORBIDDEN"
-              )
-            );
-            return;
-          }
           const invalid = badActionRequest(parsed);
           if (invalid !== null) {
             send(
