@@ -162,12 +162,27 @@ describe("envio resolvers, as Hasura's handler", () => {
     // The re-assert is a read that finds nothing to do, not a rewrite: the
     // fake reports the metadata as still empty, so it applies again.
     let exportsAfterStartup = callsOfType("export_metadata")->Array.length
-    await Utils.delay(120)
+    // Waited for rather than slept past: a fixed delay asserts how fast a busy
+    // CI runner gets round to a 40ms timer, which is not what this is about.
+    let deadline = Date.now() +. 10_000.
+    let rec waitForReassert = async () =>
+      if (
+        callsOfType("export_metadata")->Array.length > exportsAfterStartup ||
+          Date.now() > deadline
+      ) {
+        ()
+      } else {
+        await Utils.delay(20)
+        await waitForReassert()
+      }
+    await waitForReassert()
     let exportsWhileRunning = callsOfType("export_metadata")->Array.length
 
     await running.shutdown()
     let exportsAtShutdown = callsOfType("export_metadata")->Array.length
-    await Utils.delay(120)
+    // This half asserts an absence, so it can only be a wait -- long enough to
+    // be several intervals even when the runner is busy.
+    await Utils.delay(500)
     let exportsAfterShutdown = callsOfType("export_metadata")->Array.length
     await Promise.make((resolve, _reject) => hasura->closeServer(() => resolve()))
     clearHasuraEnv()
@@ -229,8 +244,17 @@ describe("envio resolvers, as Hasura's handler", () => {
       await getStatus(`http://127.0.0.1:${running.server.port->Int.toString}/healthz`)
 
     // The loop is what converges, so it has to have been started even though
-    // the first apply threw.
-    await Utils.delay(140)
+    // the first apply threw. Waited for, not slept past: how quickly a loaded
+    // runner services a 40ms timer is not what this asserts.
+    let convergeBy = Date.now() +. 10_000.
+    let rec waitForConverge = async () =>
+      if callsOfType("bulk")->Array.length > 1 || Date.now() > convergeBy {
+        ()
+      } else {
+        await Utils.delay(20)
+        await waitForConverge()
+      }
+    await waitForConverge()
     let bulksSent = callsOfType("bulk")->Array.length
 
     await running.shutdown()
