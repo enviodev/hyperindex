@@ -2062,8 +2062,20 @@ fn resolve_instruction(
 
     // Bytes identify an instruction more exactly than a name does: whatever the
     // config called it, these are the calls that will arrive, so this is the
-    // layout that decodes them.
+    // layout that decodes them. Naming an instruction is how a config renames
+    // one; naming one the IDL also declares, while dispatching on another, is
+    // more likely a discriminator pasted from the wrong row.
     if let Some(ix) = declared.as_deref().and_then(|d| abi.idl.dispatched_by(d)) {
+        if let Some(named) = abi.idl.instructions.get(&instr.name) {
+            if named.discriminator != ix.discriminator {
+                eprintln!(
+                    "Warning: instruction '{}' is dispatched on 0x{}, which the IDL declares for a \
+                     different instruction, so its accounts and arguments are the ones decoded.",
+                    instr.name,
+                    crate::hex::encode(&ix.discriminator),
+                );
+            }
+        }
         return Ok(layout(ix, declared));
     }
 
