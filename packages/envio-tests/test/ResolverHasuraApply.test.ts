@@ -8,11 +8,11 @@ import {
   defineType,
   S,
 } from "envio";
-import { buildHasuraMetadata } from "../../envio/src/resolvers/hasuraMetadata.js";
+import { buildHasuraMetadata } from "envio/src/resolvers/hasuraMetadata.js";
 import {
   applyResolverMetadata,
   startMetadataReassert,
-} from "../../envio/src/resolvers/hasuraApply.js";
+} from "envio/src/resolvers/hasuraApply.js";
 
 // Applying the metadata, against a stand-in that answers Hasura's metadata API.
 //

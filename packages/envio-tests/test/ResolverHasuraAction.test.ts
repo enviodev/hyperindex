@@ -6,8 +6,8 @@ import {
   ResolverError,
   S,
 } from "envio";
-import { createResolverPoolFromEnv } from "../../envio/src/resolvers/db.js";
-import { startResolverServer } from "../../envio/src/resolvers/server.js";
+import { createResolverPoolFromEnv } from "envio/src/resolvers/db.js";
+import { startResolverServer } from "envio/src/resolvers/server.js";
 
 // Hasura's action contract, over real HTTP. It is not envio-serve's: the result
 // is returned bare rather than under `data`, and a failure is a status code

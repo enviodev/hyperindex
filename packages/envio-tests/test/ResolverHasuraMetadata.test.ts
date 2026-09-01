@@ -7,7 +7,7 @@ import {
   defineType,
   S,
 } from "envio";
-import { buildHasuraMetadata } from "../../envio/src/resolvers/hasuraMetadata.js";
+import { buildHasuraMetadata } from "envio/src/resolvers/hasuraMetadata.js";
 
 // The manifest `envio codegen` writes, turned into the metadata Hasura needs to
 // expose each resolver as an action. Pure: manifest in, JSON out, no I/O.
