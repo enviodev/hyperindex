@@ -83,6 +83,26 @@ let crossChainLaggingFirstScenario = Scenario.make(
   ~configYaml=makeConfigYaml("per-chain-prune-cross-chain-lagging-first", ~laggingChainId=5),
 )
 
+// Both chains reach a safe checkpoint of their own, at a different one each, so
+// the prune is bounded per chain with more than one bound to apply at once.
+let twoBoundsScenario = Scenario.make(
+  ~schema,
+  ~configYaml=`
+name: per-chain-prune-two-bounds
+rollback_on_reorg: true
+disable_default_cross_chain: true
+contracts:
+  - name: Token
+    events:
+      - event: Transfer()
+chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
+      200,
+      ~startBlock=210,
+      ~maxReorgDepth=15,
+    )}
+`,
+)
+
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
 let setCounter = (~block, ~count: bigint): MockSource.itemMock => {
@@ -195,6 +215,61 @@ describe("Per-chain history pruning", () => {
           counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
         ],
         [(1n, 100), (2n, 100), (3n, 1337), (4n, 1337), (5n, 100), (6n, 100)],
+      ))
+    },
+  )
+
+  // Both chains prune, to a different checkpoint each — the case where more than
+  // one bound reaches the database at once.
+  twoBoundsScenario->Scenario.it(
+    "Holds each chain to its own bound when several chains prune at once",
+    ~sources=[{chain: 100, methods}, {chain: 200, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source200 = source(200)
+
+      let _ = await Promise.all2((
+        startAt(~t, ~source=source100, ~head=120),
+        startAt(~t, ~source=source200, ~head=220),
+      ))
+
+      source100.resolveGetItemsOrThrow(
+        [setCounter(~block=111, ~count=1n), setCounter(~block=112, ~count=2n)],
+        ~latestFetchedBlockNumber=112,
+      )
+      source200.resolveGetItemsOrThrow(
+        [setCounter(~block=211, ~count=11n), setCounter(~block=212, ~count=12n)],
+        ~latestFetchedBlockNumber=212,
+      )
+      await indexer.getBatchWritePromise()
+
+      source100.setAutoHeight(130)
+      source200.setAutoHeight(230)
+      source100.resolveGetItemsOrThrow(
+        [setCounter(~block=120, ~count=3n)],
+        ~filter=MockSource.coveringBlock(113),
+        ~latestFetchedBlockNumber=130,
+      )
+      source200.resolveGetItemsOrThrow(
+        [setCounter(~block=220, ~count=13n)],
+        ~filter=MockSource.coveringBlock(213),
+        ~latestFetchedBlockNumber=230,
+      )
+      await indexer.getBatchWritePromise()
+      await indexer.waitUntilIdle()
+
+      t.expect(
+        await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),
+        ~message="Each chain kept its own anchor and dropped only what its own safe block put out of reach",
+      ).toEqual((
+        [
+          counterSet(~checkpointId=2n, ~chain=100, ~count=2n),
+          counterSet(~checkpointId=4n, ~chain=200, ~count=12n),
+          counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
+          counterSet(~checkpointId=7n, ~chain=200, ~count=13n),
+        ],
+        [(2n, 100), (4n, 200), (5n, 100), (6n, 100), (7n, 200), (8n, 200)],
       ))
     },
   )
