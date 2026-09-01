@@ -88,7 +88,8 @@ let run = async args => {
           processChdir(cwd)
           applyEnv(env)
           switch mode {
-          | "manifest" => await ResolverProcess.writeManifest(~config=Config.load(), ~projectRoot=cwd)
+          | "manifest" =>
+            await ResolverProcess.writeManifest(~config=Config.load(), ~projectRoot=cwd)
           | "metadata" =>
             let handlerUrl = switch Env.Resolvers.publicUrl() {
             | Some(url) => url
@@ -105,6 +106,16 @@ let run = async args => {
             // stdout, so it pipes into `hasura metadata apply` or `jq` rather
             // than being buried in the log stream.
             Console.log(JSON.stringify(metadata, ~space=2))
+          | "migrate" =>
+            let {applied, reasons} = await ResolverProcess.migrate(
+              ~config=Config.load(),
+              ~projectRoot=cwd,
+            )
+            Logging.info(
+              applied
+                ? `Updated Hasura to match these resolvers: ${reasons->Array.join("; ")}`
+                : "Hasura already matches these resolvers; nothing to update",
+            )
           // Serving keeps the event loop alive on its own, so returning here
           // leaves the process running rather than exiting.
           | _ =>
