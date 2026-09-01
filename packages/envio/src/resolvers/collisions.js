@@ -19,6 +19,7 @@ const ROOT_AND_BUILTIN_TYPES = [
   "cursor_ordering",
   "Boolean",
   "Float",
+  "ID",
   "Int",
   "String",
 ];
