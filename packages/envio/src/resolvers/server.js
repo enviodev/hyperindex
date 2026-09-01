@@ -71,6 +71,10 @@ const wireError = (message, code) => ({
  * Resolves once the socket is listening, with the port it bound — pass
  * `port: 0` to let the OS choose one.
  */
+// What a readiness probe is prepared to wait for, and so what the check has to
+// answer within whether or not the database is the thing that is slow.
+const READYZ_BUDGET_MS = 2_000;
+
 export async function startResolverServer(options) {
   const { resolvers, pool, exposeErrors = false, checkCompatible, actionSecret } = options;
   const port = options.port ?? ResolversEnv.port();
@@ -104,17 +108,40 @@ export async function startResolverServer(options) {
       // reach Postgres has nothing to serve, and one pointed at a database
       // indexed by a different build would answer with plausible wrong
       // numbers.
+      //
+      // The budget is wall-clock, not just the query's `statement_timeout`.
+      // That only starts once `SET LOCAL` has been sent, so a Postgres that
+      // accepts the socket and never finishes the handshake is bounded by the
+      // pool's `connect_timeout` instead -- sized for the pool wait, and far
+      // past what a probe waits for. An orchestrator that gives up first marks
+      // the pod unready without the reason ever reaching it.
+      let answered = false;
+      let budget = null;
+      const answer = (status, payload) => {
+        if (answered) return;
+        answered = true;
+        clearTimeout(budget);
+        send(response, status, payload);
+      };
+      budget = setTimeout(
+        () =>
+          answer(503, {
+            status: "unavailable",
+            reason: `The database did not answer within ${READYZ_BUDGET_MS}ms.`,
+          }),
+        READYZ_BUDGET_MS
+      );
       pool
-        .forResolver({ name: "readyz", timeoutMs: 2_000 })
+        .forResolver({ name: "readyz", timeoutMs: READYZ_BUDGET_MS })
         .sql.unsafe("SELECT 1;")
         .then(async () => (checkCompatible ? await checkCompatible() : null))
         .then((reason) =>
           reason == null
-            ? send(response, 200, { status: "ok" })
-            : send(response, 503, { status: "incompatible", reason })
+            ? answer(200, { status: "ok" })
+            : answer(503, { status: "incompatible", reason })
         )
         .catch((error) => {
-          send(response, 503, { status: "unavailable", reason: error.message });
+          answer(503, { status: "unavailable", reason: error.message });
         });
       return;
     }
