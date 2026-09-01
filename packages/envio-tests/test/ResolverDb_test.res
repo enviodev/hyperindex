@@ -186,7 +186,7 @@ describe("Resolver db handle", () => {
     await pool->ResolverDb.endPool
     t.expect(caught->Option.map(e => e.message)).toEqual(
       Some(
-        "Resolver 'unbounded' requires a positive `timeoutMs`. The resolver process connects around PgBouncer, so statement_timeout is the only bound on a runaway query.",
+        "Resolver 'unbounded' requires a positive `timeoutMs`. It becomes the statement_timeout on every query the resolver makes, which is the only thing bounding a runaway one.",
       ),
     )
   })
