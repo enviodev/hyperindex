@@ -3,10 +3,10 @@
 // Three things it owns that a bare postgres client does not:
 //
 //   1. A `statement_timeout` on every query, taken from the resolver's own
-//      `timeoutMs`. The resolver process connects around PgBouncer, and a
-//      pooler's `query_timeout` drops the client without cancelling the
-//      backend — so this is the only thing that actually bounds a runaway
-//      query, and a handle cannot be made without one.
+//      `timeoutMs`. It is the only thing that actually bounds a runaway query
+//      -- a pooler's `query_timeout`, where there is one, drops the client
+//      without cancelling the backend -- so a handle cannot be made without
+//      one.
 //   2. A bounded pool with a bounded *wait*, sized as concurrent heavy
 //      requests x per-request fan-out rather than by CPU count: a single
 //      resolver holding four connections at once is the shape this exists for.
@@ -155,11 +155,10 @@ export function createResolverPool(options) {
     "createResolverPool `poolWaitTimeoutMs` must be a positive whole number"
   );
 
-  // Transaction-mode PgBouncer rejects named prepared statements, so the
-  // fallback path gives up plan reuse; the direct `-r` path keeps it. The
-  // per-query timeout is `SET LOCAL` on *both* paths, unlike the connection
-  // startup option the design allowed for the direct one: a single pool serves
-  // every resolver, and each brings its own `timeoutMs`.
+  // A transaction-mode pooler (PgBouncer and friends) rejects named prepared
+  // statements, so that path gives up plan reuse; connecting straight to
+  // Postgres keeps it. The per-query timeout is `SET LOCAL` on *both* paths: a
+  // single pool serves every resolver, and each brings its own `timeoutMs`.
   const prepare = poolerBacked !== true;
 
   const sql = postgres({
@@ -212,7 +211,7 @@ export function createResolverPool(options) {
       timeoutMs <= 0
     ) {
       throw new ResolverDbError(
-        `Resolver '${name}' requires a positive \`timeoutMs\`. The resolver process connects around PgBouncer, so statement_timeout is the only bound on a runaway query.`,
+        `Resolver '${name}' requires a positive \`timeoutMs\`. It becomes the statement_timeout on every query the resolver makes, which is the only thing bounding a runaway one.`,
         "MISSING_TIMEOUT"
       );
     }
@@ -309,8 +308,7 @@ export function createResolverPool(options) {
 
       /**
        * The Postgres schema the indexer's tables live in. Raw SQL has to
-       * qualify table names with it, and it is not "public" on a hosted
-       * deployment.
+       * qualify table names with it, and it is not always "public".
        */
       pgSchema,
 
@@ -336,9 +334,8 @@ export function createResolverPool(options) {
 }
 
 /**
- * The pool for the running resolver process: the indexer's ENVIO_PG_* target
- * (pointed at the read service in a deployment) with the resolver process's
- * own sizing.
+ * The pool for the running resolver process: the indexer's ENVIO_PG_* target,
+ * with sizing of its own.
  */
 export function createResolverPoolFromEnv(options) {
   return createResolverPool({
