@@ -1045,11 +1045,36 @@ GROUP BY "chain_id";`
   })
 })
 
+// Runs the validation path in makeStorageFromEnv taken only when
+// `storage.clickhouse: true` in config.yaml. The vars are cleared around the
+// call rather than assumed absent: the scenario's own ClickHouse tests need them
+// set, so an ambient value would leave nothing missing to report.
+let withoutClickHouseEnv = fn => {
+  let names = [
+    "ENVIO_CLICKHOUSE_HOST",
+    "ENVIO_CLICKHOUSE_USERNAME",
+    "ENVIO_CLICKHOUSE_PASSWORD",
+    "ENVIO_CLICKHOUSE_DATABASE",
+  ]
+  let env = NodeJs.Process.process.env
+  let saved = names->Array.map(name => (name, env->Utils.Dict.dangerouslyGetNonOption(name)))
+  names->Array.forEach(name => env->Dict.delete(name))
+  let result = try Ok(fn()) catch {
+  | exn => Error(exn)
+  }
+  saved->Array.forEach(((name, value)) =>
+    switch value {
+    | Some(value) => env->Dict.set(name, value)
+    | None => ()
+    }
+  )
+  switch result {
+  | Ok(value) => value
+  | Error(exn) => throw(exn)
+  }
+}
+
 describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
-  // Exercises the validation path in makeStorageFromEnv that's only taken
-  // when `storage.clickhouse: true` in config.yaml. The test suite does not
-  // set any ENVIO_CLICKHOUSE_* vars, so this should throw a user-friendly
-  // error listing every missing required env var in a single message.
   Async.it(
     "Throws listing all missing ENVIO_CLICKHOUSE_* env vars when storage.clickhouse=true",
     async t => {
@@ -1064,16 +1089,19 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
           }: Config.storage
         ),
       }
-      let message = switch try {
-        let _ = PgStorage.makeStorageFromEnv(~config)
-        None
-      } catch {
-      | JsExn(e) => Some(e->JsExn.message->Option.getOr(""))
-      | _ => None
-      } {
-      | Some(m) => m
-      | None => ""
-      }
+      let message = withoutClickHouseEnv(
+        () =>
+          switch try {
+            let _ = PgStorage.makeStorageFromEnv(~config)
+            None
+          } catch {
+          | JsExn(e) => Some(e->JsExn.message->Option.getOr(""))
+          | _ => None
+          } {
+          | Some(m) => m
+          | None => ""
+          },
+      )
       t.expect(
         message,
         ~message="Should throw a helpful error naming every missing env var at once",

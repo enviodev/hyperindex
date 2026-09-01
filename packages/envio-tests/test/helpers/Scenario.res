@@ -328,3 +328,37 @@ let waitUntil = async (predicate, ~message, ~timeoutMs=5000.) => {
     await Utils.delay(1)
   }
 }
+
+// A refused write reaches the indexer's error boundary rather than a promise the
+// test could await, so `onError` captures it there. `awaitStorageError` answers
+// with what an operator would have been shown: the storage error's own message
+// and the reason underneath it.
+type refusal = {
+  onError: ErrorHandling.t => unit,
+  awaitStorageError: unit => promise<option<(string, string)>>,
+}
+
+let captureRefusal = () => {
+  let captured = ref(None)
+  {
+    onError: errHandler => captured := Some(errHandler),
+    awaitStorageError: async () => {
+      // Generous: the refusal crosses a real ClickHouse round trip and the
+      // indexer's error boundary, and a slow runner missing it fails as a
+      // timeout rather than as the assertion the test is about.
+      await waitUntil(
+        () => captured.contents->Option.isSome,
+        ~message="the write to be refused",
+        ~timeoutMs=15000.,
+      )
+      switch captured.contents {
+      | Some({exn: Persistence.StorageError({message, reason})}) =>
+        Some((
+          message,
+          (reason->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"],
+        ))
+      | _ => None
+      }
+    },
+  }
+}
