@@ -14,8 +14,8 @@
 // them back or every read reports drift.
 const DEFAULT_TIMEOUT_SECONDS = 30;
 
-// Well inside the 60s re-assert interval: a call that outlived that would have
-// the loop skip ticks it can never catch up on.
+// Well inside the 60s re-assert interval: an apply that outlived that would
+// have the loop skip ticks it can never catch up on.
 const DEFAULT_METADATA_TIMEOUT_MS = 30_000;
 
 const byName = (a, b) => a.name.localeCompare(b.name);
@@ -199,16 +199,7 @@ function unionCustomTypes(current, desired) {
   };
 }
 
-async function metadataCall(
-  { endpoint, adminSecret, role = "admin", timeoutMs = DEFAULT_METADATA_TIMEOUT_MS },
-  body
-) {
-  // The deadline covers reading the body, not just the headers: a Hasura that
-  // writes a 200 and then stops leaves `response.json()` pending forever, and
-  // an unsettled call here is one the re-assert loop's overlap guard never
-  // clears -- it would stop healing without ever reporting an error.
-  const controller = new AbortController();
-  const expiry = setTimeout(() => controller.abort(), timeoutMs);
+async function metadataCall({ endpoint, adminSecret, role = "admin", signal }, body) {
   try {
     const response = await fetch(endpoint, {
       method: "POST",
@@ -218,7 +209,7 @@ async function metadataCall(
         "x-hasura-admin-secret": adminSecret,
       },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal,
     });
     let answer = null;
     let unreadable = null;
@@ -241,8 +232,11 @@ async function metadataCall(
       );
     }
     return answer;
-  } finally {
-    clearTimeout(expiry);
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Hasura metadata call '${body.type}' gave up on an unfinished response`);
+    }
+    throw error;
   }
 }
 
@@ -259,16 +253,28 @@ export async function applyResolverMetadata({
   role,
   metadata,
   healOnly = false,
-  timeoutMs,
+  timeoutMs = DEFAULT_METADATA_TIMEOUT_MS,
 }) {
-  const connection = { endpoint, adminSecret, role, timeoutMs };
-  const exported = await metadataCall(connection, { type: "export_metadata", args: {} });
-  const { bulk, reasons } = planApply(metadata, exported, { healOnly });
-  if (bulk === null) {
-    return { applied: false, reasons };
+  // One deadline for the apply, not one per call: an apply is an export and
+  // then a bulk, so a per-call bound lets a slow Hasura hold this for twice
+  // the number the caller passed. The re-assert loop skips every tick while it
+  // runs, so the guard against overlapping applies would stop them happening.
+  // The signal covers reading each body too, not just its headers -- a Hasura
+  // that writes a 200 and then stops leaves `response.json()` pending for good.
+  const controller = new AbortController();
+  const expiry = setTimeout(() => controller.abort(), timeoutMs);
+  const connection = { endpoint, adminSecret, role, signal: controller.signal };
+  try {
+    const exported = await metadataCall(connection, { type: "export_metadata", args: {} });
+    const { bulk, reasons } = planApply(metadata, exported, { healOnly });
+    if (bulk === null) {
+      return { applied: false, reasons };
+    }
+    await metadataCall(connection, bulk);
+    return { applied: true, reasons };
+  } finally {
+    clearTimeout(expiry);
   }
-  await metadataCall(connection, bulk);
-  return { applied: true, reasons };
 }
 
 /**

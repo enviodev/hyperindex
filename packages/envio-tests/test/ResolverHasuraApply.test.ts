@@ -382,6 +382,60 @@ describe("applying resolver metadata", () => {
     expect(errors.length >= 2).toBe(true);
   });
 
+  // An apply is two calls, so a per-call deadline is not a bound on the apply.
+  // A Hasura that stalls the export and then the bulk holds `running` for
+  // twice the deadline, and the re-assert loop skips every tick in between --
+  // the guard meant to stop applies overlapping instead stops them happening.
+  it("bounds the whole apply, not each call within it", async () => {
+    let served = 0;
+    const stalled: ServerResponse[] = [];
+    // The export answers immediately so the apply reaches its second call;
+    // that one stalls. Both must fit inside the one deadline.
+    const halfStalling = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk) => chunks.push(chunk));
+      request.on("end", () => {
+        served += 1;
+        if (served === 1) {
+          // Slow, but inside its own deadline and successful, so the apply
+          // goes on to its second call with most of the budget already spent.
+          const payload = JSON.stringify(EMPTY_EXPORT);
+          setTimeout(() => {
+            response.writeHead(200, {
+              "content-type": "application/json",
+              "content-length": Buffer.byteLength(payload),
+            });
+            response.end(payload);
+          }, 250);
+          return;
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        stalled.push(response);
+      });
+    });
+    await new Promise<void>((resolve) => halfStalling.listen(0, "127.0.0.1", () => resolve()));
+    const address = halfStalling.address();
+    const halfEndpoint = `http://127.0.0.1:${
+      typeof address === "object" && address ? address.port : 0
+    }/v1/metadata`;
+
+    const started = Date.now();
+    await applyResolverMetadata({
+      endpoint: halfEndpoint,
+      adminSecret: "testing",
+      metadata,
+      timeoutMs: 300,
+    }).catch(() => "failed");
+    const elapsed = Date.now() - started;
+
+    for (const response of stalled) response.destroy();
+    await new Promise<void>((resolve) => halfStalling.close(() => resolve()));
+
+    // A 250ms export then a stalled bulk is 550ms if each call gets its own
+    // 300ms; it is ~300ms if the deadline belongs to the apply.
+    expect([served, elapsed < 450]).toEqual([2, true]);
+  });
+
   // The dangerous shape of the same failure: a 2xx nobody can parse used to
   // become `null`, which reads exactly like a Hasura holding no actions at all
   // -- so the very next step would recreate every action over a Hasura that
