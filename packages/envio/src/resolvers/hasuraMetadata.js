@@ -82,11 +82,14 @@ export function buildHasuraMetadata(manifest, { handlerUrl, publicRole = "public
       handler: handlerUrl,
       arguments: resolver.args ?? [],
       output_type: resolver.type,
-      // Hasura's timeout is whole seconds and bounds the HTTP call; the
-      // resolver's own `timeoutMs` bounds its queries. Rounded up so Hasura is
-      // never the first to give up on a request the resolver still considers
-      // live.
-      timeout: Math.max(1, Math.ceil(resolver.timeoutMs / 1000)),
+      // Hasura's timeout is whole seconds and bounds the whole HTTP call; the
+      // resolver's own `timeoutMs` bounds only the queries inside it. Acquiring
+      // a connection, parsing arguments and serializing the result spend
+      // Hasura's budget without spending the resolver's, so the extra second is
+      // what keeps Hasura from being the first to give up on a request the
+      // resolver still considers live -- which the client would see as an
+      // unreachable webhook rather than as a timeout.
+      timeout: Math.ceil(resolver.timeoutMs / 1000) + 1,
       // The role reaches the handler inside the request body, so on its own it
       // is the caller's claim rather than a fact. This header is the only thing
       // that makes it one: Hasura sends it because the action declares it, and
