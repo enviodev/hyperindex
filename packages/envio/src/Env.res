@@ -267,7 +267,12 @@ module Hasura = {
       ~devFallback="http://localhost:8080/v1/metadata",
     )
 
-  let url = graphqlEndpoint->String.slice(~start=0, ~end=-("/v1/metadata"->String.length))
+  // Lazy on purpose. `graphqlEndpoint` is required in production, and a missing
+  // one arrives here as undefined -- slicing it threw a bare TypeError at import
+  // and killed the process before `EnvSafe.close` could say which variable was
+  // missing. Only the dev TUI reads this, so there is nothing to compute up
+  // front.
+  let url = () => graphqlEndpoint->String.slice(~start=0, ~end=-("/v1/metadata"->String.length))
 
   let role = envSafe->EnvSafe.get("HASURA_GRAPHQL_ROLE", S.string, ~devFallback="admin")
 
