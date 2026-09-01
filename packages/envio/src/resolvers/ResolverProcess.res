@@ -686,10 +686,18 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
         }
       let _ = waitForTables(0)
     | _ =>
-      Logging.warn(
-        `Resolvers are declared but ENVIO_SERVE_BIN is not set, so no GraphQL server was started for them. ` ++
-        `Hasura cannot serve custom fields. Point ENVIO_SERVE_BIN at an envio-serve binary, or run it yourself against ${serveDir->NodeJs.Path.toString}.`,
-      )
+      // Not a warning when Hasura is running: it publishes the resolvers as
+      // actions, so they are already in the endpoint a developer opens.
+      if Env.Hasura.enabled {
+        Logging.info(
+          `Custom resolvers are published by Hasura as actions. Set ENVIO_SERVE_BIN to serve them through envio-serve instead.`,
+        )
+      } else {
+        Logging.warn(
+          `Resolvers are declared, but ENVIO_HASURA=false and ENVIO_SERVE_BIN is unset, so nothing publishes them. ` ++
+          `Drop ENVIO_HASURA=false to have Hasura serve them as actions, or point ENVIO_SERVE_BIN at an envio-serve binary and run it against ${serveDir->NodeJs.Path.toString}.`,
+        )
+      }
     }
 
     let stop = async () => {
