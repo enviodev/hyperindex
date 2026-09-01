@@ -465,11 +465,11 @@ describe("Isolated multichain rollback", () => {
       ))
     },
   )
-  // Two isolated rollbacks can't be merged: the second diff replaces the first,
-  // and its deletes only reach its own chain. Widening to a global rollback is
-  // what keeps the first one's rows from being stranded above their target.
+  // Two isolated rollbacks superseding each other keep a floor per chain, so
+  // neither chain is dragged below the checkpoint its own reorg targeted. The
+  // merge is a pointwise minimum, which can't lose the earlier floor.
   scenario->Scenario.it(
-    "Widens to a global rollback when a second reorg lands before the first is written",
+    "Keeps each chain at its own floor when a second reorg lands before the first is written",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -485,10 +485,10 @@ describe("Isolated multichain rollback", () => {
 
       t.expect(
         (await progressByChain(indexer), await eventsByChain(indexer)),
-        ~message="Both chains went back past the lower of the two targets, events with them",
+        ~message="Each chain went back to its own fork block, keeping the block it still owns",
       ).toEqual((
-        progress(~chain100="101", ~chain1337="100"),
-        progress(~chain100="1", ~chain1337="0"),
+        progress(~chain100="101", ~chain1337="101"),
+        progress(~chain100="1", ~chain1337="1"),
       ))
 
       source100.resolveGetItemsOrThrow(
@@ -498,8 +498,8 @@ describe("Isolated multichain rollback", () => {
       )
       await indexer.getBatchWritePromise()
       source1337.resolveGetItemsOrThrow(
-        [setCounter(~block=101, ~count=1337n), setCounter(~block=102, ~count=999n)],
-        ~filter=MockSource.coveringBlock(101),
+        [setCounter(~block=102, ~count=999n)],
+        ~filter=MockSource.coveringBlock(102),
         ~latestFetchedBlockNumber=102,
       )
       await indexer.getBatchWritePromise()
@@ -510,20 +510,20 @@ describe("Isolated multichain rollback", () => {
           counters(indexer),
           counterHistory(indexer),
         )),
-        ~message="Nothing above the lower target survived on either chain",
+        ~message="Each chain kept its block-101 checkpoint and re-indexed only block 102",
       ).toEqual((
         [
           checkpoint(~id=3n, ~chain=100, ~block=101, ~events=1),
+          checkpoint(~id=4n, ~chain=1337, ~block=101, ~events=1),
           checkpoint(~id=8n, ~chain=100, ~block=102, ~events=1),
-          checkpoint(~id=9n, ~chain=1337, ~block=101, ~events=1),
-          checkpoint(~id=10n, ~chain=1337, ~block=102, ~events=1),
+          checkpoint(~id=9n, ~chain=1337, ~block=102, ~events=1),
         ],
         [{id: "total", count: 1003n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
         [
           counterSet(~checkpointId=3n, ~chain=100, ~count=100n),
+          counterSet(~checkpointId=4n, ~chain=1337, ~count=1337n),
           counterSet(~checkpointId=8n, ~chain=100, ~count=1003n),
-          counterSet(~checkpointId=9n, ~chain=1337, ~count=1337n),
-          counterSet(~checkpointId=10n, ~chain=1337, ~count=999n),
+          counterSet(~checkpointId=9n, ~chain=1337, ~count=999n),
         ],
       ))
     },
@@ -623,10 +623,11 @@ describe("Isolated multichain rollback", () => {
       ).toEqual((progress(~chain100="104", ~chain1337="101"), [102], [105]))
     },
   )
-  // The widened rollback recomputes progress from the checkpoints, and a chain
-  // the superseded diff already moved can land on exactly the block it is
-  // already at. It is still a chain whose stored progress the write has to
-  // correct, so the superseded diff's rows have to survive into this one.
+  // The superseding rollback recomputes progress from the checkpoints, and a
+  // chain the superseded diff already moved can land on exactly the block it is
+  // already at — reporting no move of its own. It is still a chain whose stored
+  // progress the write has to correct, so the superseded diff's rows have to
+  // survive into this one.
   scenario->Scenario.it(
     "Keeps a superseded diff's progress for a chain the new one leaves where it found it",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
@@ -637,16 +638,19 @@ describe("Isolated multichain rollback", () => {
 
       await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
 
-      // Chain 100 first, so its target (checkpoint 3) is below chain 1337's
-      // (checkpoint 4) and the widened rollback lands on chain 100's own —
-      // leaving chain 100 at the 101 the first diff already took it to.
+      // Chain 100's rollback lands first and is still unwritten when chain
+      // 1337's supersedes it, which recomputes chain 100 back onto the 101 the
+      // first diff already took it to.
       await reorgAtBlock102(~indexer, ~source=source100, ~sibling=source1337)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
 
+      // Only chain 1337 re-indexes, so its batch is what carries the merged
+      // diff — including chain 100's progress row, which this rollback had no
+      // move of its own to report.
       source1337.resolveGetItemsOrThrow(
-        [setCounter(~block=101, ~count=1337n)],
-        ~filter=MockSource.coveringBlock(101),
-        ~latestFetchedBlockNumber=101,
+        [setCounter(~block=102, ~count=999n)],
+        ~filter=MockSource.coveringBlock(102),
+        ~latestFetchedBlockNumber=102,
       )
       await indexer.getBatchWritePromise()
 
@@ -660,11 +664,13 @@ describe("Isolated multichain rollback", () => {
       t.expect(
         (
           await progressByChain(restarted),
-          source100.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
-          source1337.getItemsOrThrowCalls->Array.map(call => call.payload["fromBlock"]),
+          source100.getItemsOrThrowCalls
+          ->Array.map(call => call.payload["fromBlock"])
+          ->Array.toSorted(Int.compare)
+          ->Array.get(0),
         ),
         ~message="Chain 100 resumes at the block the first, superseded rollback took it back to",
-      ).toEqual((progress(~chain100="101", ~chain1337="101"), [102], [102]))
+      ).toEqual((progress(~chain100="101", ~chain1337="102"), Some(102)))
     },
   )
 
@@ -727,6 +733,46 @@ describe("Isolated multichain rollback", () => {
         ->Array.get(0),
         ~message="Chain 1337 re-fetches from just above the fork, not from its lost checkpoint",
       ).toEqual(Some(101))
+    },
+  )
+
+  // The fork block bounds where a rollback may leave a chain, whether or not the
+  // chain still has a checkpoint at or below it. Recomputing progress from the
+  // checkpoints alone lands on the block below the lowest one deleted, which
+  // sits above the fork whenever the chain has no checkpoint in between — the
+  // blocks between the fork and that checkpoint carried no events on the
+  // orphaned chain, but the chain that replaced it can have its own.
+  fullHistoryScenario->Scenario.it(
+    "Holds a chain at its fork block when its next checkpoint is far above it",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveToDistantChain1337(~t, ~indexer, ~source100, ~source1337)
+
+      // Chain 1337 forks at block 100, where full history has kept its
+      // checkpoint — so the rollback has one to target, and the recompute from
+      // the block-150 checkpoint it deletes would otherwise land on 149.
+      await reorgAt(
+        ~indexer,
+        ~source=source1337,
+        ~sibling=source100,
+        ~atBlock=150,
+        ~scanned=[(100, #valid), (150, #orphaned)],
+      )
+
+      t.expect(
+        (
+          await progressByChain(indexer),
+          source1337.getItemsOrThrowCalls
+          ->Array.map(call => call.payload["fromBlock"])
+          ->Array.toSorted(Int.compare)
+          ->Array.get(0),
+        ),
+        ~message="Chain 1337 sits at the fork block and re-fetches every block above it",
+      ).toEqual((progress(~chain100="151", ~chain1337="100"), Some(101)))
     },
   )
 

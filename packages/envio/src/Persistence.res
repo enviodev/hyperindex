@@ -59,11 +59,11 @@ type updatedEffectCache = {
 }
 
 type rollback = {
-  targetCheckpointId: Internal.checkpointId,
   diffCheckpointId: Internal.checkpointId,
-  // How far the deletes reach. An isolated rollback must leave a sibling
-  // chain's rows alone, so the scope travels with the diff to the write.
-  scope: RollbackScope.t,
+  // How far back the deletes reach on each chain. A rollback must leave an
+  // untouched sibling's rows alone and take a chain it did move back no further
+  // than that chain's own floor, so the floors travel with the diff to the write.
+  floors: RollbackFloors.t,
   // The address registrations the rollback dropped, as the chains' address
   // stores resolved them. Deleted by primary key in the same transaction.
   rolledBackAddresses: array<AddressRows.key>,
@@ -153,8 +153,7 @@ type storage = {
   ) => promise<option<Internal.checkpointId>>,
   // Get rollback progress diff
   getRollbackProgressDiff: (
-    ~scope: RollbackScope.t,
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
+    ~floors: RollbackFloors.t,
   ) => promise<
     array<{
       "chain_id": ChainId.t,
@@ -167,8 +166,7 @@ type storage = {
   // before handing them back.
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
-    ~scope: RollbackScope.t,
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
+    ~floors: RollbackFloors.t,
   ) => promise<(array<rollbackRemoval>, array<Internal.entity>)>,
   // Write batch to storage
   writeBatch: (

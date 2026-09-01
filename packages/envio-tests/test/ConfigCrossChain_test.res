@@ -298,7 +298,7 @@ describe("Per-chain rollback and delete SQL", () => {
       PgStorage.makeGetRollbackRemovedIdsQuery(
         ~entityConfig=counter,
         ~pgSchema="public",
-        ~scope=Global,
+        ~chainPredicate="",
       ),
     ).toBe(
       `SELECT DISTINCT "id", "chainId"
@@ -317,7 +317,7 @@ describe("Per-chain rollback and delete SQL", () => {
     let query = PgStorage.makeGetRollbackPreTargetRowsQuery(
       ~entityConfig=counter,
       ~pgSchema="public",
-      ~scope=Global,
+      ~chainPredicate="",
     )
     t.expect((
       query->String.includes(`SELECT DISTINCT ON ("id", "chainId")`),
@@ -405,7 +405,7 @@ describe("Per-chain entities under snake_case columns", () => {
       PgStorage.makeGetRollbackRemovedIdsQuery(
         ~entityConfig=snakeCounter,
         ~pgSchema="public",
-        ~scope=Global,
+        ~chainPredicate="",
       )->String.includes(`SELECT DISTINCT "id", "chain_id"`),
     )).toEqual((
       `CREATE TABLE IF NOT EXISTS "public"."Counter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, "chain_id" INTEGER NOT NULL, PRIMARY KEY("id", "chain_id"));`,

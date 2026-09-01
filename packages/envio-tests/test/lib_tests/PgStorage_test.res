@@ -1026,7 +1026,7 @@ LIMIT 1;`
       async t => {
         let query = InternalTable.Checkpoints.makeGetRollbackProgressDiffQuery(
           ~pgSchema="test_schema",
-          ~scope=Global,
+          ~chainPredicate="",
         )
 
         let expectedQuery = `SELECT 

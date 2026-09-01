@@ -647,19 +647,16 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
   // Optional to match the entity tables', where a cross-chain entity has none.
   let chainIdColumn = Some((#chain_id: field :> string))
 
-  let rollback = (
-    sql,
-    ~pgSchema,
-    ~scope: RollbackScope.t,
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => {
-    sql
-    ->Postgres.preparedUnsafe(
-      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1${scope->RollbackScope.predicate(
-          ~chainIdColumn,
-        )};`,
-      scope->RollbackScope.params(~targetCheckpointId=rollbackTargetCheckpointId),
+  let rollback = (sql, ~pgSchema, ~floors: RollbackFloors.t) => {
+    floors
+    ->RollbackFloors.statements(~chainIdColumn)
+    ->Array.map(({chainPredicate, params}) =>
+      sql->Postgres.preparedUnsafe(
+        `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1${chainPredicate};`,
+        params,
+      )
     )
+    ->Promise.all
     ->Utils.Promise.ignoreValue
   }
 
@@ -703,36 +700,39 @@ LIMIT 1;`
     })
   }
 
-  let makeGetRollbackProgressDiffQuery = (~pgSchema, ~scope: RollbackScope.t) => {
+  let makeGetRollbackProgressDiffQuery = (~pgSchema, ~chainPredicate) => {
     `SELECT 
   "${(#chain_id: field :> string)}"::float8 as "${(#chain_id: field :> string)}",
   SUM("${(#events_processed: field :> string)}") as events_processed_diff,
   MIN("${(#block_number: field :> string)}") - 1 as new_progress_block_number
 FROM "${pgSchema}"."${table.tableName}"
-WHERE "${(#id: field :> string)}" > $1${scope->RollbackScope.predicate(~chainIdColumn)}
+WHERE "${(#id: field :> string)}" > $1${chainPredicate}
 GROUP BY "${(#chain_id: field :> string)}";`
   }
 
-  let getRollbackProgressDiff = (
-    sql,
-    ~pgSchema,
-    ~scope: RollbackScope.t,
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => {
-    sql
-    ->Postgres.preparedUnsafe(
-      makeGetRollbackProgressDiffQuery(~pgSchema, ~scope),
-      scope->RollbackScope.params(~targetCheckpointId=rollbackTargetCheckpointId),
+  // Each chain's rows are grouped by the query itself, so a rollback bounded per
+  // chain contributes one group per statement and the results concatenate.
+  let getRollbackProgressDiff = async (sql, ~pgSchema, ~floors: RollbackFloors.t) => {
+    let results = await floors
+    ->RollbackFloors.statements(~chainIdColumn)
+    ->Array.map(({chainPredicate, params}) =>
+      sql
+      ->Postgres.preparedUnsafe(
+        makeGetRollbackProgressDiffQuery(~pgSchema, ~chainPredicate),
+        params,
+      )
+      ->(
+        Utils.magic: promise<unknown> => promise<
+          array<{
+            "chain_id": ChainId.t,
+            "events_processed_diff": string,
+            "new_progress_block_number": int,
+          }>,
+        >
+      )
     )
-    ->(
-      Utils.magic: promise<unknown> => promise<
-        array<{
-          "chain_id": ChainId.t,
-          "events_processed_diff": string,
-          "new_progress_block_number": int,
-        }>,
-      >
-    )
+    ->Promise.all
+    results->Array.flat
   }
 }
 

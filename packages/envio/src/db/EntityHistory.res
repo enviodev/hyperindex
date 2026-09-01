@@ -196,16 +196,19 @@ let rollback = (
   ~entityName,
   ~entityIndex,
   ~chainIdColumn,
-  ~scope: RollbackScope.t,
-  ~rollbackTargetCheckpointId: Internal.checkpointId,
+  ~floors: RollbackFloors.t,
 ) => {
-  sql
-  ->Postgres.preparedUnsafe(
-    `DELETE FROM "${pgSchema}"."${historyTableName(
-        ~entityName,
-        ~entityIndex,
-      )}" WHERE "${checkpointIdFieldName}" > $1${scope->RollbackScope.predicate(~chainIdColumn)};`,
-    scope->RollbackScope.params(~targetCheckpointId=rollbackTargetCheckpointId),
+  floors
+  ->RollbackFloors.statements(~chainIdColumn)
+  ->Array.map(({chainPredicate, params}) =>
+    sql->Postgres.preparedUnsafe(
+      `DELETE FROM "${pgSchema}"."${historyTableName(
+          ~entityName,
+          ~entityIndex,
+        )}" WHERE "${checkpointIdFieldName}" > $1${chainPredicate};`,
+      params,
+    )
   )
+  ->Promise.all
   ->Utils.Promise.ignoreValue
 }
