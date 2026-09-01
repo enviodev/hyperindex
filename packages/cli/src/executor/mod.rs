@@ -48,9 +48,10 @@ pub enum Command {
     DropSchema {
         config: serde_json::Value,
     },
-    /// The resolver process. `manifest` writes the artefacts the image carries
-    /// and exits, `metadata` prints the Hasura metadata and exits, and `serve`
-    /// answers Hasura's actions until stopped.
+    /// The resolver process. `manifest` writes the artefacts the image carries,
+    /// `metadata` prints the Hasura metadata, `migrate` applies it to a running
+    /// Hasura -- all three exit -- and `serve` answers Hasura's actions until
+    /// stopped.
     Resolvers {
         mode: ResolversMode,
         cwd: String,
@@ -65,6 +66,7 @@ pub enum ResolversMode {
     Serve,
     Manifest,
     Metadata,
+    Migrate,
 }
 
 /// `envio_package_dir` is only consumed by `get_envio_version` on dev builds
@@ -358,6 +360,7 @@ pub fn resolvers_mode(args: &ResolversArgs) -> ResolversMode {
     match args.subcommand {
         Some(ResolversSubcommand::Manifest) => ResolversMode::Manifest,
         Some(ResolversSubcommand::Metadata) => ResolversMode::Metadata,
+        Some(ResolversSubcommand::Migrate) => ResolversMode::Migrate,
         None | Some(ResolversSubcommand::Serve) => ResolversMode::Serve,
     }
 }
@@ -561,12 +564,14 @@ mod tests {
                 mode_of(&["envio", "resolvers", "serve"]),
                 mode_of(&["envio", "resolvers", "manifest"]),
                 mode_of(&["envio", "resolvers", "metadata"]),
+                mode_of(&["envio", "resolvers", "migrate"]),
             ),
             (
                 ResolversMode::Serve,
                 ResolversMode::Serve,
                 ResolversMode::Manifest,
-                ResolversMode::Metadata
+                ResolversMode::Metadata,
+                ResolversMode::Migrate
             )
         );
     }
