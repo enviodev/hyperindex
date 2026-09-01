@@ -96,26 +96,25 @@ let makePruneStaleEntityHistoryQuery = (
   ~entityIndex,
   ~pgSchema,
   ~chainIdColumn,
-  ~isChainNarrowed: bool,
+  ~safeCheckpoints: SafeCheckpoints.t,
 ) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   let keyColumns = makeKeyColumns(~chainIdColumn)
   let anchorKeys = keyColumns->Array.map(column => `t.${column}`)->Array.joinUnsafe(", ")
 
-  // Narrows the prune to the one chain whose safe checkpoint bounds it. Unlike
-  // the entity table, history isn't partitioned by chain, so the id is bound
-  // rather than written in — every chain then shares the one prepared statement.
-  let chainCondition = switch (chainIdColumn, isChainNarrowed) {
-  | (Some(column), true) => Some(alias => `${alias}."${column}" = $2`)
-  | _ => None
-  }
-  let anchorFilter = switch chainCondition {
-  | Some(condition) => `\n  WHERE ${condition("t")}`
-  | None => ""
-  }
-  let deleteFilter = switch chainCondition {
-  | Some(condition) => `\n  AND ${condition("d")}`
-  | None => ""
+  // Every chain's bound is joined in from one relation rather than run as a
+  // statement each: the anchors below aggregate the whole table however narrow
+  // the bound is, and history carries no index to narrow the scan with, so a
+  // statement per chain would be a pass over the table per chain.
+  let (bound, boundsJoin, boundOut, boundIn) = switch (chainIdColumn, safeCheckpoints) {
+  | (Some(column), PerChain(_)) => (
+      SafeCheckpoints.boundsCheckpointId,
+      ` JOIN ${SafeCheckpoints.boundsRelation} ON ${SafeCheckpoints.boundsChainId} = t."${column}"`,
+      `,
+    MIN(${SafeCheckpoints.boundsCheckpointId}) AS safe_checkpoint_id`,
+      "a.safe_checkpoint_id",
+    )
+  | _ => ("$1", "", "", "$1")
   }
 
   // Whether a key still has a row above the safe checkpoint is an aggregate
@@ -125,15 +124,15 @@ let makePruneStaleEntityHistoryQuery = (
   // is there to keep the rows above the safe checkpoint out of the join.
   `WITH anchors AS (
   SELECT ${anchorKeys},
-    MAX(t.${checkpointIdFieldName}) FILTER (WHERE t.${checkpointIdFieldName} <= $1) AS keep_checkpoint_id,
-    bool_or(t.${checkpointIdFieldName} > $1) AS has_above
-  FROM ${historyTableRef} t${anchorFilter}
+    MAX(t.${checkpointIdFieldName}) FILTER (WHERE t.${checkpointIdFieldName} <= ${bound}) AS keep_checkpoint_id,
+    bool_or(t.${checkpointIdFieldName} > ${bound}) AS has_above${boundOut}
+  FROM ${historyTableRef} t${boundsJoin}
   GROUP BY ${anchorKeys}
 )
 DELETE FROM ${historyTableRef} d
 USING anchors a
-WHERE ${makeKeyMatch(~chainIdColumn, ~left="d", ~right="a")}${deleteFilter}
-  AND d.${checkpointIdFieldName} <= $1
+WHERE ${makeKeyMatch(~chainIdColumn, ~left="d", ~right="a")}
+  AND d.${checkpointIdFieldName} <= ${boundIn}
   AND (d.${checkpointIdFieldName} < a.keep_checkpoint_id OR NOT a.has_above);`
 }
 
@@ -143,24 +142,22 @@ let pruneStaleEntityHistory = (
   ~entityIndex,
   ~pgSchema,
   ~chainIdColumn,
-  ~chainId: option<ChainId.t>,
-  ~safeCheckpointId,
-): promise<unit> => {
-  let safeCheckpointId = safeCheckpointId->BigInt.toString->(Utils.magic: string => unknown)
-  sql->Postgres.preparedUnsafe(
-    makePruneStaleEntityHistoryQuery(
-      ~entityName,
-      ~entityIndex,
-      ~pgSchema,
-      ~chainIdColumn,
-      ~isChainNarrowed=chainId->Option.isSome,
-    ),
-    switch chainId {
-    | Some(chainId) => [safeCheckpointId, chainId->(Utils.magic: ChainId.t => unknown)]
-    | None => [safeCheckpointId]
-    }->(Utils.magic: array<unknown> => unknown),
-  )
-}
+  ~safeCheckpoints,
+): promise<unit> =>
+  switch safeCheckpoints->SafeCheckpoints.forTable(~chainIdColumn) {
+  | None => Promise.resolve()
+  | Some(safeCheckpoints) =>
+    sql->Postgres.preparedUnsafe(
+      makePruneStaleEntityHistoryQuery(
+        ~entityName,
+        ~entityIndex,
+        ~pgSchema,
+        ~chainIdColumn,
+        ~safeCheckpoints,
+      ),
+      safeCheckpoints->SafeCheckpoints.params,
+    )
+  }
 
 // If an entity doesn't have a history before the update
 // we create it automatically with envio_checkpoint_id 0

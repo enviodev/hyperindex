@@ -2376,24 +2376,17 @@ let make = (
       %raw(`undefined`)
     )
 
-  let pruneStaleCheckpoints = (~chainId, ~safeCheckpointId) =>
-    InternalTable.Checkpoints.pruneStaleCheckpoints(sql, ~pgSchema, ~chainId, ~safeCheckpointId)
+  let pruneStaleCheckpoints = (~safeCheckpoints) =>
+    InternalTable.Checkpoints.pruneStaleCheckpoints(sql, ~pgSchema, ~safeCheckpoints)
 
-  let pruneStaleEntityHistory = (
-    ~entityName,
-    ~entityIndex,
-    ~chainIdColumn,
-    ~chainId,
-    ~safeCheckpointId,
-  ) =>
+  let pruneStaleEntityHistory = (~entityName, ~entityIndex, ~chainIdColumn, ~safeCheckpoints) =>
     EntityHistory.pruneStaleEntityHistory(
       sql,
       ~pgSchema,
       ~entityName,
       ~entityIndex,
       ~chainIdColumn,
-      ~chainId,
-      ~safeCheckpointId,
+      ~safeCheckpoints,
     )
 
   let getRollbackTargetCheckpoint = (~reorgChainId, ~lastKnownValidBlockNumber) =>

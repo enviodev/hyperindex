@@ -343,24 +343,28 @@ describe("Per-chain rollback and delete SQL", () => {
   })
 
   it("Prunes history per (id, chain id)", t => {
-    let makeQuery = isChainNarrowed =>
+    let makeQuery = safeCheckpoints =>
       EntityHistory.makePruneStaleEntityHistoryQuery(
         ~entityName="Counter",
         ~entityIndex=0,
         ~pgSchema="public",
         ~chainIdColumn=Some("chainId"),
-        ~isChainNarrowed,
+        ~safeCheckpoints,
       )
-    let query = makeQuery(false)
-    // A chain pruning to its own safe checkpoint narrows both halves to itself:
-    // the anchors it derives and the rows it deletes against them.
-    let narrowed = makeQuery(true)
+    let query = makeQuery(SafeCheckpoints.EveryChain(10n))
+    // Chains pruning to their own safe checkpoints join every bound in at once,
+    // so the anchors are still derived in a single pass over the table.
+    let perChain = makeQuery(
+      SafeCheckpoints.PerChain([(1->ChainId.fromInt, 10n), (137->ChainId.fromInt, 20n)]),
+    )
     t.expect((
       query->String.includes(`GROUP BY t.id, t."chainId"`),
       query->String.includes(`WHERE d.id = a.id AND d."chainId" = a."chainId"`),
-      query->String.includes(`$2`),
-      narrowed->String.includes(`FROM "public"."envio_history_Counter" t\n  WHERE t."chainId" = $2`),
-      narrowed->String.includes(`WHERE d.id = a.id AND d."chainId" = a."chainId"\n  AND d."chainId" = $2`),
+      query->String.includes(`envio_bounds`),
+      perChain->String.includes(
+        `JOIN unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, safe_checkpoint_id) ON envio_bounds.chain_id = t."chainId"`,
+      ),
+      perChain->String.includes(`AND d.envio_checkpoint_id <= a.safe_checkpoint_id`),
     )).toEqual((true, true, false, true, true))
   })
 

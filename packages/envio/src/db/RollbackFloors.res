@@ -17,10 +17,11 @@ type entry = {
 
 type t = {
   byChainId: dict<entry>,
-  // Whether this rollback was built to reach every configured chain. Only then
-  // does one floor bound the whole rollback, which is what lets a query over
-  // every chain's rows run as a single statement.
-  reachesEveryChain: bool,
+  // The floor every chain shares, when the rollback was built to reach all of
+  // them at one. It is what lets a query over every chain's rows run as a single
+  // unnarrowed statement, and the only floor a table with no chain of its own
+  // can be bounded by.
+  everyChainFloor: option<Internal.checkpointId>,
 }
 
 // The rollback of a schema whose chains can't have written each other's rows.
@@ -30,7 +31,7 @@ let isolated = (~chainId, ~floorCheckpointId, ~forkBlockNumber) => {
     chainId,
     {chainId, floorCheckpointId, forkBlockNumber: Some(forkBlockNumber)},
   )
-  {byChainId, reachesEveryChain: false}
+  {byChainId, everyChainFloor: None}
 }
 
 // The rollback of a schema with a cross-chain entity, where a reorg on one chain
@@ -48,19 +49,13 @@ let global = (~chainIds: array<ChainId.t>, ~floorCheckpointId, ~reorgChainId, ~f
       },
     )
   )
-  {byChainId, reachesEveryChain: true}
+  {byChainId, everyChainFloor: Some(floorCheckpointId)}
 }
 
 let mergeEntries = (a: entry, b: entry) => {
   chainId: a.chainId,
   floorCheckpointId: Pervasives.min(a.floorCheckpointId, b.floorCheckpointId),
-  forkBlockNumber: switch (a.forkBlockNumber, b.forkBlockNumber) {
-  | (Some(a), Some(b)) => Some(Pervasives.min(a, b))
-  | (Some(forkBlockNumber), None)
-  | (None, Some(forkBlockNumber)) =>
-    Some(forkBlockNumber)
-  | (None, None) => None
-  },
+  forkBlockNumber: Utils.Math.minOptInt(a.forkBlockNumber, b.forkBlockNumber),
 }
 
 // Folds an unwritten rollback into the one replacing it. The new diff's deletes
@@ -79,7 +74,13 @@ let merge = (pending: t, next: t) => {
   )
   {
     byChainId,
-    reachesEveryChain: pending.reachesEveryChain || next.reachesEveryChain,
+    // Only a floor both rollbacks held every chain to is still one the merged
+    // floors hold every chain to. Where one of them reached a single chain, the
+    // chains keep their own floors and the merge has no shared one.
+    everyChainFloor: switch (pending.everyChainFloor, next.everyChainFloor) {
+    | (Some(pending), Some(next)) => Some(Pervasives.min(pending, next))
+    | _ => None
+    },
   }
 }
 
@@ -88,8 +89,6 @@ let forkBlockNumber = (floors: t, chainId) =>
   floors.byChainId
   ->ChainId.Dict.dangerouslyGetNonOption(chainId)
   ->Option.flatMap(entry => entry.forkBlockNumber)
-
-let entries = (floors: t) => floors.byChainId->Dict.valuesToArray
 
 // What one statement of a rollback query binds. The floor is always `$1`, so a
 // query can name it as many times as it needs — the entity restore reads it on
@@ -109,38 +108,27 @@ let makeParams = (~floorCheckpointId: Internal.checkpointId, ~chainId: option<Ch
   }->(Utils.magic: array<unknown> => unknown)
 }
 
-let lowestFloor = (entries: array<entry>) =>
-  entries->Array.reduce((entries->Array.getUnsafe(0)).floorCheckpointId, (lowest, entry) =>
-    Pervasives.min(lowest, entry.floorCheckpointId)
-  )
-
 // The statements a rollback query has to run to cover every chain it touches.
+// A rollback reaching every chain at one floor is a single unnarrowed statement
+// over all of them; otherwise each chain is deleted down to its own floor,
+// leaving the chains with no floor untouched.
 //
 // A table with no chain-id column of its own holds a cross-chain entity's rows,
-// which exist only in a schema where `Config.isIsolatedMultichain` is false —
-// there every rollback is `global`, so the floors are uniform and the lowest is
-// every chain's.
-//
-// A rollback that reaches every chain at one floor is likewise a single
-// statement over all of them. Otherwise each chain is deleted down to its own
-// floor, leaving the chains with no floor untouched.
-let statements = (floors: t, ~chainIdColumn: option<string>) => {
-  let uniform = floorCheckpointId => [
-    {chainPredicate: "", params: makeParams(~floorCheckpointId, ~chainId=None)},
-  ]
-
-  switch (floors->entries, chainIdColumn) {
-  | ([], _) => []
-  | (entries, None) => uniform(entries->lowestFloor)
-  | (entries, Some(column)) =>
-    let lowest = entries->lowestFloor
-    if floors.reachesEveryChain && entries->Array.every(e => e.floorCheckpointId === lowest) {
-      uniform(lowest)
-    } else {
-      entries->Array.map(({chainId, floorCheckpointId}) => {
-        chainPredicate: ` AND "${column}" = $2`,
-        params: makeParams(~floorCheckpointId, ~chainId=Some(chainId)),
-      })
-    }
+// which need the floor every chain shares. Those entities exist only in a schema
+// where `Config.isIsolatedMultichain` is false, so every rollback reaching them
+// is `global` and has one — and a rollback that doesn't leaves the table alone
+// rather than deleting from it on a floor that isn't every chain's.
+let statements = (floors: t, ~chainIdColumn: option<string>) =>
+  switch (chainIdColumn, floors.everyChainFloor) {
+  | (_, Some(floorCheckpointId)) => [
+      {chainPredicate: "", params: makeParams(~floorCheckpointId, ~chainId=None)},
+    ]
+  | (None, None) => []
+  | (Some(column), None) =>
+    floors.byChainId
+    ->Dict.valuesToArray
+    ->Array.map(({chainId, floorCheckpointId}) => {
+      chainPredicate: ` AND "${column}" = $2`,
+      params: makeParams(~floorCheckpointId, ~chainId=Some(chainId)),
+    })
   }
-}

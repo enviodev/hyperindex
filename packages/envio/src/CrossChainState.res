@@ -76,28 +76,19 @@ let nextItemIsNone = (crossChainState: t): bool =>
 // reach, derived from its own height and reorg depth. Chains that track none
 // (maxReorgDepth = 0) are left out, and a chain that has nothing safe yet
 // reports 0.
-let getSafeCheckpointIdByChain = (crossChainState: t) => {
-  let result = []
-
-  for i in 0 to crossChainState.chainIds->Array.length - 1 {
-    let chainId = crossChainState.chainIds->Array.getUnsafe(i)
+let getSafeCheckpointIdByChain = (crossChainState: t) =>
+  crossChainState.chainIds->Array.filterMap(chainId => {
     let cs = crossChainState->getChainState(chainId)
-    switch cs->ChainState.safeCheckpointTracking {
-    | None => () // Skip chains with maxReorgDepth = 0
-    | Some(safeCheckpointTracking) =>
-      result
-      ->Array.push((
-        chainId,
-        safeCheckpointTracking->SafeCheckpointTracking.getSafeCheckpointId(
-          ~sourceBlockNumber=cs->ChainState.knownHeight,
-        ),
-      ))
-      ->ignore
-    }
-  }
-
-  result
-}
+    // Skip chains with maxReorgDepth = 0, which keep no history to prune.
+    cs
+    ->ChainState.safeCheckpointTracking
+    ->Option.map(tracking => (
+      chainId,
+      tracking->SafeCheckpointTracking.getSafeCheckpointId(
+        ~sourceBlockNumber=cs->ChainState.knownHeight,
+      ),
+    ))
+  })
 
 // --- Cross-chain transitions. ---
 

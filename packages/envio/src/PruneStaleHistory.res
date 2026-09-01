@@ -11,17 +11,8 @@
 let maxEntitiesPerWrite = 5
 let forcedIntervalMultiplier = 5.
 
-// How far back a prune may delete.
-type safeCheckpoints =
-  // One checkpoint bounds every chain's rows, for a schema where a reorg on any
-  // chain can reach a row any chain wrote.
-  | EveryChain(Internal.checkpointId)
-  // Each chain down to its own safe checkpoint. A chain with nothing safe yet is
-  // absent, and so holds only itself back.
-  | PerChain(array<(ChainId.t, Internal.checkpointId)>)
-
 type targets = {
-  safeCheckpoints: safeCheckpoints,
+  safeCheckpoints: SafeCheckpoints.t,
   concurrent: array<Internal.entityConfig>,
   forced: array<Internal.entityConfig>,
 }
@@ -39,12 +30,16 @@ type targets = {
 let selectSafeCheckpoints = (state: IndexerState.t) => {
   let byChain = state->IndexerState.getSafeCheckpointIdByChain
   if state->IndexerState.config->Config.isIsolatedMultichain {
-    PerChain(byChain->Array.filter(((_, checkpointId)) => checkpointId > 0n))
+    SafeCheckpoints.PerChain(
+      byChain->Array.filter(((_, checkpointId)) =>
+        checkpointId !== Internal.initialCheckpointId
+      ),
+    )
   } else {
     // A chain with nothing safe yet reports the initial checkpoint, which is
     // below every other chain's and so pins the bound there — the minimum can't
     // be seeded with it without reading as "no value yet" and losing that.
-    EveryChain(
+    SafeCheckpoints.EveryChain(
       byChain
       ->Array.reduce(None, (lowest, (_, checkpointId)) =>
         switch lowest {
@@ -60,7 +55,7 @@ let selectSafeCheckpoints = (state: IndexerState.t) => {
 // Nothing to prune yet: no chain has a safe checkpoint of its own, or the one
 // bounding them all is still the initial checkpoint. Checked before a pass runs
 // so an empty one doesn't spend the entity's prune interval.
-let hasNothingToPrune = safeCheckpoints =>
+let hasNothingToPrune = (safeCheckpoints: SafeCheckpoints.t) =>
   switch safeCheckpoints {
   | PerChain([]) => true
   | EveryChain(checkpointId) => checkpointId === Internal.initialCheckpointId
@@ -142,45 +137,23 @@ let select = (state: IndexerState.t, ~writtenEntityNames, ~isRollback) => {
   }
 }
 
-// What one entity's prune runs as: a statement per chain it is bounded on.
-//
-// A table with no chain of its own can't take a per-chain bound — its rows
-// aren't any one chain's — so it is left alone rather than pruned on a bound
-// that isn't every chain's. Unreachable: only a schema with no cross-chain
-// entity prunes per chain.
-let statementsFor = (~chainIdColumn, ~safeCheckpoints) =>
-  switch (chainIdColumn, safeCheckpoints) {
-  | (_, EveryChain(checkpointId)) => [(None, checkpointId)]
-  | (Some(_), PerChain(byChain)) =>
-    byChain->Array.map(((chainId, checkpointId)) => (Some(chainId), checkpointId))
-  | (None, PerChain(_)) => []
-  }
-
 let pruneEntity = async (
   state: IndexerState.t,
   ~entityConfig: Internal.entityConfig,
   ~safeCheckpoints,
 ) => {
   let persistence = state->IndexerState.persistence
-  let chainIdColumn = entityConfig.table->Table.getPgChainIdColumn
-  let statements = statementsFor(~chainIdColumn, ~safeCheckpoints)
-
   let timeRef = Performance.now()
   // Recorded for failures too, so a failing prune retries on the same
   // interval instead of on every write.
   state->IndexerState.lastPrunedAtMillis->Dict.set(entityConfig.name, Date.now())
-  switch await statements
-  ->Array.map(((chainId, safeCheckpointId)) =>
-    persistence.storage.pruneStaleEntityHistory(
-      ~entityName=entityConfig.name,
-      ~entityIndex=entityConfig.index,
-      ~chainIdColumn,
-      ~chainId,
-      ~safeCheckpointId,
-    )
-  )
-  ->Promise.all {
-  | _ =>
+  switch await persistence.storage.pruneStaleEntityHistory(
+    ~entityName=entityConfig.name,
+    ~entityIndex=entityConfig.index,
+    ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+    ~safeCheckpoints,
+  ) {
+  | () =>
     state->IndexerState.recordHistoryPrune(
       ~timeSeconds=Performance.secondsSince(timeRef),
       ~entityName=entityConfig.name,
@@ -188,38 +161,19 @@ let pruneEntity = async (
   | exception exn =>
     // Pruning is cleanup; a failure must not fail the write loop.
     Logging.createChild(
-      ~params={
-        "entityName": entityConfig.name,
-        "safeCheckpointIds": statements->Array.map(((_, id)) => id->BigInt.toString),
-      },
+      ~params={"entityName": entityConfig.name},
     )->Logging.childErrorWithExn(exn->Utils.prettifyExn, `Failed to prune stale entity history`)
   }
 }
 
-let pruneEntities = async (state: IndexerState.t, ~entities, ~safeCheckpoints) => {
-  for idx in 0 to entities->Array.length - 1 {
-    await state->pruneEntity(~entityConfig=entities->Array.getUnsafe(idx), ~safeCheckpoints)
-  }
-}
+let pruneEntities = (state: IndexerState.t, ~entities, ~safeCheckpoints) =>
+  entities->Utils.Array.awaitEach(entityConfig => state->pruneEntity(~entityConfig, ~safeCheckpoints))
 
-// The checkpoints table carries a chain of its own, so it is bounded exactly as
-// a per-chain entity's history is.
 let pruneCheckpoints = async (state: IndexerState.t, ~safeCheckpoints) => {
-  let storage = (state->IndexerState.persistence).storage
-  let statements = statementsFor(
-    ~chainIdColumn=InternalTable.Checkpoints.chainIdColumn,
-    ~safeCheckpoints,
-  )
-  switch await statements
-  ->Array.map(((chainId, safeCheckpointId)) =>
-    storage.pruneStaleCheckpoints(~chainId, ~safeCheckpointId)
-  )
-  ->Promise.all {
-  | _ => ()
+  switch await (state->IndexerState.persistence).storage.pruneStaleCheckpoints(~safeCheckpoints) {
+  | () => ()
   | exception exn =>
-    Logging.createChild(
-      ~params={"safeCheckpointIds": statements->Array.map(((_, id)) => id->BigInt.toString)},
-    )->Logging.childErrorWithExn(exn->Utils.prettifyExn, `Failed to prune stale checkpoints`)
+    Logging.errorWithExn(exn->Utils.prettifyExn, `Failed to prune stale checkpoints`)
   }
 }
 

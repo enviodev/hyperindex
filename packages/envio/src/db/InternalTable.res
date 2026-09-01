@@ -660,28 +660,24 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
     ->Utils.Promise.ignoreValue
   }
 
-  let makePruneStaleCheckpointsQuery = (~pgSchema, ~isChainNarrowed) => {
-    let chainFilter = isChainNarrowed ? ` AND "${(#chain_id: field :> string)}" = $2` : ""
-    `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" < $1${chainFilter};`
+  let makePruneStaleCheckpointsQuery = (~pgSchema, ~safeCheckpoints: SafeCheckpoints.t) => {
+    let tableRef = `"${pgSchema}"."${table.tableName}"`
+    switch safeCheckpoints {
+    | EveryChain(_) => `DELETE FROM ${tableRef} WHERE "${(#id: field :> string)}" < $1;`
+    | PerChain(_) =>
+      `DELETE FROM ${tableRef} USING ${SafeCheckpoints.boundsRelation}
+WHERE ${tableRef}."${(#chain_id: field :> string)}" = ${SafeCheckpoints.boundsChainId}
+  AND ${tableRef}."${(#id: field :> string)}" < ${SafeCheckpoints.boundsCheckpointId};`
+    }
   }
 
-  let pruneStaleCheckpoints = (
-    sql,
-    ~pgSchema,
-    ~chainId: option<ChainId.t>,
-    ~safeCheckpointId: bigint,
-  ) => {
-    let safeCheckpointId = safeCheckpointId->BigInt.toString->(Utils.magic: string => unknown)
+  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpoints) =>
     sql
     ->Postgres.preparedUnsafe(
-      makePruneStaleCheckpointsQuery(~pgSchema, ~isChainNarrowed=chainId->Option.isSome),
-      switch chainId {
-      | Some(chainId) => [safeCheckpointId, chainId->(Utils.magic: ChainId.t => unknown)]
-      | None => [safeCheckpointId]
-      }->(Utils.magic: array<unknown> => unknown),
+      makePruneStaleCheckpointsQuery(~pgSchema, ~safeCheckpoints),
+      safeCheckpoints->SafeCheckpoints.params,
     )
     ->Utils.Promise.ignoreValue
-  }
 
   let makeGetRollbackTargetCheckpointQuery = (~pgSchema) => {
     `SELECT "${(#id: field :> string)}" FROM "${pgSchema}"."${table.tableName}"
