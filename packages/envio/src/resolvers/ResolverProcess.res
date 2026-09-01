@@ -402,14 +402,23 @@ let serve = async (
   }
 
   let pool = createResolverPoolFromEnv({entities, pgSchema})
-  let server = await startResolverServer({
+  // The pool is opened before the socket, and a bind that fails -- the port is
+  // already taken -- returns nothing, so no caller can reach `shutdown` to
+  // release it later. It has to go back here or not at all.
+  let server = try await startResolverServer({
     resolvers,
     pool,
     ?port,
     exposeErrors,
     actionSecret: ?Env.Resolvers.actionSecret(),
     checkCompatible: compatibilityOf(~pool, ~pgSchema, ~envioInfo),
-  })
+  }) catch {
+  | exn =>
+    try await pool->endPool catch {
+    | _ => ()
+    }
+    throw(exn)
+  }
   Logging.info(
     `Serving ${resolvers
       ->Array.length
