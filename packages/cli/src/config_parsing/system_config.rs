@@ -2034,10 +2034,17 @@ fn resolve_instruction(
     instr: &human_config::svm::Instruction,
     abi: &SvmAbi,
 ) -> Result<ResolvedInstruction> {
-    let declared = instr
-        .discriminator
-        .as_deref()
-        .map(|d| format!("0x{}", d.strip_prefix("0x").unwrap_or(d)));
+    // Lowercased, since the config schema takes hex in either case and every
+    // discriminator this compares against or hands on is written lowercase.
+    let declared = instr.discriminator.as_deref().map(|d| {
+        format!(
+            "0x{}",
+            d.strip_prefix("0x")
+                .or_else(|| d.strip_prefix("0X"))
+                .unwrap_or(d)
+                .to_ascii_lowercase()
+        )
+    });
 
     if let (Some(accounts), Some(args)) = (&instr.accounts, &instr.args) {
         return Ok(ResolvedInstruction {
@@ -4063,6 +4070,29 @@ type Foo {
                         Vec::new(),
                     ),
                 ]
+            );
+        }
+
+        /// Hex is hex in either case, and the config schema accepts both. A
+        /// spelling difference is not a disagreement with the IDL.
+        #[test]
+        fn accepts_a_configured_discriminator_in_either_case() {
+            let config = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: swap\n              discriminator: \
+                 \"0xF8C69E91E17587C8\"\n",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![(
+                    "swap".to_string(),
+                    Some("0xf8c69e91e17587c8".to_string()),
+                    8,
+                    vec!["payer".to_string(), "pool".to_string()],
+                    vec!["amount".to_string()],
+                )]
             );
         }
 
