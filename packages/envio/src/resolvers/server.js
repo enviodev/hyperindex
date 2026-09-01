@@ -65,16 +65,16 @@ const wireError = (message, code) => ({
   errors: [{ message, extensions: { code } }],
 });
 
+// What a readiness probe is prepared to wait for, and so what the check has to
+// answer within whether or not the database is the thing that is slow.
+const READYZ_BUDGET_MS = 2_000;
+
 /**
  * Starts the resolver process's HTTP server.
  *
  * Resolves once the socket is listening, with the port it bound — pass
  * `port: 0` to let the OS choose one.
  */
-// What a readiness probe is prepared to wait for, and so what the check has to
-// answer within whether or not the database is the thing that is slow.
-const READYZ_BUDGET_MS = 2_000;
-
 export async function startResolverServer(options) {
   const { resolvers, pool, exposeErrors = false, checkCompatible, actionSecret } = options;
   const port = options.port ?? ResolversEnv.port();
