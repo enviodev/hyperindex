@@ -104,6 +104,9 @@ fn locate(index: usize, item: &Map<String, Value>) -> String {
 
 /// The parameter alloy could not read. Checking one at a time is what lets the
 /// message name it, rather than repeating serde's account of the whole entry.
+/// A parameter reads as one of two shapes, and only an event's may be indexed,
+/// so the shape that did not apply tells the two failures apart: a type the
+/// file got wrong, and an "indexed" the entry is not allowed to carry.
 fn bad_parameter(item: &Map<String, Value>, is_event: bool) -> Option<String> {
     let params = ["inputs", "outputs"]
         .iter()
@@ -111,15 +114,17 @@ fn bad_parameter(item: &Map<String, Value>, is_event: bool) -> Option<String> {
         .filter_map(Value::as_array)
         .flatten();
     for param in params {
-        let valid = if is_event {
-            serde_json::from_value::<alloy_json_abi::EventParam>(param.clone()).is_ok()
-        } else {
-            serde_json::from_value::<alloy_json_abi::Param>(param.clone()).is_ok()
-        };
-        if valid {
+        let as_param = serde_json::from_value::<alloy_json_abi::Param>(param.clone()).is_ok();
+        let as_event = serde_json::from_value::<alloy_json_abi::EventParam>(param.clone()).is_ok();
+        if if is_event { as_event } else { as_param } {
             continue;
         }
         let name = param.get("name").and_then(Value::as_str).unwrap_or("");
+        if as_param || as_event {
+            return Some(format!(
+                "parameter \"{name}\" is indexed, which only an event's parameter can be"
+            ));
+        }
         return Some(match param.get("type").and_then(Value::as_str) {
             Some(kind) => format!("parameter \"{name}\" has an invalid type \"{kind}\""),
             None => format!("parameter \"{name}\" has no \"type\""),
@@ -303,6 +308,18 @@ mod tests {
                 r#"[{"name": "Transfer", "type": "event", "inputs": [{"name": "to", "type": "address"}, {"name": "value", "type": "uint256["}]}]"#
             ),
             "abi[0] \"Transfer\": parameter \"value\" has an invalid type \"uint256[\"."
+        );
+    }
+
+    // Only an event's parameter can be indexed, so alloy refuses a function's
+    // that is; the type it names is not the problem.
+    #[test]
+    fn says_when_a_parameter_is_indexed_and_may_not_be() {
+        assert_eq!(
+            error(
+                r#"[{"name": "transfer", "type": "function", "inputs": [{"name": "to", "type": "address", "indexed": true}]}]"#
+            ),
+            "abi[0] \"transfer\": parameter \"to\" is indexed, which only an event's parameter can be."
         );
     }
 
