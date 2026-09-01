@@ -367,6 +367,31 @@ describe("applying resolver metadata", () => {
     expect(bulkSent()).toEqual([]);
   });
 
+  it("leaves a rename alone: some of ours present is not the wipe it heals", async () => {
+    // A newer deployment that renames a resolver leaves the old name absent and
+    // the rest present. Treating any absence as the wipe would have the older
+    // pod restore its whole set over the newer one for the length of a rollout.
+    // Only a Hasura holding none of them is the `clear_metadata` this heals.
+    exported = {
+      ...APPLIED_EXPORT,
+      actions: [APPLIED_EXPORT.actions[0]],
+    };
+    const stop = startMetadataReassert({
+      endpoint,
+      adminSecret: "testing",
+      metadata,
+      intervalMs: 20,
+      onApplied: () => {},
+      onError: () => {},
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 90));
+    } finally {
+      stop();
+    }
+    expect(bulkSent()).toEqual([]);
+  });
+
   it("re-applies after a clear_metadata wipes it, without being asked", async () => {
     // `Hasura.trackDatabase` opens with a wholesale `clear_metadata`, so a
     // re-initialised indexer silently deletes the actions while this service
