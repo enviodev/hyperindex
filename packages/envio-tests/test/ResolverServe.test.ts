@@ -5,13 +5,13 @@ import {
   defineType,
   getRegisteredResolvers,
   ResolverError,
-} from "../../envio/src/resolvers/index.js";
+} from "envio/src/resolvers/index.js";
 import {
   createResolverPool,
   createResolverPoolFromEnv,
   ResolverDbError,
-} from "../../envio/src/resolvers/db.js";
-import { startResolverServer } from "../../envio/src/resolvers/server.js";
+} from "envio/src/resolvers/db.js";
+import { startResolverServer } from "envio/src/resolvers/server.js";
 
 // The wire contract envio-serve already implements and tests. Everything here
 // goes over real HTTP against a real server, because the shape of the bytes is
