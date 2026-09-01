@@ -1,9 +1,9 @@
 open Vitest
 
-// `resolvers:` may name a directory, not just a file. The reference squid keeps
-// its resolvers as `server-extension/resolvers/<name>/index.ts` — a parent
-// directory of subdirectories — and `handlers:` already auto-loads that way,
-// so the two config fields should behave the same.
+// `resolvers:` may name a directory, not just a file. A project may keep its
+// resolvers as `resolvers/<name>/index.ts` — a parent directory of
+// subdirectories — and `handlers:` already auto-loads that way, so the two
+// config fields should behave the same.
 
 @module("node:fs") external mkdirSync: (string, {..}) => unit = "mkdirSync"
 @module("node:fs") external writeFileSync: (string, string) => unit = "writeFileSync"
