@@ -32,7 +32,6 @@ const resolver = (over: Record<string, unknown> = {}) => ({
   },
   output: S.array(MarketApr),
   timeoutMs: 30_000,
-  cacheTtlMs: 60_000,
   ...over,
 });
 
@@ -57,7 +56,6 @@ describe("envio's own scalars", () => {
           args: [{ name: "minSize", type: "BigInt!" }],
           type: "BigDecimal!",
           admin: false,
-          cacheTtlMs: 0,
           timeoutMs: 1000,
         },
       ],
@@ -98,7 +96,6 @@ describe("resolver manifest", () => {
           ],
           type: "[MarketApr!]!",
           admin: false,
-          cacheTtlMs: 60_000,
           timeoutMs: 30_000,
         },
       ],
@@ -164,6 +161,17 @@ describe("resolver manifest", () => {
 
   // statement_timeout is the only thing that bounds a runaway query, so it
   // must be declared.
+  // It was carried through the manifest and read by nothing. Silently ignoring
+  // a caching option is worse than not having one: a resolver author sets it,
+  // sees no error, and assumes their expensive query is being cached.
+  it("refuses cacheTtlMs rather than accepting an option that does nothing", () => {
+    expect(() =>
+      buildManifest([
+        { name: "x", args: {}, output: S.string, timeoutMs: 1, cacheTtlMs: 60_000 },
+      ])
+    ).toThrow(/cacheTtlMs.*not implemented/s);
+  });
+
   it("requires a positive timeoutMs", () => {
     expect(() =>
       buildManifest([{ name: "x", args: {}, output: S.string, timeoutMs: 0 }])

@@ -222,7 +222,6 @@ createResolver({
   name: "fresh",
   output: S.boolean,
   admin: true,
-  cacheTtlMs: 60_000,
   description: "Whether chain 1337 has caught up",
   timeoutMs: 5_000,
   handler: async ({ db, selection, ctx }) => {
