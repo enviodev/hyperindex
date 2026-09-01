@@ -169,6 +169,11 @@ export function createResolverPool(options) {
     database: connection.database,
     ssl: connection.ssl,
     max: poolSize,
+    // `statement_timeout` bounds a query, not the TCP connect and handshake in
+    // front of it, so an unreachable database would otherwise hold a request
+    // open far longer than the resolver's own `timeoutMs`. Seconds, and matched
+    // to the pool wait so a request fails at roughly the same point either way.
+    connect_timeout: Math.ceil(poolWaitTimeoutMs / 1000),
     prepare,
     transform: { undefined: null },
     onnotice: () => {},

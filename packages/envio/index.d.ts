@@ -2380,7 +2380,7 @@ export type ResolverDb<Config extends IndexerConfigTypes = GlobalConfig> = {
     >
   >(
     entityName: Name,
-    id: string
+    id: EntityId<ConfigEntities<Config>[Name]>
   ) => Promise<ConfigEntities<Config>[Name] | null>;
   /** Raw SQL, for what the loaders don't express. */
   readonly sql: ResolverSql;
