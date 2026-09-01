@@ -69,9 +69,29 @@ const actionArgs = (action) => ({
 /**
  * The single metadata call that moves Hasura from `exported` to `metadata`,
  * and the reasons it is needed. `bulk` is null when nothing differs.
+ *
+ * `healOnly` restricts it to restoring what has been *deleted*, leaving
+ * anything that merely differs alone. A rolling update runs two versions at
+ * once: the new one updates the actions to its definitions, and a periodic
+ * re-assert that called that drift would write the old ones straight back,
+ * flapping the published schema until the rollout finished. Reconciling
+ * definitions is startup's job, where only one version is speaking.
  */
-export function planApply(metadata, exported) {
+export function planApply(metadata, exported, { healOnly = false } = {}) {
   const current = new Map((exported?.actions ?? []).map((action) => [action.name, action]));
+
+  if (healOnly) {
+    const wanted = metadata.actions;
+    // Every action still present means nothing was deleted. Whatever else has
+    // changed belongs to someone with a newer manifest than ours.
+    if (wanted.length === 0 || wanted.every((action) => current.has(action.name))) {
+      return { bulk: null, reasons: [] };
+    }
+    // Something is gone -- the `clear_metadata` this loop exists for. Fall
+    // through and restore the whole set, since a wipe takes the custom types
+    // and permissions with it.
+  }
+
   const desired = new Map(metadata.actions.map((action) => [action.name, action]));
   const desiredRoles = new Map(metadata.actions.map((action) => [action.name, new Set()]));
   for (const permission of metadata.permissions) {
@@ -200,10 +220,16 @@ async function metadataCall({ endpoint, adminSecret, role = "admin" }, body) {
  * it already has, so applying twice makes one call the second time and changes
  * nothing.
  */
-export async function applyResolverMetadata({ endpoint, adminSecret, role, metadata }) {
+export async function applyResolverMetadata({
+  endpoint,
+  adminSecret,
+  role,
+  metadata,
+  healOnly = false,
+}) {
   const connection = { endpoint, adminSecret, role };
   const exported = await metadataCall(connection, { type: "export_metadata", args: {} });
-  const { bulk, reasons } = planApply(metadata, exported);
+  const { bulk, reasons } = planApply(metadata, exported, { healOnly });
   if (bulk === null) {
     return { applied: false, reasons };
   }
@@ -240,6 +266,7 @@ export function startMetadataReassert({
         adminSecret,
         role,
         metadata,
+        healOnly: true,
       });
       if (applied) onApplied?.(reasons);
     } catch (error) {
