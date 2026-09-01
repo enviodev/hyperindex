@@ -195,8 +195,7 @@ fn separates_file_level_defects_from_instruction_level_ones() {
         ),
         (
             // Read as `false` the slot becomes required, and a transaction that
-            // omits it pairs every later pubkey with the wrong name. Anchor
-            // already refused this; Codama used to default it.
+            // omits it pairs every later pubkey with the wrong name.
             "codama account with an unreadable isOptional",
             r#"{ "kind": "rootNode", "program": { "instructions": [{
                  "kind": "instructionNode", "name": "swap",

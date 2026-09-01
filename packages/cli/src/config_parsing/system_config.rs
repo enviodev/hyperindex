@@ -2181,9 +2181,8 @@ pub fn named_field_to_arg_def(nf: &SvmNamedField) -> human_config::svm::ArgDef {
 }
 
 /// The YAML/wire-format `ArgType` read back into the runtime's `FieldType`.
-/// Config parsing and the Borsh decoder both need it, and each used to carry
-/// its own copy of the mapping — a type added to one and not the other passes
-/// codegen and then fails to decode.
+/// Config parsing and the Borsh decoder read it the same way: a type one of
+/// them maps and the other does not passes codegen and then fails to decode.
 pub fn arg_type_to_field_type(ty: &human_config::svm::ArgType) -> Result<SvmFieldType> {
     use human_config::svm::{ArgComposite as C, ArgPrimitive as P, ArgType as T};
     Ok(match ty {
@@ -3996,10 +3995,11 @@ type Foo {
           ]
         }"#;
 
-        /// The IDL knows what every instruction dispatches on, so naming one it
-        /// declares is enough. A legacy Anchor config used to carry a
-        /// hand-computed `sha256("global:<snake_case>")[..8]` per instruction —
-        /// the one value in an SVM config that cannot be checked by reading it.
+        /// A legacy Anchor IDL leaves its discriminators implicit, and a config
+        /// that carries them carries a hand-computed
+        /// `sha256("global:<snake_case>")[..8]` — the one value in an SVM config
+        /// that cannot be checked by reading it. Naming the instruction the IDL
+        /// declares is enough.
         #[test]
         /// The type registry an IDL brings has to reach the runtime, which
         /// resolves `Defined` references against it once per program at
@@ -4084,9 +4084,9 @@ type Foo {
             );
         }
 
-        /// Naming an instruction the IDL sets aside gets the reason it is out,
-        /// where before the module kept a carefully worded reason no user could
-        /// ever read.
+        /// Naming an instruction the IDL sets aside gets the reason it is out.
+        /// The alternative is a config that looks accepted and an indexer that
+        /// never reports a call.
         #[test]
         fn reports_why_a_configured_instruction_cannot_be_indexed() {
             let err = program_reading_idl(
@@ -4148,10 +4148,10 @@ type Foo {
         }
 
         /// The scenario config is the real one, over three published IDLs. It
-        /// Its eleven IDL-backed instructions used to carry a hand-computed
-        /// sha256 prefix each; naming them is now enough, and this pins that
-        /// what the IDLs derive is what the config used to spell out. The three
-        /// programs with no IDL still bring their own.
+        /// The real config, over three published IDLs. It pins the bytes each
+        /// of its eleven IDL-backed instructions derives, against the
+        /// hand-computed sha256 prefixes they were dispatched on. The three
+        /// programs with no IDL bring their own discriminator.
         #[test]
         fn derives_the_scenario_config_discriminators_from_its_idls() {
             let project_paths = ParsedProjectPaths::new(
