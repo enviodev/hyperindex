@@ -660,20 +660,25 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
     ->Utils.Promise.ignoreValue
   }
 
-  let makePruneStaleCheckpointsQuery = (~pgSchema, ~chainId: option<ChainId.t>) => {
-    // Inlined for the same reason as the entity history prune it runs beside.
-    let chainFilter = switch chainId {
-    | Some(chainId) => ` AND "${(#chain_id: field :> string)}" = ${chainId->ChainId.toString}`
-    | None => ""
-    }
+  let makePruneStaleCheckpointsQuery = (~pgSchema, ~isChainNarrowed) => {
+    let chainFilter = isChainNarrowed ? ` AND "${(#chain_id: field :> string)}" = $2` : ""
     `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" < $1${chainFilter};`
   }
 
-  let pruneStaleCheckpoints = (sql, ~pgSchema, ~chainId, ~safeCheckpointId: bigint) => {
+  let pruneStaleCheckpoints = (
+    sql,
+    ~pgSchema,
+    ~chainId: option<ChainId.t>,
+    ~safeCheckpointId: bigint,
+  ) => {
+    let safeCheckpointId = safeCheckpointId->BigInt.toString->(Utils.magic: string => unknown)
     sql
     ->Postgres.preparedUnsafe(
-      makePruneStaleCheckpointsQuery(~pgSchema, ~chainId),
-      [safeCheckpointId->BigInt.toString]->Obj.magic,
+      makePruneStaleCheckpointsQuery(~pgSchema, ~isChainNarrowed=chainId->Option.isSome),
+      switch chainId {
+      | Some(chainId) => [safeCheckpointId, chainId->(Utils.magic: ChainId.t => unknown)]
+      | None => [safeCheckpointId]
+      }->(Utils.magic: array<unknown> => unknown),
     )
     ->Utils.Promise.ignoreValue
   }

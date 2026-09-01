@@ -38,7 +38,10 @@ type Counter {
 }
 `
 
-let makeConfigYaml = name =>
+// `laggingChainId` is the chain that never reaches a safe checkpoint. The chains
+// are visited in ascending id order, so putting it either side of chain 100
+// covers both orders a fold over them can see.
+let makeConfigYaml = (name, ~laggingChainId) =>
   `
 name: ${name}
 rollback_on_reorg: true
@@ -48,24 +51,36 @@ contracts:
     events:
       - event: Transfer()
 chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
-      1337,
+      laggingChainId,
       ~startBlock=1,
       ~maxReorgDepth=200,
     )}
 `
 
-let scenario = Scenario.make(~schema, ~configYaml=makeConfigYaml("per-chain-prune"))
+let scenario = Scenario.make(
+  ~schema,
+  ~configYaml=makeConfigYaml("per-chain-prune", ~laggingChainId=1337),
+)
 
-// One cross-chain entity couples the chains: a reorg on the chain furthest
-// behind can reach a row any chain wrote, so none may prune past its safe point.
-let crossChainScenario = Scenario.make(
-  ~schema=schema ++ `
+let crossChainSchema =
+  schema ++ `
 type Total @crossChain {
   id: ID!
   count: BigInt!
 }
-`,
-  ~configYaml=makeConfigYaml("per-chain-prune-cross-chain"),
+`
+
+// One cross-chain entity couples the chains: a reorg on the chain furthest
+// behind can reach a row any chain wrote, so none may prune past its safe point.
+let crossChainScenario = Scenario.make(
+  ~schema=crossChainSchema,
+  ~configYaml=makeConfigYaml("per-chain-prune-cross-chain", ~laggingChainId=1337),
+)
+
+// The same, with the lagging chain visited first.
+let crossChainLaggingFirstScenario = Scenario.make(
+  ~schema=crossChainSchema,
+  ~configYaml=makeConfigYaml("per-chain-prune-cross-chain-lagging-first", ~laggingChainId=5),
 )
 
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
@@ -99,22 +114,22 @@ let startAt = async (~t: Vitest.testContext, ~source: MockSource.t, ~head) => {
 }
 
 // Both chains index inside their reorg threshold from the first block they
-// fetch, so neither starts with a checkpoint at the threshold boundary. Chain
-// 1337's reorg depth reaches below its own head, so it never has a safe
+// fetch, so neither starts with a checkpoint at the threshold boundary. The
+// lagging chain's reorg depth reaches below its own head, so it never has a safe
 // checkpoint at all — the case that used to pin every sibling's history in
 // place. Chain 100's head then runs on to 130, which leaves its blocks 111 and
 // 112 below its own safe block and its block 120 above it.
-let driveChain100Ahead = async (~t, ~indexer: IndexerRunner.t, ~source100, ~source1337) => {
+let driveChain100Ahead = async (~t, ~indexer: IndexerRunner.t, ~source100, ~lagging) => {
   let _ = await Promise.all2((
     startAt(~t, ~source=source100, ~head=120),
-    startAt(~t, ~source=source1337, ~head=110),
+    startAt(~t, ~source=lagging, ~head=110),
   ))
 
-  source100.resolveGetItemsOrThrow(
+  source100.MockSource.resolveGetItemsOrThrow(
     [setCounter(~block=111, ~count=1n), setCounter(~block=112, ~count=2n)],
     ~latestFetchedBlockNumber=112,
   )
-  source1337.resolveGetItemsOrThrow(
+  lagging.MockSource.resolveGetItemsOrThrow(
     [setCounter(~block=5, ~count=20n)],
     ~latestFetchedBlockNumber=110,
   )
@@ -142,10 +157,7 @@ describe("Per-chain history pruning", () => {
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
-      let source100 = source(100)
-      let source1337 = source(1337)
-
-      await driveChain100Ahead(~t, ~indexer, ~source100, ~source1337)
+      await driveChain100Ahead(~t, ~indexer, ~source100=source(100), ~lagging=source(1337))
 
       t.expect(
         await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),
@@ -162,19 +174,19 @@ describe("Per-chain history pruning", () => {
     },
   )
 
+  // Chain 100's rows are all still reachable by a rollback the lagging chain's
+  // reorg would cause, so none of them may be pruned. The two cases differ only
+  // in which chain is visited first, which the checkpoint ids follow.
   crossChainScenario->Scenario.it(
     "Holds every chain at the lowest safe checkpoint when one entity is cross-chain",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
-      let source100 = source(100)
-      let source1337 = source(1337)
-
-      await driveChain100Ahead(~t, ~indexer, ~source100, ~source1337)
+      await driveChain100Ahead(~t, ~indexer, ~source100=source(100), ~lagging=source(1337))
 
       t.expect(
         await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),
-        ~message="Chain 1337 has nothing safe yet, so chain 100's early rows stay reachable by a rollback its reorg would cause",
+        ~message="Nothing is pruned while chain 1337 has nothing safe yet",
       ).toEqual((
         [
           counterSet(~checkpointId=1n, ~chain=100, ~count=1n),
@@ -183,6 +195,31 @@ describe("Per-chain history pruning", () => {
           counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
         ],
         [(1n, 100), (2n, 100), (3n, 1337), (4n, 1337), (5n, 100), (6n, 100)],
+      ))
+    },
+  )
+
+  // The same, with the lagging chain visited before the one that does have a
+  // safe checkpoint. The bound is the lowest of the two either way, never
+  // whichever chain the fold happened to see last.
+  crossChainLaggingFirstScenario->Scenario.it(
+    "Holds every chain at the lowest safe checkpoint when the lagging chain comes first",
+    ~sources=[{chain: 5, methods}, {chain: 100, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      await driveChain100Ahead(~t, ~indexer, ~source100=source(100), ~lagging=source(5))
+
+      t.expect(
+        await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),
+        ~message="Nothing is pruned while chain 5 has nothing safe yet",
+      ).toEqual((
+        [
+          counterSet(~checkpointId=1n, ~chain=5, ~count=20n),
+          counterSet(~checkpointId=3n, ~chain=100, ~count=1n),
+          counterSet(~checkpointId=4n, ~chain=100, ~count=2n),
+          counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
+        ],
+        [(1n, 5), (2n, 5), (3n, 100), (4n, 100), (5n, 100), (6n, 100)],
       ))
     },
   )

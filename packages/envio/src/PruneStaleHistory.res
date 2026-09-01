@@ -41,12 +41,18 @@ let selectSafeCheckpoints = (state: IndexerState.t) => {
   if state->IndexerState.config->Config.isIsolatedMultichain {
     PerChain(byChain->Array.filter(((_, checkpointId)) => checkpointId > 0n))
   } else {
+    // A chain with nothing safe yet reports the initial checkpoint, which is
+    // below every other chain's and so pins the bound there — the minimum can't
+    // be seeded with it without reading as "no value yet" and losing that.
     EveryChain(
-      byChain->Array.reduce(Internal.initialCheckpointId, (lowest, (_, checkpointId)) =>
-        lowest === Internal.initialCheckpointId
-          ? checkpointId
-          : Pervasives.min(lowest, checkpointId)
-      ),
+      byChain
+      ->Array.reduce(None, (lowest, (_, checkpointId)) =>
+        switch lowest {
+        | Some(lowest) => Some(Pervasives.min(lowest, checkpointId))
+        | None => Some(checkpointId)
+        }
+      )
+      ->Option.getOr(Internal.initialCheckpointId),
     )
   }
 }
@@ -200,7 +206,10 @@ let pruneEntities = async (state: IndexerState.t, ~entities, ~safeCheckpoints) =
 // a per-chain entity's history is.
 let pruneCheckpoints = async (state: IndexerState.t, ~safeCheckpoints) => {
   let storage = (state->IndexerState.persistence).storage
-  let statements = statementsFor(~chainIdColumn=InternalTable.Checkpoints.chainIdColumn, ~safeCheckpoints)
+  let statements = statementsFor(
+    ~chainIdColumn=InternalTable.Checkpoints.chainIdColumn,
+    ~safeCheckpoints,
+  )
   switch await statements
   ->Array.map(((chainId, safeCheckpointId)) =>
     storage.pruneStaleCheckpoints(~chainId, ~safeCheckpointId)

@@ -343,24 +343,24 @@ describe("Per-chain rollback and delete SQL", () => {
   })
 
   it("Prunes history per (id, chain id)", t => {
-    let makeQuery = chainId =>
+    let makeQuery = isChainNarrowed =>
       EntityHistory.makePruneStaleEntityHistoryQuery(
         ~entityName="Counter",
         ~entityIndex=0,
         ~pgSchema="public",
         ~chainIdColumn=Some("chainId"),
-        ~chainId,
+        ~isChainNarrowed,
       )
-    let query = makeQuery(None)
+    let query = makeQuery(false)
     // A chain pruning to its own safe checkpoint narrows both halves to itself:
     // the anchors it derives and the rows it deletes against them.
-    let narrowed = makeQuery(Some(137->ChainId.fromInt))
+    let narrowed = makeQuery(true)
     t.expect((
       query->String.includes(`GROUP BY t.id, t."chainId"`),
       query->String.includes(`WHERE d.id = a.id AND d."chainId" = a."chainId"`),
-      query->String.includes(`= 137`),
-      narrowed->String.includes(`FROM "public"."envio_history_Counter" t\n  WHERE t."chainId" = 137`),
-      narrowed->String.includes(`WHERE d.id = a.id AND d."chainId" = a."chainId"\n  AND d."chainId" = 137`),
+      query->String.includes(`$2`),
+      narrowed->String.includes(`FROM "public"."envio_history_Counter" t\n  WHERE t."chainId" = $2`),
+      narrowed->String.includes(`WHERE d.id = a.id AND d."chainId" = a."chainId"\n  AND d."chainId" = $2`),
     )).toEqual((true, true, false, true, true))
   })
 

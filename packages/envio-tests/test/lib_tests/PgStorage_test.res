@@ -988,11 +988,11 @@ SELECT * FROM unnest($1::BIGINT[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::INT
       async t => {
         let query = InternalTable.Checkpoints.makePruneStaleCheckpointsQuery(
           ~pgSchema="test_schema",
-          ~chainId=None,
+          ~isChainNarrowed=false,
         )
         let narrowed = InternalTable.Checkpoints.makePruneStaleCheckpointsQuery(
           ~pgSchema="test_schema",
-          ~chainId=Some(137->ChainId.fromInt),
+          ~isChainNarrowed=true,
         )
 
         t.expect(
@@ -1000,7 +1000,7 @@ SELECT * FROM unnest($1::BIGINT[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::INT
           ~message="Prune stale checkpoints SQL should match exactly",
         ).toEqual((
           `DELETE FROM "test_schema"."envio_checkpoints" WHERE "id" < $1;`,
-          `DELETE FROM "test_schema"."envio_checkpoints" WHERE "id" < $1 AND "chain_id" = 137;`,
+          `DELETE FROM "test_schema"."envio_checkpoints" WHERE "id" < $1 AND "chain_id" = $2;`,
         ))
       },
     )

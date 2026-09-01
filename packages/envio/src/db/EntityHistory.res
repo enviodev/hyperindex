@@ -96,19 +96,17 @@ let makePruneStaleEntityHistoryQuery = (
   ~entityIndex,
   ~pgSchema,
   ~chainIdColumn,
-  ~chainId: option<ChainId.t>,
+  ~isChainNarrowed: bool,
 ) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   let keyColumns = makeKeyColumns(~chainIdColumn)
   let anchorKeys = keyColumns->Array.map(column => `t.${column}`)->Array.joinUnsafe(", ")
 
-  // Narrows the prune to the one chain whose safe checkpoint bounds it. Written
-  // into the SQL rather than bound, for the same reason as the backfill above:
-  // the planner can only prune the chain's partition when the column is compared
-  // against a constant.
-  let chainCondition = switch (chainIdColumn, chainId) {
-  | (Some(column), Some(chainId)) =>
-    Some(alias => `${alias}."${column}" = ${chainId->ChainId.toString}`)
+  // Narrows the prune to the one chain whose safe checkpoint bounds it. Unlike
+  // the entity table, history isn't partitioned by chain, so the id is bound
+  // rather than written in — every chain then shares the one prepared statement.
+  let chainCondition = switch (chainIdColumn, isChainNarrowed) {
+  | (Some(column), true) => Some(alias => `${alias}."${column}" = $2`)
   | _ => None
   }
   let anchorFilter = switch chainCondition {
@@ -145,18 +143,22 @@ let pruneStaleEntityHistory = (
   ~entityIndex,
   ~pgSchema,
   ~chainIdColumn,
-  ~chainId,
+  ~chainId: option<ChainId.t>,
   ~safeCheckpointId,
 ): promise<unit> => {
+  let safeCheckpointId = safeCheckpointId->BigInt.toString->(Utils.magic: string => unknown)
   sql->Postgres.preparedUnsafe(
     makePruneStaleEntityHistoryQuery(
       ~entityName,
       ~entityIndex,
       ~pgSchema,
       ~chainIdColumn,
-      ~chainId,
+      ~isChainNarrowed=chainId->Option.isSome,
     ),
-    [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+    switch chainId {
+    | Some(chainId) => [safeCheckpointId, chainId->(Utils.magic: ChainId.t => unknown)]
+    | None => [safeCheckpointId]
+    }->(Utils.magic: array<unknown> => unknown),
   )
 }
 
