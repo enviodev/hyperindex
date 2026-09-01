@@ -124,6 +124,10 @@ let configWithoutResolvers =
   ).config
 
 beforeAll(() => {
+  // `startForDev` defaults the child's Hasura to localhost:8080, which is a
+  // developer's own `envio dev` stack. Without this, running the suite
+  // registers these fixtures against it and drops whatever was there.
+  processEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", "http://127.0.0.1:1/v1/metadata")
   mkdirSync(pathJoin([projectRoot, "src"]), {"recursive": true})
   writeFileSync(pathJoin([projectRoot, "src", "Resolvers.ts"]), resolverSource)
   // `envio resolvers` is spawned as a real child below, and the Rust CLI reads
@@ -327,7 +331,7 @@ extend type Query {
     await waitForBulk()
     await dev.stop()
     await Promise.make((resolve, _reject) => hasura->closeServer(() => resolve()))
-    processEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", "")
+    processEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", "http://127.0.0.1:1/v1/metadata")
 
     let handlers =
       seen.contents
