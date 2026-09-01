@@ -154,7 +154,6 @@ describe("envio resolvers", () => {
             args: [{ name: "account", type: "String!" }],
             type: "[PositionSummary!]!",
             admin: false,
-            cacheTtlMs: 0,
             timeoutMs: 30000,
           },
           {
@@ -162,7 +161,6 @@ describe("envio resolvers", () => {
             args: [],
             type: "String!",
             admin: false,
-            cacheTtlMs: 0,
             timeoutMs: 5000,
           },
         ],

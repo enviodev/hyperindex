@@ -34,7 +34,6 @@ createResolver({
   args: { where: Where, period: S.optional(Period) },
   output: S.array(Bucket),
   timeoutMs: 30_000,
-  cacheTtlMs: 60_000,
   handler: async () => [],
 });
 
