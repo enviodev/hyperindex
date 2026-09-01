@@ -14,6 +14,10 @@
 // them back or every read reports drift.
 const DEFAULT_TIMEOUT_SECONDS = 30;
 
+// Well inside the 60s re-assert interval: a call that outlived that would have
+// the loop skip ticks it can never catch up on.
+const DEFAULT_METADATA_TIMEOUT_MS = 30_000;
+
 const byName = (a, b) => a.name.localeCompare(b.name);
 
 function normaliseAction(action) {
@@ -195,23 +199,51 @@ function unionCustomTypes(current, desired) {
   };
 }
 
-async function metadataCall({ endpoint, adminSecret, role = "admin" }, body) {
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-hasura-role": role,
-      "x-hasura-admin-secret": adminSecret,
-    },
-    body: JSON.stringify(body),
-  });
-  const answer = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(
-      `Hasura metadata call '${body.type}' failed with ${response.status}: ${JSON.stringify(answer)}`
-    );
+async function metadataCall(
+  { endpoint, adminSecret, role = "admin", timeoutMs = DEFAULT_METADATA_TIMEOUT_MS },
+  body
+) {
+  // The deadline covers reading the body, not just the headers: a Hasura that
+  // writes a 200 and then stops leaves `response.json()` pending forever, and
+  // an unsettled call here is one the re-assert loop's overlap guard never
+  // clears -- it would stop healing without ever reporting an error.
+  const controller = new AbortController();
+  const expiry = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-hasura-role": role,
+        "x-hasura-admin-secret": adminSecret,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    let answer = null;
+    let unreadable = null;
+    try {
+      answer = await response.json();
+    } catch (error) {
+      unreadable = error;
+    }
+    if (!response.ok) {
+      throw new Error(
+        `Hasura metadata call '${body.type}' failed with ${response.status}: ${JSON.stringify(answer)}`
+      );
+    }
+    // A 2xx whose body could not be read is not an empty Hasura. Answering
+    // `null` here would have `planApply` see metadata holding none of our
+    // actions and recreate the lot against a Hasura that already has them.
+    if (unreadable !== null) {
+      throw new Error(
+        `Hasura metadata call '${body.type}' answered ${response.status} with a body that could not be read: ${unreadable.message}`
+      );
+    }
+    return answer;
+  } finally {
+    clearTimeout(expiry);
   }
-  return answer;
 }
 
 /**
@@ -227,8 +259,9 @@ export async function applyResolverMetadata({
   role,
   metadata,
   healOnly = false,
+  timeoutMs,
 }) {
-  const connection = { endpoint, adminSecret, role };
+  const connection = { endpoint, adminSecret, role, ...(timeoutMs ? { timeoutMs } : {}) };
   const exported = await metadataCall(connection, { type: "export_metadata", args: {} });
   const { bulk, reasons } = planApply(metadata, exported, { healOnly });
   if (bulk === null) {
@@ -250,6 +283,7 @@ export function startMetadataReassert({
   role,
   metadata,
   intervalMs,
+  timeoutMs,
   onApplied,
   onError,
 }) {
@@ -268,6 +302,7 @@ export function startMetadataReassert({
         role,
         metadata,
         healOnly: true,
+        timeoutMs,
       });
       if (applied) onApplied?.(reasons);
     } catch (error) {
