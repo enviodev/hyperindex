@@ -37,6 +37,18 @@ pub(crate) struct InstructionSchemaInput {
     pub args: Vec<ArgDef>,
 }
 
+/// What decoding one instruction against its program's schema produced.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Decoded {
+    Args(ParamValue),
+    /// The program's schema carries no entry for this discriminator, so the
+    /// registration declared neither args nor accounts. Nothing was asked to be
+    /// decoded and nothing failed.
+    Uncovered,
+    /// The schema covers the discriminator but rejected the data.
+    Failed,
+}
+
 /// Decode a raw instruction against a resolved schema into its args as a
 /// `ParamValue` tree. Called inline by the Solana client's `get_event_items`,
 /// so decoded args ride back on the query response instead of crossing the
@@ -46,24 +58,33 @@ pub(crate) struct InstructionSchemaInput {
 /// leaves the bigint conversion to the consumer; `args_to_param` re-walks its
 /// output against the instruction's field types to make that conversion.
 ///
-/// Any decode failure (unknown discriminator, account-count mismatch, trailing
-/// bytes, unresolved type) yields `None` rather than an error: real on-chain
-/// calls drift from schemas in small ways (Metaplex `rent` slot was optional in
-/// some versions, etc.), and a single bad row should not kill the worker. The
-/// caller drops such an instruction instead of running handlers on empty args.
+/// A decode failure (account-count mismatch, trailing bytes, unresolved type)
+/// yields `Failed` rather than an error: real on-chain calls drift from schemas
+/// in small ways (Metaplex `rent` slot was optional in some versions, etc.), and
+/// a single bad row should not kill the worker. The caller drops such an
+/// instruction instead of running handlers on args it could not decode.
 pub(crate) fn decode_with_schema(
     schema: &UpstreamSchema,
     instruction: &UpstreamInstructionCall,
-) -> Option<ParamValue> {
-    let decoded = upstream_decode(schema, instruction).ok()?;
-    // Re-run the upstream dispatch (longest discriminator prefix wins) to
-    // recover the instruction schema the decode ran against.
+) -> Decoded {
+    // Dispatch as upstream does (longest discriminator prefix wins) to recover
+    // the instruction schema, and to tell an undeclared instruction apart from
+    // one whose data the schema rejects.
     let data = instruction.data.as_deref().unwrap_or_default();
     let ix = schema.disc_lens.iter().find_map(|&len| {
         data.get(..len)
             .and_then(|prefix| schema.instructions.get(prefix))
-    })?;
-    args_to_param(decoded.args, &ix.args, &schema.defined_types)
+    });
+    let Some(ix) = ix else {
+        return Decoded::Uncovered;
+    };
+    let Ok(decoded) = upstream_decode(schema, instruction) else {
+        return Decoded::Failed;
+    };
+    match args_to_param(decoded.args, &ix.args, &schema.defined_types) {
+        Some(args) => Decoded::Args(args),
+        None => Decoded::Failed,
+    }
 }
 
 /// Convert a decoded args object into a `ParamValue` tree, guided by the
@@ -353,7 +374,7 @@ mod tests {
         data.extend_from_slice(&(-(1i128 << 100)).to_le_bytes());
         assert_eq!(
             decode_with_schema(&schema, &instruction_with_data(data)),
-            Some(obj(vec![
+            Decoded::Args(obj(vec![
                 ("maxU64", ParamValue::from_u128(u128::from(u64::MAX))),
                 ("maxU128", ParamValue::from_u128(u128::MAX)),
                 ("negI64", ParamValue::from_i128(-2)),
@@ -396,7 +417,7 @@ mod tests {
         data.push(0); // tag: In (unit variant)
         assert_eq!(
             decode_with_schema(&schema, &instruction_with_data(data)),
-            Some(obj(vec![
+            Decoded::Args(obj(vec![
                 ("absent", ParamValue::Null),
                 ("present", ParamValue::from_u128(7)),
                 (
