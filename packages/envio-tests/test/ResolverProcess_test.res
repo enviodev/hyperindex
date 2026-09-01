@@ -261,11 +261,10 @@ extend type Query {
     t.expect((outcome, answer)).toEqual(("refused", %raw(`{ data: "pong" }`)))
   })
 
-  // `ENVIO_RESOLVERS_METADATA_INTERVAL_MS` is read after the socket is already
-  // listening, so a malformed one throws from a `serve` that has bound a port
-  // and opened a pool and returns neither -- the same shape as the bind
-  // failure above, and against the rule the code states for itself: a
-  // misconfiguration should stop the process before anything can route to it.
+  // A misconfiguration stops the process before anything can route to it, so
+  // there is no port left bound behind the failure. "60s" is the value worth
+  // pinning: `parseInt` reads it as 60, which would be a 60ms re-assert loop
+  // rather than the minute it was meant to be.
   Async.it("leaves nothing listening when a misconfigured interval stops it", async t => {
     processEnv->Dict.set("ENVIO_RESOLVERS_METADATA_INTERVAL_MS", "60s")
     processEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", "http://127.0.0.1:1/v1/metadata")
