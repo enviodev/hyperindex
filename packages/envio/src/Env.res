@@ -247,9 +247,9 @@ module Resolvers = {
       }
     }
 
-  // Shared with Hasura, which presents it on every action call. Unset means the
-  // handler cannot tell Hasura from anything else that reaches the socket, so
-  // it has to believe the role in the request body.
+  // Required on every request to either route. Unset, the service cannot tell
+  // its callers apart from anything else that reaches the socket, and both
+  // routes take the role from the request body -- so anyone can claim `admin`.
   let actionSecret = () => read("ENVIO_RESOLVERS_ACTION_SECRET")
 
   // Read raw rather than through `Env.Hasura`, whose dev fallbacks would have
