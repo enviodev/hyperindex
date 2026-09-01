@@ -229,6 +229,38 @@ extend type Query {
     t.expect((answer, afterShutdown)).toEqual((%raw(`{ data: "pong" }`), "refused"))
   })
 
+  // The pool is opened before the socket, so a bind that fails has to put it
+  // back: `serve` never returns on that path, so no caller can reach
+  // `shutdown` to do it later.
+  Async.it("gives the pool back when the port is already taken", async t => {
+    let taken = createServer((_, res) => res->end_(""))
+    // The same host the resolver server binds. macOS lets 0.0.0.0 bind over a
+    // port already held on 127.0.0.1, so a loopback-only holder would make this
+    // pass there and fail on Linux.
+    await Promise.make((resolve, _reject) => taken->listenOnHost(0, "0.0.0.0", () => resolve()))
+    let port = (taken->address).port
+
+    let outcome = try {
+      let running = await ResolverProcess.serve(~config, ~projectRoot, ~envioInfo, ~port)
+      await running.shutdown()
+      "bound"
+    } catch {
+    | _ => "refused"
+    }
+
+    // Serving again on a free port still has to work: a failed bind must leave
+    // nothing of the first attempt behind.
+    let after = await ResolverProcess.serve(~config, ~projectRoot, ~envioInfo, ~port=0)
+    let answer = await postJson(
+      `http://127.0.0.1:${after.server.port->Int.toString}/resolve`,
+      `{"field":"ping","args":{},"selection":{},"role":"public","requestId":"r"}`,
+    )
+    await after.shutdown()
+    await Promise.make((resolve, _reject) => taken->closeServer(() => resolve()))
+
+    t.expect((outcome, answer)).toEqual(("refused", %raw(`{ data: "pong" }`)))
+  })
+
   Async.it("says which file it couldn't load rather than starting empty", async t => {
     let broken = InternalTestIndexer.fromUserApi(
       ~schema,
