@@ -557,6 +557,39 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
     childEnv->Dict.set("ENVIO_RESOLVERS_EXPOSE_ERRORS", "true")
     childEnv->Dict.set("ENVIO_CONFIG", configFile)
 
+    // Point the child at the Hasura `envio dev` is already running, so a
+    // resolver shows up in the same endpoint as the generated entity fields.
+    // Without this, dev serves the resolvers on their own port and the schema
+    // a developer actually opens knows nothing about them.
+    //
+    // Read here rather than from `Env.Hasura`, whose values are fixed when that
+    // module loads -- dev sets its own port and secret and this has to follow
+    // them.
+    if Env.Hasura.enabled {
+      let endpoint = switch Env.Resolvers.hasuraEndpoint() {
+      | Some(endpoint) => endpoint
+      | None =>
+        let hasuraPort =
+          processEnv->Dict.get("HASURA_EXTERNAL_PORT")->Option.getOr("8080")
+        `http://localhost:${hasuraPort}/v1/metadata`
+      }
+      childEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", endpoint)
+      childEnv->Dict.set(
+        "HASURA_GRAPHQL_ADMIN_SECRET",
+        Env.Resolvers.hasuraAdminSecret()->Option.getOr("testing"),
+      )
+      // Hasura is a container and this process is on the host, so the handler
+      // it registers is the host's address rather than the one bound here.
+      switch Env.Resolvers.publicUrl() {
+      | Some(_) => ()
+      | None =>
+        childEnv->Dict.set(
+          "ENVIO_RESOLVERS_PUBLIC_URL",
+          `http://host.docker.internal:${port->Int.toString}/hasura-action`,
+        )
+      }
+    }
+
     let resolverChild = spawn(
       execPath,
       [cliEntry(), "resolvers"],
