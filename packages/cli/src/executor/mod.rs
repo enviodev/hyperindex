@@ -185,9 +185,9 @@ async fn execute_command(
             let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;
 
-            // No codegen here, unlike `start`. The resolver process runs from
-            // an image that was already built, and in a deployment it runs in
-            // a pod of its own that has no business regenerating the project.
+            // No codegen here, unlike `start`. The resolver process runs
+            // from a build that already happened, on its own, with no business
+            // regenerating the project.
             Ok(Some(build_resolvers_command(
                 &config,
                 resolvers_mode(&resolvers_args),
@@ -353,7 +353,7 @@ fn validate_chain_selection(config: &SystemConfig, chains: &[u64], restart: bool
 }
 
 /// Bare `envio resolvers` serves, because that is the command the resolver
-/// Deployment runs.
+/// service runs.
 pub fn resolvers_mode(args: &ResolversArgs) -> ResolversMode {
     match args.subcommand {
         Some(ResolversSubcommand::Manifest) => ResolversMode::Manifest,
@@ -553,7 +553,7 @@ mod tests {
 
     #[test]
     fn bare_resolvers_serves() {
-        // `envio resolvers --config $CONFIG_FILE` is the Deployment's command,
+        // `envio resolvers --config $CONFIG_FILE` is the service's command,
         // so the form without a subcommand has to be the serving one.
         assert_eq!(
             (
@@ -574,13 +574,13 @@ mod tests {
     #[test]
     fn resolvers_payload_matches_what_bin_decodes() {
         // The wire format `Bin.res` reads. `kind` discriminates the command and
-        // `mode` the two things this one does.
+        // `mode` the three things this one does.
         assert_eq!(
             serde_json::to_value(Command::Resolvers {
                 mode: ResolversMode::Metadata,
                 cwd: "/project".to_string(),
                 env: std::iter::once(("ENVIO_CONFIG".to_string(), "config.yaml".into())).collect(),
-                config: serde_json::json!({ "name": "gmx" }),
+                config: serde_json::json!({ "name": "my-indexer" }),
             })
             .unwrap(),
             serde_json::json!({
@@ -588,7 +588,7 @@ mod tests {
                 "mode": "metadata",
                 "cwd": "/project",
                 "env": { "ENVIO_CONFIG": "config.yaml" },
-                "config": { "name": "gmx" },
+                "config": { "name": "my-indexer" },
             })
         );
     }

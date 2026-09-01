@@ -294,8 +294,7 @@ export function buildManifest(resolvers) {
     seen.add(name);
     if (!resolver.timeoutMs || resolver.timeoutMs <= 0) {
       throw new Error(
-        `Resolver '${name}' must set a positive timeoutMs. The resolver process connects ` +
-          `around PgBouncer, so statement_timeout is the only bound on a runaway query.`
+        `Resolver '${name}' must set a positive timeoutMs. It becomes the statement_timeout on every query the resolver makes, which is the only thing bounding a runaway one.`
       );
     }
 
