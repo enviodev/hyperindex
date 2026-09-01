@@ -200,8 +200,10 @@ pub fn is_valid_solana_pubkey(s: &str) -> bool {
 }
 
 pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
+    use super::svm_idl::DISPATCHABLE_DISCRIMINATOR_LENS as DISPATCHABLE;
+
     let hex = s.strip_prefix("0x").unwrap_or(s);
-    if !matches!(hex.len(), 2 | 4 | 8 | 16) {
+    if !hex.len().is_multiple_of(2) || !DISPATCHABLE.contains(&(hex.len() / 2)) {
         return Err(anyhow!(
             "discriminator {:?} must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after \
              stripping a `0x` prefix), got {} digits",

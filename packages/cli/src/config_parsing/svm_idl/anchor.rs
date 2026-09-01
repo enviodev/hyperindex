@@ -1,4 +1,4 @@
-//! Anchor IDL parsing, both dialects behind one code path.
+//! Both Anchor dialects behind one code path, and Shank with them.
 //!
 //! - **0.30+**: instructions carry an inline 8-byte `discriminator`; type refs
 //!   are `{"defined": {"name": T}}`; optional accounts use `optional`; the

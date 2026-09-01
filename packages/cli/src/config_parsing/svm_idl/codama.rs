@@ -1,9 +1,13 @@
-//! Codama IDL parsing.
+//! Codama describes the non-Anchor programs, which is why it is worth a second
+//! parser: an instruction's discriminator can be a plain constant, or a regular
+//! argument singled out by name, or several such fields packed together — none
+//! of which Anchor's fixed 8-byte prefix can express.
 //!
-//! Codama describes non-Anchor programs, which is why it is worth a second
-//! parser: an instruction's discriminator can be a plain constant, or a
-//! regular argument singled out by name, or several such fields packed
-//! together — none of which Anchor's fixed 8-byte prefix can express.
+//! It also describes the data differently. An instruction's bytes are the
+//! encoding of its `arguments` alone, and a discriminator is a match against
+//! those bytes at an offset rather than a prefix in front of them. Dispatch
+//! here works the other way round, so the arguments a prefix covers are spent
+//! and the body starts after it.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -631,13 +635,7 @@ fn item<'a>(node: &'a Value, path: &str) -> Result<&'a Value> {
 /// Codama drops `fields`/`items`/`variants` rather than writing an empty
 /// array, so an absent key is a legitimate empty collection, not a defect.
 fn optional_array<'a>(node: &'a Value, key: &str, path: &str) -> Result<&'a [Value]> {
-    match node.get(key) {
-        None => Ok(&[]),
-        Some(value) => value
-            .as_array()
-            .map(Vec::as_slice)
-            .ok_or_else(|| anyhow!("{path}: '{key}' must be an array")),
-    }
+    declared_array(node.get(key)).with_context(|| format!("{path}: '{key}'"))
 }
 
 /// Tuple items become `_0`, `_1`, … so every decoded body is keyed by name.

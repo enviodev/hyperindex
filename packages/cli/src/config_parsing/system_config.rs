@@ -1450,6 +1450,7 @@ impl SystemConfig {
                                 })
                             })
                             .collect::<Result<Vec<_>>>()?;
+                        warn_about_unindexable(program, &svm_abi);
 
                         let contract = Contract::new(
                             program.name.clone(),
@@ -1957,6 +1958,22 @@ fn resolve_program_schema(
     })
 }
 
+/// Instructions the schema set aside that the config did not ask for. Naming
+/// one is an error where the reason is the answer; the rest are worth a word
+/// each, since the file plainly declares them and the indexer will not see them.
+fn warn_about_unindexable(program: &human_config::svm::Program, abi: &SvmAbi) {
+    for (name, reason) in &abi.idl.unusable {
+        if program.instructions.iter().any(|i| i.name == *name) {
+            continue;
+        }
+        eprintln!(
+            "Warning: program '{}' cannot index the instruction '{name}' its IDL declares: \
+             {reason}",
+            program.name
+        );
+    }
+}
+
 fn describe_unusable(unusable: &svm_idl::Unusable) -> String {
     unusable
         .iter()
@@ -2103,7 +2120,7 @@ fn disc_to_bytes(disc: Option<&str>) -> Result<Option<Vec<u8>>> {
 fn yaml_arg_to_named_field(arg: &human_config::svm::ArgDef) -> Result<SvmNamedField> {
     Ok(SvmNamedField {
         name: arg.name.clone(),
-        ty: yaml_type_to_field_type(&arg.ty)
+        ty: arg_type_to_field_type(&arg.ty)
             .with_context(|| format!("translating type for arg '{}'", arg.name))?,
     })
 }
@@ -2163,7 +2180,11 @@ pub fn named_field_to_arg_def(nf: &SvmNamedField) -> human_config::svm::ArgDef {
     }
 }
 
-fn yaml_type_to_field_type(ty: &human_config::svm::ArgType) -> Result<SvmFieldType> {
+/// The YAML/wire-format `ArgType` read back into the runtime's `FieldType`.
+/// Config parsing and the Borsh decoder both need it, and each used to carry
+/// its own copy of the mapping — a type added to one and not the other passes
+/// codegen and then fails to decode.
+pub fn arg_type_to_field_type(ty: &human_config::svm::ArgType) -> Result<SvmFieldType> {
     use human_config::svm::{ArgComposite as C, ArgPrimitive as P, ArgType as T};
     Ok(match ty {
         T::Primitive(p) => match p {
@@ -2185,10 +2206,10 @@ fn yaml_type_to_field_type(ty: &human_config::svm::ArgType) -> Result<SvmFieldTy
             P::Pubkey | P::PublicKey => SvmFieldType::Pubkey,
         },
         T::Composite(c) => match c {
-            C::Option(inner) => SvmFieldType::Option(Box::new(yaml_type_to_field_type(inner)?)),
-            C::Vec(inner) => SvmFieldType::Vec(Box::new(yaml_type_to_field_type(inner)?)),
+            C::Option(inner) => SvmFieldType::Option(Box::new(arg_type_to_field_type(inner)?)),
+            C::Vec(inner) => SvmFieldType::Vec(Box::new(arg_type_to_field_type(inner)?)),
             C::Array(inner, len) => SvmFieldType::Array {
-                ty: Box::new(yaml_type_to_field_type(inner)?),
+                ty: Box::new(arg_type_to_field_type(inner)?),
                 len: *len,
             },
             C::Defined(name) => SvmFieldType::Defined(name.clone()),

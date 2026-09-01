@@ -149,7 +149,8 @@ impl Registration {
         let byte_len = match &discriminator {
             Some(bytes) => {
                 anyhow::ensure!(
-                    matches!(bytes.len(), 1 | 2 | 4 | 8),
+                    crate::config_parsing::svm_idl::DISPATCHABLE_DISCRIMINATOR_LENS
+                        .contains(&bytes.len()),
                     "discriminator must be 1/2/4/8 bytes, got {} bytes",
                     bytes.len(),
                 );

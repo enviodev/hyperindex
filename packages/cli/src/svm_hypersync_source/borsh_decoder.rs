@@ -14,13 +14,14 @@ use anyhow::{Context, Result};
 
 use hypersync_client_solana::decode::{
     decode_instruction as upstream_decode, DecodedInstruction as UpstreamDecoded,
-    EnumVariant as UpstreamEnumVariant, FieldType as SvmFieldType,
-    InstructionSchema as UpstreamIxSchema, NamedAccount as UpstreamAccount,
-    NamedField as UpstreamNamedField, ProgramSchema as UpstreamSchema,
+    FieldType as SvmFieldType, InstructionSchema as UpstreamIxSchema,
+    NamedAccount as UpstreamAccount, NamedField as UpstreamNamedField,
+    ProgramSchema as UpstreamSchema,
 };
 use hypersync_client_solana::simple_types::InstructionCall as UpstreamInstructionCall;
 
-use crate::config_parsing::human_config::svm::{ArgComposite, ArgDef, ArgPrimitive, ArgType};
+use crate::config_parsing::human_config::svm::{ArgDef, ArgType};
+use crate::config_parsing::system_config::arg_type_to_field_type;
 
 use super::mod_helpers::hex_to_bytes;
 
@@ -143,77 +144,4 @@ pub(crate) fn build_program_schema(
         instructions,
         defined_types,
     ))
-}
-
-fn arg_type_to_field_type(ty: &ArgType) -> Result<SvmFieldType> {
-    Ok(match ty {
-        ArgType::Primitive(p) => match p {
-            ArgPrimitive::Bool => SvmFieldType::Bool,
-            ArgPrimitive::U8 => SvmFieldType::U8,
-            ArgPrimitive::U16 => SvmFieldType::U16,
-            ArgPrimitive::U32 => SvmFieldType::U32,
-            ArgPrimitive::U64 => SvmFieldType::U64,
-            ArgPrimitive::U128 => SvmFieldType::U128,
-            ArgPrimitive::I8 => SvmFieldType::I8,
-            ArgPrimitive::I16 => SvmFieldType::I16,
-            ArgPrimitive::I32 => SvmFieldType::I32,
-            ArgPrimitive::I64 => SvmFieldType::I64,
-            ArgPrimitive::I128 => SvmFieldType::I128,
-            ArgPrimitive::F32 => SvmFieldType::F32,
-            ArgPrimitive::F64 => SvmFieldType::F64,
-            ArgPrimitive::String => SvmFieldType::String,
-            ArgPrimitive::Bytes => SvmFieldType::Bytes,
-            ArgPrimitive::Pubkey | ArgPrimitive::PublicKey => SvmFieldType::Pubkey,
-        },
-        ArgType::Composite(c) => match c {
-            ArgComposite::Option(inner) => {
-                SvmFieldType::Option(Box::new(arg_type_to_field_type(inner)?))
-            }
-            ArgComposite::Vec(inner) => SvmFieldType::Vec(Box::new(arg_type_to_field_type(inner)?)),
-            ArgComposite::Array(inner, len) => SvmFieldType::Array {
-                ty: Box::new(arg_type_to_field_type(inner)?),
-                len: *len,
-            },
-            ArgComposite::Defined(name) => SvmFieldType::Defined(name.clone()),
-            ArgComposite::Struct(fields) => SvmFieldType::Struct(
-                fields
-                    .iter()
-                    .map(|f| {
-                        Ok(UpstreamNamedField {
-                            name: f.name.clone(),
-                            ty: arg_type_to_field_type(&f.ty)
-                                .with_context(|| format!("struct field '{}'", f.name))?,
-                        })
-                    })
-                    .collect::<Result<_>>()?,
-            ),
-            ArgComposite::Enum(variants) => SvmFieldType::Enum(
-                variants
-                    .iter()
-                    .map(|v| {
-                        let fields = v
-                            .fields
-                            .as_ref()
-                            .map(|fs| {
-                                fs.iter()
-                                    .map(|f| {
-                                        Ok(UpstreamNamedField {
-                                            name: f.name.clone(),
-                                            ty: arg_type_to_field_type(&f.ty).with_context(
-                                                || format!("enum field '{}'", f.name),
-                                            )?,
-                                        })
-                                    })
-                                    .collect::<Result<_>>()
-                            })
-                            .transpose()?;
-                        Ok(UpstreamEnumVariant {
-                            name: v.name.clone(),
-                            fields,
-                        })
-                    })
-                    .collect::<Result<_>>()?,
-            ),
-        },
-    })
 }
