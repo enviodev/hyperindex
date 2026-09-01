@@ -2426,8 +2426,11 @@ export type ResolverHandlerArgs<
  * ```
  */
 export function createResolver<
-  AS extends Record<string, unknown>,
-  OS,
+  // Both are schemas at runtime: `createResolver` reads `output.t` and walks
+  // every argument with `toGraphQLType` while the module is being imported, so
+  // anything else fails at indexer startup rather than in the editor.
+  AS extends Record<string, Sury.Schema<unknown>>,
+  OS extends Sury.Schema<unknown>,
   A = UnknownToOutput<AS>,
   O = UnknownToOutput<OS>,
   // A hack to enforce that the inferred return type matches the output schema.
