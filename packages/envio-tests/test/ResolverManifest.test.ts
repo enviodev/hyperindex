@@ -8,7 +8,7 @@ import {
   defineScalar,
   defineType,
   toSDL,
-} from "../../envio/src/resolvers/manifest.js";
+} from "envio/src/resolvers/manifest.js";
 
 const BigIntScalar = defineScalar("BigInt", S.string);
 
@@ -326,7 +326,7 @@ describe("createResolver", () => {
   // its handlers -- so there is no second export list to keep in sync.
   it("registers declarations and builds their manifest", async () => {
     const { createResolver, getRegisteredResolvers, buildRegisteredManifest, resetResolvers } =
-      await import("../../envio/src/resolvers/index.js");
+      await import("envio/src/resolvers/index.js");
     resetResolvers();
 
     const Stat = defineType("Stat2", { pnl: S.string });
@@ -363,7 +363,7 @@ describe("createResolver", () => {
   // the bad resolver came from.
   it("validates at declaration time", async () => {
     const { createResolver, resetResolvers } = await import(
-      "../../envio/src/resolvers/index.js"
+      "envio/src/resolvers/index.js"
     );
     resetResolvers();
     const base = { name: "x", output: S.string, timeoutMs: 1, handler: async () => "" };
