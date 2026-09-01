@@ -12,6 +12,11 @@ import {
   ResolverDbError,
 } from "envio/src/resolvers/db.js";
 import { startResolverServer } from "envio/src/resolvers/server.js";
+import {
+  createServer as createTcpServer,
+  type Server as TcpServer,
+  type Socket,
+} from "node:net";
 
 // The wire contract envio-serve already implements and tests. Everything here
 // goes over real HTTP against a real server, because the shape of the bytes is
@@ -367,6 +372,58 @@ describe("resolver /resolve", () => {
     } finally {
       await broken.close();
       await brokenPool.end().catch(() => {});
+    }
+  });
+
+  // A refused connection is the easy case. A Postgres that accepts the socket
+  // and never finishes the handshake is the one that hurts: `statement_timeout`
+  // has not been sent yet, so only the pool's `connect_timeout` bounds it, and
+  // that is sized for the pool wait rather than for a probe. A readiness check
+  // that outlives its own budget is one the orchestrator times out on instead,
+  // which reports the pod as unready without ever saying why.
+  it("answers readiness within its budget when the database stalls the handshake", async () => {
+    const accepted: Socket[] = [];
+    const blackHole: TcpServer = createTcpServer((socket) => {
+      // Accepted, then silence. The Postgres startup packet is never answered.
+      socket.on("error", () => {});
+      accepted.push(socket);
+    });
+    await new Promise<void>((resolve) => blackHole.listen(0, "127.0.0.1", () => resolve()));
+    const address = blackHole.address();
+    const stalledPool = createResolverPool({
+      connection: {
+        host: "127.0.0.1",
+        port: typeof address === "object" && address ? address.port : 0,
+        username: "postgres",
+        password: "testing",
+        database: "envio-dev",
+      },
+      entities: {},
+      pgSchema: "public",
+      poolSize: 1,
+      // The pool's own bound on a connect, well past the probe's budget: what
+      // is under test is that the probe does not wait for it.
+      poolWaitTimeoutMs: 20_000,
+    });
+    const stalled = await startResolverServer({ resolvers: [], pool: stalledPool, port: 0 });
+    try {
+      const started = Date.now();
+      const readyz = await fetch(`http://127.0.0.1:${stalled.port}/readyz`);
+      const body = await readyz.json();
+      const elapsed = Date.now() - started;
+      expect([readyz.status, body, elapsed < 4_000]).toEqual([
+        503,
+        { status: "unavailable", reason: "The database did not answer within 2000ms." },
+        true,
+      ]);
+    } finally {
+      await stalled.close();
+      // Not awaited, and the sockets are cut rather than drained: the connect
+      // this pool is still attempting has 20 seconds to run, and the driver
+      // opens a fresh one each time this end of it goes away.
+      stalledPool.end().catch(() => {});
+      for (const socket of accepted) socket.destroy();
+      await new Promise<void>((resolve) => blackHole.close(() => resolve()));
     }
   });
 
