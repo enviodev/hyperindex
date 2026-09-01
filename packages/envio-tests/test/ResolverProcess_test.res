@@ -261,6 +261,40 @@ extend type Query {
     t.expect((outcome, answer)).toEqual(("refused", %raw(`{ data: "pong" }`)))
   })
 
+  // `ENVIO_RESOLVERS_METADATA_INTERVAL_MS` is read after the socket is already
+  // listening, so a malformed one throws from a `serve` that has bound a port
+  // and opened a pool and returns neither -- the same shape as the bind
+  // failure above, and against the rule the code states for itself: a
+  // misconfiguration should stop the process before anything can route to it.
+  Async.it("leaves nothing listening when a misconfigured interval stops it", async t => {
+    processEnv->Dict.set("ENVIO_RESOLVERS_METADATA_INTERVAL_MS", "60s")
+    processEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", "http://127.0.0.1:1/v1/metadata")
+    processEnv->Dict.set("HASURA_GRAPHQL_ADMIN_SECRET", "testing")
+    processEnv->Dict.set("ENVIO_RESOLVERS_PUBLIC_URL", "http://127.0.0.1:9919/hasura-action")
+
+    let outcome = try {
+      let running = await ResolverProcess.serve(~config, ~projectRoot, ~envioInfo, ~port=9919)
+      await running.shutdown()
+      "served"
+    } catch {
+    | _ => "refused"
+    }
+
+    // Whatever it did with the port, it must not still be answering on it.
+    let stillListening = try {
+      let _ = await getStatus(`http://127.0.0.1:9919/healthz`)
+      true
+    } catch {
+    | _ => false
+    }
+
+    processEnv->Dict.set("ENVIO_RESOLVERS_METADATA_INTERVAL_MS", "")
+    processEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", "http://127.0.0.1:1/v1/metadata")
+    processEnv->Dict.set("ENVIO_RESOLVERS_PUBLIC_URL", "")
+
+    t.expect((outcome, stillListening)).toEqual(("refused", false))
+  })
+
   Async.it("says which file it couldn't load rather than starting empty", async t => {
     let broken = InternalTestIndexer.fromUserApi(
       ~schema,
