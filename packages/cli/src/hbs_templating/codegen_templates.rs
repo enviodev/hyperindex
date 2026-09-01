@@ -2570,9 +2570,9 @@ struct ConfigBodies<'a> {
 /// the program-level nominal-type registry, used when the field is
 /// `Defined("Name")`. `seen` tracks the recursion stack to break cycles.
 ///
-/// Locked conventions (mirror `STAGE_7B_DECISIONS.md` decision 3):
+/// Locked conventions:
 /// - sub-64-bit integers / floats → `number`
-/// - 64-/128-bit integers → `string` (decimal)
+/// - 64-/128-bit integers → `bigint`
 /// - pubkey + `[u8; 32]` → `string` (base58)
 /// - `Vec<u8>` (Borsh `bytes`) → `string` (hex)
 fn field_type_to_ts_type(
@@ -2584,7 +2584,7 @@ fn field_type_to_ts_type(
     match ty {
         F::Bool => "boolean".to_string(),
         F::U8 | F::U16 | F::U32 | F::I8 | F::I16 | F::I32 | F::F32 | F::F64 => "number".to_string(),
-        F::U64 | F::U128 | F::I64 | F::I128 => "string".to_string(),
+        F::U64 | F::U128 | F::I64 | F::I128 => "bigint".to_string(),
         F::String | F::Bytes | F::Pubkey => "string".to_string(),
         F::Option(inner) => format!(
             "({}) | null",

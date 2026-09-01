@@ -478,13 +478,14 @@ pub struct EventItem {
     pub program_id: String,
     pub accounts: Vec<String>,
     /// Raw instruction data, `0x`-prefixed hex; decoded params ride on
-    /// `args_json` when the registration carries a Borsh schema.
+    /// `args` when the registration carries a Borsh schema.
     pub data: String,
     pub is_inner: bool,
-    /// Borsh-decoded args as a JSON object literal, `{}` when the routed
-    /// registration reads no args or the program carries no schema. An
-    /// instruction the schema rejects never becomes an item at all.
-    pub args_json: String,
+    /// Borsh-decoded args as a JS value tree (wide integers as bigint), an
+    /// empty object when the routed registration reads no args or the program
+    /// carries no schema. An instruction the schema rejects never becomes an
+    /// item at all.
+    pub args: crate::param_value::ParamValue,
     /// Logs scoped to this instruction; `Some` only when the routed
     /// registration selected `fields.log`.
     pub logs: Option<Vec<LogItem>>,
@@ -614,9 +615,9 @@ fn build_event_items(
                 accounts: instr.account_arguments.clone(),
                 data: to_hex(&instr.data),
                 is_inner: instr.is_inner,
-                args_json: match &decoded {
-                    Some(args_json) if reg.selects_args => args_json.clone(),
-                    _ => "{}".to_string(),
+                args: match &decoded {
+                    Some(args) if reg.selects_args => args.clone(),
+                    _ => crate::param_value::ParamValue::Obj(vec![]),
                 },
                 logs: if !reg.log_columns.is_empty() {
                     logs.as_deref()
@@ -688,6 +689,7 @@ pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
 mod tests {
     use super::*;
     use crate::address_store::test_support::{set_of, svm_store};
+    use crate::param_value::ParamValue;
     use query::{InstructionSelection, SvmQuery};
 
     const TOKEN_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
@@ -1061,9 +1063,18 @@ mod tests {
         .unwrap();
         let decoded = items
             .iter()
-            .map(|item| (item.on_event_registration_index, item.args_json.as_str()))
+            .map(|item| (item.on_event_registration_index, item.args.clone()))
             .collect::<Vec<_>>();
-        assert_eq!(decoded, vec![(0, r#"{"amount":"1"}"#), (1, "{}")]);
+        assert_eq!(
+            decoded,
+            vec![
+                (
+                    0,
+                    ParamValue::Obj(vec![("amount".to_string(), ParamValue::from_u128(1))])
+                ),
+                (1, ParamValue::Obj(vec![])),
+            ]
+        );
     }
 
     #[test]

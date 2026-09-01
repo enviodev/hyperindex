@@ -64,13 +64,15 @@ type Hit {
   tag: String!
   ammAuthority: String!
   isInner: Boolean!
+  amountIn: BigInt!
+  amountInIsBigint: Boolean!
 }
 `,
   ~handlers=`
 import { indexer, type SvmOnInstructionHandler } from "envio";
 
 const fields = {
-  instruction: ["accounts", "isInner", "path"],
+  instruction: ["accounts", "isInner", "path", "args"],
   transaction: ["signature"],
 } as const;
 
@@ -82,6 +84,8 @@ const record =
       tag,
       ammAuthority: instruction.accounts.ammAuthority.address,
       isInner: instruction.isInner,
+      amountIn: instruction.args.amountIn,
+      amountInIsBigint: typeof instruction.args.amountIn === "bigint",
     });
   };
 
@@ -146,6 +150,8 @@ describe("SVM onInstruction where (live)", () => {
         ),
         innerHitsAreInner: inner.every((hit) => hit.isInner),
         outerHitsAreOuter: outer.every((hit) => !hit.isInner),
+        argsDecodeAsBigints: all.every((hit) => hit.amountInIsBigint),
+        someSwapMovesTokens: all.some((hit) => hit.amountIn > 0n),
       }).toEqual({
         windowHasSwaps: true,
         authorityMatchesEverySwap: true,
@@ -155,6 +161,8 @@ describe("SVM onInstruction where (live)", () => {
         authorityHitsCarryTheAuthority: true,
         innerHitsAreInner: true,
         outerHitsAreOuter: true,
+        argsDecodeAsBigints: true,
+        someSwapMovesTokens: true,
       });
     },
     300_000,
