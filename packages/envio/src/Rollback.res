@@ -133,9 +133,8 @@ and executeRollback = async (
   // different chains only meet at Global. The flush above leaves a diff pending
   // only when no batch has come along to carry it.
   let (scope, rollbackTargetCheckpointId) = {
-    let scope: RollbackScope.t = (state->IndexerState.config)->Config.isIsolatedMultichain
-      ? Isolated(reorgChain)
-      : Global
+    let scope: RollbackScope.t =
+      state->IndexerState.config->Config.isIsolatedMultichain ? Isolated(reorgChain) : Global
     switch state->IndexerState.pendingRollback {
     | None => (scope, rollbackTargetCheckpointId)
     | Some({scope: pendingScope, targetCheckpointId: pendingTarget}) =>
@@ -151,8 +150,7 @@ and executeRollback = async (
     }
   }
 
-  let eventsProcessedDiffByChain = Dict.make()
-  let newProgressBlockNumberPerChain = Dict.make()
+  let progressDiffByChain: dict<ChainState.progressDiff> = Dict.make()
   let rollbackedProcessedEvents = ref(0.)
 
   {
@@ -161,21 +159,17 @@ and executeRollback = async (
     ).storage.getRollbackProgressDiff(~scope, ~rollbackTargetCheckpointId)
     for idx in 0 to rollbackProgressDiff->Array.length - 1 {
       let diff = rollbackProgressDiff->Array.getUnsafe(idx)
-      eventsProcessedDiffByChain->ChainId.Dict.set(
+      let eventsProcessed = Float.fromString(diff["events_processed_diff"])->Option.getOrThrow
+      rollbackedProcessedEvents := rollbackedProcessedEvents.contents +. eventsProcessed
+      progressDiffByChain->ChainId.Dict.set(
         diff["chain_id"],
         {
-          let eventsProcessedDiff =
-            Float.fromString(diff["events_processed_diff"])->Option.getOrThrow
-          rollbackedProcessedEvents := rollbackedProcessedEvents.contents +. eventsProcessedDiff
-          eventsProcessedDiff
-        },
-      )
-      newProgressBlockNumberPerChain->ChainId.Dict.set(
-        diff["chain_id"],
-        if rollbackTargetCheckpointId === 0n && diff["chain_id"] === reorgChain {
-          Pervasives.min(diff["new_progress_block_number"], rollbackTargetBlockNumber)
-        } else {
-          diff["new_progress_block_number"]
+          blockNumber: if rollbackTargetCheckpointId === 0n && diff["chain_id"] === reorgChain {
+            Pervasives.min(diff["new_progress_block_number"], rollbackTargetBlockNumber)
+          } else {
+            diff["new_progress_block_number"]
+          },
+          eventsProcessed,
         },
       )
     }
@@ -190,17 +184,13 @@ and executeRollback = async (
   ->Utils.Dict.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
     let fromBlock = cs->ChainState.committedProgressBlockNumber
-    let killedAddresses =
-      cs->ChainState.rollback(
-        ~newProgressBlockNumber=newProgressBlockNumberPerChain->ChainId.Dict.dangerouslyGetNonOption(
-          chainId,
-        ),
-        ~eventsProcessedDiff=eventsProcessedDiffByChain->ChainId.Dict.dangerouslyGetNonOption(
-          chainId,
-        ),
-        ~rollbackTargetBlockNumber,
-        ~isReorgChain=chainId === reorgChain,
-      )
+    let progressDiff = progressDiffByChain->ChainId.Dict.dangerouslyGetNonOption(chainId)
+    let killedAddresses = cs->ChainState.rollback(
+      ~rolledBackTo=switch progressDiff {
+      | Some(progressDiff) => RecomputedProgress(progressDiff)
+      | None => chainId === reorgChain ? ForkBlock(rollbackTargetBlockNumber) : Untouched
+      },
+    )
     rolledBackAddresses->Array.pushMany(killedAddresses)->ignore
     let toBlock = cs->ChainState.committedProgressBlockNumber
     if fromBlock !== toBlock {
@@ -217,9 +207,7 @@ and executeRollback = async (
         "chainId": chainId,
         "fromBlock": fromBlock,
         "toBlock": toBlock,
-        "rollbackedEvents": eventsProcessedDiffByChain
-        ->ChainId.Dict.dangerouslyGetNonOption(chainId)
-        ->Option.getOr(0.),
+        "rollbackedEvents": progressDiff->Option.mapOr(0., diff => diff.eventsProcessed),
       })
     }
   })
@@ -242,7 +230,11 @@ and executeRollback = async (
     ~rollbackedProcessedEvents=rollbackedProcessedEvents.contents,
   )
 
-  state->IndexerState.completeRollback(~eventsProcessedDiffByChain)
+  state->IndexerState.completeRollback(
+    ~eventsProcessedDiffByChain=progressDiffByChain->Utils.Dict.mapValues(diff =>
+      diff.eventsProcessed
+    ),
+  )
   scheduleFetch()
   scheduleProcessing()
 }

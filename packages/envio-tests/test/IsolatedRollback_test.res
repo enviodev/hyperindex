@@ -191,6 +191,7 @@ let reorgAt = async (
     () => source.reorgCallCount() > reorgsBefore,
     ~message="the reorg to be detected and the rollback's depth search to start",
   )
+
   // With nothing left hashed inside the threshold the search skips the lookup
   // and falls straight back to the threshold's lower edge, so an empty
   // `scanned` waits for no call.
