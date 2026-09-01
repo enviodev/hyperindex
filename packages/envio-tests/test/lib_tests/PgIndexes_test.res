@@ -101,7 +101,7 @@ let setup = async (~pgSchema, ~fixtures=[], ~sql as client=sql, ~entities=allEnt
     let _ = await sql->Postgres.unsafe(fixtures->Array.getUnsafe(idx))
   }
   if fixtures->Utils.Array.notEmpty {
-    let _ = await storage.resumeInitialState()
+    let _ = await storage.resumeInitialState(~entities)
   }
   storage
 }
@@ -217,7 +217,7 @@ describe("Indexes built against a real schema", () => {
     let failure = await sql
     ->Postgres.unsafe(`CREATE UNIQUE INDEX CONCURRENTLY "A_b_id" ON "${pgSchema}"."A"("b_id");`)
     ->catchMessage
-    let _ = await storage.resumeInitialState()
+    let _ = await storage.resumeInitialState(~entities)
 
     let leftBehind = await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"])
 

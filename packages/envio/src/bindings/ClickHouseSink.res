@@ -88,7 +88,7 @@ external registerCheckpointsTable: (t, array<columnSpec>) => registeredTable =
 @send external initialize: (t, initializeInput) => promise<unit> = "initialize"
 
 @send
-external resume: (t, string, array<chainProgressInput>) => promise<unit> = "resume"
+external resume: (t, string, array<chainProgressInput>, array<string>) => promise<unit> = "resume"
 
 @send
 external stage: (t, ~table: int, ~rows: int, ~columns: array<columnValuesInput>) => int = "stage"

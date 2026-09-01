@@ -108,7 +108,7 @@ type storage = {
     ~contractMapping: ContractMapping.t,
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
-  resumeInitialState: unit => promise<initialState>,
+  resumeInitialState: (~entities: array<Internal.entityConfig>) => promise<initialState>,
   // Returns rows matching the filter.
   // Field values are serialized and rows parsed with the table's field schemas.
   @raises("StorageError")
@@ -271,7 +271,9 @@ let init = {
           }
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
-          let initialState = await persistence.storage.resumeInitialState()
+          let initialState = await persistence.storage.resumeInitialState(
+            ~entities=persistence.allEntities,
+          )
           let changedPaths = switch initialState.envioInfo {
           | None => ["storage was initialized by an older envio version"]
           | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
