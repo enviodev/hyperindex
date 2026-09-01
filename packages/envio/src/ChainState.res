@@ -310,7 +310,11 @@ let makeInternal = (
           chainId,
           endpointUrl: hypersyncUrl,
           apiToken,
-          onEventRegistrations,
+          onEventRegistrations: onEventRegistrations->(
+            Utils.magic: array<Internal.onEventRegistration> => array<
+              Internal.svmOnEventRegistration,
+            >
+          ),
           clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
           addressStore,
         }),

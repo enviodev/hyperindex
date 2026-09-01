@@ -3,8 +3,8 @@ name: svm-flow-xray
 description: |
   Solana Flow X-Ray: cross-protocol atomic money-flow + contagion radar.
   Indexes Jupiter / Kamino / Drift / Raydium / SPL-Token / System instructions
-  with is_inner unset (matches inner + outer) so each tx's CPI tree, token
-  deltas, and cross-protocol edges reconstruct in SQL views (sql/views.sql).
+  without an inner/outer filter, so each tx's CPI tree, token deltas, and
+  cross-protocol edges reconstruct in SQL views (sql/views.sql).
 ecosystem: svm
 chains:
   - id: solana
