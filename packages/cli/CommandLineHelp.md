@@ -40,6 +40,7 @@ This document contains the help content for the `envio` command-line program.
 * [`envio resolvers`↴](#envio-resolvers)
 * [`envio resolvers manifest`↴](#envio-resolvers-manifest)
 * [`envio resolvers metadata`↴](#envio-resolvers-metadata)
+* [`envio resolvers migrate`↴](#envio-resolvers-migrate)
 * [`envio resolvers serve`↴](#envio-resolvers-serve)
 
 ## `envio`
@@ -493,6 +494,7 @@ Run the custom GraphQL resolvers declared by `resolvers:` in config.yaml. With n
 
 * `manifest` — Write `.envio/resolvers.json` and `.envio/resolvers.graphql`, then exit
 * `metadata` — Print the Hasura metadata these resolvers become, then exit. Needs ENVIO_RESOLVERS_PUBLIC_URL, which is baked into every action
+* `migrate` — Update a running indexer's Hasura metadata to match these resolvers, then exit. Does not start a server and does not touch the database
 * `serve` — Answer Hasura's actions over HTTP until stopped (the default)
 
 
@@ -510,6 +512,14 @@ Write `.envio/resolvers.json` and `.envio/resolvers.graphql`, then exit
 Print the Hasura metadata these resolvers become, then exit. Needs ENVIO_RESOLVERS_PUBLIC_URL, which is baked into every action
 
 **Usage:** `envio resolvers metadata`
+
+
+
+## `envio resolvers migrate`
+
+Update a running indexer's Hasura metadata to match these resolvers, then exit. Does not start a server and does not touch the database
+
+**Usage:** `envio resolvers migrate`
 
 
 

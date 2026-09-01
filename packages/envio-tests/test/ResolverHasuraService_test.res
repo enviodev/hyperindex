@@ -248,6 +248,80 @@ describe("envio resolvers, as Hasura's handler", () => {
     t.expect(received.contents->Array.length).toEqual(0)
   })
 
+  // `envio resolvers migrate` is the one-shot that updates a running indexer's
+  // Hasura metadata and exits -- the same shape as `db-migrate up`, which
+  // reconciles and stops. Serving applies its own metadata on the way up, but a
+  // deploy step needs to do it without starting a server, and needs to fail
+  // when it doesn't land.
+  Async.it("applies the metadata to a running Hasura and exits", async t => {
+    received := []
+    bulkFailures := 0
+    let hasura = await startFakeHasura()
+    let endpoint = `http://127.0.0.1:${(hasura->address).port->Int.toString}/v1/metadata`
+    processEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", endpoint)
+    processEnv->Dict.set("HASURA_GRAPHQL_ADMIN_SECRET", "testing")
+    processEnv->Dict.set("ENVIO_RESOLVERS_PUBLIC_URL", publicUrl)
+
+    let result = await ResolverProcess.migrate(~config, ~projectRoot)
+
+    // Nothing is listening on the resolver port: this reconciles Hasura, it
+    // does not serve.
+    let served = try {
+      let _ = await getStatus("http://127.0.0.1:9900/healthz")
+      "answered"
+    } catch {
+    | _ => "refused"
+    }
+
+    await Promise.make((resolve, _reject) => hasura->closeServer(() => resolve()))
+    clearHasuraEnv()
+
+    t.expect((result.applied, callsOfType("bulk")->Array.length, served)).toEqual((
+      true,
+      1,
+      "refused",
+    ))
+  })
+
+  Async.it("fails loudly when Hasura refuses the migration", async t => {
+    // Unlike serving, where a refused apply is logged and the process keeps
+    // answering, a deploy step that cannot land the metadata has to be a
+    // failure the pipeline sees.
+    received := []
+    bulkFailures := 1
+    let hasura = await startFakeHasura()
+    let endpoint = `http://127.0.0.1:${(hasura->address).port->Int.toString}/v1/metadata`
+    processEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", endpoint)
+    processEnv->Dict.set("HASURA_GRAPHQL_ADMIN_SECRET", "testing")
+    processEnv->Dict.set("ENVIO_RESOLVERS_PUBLIC_URL", publicUrl)
+
+    let outcome = try {
+      let _ = await ResolverProcess.migrate(~config, ~projectRoot)
+      "returned"
+    } catch {
+    | _ => "threw"
+    }
+
+    await Promise.make((resolve, _reject) => hasura->closeServer(() => resolve()))
+    clearHasuraEnv()
+    t.expect(outcome).toEqual("threw")
+  })
+
+  Async.it("refuses to migrate without somewhere to send it", async t => {
+    clearHasuraEnv()
+    let outcome = try {
+      let _ = await ResolverProcess.migrate(~config, ~projectRoot)
+      "returned"
+    } catch {
+    | JsExn(e) =>
+      e->JsExn.message->Option.getOr("")->String.includes("HASURA_GRAPHQL_ENDPOINT")
+        ? "named the missing var"
+        : "threw something else"
+    | _ => "threw something else"
+    }
+    t.expect(outcome).toEqual("named the missing var")
+  })
+
   Async.it("prints the metadata for anyone applying it by hand", async t => {
     // `envio resolvers metadata`: the same JSON the service would POST, so a
     // deployment that applies metadata elsewhere is not guessing at its shape.

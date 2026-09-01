@@ -204,6 +204,31 @@ let writeManifest = async (~config: Config.t, ~projectRoot) => {
   )
 }
 
+/// Where Hasura's metadata API lives and what may write to it, or a message
+/// naming what is missing. Shared by `serve` and `migrate` so the two cannot
+/// disagree about what "configured for Hasura" means.
+let hasuraTarget = () =>
+  switch (Env.Resolvers.hasuraEndpoint(), Env.Resolvers.hasuraAdminSecret()) {
+  | (Some(endpoint), Some(adminSecret)) => Ok((endpoint, adminSecret))
+  | (None, _) =>
+    Error(
+      "HASURA_GRAPHQL_ENDPOINT is not set, so there is no Hasura to update. It is the full metadata URL, ending in /v1/metadata.",
+    )
+  | (_, None) =>
+    Error(
+      "HASURA_GRAPHQL_ADMIN_SECRET is not set. Writing metadata is an admin operation, so Hasura will refuse without it.",
+    )
+  }
+
+let handlerUrlOrThrow = () =>
+  switch Env.Resolvers.publicUrl() {
+  | Some(url) => url
+  | None =>
+    JsError.throwWithMessage(
+      "ENVIO_RESOLVERS_PUBLIC_URL is not set. It is the URL Hasura posts to, which is not the address the resolver process binds -- Hasura has no other way to reach the resolvers, and it is baked into every action.",
+    )
+  }
+
 /// The Hasura metadata for this project's resolvers, as `envio resolvers
 /// metadata` prints it.
 let metadataJson = async (~config: Config.t, ~projectRoot, ~handlerUrl) => {
@@ -216,6 +241,23 @@ let metadataJson = async (~config: Config.t, ~projectRoot, ~handlerUrl) => {
     bundle.manifest
   }
   buildHasuraMetadata(manifest, {handlerUrl: handlerUrl})
+}
+
+/// `envio resolvers migrate`: brings a running indexer's Hasura metadata in
+/// line with these resolvers, then exits. The same shape as `db-migrate up` --
+/// reconcile and stop -- for the metadata rather than the schema.
+///
+/// Strict where `serve` is forgiving. Serving keeps answering when an apply
+/// fails, because Hasura simply sends it nothing until the metadata lands; a
+/// deploy step that cannot land it has to be a failure the pipeline sees.
+let migrate = async (~config: Config.t, ~projectRoot) => {
+  let (endpoint, adminSecret) = switch hasuraTarget() {
+  | Ok(target) => target
+  | Error(message) => JsError.throwWithMessage(message)
+  }
+  let handlerUrl = handlerUrlOrThrow()
+  let metadata = await metadataJson(~config, ~projectRoot, ~handlerUrl)
+  await applyResolverMetadata({endpoint, adminSecret, metadata})
 }
 
 @val @scope("process") external onSignal: (string, unit => unit) => unit = "on"
@@ -366,18 +408,9 @@ let serve = async (
 
   // After the socket is listening, never before: an action Hasura knows about
   // is one it will send traffic to.
-  let stopReassert = switch (
-    Env.Resolvers.hasuraEndpoint(),
-    Env.Resolvers.hasuraAdminSecret(),
-  ) {
-  | (Some(endpoint), Some(adminSecret)) =>
-    let handlerUrl = switch Env.Resolvers.publicUrl() {
-    | Some(url) => url
-    | None =>
-      JsError.throwWithMessage(
-        "HASURA_GRAPHQL_ENDPOINT is set, so this process registers its resolvers with Hasura, but ENVIO_RESOLVERS_PUBLIC_URL is not. It is the URL Hasura posts to, which is not the address this process binds -- Hasura has no other way to reach the resolvers.",
-      )
-    }
+  let stopReassert = switch hasuraTarget() {
+  | Ok((endpoint, adminSecret)) =>
+    let handlerUrl = handlerUrlOrThrow()
     let metadata = buildHasuraMetadata(manifest, {handlerUrl: handlerUrl})
     let intervalMs = Env.Resolvers.metadataIntervalMs()
 
@@ -429,9 +462,9 @@ let serve = async (
           ),
       })
     }
-  | _ =>
+  | Error(message) =>
     Logging.info(
-      "HASURA_GRAPHQL_ENDPOINT is not set, so nothing was registered with Hasura. This process still answers /hasura-action and /resolve.",
+      `${message} Nothing was registered with Hasura; this process still answers /hasura-action and /resolve.`,
     )
     () => ()
   }
