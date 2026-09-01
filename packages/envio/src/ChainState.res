@@ -1236,6 +1236,15 @@ let rollback = (
 
   switch newProgressBlockNumber {
   | Some(newProgressBlockNumber) =>
+    // A rollback only ever takes a chain back. The diff recomputes progress from
+    // the checkpoints still in the database, so a chain that an unwritten
+    // rollback already took below them — to a fork block only that rollback
+    // knew — would be handed their MIN back and moved forward onto blocks it
+    // never re-indexed.
+    let newProgressBlockNumber = Pervasives.min(
+      newProgressBlockNumber,
+      cs.committedProgressBlockNumber,
+    )
     let newTotalEventsProcessed =
       cs.numEventsProcessed -.
       // Both dicts are populated together per progress-diff row, so a chain with

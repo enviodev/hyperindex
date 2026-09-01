@@ -108,8 +108,10 @@ let setCounterAndTotal = (~block, ~count: bigint): MockSource.itemMock => {
   },
 }
 
-let progressByChain = async (indexer: IndexerRunner.t) => {
-  let metrics = await indexer.metric("envio_progress_block")
+// Per-chain metrics come back in no particular order, so every read is sorted
+// by the chain label the assertions are written in.
+let metricByChain = async (indexer: IndexerRunner.t, name) => {
+  let metrics = await indexer.metric(name)
   metrics->Array.toSorted((a: IndexerRunner.metric, b) =>
     String.compare(
       a.labels->Dict.get("chainId")->Option.getOr(""),
@@ -117,6 +119,9 @@ let progressByChain = async (indexer: IndexerRunner.t) => {
     )
   )
 }
+
+let progressByChain = indexer => indexer->metricByChain("envio_progress_block")
+let eventsByChain = indexer => indexer->metricByChain("envio_progress_events")
 
 let counters = (indexer: IndexerRunner.t): promise<array<counter>> => indexer.query("Counter")
 let counterHistory = (indexer: IndexerRunner.t): promise<array<Change.t<counter>>> =>
@@ -154,31 +159,62 @@ let driveBothChainsToBlock102 = async (
   await indexer.getBatchWritePromise()
 }
 
-// Reorgs `source` at block 102: the range covering 103 comes back reporting a
-// different hash for 102, and blocks 100 and 101 survive the depth search.
+// Reorgs `source` at `atBlock`: the range above it comes back reporting a
+// different hash, and the depth search re-fetches `scanned` — the blocks the
+// chain still has hashes for. A block listed as `#valid` answers with the hash
+// already stored and `#orphaned` with a different one, so the rollback targets
+// the highest valid block among them.
 //
-// The rollback resets every chain's in-flight queries, so the sibling's are
+// A rollback that reaches `sibling` resets its in-flight queries, so those are
 // voided in the mock first — otherwise its pre-rollback queries stay pending
-// there and the ones it re-issues can't be told apart from them.
-let reorgAtBlock102 = async (
+// there and the ones it re-issues can't be told apart from them. An isolated
+// rollback leaves the sibling indexing, and passes no `sibling` to void.
+let reorgAt = async (
   ~indexer: IndexerRunner.t,
   ~source: MockSource.t,
-  ~sibling: MockSource.t,
+  ~sibling: option<MockSource.t>=?,
+  ~atBlock,
+  ~scanned: array<(int, [#valid | #orphaned])>=[],
 ) => {
-  sibling.dropPendingCalls()
+  sibling->Option.forEach(sibling => sibling.dropPendingCalls())
+  let reorgsBefore = source.reorgCallCount()
   source.resolveGetItemsOrThrow(
     [],
-    ~filter=MockSource.coveringBlock(103),
-    ~prevRangeLastBlock={blockNumber: 102, blockHash: "0x102a"},
+    ~filter=MockSource.coveringBlock(atBlock + 1),
+    ~prevRangeLastBlock={blockNumber: atBlock, blockHash: `0x${atBlock->Int.toString}a`},
   )
-  await Utils.delay(0)
-  await Utils.delay(0)
-  source.resolveGetBlockHashes([
-    {blockNumber: 100, blockHash: "0x0100", blockTimestamp: 100},
-    {blockNumber: 101, blockHash: "0x0101", blockTimestamp: 101},
-  ])
+  // The depth search drops the source's orphaned-chain state before it reads
+  // any hash, so this is the one point both shapes of the search pass through —
+  // and the only thing separating "the rollback hasn't started" from "there is
+  // no rollback" for a search that never asks for a hash at all.
+  await Scenario.waitUntil(
+    () => source.reorgCallCount() > reorgsBefore,
+    ~message="the reorg to be detected and the rollback's depth search to start",
+  )
+  // With nothing left hashed inside the threshold the search skips the lookup
+  // and falls straight back to the threshold's lower edge, so an empty
+  // `scanned` waits for no call.
+  if scanned->Array.length > 0 {
+    await Scenario.waitUntil(
+      () => source.getBlockHashesCalls->Array.length > 0,
+      ~message="the rollback's depth search to re-fetch the scanned block hashes",
+    )
+    source.resolveGetBlockHashes(
+      scanned->Array.map(((blockNumber, fate)): BlockStore.inputBlock => {
+        blockNumber,
+        blockHash: switch fate {
+        | #valid => `0x${blockNumber->Int.toString}`
+        | #orphaned => `0x${blockNumber->Int.toString}a`
+        },
+        blockTimestamp: blockNumber,
+      }),
+    )
+  }
   await indexer.getRollbackReadyPromise()
 }
+
+let reorgAtBlock102 = (~indexer, ~source, ~sibling) =>
+  reorgAt(~indexer, ~source, ~sibling, ~atBlock=102, ~scanned=[(100, #valid), (101, #valid)])
 
 // The rollback diff only reaches the database with the next batch, so the reorg
 // chain re-delivers block 102 to flush it.
@@ -191,8 +227,41 @@ let reindexBlock102 = async (~indexer: IndexerRunner.t, ~source: MockSource.t, ~
   await indexer.getBatchWritePromise()
 }
 
-// The three shapes every assertion below is made of, so a case reads as the
-// rows it expects rather than as the records that spell them.
+// Chain 1337's only event sits far above the pre-threshold boundary, with chain
+// 100 left just ahead of it so the fetch budget still comes back to 1337. Once
+// the block-100 checkpoints are pruned, chain 1337 has nothing at or below the
+// block a reorg deeper than that event takes it back to, so the rollback finds
+// no checkpoint to target and falls back to the fork block itself.
+let driveToDistantChain1337 = async (
+  ~t,
+  ~indexer: IndexerRunner.t,
+  ~source100: MockSource.t,
+  ~source1337: MockSource.t,
+) => {
+  await Utils.delay(0)
+  let _ = await Promise.all2((
+    Scenario.enterReorgThreshold(~t, ~indexer, ~source=source100),
+    Scenario.enterReorgThreshold(~t, ~indexer, ~source=source1337),
+  ))
+
+  source100.resolveGetItemsOrThrow(
+    [setCounter(~block=101, ~count=100n)],
+    ~latestFetchedBlockNumber=101,
+  )
+  await MockSource.waitItemsQuery(source1337)
+  source1337.resolveGetItemsOrThrow(
+    [setCounter(~block=150, ~count=1337n)],
+    ~latestFetchedBlockNumber=150,
+  )
+  await indexer.getBatchWritePromise()
+
+  source100.resolveGetItemsOrThrow(
+    [setCounter(~block=102, ~count=1002n)],
+    ~latestFetchedBlockNumber=151,
+  )
+  await indexer.getBatchWritePromise()
+}
+
 let checkpoint = (~id, ~chain, ~block, ~events): InternalTable.Checkpoints.t => {
   id,
   chainId: chain->ChainId.fromInt,
@@ -414,9 +483,12 @@ describe("Isolated multichain rollback", () => {
       await reorgAtBlock102(~indexer, ~source=source100, ~sibling=source1337)
 
       t.expect(
-        await progressByChain(indexer),
-        ~message="Both chains went back past the lower of the two targets",
-      ).toEqual(progress(~chain100="101", ~chain1337="100"))
+        (await progressByChain(indexer), await eventsByChain(indexer)),
+        ~message="Both chains went back past the lower of the two targets, events with them",
+      ).toEqual((
+        progress(~chain100="101", ~chain1337="100"),
+        progress(~chain100="1", ~chain1337="0"),
+      ))
 
       source100.resolveGetItemsOrThrow(
         [setCounter(~block=102, ~count=1003n)],
@@ -592,6 +664,68 @@ describe("Isolated multichain rollback", () => {
         ),
         ~message="Chain 100 resumes at the block the first, superseded rollback took it back to",
       ).toEqual((progress(~chain100="101", ~chain1337="101"), [102], [102]))
+    },
+  )
+
+  // A rollback never moves a chain forward. When the superseded diff took its
+  // chain below every checkpoint that chain has left, the rollback replacing it
+  // recomputes that chain's progress from those same checkpoints — a block the
+  // chain is no longer at. Only the chain that reorged this time is clamped to
+  // its own fork block, so the superseded chain has to be held down by where the
+  // first rollback already left it.
+  //
+  // Run on the cross-chain schema because the first rollback has to take both
+  // chains back: an isolated one leaves the sibling ahead, and the reorg chain
+  // then holds the fetch budget as the furthest behind, so the sibling never
+  // gets to reorg on top of it. The scope reaches the same recompute either way.
+  crossChainScenario->Scenario.it(
+    "Keeps a superseded chain below the checkpoints the new rollback recomputes from",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveToDistantChain1337(~t, ~indexer, ~source100, ~source1337)
+
+      // Chain 1337 forks below block 150, its only checkpoint: nothing of its
+      // own is at or under the fork, so the rollback has no checkpoint to target
+      // and falls back to the fork block, clamping the block-150 checkpoint's
+      // recomputed 149 down to 100.
+      await reorgAt(
+        ~indexer,
+        ~source=source1337,
+        ~sibling=source100,
+        ~atBlock=150,
+        ~scanned=[(100, #valid), (150, #orphaned)],
+      )
+
+      t.expect(
+        await progressByChain(indexer),
+        ~message="Chain 1337 went back to the fork block, below its only checkpoint",
+      ).toEqual(progress(~chain100="100", ~chain1337="100"))
+
+      // No batch has carried that diff, so this reorg supersedes it. Chain 1337
+      // is no longer the reorg chain, so its progress is recomputed from the
+      // block-150 checkpoint still in the database — 49 blocks above where the
+      // superseded rollback left it.
+      await reorgAt(~indexer, ~source=source100, ~sibling=source1337, ~atBlock=100)
+
+      t.expect(
+        (await progressByChain(indexer), await eventsByChain(indexer)),
+        ~message="Chain 1337 stays at the fork block the superseded rollback took it to",
+      ).toEqual((
+        progress(~chain100="100", ~chain1337="100"),
+        progress(~chain100="0", ~chain1337="0"),
+      ))
+
+      t.expect(
+        source1337.getItemsOrThrowCalls
+        ->Array.map(call => call.payload["fromBlock"])
+        ->Array.toSorted(Int.compare)
+        ->Array.get(0),
+        ~message="Chain 1337 re-fetches from just above the fork, not from its lost checkpoint",
+      ).toEqual(Some(101))
     },
   )
 

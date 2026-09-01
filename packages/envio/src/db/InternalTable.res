@@ -644,8 +644,7 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
     ->Utils.Promise.ignoreValue
   }
 
-  // The chain a checkpoint belongs to, named once for the queries that narrow a
-  // rollback to it.
+  // Optional to match the entity tables', where a cross-chain entity has none.
   let chainIdColumn = Some((#chain_id: field :> string))
 
   let rollback = (

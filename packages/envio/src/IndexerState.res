@@ -793,7 +793,6 @@ let drainBatchRun = (state: t): Batch.t => {
   }
 }
 
-// The rollback diff staged for the next write, if one hasn't been written yet.
 let pendingRollback = (state: t): option<Persistence.rollback> => state.rollback
 
 // Take the pending rollback diff to write, clearing it from the store.
@@ -840,11 +839,10 @@ let beginRollbackDiff = (
   // chain wins, being the later reading of the same chain state.
   let progressedChains = switch state.rollback {
   | Some({progressedChains: pending}) =>
-    pending
-    ->Array.filter(({chainId}) =>
-      !(progressedChains->Array.some(chain => chain.chainId === chainId))
-    )
-    ->Array.concat(progressedChains)
+    let byChainId = Dict.make()
+    pending->Array.forEach(chain => byChainId->ChainId.Dict.set(chain.chainId, chain))
+    progressedChains->Array.forEach(chain => byChainId->ChainId.Dict.set(chain.chainId, chain))
+    byChainId->Dict.valuesToArray
   | None => progressedChains
   }
   state.rollback = Some({

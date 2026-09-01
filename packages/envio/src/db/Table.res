@@ -288,7 +288,7 @@ let getChainIdField = (table): option<field> =>
     }
   )
 
-// The chain-id column as Postgres spells it. None for a cross-chain entity.
+// None for a cross-chain entity, whose rows no single chain owns.
 let getPgChainIdColumn = table => table->getChainIdField->Option.map(getPgDbFieldName)
 
 let getFieldByName = (table, fieldName) =>

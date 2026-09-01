@@ -40,15 +40,6 @@ let getLastKnownValidBlock = async (
   }
 }
 
-// A chain the rollback moved: where it leaves the chain — written with the diff,
-// since the batch that carries it may belong to a chain the rollback never
-// touched — and what it took away, for the log.
-type rolledBackChain = {
-  progress: InternalTable.Chains.progressedChain,
-  fromBlock: int,
-  rollbackedEvents: float,
-}
-
 let rec rollback = async (
   state: IndexerState.t,
   ~scheduleFetch,
@@ -142,14 +133,13 @@ and executeRollback = async (
   // different chains only meet at Global. The flush above leaves a diff pending
   // only when no batch has come along to carry it.
   let (scope, rollbackTargetCheckpointId) = {
-    let scope: RollbackScope.t = (state->IndexerState.config).isIsolatedMultichain
+    let scope: RollbackScope.t = (state->IndexerState.config)->Config.isIsolatedMultichain
       ? Isolated(reorgChain)
       : Global
     switch state->IndexerState.pendingRollback {
     | None => (scope, rollbackTargetCheckpointId)
     | Some({scope: pendingScope, targetCheckpointId: pendingTarget}) =>
-      let target =
-        rollbackTargetCheckpointId < pendingTarget ? rollbackTargetCheckpointId : pendingTarget
+      let target = Pervasives.min(rollbackTargetCheckpointId, pendingTarget)
       if scope == pendingScope {
         (scope, target)
       } else {
@@ -191,7 +181,9 @@ and executeRollback = async (
     }
   }
 
-  let rolledBackChains: array<rolledBackChain> = []
+  // Where the rollback leaves each chain it moved, written with the diff: the
+  // batch that carries it may belong to a chain the rollback never touched.
+  let rolledBackChains: array<InternalTable.Chains.progressedChain> = []
   let rolledBackAddresses = []
   state
   ->IndexerState.chainStates
@@ -214,38 +206,32 @@ and executeRollback = async (
     if fromBlock !== toBlock {
       rolledBackChains
       ->Array.push({
-        progress: {
-          chainId,
-          progressBlockNumber: toBlock,
-          sourceBlockNumber: cs->ChainState.knownHeight,
-          totalEventsProcessed: cs->ChainState.numEventsProcessed,
-        },
-        fromBlock,
-        rollbackedEvents: eventsProcessedDiffByChain
+        chainId,
+        progressBlockNumber: toBlock,
+        sourceBlockNumber: cs->ChainState.knownHeight,
+        totalEventsProcessed: cs->ChainState.numEventsProcessed,
+      })
+      ->ignore
+      logger->Logging.childInfo({
+        "msg": "Rollbacked",
+        "chainId": chainId,
+        "fromBlock": fromBlock,
+        "toBlock": toBlock,
+        "rollbackedEvents": eventsProcessedDiffByChain
         ->ChainId.Dict.dangerouslyGetNonOption(chainId)
         ->Option.getOr(0.),
       })
-      ->ignore
     }
   })
 
   let diff = await state->InMemoryStore.prepareRollbackDiff(
-    ~scope,
+    ~rollbackScope=scope,
     ~rollbackTargetCheckpointId,
     ~rollbackDiffCheckpointId=state->IndexerState.committedCheckpointId->BigInt.add(1n),
-    ~progressedChains=rolledBackChains->Array.map(({progress}) => progress),
+    ~progressedChains=rolledBackChains,
     ~rolledBackAddresses,
   )
 
-  rolledBackChains->Array.forEach(({progress, fromBlock, rollbackedEvents}) => {
-    logger->Logging.childInfo({
-      "msg": "Rollbacked",
-      "chainId": progress.chainId,
-      "fromBlock": fromBlock,
-      "toBlock": progress.progressBlockNumber,
-      "rollbackedEvents": rollbackedEvents,
-    })
-  })
   logger->Logging.childTrace({
     "msg": "Rollback entity changes",
     "deleted": diff["deletedEntities"],
