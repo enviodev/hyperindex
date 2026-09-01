@@ -163,10 +163,10 @@ module ClickHouse = {
   let databaseEngine = () => read("ENVIO_CLICKHOUSE_DATABASE_ENGINE")
 }
 
-// The resolver process runs in a pod of its own, so its database connection
-// comes from the same ENVIO_PG_* vars the indexer's does -- the controller
-// points them at the CNPG `-r` service instead of the primary. Only what
-// genuinely differs from the indexer's shape gets a var of its own.
+// The resolver process runs on its own, so its database connection comes from
+// the same ENVIO_PG_* vars the indexer's does -- point them wherever reads
+// should go. Only what genuinely differs from the indexer's shape gets a var
+// of its own.
 //
 // Read at call time rather than module load, for the same reason ClickHouse's
 // are: `envio dev` injects them after this module has been evaluated.
@@ -202,8 +202,8 @@ module Resolvers = {
 
   // `envio dev` sets this on the resolver process it spawns: locally the
   // caller is the person who wrote the resolver, so an unexpected error's own
-  // message is what they need. In a deployment the caller is the public
-  // internet and the message can carry a connection string.
+  // message is what they need. Deployed, the caller may be the public internet
+  // and the message can carry a connection string.
   let exposeErrors = () =>
     switch read("ENVIO_RESOLVERS_EXPOSE_ERRORS") {
     | Some("true") => true
@@ -236,9 +236,8 @@ module Resolvers = {
   let hasuraEndpoint = () => read("HASURA_GRAPHQL_ENDPOINT")
   let hasuraAdminSecret = () => read("HASURA_GRAPHQL_ADMIN_SECRET")
 
-  // Set where the `-r` service isn't reachable and the pooler is the only way
-  // in. Transaction-mode PgBouncer rejects named prepared statements, so this
-  // gives up plan reuse.
+  // Set where a transaction-mode pooler is the only way in. Those reject
+  // named prepared statements, so this gives up plan reuse.
   let poolerBacked = () =>
     switch read("ENVIO_RESOLVERS_POOLER_BACKED") {
     | None

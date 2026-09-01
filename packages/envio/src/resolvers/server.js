@@ -1,6 +1,6 @@
 // The HTTP surface of the resolver process: one POST per caller -- Hasura's
-// action contract and envio-serve's -- and the two probes the Deployment is
-// checked with.
+// action contract and envio-serve's -- and the two probes an orchestrator
+// restarts and routes on.
 //
 // Deliberately not a framework. The whole surface is three routes and a JSON
 // body with a size cap, and the one thing that must not drift is the wire
@@ -19,8 +19,8 @@ import { error as logError } from "../Logging.res.mjs";
 import { Resolvers as ResolversEnv } from "../Env.res.mjs";
 
 // Serve coerces arguments before dispatching, so a request is small by
-// construction. The cap is here because the socket is reachable from inside
-// the cluster, not because a legitimate request could approach it.
+// construction. The cap is here because the socket is reachable by whatever
+// shares its network, not because a legitimate request could approach it.
 const MAX_REQUEST_BYTES = 1024 * 1024;
 
 function readBody(request, limit) {
@@ -89,9 +89,10 @@ export async function startResolverServer(options) {
 
     if (request.method === "GET" && path === "/readyz") {
       // Ready means the database answers and is the one this build indexes,
-      // not merely that the process is up: a resolver pod that cannot reach
-      // Postgres has nothing to serve, and one pointed at a database indexed
-      // by a different build would answer with plausible wrong numbers.
+      // not merely that the process is up: a resolver process that cannot
+      // reach Postgres has nothing to serve, and one pointed at a database
+      // indexed by a different build would answer with plausible wrong
+      // numbers.
       pool
         .forResolver({ name: "readyz", timeoutMs: 2_000 })
         .sql.unsafe("SELECT 1;")

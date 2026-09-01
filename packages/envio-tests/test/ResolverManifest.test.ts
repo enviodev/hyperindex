@@ -162,8 +162,8 @@ describe("resolver manifest", () => {
     ).toThrow(/must be named.*defineType/s);
   });
 
-  // Bypassing PgBouncer removes its query_timeout net, so statement_timeout
-  // is the only bound left and must be declared.
+  // statement_timeout is the only thing that bounds a runaway query, so it
+  // must be declared.
   it("requires a positive timeoutMs", () => {
     expect(() =>
       buildManifest([{ name: "x", args: {}, output: S.string, timeoutMs: 0 }])

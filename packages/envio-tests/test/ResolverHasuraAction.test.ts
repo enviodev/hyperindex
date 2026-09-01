@@ -182,7 +182,7 @@ describe("resolver /hasura-action", () => {
 
   it("refuses an admin resolver for a non-admin role, and answers it for admin", async () => {
     // Enforced here as well as by Hasura's action permissions: the handler is
-    // reachable from inside the cluster without going through Hasura at all.
+    // reachable on its own network without going through Hasura at all.
     const [refused, answered] = await Promise.all([
       action({
         action: { name: "adminOnly" },
@@ -273,9 +273,9 @@ describe("resolver /hasura-action", () => {
 
   it("gives the handler the selection Hasura's callers asked for", async () => {
     // Hasura sends the operation as text, not as a parsed selection, so the
-    // tree a resolver skips work on has to be recovered from it. GMX's PnL
-    // resolver skips a TradeAction aggregation when the fee breakdown is not
-    // requested, which is the whole reason this is not left empty.
+    // tree a resolver skips work on has to be recovered from it. A resolver
+    // that skips an expensive aggregation when the breakdown is not requested
+    // is the whole reason this is not left empty.
     const queries: [string, string][] = [
       ["plain", `query { selectionProbe { openFeesUsd closeFeesUsd } }`],
       // The declared field name, never the alias -- a resolver knows its own

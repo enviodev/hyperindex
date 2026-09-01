@@ -69,8 +69,8 @@ type serverOptions = {
   port?: int,
   exposeErrors?: bool,
   // `null` means ready. A string is the reason it is not, and reaches the
-  // probe's body so an operator reads it from `kubectl describe` rather than
-  // by correlating logs.
+  // probe's body, so an operator reads it wherever the failed probe surfaces
+  // rather than by correlating logs.
   checkCompatible?: unit => promise<Nullable.t<string>>,
 }
 
@@ -276,8 +276,8 @@ external readConfigRows: (sqlFn, string, array<JSON.t>) => promise<array<{"confi
 //
 // It reads on every probe rather than once at startup because the mismatch it
 // exists for arrives later: the indexer is redeployed with a new config while
-// this pod keeps serving, and readiness is the only thing that can still take
-// it out of rotation.
+// this process keeps serving, and readiness is the only thing that can still
+// take it out of rotation.
 let compatibilityOf = (~pool, ~pgSchema, ~envioInfo) => async () => {
   let sql =
     pool->forResolver({name: "readyz", timeoutMs: 2_000})->sqlOf
@@ -462,7 +462,7 @@ let handleSignals = (running: running) =>
   )
 
 // `envio dev` only. `envio start` never calls it — a deployment runs the
-// resolvers as their own Deployment.
+// resolvers as their own service.
 //
 // Dev spawns `envio resolvers` as a child rather than serving in-process, so
 // local and hosted run the same command over the same HTTP seam, with a pool
@@ -470,10 +470,8 @@ let handleSignals = (running: running) =>
 // process alone: the indexer keeps its place, and a resolver that crashes
 // takes nothing with it.
 //
-// Hasura cannot serve custom fields, so the endpoint has to be envio-serve.
-// Until it ships as an image, `ENVIO_SERVE_BIN` points at a local build and
-// this starts it; without it, everything else still runs and the hint says
-// what is missing.
+// `ENVIO_SERVE_BIN` points at a local envio-serve build and this starts it;
+// without it, everything else still runs and the hint says what is missing.
 type devResolvers = {port: int, pid: option<int>, stop: unit => promise<unit>}
 
 // Bounded: a resolver module that throws on import never binds the port, and
