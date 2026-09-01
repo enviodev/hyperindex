@@ -191,7 +191,16 @@ module Resolvers = {
       }
   )
 
-  let port = () => readInt("ENVIO_RESOLVERS_PORT", ~fallback=9900)
+  let port = () =>
+    switch readInt("ENVIO_RESOLVERS_PORT", ~fallback=9900) {
+    | value if value <= 65535 => value
+    | value =>
+      // `readInt` only rejects zero and below, so an out-of-range port reached
+      // `listen` and failed there instead, naming neither the variable nor why.
+      JsError.throwWithMessage(
+        `Invalid ENVIO_RESOLVERS_PORT value: "${value->Int.toString}". A TCP port is 1 to 65535.`,
+      )
+    }
 
   // Sized as concurrent heavy requests x per-request fan-out, not as the
   // indexer's two long-lived connections: one resolver request can hold four
