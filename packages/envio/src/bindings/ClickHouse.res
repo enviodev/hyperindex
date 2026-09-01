@@ -14,8 +14,13 @@ type execParams = {query: string}
 @module("@clickhouse/client")
 external createClient: clientConfig => client = "createClient"
 
+// `command`, not `exec`: exec hands its response stream to the caller and holds
+// the socket until it is consumed, which nothing here does. The pool is 10
+// sockets wide, so a schema whose DDL needs more than that — initialize issues
+// 2N+3 statements for N entities — stalled every statement past the tenth until
+// the 30s request timeout freed one. command destroys the stream for us.
 @send
-external exec: (client, execParams) => promise<unit> = "exec"
+external command: (client, execParams) => promise<unit> = "command"
 
 @send
 external close: client => promise<unit> = "close"
@@ -55,6 +60,12 @@ let getClickHouseFieldType = (
     }
   | Uint32 => "UInt32"
   | UInt52 => "UInt64"
+  // Internal-only column types, never on an entity the sink mirrors.
+  | SmallInt
+  | Bytea =>
+    JsError.throwWithMessage(
+      "ClickHouse doesn't support the internal SmallInt and Bytea column types",
+    )
   | UInt64 => "UInt64"
   | Serial => "Int32"
   | BigSerial => "Int64"
@@ -122,7 +133,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
           | Date => {
               let dateSchema = Utils.Schema.clickHouseDate->S.toUnknown
               if f.isNullable {
-                S.null(dateSchema)->S.toUnknown
+                Utils.Schema.nullTolerant(dateSchema)->S.toUnknown
               } else if f.isArray {
                 S.array(dateSchema)->S.toUnknown
               } else {
@@ -141,7 +152,7 @@ let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
                 )
                 ->S.toUnknown
               if f.isNullable {
-                S.null(uint52Schema)->S.toUnknown
+                Utils.Schema.nullTolerant(uint52Schema)->S.toUnknown
               } else if f.isArray {
                 S.array(uint52Schema)->S.toUnknown
               } else {
@@ -352,6 +363,17 @@ let setUpdatesOrThrow = async (
 // The '{cluster}' macro resolves to each node's configured cluster name.
 let onClusterClause = (~onCluster: bool) => onCluster ? ` ON CLUSTER '{cluster}'` : ""
 
+// ReplicatedMergeTree drops an insert whose block hash is already in Keeper, and
+// mutations don't clear those hashes. Crash recovery trims the history tail past
+// the committed Postgres checkpoint with ALTER ... DELETE and then replays it, so
+// an identical replayed block would be discarded while still reporting success —
+// a permanent gap that nothing surfaces. Trim-then-replay is what makes recovery
+// correct here, and the duplicates dedup would have caught are already collapsed
+// by the entity view's `LIMIT 1 BY`. Plain MergeTree goes by
+// non_replicated_deduplication_window (0 by default), so it needs no clause.
+let replicatedTableSettingsClause = (~replicated: bool) =>
+  replicated ? "\nSETTINGS replicated_deduplication_window = 0" : ""
+
 // Strip both engine arguments `(...)` and a trailing `SETTINGS ...` clause to
 // get the bare engine name, e.g. `Replicated('/p','{shard}','{replica}') SETTINGS x=1`
 // and `Replicated SETTINGS x=1` both yield `Replicated`.
@@ -390,9 +412,9 @@ let makeCreateHistoryTableQuery = (
     }
   })
 
-  let (partitionBy, orderBy, ttl) = switch entityConfig.storage.clickhouseOptions {
-  | Some(options) => (options.partitionBy, options.orderBy, options.ttl)
-  | None => (None, None, None)
+  let (partitionBy, orderBy, ttl, skippingIndexes) = switch entityConfig.storage.clickhouseOptions {
+  | Some(options) => (options.partitionBy, options.orderBy, options.ttl, options.skippingIndexes)
+  | None => (None, None, None, None)
   }
 
   // Schema field name -> ClickHouse column name, so @storage(clickhouse: {...})
@@ -456,6 +478,22 @@ let makeCreateHistoryTableQuery = (
   | None => ""
   }
 
+  // Data skipping indexes live inside the column list, after the last column.
+  // GRANULARITY is omitted when unset, leaving ClickHouse's default of 1.
+  let skippingIndexDefinitions = switch skippingIndexes {
+  | Some(skippingIndexes) =>
+    skippingIndexes
+    ->Array.map(index => {
+      let granularityClause = switch index.granularity {
+      | Some(granularity) => ` GRANULARITY ${granularity->Int.toString}`
+      | None => ""
+      }
+      `,\n  INDEX \`${index.name}\` ${index.expr->resolveExpressionColumns} TYPE ${index.type_}${granularityClause}`
+    })
+    ->Array.joinUnsafe("")
+  | None => ""
+  }
+
   `CREATE TABLE IF NOT EXISTS ${database}.\`${EntityHistory.historyTableName(
       ~entityName=entityConfig.name,
       ~entityIndex=entityConfig.index,
@@ -470,10 +508,10 @@ let makeCreateHistoryTableQuery = (
       ~fieldType=Enum({config: EntityHistory.RowAction.config->Table.fromGenericEnumConfig}),
       ~isNullable=false,
       ~isArray=false,
-    )}
+    )}${skippingIndexDefinitions}
 )
 ENGINE = ${tableEngine}${partitionByClause}
-ORDER BY (${orderByColumns})${ttlClause}`
+ORDER BY (${orderByColumns})${ttlClause}${replicatedTableSettingsClause(~replicated)}`
 }
 
 // Generate CREATE TABLE query for checkpoints
@@ -517,7 +555,7 @@ let makeCreateCheckpointsTableQuery = (
     )}
 )
 ENGINE = ${tableEngine}
-ORDER BY (${idField})`
+ORDER BY (${idField})${replicatedTableSettingsClause(~replicated)}`
 }
 
 // Generate CREATE VIEW query for entity current state
@@ -628,21 +666,21 @@ let initialize = async (
       // CLUSTER removes the database from every node — the engine's own log
       // can't replicate the drop of the database it lives in — and SYNC waits
       // for the drop to finish before the CREATE below.
-      await client->exec({
+      await client->command({
         query: `DROP DATABASE IF EXISTS ${database} ON CLUSTER '{cluster}' SYNC`,
       })
     } else {
-      await client->exec({
+      await client->command({
         query: `TRUNCATE DATABASE IF EXISTS ${database}${onClusterClause(~onCluster=ddlOnCluster)}`,
       })
     }
-    await client->exec({
+    await client->command({
       query: `CREATE DATABASE IF NOT EXISTS ${database}${databaseOnClusterClause}${databaseEngineClause}`,
     })
 
     await Promise.all(
       entities->Array.map(entityConfig =>
-        client->exec({
+        client->command({
           query: makeCreateHistoryTableQuery(
             ~entityConfig,
             ~database,
@@ -653,7 +691,7 @@ let initialize = async (
         })
       ),
     )->Utils.Promise.ignoreValue
-    await client->exec({
+    await client->command({
       query: makeCreateCheckpointsTableQuery(
         ~database,
         ~replicated,
@@ -670,14 +708,14 @@ let initialize = async (
     // caught up before creating the views. ON CLUSTER must precede the
     // database name in this command's grammar.
     if hasReplicatedDatabaseEngine {
-      await client->exec({
+      await client->command({
         query: `SYSTEM SYNC DATABASE REPLICA ON CLUSTER '{cluster}' ${database}`,
       })
     }
 
     await Promise.all(
       entities->Array.map(entityConfig =>
-        client->exec({
+        client->command({
           query: makeCreateViewQuery(~entityConfig, ~database, ~onCluster=ddlOnCluster),
         })
       ),
@@ -697,7 +735,7 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
   try {
     // Try to use the database - will throw if it doesn't exist
     try {
-      await client->exec({query: `USE ${database}`})
+      await client->command({query: `USE ${database}`})
     } catch {
     | exn =>
       Logging.errorWithExn(
@@ -717,14 +755,14 @@ let resume = async (client, ~database: string, ~checkpointId: Internal.checkpoin
     await Promise.all(
       tables->Array.map(table => {
         let tableName = table["name"]
-        client->exec({
+        client->command({
           query: `ALTER TABLE ${database}.\`${tableName}\` DELETE WHERE \`${EntityHistory.checkpointIdFieldName}\` > ${checkpointId->BigInt.toString}`,
         })
       }),
     )->Utils.Promise.ignoreValue
 
     // Delete stale checkpoints
-    await client->exec({
+    await client->command({
       query: `DELETE FROM ${database}.\`${InternalTable.Checkpoints.table.tableName}\` WHERE \`${Table.idFieldName}\` > ${checkpointId->BigInt.toString}`,
     })
   } catch {

@@ -1,6 +1,5 @@
 use super::{
-    entity_parsing::{self, IndexFieldDirection},
-    field_types,
+    entity_parsing, field_types,
     human_config::{self, evm::For, ColumnNameFormat},
     system_config::{
         self, field_type_to_arg_type, named_field_to_arg_def, Abi, ChainIdMode, Ecosystem,
@@ -114,6 +113,10 @@ struct EntityJson {
     // JSON byte-identical for projects predating per-backend `default`.
     #[serde(skip_serializing_if = "Option::is_none")]
     storage: Option<EntityStorageJson>,
+    // `@internal`: stored but never exposed through the GraphQL API. Omitted
+    // while false so projects predating the directive keep the same JSON.
+    #[serde(skip_serializing_if = "is_false")]
+    internal: bool,
     properties: Vec<PropertyJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     derived_fields: Vec<DerivedFieldJson>,
@@ -152,6 +155,18 @@ struct EntityClickHouseOptionsJson {
     order_by: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ttl: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skipping_indexes: Option<Vec<EntityClickHouseSkippingIndexJson>>,
+}
+
+#[derive(Serialize, Debug)]
+struct EntityClickHouseSkippingIndexJson {
+    name: String,
+    expr: String,
+    #[serde(rename = "type")]
+    index_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    granularity: Option<u32>,
 }
 
 impl From<&entity_parsing::ClickHouseEntityStorage> for EntityClickHouseStorageJson {
@@ -161,8 +176,24 @@ impl From<&entity_parsing::ClickHouseEntityStorage> for EntityClickHouseStorageJ
             entity_parsing::ClickHouseEntityStorage::Options(options) => {
                 Self::Options(EntityClickHouseOptionsJson {
                     partition_by: options.partition_by.clone(),
-                    order_by: options.order_by.clone(),
+                    order_by: options.order_by.as_ref().map(|columns| {
+                        columns
+                            .iter()
+                            .map(|column| column.field_name().to_string())
+                            .collect()
+                    }),
                     ttl: options.ttl.clone(),
+                    skipping_indexes: options.skipping_indexes.as_ref().map(|indices| {
+                        indices
+                            .iter()
+                            .map(|index| EntityClickHouseSkippingIndexJson {
+                                name: index.name.clone(),
+                                expr: index.expr.clone(),
+                                index_type: index.index_type.clone(),
+                                granularity: index.granularity,
+                            })
+                            .collect()
+                    }),
                 })
             }
         }
@@ -394,12 +425,6 @@ struct SvmEventItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     discriminator: Option<String>,
     discriminator_byte_len: u8,
-    /// Selected parent-transaction fields (camelCase), incl. `tokenBalances`.
-    transaction_fields: Vec<String>,
-    /// Selected block fields (camelCase), excluding the always-included `slot`.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    block_fields: Vec<String>,
-    include_logs: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     account_filters: Vec<Vec<SvmAccountFilterJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -603,11 +628,6 @@ impl SystemConfig {
                                     let svm_item = SvmEventItem {
                                         discriminator: svm_kind.discriminator.clone(),
                                         discriminator_byte_len: svm_kind.discriminator_byte_len,
-                                        transaction_fields: svm_kind
-                                            .selected_transaction_fields
-                                            .clone(),
-                                        block_fields: svm_kind.selected_block_fields.clone(),
-                                        include_logs: svm_kind.include_logs,
                                         account_filters: svm_kind
                                             .account_filters
                                             .iter()
@@ -821,11 +841,8 @@ impl SystemConfig {
                         fields
                             .iter()
                             .map(|f| CompositeIndexJson {
-                                field_name: f.name.clone(),
-                                direction: match f.direction {
-                                    IndexFieldDirection::Asc => "Asc".to_string(),
-                                    IndexFieldDirection::Desc => "Desc".to_string(),
-                                },
+                                field_name: f.column.field_name().to_string(),
+                                direction: f.direction.as_pascal_str().to_string(),
                             })
                             .collect()
                     })
@@ -861,12 +878,13 @@ impl SystemConfig {
 
                 Ok(EntityJson {
                     name: entity.name.clone(),
-                    cross_chain: Some(system_config::entity_is_cross_chain(
-                        entity,
-                        cfg.default_cross_chain,
-                    ))
-                    .filter(|cross_chain| *cross_chain != cfg.default_cross_chain),
+                    cross_chain: Some(entity.is_cross_chain(cfg.default_chain_scope)).filter(
+                        |cross_chain| {
+                            *cross_chain != cfg.default_chain_scope.is_cross_chain_by_default()
+                        },
+                    ),
                     storage,
+                    internal: entity.internal,
                     properties,
                     derived_fields,
                     composite_indexes,
@@ -886,7 +904,7 @@ impl SystemConfig {
             save_full_history: cfg.save_full_history,
             raw_events: cfg.enable_raw_events,
             chain_id_mode: cfg.chain_id_mode,
-            default_cross_chain: cfg.default_cross_chain,
+            default_cross_chain: cfg.default_chain_scope.is_cross_chain_by_default(),
             storage: (&cfg.storage).into(),
             evm,
             fuel,

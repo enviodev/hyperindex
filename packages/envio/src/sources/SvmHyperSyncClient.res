@@ -27,14 +27,15 @@ module Registration = {
     // Earliest slot this registration accepts; `None` is unrestricted.
     startBlock: option<int>,
     discriminator?: string,
-    discriminatorByteLen: int,
     isInner?: bool,
-    includeLogs: bool,
     // DNF: outer array is OR of AND-groups.
     accountFilters: array<array<accountFilter>>,
     // camelCase Internal.svmTransactionField / svmBlockField names.
     transactionFields: array<string>,
     blockFields: array<string>,
+    accountActivityFields: array<string>,
+    logFields: array<string>,
+    instructionFields: array<string>,
     // Borsh schema pieces; empty accounts + absent argsJson = no schema.
     accounts: array<string>,
     argsJson?: string,
@@ -55,9 +56,7 @@ module Registration = {
         isWildcard: reg.isWildcard,
         startBlock: reg.startBlock,
         discriminator: ?eventConfig.discriminator,
-        discriminatorByteLen: eventConfig.discriminatorByteLen,
         isInner: ?eventConfig.isInner,
-        includeLogs: eventConfig.includeLogs,
         accountFilters: eventConfig.accountFilters->Array.map(group =>
           group->Array.map(
             (filter): accountFilter => {
@@ -68,6 +67,9 @@ module Registration = {
         ),
         transactionFields: reg.fieldSelection.transactionFields->Utils.Set.toArray,
         blockFields: reg.fieldSelection.blockFields->Utils.Set.toArray,
+        accountActivityFields: reg.fieldSelection.accountActivityFields->Utils.Set.toArray,
+        logFields: reg.fieldSelection.logFields->Utils.Set.toArray,
+        instructionFields: reg.fieldSelection.instructionFields->Utils.Set.toArray,
         accounts: eventConfig.accounts,
         argsJson: ?switch eventConfig.args {
         | JSON.Null => None
@@ -142,16 +144,7 @@ module ResponseTypes = {
   type block = {
     slot: int,
     blockhash: string,
-    blockTime?: int,
-  }
-
-  /// Borsh-decoded view attached by the Rust client. `argsJson`/`accountsJson`
-  /// are stringified to side-step napi-rs's lack of native JSON passthrough.
-  type decodedInstruction = {
-    name: string,
-    argsJson: string,
-    accountsJson: string,
-    extraAccounts: array<string>,
+    blockTime: Null.t<int>,
   }
 
   type instructionCall = {
@@ -162,16 +155,16 @@ module ResponseTypes = {
     executingAccount: string,
     accountArguments: array<string>,
     data: string,
-    d1?: string,
-    d2?: string,
-    d4?: string,
-    d8?: string,
+    d1: Null.t<string>,
+    d2: Null.t<string>,
+    d4: Null.t<string>,
+    d8: Null.t<string>,
     isInner: bool,
     /** Success of the parent transaction, not of this invocation. */
     txSuccess: bool,
     /** Per-invocation failure reason (e.g. "custom program error: 0x1"). */
-    error?: string,
-    computeUnitsConsumed?: bigint,
+    error: Null.t<string>,
+    computeUnitsConsumed: Null.t<bigint>,
   }
 
   type queryResponseData = {
@@ -204,9 +197,11 @@ module EventItems = {
     clientFilteredContracts: option<array<string>>,
   }
 
+  // NAPI encodes Rust `None` as `null`, never `undefined`, so an unselected
+  // key arrives as an explicit null rather than a missing field.
   type log = {
-    kind: string,
-    message: string,
+    kind: Null.t<string>,
+    message: Null.t<string>,
   }
 
   // One routed instruction; `block` and `transaction` are materialised from
@@ -215,18 +210,17 @@ module EventItems = {
     onEventRegistrationIndex: int,
     slot: int,
     transactionIndex: int,
-    instructionAddress: array<int>,
+    path: array<int>,
     programId: string,
     accounts: array<string>,
     data: string,
-    d1?: string,
-    d2?: string,
-    d4?: string,
-    d8?: string,
     isInner: bool,
-    decoded?: ResponseTypes.decodedInstruction,
-    // Present only when the routed registration opted in via `includeLogs`.
-    logs?: array<log>,
+    // Borsh-decoded args as a JSON object literal, `{}` when the routed
+    // registration reads no args. An instruction the schema rejects is dropped
+    // in Rust, so a selected `args` is always decoded.
+    argsJson: string,
+    // Non-null only when the routed registration selected `fields.log`.
+    logs: Null.t<array<log>>,
   }
 
   type response = {

@@ -1,6 +1,9 @@
 use super::{
     chain_helpers::get_max_reorg_depth_from_id,
-    entity_parsing::{ClickHouseEntityStorage, Entity, GqlScalar, GraphQLEnum, Schema},
+    entity_parsing::{
+        schema_source_label, ClickHouseEntityStorage, DefaultChainScope, Entity, EntityColumn,
+        GqlScalar, GraphQLEnum, Schema, MAX_PG_IDENTIFIER_LENGTH, RESERVED_CHAIN_ID_FIELD_NAMES,
+    },
     env_interpolation::interpolate_config_variables,
     human_config::{
         self,
@@ -9,12 +12,12 @@ use super::{
             RpcSelection,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
-        HumanConfig,
+        svm, HumanConfig,
     },
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
 };
-use crate::utils::dotenv::{self, EnvMap};
+use crate::utils::project_env::ProjectEnv;
 use crate::{
     config_parsing::human_config::evm::RpcTransactionField,
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
@@ -33,7 +36,7 @@ use regex::Regex;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env, fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use hypersync_client_solana::decode::{
@@ -58,52 +61,6 @@ pub enum Ecosystem {
     Svm,
 }
 
-// Allows to get an env var with a lazy loading of .env file
-#[derive(Debug)]
-pub struct EnvState {
-    // Lazy loading of .env file
-    maybe_dotenv: Option<EnvMap>,
-    project_root: PathBuf,
-}
-
-impl EnvState {
-    pub fn new(project_root: &Path) -> Self {
-        EnvState {
-            maybe_dotenv: None,
-            project_root: PathBuf::from(project_root),
-        }
-    }
-
-    pub fn var(&mut self, name: &str) -> Option<String> {
-        match std::env::var(name) {
-            Ok(val) => Some(val),
-            Err(_) => {
-                let result = match &self.maybe_dotenv {
-                    Some(env_map) => env_map.var(name),
-                    None => match dotenv::from_path(self.project_root.join(".env")) {
-                        Ok(env_map) => {
-                            self.maybe_dotenv = Some(env_map.clone());
-                            env_map.var(name)
-                        }
-                        Err(err) => {
-                            match err {
-                                dotenv::Error::Io(_, _) => (),
-                                _ => println!(
-                                    "Warning: Failed loading .env file with unexpected error: \
-                                     {err}"
-                                ),
-                            };
-                            self.maybe_dotenv = Some(EnvMap::new());
-                            Err(err)
-                        }
-                    },
-                };
-                result.ok()
-            }
-        }
-    }
-}
-
 #[derive(Debug)]
 struct ResolvedConfigFile {
     path: PathBuf,
@@ -117,21 +74,28 @@ trait ConfigSource {
     fn project_paths(&self) -> &ParsedProjectPaths;
     fn is_rescript(&self) -> bool;
     fn env_var(&mut self, name: &str) -> Option<String>;
-    fn load_schema(&self, configured_path: &Option<String>) -> Result<Schema>;
+    /// `default_scope` reaches the parser because directive column references
+    /// resolve as the schema is built, and whether an entity has an appended
+    /// chain-id column to resolve against depends on it.
+    fn load_schema(
+        &self,
+        configured_path: &Option<String>,
+        default_scope: DefaultChainScope,
+    ) -> Result<Schema>;
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
     fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
 }
 
 struct FilesystemConfigSource<'a> {
     project_paths: &'a ParsedProjectPaths,
-    env: EnvState,
+    env: ProjectEnv,
 }
 
 impl<'a> FilesystemConfigSource<'a> {
     fn new(project_paths: &'a ParsedProjectPaths) -> Self {
         Self {
             project_paths,
-            env: EnvState::new(&project_paths.project_root),
+            env: ProjectEnv::new(&project_paths.project_root),
         }
     }
 }
@@ -152,8 +116,12 @@ impl ConfigSource for FilesystemConfigSource<'_> {
         self.env.var(name)
     }
 
-    fn load_schema(&self, configured_path: &Option<String>) -> Result<Schema> {
-        Schema::parse_from_file(self.project_paths, configured_path)
+    fn load_schema(
+        &self,
+        configured_path: &Option<String>,
+        default_scope: DefaultChainScope,
+    ) -> Result<Schema> {
+        Schema::parse_from_file(self.project_paths, configured_path, default_scope)
             .context("Parsing schema file for config")
     }
 
@@ -237,10 +205,19 @@ impl ConfigSource for MemoryConfigSource<'_> {
         self.env.get(name).cloned()
     }
 
-    fn load_schema(&self, _configured_path: &Option<String>) -> Result<Schema> {
-        match self.schema.map(str::trim) {
-            None | Some("") => Ok(Schema::empty()),
-            Some(schema) => Schema::from_string(schema),
+    fn load_schema(
+        &self,
+        configured_path: &Option<String>,
+        default_scope: DefaultChainScope,
+    ) -> Result<Schema> {
+        // Parsed as given: schema errors carry the line and column they were
+        // raised at, and trimming first would report them against text the
+        // caller never wrote.
+        match self.schema {
+            Some(schema) if !schema.trim().is_empty() => {
+                Schema::from_string_at(schema, default_scope, &schema_source_label(configured_path))
+            }
+            _ => Ok(Schema::empty()),
         }
     }
 
@@ -346,9 +323,9 @@ pub struct SystemConfig {
     pub contracts: ContractMap,
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
-    // False when `disable_default_cross_chain: true` — entities and effect
-    // caches are then per-chain unless they opt back in.
-    pub default_cross_chain: bool,
+    // `PerChain` when `disable_default_cross_chain: true` — entities and
+    // effect caches are then per-chain unless they opt back in.
+    pub default_chain_scope: DefaultChainScope,
     pub schema: Schema,
     pub field_selection: FieldSelection,
     pub enable_raw_events: bool,
@@ -428,8 +405,7 @@ const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
 pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
+    let entities = schema.entities_by_name();
 
     // Entities without @storage fall back to the backends marked `default`
     // in config.yaml. When no backend is a default, such entities would end
@@ -459,78 +435,6 @@ pub fn validate_entity_storage(storage: &Storage, schema: &Schema) -> anyhow::Re
                      entities listed above. Example:\n      type {example} @storage(postgres: \
                      true) {{ ... }}"
             ));
-        }
-    }
-
-    // ClickHouse stores a BigInt whose precision is unset (or above its Decimal
-    // ceiling) as a String, which sorts lexicographically — wrong for anything
-    // in the sorting key. See the BigInt branch of `getClickHouseFieldType` in
-    // ClickHouse.res.
-    //
-    // Which column that applies to depends on `@storage(clickhouse: {orderBy})`:
-    // without it the sorting key is `id`, with it the listed fields replace `id`
-    // (see `makeCreateHistoryTableQuery`). Unlike the parse-time
-    // `validate_clickhouse_order_by_fields`, the schema is available here, so a
-    // relation in the sorting key can be resolved to the id it actually stores.
-    let bigint_stored_as_string =
-        |precision: Option<u32>| !precision.is_some_and(|p| p <= CLICKHOUSE_DECIMAL_MAX_PRECISION);
-    for entity in &entities {
-        let uses_clickhouse = if entity.has_storage_directive() {
-            entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
-        } else {
-            clickhouse_default
-        };
-        if !uses_clickhouse {
-            continue;
-        }
-
-        let order_by = match entity.clickhouse.as_ref() {
-            Some(ClickHouseEntityStorage::Options(options)) => options.order_by.as_deref(),
-            _ => None,
-        };
-
-        match order_by {
-            Some(order_by_fields) => {
-                for field_name in order_by_fields {
-                    // Existence, nullability and array-ness are already rejected
-                    // at parse time; a miss here just means nothing to resolve.
-                    let Some(field) = entity.get_field(field_name) else {
-                        continue;
-                    };
-                    let stored =
-                        schema.resolve_stored_scalar(&field.field_type.get_underlying_scalar())?;
-                    if let GqlScalar::BigInt(precision) = stored {
-                        if bigint_stored_as_string(precision) {
-                            return Err(anyhow!(
-                                "Invalid storage for `{}`. `clickhouse.orderBy` sorts by \
-                                 `{field_name}`, which stores a BigInt that ClickHouse keeps as a \
-                                 String (sorted lexicographically, not numerically) unless a \
-                                 precision is set. Add `@config(precision: N)` with N <= \
-                                 {CLICKHOUSE_DECIMAL_MAX_PRECISION} to the BigInt it stores so it \
-                                 sorts as a numeric Decimal.",
-                                entity.name
-                            ));
-                        }
-                    }
-                }
-            }
-            // No custom orderBy, so `id` is the sorting key.
-            None => {
-                if let Ok(GqlScalar::BigInt(precision)) = entity.get_id_scalar() {
-                    if bigint_stored_as_string(precision) {
-                        return Err(anyhow!(
-                            "Invalid storage for `{}`. Its `id` is a BigInt, which ClickHouse \
-                             stores as a String (sorted lexicographically, not numerically) \
-                             unless a precision is set. Since `id` is ClickHouse's sorting key, \
-                             add `@config(precision: N)` with N <= \
-                             {CLICKHOUSE_DECIMAL_MAX_PRECISION} so the id stores as a numeric \
-                             Decimal, or set `@storage(clickhouse: {{orderBy: [...]}})` to sort \
-                             by other fields.",
-                            entity.name
-                        ));
-                    }
-                }
-            }
         }
     }
 
@@ -582,11 +486,8 @@ fn is_stored_in_postgres(entity: &Entity, storage: &Storage) -> bool {
 /// it here rather than letting table creation (or the end-of-backfill index
 /// pass) fail on an entity it can't resolve.
 pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-
     let mut invalid: Vec<String> = Vec::new();
-    for entity in entities {
+    for entity in schema.entities_by_name() {
         if !is_stored_in_postgres(entity, storage) {
             continue;
         }
@@ -620,11 +521,6 @@ pub fn validate_relationship_storage(storage: &Storage, schema: &Schema) -> anyh
     ))
 }
 
-// Postgres truncates longer identifiers silently, which can collide two
-// distinct columns and breaks the Hasura custom_name mapping (it is keyed
-// by the untruncated name).
-const MAX_PG_IDENTIFIER_LENGTH: usize = 63;
-
 /// Resolved column names can break table creation in ways schema.graphql
 /// validation can't see: distinct fields may collide on the same column
 /// (`tokenId` and an entity reference `token` both become `token_id`), shadow
@@ -639,9 +535,6 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
         }
     }
 
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-
     // The identifier length limit is Postgres-specific (ClickHouse has no
     // comparable limit), so only names that become Postgres columns are
     // checked against it.
@@ -651,6 +544,7 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     let mut reserved: Vec<String> = vec![];
     let mut too_long: Vec<String> = vec![];
     let mut collisions: Vec<String> = vec![];
+    let entities = schema.entities_by_name();
     for format in &formats {
         for entity in &entities {
             let mut field_names_by_column: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -751,34 +645,113 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     Ok(())
 }
 
-/// The chain-id column appended to per-chain entity tables, spelled for the
-/// backend's configured `column_name_format`.
-pub fn chain_id_column_name(format: human_config::ColumnNameFormat) -> &'static str {
-    match format {
-        human_config::ColumnNameFormat::Original => "chainId",
-        human_config::ColumnNameFormat::SnakeCase => "chain_id",
+/// What to add to a field so ClickHouse stores it as a numeric Decimal. A
+/// BigDecimal needs both parameters — `@config(precision:)` alone is rejected
+/// by the field parser, so naming only it would send the user in a circle.
+fn precision_fix(stored: &GqlScalar) -> String {
+    match stored {
+        GqlScalar::BigDecimal(_) => format!(
+            "Add `@config(precision: N, scale: M)` with M <= N <= \
+             {CLICKHOUSE_DECIMAL_MAX_PRECISION}"
+        ),
+        _ => format!("Add `@config(precision: N)` with N <= {CLICKHOUSE_DECIMAL_MAX_PRECISION}"),
     }
 }
 
-/// Every spelling `chain_id_column_name` can produce, plus the `chainId` name
-/// the appended field keeps on the API surface.
-pub const RESERVED_CHAIN_ID_FIELD_NAMES: [&str; 2] = ["chainId", "chain_id"];
+/// ClickHouse stores a BigInt or BigDecimal whose precision is unset (or
+/// outside what its `Decimal` can express) as a String, which sorts
+/// lexicographically — wrong for anything in the sorting key. See the BigInt and
+/// BigDecimal branches of `getClickHouseFieldType` in ClickHouse.res.
+///
+/// Which column that applies to depends on `@storage(clickhouse: {orderBy})`:
+/// without it the sorting key is `id`, with it the listed columns replace `id`
+/// (see `makeCreateHistoryTableQuery`). Runs on the resolved schema, so a
+/// relation in the sorting key resolves to the id it actually stores.
+pub fn validate_clickhouse_sorting_key_scalars(
+    storage: &Storage,
+    schema: &Schema,
+) -> anyhow::Result<()> {
+    let clickhouse_default = storage.clickhouse.is_some_and(|b| b.entity_default);
+    // Mirrors getClickHouseFieldType: only a Decimal that fits keeps numeric
+    // ordering, and a BigDecimal's scale has to fit inside its precision.
+    let stored_as_string = |scalar: &GqlScalar| match scalar {
+        GqlScalar::BigInt(precision) => {
+            !precision.is_some_and(|p| p <= CLICKHOUSE_DECIMAL_MAX_PRECISION)
+        }
+        GqlScalar::BigDecimal(config) => !config.is_some_and(|(precision, scale)| {
+            precision <= CLICKHOUSE_DECIMAL_MAX_PRECISION && scale <= precision
+        }),
+        _ => false,
+    };
 
-/// Whether an entity's rows are shared across chains. With the default
-/// cross-chain mode every entity is; otherwise only those carrying
-/// `@crossChain`.
-pub fn entity_is_cross_chain(entity: &Entity, default_cross_chain: bool) -> bool {
-    default_cross_chain || entity.cross_chain
+    for entity in schema.entities_by_name() {
+        if !entity.uses_clickhouse(clickhouse_default) {
+            continue;
+        }
+
+        let order_by = match entity.clickhouse.as_ref() {
+            Some(ClickHouseEntityStorage::Options(options)) => options.order_by.as_deref(),
+            _ => None,
+        };
+
+        match order_by {
+            Some(order_by) => {
+                for column in order_by {
+                    // The appended chain id is an integer column, so only a
+                    // declared field can store a BigInt.
+                    let EntityColumn::Declared(field_name) = column else {
+                        continue;
+                    };
+                    // A resolved entity cannot name a column its table lacks —
+                    // the parser rejects that with the schema position in hand.
+                    let Some(field) = entity.get_field(field_name) else {
+                        continue;
+                    };
+                    let stored =
+                        schema.resolve_stored_scalar(&field.field_type.get_underlying_scalar())?;
+                    if stored_as_string(&stored) {
+                        return Err(anyhow!(
+                            "Invalid storage for `{}`. `clickhouse.orderBy` sorts by \
+                             `{field_name}`, which stores a {stored} that ClickHouse keeps as a \
+                             String (sorted lexicographically, not numerically) unless a \
+                             precision is set. {} to the {stored} it stores so it sorts as a \
+                             numeric Decimal.",
+                            entity.name,
+                            precision_fix(&stored)
+                        ));
+                    }
+                }
+            }
+            None => {
+                if let Ok(id_scalar @ GqlScalar::BigInt(_)) = entity.get_id_scalar() {
+                    if stored_as_string(&id_scalar) {
+                        return Err(anyhow!(
+                            "Invalid storage for `{}`. Its `id` is a BigInt, which ClickHouse \
+                             stores as a String (sorted lexicographically, not numerically) \
+                             unless a precision is set. Since `id` is ClickHouse's sorting key, \
+                             add `@config(precision: N)` with N <= \
+                             {CLICKHOUSE_DECIMAL_MAX_PRECISION} so the id stores as a numeric \
+                             Decimal, or set `@storage(clickhouse: {{orderBy: [...]}})` to sort \
+                             by other fields.",
+                            entity.name
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// `@crossChain` only means something when entities are per-chain by default.
 /// Left silently accepted it would read as "this entity is special" while
 /// changing nothing, so reject it instead of ignoring it.
 pub fn validate_cross_chain_directives(
-    default_cross_chain: bool,
+    default_scope: DefaultChainScope,
     schema: &Schema,
 ) -> anyhow::Result<()> {
-    if !default_cross_chain {
+    if default_scope == DefaultChainScope::PerChain {
         return Ok(());
     }
     let mut annotated: Vec<&str> = schema
@@ -807,20 +780,15 @@ pub fn validate_cross_chain_directives(
 /// the references alone covers both.
 pub fn validate_cross_chain_relationships(
     schema: &Schema,
-    default_cross_chain: bool,
+    default_scope: DefaultChainScope,
 ) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-
     let mut invalid: Vec<String> = vec![];
-    for entity in &entities {
-        if !entity_is_cross_chain(entity, default_cross_chain) {
+    for entity in schema.entities_by_name() {
+        if !entity.is_cross_chain(default_scope) {
             continue;
         }
         for (field, related) in entity.get_related_entities(schema)? {
-            if field.get_derived_from_field().is_some()
-                || entity_is_cross_chain(related, default_cross_chain)
-            {
+            if field.get_derived_from_field().is_some() || related.is_cross_chain(default_scope) {
                 continue;
             }
             invalid.push(format!(
@@ -843,6 +811,41 @@ pub fn validate_cross_chain_relationships(
     ))
 }
 
+/// An @internal entity has no GraphQL surface, so a relationship from an
+/// exposed entity to it cannot be served: an object reference would break
+/// Hasura relationship creation against the untracked table, and a
+/// @derivedFrom field would silently vanish from the API. Reject both at
+/// codegen. References from @internal entities are fine — nothing is exposed
+/// on their side.
+pub fn validate_internal_relationships(schema: &Schema) -> anyhow::Result<()> {
+    let mut invalid: Vec<String> = vec![];
+    for entity in schema.entities_by_name() {
+        if entity.internal {
+            continue;
+        }
+        for (field, related) in entity.get_related_entities(schema)? {
+            if related.internal {
+                invalid.push(format!(
+                    "  - `{}`.`{}` references `{}`, which is @internal.",
+                    entity.name, field.name, related.name
+                ));
+            }
+        }
+    }
+
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "Schema validation failed:\n\nEntities exposed through the GraphQL API reference \
+         @internal entities:\n{}\n\nAn @internal entity is not exposed through the GraphQL API, \
+         so the relationship cannot be served. Fixes:\n  - Mark the referencing entities \
+         @internal too, or\n  - Replace the reference with a plain id field (e.g. `secretId: \
+         String!`), or\n  - Remove @internal from the referenced entities.",
+        invalid.join("\n")
+    ))
+}
+
 /// Per-chain entities get a chain-id field appended, so no schema field may
 /// claim its name. Both spellings are reserved whatever the backends and their
 /// `column_name_format` are, so the name a user may give a field never depends
@@ -850,13 +853,10 @@ pub fn validate_cross_chain_relationships(
 /// appended and keep both names free.
 pub fn validate_chain_id_field_names(
     schema: &Schema,
-    default_cross_chain: bool,
+    default_scope: DefaultChainScope,
 ) -> anyhow::Result<()> {
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-
-    for entity in &entities {
-        if entity_is_cross_chain(entity, default_cross_chain) {
+    for entity in schema.entities_by_name() {
+        if entity.is_cross_chain(default_scope) {
             continue;
         }
         for gql_field in entity.get_fields() {
@@ -887,22 +887,9 @@ pub fn validate_clickhouse_nullable_arrays(
         return Ok(());
     };
 
-    let mut entities: Vec<&Entity> = schema.entities.values().collect();
-    entities.sort_by(|a, b| a.name.cmp(&b.name));
-
     let mut offending: Vec<String> = vec![];
-    for entity in &entities {
-        // A storage directive's omitted backend resolves to false at runtime
-        // (Config.res `Option.getOr(false)`), so a directive routes to
-        // ClickHouse only when it enables the backend (boolean `true` or the
-        // table options object form). Without a directive the entity follows
-        // the backend's `default`.
-        let uses_clickhouse = if entity.has_storage_directive() {
-            entity.clickhouse.as_ref().is_some_and(|c| c.is_enabled())
-        } else {
-            clickhouse.entity_default
-        };
-        if !uses_clickhouse {
+    for entity in schema.entities_by_name() {
+        if !entity.uses_clickhouse(clickhouse.entity_default) {
             continue;
         }
         for field in entity.get_fields() {
@@ -1041,15 +1028,18 @@ impl SystemConfig {
         let mut contracts: ContractMap = HashMap::new();
 
         let base_config = human_config.get_base_config();
-        let default_cross_chain = !base_config.disable_default_cross_chain.unwrap_or(false);
+        let default_scope = base_config.default_chain_scope();
         let storage = Storage::resolve(base_config.storage.as_ref())?;
         validate_entity_storage(&storage, &schema)?;
         validate_relationship_storage(&storage, &schema)?;
-        validate_db_column_names(&storage, &schema)?;
-        validate_cross_chain_directives(default_cross_chain, &schema)?;
-        validate_chain_id_field_names(&schema, default_cross_chain)?;
-        validate_cross_chain_relationships(&schema, default_cross_chain)?;
+        validate_cross_chain_directives(default_scope, &schema)?;
+        validate_chain_id_field_names(&schema, default_scope)?;
+        validate_cross_chain_relationships(&schema, default_scope)?;
+        validate_internal_relationships(&schema)?;
         validate_clickhouse_nullable_arrays(&storage, &schema)?;
+
+        validate_db_column_names(&storage, &schema)?;
+        validate_clickhouse_sorting_key_scalars(&storage, &schema)?;
 
         let final_project_paths = source.project_paths().clone();
         let is_rescript = source.is_rescript();
@@ -1211,7 +1201,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
                     save_full_history: evm_config.save_full_history.unwrap_or(false),
-                    default_cross_chain,
+                    default_chain_scope: default_scope,
                     schema,
                     field_selection,
                     enable_raw_events: evm_config.raw_events.unwrap_or(false),
@@ -1361,7 +1351,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: false,
                     save_full_history: false,
-                    default_cross_chain,
+                    default_chain_scope: default_scope,
                     schema,
                     field_selection: FieldSelection::fuel(),
                     enable_raw_events: fuel_config.raw_events.unwrap_or(false),
@@ -1375,12 +1365,24 @@ impl SystemConfig {
             HumanConfig::Svm(ref svm_config) => {
                 validation::validate_deserialized_svm_config_yaml(svm_config)?;
                 for network in &svm_config.chains {
+                    let chain_id = network.id.to_u64();
+                    let hypersync_endpoint_url = network
+                        .experimental
+                        .as_ref()
+                        .map(|e| match &e.hypersync_config {
+                            Some(hypersync_config) => Ok(hypersync_config.url.clone()),
+                            None => svm::default_hypersync_endpoint(chain_id).ok_or_else(|| {
+                                anyhow!(
+                                    "Chain {chain_id} has no default HyperSync endpoint. Set \
+                                     `experimental.hypersync_config.url` explicitly, or use the \
+                                     `solana` / `solana-devnet` chain id."
+                                )
+                            }),
+                        })
+                        .transpose()?;
                     let sync_source = DataSource::Svm {
                         rpc: network.rpc.clone(),
-                        hypersync_endpoint_url: network
-                            .experimental
-                            .as_ref()
-                            .map(|e| e.hypersync_config.url.clone()),
+                        hypersync_endpoint_url,
                     };
 
                     let programs = network
@@ -1414,17 +1416,9 @@ impl SystemConfig {
                                     .with_context(|| {
                                         format!("Layout for instruction '{}'", instr.name)
                                     })?;
-                                let fs = instr.field_selection.as_ref();
-                                let selected_transaction_fields =
-                                    resolve_svm_transaction_fields(fs);
-                                let selected_block_fields = resolve_svm_block_fields(fs);
-                                let include_logs = fs.and_then(|f| f.log_fields).unwrap_or(false);
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
                                     discriminator_byte_len: byte_len,
-                                    selected_transaction_fields,
-                                    selected_block_fields,
-                                    include_logs,
                                     account_filters: instr
                                         .account_filters
                                         .as_ref()
@@ -1473,7 +1467,7 @@ impl SystemConfig {
                     }
 
                     let chain = Chain {
-                        id: 0, //network.id,
+                        id: chain_id,
                         skip: network.skip.unwrap_or(false),
                         start_block: network.start_block,
                         end_block: network.end_block,
@@ -1507,7 +1501,7 @@ impl SystemConfig {
                     contracts,
                     rollback_on_reorg: uses_hypersync,
                     save_full_history: false,
-                    default_cross_chain,
+                    default_chain_scope: default_scope,
                     schema,
                     field_selection: FieldSelection::svm(),
                     enable_raw_events: false,
@@ -1603,7 +1597,9 @@ impl SystemConfig {
             }
         };
 
-        let schema = source.load_schema(&human_config.get_base_config().schema)?;
+        let base_config = human_config.get_base_config();
+        let default_scope = base_config.default_chain_scope();
+        let schema = source.load_schema(&base_config.schema, default_scope)?;
         Self::from_human_config_with_source(human_config, schema, source)
     }
 }
@@ -2198,8 +2194,11 @@ impl Contract {
         events: Vec<Event>,
         abi: Abi,
     ) -> Result<Self> {
+        // Every ecosystem builds its contracts through here, unlike
+        // `validate_deserialized_config_yaml`, which only sees EVM configs.
+        validate_names_valid_rescript(std::slice::from_ref(&name), "contract".to_string())?;
         validate_names_valid_rescript(
-            &events.iter().map(|e| e.name.clone()).collect(),
+            &events.iter().map(|e| e.name.clone()).collect::<Vec<_>>(),
             "event".to_string(),
         )?;
 
@@ -2305,45 +2304,6 @@ pub struct SvmAccountFilter {
     pub values: Vec<String>,
 }
 
-/// Resolve an instruction's field selection into the selected transaction-field
-/// names (camelCase). The listed `transaction_fields` are deduplicated in
-/// declared order, then `token_balance_fields` appends `tokenBalances`.
-fn resolve_svm_transaction_fields(
-    fs: Option<&human_config::svm::SvmFieldSelection>,
-) -> Vec<String> {
-    let mut selected: Vec<String> = Vec::new();
-    let Some(fs) = fs else {
-        return selected;
-    };
-    for field in fs.transaction_fields.iter().flatten() {
-        let name = field.to_string();
-        if !selected.contains(&name) {
-            selected.push(name);
-        }
-    }
-    if fs.token_balance_fields == Some(true) {
-        selected.push("tokenBalances".to_string());
-    }
-    selected
-}
-
-/// Resolve an instruction's selected block fields (camelCase), in declared
-/// order. `slot`/`time`/`hash` are always included by the runtime, so they're
-/// not returned here (they aren't even selectable — see `SvmBlockField`).
-fn resolve_svm_block_fields(fs: Option<&human_config::svm::SvmFieldSelection>) -> Vec<String> {
-    let mut selected: Vec<String> = Vec::new();
-    let Some(fs) = fs else {
-        return selected;
-    };
-    for field in fs.block_fields.iter().flatten() {
-        let name = field.to_string();
-        if !selected.contains(&name) {
-            selected.push(name);
-        }
-    }
-    selected
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
@@ -2353,13 +2313,6 @@ pub struct SvmEventKind {
     /// router precomputes a per-program ordering on this so dispatch tries
     /// longest first.
     pub discriminator_byte_len: u8,
-    /// Selected parent-transaction fields (camelCase names matching the public
-    /// `svmTransaction` shape, incl. `tokenBalances`). Empty = no transaction.
-    pub selected_transaction_fields: Vec<String>,
-    /// Selected block fields (camelCase, matching `instruction.block`), excluding
-    /// the always-included `slot`. Empty = only `slot`.
-    pub selected_block_fields: Vec<String>,
-    pub include_logs: bool,
     /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
     /// AND across positions. An empty outer list means "no account filter".
     pub account_filters: Vec<Vec<SvmAccountFilter>>,
@@ -3010,6 +2963,43 @@ mod test {
     }
 
     #[test]
+    fn svm_chain_ids_resolve_labels_and_support_multiple_chains() {
+        use crate::config_parsing::human_config::svm::{
+            SOLANA_DEVNET_CHAIN_ID, SOLANA_MAINNET_CHAIN_ID,
+        };
+
+        let schema = "type Foo @entity { id: ID! }";
+        let program_block = |name: &str| {
+            format!(
+                r#"    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: {name}
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: UpdateMetadataAccountV2
+              discriminator: "0x0f"
+"#
+            )
+        };
+        // Labels resolve to the HOS-1682 ids, and two SVM chains coexist in
+        // one config: the old hardcoded 0 made the second insert collide.
+        let yaml = format!(
+            "\nname: svm-chain-id\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+             0\n{}  - id: solana-devnet\n    start_block: 0\n{}",
+            program_block("TokenMetadata"),
+            program_block("TokenMetadataDevnet"),
+        );
+        let config =
+            SystemConfig::parse_yaml(&yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
+                .expect("svm config");
+        let mut ids: Vec<_> = config.chains.keys().copied().collect();
+        ids.sort();
+        assert_eq!(ids, vec![SOLANA_MAINNET_CHAIN_ID, SOLANA_DEVNET_CHAIN_ID]);
+    }
+
+    #[test]
     fn in_memory_fuel_abi_matches_filesystem_public_config() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let project_paths =
@@ -3506,6 +3496,7 @@ chains:
                 postgres,
                 clickhouse: clickhouse.map(ClickHouseEntityStorage::Enabled),
                 cross_chain: false,
+                internal: false,
             }
         }
 
@@ -3636,11 +3627,95 @@ chains:
         }
     }
 
+    // --- validate_internal_relationships: no public -> @internal references ---
+
+    mod internal_relationship_validation {
+        use super::super::validate_internal_relationships;
+        use crate::config_parsing::entity_parsing::{DefaultChainScope, Schema};
+
+        #[test]
+        fn public_reference_to_internal_entity_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Trader {
+  id: ID!
+  secret: Secret!
+}
+type Secret @internal {
+  id: ID!
+}"#,
+                DefaultChainScope::CrossChain,
+            )
+            .unwrap();
+            let err = validate_internal_relationships(&schema)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("`Trader`.`secret` references `Secret`, which is @internal."),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn public_derived_from_internal_entity_rejected() {
+            let schema = Schema::from_string(
+                r#"
+type Trader {
+  id: ID!
+  orders: [Order!]! @derivedFrom(field: "trader")
+}
+type Order @internal {
+  id: ID!
+  trader: Trader!
+}"#,
+                DefaultChainScope::CrossChain,
+            )
+            .unwrap();
+            let err = validate_internal_relationships(&schema)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("`Trader`.`orders` references `Order`, which is @internal."),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn internal_references_are_allowed() {
+            let schema = Schema::from_string(
+                r#"
+type PublicUser {
+  id: ID!
+}
+type SecretA @internal {
+  id: ID!
+  user: PublicUser!
+  other: SecretB!
+}
+type SecretB @internal {
+  id: ID!
+  entries: [SecretA!]! @derivedFrom(field: "other")
+}"#,
+                DefaultChainScope::CrossChain,
+            )
+            .unwrap();
+            assert!(validate_internal_relationships(&schema).is_ok());
+        }
+    }
+
     // --- validate_db_column_names: snake_case column collision checks ---
 
     mod db_column_name_validation {
         use super::super::{validate_db_column_names, Storage};
-        use crate::config_parsing::{entity_parsing::Schema, human_config::ColumnNameFormat};
+        use crate::config_parsing::{
+            entity_parsing::{DefaultChainScope, Schema},
+            human_config::ColumnNameFormat,
+        };
+
+        // Cross-chain: these fixtures declare no chain column.
+        fn parse_schema(schema: &str) -> Schema {
+            Schema::from_string(schema, DefaultChainScope::CrossChain).unwrap()
+        }
 
         fn storage(column_name_format: ColumnNameFormat) -> Storage {
             Storage {
@@ -3654,15 +3729,14 @@ chains:
 
         #[test]
         fn snake_case_unique_columns_ok() {
-            let schema = Schema::from_string(
+            let schema = parse_schema(
                 r#"
 type Token {
   id: ID!
   tokenId: BigInt!
   transactionIndex: Int!
 }"#,
-            )
-            .unwrap();
+            );
             assert!(
                 validate_db_column_names(&storage(ColumnNameFormat::SnakeCase), &schema).is_ok()
             );
@@ -3674,14 +3748,13 @@ type Token {
         #[test]
         fn length_limit_not_applied_to_clickhouse_columns() {
             let long_field = "a".repeat(30) + "B" + &"b".repeat(29) + "Cc";
-            let schema = Schema::from_string(&format!(
+            let schema = parse_schema(&format!(
                 r#"
 type Token {{
   id: ID!
   {long_field}: BigInt!
 }}"#,
-            ))
-            .unwrap();
+            ));
             // 62 characters as written, 64 once snake_case inserts separators
             assert_eq!(long_field.len(), 62);
             let pg_original_ch_snake = Storage {
@@ -3704,7 +3777,7 @@ type Token {{
         // reference column is `token_id` but the scalar stays `tokenId`.
         #[test]
         fn graphql_naming_skips_the_check() {
-            let schema = Schema::from_string(
+            let schema = parse_schema(
                 r#"
 type Token {
   id: ID!
@@ -3715,8 +3788,7 @@ type Transfer {
   token: Token!
   tokenId: BigInt!
 }"#,
-            )
-            .unwrap();
+            );
             assert!(
                 validate_db_column_names(&storage(ColumnNameFormat::Original), &schema).is_ok()
             );
@@ -3728,7 +3800,10 @@ type Transfer {
 
     mod clickhouse_nullable_array_validation {
         use super::super::{validate_clickhouse_nullable_arrays, Storage, StorageBackend};
-        use crate::config_parsing::{entity_parsing::Schema, human_config::ColumnNameFormat};
+        use crate::config_parsing::{
+            entity_parsing::{DefaultChainScope, Schema},
+            human_config::ColumnNameFormat,
+        };
 
         fn backend(entity_default: bool) -> Option<StorageBackend> {
             Some(StorageBackend {
@@ -3752,6 +3827,7 @@ type Foo @storage(postgres: true, clickhouse: true) {
   id: ID!
   tags: [String!]!
 }"#,
+                DefaultChainScope::CrossChain,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, false), &schema).is_ok());
@@ -3767,6 +3843,7 @@ type Foo @storage(postgres: true) {
   id: ID!
   tags: [String!]
 }"#,
+                DefaultChainScope::CrossChain,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_ok());
@@ -3783,6 +3860,7 @@ type Foo {
   id: ID!
   tags: [String!]
 }"#,
+                DefaultChainScope::CrossChain,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_err());
@@ -3797,6 +3875,7 @@ type Foo {
   id: ID!
   tags: [String!]
 }"#,
+                DefaultChainScope::CrossChain,
             )
             .unwrap();
             let storage = Storage {
@@ -3833,12 +3912,6 @@ type Foo {
             assert!(matches!(token_metadata.abi, Abi::Svm(_)));
             assert_eq!(token_metadata.events.len(), 2);
 
-            let to_strings = |fields: &[&str]| {
-                fields
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<String>>()
-            };
             let kinds: Vec<_> = token_metadata
                 .events
                 .iter()
@@ -3847,8 +3920,6 @@ type Foo {
                         e.name.as_str(),
                         k.discriminator.as_deref(),
                         k.discriminator_byte_len,
-                        k.selected_transaction_fields.clone(),
-                        k.include_logs,
                         k.account_filters.len(),
                     ),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
@@ -3857,22 +3928,8 @@ type Foo {
             assert_eq!(
                 kinds,
                 vec![
-                    (
-                        "CreateMetadataAccountV3",
-                        Some("0x21"),
-                        1,
-                        to_strings(&[]),
-                        false,
-                        0
-                    ),
-                    (
-                        "UpdateMetadataAccountV2",
-                        Some("0x0f"),
-                        1,
-                        to_strings(&["signature"]),
-                        false,
-                        1
-                    ),
+                    ("CreateMetadataAccountV3", Some("0x21"), 1, 0),
+                    ("UpdateMetadataAccountV2", Some("0x0f"), 1, 1),
                 ],
             );
 

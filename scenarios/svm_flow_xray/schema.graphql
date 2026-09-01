@@ -6,8 +6,8 @@ type InstructionNode {
   id: ID! # "${txSig}:${addrPath}"
   txSig: String! @index
   slot: Int!
-  addrPath: String! # "0", "0.1", "0.1.2" (instructionAddress joined by ".")
-  depth: Int! # instructionAddress.length - 1
+  addrPath: String! # "0", "0.1", "0.1.2" (path joined by ".")
+  depth: Int! # path.length - 1
   parentPath: String # addrPath minus last segment; null at top level
   program: String! @index # config name: Jupiter/Kamino/Drift/Raydium/SplToken/System
   programId: String!

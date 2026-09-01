@@ -424,27 +424,39 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     const accountId = account[0]?.[0];
     expect(accountId).toBeTruthy();
 
+    // A per-chain entity's table is partitioned by chain id and only the
+    // configured chains get a partition, so chain 999 needs one before a row
+    // can be routed to it. The name is this test's own — the indexer's
+    // partitions are named elsewhere, and nothing here should depend on how.
     await runPgSql(
-      `INSERT INTO "ChainTransfer" ("id", "from", "value", "chain_id")
-       VALUES ('planted-other-chain', '${accountId}', 1, 999)
-       ON CONFLICT DO NOTHING`
+      `CREATE TABLE "ChainTransfer_planted"
+       PARTITION OF "ChainTransfer" FOR VALUES IN (999)`
     );
 
-    const result = await graphql.query<{
-      ChainAccount: Array<{
-        id: string;
-        transfers: Array<{ id: string; chainId: number }>;
-      }>;
-    }>(
-      `{ ChainAccount(where: {id: {_eq: "${accountId}"}}) { id transfers { id chainId } } }`
-    );
-    const transfers = result.data?.ChainAccount[0]?.transfers ?? [];
+    // Dropped before asserting, and in a `finally` so that a query throwing
+    // doesn't leave the partition behind either — the tests that follow count
+    // rows in this table, and a leftover partition would also collide with the
+    // `CREATE` above on the next run. Dropping it takes its row with it.
+    let transfers: Array<{ id: string; chainId: number }>;
+    try {
+      await runPgSql(
+        `INSERT INTO "ChainTransfer" ("id", "from", "value", "chain_id")
+         VALUES ('planted-other-chain', '${accountId}', 1, 999)
+         ON CONFLICT DO NOTHING`
+      );
 
-    // Removed before asserting so a failure doesn't leave the row for the
-    // tests that follow.
-    await runPgSql(
-      `DELETE FROM "ChainTransfer" WHERE "id" = 'planted-other-chain'`
-    );
+      const result = await graphql.query<{
+        ChainAccount: Array<{
+          id: string;
+          transfers: Array<{ id: string; chainId: number }>;
+        }>;
+      }>(
+        `{ ChainAccount(where: {id: {_eq: "${accountId}"}}) { id transfers { id chainId } } }`
+      );
+      transfers = result.data?.ChainAccount[0]?.transfers ?? [];
+    } finally {
+      await runPgSql(`DROP TABLE "ChainTransfer_planted"`);
+    }
 
     expect(transfers.length).toBeGreaterThan(0);
     expect({
@@ -520,27 +532,49 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
     });
   });
 
+  it("ClickHouse history table has the schema-declared skipping indexes", async () => {
+    // Transfer declares two bloom-filter skipping indexes via
+    // @storage(clickhouse: {skippingIndexes: [...]}). An omitted granularity falls
+    // back to ClickHouse's default of 1.
+    const result = await queryClickHouse<
+      ClickHouseResult<{ name: string; type_full: string; granularity: number }>
+    >(
+      `SELECT name, type_full, toUInt32(granularity) as granularity
+       FROM system.data_skipping_indices
+       WHERE database = '${CH_DATABASE}' AND table = 'envio_history_Transfer'
+       ORDER BY name
+       FORMAT JSON`
+    );
+
+    expect(result.data).toEqual([
+      { name: "idx_from", type_full: "bloom_filter(0.01)", granularity: 4 },
+      { name: "idx_to", type_full: "bloom_filter(0.01)", granularity: 1 },
+    ]);
+  });
+
   // --- Per-entity @storage routing ---
   //
   // The e2e_test schema declares:
-  //   Transfer        @storage(postgres: true, clickhouse: true)
-  //   TransferPgOnly  @storage(postgres: true)
-  //   TransferChOnly  @storage(clickhouse: true)
+  //   Transfer         @storage(postgres: true, clickhouse: true)
+  //   TransferPgOnly   @storage(postgres: true)
+  //   TransferChOnly   @storage(clickhouse: true)
+  //   TransferInternal @internal @storage(postgres: true)
   //
   // Each backend should host exactly the entities that opted into it, with
-  // at least one row each. Hasura sits on top of Postgres so it must
-  // expose Transfer and TransferPgOnly only.
+  // at least one row each. Hasura sits on top of Postgres, minus @internal
+  // entities, so it must expose Transfer and TransferPgOnly only.
 
   it("Postgres has tables for postgres-enabled entities only", async () => {
     const tables = await runPgSql(`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public'
-        AND table_name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly')
+        AND table_name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly', 'TransferInternal')
       ORDER BY table_name
     `);
     expect(tables.map((r) => r[0])).toMatchInlineSnapshot(`
       [
         "Transfer",
+        "TransferInternal",
         "TransferPgOnly",
       ]
     `);
@@ -555,6 +589,11 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
 
     const pgOnlyRows = await runPgSql(`SELECT count(*)::text FROM "TransferPgOnly"`);
     expect(Number(pgOnlyRows[0]?.[0])).toBe(transferCount);
+
+    // @internal entities keep their Postgres table and handler writes; only
+    // the GraphQL exposure is removed (asserted in the introspection test).
+    const internalRows = await runPgSql(`SELECT count(*)::text FROM "TransferInternal"`);
+    expect(Number(internalRows[0]?.[0])).toBe(transferCount);
   });
 
   it("Postgres raw_events holds one row per indexed event with decoded data", async () => {
@@ -655,7 +694,12 @@ describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink
       }
     }`);
 
-    const userEntityNames = ["Transfer", "TransferPgOnly", "TransferChOnly"];
+    const userEntityNames = [
+      "Transfer",
+      "TransferPgOnly",
+      "TransferChOnly",
+      "TransferInternal",
+    ];
     const isEntityQuery = (name: string) =>
       userEntityNames.some((p) => name === p || name.startsWith(`${p}_`));
 

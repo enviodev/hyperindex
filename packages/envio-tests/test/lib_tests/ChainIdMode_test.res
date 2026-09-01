@@ -43,7 +43,7 @@ let chainsDdl = (config: Config.t) =>
 
 let addressesDdl = (config: Config.t) =>
   PgStorage.makeCreateTableQuery(
-    Config.EnvioAddresses.table,
+    InternalTable.EnvioAddresses.table,
     ~pgSchema="test_schema",
     ~isNumericArrayAsText=false,
     ~chainIdMode=config.chainIdMode,
@@ -83,7 +83,7 @@ describe("ChainIdMode resolution", () => {
   it("rejects a chain id above Number.MAX_SAFE_INTEGER", t => {
     t->toThrowErrorEqual(
       () => parse(~name="too-big", ~chains=evmChain(~id="9007199254740992"))->ignore,
-      "Config parse error: Chain id 9007199254740992 is above the maximum supported chain id 9007199254740991 (Number.MAX_SAFE_INTEGER).",
+      "Chain id 9007199254740992 is above the maximum supported chain id 9007199254740991 (Number.MAX_SAFE_INTEGER).",
     )
   })
 
@@ -108,7 +108,7 @@ describe("ChainIdMode resolution", () => {
     start_block: 0`
     t->toThrowErrorEqual(
       () => parse(~name="skipped-too-big", ~chains=skippedTooBig)->ignore,
-      "Config parse error: Chain id 9007199254740992 is above the maximum supported chain id 9007199254740991 (Number.MAX_SAFE_INTEGER).",
+      "Chain id 9007199254740992 is above the maximum supported chain id 9007199254740991 (Number.MAX_SAFE_INTEGER).",
     )
   })
 
@@ -151,8 +151,8 @@ describe("ChainIdMode Postgres schema", () => {
       maxInt32Config->addressesDdl,
       maxInt32Config->rawEventsDdl,
     )).toEqual((
-      `CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));`,
-      `CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("id" TEXT NOT NULL, "chain_id" INTEGER NOT NULL, "registration_block" INTEGER NOT NULL, "registration_log_index" INTEGER NOT NULL, "contract_name" TEXT NOT NULL, PRIMARY KEY("id"));`,
+      `CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "ecosystem" TEXT NOT NULL, "start_block" INTEGER NOT NULL, "end_block" INTEGER, "max_reorg_depth" INTEGER NOT NULL, "buffer_block" INTEGER NOT NULL, "source_block" INTEGER NOT NULL, "first_event_block" INTEGER, "ready_at" TIMESTAMP WITH TIME ZONE NULL, "events_processed" BIGINT NOT NULL, "_is_hyper_sync" BOOLEAN NOT NULL, "progress_block" INTEGER NOT NULL, PRIMARY KEY("id"));`,
+      `CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));`,
       `CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));`,
     ))
   })
@@ -179,13 +179,10 @@ describe("ChainIdMode Postgres schema", () => {
         ~pgSchema="test_schema",
         ~chainIdMode=tronConfig.chainIdMode,
       ),
-      PgStorage.makeInsertUnnestSetQuery(
+      InternalTable.EnvioAddresses.makeInsertQuery(
         ~pgSchema="test_schema",
-        ~table=Config.EnvioAddresses.table,
-        ~itemSchema=Config.EnvioAddresses.schema->S.toUnknown,
-        ~isRawEvents=false,
         ~chainIdMode=tronConfig.chainIdMode,
-      )->String.includes("$2::BIGINT[]"),
+      )->String.includes("$1::BIGINT[]"),
     )).toEqual((
       `INSERT INTO "test_schema"."envio_checkpoints" ("id", "chain_id", "block_number", "block_hash", "events_processed")
 SELECT * FROM unnest($1::BIGINT[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::INTEGER[]);`,

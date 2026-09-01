@@ -5,7 +5,167 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-module EnvioAddresses = Config.EnvioAddresses
+// Postgres SQLSTATE for "undefined_table" — what a read gets when the schema was
+// initialized by an older envio that didn't have the table.
+let undefinedTableSqlState = "42P01"
+
+@get external getSqlStateCode: JsExn.t => option<string> = "code"
+
+let isUndefinedTable = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(e) => e->getSqlStateCode === Some(undefinedTableSqlState)
+  | _ => false
+  }
+
+// The array type an unnest binds a chain-id column to. Resolved from the
+// config's mode, so every internal query casts the parameter the same way the
+// column was created.
+let chainIdArrayType = (~pgSchema, ~chainIdMode: ChainId.mode) =>
+  Table.getPgFieldType(
+    ~fieldType=ChainId,
+    ~pgSchema,
+    ~isArray=true,
+    ~isNumericArrayAsText=false,
+    ~isNullable=false,
+    ~chainIdMode,
+  )
+
+// The canonical contract ids. Written once at initialize from the config's
+// contract names in byte order, so an id names the same contract on every
+// chain and across restarts; read back on resume, where the stored mapping is
+// what every address row means.
+module EnvioContracts = {
+  let table = mkTable(
+    "envio_contracts",
+    ~fields=[
+      mkField("id", SmallInt, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField("name", String, ~fieldSchema=S.string),
+    ],
+  )
+
+  let makeInsertQuery = (~pgSchema) =>
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("id", "name")
+SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(Text: Postgres.columnType :> string)}[]);`
+
+  // `contractNames` is the canonical list: a name's position is its id.
+  let insert = (sql, ~pgSchema, ~contractNames: array<string>) =>
+    sql
+    ->Postgres.preparedUnsafe(
+      makeInsertQuery(~pgSchema),
+      (contractNames->Array.mapWithIndex((_, idx) => idx), contractNames)->(
+        Utils.magic: ((array<int>, array<string>)) => unknown
+      ),
+    )
+    ->Utils.Promise.ignoreValue
+
+  // Ordered by id, so the result is the canonical list itself. None when the
+  // schema has no such table: it was written by an envio that predates the
+  // contract mapping, and every address row in it is shaped differently — so a
+  // resume has to stop at the compat check rather than at a missing column.
+  let read = async (sql, ~pgSchema): option<array<string>> =>
+    try {
+      let rows: array<{
+        "name": string,
+      }> = await sql->Postgres.unsafe(
+        `SELECT "name" FROM "${pgSchema}"."${table.tableName}" ORDER BY "id";`,
+      )
+      Some(rows->Array.map(row => row["name"]))
+    } catch {
+    | exn => isUndefinedTable(exn) ? None : throw(exn)
+    }
+}
+
+module EnvioAddresses = {
+  let name = "envio_addresses"
+
+  let table = mkTable(
+    name,
+    ~fields=[
+      mkField("chain_id", ChainId, ~fieldSchema=ChainId.schema, ~isPrimaryKey),
+      // The field schemas are unused: this table is read and written by the
+      // hand-written queries below, never through the generic row encoding.
+      mkField("address", Bytea, ~fieldSchema=S.string, ~isPrimaryKey),
+      mkField("contract_id", SmallInt, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField("registration_block", Int32, ~fieldSchema=S.int),
+    ],
+  )
+
+  let makeInsertQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("chain_id", "address", "contract_id", "registration_block")
+SELECT * FROM unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[],$4::${(Integer: Postgres.columnType :> string)}[])
+ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
+  }
+
+  let insert = (
+    sql,
+    ~pgSchema,
+    ~rows: array<AddressRows.row>,
+    ~chainIdMode: ChainId.mode=Int32,
+  ) => {
+    let chainIds = []
+    let addresses = []
+    let contractIds = []
+    let registrationBlocks = []
+    rows->Array.forEach(row => {
+      chainIds->Array.push(row.chainId)->ignore
+      addresses->Array.push(row.address)->ignore
+      contractIds->Array.push(row.contractId)->ignore
+      registrationBlocks->Array.push(row.registrationBlock)->ignore
+    })
+    sql
+    ->Postgres.preparedUnsafe(
+      makeInsertQuery(~pgSchema, ~chainIdMode),
+      (
+        chainIds,
+        sql->Postgres.typed(addresses, Postgres.byteaArrayOid),
+        contractIds,
+        registrationBlocks,
+      )->(Utils.magic: ((array<ChainId.t>, unknown, array<int>, array<int>)) => unknown),
+    )
+    ->Utils.Promise.ignoreValue
+  }
+
+  let makeDeleteQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
+    `DELETE FROM "${pgSchema}"."${table.tableName}"
+USING unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[]) AS dead(chain_id, address, contract_id)
+WHERE "${table.tableName}"."chain_id" = dead.chain_id
+  AND "${table.tableName}"."address" = dead.address
+  AND "${table.tableName}"."contract_id" = dead.contract_id;`
+  }
+
+  let delete = (
+    sql,
+    ~pgSchema,
+    ~keys: array<AddressRows.key>,
+    ~chainIdMode: ChainId.mode=Int32,
+  ) => {
+    let chainIds = []
+    let addresses = []
+    let contractIds = []
+    keys->Array.forEach(key => {
+      chainIds->Array.push(key.chainId)->ignore
+      addresses->Array.push(key.address)->ignore
+      contractIds->Array.push(key.contractId)->ignore
+    })
+    sql
+    ->Postgres.preparedUnsafe(
+      makeDeleteQuery(~pgSchema, ~chainIdMode),
+      (chainIds, sql->Postgres.typed(addresses, Postgres.byteaArrayOid), contractIds)->(
+        Utils.magic: ((array<ChainId.t>, unknown, array<int>)) => unknown
+      ),
+    )
+    ->Utils.Promise.ignoreValue
+  }
+
+  let makeGetRowsQuery = (~pgSchema) =>
+    `SELECT "chain_id" as "chainId",
+"address" as "address",
+"contract_id" as "contractId",
+"registration_block" as "registrationBlock"
+FROM "${pgSchema}"."${table.tableName}";`
+}
 
 module Chains = {
   type progressFields = [
@@ -17,6 +177,7 @@ module Chains = {
   type field = [
     | progressFields
     | #id
+    | #ecosystem
     | #start_block
     | #end_block
     | #max_reorg_depth
@@ -29,6 +190,7 @@ module Chains = {
 
   let fields: array<field> = [
     #id,
+    #ecosystem,
     #start_block,
     #end_block,
     #max_reorg_depth,
@@ -57,6 +219,7 @@ module Chains = {
 
   type t = {
     @as("id") id: ChainId.t,
+    @as("ecosystem") ecosystem: string,
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Null.t<int>,
     @as("max_reorg_depth") maxReorgDepth: int,
@@ -70,6 +233,10 @@ module Chains = {
     "envio_chains",
     ~fields=[
       mkField((#id: field :> string), ChainId, ~fieldSchema=ChainId.schema, ~isPrimaryKey),
+      // Which ecosystem the chain belongs to (evm / fuel / svm). Chain ids are
+      // only unique within an ecosystem (HOS-1880: Svm ids are Envio-assigned),
+      // so consumers should treat (ecosystem, id) as the chain's identity.
+      mkField((#ecosystem: field :> string), String, ~fieldSchema=S.string),
       // Values populated from config
       mkField((#start_block: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#end_block: field :> string), Int32, ~fieldSchema=S.null(S.int), ~isNullable),
@@ -104,6 +271,7 @@ module Chains = {
   let initialFromConfig = (chainConfig: Config.chain) => {
     {
       id: chainConfig.id,
+      ecosystem: (chainConfig.ecosystem: Ecosystem.name :> string),
       startBlock: chainConfig.startBlock,
       endBlock: chainConfig.endBlock->Null.fromOption,
       maxReorgDepth: chainConfig.maxReorgDepth,
@@ -131,6 +299,7 @@ module Chains = {
           let value = initialValues->(Utils.magic: t => dict<unknown>)->Dict.get((field :> string))
           switch typeof(value) {
           | #object => "NULL"
+          | #string => `'${value->(Utils.magic: option<unknown> => string)}'`
           | #number => value->(Utils.magic: option<unknown> => int)->Int.toString
           | #bigint => value->(Utils.magic: option<unknown> => bigint)->BigInt.toString
           | #boolean => value->(Utils.magic: option<unknown> => bool) ? "true" : "false"
@@ -189,7 +358,7 @@ WHERE "${(#id: field :> string)}" = $2
     timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
     numEventsProcessed: float,
     progressBlockNumber: int,
-    indexingAddresses: array<Internal.indexingAddress>,
+    addressRows: AddressRows.seedRows,
     sourceBlockNumber: int,
   }
 
@@ -206,67 +375,30 @@ WHERE "${(#id: field :> string)}" = $2
 FROM "${pgSchema}"."${table.tableName}";`
   }
 
-  type rawIndexingAddress = {
-    chainId: ChainId.t,
-    address: Address.t,
-    contractName: string,
-    registrationBlock: int,
-  }
-
   // Addresses are read as plain rows rather than aggregated per chain with
   // json_agg: a single chain's aggregate can exceed V8's max string length
   // (postgres.js decodes the column with Buffer.toString and throws
   // ERR_STRING_TOO_LONG). Grouping happens in JS instead — see getInitialState.
-  let makeGetIndexingAddressesQuery = (~pgSchema) => {
-    // envio_addresses.id is a composite "{chainId}-{address}" string produced by
-    // Config.EnvioAddresses.makeId; extract the address by taking everything
-    // after the first '-'. Keep in sync with makeId / getAddress.
-    `SELECT "chain_id" as "chainId",
-SUBSTRING("id" FROM POSITION('-' IN "id") + 1) as "address",
-"contract_name" as "contractName",
-"registration_block" as "registrationBlock"
-FROM "${pgSchema}"."${EnvioAddresses.table.tableName}";`
-  }
-
   let getInitialState = async (sql, ~pgSchema) => {
-    let (rawInitialStates, rawIndexingAddresses) = await Promise.all2((
+    let (rawInitialStates, rawAddressRows) = await Promise.all2((
       sql
       ->Postgres.unsafe(makeGetInitialStateQuery(~pgSchema))
       ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>),
       sql
-      ->Postgres.unsafe(makeGetIndexingAddressesQuery(~pgSchema))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<rawIndexingAddress>>),
+      ->Postgres.unsafe(EnvioAddresses.makeGetRowsQuery(~pgSchema))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<AddressRows.row>>),
     ))
 
-    let indexingAddressesByChainId = Dict.make()
-    rawIndexingAddresses->Array.forEach(row => {
-      // BIGINT chain ids come back as strings; normalizing here keeps the
-      // grouping key identical to the one derived from the chains rows below.
-      let key = row.chainId->ChainId.normalizeOrThrow->ChainId.toString
-      let addresses = switch indexingAddressesByChainId->Dict.get(key) {
-      | Some(addresses) => addresses
-      | None =>
-        let addresses: array<Internal.indexingAddress> = []
-        indexingAddressesByChainId->Dict.set(key, addresses)
-        addresses
-      }
-      addresses
-      ->Array.push({
-        address: row.address,
-        contractName: row.contractName,
-        registrationBlock: row.registrationBlock,
-      })
-      ->ignore
-    })
+    let addressRowsByChainId = rawAddressRows->AddressRows.group
 
     rawInitialStates->Array.map(rawInitialState => {
       let id = rawInitialState.id->ChainId.normalizeOrThrow
       {
         ...rawInitialState,
         id,
-        indexingAddresses: indexingAddressesByChainId
-        ->Dict.get(id->ChainId.toString)
-        ->Option.getOr([]),
+        addressRows: addressRowsByChainId
+        ->Utils.Dict.dangerouslyGetNonOption(id->ChainId.toString)
+        ->Option.getOr(AddressRows.emptySeedRows()),
       }
     })
   }
@@ -362,23 +494,13 @@ module EnvioInfo = {
     ],
   )
 
-  // Postgres SQLSTATE for "undefined_table" — what we get when the schema
-  // was initialized by an older envio that didn't have `envio_info`.
-  let undefinedTableSqlState = "42P01"
-
-  @get external getCode: JsExn.t => option<string> = "code"
-
   let read = async (sql, ~pgSchema): option<JSON.t> => {
     let rows: array<{
       "config": string,
     }> = try await sql->Postgres.unsafe(
       `SELECT "config" FROM "${pgSchema}"."${table.tableName}" LIMIT 1;`,
     ) catch {
-    | exn =>
-      switch exn->JsExn.anyToExnInternal {
-      | JsExn(e) if e->getCode === Some(undefinedTableSqlState) => []
-      | _ => throw(exn)
-      }
+    | exn => isUndefinedTable(exn) ? [] : throw(exn)
     }
     rows->Array.get(0)->Option.map(row => row["config"]->JSON.parseOrThrow)
   }
@@ -476,14 +598,7 @@ WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
   }
 
   let makeInsertCheckpointQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
-    let chainIdArrayType = Table.getPgFieldType(
-      ~fieldType=ChainId,
-      ~pgSchema,
-      ~isArray=true,
-      ~isNumericArrayAsText=false,
-      ~isNullable=false,
-      ~chainIdMode,
-    )
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
 SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chainIdArrayType},$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
   }
@@ -648,6 +763,7 @@ module Views = {
     `CREATE VIEW "${pgSchema}"."${metaViewName}" AS 
 SELECT 
   "${(#id: Chains.field :> string)}" AS "chainId",
+  "${(#ecosystem: Chains.field :> string)}" AS "ecosystem",
   "${(#start_block: Chains.field :> string)}" AS "startBlock", 
   "${(#end_block: Chains.field :> string)}" AS "endBlock",
   "${(#progress_block: Chains.field :> string)}" AS "progressBlock",
@@ -666,6 +782,7 @@ ORDER BY "${(#id: Chains.field :> string)}";`
 SELECT 
   "${(#source_block: Chains.field :> string)}" AS "block_height",
   "${(#id: Chains.field :> string)}" AS "chain_id",
+  "${(#ecosystem: Chains.field :> string)}" AS "ecosystem",
   "${(#end_block: Chains.field :> string)}" AS "end_block", 
   "${(#first_event_block: Chains.field :> string)}" AS "first_event_block_number",
   "${(#_is_hyper_sync: Chains.field :> string)}" AS "is_hyper_sync",

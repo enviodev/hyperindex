@@ -143,6 +143,7 @@ let beginRollbackDiff: (
   ~targetCheckpointId: Internal.checkpointId,
   ~diffCheckpointId: Internal.checkpointId,
   ~progressBlockNumberByChainId: dict<int>,
+  ~rolledBackAddresses: array<AddressRows.key>,
 ) => unit
 let recordWriteFailure: (t, exn) => unit
 let beginWriteFiber: (t, promise<unit>) => unit

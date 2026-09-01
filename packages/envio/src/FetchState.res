@@ -1,7 +1,5 @@
 type indexingAddress = Internal.indexingContract
 
-type blockNumberAndLogIndex = {blockNumber: int, logIndex: int}
-
 type selection = {
   onEventRegistrations: array<Internal.onEventRegistration>,
   // Whether the partition's queries are built from its own address list
@@ -902,31 +900,87 @@ let getRegistrationIndex = (item: Internal.item): int =>
   | Block({onBlockRegistration}) => onBlockRegistration.index
   }
 
-// Total order on buffer items: block, then logIndex, then registration index.
-// Returns a plain int (-1/0/1) with explicit field comparisons so it can be
-// called directly from the merge/insertion loops below — no Array.sort callback,
-// no allocated key. `0` means a true duplicate: same log routed to the same
-// registration (two registrations for one log differ by index and are kept).
+// Lexicographic order on two call paths, parent before child: `[1]` precedes
+// `[1, 0]`, which is the order the runtime executed them in.
+let comparePath = (a: array<int>, b: array<int>): int => {
+  let la = a->Array.length
+  let lb = b->Array.length
+  let shared = la < lb ? la : lb
+  let i = ref(0)
+  let result = ref(0)
+  while result.contents === 0 && i.contents < shared {
+    let x = a->Array.getUnsafe(i.contents)
+    let y = b->Array.getUnsafe(i.contents)
+    if x !== y {
+      result := (x < y ? -1 : 1)
+    }
+    i := i.contents + 1
+  }
+  if result.contents !== 0 {
+    result.contents
+  } else if la === lb {
+    0
+  } else if la < lb {
+    -1
+  } else {
+    1
+  }
+}
+
+// Cold tail of `compareBufferItem`, out of line so the block/kind/log-index
+// comparison that every merge step runs stays small enough for V8 to inline.
+let compareTiebreak = (a: Internal.item, b: Internal.item): int => {
+  // Two items an ecosystem's scalar key can't separate: instructions of one
+  // Solana transaction, ordered by their position in its CPI tree.
+  let byPath = switch (a->Internal.getItemOrderPath, b->Internal.getItemOrderPath) {
+  | (Value(pa), Value(pb)) => comparePath(pa, pb)
+  | _ => 0
+  }
+  if byPath !== 0 {
+    byPath
+  } else {
+    let ia = a->getRegistrationIndex
+    let ib = b->getRegistrationIndex
+    ia < ib ? -1 : ia > ib ? 1 : 0
+  }
+}
+
+// Total order on buffer items: block, then item kind, then the ecosystem's
+// within-block order, then registration index. Returns a plain int (-1/0/1)
+// with explicit field comparisons so it can be called directly from the
+// merge/insertion loops below — no Array.sort callback, no allocated key. `0`
+// means a true duplicate: the same log routed to the same registration (two
+// registrations for one log differ by index and are kept).
+//
+// Kind outranks the log index so that every event of a block precedes that
+// block's handlers by construction. A sentinel log index for block items
+// would put the same guarantee at the mercy of how large an ecosystem's key
+// grows — which is how SVM, keyed by transaction index, came to run slot
+// handlers ahead of most of a slot's instructions.
 let compareBufferItem = (a: Internal.item, b: Internal.item): int => {
   let ba = a->Internal.getItemBlockNumber
   let bb = b->Internal.getItemBlockNumber
   if ba != bb {
     ba < bb ? -1 : 1
   } else {
-    let la = a->Internal.getItemLogIndex
-    let lb = b->Internal.getItemLogIndex
-    if la != lb {
-      la < lb ? -1 : 1
+    let ka = a->Internal.getItemKind
+    let kb = b->Internal.getItemKind
+    if ka !== kb {
+      ka < kb ? -1 : 1
     } else {
-      let ia = a->getRegistrationIndex
-      let ib = b->getRegistrationIndex
-      ia < ib ? -1 : ia > ib ? 1 : 0
+      let la = a->Internal.getItemLogIndex
+      let lb = b->Internal.getItemLogIndex
+      if la != lb {
+        la < lb ? -1 : 1
+      } else {
+        compareTiebreak(a, b)
+      }
     }
   }
 }
 
 // Merge a maybe-unsorted `newItems` run into the already-sorted, already-deduped
-// `buffer`, dropping items equal on (blockNumber, logIndex, registration index).
+// `buffer`, dropping items equal on every component of `compareBufferItem`.
 // Single linear pass over both runs after ordering `newItems` in place; every
 // comparison is a direct `compareBufferItem` call (V8 inlines it) rather than a
 // callback through `Array.sort`.
@@ -982,9 +1036,6 @@ let mergeIntoBuffer = (buffer: array<Internal.item>, newItems: array<Internal.it
   merged
 }
 
-// Some big number which should be bigger than any log index
-let blockItemLogIndex = 16777216
-
 // Appends Block items produced by the onBlock handlers for every block in
 // (fromBlock, maxBlockNumber] into mutItems and returns the new
 // latestOnBlockBlockNumber pointer. maxOnBlockBufferSize bounds how many items
@@ -1031,7 +1082,6 @@ let appendOnBlockItems = (
           Block({
             onBlockRegistration,
             blockNumber,
-            logIndex: blockItemLogIndex + onBlockRegistration.index,
           }),
         )
         newItemsCounter := newItemsCounter.contents + 1
@@ -1064,7 +1114,7 @@ let updateInternal = (
   | None => fetchState.buffer
   }
 
-  // onBlock items are generated as their own ascending (block, logIndex) run and
+  // onBlock items are generated as their own ascending run and
   // folded into `base` by the single merge below.
   let blockItems = []
   let latestOnBlockBlockNumber = switch fetchState.onBlockRegistrations {
@@ -1419,7 +1469,6 @@ let warnAddressRegistration = (
 
 // A rejected registration is simply absent from every partition, so without a
 // warning the user sees a contract that never indexes and nothing saying why.
-// Shared by config-time registration in `make` and by dynamic registration.
 let warnRejectedRegistration = (
   verdict: AddressStore.verdict,
   ~chainId: ChainId.t,
@@ -1427,20 +1476,7 @@ let warnRejectedRegistration = (
   ~contractName: string,
 ) =>
   switch verdict {
-  | Conflict({existingContractName}) =>
-    warnAddressRegistration(
-      ~chainId,
-      ~contractAddress,
-      ~params={
-        "existingContractType": existingContractName,
-        "newContractType": contractName,
-      },
-      `Skipping contract registration: Contract address is already registered for one contract and cannot be registered for another contract.`,
-    )
   | Duplicate({effectiveStartBlock, existingEffectiveStartBlock}) =>
-    // FIXME: Instead of filtering out duplicates, we should check the block
-    // number first. If a new registration has an earlier block number we
-    // should register it for the missing block range.
     if existingEffectiveStartBlock > effectiveStartBlock {
       warnAddressRegistration(
         ~chainId,
@@ -1449,7 +1485,7 @@ let warnRejectedRegistration = (
           "existingBlockNumber": existingEffectiveStartBlock,
           "newBlockNumber": effectiveStartBlock,
         },
-        `Skipping contract registration: Contract address is already registered at a later block number. Currently registration of the same contract address is not supported by Envio. Reach out to us if it's a problem for you.`,
+        `Skipping same-contract re-registration: the address is already registered for this contract. The start block does not move earlier.`,
       )
     }
   | Invalid =>
@@ -1673,9 +1709,10 @@ let registerDynamicContracts = (
   // exactly what this batch adds.
   let idCursor = addressStore->AddressStore.nextId
   // The store resolves each address against both what it already holds and the
-  // batch's own earlier entries, so two contracts claiming one address inside a
-  // single batch conflict the same way as across batches. It also decides which
-  // additions this chain fetches for, since it's what holds the contract list.
+  // batch's own earlier entries, so the same address registered twice for one
+  // contract inside a single batch is a duplicate just as it is across batches.
+  // It also decides which additions this chain fetches for, since it's what
+  // holds the contract list.
   let verdicts = addressStore->AddressStore.registerBatch(registrations)
 
   let registeringContractNames = []
@@ -1691,7 +1728,7 @@ let registerDynamicContracts = (
     // no partition to build. The address is still stored and persisted, so a
     // config that later adds address-dependent events picks it up on restart.
     | Added({fetchable: false}) => ()
-    | Conflict(_) | Duplicate(_) | Invalid =>
+    | Duplicate(_) | Invalid =>
       verdict->warnRejectedRegistration(
         ~chainId=fetchState.chainId,
         ~contractAddress=registration.address,
@@ -2577,7 +2614,7 @@ let make = (
   ~endBlock,
   ~onEventRegistrations: array<Internal.onEventRegistration>,
   ~addressStore: AddressStore.t,
-  ~addresses: array<Internal.indexingAddress>,
+  ~addressRows: AddressRows.seedRows,
   ~maxAddrInPartition,
   ~chainId: ChainId.t,
   ~maxOnBlockBufferSize,
@@ -2631,27 +2668,24 @@ let make = (
   )
 
   // Every address the chain indexes goes into the store — including ones whose
-  // contract has no address-dependent events, so a later registration of the
-  // same address still conflicts and the address is still persisted.
+  // contract has no address-dependent events, so the address is still persisted
+  // and a config that later adds events picks it up.
+  //
+  // These rows come from the config or from a resume, so they're already stored
+  // and must never be drained back into a write. Only the rows the store
+  // refuses come back: a resume seeds millions of them.
   addressStore
-  // These come from the config or from a resume, so they're already stored and
-  // must never be drained back into a write.
-  ->AddressStore.seedBatch(
-    addresses->Array.map((contract): AddressStore.registration => {
-      address: contract.address,
-      contractName: contract.contractName,
-      registrationBlock: contract.registrationBlock,
-    }),
-  )
-  // Verdicts are in the batch's order, so they line up with `addresses`. A
-  // config address the store rejects is dropped exactly like a dynamic one, and
-  // needs the same warning — restored dynamic addresses come through here too.
-  ->Array.forEachWithIndex((verdict, idx) => {
-    let contract = addresses->Array.getUnsafe(idx)
-    verdict->warnRejectedRegistration(
+  ->AddressStore.seedRows(addressRows)
+  ->Array.forEach(rejected => {
+    warnAddressRegistration(
       ~chainId,
-      ~contractAddress=contract.address,
-      ~contractName=contract.contractName,
+      ~contractAddress=rejected.address,
+      ~params={
+        "contractName": rejected.contractName,
+        "existingBlockNumber": rejected.existingEffectiveStartBlock,
+        "newBlockNumber": rejected.effectiveStartBlock,
+      },
+      `Skipping a stored address: it is already registered for this contract.`,
     )
   })
 
@@ -2659,23 +2693,24 @@ let make = (
   let clientFilteredContracts = Utils.Set.make()
   let registeringSetsByContract = Dict.make()
 
-  addresses->Array.forEach(contract => {
-    let contractName = contract.contractName
-
-    // Only addresses whose contract has events that depend on addresses get
-    // registered for active fetching via partitions.
+  // What each contract needs a partition for is read back off the store rather
+  // than re-derived from the seeded columns: the store is what resolved the
+  // rows, including the ones it refused.
+  contractNamesWithNormalEvents
+  ->Utils.Set.toArray
+  ->Array.forEach(contractName => {
+    if addressStore->AddressStore.contractCount(contractName) > 0 {
+      registeringSetsByContract->Dict.set(
+        contractName,
+        addressStore->AddressStore.makeSet(~contractName),
+      )
+    }
+  })
+  addressStore
+  ->AddressStore.dynamicContractNames
+  ->Array.forEach(contractName => {
     if contractNamesWithNormalEvents->Utils.Set.has(contractName) {
-      if !(registeringSetsByContract->Dict.has(contractName)) {
-        registeringSetsByContract->Dict.set(
-          contractName,
-          addressStore->AddressStore.makeSet(~contractName),
-        )
-      }
-
-      // Detect dynamic contracts by registrationBlock
-      if contract.registrationBlock !== -1 {
-        dynamicContracts->Utils.Set.add(contractName)->ignore
-      }
+      dynamicContracts->Utils.Set.add(contractName)->ignore
     }
   })
 
@@ -2718,7 +2753,7 @@ let make = (
   ) {
     JsError.throwWithMessage(
       `Invalid configuration: Nothing to fetch on chain ${chainId->ChainId.toString}. ` ++
-      `addresses=${addresses->Array.length->Int.toString}, ` ++
+      `addresses=${addressRows.addresses->Array.length->Int.toString}, ` ++
       `onEventRegistrations=${onEventRegistrations->Array.length->Int.toString}, ` ++
       `normalRegistrations=${normalRegistrations
         ->Array.length
@@ -2795,20 +2830,28 @@ let rollbackPendingQueries = (mutPendingQueries: array<pendingQuery>, ~targetBlo
   adjusted
 }
 
+type rollbackResult = {
+  fetchState: t,
+  // The registrations the prune dropped, for the storage that deletes their rows.
+  rolledBackAddresses: array<AddressStore.rolledBackAddress>,
+}
+
 /**
 Rolls back fetch state to the given valid block.
+Prunes the store first, then rebuilds partitions from it: an address survives iff
+`filterByRegistrationBlock` keeps it, so the partitions and the rows the caller
+goes on to delete can't disagree about which registrations died.
 Always recreates optimized partitions to avoid duplicate addresses:
 - Wildcard: only rollback latestFetchedBlock
 - Non-wildcard with lfb <= target: keep, adjust pending queries and mergeBlock
 - Non-wildcard with lfb > target: delete, track addresses for recreation
 */
-let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber) => {
-  // Step 1: Prune addresses registered after the target block. The pruned store
-  // is then the source of truth for partition cleanup below — an address
-  // survives iff `filterByRegistrationBlock` keeps it.
-  addressStore->AddressStore.rollback(targetBlockNumber)->ignore
-
-  // Step 2: Categorize partitions
+let rollback = (
+  fetchState: t,
+  ~rolledBackAddressStore: AddressStore.t,
+  ~targetBlockNumber,
+): rollbackResult => {
+  let rolledBackAddresses = rolledBackAddressStore->AddressStore.rollback(targetBlockNumber)
   let keptPartitions = []
   let nextKeptIdRef = ref(0)
   let registeringSetsByContract: dict<AddressSet.t> = Dict.make()
@@ -2885,10 +2928,9 @@ let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber
     }
   }
 
-  // Step 3: Recreate partitions from deleted partition addresses
   let optimizedPartitions = createPartitions(
     ~registeringSetsByContract,
-    ~addressStore,
+    ~addressStore=rolledBackAddressStore,
     ~dynamicContracts=fetchState.optimizedPartitions.dynamicContracts,
     ~clientFilteredContracts=fetchState.optimizedPartitions.clientFilteredContracts,
     ~normalSelection=fetchState.normalSelection,
@@ -2899,8 +2941,7 @@ let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber
     ~knownHeight=fetchState.knownHeight,
   )
 
-  // Step 4: Update state
-  {
+  let rolledBack = {
     ...fetchState,
     // TODO: Test this. Currently it's not tested.
     latestOnBlockBlockNumber: Pervasives.min(
@@ -2919,6 +2960,7 @@ let rollback = (fetchState: t, ~addressStore: AddressStore.t, ~targetBlockNumber
       targetBlockNumber
     ),
   )
+  {fetchState: rolledBack, rolledBackAddresses}
 }
 
 // Reset pending queries by removing in-flight queries (ones without fetchedBlock).

@@ -86,6 +86,7 @@ let makeCreateTableQuery = (
   ~pgSchema,
   ~isNumericArrayAsText,
   ~chainIdMode: ChainId.mode=Int32,
+  ~partitionByColumn: option<string>=?,
 ) => {
   let fieldsMapped =
     table
@@ -115,7 +116,23 @@ let makeCreateTableQuery = (
 
   `CREATE TABLE IF NOT EXISTS "${pgSchema}"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
       ? `, PRIMARY KEY(${primaryKey})`
-      : ""});`
+      : ""})${switch partitionByColumn {
+    | Some(column) => ` PARTITION BY LIST ("${column}")`
+    | None => ""
+    }};`
+}
+
+// A per-chain entity's rows are partitioned by the chain that owns them, so a
+// chain-filtered read scans one chain's partition rather than the whole table.
+// `$` can't occur in a GraphQL entity name, so a partition name can never
+// collide with the table another entity claims; past the identifier limit the
+// entity index keeps what survives truncation unique.
+let partitionTableName = (~entityConfig: Internal.entityConfig, ~chainId: ChainId.t) => {
+  let chainIdStr = chainId->ChainId.toString
+  Table.fitPgTableName(
+    `${entityConfig.table.tableName}$${chainIdStr}`,
+    ~uniqueSuffix=`$${entityConfig.index->Int.toString}$${chainIdStr}`,
+  )
 }
 
 // The entity as it's stored: the handler-visible schema plus the chain-id
@@ -222,6 +239,40 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
   }
 }
 
+// Every table an entity needs: its own, one partition per chain when it's
+// per-chain, and its history table. The chain set is fixed for the life of a
+// schema — changing it fails the resume compat check against `envio_info` and
+// forces a resync — so every partition the entity will ever need is created
+// here, at init.
+//
+// History stays unpartitioned: it is only ever read by checkpoint, never by
+// chain, so partitioning it would route every write and prune nothing.
+let makeCreateEntityTableQueries = (
+  entityConfig: Internal.entityConfig,
+  ~pgSchema,
+  ~isNumericArrayAsText,
+  ~chainIdMode: ChainId.mode=Int32,
+  ~chainIds: array<ChainId.t>,
+) => {
+  let createTable = (table, ~partitionByColumn=?) =>
+    makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText, ~chainIdMode, ~partitionByColumn?)
+
+  switch entityConfig.table->Table.getChainIdField {
+  | None => [entityConfig.table->createTable]
+  | Some(chainIdField) =>
+    [
+      entityConfig.table->createTable(~partitionByColumn=chainIdField->Table.getPgDbFieldName),
+    ]->Array.concat(
+      chainIds->Array.map(chainId =>
+        `CREATE TABLE IF NOT EXISTS "${pgSchema}"."${partitionTableName(
+            ~entityConfig,
+            ~chainId,
+          )}" PARTITION OF "${pgSchema}"."${entityConfig.table.tableName}" FOR VALUES IN (${chainId->ChainId.toString});`
+      ),
+    )
+  }->Array.concat([getEntityHistory(~entityConfig).table->createTable])
+}
+
 let makeInitializeTransaction = (
   ~pgSchema,
   ~pgUser,
@@ -239,15 +290,29 @@ let makeInitializeTransaction = (
   let generalTables = [
     InternalTable.Chains.table,
     InternalTable.EnvioInfo.table,
+    InternalTable.EnvioContracts.table,
+    InternalTable.EnvioAddresses.table,
     InternalTable.Checkpoints.table,
     InternalTable.RawEvents.table,
   ]
 
-  let allTables = generalTables->Array.copy
-  entities->Array.forEach((entityConfig: Internal.entityConfig) => {
-    allTables->Array.push(entityConfig.table)->ignore
-    allTables->Array.push(getEntityHistory(~entityConfig).table)->ignore
-  })
+  let chainIds = chainConfigs->Array.map((chainConfig: Config.chain) => chainConfig.id)
+
+  let tableQueries =
+    generalTables
+    ->Array.map(table =>
+      makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=isHasuraEnabled, ~chainIdMode)
+    )
+    ->Array.concat(
+      entities->Array.flatMap((entityConfig: Internal.entityConfig) =>
+        entityConfig->makeCreateEntityTableQueries(
+          ~pgSchema,
+          ~isNumericArrayAsText=isHasuraEnabled,
+          ~chainIdMode,
+          ~chainIds,
+        )
+      ),
+    )
 
   let schemaIndexes = getSchemaIndexes(~entities)
 
@@ -276,11 +341,8 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   })
 
   // Batch all table creation first (optimal for PostgreSQL)
-  allTables->Array.forEach((table: Table.table) => {
-    query :=
-      query.contents ++
-      "\n" ++
-      makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=isHasuraEnabled, ~chainIdMode)
+  tableQueries->Array.forEach(tableQuery => {
+    query := query.contents ++ "\n" ++ tableQuery
   })
 
   // Then batch all indexes (better performance when tables exist)
@@ -360,6 +422,26 @@ let rec makeFilterCondition = (
       )}`
   }
   switch filter {
+  // A per-chain entity's table is partitioned by its chain-id column, and
+  // Postgres can only prune a plan it caches when that column is a constant in
+  // the SQL. Bound, the cached plan has to keep every partition, and the
+  // planner ends up throwing it away and re-planning on every execution
+  // instead — measured at 315us per load against 218us with the id written in,
+  // on 30 chains.
+  //
+  // The cost is that each chain gets its own query text, so Postgres caches a
+  // prepared statement per (entity, chain, filter shape) rather than per
+  // (entity, filter shape). Measured at ~8KB of plan cache each, which is ~10MB
+  // per connection for 40 entities across 30 chains — accepted, since the
+  // alternative is a cached plan that can't prune.
+  //
+  // `LoadLayer.scopeFilter` is what puts this filter here, and the value is
+  // range-checked to a non-negative safe integer, so it can carry nothing but
+  // digits.
+  | Eq({fieldName, fieldValue}) if (getQueryFieldOrThrow(fieldName)).isChainId =>
+    `"${(getQueryFieldOrThrow(fieldName)).pgDbFieldName}" = ${fieldValue
+      ->ChainId.normalizeOrThrow
+      ->ChainId.toString}`
   | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
   | Gt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op=">")
   | Lt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="<")
@@ -387,12 +469,16 @@ let rec makeFilterCondition = (
 }
 
 // The chain-id predicate a per-chain entity's row-level SQL needs, already
-// including the leading AND. The chain id is bound as $2 — after the id
-// params at $1 — so one prepared statement serves every chain. Empty for
-// cross-chain entities and for internal tables, which have no such column.
+// including the leading AND. Empty for cross-chain entities and for internal
+// tables, which have no such column.
+//
+// The chain id is written into the SQL rather than bound, because the table is
+// partitioned by it — see `makeFilterCondition` for why a partition key has to
+// be a constant.
 let makeChainIdCondition = (~table: Table.table, ~chainId: option<ChainId.t>) =>
   switch (table->Table.getChainIdField, chainId) {
-  | (Some(field), Some(_)) => ` AND "${field->Table.getPgDbFieldName}" = $2`
+  | (Some(field), Some(chainId)) =>
+    ` AND "${field->Table.getPgDbFieldName}" = ${chainId->ChainId.toString}`
   | _ => ""
   }
 
@@ -835,24 +921,16 @@ let deleteByIdsOrThrow = async (
   ~chainId: option<ChainId.t>=None,
 ) => {
   let chainIdCondition = makeChainIdCondition(~table, ~chainId)
-  let chainIdParams = switch chainId {
-  | Some(chainId) if chainIdCondition !== "" => [chainId->(Utils.magic: ChainId.t => unknown)]
-  | _ => []
-  }
   // A JSON array of the serialized ids. For a single id the query binds it as
   // `$1` directly (the array is the positional-params array); for many it binds
-  // the whole array to `$1` behind an `ANY(...)`. The chain id, when the
-  // condition needs it, rides along as $2.
+  // the whole array to `$1` behind an `ANY(...)`.
   let idsJson = table->Table.encodeIdsToJson(ids)
   switch await (
     switch ids {
     | [_] =>
       sql->Postgres.preparedUnsafe(
         makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName, ~chainIdCondition),
-        idsJson
-        ->(Utils.magic: JSON.t => array<unknown>)
-        ->Array.concat(chainIdParams)
-        ->Obj.magic,
+        idsJson->(Utils.magic: JSON.t => array<unknown>)->Obj.magic,
       )
     | _ =>
       sql->Postgres.preparedUnsafe(
@@ -862,7 +940,7 @@ let deleteByIdsOrThrow = async (
           ~idPgType=table->Table.getIdPgFieldType(~pgSchema),
           ~chainIdCondition,
         ),
-        [idsJson->(Utils.magic: JSON.t => unknown)]->Array.concat(chainIdParams)->Obj.magic,
+        [idsJson->(Utils.magic: JSON.t => unknown)]->Obj.magic,
       )
     }
   ) {
@@ -961,6 +1039,7 @@ let rec writeBatch = async (
   ~setQueryCache,
   ~updatedEffectsCache,
   ~updatedEntities: array<Persistence.updatedEntity>,
+  ~registeredAddresses: array<AddressRows.staged>,
   ~sinkPromise: option<promise<option<exn>>>,
   ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
   ~escapeTables=?,
@@ -979,11 +1058,8 @@ let rec writeBatch = async (
       let rows = batch.items->Array.filterMap(item =>
         switch item {
         | Internal.Event(_) =>
-          let coordinate = `${item
-            ->Internal.getItemChainId
-            ->ChainId.toString}-${item
-            ->Internal.getItemBlockNumber
-            ->Int.toString}-${item->Internal.getItemLogIndex->Int.toString}`
+          let eventItem = item->Internal.castUnsafeEventItem
+          let coordinate = `${eventItem.chainId->ChainId.toString}-${eventItem.blockNumber->Int.toString}-${eventItem.logIndex->Int.toString}`
           if seenLogCoordinates->Utils.Set.has(coordinate) {
             None
           } else {
@@ -1220,7 +1296,7 @@ let rec writeBatch = async (
     //valid event identifier, where all rows created after this eventIdentifier should
     //be deleted
     let rollbackTables = switch rollback {
-    | Some({targetCheckpointId: rollbackTargetCheckpointId}) =>
+    | Some({targetCheckpointId: rollbackTargetCheckpointId, rolledBackAddresses}) =>
       Some(
         sql => {
           // Postgres owns history tables only for Postgres-backed entities;
@@ -1241,6 +1317,22 @@ let rec writeBatch = async (
             sql->InternalTable.Checkpoints.rollback(~pgSchema, ~rollbackTargetCheckpointId),
           )
           ->ignore
+
+          // Addresses are insert-only, so undoing their registrations is a
+          // delete rather than a history replay. It runs before the batch's own
+          // inserts in the same transaction, so a re-registered address lands
+          // after its old row is gone.
+          if rolledBackAddresses->Utils.Array.notEmpty {
+            promises
+            ->Array.push(
+              sql->InternalTable.EnvioAddresses.delete(
+                ~pgSchema,
+                ~keys=rolledBackAddresses,
+                ~chainIdMode,
+              ),
+            )
+            ->ignore
+          }
           Promise.all(promises)
         },
       )
@@ -1281,6 +1373,16 @@ let rec writeBatch = async (
             )
             ->ignore
           | None => ()
+          }
+
+          if registeredAddresses->Utils.Array.notEmpty {
+            setOperations->Array.push(sql =>
+              sql->InternalTable.EnvioAddresses.insert(
+                ~pgSchema,
+                ~rows=registeredAddresses->Array.map(staged => staged.row),
+                ~chainIdMode,
+              )
+            )
           }
 
           if shouldSaveHistory {
@@ -1357,6 +1459,7 @@ let rec writeBatch = async (
       ~updatedEffectsCache,
       ~allEntities,
       ~updatedEntities,
+      ~registeredAddresses,
       ~sinkPromise,
       ~chainMetaData,
     )
@@ -1472,6 +1575,9 @@ let make = (
   ~pgPassword,
   ~isHasuraEnabled,
   ~chainIdMode: ChainId.mode=Int32,
+  // Decides how wide an address key is, both when the config's addresses are
+  // encoded at initialize and when stored rows are grouped on resume.
+  ~ecosystem: Ecosystem.name,
   ~sink: option<Sink.t>=?,
   ~onInitialize=?,
   ~onNewTables=?,
@@ -1665,6 +1771,7 @@ let make = (
     ~chainConfigs=[],
     ~entities=[],
     ~enums=[],
+    ~contractMapping,
     ~envioInfo,
   ): Persistence.initialState => {
     // Per-entity storage routing: PG owns tables only for entities that
@@ -1718,43 +1825,34 @@ let make = (
     // Execute all queries within a single transaction for integrity.
     // The envio_info row is written in the same transaction so a successful
     // initialize is atomic — no schema can come up without the matching row.
+    let rowsByChain =
+      chainConfigs->Array.map(chainConfig =>
+        chainConfig->ChainState.configStorageRows(~ecosystem, ~contractMapping)
+      )
+    let configAddressRows = rowsByChain->Array.flat
+
+    // The contract mapping and the config's addresses join the schema in the
+    // same transaction as envio_info: a schema that comes up without them would
+    // resume against ids nothing assigned.
     let _ = await sql->Postgres.beginSql(async sql => {
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
       let _ = await Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
       await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
-    })
-
-    // Populate config addresses into envio_addresses with registration_block/log = -1
-    let ids = []
-    let addrChainIds = []
-    let addrContractNames = []
-    chainConfigs->Array.forEach(chain => {
-      chain.contracts->Array.forEach(contract => {
-        contract.addresses->Array.forEach(
-          address => {
-            ids->Array.push(Config.EnvioAddresses.makeId(~chainId=chain.id, ~address))->ignore
-            addrChainIds->Array.push(chain.id)->ignore
-            addrContractNames->Array.push(contract.name)->ignore
-          },
-        )
-      })
-    })
-    if ids->Array.length > 0 {
-      let addrChainIdArrayType = Table.getPgFieldType(
-        ~fieldType=ChainId,
+      await InternalTable.EnvioContracts.insert(
+        sql,
         ~pgSchema,
-        ~isArray=true,
-        ~isNumericArrayAsText=false,
-        ~isNullable=false,
-        ~chainIdMode,
+        ~contractNames=contractMapping->ContractMapping.names,
       )
-      await sql->Postgres.unpreparedUnsafe(
-        `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.table.tableName}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
-SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChainIdArrayType},$3::text[]) AS t(id, chain_id, contract_name);`,
-        (ids, addrChainIds, addrContractNames)->(Utils.magic: _ => unknown),
-      )
-    }
+      if configAddressRows->Utils.Array.notEmpty {
+        await InternalTable.EnvioAddresses.insert(
+          sql,
+          ~pgSchema,
+          ~rows=configAddressRows,
+          ~chainIdMode,
+        )
+      }
+    })
 
     let cache = await restoreEffectCache(~withUpload=true)
 
@@ -1770,10 +1868,12 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       cleanRun: true,
       cache,
       reorgCheckpoints: [],
-      // Just-written row; resume's compat check would no-op on a clean run,
-      // but keep the field consistent with the resume path's shape.
+      contractMapping,
       envioInfo: Some(envioInfo),
-      chains: chainConfigs->Array.map((chainConfig): Persistence.initialChainState => {
+      chains: chainConfigs->Array.mapWithIndex((
+        chainConfig,
+        idx,
+      ): Persistence.initialChainState => {
         id: chainConfig.id,
         startBlock: chainConfig.startBlock,
         endBlock: chainConfig.endBlock,
@@ -1782,7 +1882,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
         numEventsProcessed: 0.,
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
-        indexingAddresses: ChainState.configAddresses(chainConfig),
+        addressRows: rowsByChain->Array.getUnsafe(idx)->AddressRows.seedRowsOf,
         sourceBlockNumber: 0,
       }),
       checkpointId: InternalTable.Checkpoints.initialCheckpointId,
@@ -2172,7 +2272,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
   }
 
   let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints, envioInfo) = await Promise.all5((
+    let (cache, chains, checkpointIdResult, reorgCheckpoints, (envioInfo, contractMapping)) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
@@ -2187,7 +2287,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
           timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Null.toOption,
           numEventsProcessed: rawInitialState.numEventsProcessed,
           progressBlockNumber: rawInitialState.progressBlockNumber,
-          indexingAddresses: rawInitialState.indexingAddresses,
+          addressRows: rawInitialState.addressRows,
           sourceBlockNumber: rawInitialState.sourceBlockNumber,
         })
       }),
@@ -2206,7 +2306,18 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
           }>,
         >
       ),
-      InternalTable.EnvioInfo.read(sql, ~pgSchema),
+      Promise.all2((
+        InternalTable.EnvioInfo.read(sql, ~pgSchema),
+        InternalTable.EnvioContracts.read(sql, ~pgSchema),
+      ))->Promise.thenResolve(((info, names)) =>
+        // Both tables join the schema in one transaction. A missing mapping
+        // means an older envio wrote this schema, so treat the snapshot as
+        // unreadable rather than decoding address rows against ids nothing assigned.
+        switch (info, names) {
+        | (Some(info), Some(names)) => (Some(info), ContractMapping.fromStoredNames(names))
+        | _ => (None, ContractMapping.empty)
+        }
+      ),
     ))
 
     await reloadIndexCatalog()
@@ -2233,6 +2344,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       cache,
       chains,
       checkpointId,
+      contractMapping,
       envioInfo,
     }
   }
@@ -2311,7 +2423,12 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       }
     })
 
-    (removals, restoredEntitiesResult)
+    (
+      removals,
+      restoredEntitiesResult
+      ->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
+      ->(Utils.magic: array<unknown> => array<Internal.entity>),
+    )
   }
 
   let writeBatchMethod = async (
@@ -2322,6 +2439,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
     ~allEntities,
     ~updatedEffectsCache,
     ~updatedEntities,
+    ~registeredAddresses,
     ~chainMetaData,
     ~onWrite,
   ) => {
@@ -2368,6 +2486,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::${addrChai
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
       ~updatedEntities=pgUpdates,
+      ~registeredAddresses,
       ~sinkPromise,
       ~chainMetaData,
     )
@@ -2413,6 +2532,7 @@ let makeStorageFromEnv = (
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
     ~chainIdMode=config.chainIdMode,
+    ~ecosystem=config.ecosystem.name,
     ~sink=?{
       // Internally ClickHouse storage is implemented as a sync of the
       // Postgres storage. Required env vars are validated here only when
@@ -2465,7 +2585,7 @@ let makeStorageFromEnv = (
               ~pgSchema,
               ~userEntities=config->Config.getPgUserEntities,
               ~responseLimit=Env.Hasura.responseLimit,
-              ~schema=Schema.make(config.allEntities->Array.map(e => e.table)),
+              ~schema=Schema.make(config.userEntities->Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
             )->Promise.catch(err => {
               Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve

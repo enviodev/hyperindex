@@ -26,13 +26,13 @@ pub struct FromUserApiResult {
     /// `with_indexer_types` was requested.
     pub indexer_types: Option<String>,
     /// The generated `Indexer.res`, present only when `with_indexer_types` was
-    /// requested. Same production codegen output, from the same parse.
+    /// requested and the config isn't SVM (which has no ReScript surface).
+    /// Same production codegen output, from the same parse.
     pub indexer_code: Option<String>,
 }
 
 fn serialize_config_result(config: anyhow::Result<SystemConfig>) -> napi::Result<String> {
-    let system_config =
-        config.map_err(|e| napi::Error::from_reason(format!("Config parse error: {e:#}")))?;
+    let system_config = config.map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
     system_config
         .to_public_config_json(false)
         .map_err(|e| napi::Error::from_reason(format!("Failed serializing config: {e}")))
@@ -68,7 +68,7 @@ pub fn from_user_api(
     let env = options.env.unwrap_or_default();
     let files = options.files.unwrap_or_default();
     let config = SystemConfig::parse_yaml(&yaml, options.schema.as_deref(), &env, &files, false)
-        .map_err(|e| napi::Error::from_reason(format!("Config parse error: {e:#}")))?;
+        .map_err(|e| napi::Error::from_reason(format!("{e:#}")))?;
 
     let config_json = config
         .to_public_config_json(false)
@@ -80,7 +80,7 @@ pub fn from_user_api(
         })?;
         (
             Some(template.indexer_types_dts().to_string()),
-            Some(template.indexer_code().to_string()),
+            template.indexer_code().map(str::to_string),
         )
     } else {
         (None, None)
