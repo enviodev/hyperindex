@@ -181,8 +181,11 @@ describe("resolver /hasura-action", () => {
   });
 
   it("refuses an admin resolver for a non-admin role, and answers it for admin", async () => {
-    // Enforced here as well as by Hasura's action permissions: the handler is
-    // reachable on its own network without going through Hasura at all.
+    // Hasura's action permissions keep this off the public schema; the check
+    // here refuses it again for a caller who reached the socket some other way
+    // and claimed the role. That second check only means something once
+    // ENVIO_RESOLVERS_ACTION_SECRET is set -- until then the role in the body
+    // is the caller's own word.
     const [refused, answered] = await Promise.all([
       action({
         action: { name: "adminOnly" },
@@ -397,6 +400,42 @@ describe("resolver /hasura-action", () => {
       status: answer.status,
       code: (answer.body as { extensions: { code: string } }).extensions.code,
     }).toEqual({ status: 400, code: "BAD_USER_INPUT" });
+  });
+
+  it("refuses a caller that cannot present the shared secret", async () => {
+    // The role arrives in the request body, so it is the caller's claim, not a
+    // fact. With a secret configured, only something Hasura sent can be
+    // believed -- and an unauthenticated caller can no longer assert `admin`.
+    const guarded = await startResolverServer({
+      resolvers,
+      pool,
+      port: 0,
+      actionSecret: "s3cr3t",
+      onError: () => {},
+    });
+    const call = (headers: Record<string, string>) =>
+      fetch(`http://127.0.0.1:${guarded.port}/hasura-action`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify({
+          action: { name: "adminOnly" },
+          input: {},
+          session_variables: { "x-hasura-role": "admin" },
+          request_query: "{ adminOnly }",
+        }),
+      });
+    try {
+      const [missing, wrong, right] = await Promise.all([
+        call({}),
+        call({ "x-envio-resolver-secret": "guess" }),
+        call({ "x-envio-resolver-secret": "s3cr3t" }),
+      ]);
+      expect([missing.status, wrong.status, right.status, await right.json()]).toEqual([
+        403, 403, 200, "secret",
+      ]);
+    } finally {
+      await guarded.close();
+    }
   });
 
   it("leaves /resolve answering serve's contract", async () => {

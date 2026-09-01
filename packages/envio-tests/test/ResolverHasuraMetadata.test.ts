@@ -111,6 +111,21 @@ describe("manifest -> Hasura metadata", () => {
     });
   });
 
+  // Without this the service can only take the caller's word for its own role,
+  // so anything that can reach the pod can claim `admin`. Hasura sends the
+  // header because the action declares it, and the value is literal so no
+  // Hasura-side configuration is involved.
+  it("declares a shared-secret header on every action when one is configured", () => {
+    const withSecret = buildHasuraMetadata(manifest, {
+      handlerUrl: "http://resolvers:9900/hasura-action",
+      actionSecret: "s3cr3t",
+    });
+    expect(withSecret.actions.map((a: any) => a.definition.headers)).toEqual([
+      [{ name: "x-envio-resolver-secret", value: "s3cr3t" }],
+      [{ name: "x-envio-resolver-secret", value: "s3cr3t" }],
+    ]);
+  });
+
   it("refuses a manifest it cannot represent rather than emitting a partial one", () => {
     const bad = { ...manifest, types: [{ kind: "union", name: "Weird" }] };
     expect(() => buildHasuraMetadata(bad as never, { handlerUrl: "http://x" })).toThrow(
