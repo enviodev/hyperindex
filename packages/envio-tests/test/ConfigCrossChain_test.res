@@ -295,7 +295,11 @@ describe("Per-chain entity DDL", () => {
 describe("Per-chain rollback and delete SQL", () => {
   it("Keys the removed-ids query on (id, chain id)", t => {
     t.expect(
-      PgStorage.makeGetRollbackRemovedIdsQuery(~entityConfig=counter, ~pgSchema="public"),
+      PgStorage.makeGetRollbackRemovedIdsQuery(
+        ~entityConfig=counter,
+        ~pgSchema="public",
+        ~scope=Global,
+      ),
     ).toBe(
       `SELECT DISTINCT "id", "chainId"
   FROM "public"."envio_history_Counter"
@@ -310,7 +314,11 @@ describe("Per-chain rollback and delete SQL", () => {
   })
 
   it("Dedups the pre-target restore per (id, chain id)", t => {
-    let query = PgStorage.makeGetRollbackPreTargetRowsQuery(~entityConfig=counter, ~pgSchema="public")
+    let query = PgStorage.makeGetRollbackPreTargetRowsQuery(
+      ~entityConfig=counter,
+      ~pgSchema="public",
+      ~scope=Global,
+    )
     t.expect((
       query->String.includes(`SELECT DISTINCT ON ("id", "chainId")`),
       query->String.includes(`ORDER BY "id", "chainId", "envio_checkpoint_id" DESC`),
@@ -397,6 +405,7 @@ describe("Per-chain entities under snake_case columns", () => {
       PgStorage.makeGetRollbackRemovedIdsQuery(
         ~entityConfig=snakeCounter,
         ~pgSchema="public",
+        ~scope=Global,
       )->String.includes(`SELECT DISTINCT "id", "chain_id"`),
     )).toEqual((
       `CREATE TABLE IF NOT EXISTS "public"."Counter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, "chain_id" INTEGER NOT NULL, PRIMARY KEY("id", "chain_id"));`,
