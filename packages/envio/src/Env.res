@@ -238,6 +238,11 @@ module Resolvers = {
       }
     }
 
+  // Shared with Hasura, which presents it on every action call. Unset means the
+  // handler cannot tell Hasura from anything else that reaches the socket, so
+  // it has to believe the role in the request body.
+  let actionSecret = () => read("ENVIO_RESOLVERS_ACTION_SECRET")
+
   // Read raw rather than through `Env.Hasura`, whose dev fallbacks would have
   // this process apply metadata to a localhost Hasura nobody asked for. Only
   // an endpoint someone set means "there is a Hasura to register with".

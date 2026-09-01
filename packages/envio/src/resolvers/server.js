@@ -7,7 +7,8 @@
 // contract, which is easier to read as bytes in and bytes out.
 
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import { RESOLVER_SECRET_HEADER } from "./hasuraMetadata.js";
 import { createDispatcher } from "./dispatch.js";
 import {
   actionErrorBody,
@@ -50,6 +51,16 @@ function send(response, status, body) {
   response.end(payload);
 }
 
+// Constant time, so a wrong guess cannot be narrowed by how long the compare
+// took. Lengths are compared first because timingSafeEqual throws on a mismatch.
+function presentedSecret(request, expected) {
+  const presented = request.headers[RESOLVER_SECRET_HEADER];
+  if (typeof presented !== "string") return false;
+  const a = Buffer.from(presented);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 const wireError = (message, code) => ({
   errors: [{ message, extensions: { code } }],
 });
@@ -61,7 +72,7 @@ const wireError = (message, code) => ({
  * `port: 0` to let the OS choose one.
  */
 export async function startResolverServer(options) {
-  const { resolvers, pool, exposeErrors = false, checkCompatible } = options;
+  const { resolvers, pool, exposeErrors = false, checkCompatible, actionSecret } = options;
   const port = options.port ?? ResolversEnv.port();
   const host = options.host ?? "0.0.0.0";
 
@@ -131,6 +142,20 @@ export async function startResolverServer(options) {
         }
 
         if (isAction) {
+          // Checked before anything is parsed or dispatched. Without it the
+          // handler believes whatever role the body claims, so `admin: true`
+          // stops anyone reaching Hasura and nobody reaching the socket.
+          if (actionSecret !== undefined && !presentedSecret(request, actionSecret)) {
+            send(
+              response,
+              403,
+              actionErrorBody(
+                "This resolver service requires the shared secret Hasura is configured to send.",
+                "FORBIDDEN"
+              )
+            );
+            return;
+          }
           const invalid = badActionRequest(parsed);
           if (invalid !== null) {
             send(
