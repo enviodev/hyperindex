@@ -261,7 +261,7 @@ export async function applyResolverMetadata({
   healOnly = false,
   timeoutMs,
 }) {
-  const connection = { endpoint, adminSecret, role, ...(timeoutMs ? { timeoutMs } : {}) };
+  const connection = { endpoint, adminSecret, role, timeoutMs };
   const exported = await metadataCall(connection, { type: "export_metadata", args: {} });
   const { bulk, reasons } = planApply(metadata, exported, { healOnly });
   if (bulk === null) {
