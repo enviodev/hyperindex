@@ -90,7 +90,7 @@ describe("manifest -> Hasura metadata", () => {
               { name: "period", type: "Period" },
             ],
             output_type: "[Bucket!]!",
-            timeout: 30,
+            timeout: 31,
           },
         },
         {
@@ -101,7 +101,7 @@ describe("manifest -> Hasura metadata", () => {
             handler: "http://resolvers:9900/hasura-action",
             arguments: [],
             output_type: "String",
-            timeout: 5,
+            timeout: 6,
           },
         },
       ],
@@ -123,6 +123,27 @@ describe("manifest -> Hasura metadata", () => {
     expect(withSecret.actions.map((a: any) => a.definition.headers)).toEqual([
       [{ name: "x-envio-resolver-secret", value: "s3cr3t" }],
       [{ name: "x-envio-resolver-secret", value: "s3cr3t" }],
+    ]);
+  });
+
+  // Hasura's `timeout` bounds the whole HTTP call; the resolver's `timeoutMs`
+  // bounds only the queries inside it. Acquiring a connection, parsing
+  // arguments and serializing the result all spend Hasura's budget without
+  // spending the resolver's, so equal deadlines let Hasura abort a request the
+  // resolver still considers live -- and Hasura aborting reaches the client as
+  // an unreachable webhook rather than as the resolver's own timeout.
+  it("gives Hasura's timeout headroom over the resolver's query timeout", () => {
+    const actions = buildHasuraMetadata(manifest, {
+      handlerUrl: "http://resolvers:9900/hasura-action",
+    }).actions;
+    expect(
+      manifest.resolvers.map((resolver: any) => [
+        resolver.timeoutMs,
+        actions.find((action: any) => action.name === resolver.name)!.definition.timeout,
+      ])
+    ).toEqual([
+      [30_000, 31],
+      [5_000, 6],
     ]);
   });
 
