@@ -14,7 +14,7 @@ external buildRegisteredManifest: unit => manifestBundle = "buildRegisteredManif
 @module("./index.js")
 external getRegisteredResolvers: unit => array<unknown> = "getRegisteredResolvers"
 
-type hasuraMetadataOptions = {handlerUrl: string}
+type hasuraMetadataOptions = {handlerUrl: string, actionSecret?: string}
 
 @module("./hasuraMetadata.js")
 external buildHasuraMetadata: (JSON.t, hasuraMetadataOptions) => JSON.t = "buildHasuraMetadata"
@@ -68,6 +68,7 @@ type serverOptions = {
   pool: pool,
   port?: int,
   exposeErrors?: bool,
+  actionSecret?: string,
   // `null` means ready. A string is the reason it is not, and reaches the
   // probe's body, so an operator reads it wherever the failed probe surfaces
   // rather than by correlating logs.
@@ -240,7 +241,7 @@ let metadataJson = async (~config: Config.t, ~projectRoot, ~handlerUrl) => {
     checkCollisions(bundle.manifest, schemaNamesOf(config))
     bundle.manifest
   }
-  buildHasuraMetadata(manifest, {handlerUrl: handlerUrl})
+  buildHasuraMetadata(manifest, {handlerUrl, actionSecret: ?Env.Resolvers.actionSecret()})
 }
 
 /// `envio resolvers migrate`: brings a running indexer's Hasura metadata in
@@ -406,6 +407,7 @@ let serve = async (
     pool,
     ?port,
     exposeErrors,
+    actionSecret: ?Env.Resolvers.actionSecret(),
     checkCompatible: compatibilityOf(~pool, ~pgSchema, ~envioInfo),
   })
   Logging.info(
@@ -419,7 +421,7 @@ let serve = async (
   let stopReassert = switch hasuraTargetOrNone {
   | Ok((endpoint, adminSecret)) =>
     let handlerUrl = handlerUrlOrThrow()
-    let metadata = buildHasuraMetadata(manifest, {handlerUrl: handlerUrl})
+    let metadata = buildHasuraMetadata(manifest, {handlerUrl, actionSecret: ?Env.Resolvers.actionSecret()})
     let intervalMs = Env.Resolvers.metadataIntervalMs()
 
     // Best effort, deliberately. Replicas rolling out together all find the

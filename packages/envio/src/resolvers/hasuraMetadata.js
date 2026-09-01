@@ -13,6 +13,10 @@
 // Hasura's own; anything else a resolver names has to be declared.
 const BUILTIN_SCALARS = new Set(["String", "Int", "Float", "Boolean", "ID"]);
 
+/** The header Hasura presents so the handler can tell it apart from anyone
+ *  else who can reach the socket. */
+export const RESOLVER_SECRET_HEADER = "x-envio-resolver-secret";
+
 /**
  * @param manifest the parsed `.envio/resolvers.json`
  * @param handlerUrl the URL *Hasura* posts to -- reachable from Hasura, which
@@ -20,7 +24,7 @@ const BUILTIN_SCALARS = new Set(["String", "Int", "Float", "Boolean", "ID"]);
  * @param publicRole the role a non-admin caller runs as (Hasura's
  *   `unauthorized_role`)
  */
-export function buildHasuraMetadata(manifest, { handlerUrl, publicRole = "public" }) {
+export function buildHasuraMetadata(manifest, { handlerUrl, publicRole = "public", actionSecret }) {
   if (!handlerUrl) {
     throw new Error(
       "buildHasuraMetadata requires a handlerUrl: it is baked into every action, and Hasura has no other way to reach the resolvers."
@@ -83,6 +87,13 @@ export function buildHasuraMetadata(manifest, { handlerUrl, publicRole = "public
       // never the first to give up on a request the resolver still considers
       // live.
       timeout: Math.max(1, Math.ceil(resolver.timeoutMs / 1000)),
+      // The role reaches the handler inside the request body, so on its own it
+      // is the caller's claim rather than a fact. This header is the only thing
+      // that makes it one: Hasura sends it because the action declares it, and
+      // the value is literal, so Hasura itself needs no configuration.
+      ...(actionSecret
+        ? { headers: [{ name: RESOLVER_SECRET_HEADER, value: actionSecret }] }
+        : {}),
     };
     const action = { name: resolver.name, definition };
     if (resolver.description) {
