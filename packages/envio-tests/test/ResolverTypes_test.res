@@ -115,6 +115,33 @@ createResolver({
 `)
   )
 
+  // `createResolver` reads `output.t` and walks each argument with
+  // `toGraphQLType` at declaration time, so anything that is not a schema
+  // throws the moment the module is imported -- at indexer startup, not in the
+  // editor. The generics are what move that to the editor.
+  it("refuses arguments and an output that aren't schemas", _ =>
+    check(`
+import { createResolver, S } from "envio";
+
+createResolver({
+  name: "notASchema",
+  // @ts-expect-error - the output has to be a schema, not a string
+  output: "not-a-schema",
+  timeoutMs: 30_000,
+  handler: async () => "",
+});
+
+createResolver({
+  name: "argIsNotASchema",
+  // @ts-expect-error - every argument has to be a schema too
+  args: { limit: 20 },
+  output: S.string,
+  timeoutMs: 30_000,
+  handler: async () => "",
+});
+`)
+  )
+
   it("types the entity loaders off the project schema", _ =>
     check(`
 import { createResolver, S } from "envio";
