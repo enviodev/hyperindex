@@ -20,6 +20,20 @@ type fetchArgs = {method: string, headers: dict<string>, body: string}
 
 type getArgs = {method: string}
 @val external fetchGet: (string, getArgs) => promise<response> = "fetch"
+
+type server
+type req
+type res
+@module("node:http") external createServer: ((req, res) => unit) => server = "createServer"
+@send external listenOnHost: (server, int, string, unit => unit) => unit = "listen"
+@send external closeServer: (server, unit => unit) => unit = "close"
+type address = {port: int}
+@send external address: server => address = "address"
+@send external setEncoding: (req, string) => unit = "setEncoding"
+@send external onData: (req, @as("data") _, string => unit) => unit = "on"
+@send external onEnd: (req, @as("end") _, unit => unit) => unit = "on"
+@send external writeHead: (res, int, dict<string>) => unit = "writeHead"
+@send external end_: (res, string) => unit = "end"
 @val external processEnv: dict<string> = "process.env"
 @val @scope("process") external currentPid: int = "pid"
 
@@ -263,5 +277,92 @@ extend type Query {
       answeredWhileRunning,
       afterStop,
     )).toEqual((true, false, 200, "refused"))
+  })
+
+  // Locally the resolvers have to appear in the same GraphQL endpoint as the
+  // generated entity fields, or `envio dev` shows a developer everything except
+  // the thing they just wrote. Hasura is a container and the resolver process
+  // is on the host, so the handler it registers has to be the host's address,
+  // not the one the process binds.
+  Async.it("points its Hasura at the resolvers it just spawned", async t => {
+    let seen: ref<array<JSON.t>> = ref([])
+    let hasura = createServer((req, res) => {
+      let body = ref("")
+      req->setEncoding("utf8")
+      req->onData(chunk => body := body.contents ++ chunk)
+      req->onEnd(() => {
+        let parsed = body.contents->JSON.parseOrThrow
+        seen.contents->Array.push(parsed)->ignore
+        let isExport = switch parsed {
+        | Object(dict) =>
+          switch dict->Dict.get("type") {
+          | Some(String("export_metadata")) => true
+          | _ => false
+          }
+        | _ => false
+        }
+        res->writeHead(200, dict{"content-type": "application/json"})
+        res->end_(isExport ? `{"version":3,"sources":[]}` : `[{"message":"success"}]`)
+      })
+    })
+    await Promise.make((resolve, _reject) =>
+      hasura->listenOnHost(0, "127.0.0.1", () => resolve())
+    )
+    processEnv->Dict.set(
+      "HASURA_GRAPHQL_ENDPOINT",
+      `http://127.0.0.1:${(hasura->address).port->Int.toString}/v1/metadata`,
+    )
+    processEnv->Dict.set("ENVIO_RESOLVERS_PORT", "9918")
+
+    let dev = (await ResolverProcess.startForDev(~config, ~projectRoot))->Option.getOrThrow
+    // The child applies after it binds, so give it a moment past /healthz.
+    let deadline = Date.now() +. 10_000.
+    let rec waitForBulk = async () =>
+      if seen.contents->Array.length >= 2 || Date.now() > deadline {
+        ()
+      } else {
+        await Utils.delay(50)
+        await waitForBulk()
+      }
+    await waitForBulk()
+    await dev.stop()
+    await Promise.make((resolve, _reject) => hasura->closeServer(() => resolve()))
+    processEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", "")
+
+    let handlers =
+      seen.contents
+      ->Array.flatMap(call =>
+        switch call {
+        | Object(dict) =>
+          switch (dict->Dict.get("type"), dict->Dict.get("args")) {
+          | (Some(String("bulk")), Some(Array(args))) =>
+            args->Array.filterMap(arg =>
+              switch arg {
+              | Object(argDict) =>
+                switch argDict->Dict.get("args") {
+                | Some(Object(actionArgs)) =>
+                  switch actionArgs->Dict.get("definition") {
+                  | Some(Object(definition)) =>
+                    switch definition->Dict.get("handler") {
+                    | Some(String(handler)) => Some(handler)
+                    | _ => None
+                    }
+                  | _ => None
+                  }
+                | _ => None
+                }
+              | _ => None
+              }
+            )
+          | _ => []
+          }
+        | _ => []
+        }
+      )
+
+    t.expect(handlers).toEqual([
+      "http://host.docker.internal:9918/hasura-action",
+      "http://host.docker.internal:9918/hasura-action",
+    ])
   })
 })
