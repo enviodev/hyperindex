@@ -430,9 +430,26 @@ describe("resolver /hasura-action", () => {
         call({ "x-envio-resolver-secret": "guess" }),
         call({ "x-envio-resolver-secret": "s3cr3t" }),
       ]);
-      expect([missing.status, wrong.status, right.status, await right.json()]).toEqual([
-        403, 403, 200, "secret",
-      ]);
+      // `/resolve` takes the role as a plain body field, so it is the same
+      // bypass through a different door and has to be shut with it.
+      const serveRoute = await fetch(`http://127.0.0.1:${guarded.port}/resolve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          field: "adminOnly",
+          args: {},
+          selection: {},
+          role: "admin",
+          requestId: "req-unauthenticated",
+        }),
+      });
+      expect([
+        missing.status,
+        wrong.status,
+        right.status,
+        await right.json(),
+        serveRoute.status,
+      ]).toEqual([403, 403, 200, "secret", 403]);
     } finally {
       await guarded.close();
     }
