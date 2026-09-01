@@ -28,7 +28,12 @@ type harness = {
   unsubscribe: unit => unit,
 }
 
-let makeHarness = (~staleTimeout=15_000, ~failOnConnect=?, ~throwOnConnect=false, ~throwOnClose=false) => {
+let makeHarness = (
+  ~staleTimeout=15_000,
+  ~failOnConnect=?,
+  ~throwOnConnect=false,
+  ~throwOnClose=false,
+) => {
   let statuses = []
   let heights = []
   let drivers = []
@@ -79,13 +84,10 @@ let advanceThroughRetryWindow = async (harness, ~delay) => {
   (beforeEarliest, harness.drivers->Array.length)
 }
 
-describe("HeightStream reconnect driver", () => {
-  beforeEach(() => Vi.useFakeTimers())
-  afterEach(() => Vi.useRealTimers())
-
-  it("Spreads a retry wait across the half-window below it", t => {
+describe("Utils.jitter", () => {
+  it("Spreads a delay across the half-window below it", t => {
     // Every indexer on one provider loses its stream in the same instant when
-    // that provider blinks; reconnecting them all on one schedule is what turns
+    // that provider blinks; putting them all back on one schedule is what turns
     // a blip into a stampede.
     let samples = Belt.Array.makeBy(200, _ => Utils.jitter(1_000))
     let first = samples->Array.getUnsafe(0)
@@ -93,10 +95,15 @@ describe("HeightStream reconnect driver", () => {
     t.expect((
       samples->Array.every(v => v >= 500 && v < 1_000),
       samples->Array.some(v => v !== first),
-      // Nothing to spread on a first connection, which nothing preceded.
+      // A delay of nothing has nothing to spread.
       Utils.jitter(0),
     )).toStrictEqual((true, true, 0))
   })
+})
+
+describe("HeightStream reconnect driver", () => {
+  beforeEach(() => Vi.useFakeTimers())
+  afterEach(() => Vi.useRealTimers())
 
   Async.it("Backs off exponentially to a 60s cap and never gives up", async t => {
     let harness = makeHarness()
@@ -242,12 +249,7 @@ describe("HeightStream reconnect driver", () => {
     rotated.onFailure(~reason=Source.Closed)
     harness.unsubscribe()
 
-    t.expect(harness.statuses).toStrictEqual([
-      "live",
-      "down:closed",
-      "live",
-      "down:rotated",
-    ])
+    t.expect(harness.statuses).toStrictEqual(["live", "down:closed", "live", "down:rotated"])
   })
 
   Async.it("Leaves a failure that is not a clean end alone, however long it served", async t => {
@@ -286,7 +288,11 @@ describe("HeightStream reconnect driver", () => {
     await Vi.advanceTimersByTimeAsync(250)
     harness.unsubscribe()
 
-    t.expect((harness.statuses, harness.closes.contents, harness.drivers->Array.length)).toStrictEqual((
+    t.expect((
+      harness.statuses,
+      harness.closes.contents,
+      harness.drivers->Array.length,
+    )).toStrictEqual((
       ["live", "down:error"],
       // One close for the failed connection, one for the unsubscribe.
       2,
@@ -303,10 +309,7 @@ describe("HeightStream reconnect driver", () => {
     await Vi.advanceTimersByTimeAsync(1)
     harness.unsubscribe()
 
-    t.expect((beforeStale, harness.statuses)).toStrictEqual((
-      ["live"],
-      ["live", "down:stale"],
-    ))
+    t.expect((beforeStale, harness.statuses)).toStrictEqual((["live"], ["live", "down:stale"]))
   })
 
   Async.it("Names a stale failure after a message it could not read", async t => {
@@ -336,12 +339,7 @@ describe("HeightStream reconnect driver", () => {
     harness.unsubscribe()
 
     t.expect((harness.statuses, harness.heights)).toStrictEqual((
-      [
-        "live",
-        `down:unreadable:{"height":"not-a-number"}`,
-        "live",
-        "down:stale",
-      ],
+      ["live", `down:unreadable:{"height":"not-a-number"}`, "live", "down:stale"],
       [101],
     ))
   })
@@ -463,7 +461,9 @@ describe("HeightStream reconnect driver", () => {
 
   Async.it("Keeps retrying when the transport throws while connecting", async t => {
     // Reached through a malformed url: escaping the retry timer would take the
-    // process down instead.
+    // process down instead. The throw is the only account of what is wrong with
+    // the url, and it retries forever, so losing it leaves an operator with a
+    // counter and no cause.
     let harness = makeHarness(~throwOnConnect=true)
 
     let (beforeRetry, afterRetry) = await harness->advanceThroughRetryWindow(~delay=250)
@@ -472,7 +472,7 @@ describe("HeightStream reconnect driver", () => {
     t.expect((beforeRetry, afterRetry, harness.statuses)).toStrictEqual((
       1,
       2,
-      ["down:connect-failed", "down:connect-failed"],
+      ["down:connect-failed:Invalid URL", "down:connect-failed:Invalid URL"],
     ))
   })
 
@@ -526,10 +526,12 @@ let listenWs = onConnection => {
 
 describe("HyperSyncSSE", () => {
   Async.it("Reports the HTTP status as the failure reason", async t => {
-    let (server, url) = await listenHttp((_request, response) => {
-      response->MockRpcServer.writeHead(401, Dict.fromArray([("Content-Type", "text/plain")]))
-      response->MockRpcServer.end_("unauthorized")
-    })
+    let (server, url) = await listenHttp(
+      (_request, response) => {
+        response->MockRpcServer.writeHead(401, Dict.fromArray([("Content-Type", "text/plain")]))
+        response->MockRpcServer.end_("unauthorized")
+      },
+    )
     let statuses = []
     // The status alone can't tell an operator which of a provider's many 401s
     // this was, so the transport has to carry its message out too.
@@ -555,16 +557,18 @@ describe("HyperSyncSSE", () => {
   })
 
   Async.it("Delivers heights and reports a clean stream end as closed", async t => {
-    let (server, url) = await listenHttp((_request, response) => {
-      response->MockRpcServer.writeHead(
-        200,
-        Dict.fromArray([("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache")]),
-      )
-      response->MockRpcServer.write("event: height\ndata: 123\n\n")
-      // Ending the response drops the stream without an HTTP error, which is
-      // how a load balancer rotating connections shows up.
-      response->MockRpcServer.endStream()
-    })
+    let (server, url) = await listenHttp(
+      (_request, response) => {
+        response->MockRpcServer.writeHead(
+          200,
+          Dict.fromArray([("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache")]),
+        )
+        response->MockRpcServer.write("event: height\ndata: 123\n\n")
+        // Ending the response drops the stream without an HTTP error, which is
+        // how a load balancer rotating connections shows up.
+        response->MockRpcServer.endStream()
+      },
+    )
     let statuses = []
     let heights = []
     let unsubscribe = HyperSyncSSE.subscribe(
@@ -587,15 +591,16 @@ describe("HyperSyncSSE", () => {
 
 describe("EvmRpcWs", () => {
   Async.it("Goes live on subscription confirmation and delivers new heads", async t => {
-    let (server, url) = await listenWs(socket =>
-      socket->WsServer.onMessage(data => {
-        if data->WsServer.toString->String.includes("eth_subscribe") {
-          socket->WsServer.send(`{"jsonrpc":"2.0","id":1,"result":"0xsub"}`)
-          socket->WsServer.send(
-            `{"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"0xsub","result":{"number":"0x2a"}}}`,
-          )
-        }
-      })
+    let (server, url) = await listenWs(
+      socket =>
+        socket->WsServer.onMessage(
+          data => {
+            if data->WsServer.toString->String.includes("eth_subscribe") {
+              socket->WsServer.send(`{"jsonrpc":"2.0","id":1,"result":"0xsub"}`)
+              socket->WsServer.send(`{"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"0xsub","result":{"number":"0x2a"}}}`)
+            }
+          },
+        ),
     )
     let statuses = []
     let heights = []
@@ -615,8 +620,8 @@ describe("EvmRpcWs", () => {
   Async.it("Stays down while the socket opens but never confirms the subscription", async t => {
     // Answering with something the stream can't read must not count as
     // confirmation, nor bring the connection down on its own.
-    let (server, url) = await listenWs(socket =>
-      socket->WsServer.onMessage(_data => socket->WsServer.send("not json at all"))
+    let (server, url) = await listenWs(
+      socket => socket->WsServer.onMessage(_data => socket->WsServer.send("not json at all")),
     )
     let statuses = []
     let unsubscribe = EvmRpcWs.subscribe(
@@ -635,10 +640,11 @@ describe("EvmRpcWs", () => {
   Async.it("Treats a frame it cannot make sense of as unreadable, not as a rejection", async t => {
     // Valid JSON, but none of the shapes this stream knows. Reporting it as a
     // rejected subscription would name a cause the provider never gave.
-    let (server, url) = await listenWs(socket =>
-      socket->WsServer.onMessage(_data =>
-        socket->WsServer.send(`{"jsonrpc":"2.0","hello":"world"}`)
-      )
+    let (server, url) = await listenWs(
+      socket =>
+        socket->WsServer.onMessage(
+          _data => socket->WsServer.send(`{"jsonrpc":"2.0","hello":"world"}`),
+        ),
     )
     let statuses = []
     let unsubscribe = EvmRpcWs.subscribe(
@@ -655,20 +661,18 @@ describe("EvmRpcWs", () => {
   })
 
   Async.it("Keeps a delivering connection through an error meant for something else", async t => {
-    let (server, url) = await listenWs(socket =>
-      socket->WsServer.onMessage(data =>
-        if data->WsServer.toString->String.includes("eth_subscribe") {
-          socket->WsServer.send(`{"jsonrpc":"2.0","id":1,"result":"0xsub"}`)
-          // Nothing to do with the subscription this stream asked for: a
-          // provider talking about some other request, or about itself.
-          socket->WsServer.send(
-            `{"jsonrpc":"2.0","id":7,"error":{"code":-32005,"message":"rate limited"}}`,
-          )
-          socket->WsServer.send(
-            `{"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"0xsub","result":{"number":"0x2a"}}}`,
-          )
-        }
-      )
+    let (server, url) = await listenWs(
+      socket =>
+        socket->WsServer.onMessage(
+          data =>
+            if data->WsServer.toString->String.includes("eth_subscribe") {
+              socket->WsServer.send(`{"jsonrpc":"2.0","id":1,"result":"0xsub"}`)
+              // Nothing to do with the subscription this stream asked for: a
+              // provider talking about some other request, or about itself.
+              socket->WsServer.send(`{"jsonrpc":"2.0","id":7,"error":{"code":-32005,"message":"rate limited"}}`)
+              socket->WsServer.send(`{"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"0xsub","result":{"number":"0x2a"}}}`)
+            },
+        ),
     )
     let statuses = []
     let heights = []
@@ -686,12 +690,12 @@ describe("EvmRpcWs", () => {
   })
 
   Async.it("Reports a rejected eth_subscribe without giving up", async t => {
-    let (server, url) = await listenWs(socket =>
-      socket->WsServer.onMessage(_data =>
-        socket->WsServer.send(
-          `{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"not supported"}}`,
-        )
-      )
+    let (server, url) = await listenWs(
+      socket =>
+        socket->WsServer.onMessage(
+          _data =>
+            socket->WsServer.send(`{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"not supported"}}`),
+        ),
     )
     let statuses = []
     let unsubscribe = EvmRpcWs.subscribe(

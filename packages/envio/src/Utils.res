@@ -22,16 +22,24 @@ external importPathWithJson: (
 // provider loses its stream, or gives up on a quiet chain, in the same instant
 // that provider blinks, and putting them all back on the same schedule is how a
 // blip becomes a stampede.
-let jitter = delay =>
-  delay === 0 ? 0 : delay / 2 + (Math.random() *. (delay / 2)->Int.toFloat)->Float.toInt
+let jitter = delay => delay / 2 + (Math.random() *. (delay / 2)->Int.toFloat)->Float.toInt
+
+// Clearing a pending timer and forgetting it are one action. A ref left holding
+// a spent id reads as a timer still pending, and the next clear looks like it
+// did something.
+let clearTimeoutRef = timeoutId => {
+  switch timeoutId.contents {
+  | Some(id) => clearTimeout(id)
+  | None => ()
+  }
+  timeoutId := None
+}
 
 // Keeps the doubling from overflowing on something that has been failing for
 // days. Every caller's delay reaches its cap long before this.
 let maxBackoffExponent = 20
 
-// `base` doubled `exp` times, capped. One ramp shape for everything that backs
-// off, so the cap and the overflow guard can't be right in one place and missing
-// in the next.
+// `base` doubled `exp` times, capped.
 let expBackoff = (~base, ~exp, ~maxMillis) =>
   Pervasives.min(
     base * Math.pow(2.0, ~exp=Pervasives.min(exp, maxBackoffExponent)->Int.toFloat)->Float.toInt,
@@ -523,6 +531,20 @@ external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 module Schema = {
   let variantTag = S.union([S.string, S.object(s => s.field("TAG", S.string))])
 
+  // A ReScript `option` is `undefined` at runtime, so `S.null`'s serializer
+  // treats only `undefined` as the empty case — a genuine `null`, which a JS
+  // handler writes for a field it doesn't set, reaches the value serializer
+  // and crashes it (`null.toString()` for a BigInt column). Collapse both to
+  // `None` before the value serializer sees them.
+  //
+  // Revisit on the Sury v11 migration: if its nullable handles a `null` value
+  // on the serialize side, this wrapper goes away.
+  let nullTolerant = schema =>
+    S.null(schema)->S.transform(_ => {
+      parser: value => value,
+      serializer: value => value->(magic: option<'a> => Nullable.t<'a>)->Nullable.toOption,
+    })
+
   // Don't use S.unknown, since it's not serializable to json
   // In a nutshell, this is completely unsafe.
   let dbDate =
@@ -789,6 +811,14 @@ let prettifyExn = exn => {
   | exn => exn
   }
 }
+
+// The message a throw carries, for the places that want to put it in a string
+// rather than re-throw it.
+let exnMessage = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(jsExn) => jsExn->JsExn.message
+  | _ => None
+  }
 
 module EnvioPackage = {
   type t = {version: string}

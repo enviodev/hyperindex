@@ -98,8 +98,6 @@ type sourceHeightMetrics = {
   height: int,
 }
 
-// Only sources that have a height subscription appear, so an indexer with none
-// renders none of it.
 type sourceHeightStreamMetrics = {
   source: string,
   chainId: ChainId.t,
@@ -230,9 +228,8 @@ let renderMetrics = (b: builder, metrics: t) => {
     metrics.storageWrites->Array.map(s => (`{storage="${s.storage->escapeLabelValue}"}`, s))
   let historyPrunes =
     metrics.historyPrunes->Array.map(s => (`{entity="${s.entity->escapeLabelValue}"}`, s))
-  // Every per-source series is keyed by these, so they are built in one place:
-  // a scrape whose label sets disagree between two of them is one nothing can
-  // join on.
+  // Every per-source series shares this label set: a scrape whose labels
+  // disagree between two of them is one nothing can join on.
   let sourceLabels = (~source, ~chainId, ~extra: option<(string, string)>=?) => {
     let pair = `{source="${source->escapeLabelValue}",chainId="${chainId->ChainId.toString}"`
     switch extra {
@@ -515,7 +512,7 @@ let renderMetrics = (b: builder, metrics: t) => {
   if heightStreamConnects->Array.length > 0 {
     b->series(
       ~name="envio_source_height_stream_connects_total",
-      ~help="The number of times a source's height subscription connected. Compare against the disconnects total, which is absent until the first disconnect and counts as zero while it is: one more connect than disconnects means the stream is up, equal counts mean it is down and the indexer is polling instead, and zero connects means it has never come up.",
+      ~help="The number of times a source's height subscription connected. Compare against the disconnects total, which is absent until the first disconnect and counts as zero while it is: one more connect than disconnects means the stream is up, and equal counts mean it is down and the indexer is polling instead. Zero connects means the stream has not come up, which is the normal reading for a chain that is still backfilling: subscriptions are only opened once a chain reaches the head.",
       ~kind="counter",
       ~entries=heightStreamConnects,
       ~value=count => count->Int.toFloat,
@@ -773,10 +770,12 @@ let renderMetrics = (b: builder, metrics: t) => {
     ~help="The number of address registrations per contract on chain, static and dynamic. An address shared by N contracts counts N times.",
     ~kind="gauge",
     ~entries=metrics.chains->Array.flatMap(m =>
-      m.addressesByContract->Array.map(((contract, count)) => (
-        `{chainId="${m.chainId->ChainId.toString}",contract="${contract->escapeLabelValue}"}`,
-        count,
-      ))
+      m.addressesByContract->Array.map(
+        ((contract, count)) => (
+          `{chainId="${m.chainId->ChainId.toString}",contract="${contract->escapeLabelValue}"}`,
+          count,
+        ),
+      )
     ),
     ~value=count => count->Int.toFloat,
   )

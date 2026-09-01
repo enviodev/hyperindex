@@ -88,9 +88,7 @@ let onNewBlockMock = () => {
 describe("native request failures", () => {
   it("keeps timings and maps a wrapped HyperSync rate limit", t => {
     let exn = try {
-      JsError.throwWithMessage(
-        `ENVIO_NATIVE_FAILURE:{"message":"RATE_LIMITED:2500","requestStats":[{"method":"getBlockHashes","seconds":0.25}]}`,
-      )
+      JsError.throwWithMessage(`ENVIO_NATIVE_FAILURE:{"message":"RATE_LIMITED:2500","requestStats":[{"method":"getBlockHashes","seconds":0.25}]}`)
     } catch {
     | exn => exn
     }
@@ -397,10 +395,11 @@ describe("SourceManager fetchNext", () => {
     ~onNewBlock,
     ~stateId,
   ) => {
-    let action = fetchState->FetchState.getNextQuery(
-      ~chainTargetBlock=fetchState.knownHeight,
-      ~chainTargetItems=50_000.,
-    )
+    let action =
+      fetchState->FetchState.getNextQuery(
+        ~chainTargetBlock=fetchState.knownHeight,
+        ~chainTargetItems=50_000.,
+      )
     // CrossChainState marks queries in flight when admitting them; dispatch no
     // longer does, so mirror that here before dispatching.
     switch action {
@@ -430,7 +429,7 @@ describe("SourceManager fetchNext", () => {
 
     {
       id: partitionIndex->Int.toString,
-      latestFetchedBlock:latestFetchedBlockNumber,
+      latestFetchedBlock: latestFetchedBlockNumber,
       selection: normalSelection,
       addresses: TestAddresses.setOf(addresses),
       mergeBlock: None,
@@ -522,7 +521,10 @@ describe("SourceManager fetchNext", () => {
 
     t.expect({
       // 10 already pending: the partition is capped, so the scheduler issues nothing.
-      "atCap": withPending(10)->FetchState.getNextQuery(~chainTargetBlock=1000, ~chainTargetItems=0.),
+      "atCap": withPending(10)->FetchState.getNextQuery(
+        ~chainTargetBlock=1000,
+        ~chainTargetItems=0.,
+      ),
       // 9 pending (45_000 already reserved): plenty of fresh chainTargetItems
       // headroom above that, so the two-chunk tail is trimmed down to the one
       // remaining slot by the chunk cap, not by budget.
@@ -844,6 +846,12 @@ describe("SourceManager fetchNext", () => {
 })
 
 describe("SourceManager wait for new blocks", () => {
+  // Several tests below install fake timers inline. A throw between installing
+  // and restoring them would otherwise leave the fake clock running for every
+  // real-timer test after it, burying the original failure in timeouts. A no-op
+  // where fake timers were never installed.
+  afterEach(() => Vi.useRealTimers())
+
   Async.it(
     "Immediately resolves when the source height is higher than the current height",
     async t => {
@@ -1209,11 +1217,7 @@ describe("SourceManager wait for new blocks", () => {
       let stalledPollingInterval = 2
       let newBlockStallTimeout = 8
       let sync = MockSource.make([#getHeightOrThrow], ~pollingInterval)
-      let fallback = MockSource.make(
-        ~sourceFor=Fallback,
-        [#getHeightOrThrow],
-        ~pollingInterval,
-      )
+      let fallback = MockSource.make(~sourceFor=Fallback, [#getHeightOrThrow], ~pollingInterval)
       let sourceManager = SourceManager.make(
         ~isRealtime=false,
         ~sources=[sync.source, fallback.source],
@@ -1459,9 +1463,7 @@ describe("SourceManager.executeQuery", () => {
   }
 
   Async.it("Successfully executes the query", async t => {
-    let {source, getItemsOrThrowCalls, resolveGetItemsOrThrow} = MockSource.make([
-      #getItemsOrThrow,
-    ])
+    let {source, getItemsOrThrowCalls, resolveGetItemsOrThrow} = MockSource.make([#getItemsOrThrow])
     let sourceManager = SourceManager.make(~isRealtime=false, ~sources=[source])
     let p =
       sourceManager->SourceManager.executeQuery(
@@ -2811,6 +2813,12 @@ Retries 2 times on fallback, switches back to sync (oldest lastFailedAt).
 })
 
 describe("SourceManager height subscription", () => {
+  // Several tests below install fake timers inline. A throw between installing
+  // and restoring them would otherwise leave the fake clock running for every
+  // real-timer test after it, burying the original failure in timeouts. A no-op
+  // where fake timers were never installed.
+  afterEach(() => Vi.useRealTimers())
+
   Async.it(
     "Creates subscription when getHeightOrThrow returns same height as knownHeight",
     async t => {
@@ -2969,8 +2977,8 @@ describe("SourceManager height subscription", () => {
           ~reducedPolling=false,
         )
 
-      // First stall is unjittered: the operator is promised a warning at
-      // exactly newBlockStallTimeoutRealtime. Repeats after that are jittered.
+      // The poke that starts this polling lands somewhere in
+      // [stallTimeout/2, stallTimeout), so the wait has to span the whole window.
       await Utils.delay(stallTimeout + 30)
 
       t.expect(
@@ -2984,6 +2992,81 @@ describe("SourceManager height subscription", () => {
       t.expect(await p2, ~message="Should resolve via REST polling fallback").toEqual(102)
     },
   )
+
+  Async.it("Spreads the first stall poke below the window it warns at", async t => {
+    Vi.useFakeTimers()
+    let stallTimeout = 20_000
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~sourceFor=Realtime,
+      ~pollingInterval=10_000,
+    )
+    let fallback = MockSource.make(
+      [#getHeightOrThrow],
+      ~sourceFor=Fallback,
+      ~pollingInterval=10_000,
+    )
+    let sourceManager = SourceManager.make(
+      ~isRealtime=true,
+      ~sources=[mock.source, fallback.source],
+      ~newBlockStallTimeoutRealtime=stallTimeout,
+    )
+
+    let first =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=true,
+        ~knownHeight=100,
+        ~reducedPolling=false,
+      )
+    mock.resolveGetHeightOrThrow(100)
+    await Vi.advanceTimersByTimeAsync(0)
+    mock.setHeightSubscriptionStatus(Live)
+    mock.triggerHeightSubscription(101)
+    let firstHeight = await first
+    await Vi.advanceTimersByTimeAsync(0)
+    // The fake clock is process-wide and the catch-up this connect fired is still
+    // outstanding; what the wait below arms is armed after this point.
+    Vi.clearAllTimers()
+
+    let polls = () => mock.getHeightOrThrowCalls->Array.length
+    let recruits = () => fallback.getHeightOrThrowCalls->Array.length
+    let (pollsBefore, recruitsBefore) = (polls(), recruits())
+
+    // A live stream that has delivered carries the wait on its own, so every poll
+    // this source makes below is one the stall poke asked for.
+    let waiting =
+      sourceManager->SourceManager.waitForNewBlock(
+        ~isRealtime=true,
+        ~knownHeight=101,
+        ~reducedPolling=false,
+      )
+
+    // Earliest instant the spread allows, minus one.
+    await Vi.advanceTimersByTimeAsync(stallTimeout / 2 - 1)
+    let pokedBeforeWindow = polls() > pollsBefore
+
+    // Latest instant it allows, still short of the window itself.
+    await Vi.advanceTimersByTimeAsync(stallTimeout / 2)
+    let pokedWithinWindow = polls() > pollsBefore
+    let recruitedWithinWindow = recruits() > recruitsBefore
+
+    // The window: the warning, and the fallbacks it names, stay punctual.
+    await Vi.advanceTimersByTimeAsync(1)
+    let recruitedAtWindow = recruits() > recruitsBefore
+
+    fallback.resolveGetHeightOrThrow(102)
+    let height = await waiting
+    Vi.useRealTimers()
+
+    t.expect((
+      firstHeight,
+      pokedBeforeWindow,
+      pokedWithinWindow,
+      recruitedWithinWindow,
+      recruitedAtWindow,
+      height,
+    )).toStrictEqual((101, false, true, false, true, 102))
+  })
 
   Async.it("Stale SSE heights do not multiply concurrent /height polls (#1270)", async t => {
     let stallTimeout = 200
@@ -3065,7 +3148,6 @@ describe("SourceManager height subscription", () => {
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
     // The catch-up the connect fired, answered at the height we already know so
     // the wait stays in flight.
     mock.resolveGetHeightOrThrow(100)
@@ -3073,21 +3155,20 @@ describe("SourceManager height subscription", () => {
     let pollsBeforeDisable = mock.getHeightOrThrowCalls->Array.length
 
     // An unrecoverable selection error is what benches a source for good.
-    let query =
-      sourceManager->SourceManager.executeQuery(
-        ~query={
-          partitionId: "0",
-          itemsTarget: Some(5000),
-          itemsEst: 5000,
-          fromBlock: 0,
-          toBlock: None,
-          isChunk: false,
-          selection: {dependsOnAddresses: false, onEventRegistrations: []},
-          addresses: TestAddresses.setOf([]),
-        },
-        ~isRealtime=true,
-        ~knownHeight=100,
-      )
+    let query = sourceManager->SourceManager.executeQuery(
+      ~query={
+        partitionId: "0",
+        itemsTarget: Some(5000),
+        itemsEst: 5000,
+        fromBlock: 0,
+        toBlock: None,
+        isChunk: false,
+        selection: {dependsOnAddresses: false, onEventRegistrations: []},
+        addresses: TestAddresses.setOf([]),
+      },
+      ~isRealtime=true,
+      ~knownHeight=100,
+    )
     switch mock.getItemsOrThrowCalls {
     | [call] => call.reject(Source.GetItemsError(UnsupportedSelection({message: "test disable"})))
     | _ => JsError.throwWithMessage("Expected one pending call to the primary source")
@@ -3291,7 +3372,6 @@ describe("SourceManager height subscription", () => {
     mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
 
     // Keep answering at an unchanged height so a loop that has not stopped
     // issues a fresh call every polling interval instead of blocking on one.
@@ -3368,7 +3448,6 @@ describe("SourceManager height subscription", () => {
     mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
 
     // The chain moved to 102 while the stream was down. A WebSocket newHeads
     // subscription would only deliver 103, so without the catch-up poll the
@@ -3451,19 +3530,17 @@ describe("SourceManager height subscription", () => {
 
     mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(105)
     await Utils.delay(0)
 
     // The catch-up ran with no waiter to hand the height to, so the next wait
     // should already know about it.
     let pollsBefore = mock.getHeightOrThrowCalls->Array.length
-    let height =
-      await sourceManager->SourceManager.waitForNewBlock(
-        ~isRealtime=true,
-        ~knownHeight=101,
-        ~reducedPolling=false,
-      )
+    let height = await sourceManager->SourceManager.waitForNewBlock(
+      ~isRealtime=true,
+      ~knownHeight=101,
+      ~reducedPolling=false,
+    )
 
     t.expect((height, mock.getHeightOrThrowCalls->Array.length - pollsBefore)).toStrictEqual((
       105,
@@ -3490,7 +3567,6 @@ describe("SourceManager height subscription", () => {
     mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(101)
 
     let resolved = ref(false)
@@ -3563,7 +3639,6 @@ describe("SourceManager height subscription", () => {
     mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
 
     // The catch-up's continuation is queued first, then the push drains the
     // waiters and queues the race continuation behind it. The catch-up's 105
@@ -3598,7 +3673,6 @@ describe("SourceManager height subscription", () => {
     // A reconnect ends the fallback loop, so the wait takes the polled 105 even
     // though the stream itself is still only caught up to 101.
     mock.setHeightSubscriptionStatus(Down({reason: Closed}))
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(105)
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Live)
@@ -3679,6 +3753,11 @@ describe("SourceManager height subscription", () => {
   })
 
   Async.it("Keeps covering a stream that goes quiet again after the stall", async t => {
+    // On the fake clock throughout: pokes are spread across the window below the
+    // stall timeout, so on a real one whether a poke lands before or after a
+    // snapshot is a coin flip. Every step below either advances no time at all —
+    // where no poke can slip in — or a whole window, which always contains one.
+    Vi.useFakeTimers()
     let stallTimeout = 100
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
@@ -3697,33 +3776,37 @@ describe("SourceManager height subscription", () => {
         ~reducedPolling=false,
       )
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
+    await Vi.advanceTimersByTimeAsync(0)
     mock.resolveGetHeightOrThrow(100)
-    await Utils.delay(10)
+    await Vi.advanceTimersByTimeAsync(0)
     let pollsWhileProven = mock.getHeightOrThrowCalls->Array.length
 
-    await Utils.delay(stallTimeout)
+    await Vi.advanceTimersByTimeAsync(stallTimeout)
     let pollsAfterFirstStall = mock.getHeightOrThrowCalls->Array.length
+    // Answered, so the poke is taken back and the stream is quiet and proven
+    // again — the state the first stall started from.
     mock.resolveGetHeightOrThrow(100)
-    await Utils.delay(0)
+    await Vi.advanceTimersByTimeAsync(0)
 
     // A reconnect part way through the wait, whose catch-up succeeds: that takes
     // the stream at its word again, and it goes quiet in exactly the same way.
     mock.setHeightSubscriptionStatus(Down({reason: Closed}))
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
+    await Vi.advanceTimersByTimeAsync(0)
     mock.resolveGetHeightOrThrow(100)
-    await Utils.delay(10)
+    await Vi.advanceTimersByTimeAsync(0)
     let pollsAfterReconnect = mock.getHeightOrThrowCalls->Array.length
 
-    await Utils.delay(stallTimeout)
+    await Vi.advanceTimersByTimeAsync(stallTimeout)
     let pollsAfterSecondStall = mock.getHeightOrThrowCalls->Array.length
     mock.triggerHeightSubscription(101)
+    let height = await waiting
+    Vi.useRealTimers()
 
     t.expect((
       pollsAfterFirstStall > pollsWhileProven,
       pollsAfterSecondStall > pollsAfterReconnect,
-      await waiting,
+      height,
     )).toStrictEqual((true, true, 101))
   })
 
@@ -3796,7 +3879,6 @@ describe("SourceManager height subscription", () => {
     await Utils.delay(0)
     mock.setHeightSubscriptionStatus(Down({reason: Rotated}))
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(102)
     let _ = await waiting
 
@@ -3858,11 +3940,13 @@ describe("SourceManager height subscription", () => {
     let samplesWhileDown = sourceManager->SourceManager.getHeightStreamSamples
 
     mock.setHeightSubscriptionStatus(Live)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(101)
     let _ = await waiting
 
-    t.expect((samplesWhileDown, sourceManager->SourceManager.getHeightStreamSamples)).toStrictEqual((
+    t.expect((
+      samplesWhileDown,
+      sourceManager->SourceManager.getHeightStreamSamples,
+    )).toStrictEqual((
       [
         {
           SourceManager.sourceName: "MockSource",
@@ -3909,7 +3993,6 @@ describe("SourceManager height subscription", () => {
       )
     await Utils.delay(0)
     stuckMock.setHeightSubscriptionStatus(Down({reason: Closed}))
-    await Utils.delay(0)
 
     // The other source decides the wait while the stuck one is mid-poll.
     fastMock.resolveGetHeightOrThrow(102)

@@ -1,32 +1,5 @@
 open Vitest
 
-// Everything off, so each test below shows only the fields it is actually about.
-let emptyMetrics: Metrics.t = {
-  startTime: Date.fromTime(0.),
-  metricTime: Date.fromTime(0.),
-  elapsedSeconds: 0.,
-  targetBufferSize: 0,
-  isInReorgThreshold: false,
-  rollbackEnabled: false,
-  maxBatchSize: 0,
-  preloadSeconds: 0.,
-  processingSeconds: 0.,
-  processingStalledOnFetchSeconds: 0.,
-  processingStalledOnStorageWriteSeconds: 0.,
-  rollbackSeconds: 0.,
-  rollbackCount: 0,
-  rollbackEventsCount: 0.,
-  chains: [],
-  handlers: [],
-  effects: [],
-  storageLoads: [],
-  storageWrites: [],
-  historyPrunes: [],
-  sourceRequests: [],
-  sourceHeights: [],
-  sourceHeightStreams: [],
-}
-
 describe("Metrics rendering helpers", () => {
   it("Renders metrics separated by a blank line, keeping 3 decimals after the point", t => {
     let b: Metrics.builder = {out: ""}
@@ -55,8 +28,10 @@ envio_indexing_addresses{chainId="137"} 0`)
   })
 
   it("Escapes quotes/backslashes/newlines and passes commas and equals through", t => {
-    t.expect(`weird "name",a=b \\ with
-newline`->Metrics.escapeLabelValue).toBe(`weird \\"name\\",a=b \\\\ with\\nnewline`)
+    t.expect(
+      `weird "name",a=b \\ with
+newline`->Metrics.escapeLabelValue,
+    ).toBe(`weird \\"name\\",a=b \\\\ with\\nnewline`)
   })
 
   it("Renders only the header for a series without entries and skips seriesOpt None samples", t => {
@@ -85,9 +60,38 @@ envio_source_request_seconds_total{method="getLogs"} 1.5`)
   })
 })
 
+// The state a Metrics.t carries when a test says nothing about it. Each test
+// below spreads this and names only the fields it asserts on.
+let baseMetrics: Metrics.t = {
+  startTime: Date.fromTime(0.),
+  metricTime: Date.fromTime(0.),
+  elapsedSeconds: 0.,
+  targetBufferSize: 0,
+  isInReorgThreshold: false,
+  rollbackEnabled: false,
+  maxBatchSize: 0,
+  preloadSeconds: 0.,
+  processingSeconds: 0.,
+  processingStalledOnFetchSeconds: 0.,
+  processingStalledOnStorageWriteSeconds: 0.,
+  rollbackSeconds: 0.,
+  rollbackCount: 0,
+  rollbackEventsCount: 0.,
+  chains: [],
+  handlers: [],
+  effects: [],
+  storageLoads: [],
+  storageWrites: [],
+  historyPrunes: [],
+  sourceRequests: [],
+  sourceHeights: [],
+  sourceHeightStreams: [],
+}
+
 describe("Metrics.collect", () => {
   it("Renders only the indexer info when there is no state", t => {
-    t.expect(Metrics.collect(~metrics=None)).toBe(`# HELP envio_info Information about the indexer
+    t.expect(Metrics.collect(~metrics=None)).toBe(
+      `# HELP envio_info Information about the indexer
 # TYPE envio_info gauge
 envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 `,
@@ -96,7 +100,7 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
   it("Escapes both the effect and the scope label values", t => {
     let metrics: Metrics.t = {
-      ...emptyMetrics,
+      ...baseMetrics,
       effects: [
         {
           effect: `a",b=c`,
@@ -114,21 +118,23 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
     }
 
     t.expect(
-      Metrics.collect(~metrics=Some(metrics))->String.includes(
-        `envio_effect_call_total{effect="a\\",b=c",scope="d\\"e"} 2`,
-      ),
+      Metrics.collect(
+        ~metrics=Some(metrics),
+      )->String.includes(`envio_effect_call_total{effect="a\\",b=c",scope="d\\"e"} 2`),
     ).toBe(true)
   })
 
   it("Omits the height stream families entirely when no source subscribes", t => {
+    // No source samples at all, which is what a chain that only ever polls
+    // reports — the base is already exactly that.
     t.expect(
-      Metrics.collect(~metrics=Some(emptyMetrics))->String.includes("envio_source_height_stream"),
+      Metrics.collect(~metrics=Some(baseMetrics))->String.includes("envio_source_height_stream"),
     ).toBe(false)
   })
 
   it("Renders a stream that has never connected as zero connects", t => {
     let metrics: Metrics.t = {
-      ...emptyMetrics,
+      ...baseMetrics,
       sourceHeightStreams: [
         {
           source: "RPC (rpc.example.com)",
@@ -147,12 +153,14 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       Metrics.collect(~metrics=Some(metrics))
       ->String.split("\n")
       ->Array.filter(line => line->String.startsWith("envio_source_height_stream")),
-    ).toStrictEqual([`envio_source_height_stream_connects_total{source="RPC (rpc.example.com)",chainId="1"} 0`])
+    ).toStrictEqual([
+      `envio_source_height_stream_connects_total{source="RPC (rpc.example.com)",chainId="1"} 0`,
+    ])
   })
 
   it("Aggregates height stream samples that share a source name and chain", t => {
     let metrics: Metrics.t = {
-      ...emptyMetrics,
+      ...baseMetrics,
       // Two RPC urls on the same host share a source name, and duplicate
       // samples would make Prometheus reject the whole scrape.
       sourceHeightStreams: [
@@ -324,7 +332,8 @@ envio_info{version="${Utils.EnvioPackage.value.version}"} 1
       ],
     }
 
-    t.expect(Metrics.collect(~metrics=Some(metrics))).toBe(`# HELP envio_info Information about the indexer
+    t.expect(Metrics.collect(~metrics=Some(metrics))).toBe(
+      `# HELP envio_info Information about the indexer
 # TYPE envio_info gauge
 envio_info{version="${Utils.EnvioPackage.value.version}"} 1
 
@@ -453,7 +462,7 @@ envio_source_request_total{source="HyperSync",chainId="1",method="heightPush"} 7
 # TYPE envio_source_request_seconds_total counter
 envio_source_request_seconds_total{source="HyperSync",chainId="1",method="getLogs"} 33.75
 
-# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected. Compare against the disconnects total, which is absent until the first disconnect and counts as zero while it is: one more connect than disconnects means the stream is up, equal counts mean it is down and the indexer is polling instead, and zero connects means it has never come up.
+# HELP envio_source_height_stream_connects_total The number of times a source's height subscription connected. Compare against the disconnects total, which is absent until the first disconnect and counts as zero while it is: one more connect than disconnects means the stream is up, and equal counts mean it is down and the indexer is polling instead. Zero connects means the stream has not come up, which is the normal reading for a chain that is still backfilling: subscriptions are only opened once a chain reaches the head.
 # TYPE envio_source_height_stream_connects_total counter
 envio_source_height_stream_connects_total{source="HyperSync",chainId="1"} 3
 

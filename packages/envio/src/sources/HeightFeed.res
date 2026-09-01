@@ -15,9 +15,9 @@ type waiter = {
   // The height this waiter has to beat.
   knownHeight: int,
   onHeight: int => unit,
-  // How fast to poll while nothing is pushing. The most recently registered
-  // waiter's interval wins: only a wait superseded by a rollback overlaps with
-  // another, and both want the same cadence anyway.
+  // How fast to poll while nothing is pushing. Read per poll rather than fixed
+  // here, so a wait that goes on to stall slows itself down without restarting
+  // anything.
   interval: unit => int,
   // The wait this waiter belongs to sat out a whole window hearing nothing from
   // a stream that says it is connected. It belongs to the waiter rather than the
@@ -195,6 +195,11 @@ let fireWaiters = (feed: t, height) => {
   }
 }
 
+// A verdict a wait reached about a connection says nothing about the next one,
+// nor about a stream that has just delivered.
+let trustStreamAgain = (feed: t) =>
+  feed.waiters->Array.forEach(waiter => waiter.distrustsStream = false)
+
 let recordHeight = (feed: t, height) =>
   if height > feed.knownHeight {
     feed.knownHeight = height
@@ -291,11 +296,15 @@ let sleep = (feed: t, ~kind, millis) =>
     })
   })
 
+// The shortest cadence any waiter asked for. Waits overlap on one source after a
+// rollback, and a wait that only needs a slow poll must not stretch the one a
+// faster wait is sitting on.
 let currentInterval = (feed: t) =>
-  switch feed.waiters->Array.get(feed.waiters->Array.length - 1) {
-  | Some(waiter) => waiter.interval()
-  | None => feed.source.pollingInterval
-  }
+  feed.waiters
+  ->Array.reduce(None, (shortest, waiter) =>
+    Utils.Math.minOptInt(shortest, Some(waiter.interval()))
+  )
+  ->Option.getOr(feed.source.pollingInterval)
 
 let nextRetryInterval = (feed: t) => {
   let retryInterval = feed.getHeightRetryInterval(~retry=feed.pollRetry)
@@ -398,7 +407,7 @@ let handlePushedHeight = (feed: t, height) => {
   | Connected(_) if advances => feed.stream = Connected({proven: true})
   | _ => ()
   }
-  feed.waiters->Array.forEach(waiter => waiter.distrustsStream = false)
+  feed->trustStreamAgain
   feed->recordHeight(height)
   // Never more to do than before: a delivering stream only takes work away.
   feed->wakeCadence
@@ -422,7 +431,7 @@ let markStreamDown = (feed: t, ~reason) => {
   feed.generation = feed.generation + 1
   // The connection they gave up on is gone; the one that replaces it starts with
   // a head of its own to account for.
-  feed.waiters->Array.forEach(waiter => waiter.distrustsStream = false)
+  feed->trustStreamAgain
   feed->syncPolling
 }
 

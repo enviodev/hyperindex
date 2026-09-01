@@ -93,9 +93,9 @@ let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
     ws->WebSocket.onmessage(event =>
       if event.data->isText {
         let text = event.data->(Utils.magic: unknown => string)
-        let message = try Some(text->JSON.parseOrThrow->S.parseOrThrow(wsMessageSchema)) catch {
-        | _ => None
-        }
+        let message = Utils.Option.catchToNone(
+          () => text->JSON.parseOrThrow->S.parseOrThrow(wsMessageSchema),
+        )
         switch message {
         | Some(NewHead(blockNumber)) => driver.onHeight(blockNumber)
         // An open socket isn't usable until the node accepts the subscription,

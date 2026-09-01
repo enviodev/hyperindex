@@ -77,12 +77,6 @@ let noRollbackMultichainScenario = makeScenario(
   ~chains=chainYaml(100) ++ chainYaml(1337),
 )
 
-// The `storage` label on the load metrics is whichever storage answered.
-let storageName = switch IndexerRunner.selectedBackend {
-| #memory => "memory"
-| #postgres | #clickhouse => "postgres"
-}
-
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
 type simpleEntity = {id: string, value: string}
@@ -485,7 +479,7 @@ describe("E2E tests", () => {
           value: "2",
           labels: Dict.fromArray([
             ("operation", "testEffectWithCache.effect"),
-            ("storage", storageName),
+            ("storage", "postgres"),
           ]),
         },
       ],
@@ -494,7 +488,7 @@ describe("E2E tests", () => {
           value: "2",
           labels: Dict.fromArray([
             ("operation", "testEffectWithCache.effect"),
-            ("storage", storageName),
+            ("storage", "postgres"),
           ]),
         },
       ],
@@ -503,7 +497,7 @@ describe("E2E tests", () => {
           value: "1",
           labels: Dict.fromArray([
             ("operation", "testEffectWithCache.effect"),
-            ("storage", storageName),
+            ("storage", "postgres"),
           ]),
         },
       ],

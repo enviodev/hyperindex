@@ -224,6 +224,12 @@ describe("HeightFeed unsubscribe", () => {
 })
 
 describe("HeightFeed stream state", () => {
+  // Several tests below install fake timers inline. A throw between installing
+  // and restoring them would otherwise leave the fake clock running for every
+  // real-timer test after it, burying the original failure in timeouts. A no-op
+  // where fake timers were never installed.
+  afterEach(() => Vi.useRealTimers())
+
   Async.it("Polls alongside a live stream once distrusted, until a push proves it", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],
@@ -247,7 +253,6 @@ describe("HeightFeed stream state", () => {
 
     // A push that advances is the stream proving it carries heights again.
     mock.triggerHeightSubscription(101)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(101)
     await Utils.delay(20)
 
@@ -259,6 +264,34 @@ describe("HeightFeed stream state", () => {
       mock.getHeightOrThrowCalls->Array.length,
     )).toStrictEqual((1, 1, 2, [101], 2))
   })
+
+  Async.it(
+    "Keeps polling a distrusted stream until it delivers, not until one poll is quiet",
+    async t => {
+      let mock = MockSource.make([#getHeightOrThrow, #createHeightSubscription], ~pollingInterval=5)
+      let (feed, _stats) = makeFeed(mock)
+      feed->HeightFeed.enableStream
+      let (heights, subscription) = feed->watch(~knownHeight=100, ~interval=() => 5)
+
+      mock.setHeightSubscriptionStatus(Live)
+      mock.resolveGetHeightOrThrow(100)
+      await Utils.delay(0)
+
+      // The stream says it is connected and has sent nothing for a whole window,
+      // so the wait stops taking its word for it.
+      subscription.distrustStream()
+      // A poll that agrees the chain is quiet is not the stream delivering. It
+      // says nothing about whether the stream would have, so the distrust stands.
+      mock.resolveGetHeightOrThrow(100)
+      await Utils.delay(20)
+      // The chain moves, and a stream that has gone silent will not say so. Only
+      // the polling the distrust asked for can find it.
+      mock.resolveGetHeightOrThrow(101)
+      await Utils.delay(20)
+
+      t.expect(heights).toStrictEqual([101])
+    },
+  )
 
   Async.it("Takes a distrust back on any push, even of a height it already knew", async t => {
     let mock = MockSource.make(
@@ -279,7 +312,6 @@ describe("HeightFeed stream state", () => {
     // height already known. It is still the stream delivering, which is all the
     // distrust was ever complaining it did not do.
     mock.triggerHeightSubscription(100)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(100)
     await Utils.delay(0)
     subscription.unsubscribe()
@@ -341,7 +373,6 @@ describe("HeightFeed stream state", () => {
     // Answered by a height learned elsewhere — a query response, or a sibling
     // source settling the wait — so no push ever comes to take the distrust back.
     feed->HeightFeed.recordHeight(101)
-    await Utils.delay(0)
     mock.resolveGetHeightOrThrow(101)
     await Utils.delay(0)
 
@@ -555,14 +586,20 @@ describe("HeightFeed stream state", () => {
     let (feed, _stats) = makeFeed(mock)
     feed->HeightFeed.enableStream
 
-    t.expect((
-      mock.heightSubscriptionCalls->Array.length,
-      feed->HeightFeed.sample,
-    )).toStrictEqual((0, None))
+    t.expect((mock.heightSubscriptionCalls->Array.length, feed->HeightFeed.sample)).toStrictEqual((
+      0,
+      None,
+    ))
   })
 })
 
 describe("HeightFeed poll failures", () => {
+  // Several tests below install fake timers inline. A throw between installing
+  // and restoring them would otherwise leave the fake clock running for every
+  // real-timer test after it, burying the original failure in timeouts. A no-op
+  // where fake timers were never installed.
+  afterEach(() => Vi.useRealTimers())
+
   Async.it("Escalates the retry interval, and resets it after a success", async t => {
     let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
     let retries = []
@@ -606,6 +643,44 @@ describe("HeightFeed poll failures", () => {
 
     t.expect((pollsBefore, pollsAfter > pollsBefore)).toStrictEqual((1, true))
   })
+
+  Async.it("Polls at once for a waiter that arrives while the last loop is unwinding", async t => {
+    let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
+    let (feed, _stats) = makeFeed(mock)
+    let (heights, _subscription) = feed->watch(~knownHeight=100, ~interval=() => 60_000)
+
+    // The answer settles the wait, and whoever was waiting registers the next one
+    // straight away — before the loop that answered it has finished unwinding, so
+    // it still holds `polling` and no new loop can start. That loop does pick the
+    // waiter up, but it was already on its way to a sleep chosen without it: left
+    // there, the next poll is a whole interval away rather than now.
+    mock.resolveGetHeightOrThrowAt(~index=0, 101)
+    await Utils.delay(0)
+    let (_next, _nextSubscription) = feed->watch(~knownHeight=101, ~interval=() => 60_000)
+    await Utils.delay(20)
+
+    t.expect((heights, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual(([101], 2))
+  })
+
+  Async.it(
+    "Records a poll answer that arrives after the bound rather than dropping it",
+    async t => {
+      Vi.useFakeTimers()
+      let mock = MockSource.make([#getHeightOrThrow], ~pollingInterval=10_000)
+      let (feed, _stats) = makeFeed(mock, ~getHeightRetryInterval=(~retry as _) => 10_000)
+      let (heights, _subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+
+      // The endpoint answers, only slower than the bound allows. The request was
+      // made and the height is the head, so a source that always answers just past
+      // the bound must still move the feed rather than never moving it at all.
+      await Vi.advanceTimersByTimeAsync(HeightFeed.pollTimeoutMillis + 100)
+      mock.resolveGetHeightOrThrowAt(~index=0, 101)
+      await Vi.advanceTimersByTimeAsync(1)
+      Vi.useRealTimers()
+
+      t.expect((heights, feed->HeightFeed.knownHeight)).toStrictEqual(([101], 101))
+    },
+  )
 
   Async.it("Lets a catch-up that answers reset the poll ramp", async t => {
     let mock = MockSource.make(

@@ -85,13 +85,7 @@ let subscribe = (
   let liveAt = ref(None)
   let minProvenMillis = staleTimeout / provenStaleFraction
 
-  let clearPendingTimeout = () => {
-    switch timeoutId.contents {
-    | Some(id) => clearTimeout(id)
-    | None => ()
-    }
-    timeoutId := None
-  }
+  let clearPendingTimeout = () => timeoutId->Utils.clearTimeoutRef
 
   // A transport that throws while closing must not be able to stop the retry
   // that follows, nor escape a timer callback and take the process down. Every
@@ -143,8 +137,7 @@ let subscribe = (
     // reads. Judging a connection by the step of the ramp it was born on is
     // conservative in the same direction every time.
     let provenMillis = Pervasives.max(retryDelayFor(failureCount.contents), minProvenMillis)
-    failureCount :=
-      if servedMillis >= provenMillis {
+    failureCount := if servedMillis >= provenMillis {
         1
       } else {
         failureCount.contents + 1
@@ -234,20 +227,22 @@ let subscribe = (
 
     // A transport constructor can throw on a malformed url. Left to escape it
     // would reach a timer callback on the next retry and take the process down.
-    let closeCurrentConnection = try Some(connect(driver)) catch {
-    | _ => None
+    // What it says is the only account of why the url can't be connected to, and
+    // this retries forever, so it goes out as the failure's detail.
+    let connected = try Ok(connect(driver)) catch {
+    | exn => Error(exn)
     }
 
-    switch closeCurrentConnection {
-    | Some(closeCurrentConnection) =>
+    switch connected {
+    | Ok(closeCurrentConnection) =>
       if isCurrent() {
         closeConnectionRef := Some(closeCurrentConnection)
       } else {
         closeSafely(closeCurrentConnection)
       }
-    | None =>
+    | Error(exn) =>
       if isCurrent() {
-        fail(~reason=ConnectFailed)
+        fail(~reason=ConnectFailed, ~detail=?exn->Utils.exnMessage)
       }
     }
   }
