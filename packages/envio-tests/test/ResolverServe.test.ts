@@ -427,6 +427,29 @@ describe("resolver /resolve", () => {
     }
   });
 
+  // Saturation and silence are different failures and need different answers.
+  // The probe's own wall clock is the bound on a database that never speaks;
+  // it must not also be the first thing to fire when the pool is merely busy,
+  // because then a pod under load reports a database fault it does not have.
+  it("blames the pool, not the database, when the pool is the thing that is full", async () => {
+    const busyPool = createResolverPoolFromEnv({ entities: {}, pgSchema: "public", poolSize: 1 });
+    const busy = await startResolverServer({ resolvers: [], pool: busyPool, port: 0 });
+    // Hold the pool's only connection for longer than the probe will wait.
+    const hog = busyPool
+      .forResolver({ name: "hog", timeoutMs: 10_000 })
+      .sql.unsafe("SELECT pg_sleep(3);")
+      .catch(() => {});
+    try {
+      const readyz = await fetch(`http://127.0.0.1:${busy.port}/readyz`);
+      const body = (await readyz.json()) as { status: string; reason: string };
+      expect([readyz.status, /pool/i.test(body.reason)]).toEqual([503, true]);
+    } finally {
+      await hog;
+      await busy.close();
+      await busyPool.end().catch(() => {});
+    }
+  });
+
   it("puts an unexpected error's message on the wire only in dev", async () => {
     const dev = await startResolverServer({
       resolvers: getRegisteredResolvers(),

@@ -70,6 +70,18 @@ const wireError = (message, code) => ({
 const READYZ_BUDGET_MS = 2_000;
 
 /**
+ * The bound on each pooled operation the probe runs -- its `statement_timeout`
+ * and, because `forResolver` waits `min(poolWait, timeoutMs)` for a slot, its
+ * share of the pool queue too.
+ *
+ * Deliberately well under the wall-clock budget, and the probe runs two of
+ * them. A busy pool and a silent database are different faults: leaving room
+ * here is what lets the pool's own timeout surface first and name itself,
+ * instead of the budget firing and reporting a database that answered fine.
+ */
+export const READYZ_PROBE_MS = 500;
+
+/**
  * Starts the resolver process's HTTP server.
  *
  * Resolves once the socket is listening, with the port it bound — pass
@@ -132,7 +144,7 @@ export async function startResolverServer(options) {
         READYZ_BUDGET_MS
       );
       pool
-        .forResolver({ name: "readyz", timeoutMs: READYZ_BUDGET_MS })
+        .forResolver({ name: "readyz", timeoutMs: READYZ_PROBE_MS })
         .sql.unsafe("SELECT 1;")
         .then(async () => (checkCompatible ? await checkCompatible() : null))
         .then((reason) =>

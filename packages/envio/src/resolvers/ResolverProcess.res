@@ -78,6 +78,8 @@ type serverOptions = {
 @module("./server.js")
 external startResolverServer: serverOptions => promise<server> = "startResolverServer"
 
+@module("./server.js") external readyzProbeMs: int = "READYZ_PROBE_MS"
+
 // The resolver module is the user's TypeScript. Registering tsx is what makes
 // it importable; the throw means it is already registered, which is the case
 // under `--import tsx` and in tests.
@@ -322,8 +324,10 @@ external readConfigRows: (sqlFn, string, array<JSON.t>) => promise<array<{"confi
 // this process keeps serving, and readiness is the only thing that can still
 // take it out of rotation.
 let compatibilityOf = (~pool, ~pgSchema, ~envioInfo) => async () => {
+  // The probe's bound, not its own: this runs inside the same readiness check
+  // and shares its budget.
   let sql =
-    pool->forResolver({name: "readyz", timeoutMs: 2_000})->sqlOf
+    pool->forResolver({name: "readyz", timeoutMs: readyzProbeMs})->sqlOf
   switch await readConfigRows(
     sql,
     `SELECT "config" FROM "${pgSchema}"."${InternalTable.EnvioInfo.table.tableName}" LIMIT 1;`,
