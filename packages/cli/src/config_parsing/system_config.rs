@@ -17,6 +17,7 @@ use super::{
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
 };
+use crate::clickhouse::ch_type;
 use crate::utils::project_env::ProjectEnv;
 use crate::{
     config_parsing::human_config::evm::RpcTransactionField,
@@ -281,7 +282,7 @@ pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
 /// maximum active chain id and carried through the public config, so a resume
 /// against a schema built for the other mode is rejected rather than silently
 /// truncating ids.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ChainIdMode {
     Int32,
@@ -310,6 +311,14 @@ impl ChainIdMode {
         } else {
             Self::Int64
         })
+    }
+
+    /// Reads the mode back out of the form it is serialized in, which is how it
+    /// reaches the ClickHouse sink: through the generated config and the JS
+    /// runtime, both of which carry it as that string.
+    pub fn parse(mode: &str) -> Result<Self> {
+        serde_json::from_value(serde_json::Value::String(mode.to_string()))
+            .with_context(|| format!("unknown chain id mode `{mode}`"))
     }
 }
 
@@ -396,11 +405,6 @@ impl Storage {
         })
     }
 }
-
-/// Largest BigInt precision ClickHouse still stores as a numeric `Decimal`;
-/// above this (or with no precision) it falls back to `String`. Kept in sync
-/// with the BigInt branch of `getClickHouseFieldType` in ClickHouse.res.
-const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
 
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
@@ -645,6 +649,8 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     Ok(())
 }
 
+const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = crate::clickhouse::ch_type::MAX_DECIMAL_PRECISION;
+
 /// What to add to a field so ClickHouse stores it as a numeric Decimal. A
 /// BigDecimal needs both parameters — `@config(precision:)` alone is rejected
 /// by the field parser, so naming only it would send the user in a circle.
@@ -660,27 +666,23 @@ fn precision_fix(stored: &GqlScalar) -> String {
 
 /// ClickHouse stores a BigInt or BigDecimal whose precision is unset (or
 /// outside what its `Decimal` can express) as a String, which sorts
-/// lexicographically — wrong for anything in the sorting key. See the BigInt and
-/// BigDecimal branches of `getClickHouseFieldType` in ClickHouse.res.
+/// lexicographically — wrong for anything in the sorting key.
 ///
 /// Which column that applies to depends on `@storage(clickhouse: {orderBy})`:
-/// without it the sorting key is `id`, with it the listed columns replace `id`
-/// (see `makeCreateHistoryTableQuery`). Runs on the resolved schema, so a
-/// relation in the sorting key resolves to the id it actually stores.
+/// without it the sorting key is `id`, with it the listed columns replace `id`.
+/// Runs on the resolved schema, so a relation in the sorting key resolves to
+/// the id it actually stores.
 pub fn validate_clickhouse_sorting_key_scalars(
     storage: &Storage,
     schema: &Schema,
 ) -> anyhow::Result<()> {
     let clickhouse_default = storage.clickhouse.is_some_and(|b| b.entity_default);
-    // Mirrors getClickHouseFieldType: only a Decimal that fits keeps numeric
-    // ordering, and a BigDecimal's scale has to fit inside its precision.
     let stored_as_string = |scalar: &GqlScalar| match scalar {
-        GqlScalar::BigInt(precision) => {
-            !precision.is_some_and(|p| p <= CLICKHOUSE_DECIMAL_MAX_PRECISION)
-        }
-        GqlScalar::BigDecimal(config) => !config.is_some_and(|(precision, scale)| {
-            precision <= CLICKHOUSE_DECIMAL_MAX_PRECISION && scale <= precision
-        }),
+        GqlScalar::BigInt(precision) => ch_type::stored_as_string(*precision, 0),
+        GqlScalar::BigDecimal(config) => match config {
+            Some((precision, scale)) => ch_type::stored_as_string(Some(*precision), *scale),
+            None => true,
+        },
         _ => false,
     };
 

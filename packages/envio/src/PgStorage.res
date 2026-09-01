@@ -438,8 +438,8 @@ let rec makeFilterCondition = (
   // `LoadLayer.scopeFilter` is what puts this filter here, and the value is
   // range-checked to a non-negative safe integer, so it can carry nothing but
   // digits.
-  | Eq({fieldName, fieldValue}) if (getQueryFieldOrThrow(fieldName)).isChainId =>
-    `"${(getQueryFieldOrThrow(fieldName)).pgDbFieldName}" = ${fieldValue
+  | Eq({fieldName, fieldValue}) if getQueryFieldOrThrow(fieldName).isChainId =>
+    `"${getQueryFieldOrThrow(fieldName).pgDbFieldName}" = ${fieldValue
       ->ChainId.normalizeOrThrow
       ->ChainId.toString}`
   | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
@@ -1836,7 +1836,7 @@ let make = (
 
     // Call sink.initialize before executing PG queries
     switch sink {
-    | Some(sink) => await sink.initialize(~chainConfigs, ~entities=chEntities, ~enums)
+    | Some(sink) => await sink.initialize(~entities=chEntities)
     | None => ()
     }
 
@@ -2363,7 +2363,7 @@ let make = (
 
     // Resume sink if present - needed to rollback any reorg changes
     switch sink {
-    | Some(sink) => await sink.resume(~checkpointId)
+    | Some(sink) => await sink.resume(~checkpointId, ~chains)
     | None => ()
     }
 
