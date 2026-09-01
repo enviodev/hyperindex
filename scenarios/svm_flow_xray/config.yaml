@@ -22,40 +22,29 @@ chains:
         - name: Jupiter
           program_id: JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4
           idl: idls/jupiter.json
-          # Legacy Anchor IDLs carry no inline discriminator; HyperIndex needs the
-          # 8-byte sha256("global:<snake_case>")[..8] both to dispatch and to look
-          # up the IDL arg/account schema. Computed per instruction below.
+          # Naming an instruction the IDL declares is enough: the discriminator
+          # comes from the IDL, including the sha256("global:<snake_case>")[..8]
+          # a legacy Anchor file leaves implicit.
           instructions:
             - name: route
-              discriminator: "0xe517cb977ae3ad2a"
             - name: sharedAccountsRoute
-              discriminator: "0xc1209b3341d69c81"
         - name: Kamino
           program_id: KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD
           idl: idls/kamino.json
           instructions:
             - name: depositReserveLiquidityAndObligationCollateral
-              discriminator: "0x81c70402de271a2e"
             - name: borrowObligationLiquidity
-              discriminator: "0x797f12cc49f5e141"
             - name: repayObligationLiquidity
-              discriminator: "0x91b20de14cf09348"
             - name: withdrawObligationCollateralAndRedeemReserveCollateral
-              discriminator: "0x4b5d5ddc2296dac4"
         - name: Drift
           program_id: dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH
           idl: idls/drift.json
           instructions:
             - name: placePerpOrder
-              discriminator: "0x45a15dca787e4cb9"
             - name: fillPerpOrder
-              discriminator: "0x0dbcf86786d96af0"
             - name: liquidatePerp
-              discriminator: "0x4b2377f7bf128b02"
             - name: liquidateSpot
-              discriminator: "0x6b00802923e5fb12"
             - name: settlePnl
-              discriminator: "0x2b3dea2d0f5f9899"
         # --- inline-decoded programs (no Anchor IDL) ---
         # SplToken + System are intentionally NOT matched: they are the
         # highest-frequency instructions on Solana and overwhelm the backfill.

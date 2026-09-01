@@ -42,7 +42,7 @@ pub struct IxIdl {
 pub type Unusable = BTreeMap<String, String>;
 
 /// Parsed program IDL, keyed by instruction name.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ProgramIdl {
     pub address: Option<String>,
     pub instructions: BTreeMap<String, IxIdl>,
@@ -64,6 +64,34 @@ const DISPATCHABLE_DISCRIMINATOR_LENS: [usize; 4] = [1, 2, 4, 8];
 
 pub fn parse_idl(json: &str, program_name: &str) -> Result<ProgramIdl> {
     parse_validated(json).with_context(|| format!("parsing IDL for program '{program_name}'"))
+}
+
+impl ProgramIdl {
+    /// A program whose schema is compiled in rather than read from a file. It
+    /// goes through the same checks, so a bundled schema cannot carry a
+    /// collision or a discriminator width the router never probes for.
+    pub fn compiled_in(
+        address: Option<String>,
+        instructions: BTreeMap<String, IxIdl>,
+        defined_types: BTreeMap<String, FieldType>,
+    ) -> Self {
+        let mut idl = ProgramIdl {
+            address,
+            instructions,
+            defined_types,
+            ..Default::default()
+        };
+        validate(&mut idl);
+        idl
+    }
+
+    /// The instruction dispatched by these bytes, for a config that names an
+    /// instruction differently from the IDL.
+    pub fn dispatched_by(&self, discriminator: &[u8]) -> Option<&IxIdl> {
+        self.instructions
+            .values()
+            .find(|ix| ix.discriminator == discriminator)
+    }
 }
 
 fn parse_validated(json: &str) -> Result<ProgramIdl> {

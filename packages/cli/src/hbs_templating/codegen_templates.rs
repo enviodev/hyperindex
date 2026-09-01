@@ -2301,7 +2301,7 @@ type testIndexer = {{
                                 .map(|f| {
                                     let ts = field_type_to_ts_type(
                                         &f.ty,
-                                        &svm_abi.defined_types,
+                                        &svm_abi.idl.defined_types,
                                         &mut Vec::new(),
                                     );
                                     format!("readonly {}: {}", ts_safe_property_name(&f.name), ts)
