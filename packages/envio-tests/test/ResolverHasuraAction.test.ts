@@ -183,10 +183,10 @@ describe("resolver /hasura-action", () => {
   it("refuses an admin resolver for a non-admin role, and answers it for admin", async () => {
     // Hasura's action permissions keep this off the public schema; the check
     // here refuses it again for a caller who reached the socket some other way
-    // and claimed the role. That second check only means something once
-    // ENVIO_RESOLVERS_ACTION_SECRET is set -- until then the role in the body
-    // is the caller's own word.
-    const [refused, answered] = await Promise.all([
+    // and claimed the role. This server has no secret configured, so the role
+    // in the body is the caller's own word and neither claim is believed --
+    // `admin` gets the same refusal as `public` rather than the resolver.
+    const [refusedAsPublic, refusedAsAdmin] = await Promise.all([
       action({
         action: { name: "adminOnly" },
         input: {},
@@ -200,16 +200,43 @@ describe("resolver /hasura-action", () => {
         request_query: "query { adminOnly }",
       }),
     ]);
-    expect([refused, answered]).toEqual([
-      {
-        status: 403,
-        body: {
-          message: "Resolver 'adminOnly' is admin-only",
-          extensions: { code: "FORBIDDEN" },
-        },
+    const forbidden = {
+      status: 403,
+      body: {
+        message: "Resolver 'adminOnly' is admin-only",
+        extensions: { code: "FORBIDDEN" },
       },
-      { status: 200, body: "secret" },
-    ]);
+    };
+    expect([refusedAsPublic, refusedAsAdmin]).toEqual([forbidden, forbidden]);
+  });
+
+  // And the claim is believed once something can vouch for it, which is what
+  // makes an admin resolver reachable through Hasura at all.
+  it("answers an admin resolver for Hasura once a secret is configured", async () => {
+    const guarded = await startResolverServer({
+      resolvers,
+      pool,
+      port: 0,
+      actionSecret: "s3cr3t",
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${guarded.port}/hasura-action`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-envio-resolver-secret": "s3cr3t" },
+        body: JSON.stringify({
+          action: { name: "adminOnly" },
+          input: {},
+          session_variables: { "x-hasura-role": "admin" },
+          request_query: "query { adminOnly }",
+        }),
+      });
+      expect({ status: response.status, body: await response.json() }).toEqual({
+        status: 200,
+        body: "secret",
+      });
+    } finally {
+      await guarded.close();
+    }
   });
 
   it("treats a missing or unrecognised role as public", async () => {

@@ -16,7 +16,7 @@ import {
   toActionResponse,
   toResolveRequest,
 } from "./hasuraAction.js";
-import { error as logError } from "../Logging.res.mjs";
+import { error as logError, warn as logWarn } from "../Logging.res.mjs";
 import { Resolvers as ResolversEnv } from "../Env.res.mjs";
 
 // Serve coerces arguments before dispatching, so a request is small by
@@ -91,6 +91,20 @@ export async function startResolverServer(options) {
   const { resolvers, pool, exposeErrors = false, checkCompatible, actionSecret } = options;
   const port = options.port ?? ResolversEnv.port();
   const host = options.host ?? "0.0.0.0";
+
+  // Otherwise the resolver is simply absent and nothing says why: the
+  // declaration asked for admin-only, and admin-only is unreachable until
+  // something can tell an admin caller from any other.
+  const unreachable = (resolvers ?? []).filter((resolver) => resolver?.admin === true);
+  if (actionSecret === undefined && unreachable.length > 0) {
+    logWarn(
+      `ENVIO_RESOLVERS_ACTION_SECRET is not set, so an 'admin' role in a request is only the caller's own claim and is not believed. ${unreachable
+        .map((resolver) => `'${resolver.name}'`)
+        .join(", ")} declared admin, so nothing can reach ${
+        unreachable.length > 1 ? "them" : "it"
+      } until the secret is set.`
+    );
+  }
 
   const dispatch = createDispatcher({
     resolvers,
@@ -170,6 +184,12 @@ export async function startResolverServer(options) {
     // a field, `/hasura-action` in `session_variables` -- so on an open socket
     // either is a way to assert `admin`. The gate belongs in front of both, and
     // ahead of reading the body at all.
+    //
+    // With no secret configured there is no gate, and then an `admin` claim is
+    // self-certified: `admin: true` keeps a resolver off the public schema, so
+    // honouring the claim would leave it reachable by anything that can dial
+    // this process. Unauthenticated callers are therefore public, whatever they
+    // say they are -- the resolver is unreachable rather than unguarded.
     if (actionSecret !== undefined && !presentedSecret(request, actionSecret)) {
       const refusal = "This resolver service requires its shared secret on every request.";
       send(
@@ -179,6 +199,11 @@ export async function startResolverServer(options) {
       );
       return;
     }
+
+    const asCaller = (parsed) =>
+      actionSecret !== undefined || parsed === null || typeof parsed !== "object"
+        ? parsed
+        : { ...parsed, role: "public" };
 
     readBody(request, MAX_REQUEST_BYTES)
       .then(async (raw) => {
@@ -204,13 +229,13 @@ export async function startResolverServer(options) {
             );
             return;
           }
-          const answer = await dispatch(toResolveRequest(parsed, randomUUID()));
+          const answer = await dispatch(asCaller(toResolveRequest(parsed, randomUUID())));
           const { status, body } = toActionResponse(answer);
           send(response, status, body);
           return;
         }
 
-        const answer = await dispatch(parsed);
+        const answer = await dispatch(asCaller(parsed));
         // A malformed request is the caller's error and says so in the status;
         // everything a resolver itself produces is a 200 with a GraphQL-shaped
         // body, because the operation as a whole still succeeded.
