@@ -13,6 +13,13 @@ open Vitest
 @val external importMetaUrl: string = "import.meta.url"
 @val external processEnv: dict<string> = "process.env"
 
+type response
+type getArgs = {method: string}
+@val external fetchGet: (string, getArgs) => promise<response> = "fetch"
+@get external status: response => int = "status"
+
+let getStatus = async url => (await fetchGet(url, {method: "GET"}))->status
+
 type server
 type req
 type res
@@ -29,6 +36,10 @@ type address = {port: int}
 
 let received: ref<array<JSON.t>> = ref([])
 
+// How many `bulk` calls to refuse before accepting them, so a rollout where
+// another replica wins the race can be reproduced.
+let bulkFailures = ref(0)
+
 // Only the two calls an apply makes: report an empty Hasura, accept the bulk.
 let startFakeHasura = async () => {
   let server = createServer((req, res) => {
@@ -38,15 +49,23 @@ let startFakeHasura = async () => {
     req->onEnd(() => {
       let parsed = body.contents->JSON.parseOrThrow
       received.contents->Array.push(parsed)->ignore
-      let answer = switch parsed {
+      let isExport = switch parsed {
       | Object(dict) =>
         switch dict->Dict.get("type") {
-        | Some(String("export_metadata")) => `{"version":3,"sources":[]}`
-        | _ => `[{"message":"success"}]`
+        | Some(String("export_metadata")) => true
+        | _ => false
         }
-      | _ => `[{"message":"success"}]`
+      | _ => false
       }
-      res->writeHead(200, dict{"content-type": "application/json"})
+      let (status, answer) = if isExport {
+        (200, `{"version":3,"sources":[]}`)
+      } else if bulkFailures.contents > 0 {
+        bulkFailures := bulkFailures.contents - 1
+        (400, `{"code":"already-exists","error":"action already exists"}`)
+      } else {
+        (200, `[{"message":"success"}]`)
+      }
+      res->writeHead(status, dict{"content-type": "application/json"})
       res->end_(answer)
     })
   })
@@ -129,6 +148,7 @@ let clearHasuraEnv = () => {
 describe("envio resolvers, as Hasura's handler", () => {
   Async.it("registers its own actions on startup and keeps asserting them", async t => {
     received := []
+    bulkFailures := 0
     let hasura = await startFakeHasura()
     let endpoint = `http://127.0.0.1:${(hasura->address).port->Int.toString}/v1/metadata`
     processEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", endpoint)
@@ -187,6 +207,37 @@ describe("envio resolvers, as Hasura's handler", () => {
       true,
       true,
     ))
+  })
+
+  Async.it("keeps serving when Hasura refuses the first apply, and converges", async t => {
+    // Two replicas rolling out at once both find an empty Hasura and both try
+    // to create the actions; the loser is told `already-exists`. That is a
+    // race to converge out of, not a reason to exit -- a process that dies
+    // here crash-loops through the rollout, and the metadata is already
+    // correct because the other replica wrote it.
+    received := []
+    bulkFailures := 1
+    let hasura = await startFakeHasura()
+    let endpoint = `http://127.0.0.1:${(hasura->address).port->Int.toString}/v1/metadata`
+    processEnv->Dict.set("HASURA_GRAPHQL_ENDPOINT", endpoint)
+    processEnv->Dict.set("HASURA_GRAPHQL_ADMIN_SECRET", "testing")
+    processEnv->Dict.set("ENVIO_RESOLVERS_PUBLIC_URL", publicUrl)
+    processEnv->Dict.set("ENVIO_RESOLVERS_METADATA_INTERVAL_MS", "40")
+
+    let running = await ResolverProcess.serve(~config, ~projectRoot, ~envioInfo, ~port=0)
+    let servingAfterRefusal =
+      await getStatus(`http://127.0.0.1:${running.server.port->Int.toString}/healthz`)
+
+    // The loop is what converges, so it has to have been started even though
+    // the first apply threw.
+    await Utils.delay(140)
+    let bulksSent = callsOfType("bulk")->Array.length
+
+    await running.shutdown()
+    await Promise.make((resolve, _reject) => hasura->closeServer(() => resolve()))
+    clearHasuraEnv()
+
+    t.expect((servingAfterRefusal, bulksSent > 1)).toEqual((200, true))
   })
 
   Async.it("serves without touching Hasura when it was not told where one is", async t => {
