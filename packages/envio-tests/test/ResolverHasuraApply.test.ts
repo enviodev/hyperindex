@@ -337,6 +337,36 @@ describe("applying resolver metadata", () => {
     });
   });
 
+  it("leaves a newer deployment's metadata alone rather than reverting it", async () => {
+    // A rolling update runs both versions at once. The new pod updates the
+    // actions to its own definitions; if the old pod's re-assert treated that
+    // as drift it would write the old ones straight back, and the two would
+    // fight over the published schema until the rollout finished. Clients would
+    // see a field's type flap. So the loop heals what is *missing* and never
+    // argues about what differs -- reconciling definitions is startup's job.
+    exported = {
+      ...APPLIED_EXPORT,
+      actions: APPLIED_EXPORT.actions.map((action) => ({
+        ...action,
+        definition: { ...action.definition, handler: "http://the-new-pod:9900/hasura-action" },
+      })),
+    };
+    const stop = startMetadataReassert({
+      endpoint,
+      adminSecret: "testing",
+      metadata,
+      intervalMs: 20,
+      onApplied: () => {},
+      onError: () => {},
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 90));
+    } finally {
+      stop();
+    }
+    expect(bulkSent()).toEqual([]);
+  });
+
   it("re-applies after a clear_metadata wipes it, without being asked", async () => {
     // `Hasura.trackDatabase` opens with a wholesale `clear_metadata`, so a
     // re-initialised indexer silently deletes the actions while this service
