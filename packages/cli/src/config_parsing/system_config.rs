@@ -1487,7 +1487,7 @@ impl SystemConfig {
                     storage,
                     lowercase_addresses: false,
                     handlers: None,
-                    resolvers: None,
+                    resolvers: human_config.get_base_config().resolvers.clone(),
                     human_config,
                     is_rescript,
                 })
@@ -3795,6 +3795,26 @@ type Foo {
         /// translates into a single Contract whose two Events carry the
         /// expected discriminator + flags. Guards Stage 3 + Stage 4 plumbing
         /// from drifting out of sync.
+        /// `resolvers:` is declared on the shared BaseConfig, and every
+        /// ecosystem has to carry it through: the SVM arm dropped it, so an SVM
+        /// project could name a resolver module and have it silently ignored --
+        /// `to_public_config_json` emitted no `resolvers`, and
+        /// `build_resolvers_command` therefore had nothing to load.
+        #[test]
+        fn svm_carries_the_declared_resolvers_path() {
+            let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+            let project_paths =
+                ParsedProjectPaths::new(&test_dir, "configs/svm-metaplex-config.yaml")
+                    .expect("paths");
+            let config = SystemConfig::parse_from_project_files(&project_paths).expect("parse");
+
+            assert_eq!(config.resolvers.as_deref(), Some("src/Resolvers.ts"));
+            assert!(config
+                .to_public_config_json(false)
+                .expect("public config")
+                .contains("src/Resolvers.ts"));
+        }
+
         #[test]
         fn translates_metaplex_yaml_into_contract_events() {
             let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));

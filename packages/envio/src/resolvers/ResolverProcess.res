@@ -392,6 +392,14 @@ let serve = async (
   let entities = Dict.make()
   config->Config.getPgUserEntities->Array.forEach(entity => entities->Dict.set(entity.name, entity))
 
+  // Read before the socket opens. It is a misconfiguration, not a runtime
+  // failure, so it should stop the process before anything can route to it.
+  let hasuraTargetOrNone = hasuraTarget()
+  switch hasuraTargetOrNone {
+  | Ok(_) => handlerUrlOrThrow()->ignore
+  | Error(_) => ()
+  }
+
   let pool = createResolverPoolFromEnv({entities, pgSchema})
   let server = await startResolverServer({
     resolvers,
@@ -408,7 +416,7 @@ let serve = async (
 
   // After the socket is listening, never before: an action Hasura knows about
   // is one it will send traffic to.
-  let stopReassert = switch hasuraTarget() {
+  let stopReassert = switch hasuraTargetOrNone {
   | Ok((endpoint, adminSecret)) =>
     let handlerUrl = handlerUrlOrThrow()
     let metadata = buildHasuraMetadata(manifest, {handlerUrl: handlerUrl})
@@ -717,7 +725,16 @@ let startForDev = async (~config: Config.t, ~projectRoot) => {
             await waitForTables(attempt + 1)
           }
         }
-      let _ = waitForTables(0)
+      // Detached on purpose -- it polls in the background while dev carries on
+      // -- so its rejection has to be caught here or it is unhandled.
+      waitForTables(0)
+      ->Promise.catch(exn => {
+        Logging.warn(
+          `Stopped waiting for the resolver tables: ${exn->Utils.prettifyExn->Obj.magic}`,
+        )
+        Promise.resolve()
+      })
+      ->ignore
     | _ =>
       // Not a warning when Hasura is running: it publishes the resolvers as
       // actions, so they are already in the endpoint a developer opens.

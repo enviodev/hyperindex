@@ -358,6 +358,11 @@ impl EnvConfig {
 
     fn hasura_config_hash(&self) -> String {
         let mut h = Sha256::new();
+        // Bump when the container's HostConfig changes. `ensure_container`
+        // applies HostConfig only when it creates a container, so without this
+        // an existing Hasura is reused and never gains the host-gateway mapping
+        // custom resolvers need to be reachable from inside it.
+        h.update(b"host-gateway-v1");
         h.update(&self.pg_password);
         h.update(&self.pg_user);
         h.update(&self.pg_database);

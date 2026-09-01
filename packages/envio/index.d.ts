@@ -2500,6 +2500,12 @@ export function defineInput<F extends Record<string, unknown>>(
   fields: F
 ): Sury.Schema<UnknownToOutput<F>>;
 
+/** Every resolver declared so far, in declaration order. */
+export function getRegisteredResolvers(): readonly Resolver<unknown, unknown>[];
+
+/** The manifest and SDL for everything declared so far. */
+export function buildRegisteredManifest(): { manifest: unknown; sdl: string };
+
 /** Names a schema representing a GraphQL enum. */
 export function defineEnum<const V extends readonly string[]>(
   name: string,
