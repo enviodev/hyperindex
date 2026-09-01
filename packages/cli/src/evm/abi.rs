@@ -122,7 +122,7 @@ fn bad_parameter(item: &Map<String, Value>, is_event: bool) -> Option<String> {
         let name = param.get("name").and_then(Value::as_str).unwrap_or("");
         if as_param || as_event {
             return Some(format!(
-                "parameter \"{name}\" is indexed, which only an event's parameter can be"
+                "parameter \"{name}\" has \"indexed\", which only an event's parameter can have"
             ));
         }
         return Some(match param.get("type").and_then(Value::as_str) {
@@ -314,12 +314,24 @@ mod tests {
     // Only an event's parameter can be indexed, so alloy refuses a function's
     // that is; the type it names is not the problem.
     #[test]
-    fn says_when_a_parameter_is_indexed_and_may_not_be() {
+    fn says_when_a_parameter_carries_indexed_and_may_not() {
         assert_eq!(
             error(
                 r#"[{"name": "transfer", "type": "function", "inputs": [{"name": "to", "type": "address", "indexed": true}]}]"#
             ),
-            "abi[0] \"transfer\": parameter \"to\" is indexed, which only an event's parameter can be."
+            "abi[0] \"transfer\": parameter \"to\" has \"indexed\", which only an event's parameter can have."
+        );
+    }
+
+    // alloy refuses the property, not the value, so "indexed": false is
+    // rejected as surely as true and must not be described as being indexed.
+    #[test]
+    fn says_when_a_parameter_carries_indexed_set_to_false() {
+        assert_eq!(
+            error(
+                r#"[{"name": "transfer", "type": "function", "inputs": [{"name": "to", "type": "address", "indexed": false}]}]"#
+            ),
+            "abi[0] \"transfer\": parameter \"to\" has \"indexed\", which only an event's parameter can have."
         );
     }
 
