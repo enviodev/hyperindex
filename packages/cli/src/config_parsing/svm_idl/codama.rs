@@ -3,26 +3,25 @@
 //! argument singled out by name, or several such fields packed together — none
 //! of which Anchor's fixed 8-byte prefix can express.
 //!
-//! It also describes the data differently. An instruction's bytes are the
-//! encoding of its `arguments` alone, and a discriminator is a match against
-//! those bytes at an offset rather than a prefix in front of them. Dispatch
-//! here works the other way round, so the arguments a prefix covers are spent
-//! and the body starts after it.
+//! It also describes the data differently — see `parse_arguments`.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 
 use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 
 use super::{
-    account_slot, collect_instructions, collect_named, declared_array, le_bytes, required_str,
-    Dispatch, IdlAccount, ProgramIdl, Unusable,
+    account_slot, collect_instructions, declared_array, le_bytes, parse_defined_types,
+    required_str, Dispatch, IdlAccount, ProgramIdl,
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
     let program = codama_program(root)?;
-    let (defined_types, unusable_types) = parse_defined_types(program)?;
+    let (defined_types, unusable_types) =
+        parse_defined_types(program.get("definedTypes"), "definedTypes", |name, node| {
+            parse_type(node, &format!("definedTypes.{name}"))
+        })?;
     Ok(ProgramIdl {
         address: program
             .get("publicKey")
@@ -45,18 +44,6 @@ fn codama_program(root: &Map<String, Value>) -> Result<&Map<String, Value>> {
     root.get("program")
         .and_then(Value::as_object)
         .ok_or_else(|| anyhow!("Codama root node has no 'program'"))
-}
-
-fn parse_defined_types(
-    program: &Map<String, Value>,
-) -> Result<(BTreeMap<String, FieldType>, Unusable)> {
-    let arr = declared_array(program.get("definedTypes")).context("definedTypes")?;
-    collect_named(arr, "type", "definedTypes[].name", |name, t| {
-        let node = t
-            .get("type")
-            .ok_or_else(|| anyhow!("defined type '{name}' has no 'type'"))?;
-        parse_type(node, &format!("definedTypes.{name}"))
-    })
 }
 
 fn parse_instructions(program: &Map<String, Value>) -> Result<ProgramIdl> {
@@ -236,14 +223,12 @@ fn reject_ambiguous_optional_accounts(ix: &Value, accounts: &[IdlAccount]) -> Re
             _ => bail!("unsupported optionalAccountStrategy {strategy}"),
         },
     }
-    for (account, trailing) in accounts.iter().zip(super::trailing_optional_mask(accounts)) {
-        if account.optional && !trailing {
-            bail!(
-                "account '{}' is optional and left out entirely when absent, so every account \
-                 after it shifts and this parser cannot tell which name a slot carries",
-                account.name
-            );
-        }
+    if let Some(account) = super::optional_before_a_required_slot(accounts) {
+        bail!(
+            "account '{}' is optional and left out entirely when absent, so every account after \
+             it shifts and this parser cannot tell which name a slot carries",
+            account.name
+        );
     }
     Ok(())
 }

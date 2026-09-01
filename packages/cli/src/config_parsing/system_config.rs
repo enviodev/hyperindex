@@ -1408,9 +1408,10 @@ impl SystemConfig {
                                     discriminator,
                                     accounts,
                                     args,
-                                } = resolve_instruction(instr, &svm_abi).with_context(|| {
-                                    format!("Layout for instruction '{}'", instr.name)
-                                })?;
+                                } = resolve_instruction(instr, &program.name, &svm_abi)
+                                    .with_context(|| {
+                                        format!("Layout for instruction '{}'", instr.name)
+                                    })?;
                                 let byte_len = discriminator.as_ref().map_or(0, Vec::len) as u8;
                                 let normalized_discriminator =
                                     discriminator.map(|d| format!("0x{}", crate::hex::encode(&d)));
@@ -2019,6 +2020,7 @@ struct ResolvedInstruction {
 ///    declared.
 fn resolve_instruction(
     instr: &human_config::svm::Instruction,
+    program_name: &str,
     abi: &SvmAbi,
 ) -> Result<ResolvedInstruction> {
     let declared = instr
@@ -2098,9 +2100,9 @@ fn resolve_instruction(
             }
         };
         eprintln!(
-            "Warning: instruction '{}' is not declared by the schema for program '{}'. {dispatch}, \
-             with no decoded accounts or arguments.",
-            instr.name, abi.program_id
+            "Warning: instruction '{}' is not declared by the schema for program '{program_name}'. \
+             {dispatch}, with no decoded accounts or arguments.",
+            instr.name
         );
     }
     Ok(ResolvedInstruction {

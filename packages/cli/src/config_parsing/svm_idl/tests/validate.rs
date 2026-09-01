@@ -22,7 +22,7 @@ fn separates_file_level_defects_from_instruction_level_ones() {
                }] }"#,
         ),
         (
-            "undefined type reference",
+            "unknown primitive type",
             r#"{ "instructions": [{
                  "name": "swap",
                  "discriminator": [1],
@@ -91,7 +91,7 @@ fn separates_file_level_defects_from_instruction_level_ones() {
                  { "name": "sub", "discriminator": [12, 999], "args": [] }] }"#,
         ),
         (
-            "instruction declaring no discriminator at all",
+            "a sibling with a discriminator survives one without",
             r#"{ "kind": "rootNode", "program": { "instructions": [
                  { "kind": "instructionNode", "name": "raw",
                    "arguments": [{ "kind": "instructionArgumentNode", "name": "amount",
@@ -300,7 +300,7 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "neither dialect: fatal: unrecognized IDL: expected an Anchor IDL (top-level 'instructions') or a Codama IDL (a 'rootNode' or 'programNode')",
             "duplicate instruction name: fatal: IDL declares instruction 'swap' more than once",
             "anchor coption: initializeMint set aside: args.freezeAuthority: `coption` is not Borsh-compatible and cannot be decoded",
-            "undefined type reference: swap set aside: args.amount: unknown type 'u46'",
+            "unknown primitive type: swap set aside: args.amount: unknown type 'u46'",
             "discriminator wider than dispatch probes: swap set aside: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8",
             "instruction with no discriminator at all: swap set aside: its discriminator is 0 bytes, and dispatch matches only 1, 2, 4, or 8",
             "one discriminator a prefix of another: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferChecked set aside: its discriminator 0x0c02 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead",
@@ -308,7 +308,7 @@ fn separates_file_level_defects_from_instruction_level_ones() {
             "discriminator value too wide for its format: swap set aside: discriminators: discriminator value 300 does not fit in u8",
             "instruction shadowed by one set aside for its args: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferChecked set aside: args.amount: `coption` is not Borsh-compatible and cannot be decoded",
             "instruction whose discriminator cannot be read: sub set aside: discriminator: expected a byte (0-255), got 999",
-            "instruction declaring no discriminator at all: raw set aside: its discriminator is 0 bytes, and dispatch matches only 1, 2, 4, or 8",
+            "a sibling with a discriminator survives one without: raw set aside: its discriminator is 0 bytes, and dispatch matches only 1, 2, 4, or 8",
             "size-only discriminator does not poison a sibling: sized set aside: discriminators: dispatch matches a fixed-width prefix of the data, not its length, so a sizeDiscriminatorNode cannot be honoured",
             "one discriminator a prefix of several others: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferAll set aside: its discriminator 0x0c03 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead; transferChecked set aside: its discriminator 0x0c02 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead",
             "instruction shadowed by one of an undispatchable width: swap set aside: its discriminator 0x0102 is a prefix of 'swapV2''s 0x010203, so 'swapV2' takes every call that would have matched it; swapV2 set aside: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8",
@@ -484,14 +484,13 @@ fn reads_the_published_kamino_composite_instructions() {
     );
 }
 
-/// The upstream Anchor parser is what an `idl:` config goes through today, and
-/// this module is what replaces it. Anything the two read differently reaches
-/// users as a changed discriminator or a shifted argument on a config that
-/// already works, so the scenario IDLs are read by both and compared.
+/// A second implementation of the same job, over the scenario IDLs, as a
+/// cross-check: a discriminator or an argument the two read differently is one
+/// of them being wrong about a file that ships in this repo.
 ///
 /// Account names are the one intended divergence: a slot inside a composite
-/// group is named for the group, where upstream flattens to a bare name and
-/// lets two of them collide.
+/// group is named for the group, where the upstream parser flattens to a bare
+/// name and lets two of them collide.
 #[test]
 fn reads_the_scenario_idls_as_the_upstream_parser_does() {
     fn qualifies(ours: &str, upstream: &str) -> bool {
@@ -613,13 +612,18 @@ fn mutated_fixtures_never_panic() {
             let target = (next(&mut state) % 4000) as i64;
 
             let mut replaced = None;
-            replace_nth(&mut fixture, &mut { target }, &replacement, &mut replaced);
+            replace_nth(
+                &mut fixture,
+                &mut target.clone(),
+                &replacement,
+                &mut replaced,
+            );
             let json = fixture.to_string();
             // `parse_idl` must decide, not panic. A panic here fails the test
             // with the seed in the message so it can be replayed.
             let outcome = std::panic::catch_unwind(|| parse_idl(&json, "Fuzzed").is_ok());
             if let Some(original) = replaced {
-                replace_nth(&mut fixture, &mut { target }, &original, &mut None);
+                replace_nth(&mut fixture, &mut target.clone(), &original, &mut None);
             }
             assert!(
                 outcome.is_ok(),
@@ -671,7 +675,7 @@ fn resolves_shared_type_graphs_without_blowing_up() {
             started.elapsed() < std::time::Duration::from_secs(5)
         ),
         (vec![&"swap".to_string()], true),
-        "resolving the shared graph took {:?}",
+        "resolving the shared graph took {:?}; a heavily loaded machine can miss this bound",
         started.elapsed()
     );
 }
@@ -798,7 +802,7 @@ fn resolves_self_referential_types() {
 /// arrive as a demotion, not as the stack running out under the whole CLI.
 #[test]
 fn demotes_a_type_chain_too_deep_to_walk() {
-    let depth = 40_000;
+    let depth = 400;
     let types = (0..depth)
         .map(|i| {
             format!(

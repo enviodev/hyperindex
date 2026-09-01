@@ -170,36 +170,8 @@ fn parses_a_codama_program_node_without_root_wrapper() {
     );
 }
 
-#[test]
-fn trailing_optional_mask_keeps_middle_slots_required() {
-    let account = |name: &str, optional| IdlAccount {
-        name: name.to_string(),
-        optional,
-    };
-    assert_eq!(
-        [
-            trailing_optional_mask(&[
-                account("metadata", false),
-                account("mint", true),
-                account("payer", false),
-                account("rent", true),
-            ]),
-            trailing_optional_mask(&[account("a", true), account("b", true)]),
-            trailing_optional_mask(&[account("a", false), account("b", true), account("c", true)]),
-            trailing_optional_mask(&[]),
-        ],
-        [
-            vec![false, false, false, true],
-            vec![true, true],
-            vec![false, true, true],
-            vec![],
-        ]
-    );
-}
-
-/// Legacy IDLs declare no address and no inline discriminators, so both are
-/// derived: `sha256("global:<snake_case>")[..8]` for instructions and
-/// `sha256("event:<Name>")[..8]` for events.
+/// A legacy IDL declares no address and no inline discriminator, so the bytes
+/// are derived: `sha256("global:<snake_case>")[..8]`.
 #[test]
 fn derives_discriminators_for_legacy_anchor_idl() {
     let idl = parse_idl(
@@ -217,13 +189,6 @@ fn derives_discriminators_for_legacy_anchor_idl() {
               { "name": "id", "type": "u8" },
               { "name": "routePlan", "type": { "vec": { "defined": "RoutePlanStep" } } },
               { "name": "limitPrice", "type": { "option": "u64" } }
-            ]
-          }],
-          "events": [{
-            "name": "SwapEvent",
-            "fields": [
-              { "name": "amm", "type": "publicKey", "index": false },
-              { "name": "inputAmount", "type": "u64", "index": false }
             ]
           }],
           "types": [{

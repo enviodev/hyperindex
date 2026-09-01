@@ -14,22 +14,22 @@
 //! Shank (Metaplex's generator) emits the same top-level shape and is read
 //! here too, but it dispatches on `discriminant`, never on a hashed name.
 
-use std::collections::BTreeMap;
-
 use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::config_parsing::field_types::to_snake_case;
+use crate::utils::text::Capitalize;
 
 use super::{
-    account_slot, collect_instructions, collect_named, declared_array, declared_optional, le_bytes,
-    required_str, Dispatch, IdlAccount, ProgramIdl, Unusable,
+    account_slot, collect_instructions, declared_array, declared_optional, le_bytes,
+    parse_defined_types, required_str, Dispatch, IdlAccount, ProgramIdl,
 };
 
 pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
-    let (defined_types, unusable_types) = parse_defined_types(root)?;
+    let (defined_types, unusable_types) =
+        parse_defined_types(root.get("types"), "types", parse_type_def)?;
     Ok(ProgramIdl {
         address: root
             .get("address")
@@ -43,18 +43,6 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
         defined_types,
         unusable_types,
         ..parse_instructions(root)?
-    })
-}
-
-fn parse_defined_types(
-    root: &Map<String, Value>,
-) -> Result<(BTreeMap<String, FieldType>, Unusable)> {
-    let arr = declared_array(root.get("types")).context("types")?;
-    collect_named(arr, "type", "types[].name", |name, t| {
-        let node = t
-            .get("type")
-            .ok_or_else(|| anyhow!("type '{name}' has no 'type'"))?;
-        parse_type_def(name, node)
     })
 }
 
@@ -180,14 +168,7 @@ fn qualify(prefix: &str, name: &str) -> String {
     if prefix.is_empty() {
         return name.to_string();
     }
-    let mut out = String::with_capacity(prefix.len() + name.len());
-    out.push_str(prefix);
-    let mut chars = name.chars();
-    if let Some(first) = chars.next() {
-        out.extend(first.to_uppercase());
-        out.push_str(chars.as_str());
-    }
-    out
+    format!("{prefix}{}", name.to_string().capitalize())
 }
 
 /// Present but not an array is a defect, not an empty list: read as empty, an

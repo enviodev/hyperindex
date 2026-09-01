@@ -205,9 +205,10 @@ pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
     let hex = crate::hex::strip_prefix(s).unwrap_or(s);
     if !hex.len().is_multiple_of(2) || !DISPATCHABLE.contains(&(hex.len() / 2)) {
         return Err(anyhow!(
-            "discriminator {:?} must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after \
-             stripping a `0x` prefix), got {} digits",
+            "discriminator {:?} must be {} bytes (twice that many hex digits after stripping a \
+             `0x` prefix), got {} digits",
             s,
+            super::svm_idl::describe_dispatchable_lens(),
             hex.len()
         ));
     }

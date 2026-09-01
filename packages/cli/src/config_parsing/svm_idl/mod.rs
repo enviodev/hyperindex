@@ -21,17 +21,12 @@ pub struct IdlAccount {
     pub optional: bool,
 }
 
-/// Only a trailing run of optional slots can be omitted from a transaction.
-/// A middle optional would shift later names, so generated types keep it required.
-pub fn trailing_optional_mask(accounts: &[IdlAccount]) -> Vec<bool> {
-    let mut mask = vec![false; accounts.len()];
-    for (i, account) in accounts.iter().enumerate().rev() {
-        if !account.optional {
-            break;
-        }
-        mask[i] = true;
-    }
-    mask
+/// The first optional slot with a required one after it, if any. Names are
+/// paired to accounts by position, so a slot like that shifts every name after
+/// it when the transaction leaves it out.
+pub(crate) fn optional_before_a_required_slot(accounts: &[IdlAccount]) -> Option<&IdlAccount> {
+    let last_required = accounts.iter().rposition(|a| !a.optional)?;
+    accounts[..last_required].iter().find(|a| a.optional)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,7 +44,6 @@ pub struct IxIdl {
 
 pub type Unusable = BTreeMap<String, String>;
 
-/// Parsed program IDL, keyed by instruction name.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ProgramIdl {
     pub address: Option<String>,
@@ -72,8 +66,22 @@ pub struct ProgramIdl {
 /// the three admits and another does not is a registration nothing can match.
 pub(crate) const DISPATCHABLE_DISCRIMINATOR_LENS: [usize; 4] = [1, 2, 4, 8];
 
+/// "1, 2, 4, or 8", for a message that would otherwise spell out by hand the
+/// list it is reporting against.
+pub(crate) fn describe_dispatchable_lens() -> String {
+    let (last, rest) = DISPATCHABLE_DISCRIMINATOR_LENS
+        .split_last()
+        .expect("non-empty");
+    let rest = rest
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{rest}, or {last}")
+}
+
 pub fn parse_idl(json: &str, program_name: &str) -> Result<ProgramIdl> {
-    parse_validated(json).with_context(|| format!("parsing IDL for program '{program_name}'"))
+    parse_and_validate(json).with_context(|| format!("parsing IDL for program '{program_name}'"))
 }
 
 impl ProgramIdl {
@@ -104,7 +112,7 @@ impl ProgramIdl {
     }
 }
 
-fn parse_validated(json: &str) -> Result<ProgramIdl> {
+fn parse_and_validate(json: &str) -> Result<ProgramIdl> {
     let root: Value = serde_json::from_str(json).context("invalid JSON")?;
     let root = root
         .as_object()
@@ -133,7 +141,6 @@ fn is_codama_root(root: &Map<String, Value>) -> bool {
         )
 }
 
-/// Shared post-parse checks. Failures demote an instruction from the catalog.
 fn validate(idl: &mut ProgramIdl) {
     let mut demoted = Unusable::new();
     for (name, ix) in &idl.instructions {
@@ -142,7 +149,8 @@ fn validate(idl: &mut ProgramIdl) {
             demoted.insert(
                 name.clone(),
                 format!(
-                    "its discriminator is {len} bytes, and dispatch matches only 1, 2, 4, or 8"
+                    "its discriminator is {len} bytes, and dispatch matches only {}",
+                    describe_dispatchable_lens()
                 ),
             );
         }
@@ -211,7 +219,7 @@ fn demote(idl: &mut ProgramIdl, demoted: Unusable) {
 
 /// Dispatch probes widths longest-first, so `0x0c` and `0x0c02` are one key:
 /// the longer wins every probe that reaches it, and the shorter never fires.
-pub(crate) fn prefix_collisions(mut by_bytes: Vec<(&[u8], &str)>) -> Unusable {
+fn prefix_collisions(mut by_bytes: Vec<(&[u8], &str)>) -> Unusable {
     by_bytes.sort_unstable();
     let mut out = Unusable::new();
     for (i, (shorter, first)) in by_bytes.iter().enumerate() {
@@ -561,6 +569,24 @@ fn collect_instructions(
     Ok(idl)
 }
 
+/// The `types` / `definedTypes` block: every declared type by name, plus the
+/// reasons for the ones that could not be read. Which key holds them and how a
+/// type node is read is the dialect's business; that a type without a `type` is
+/// that type's defect rather than the file's is not.
+fn parse_defined_types(
+    node: Option<&Value>,
+    key: &str,
+    mut parse_one: impl FnMut(&str, &Value) -> Result<FieldType>,
+) -> Result<(BTreeMap<String, FieldType>, Unusable)> {
+    let arr = declared_array(node).with_context(|| key.to_string())?;
+    collect_named(arr, "type", &format!("{key}[].name"), |name, t| {
+        let node = t
+            .get("type")
+            .ok_or_else(|| anyhow!("type '{name}' has no 'type'"))?;
+        parse_one(name, node)
+    })
+}
+
 fn collect_named<T>(
     entries: &[Value],
     noun: &str,
@@ -591,8 +617,7 @@ fn collect_named<T>(
 /// A declared list of nodes. Absent means the file declares none; present but
 /// not an array is a defect, not an empty list — read as empty, whatever it
 /// held disappears silently, and what disappears is a slot whose name every
-/// later account inherits, or a field the decoder then reads past. Callers add
-/// the key's name as context.
+/// later account inherits, or a field the decoder then reads past.
 fn declared_array(node: Option<&Value>) -> Result<&[Value]> {
     match node {
         None => Ok(&[]),
