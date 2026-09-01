@@ -239,7 +239,11 @@ describe("resolver /resolve", () => {
     });
   });
 
-  it("answers an admin resolver asked for as admin", async () => {
+  // The shared server has no secret configured, so there is nothing that could
+  // tell an admin caller from any other and the claim is not honoured. The
+  // socket is on 0.0.0.0; honouring it would put a resolver deliberately kept
+  // off the public schema within reach of anything that can dial the process.
+  it("does not honour an admin claim when nothing can authenticate it", async () => {
     expect(
       await resolve({
         field: "adminOnly",
@@ -248,7 +252,45 @@ describe("resolver /resolve", () => {
         role: "admin",
         requestId: "req-6",
       })
-    ).toEqual({ status: 200, body: { data: "secret" } });
+    ).toEqual({
+      status: 200,
+      body: {
+        errors: [
+          {
+            message: "Resolver 'adminOnly' is admin-only",
+            extensions: { code: "FORBIDDEN" },
+          },
+        ],
+      },
+    });
+  });
+
+  it("answers an admin resolver asked for as admin once a secret is configured", async () => {
+    const guarded = await startResolverServer({
+      resolvers: getRegisteredResolvers(),
+      pool,
+      port: 0,
+      actionSecret: "s3cr3t",
+    });
+    try {
+      const response = await fetch(`http://127.0.0.1:${guarded.port}/resolve`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-envio-resolver-secret": "s3cr3t" },
+        body: JSON.stringify({
+          field: "adminOnly",
+          args: {},
+          selection: {},
+          role: "admin",
+          requestId: "req-6b",
+        }),
+      });
+      expect({ status: response.status, body: await response.json() }).toEqual({
+        status: 200,
+        body: { data: "secret" },
+      });
+    } finally {
+      await guarded.close();
+    }
   });
 
   it("refuses a field it has no resolver for", async () => {
