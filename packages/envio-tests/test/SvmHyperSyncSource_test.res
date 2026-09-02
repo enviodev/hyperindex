@@ -8,7 +8,7 @@ open Vitest
 //      addresses, and the inclusive slot range.
 //   2. Item building: registrations resolved by index, `block` omitted on the
 //      payload (materialised from the block store at batch prep), synthesized
-//      logIndex, and Rust-decoded params parsed from JSON strings.
+//      logIndex, and Rust-decoded params passed through as values.
 
 let metaplexProgramId = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 let chainId = 0->ChainId.fromInt
@@ -77,7 +77,7 @@ let mockResponse: SvmHyperSyncClient.EventItems.response = {
       accounts: [],
       data: "0x21",
       isInner: false,
-      argsJson: `{"amount":"1"}`,
+      args: %raw(`{amount: 1n}`),
       logs: Null.null,
     },
   ],
