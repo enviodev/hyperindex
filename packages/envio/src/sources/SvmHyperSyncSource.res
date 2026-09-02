@@ -10,9 +10,10 @@ type options = {
   addressStore: AddressStore.t,
 }
 
-let namedAccounts = (~idlNames: array<string>, ~accountArguments: array<string>): dict<
-  Envio.svmInstructionAccount,
-> => {
+let namedAccounts = (
+  ~idlNames: array<string>,
+  ~accountArguments: array<string>,
+): dict<Envio.svmInstructionAccount> => {
   let out = Dict.make()
   idlNames->Array.forEachWithIndex((name, i) =>
     switch accountArguments->Array.get(i) {
@@ -31,10 +32,7 @@ let namedAccounts = (~idlNames: array<string>, ~accountArguments: array<string>)
   out
 }
 
-let selectedLog = (
-  log: SvmHyperSyncClient.EventItems.log,
-  ~logFields: Utils.Set.t<string>,
-): Envio.svmLog => {
+let selectedLog = (log: SvmHyperSyncClient.EventItems.log, ~logFields: Utils.Set.t<string>): Envio.svmLog => {
   let out = Dict.make()
   if logFields->Utils.Set.has("kind") {
     switch log.kind->Null.toOption {
@@ -240,8 +238,8 @@ let make = (
 
   // Called through the client rather than passed as a value: the client is a
   // napi class, so a detached method reference loses the instance it belongs to.
-  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=(~blockNumbers) =>
-    client.getBlockHashes(~blockNumbers)
+  let getBlockHashes = HyperSync.makeGetBlockHashes(
+    ~query=(~blockNumbers) => client.getBlockHashes(~blockNumbers),
   )
 
   {

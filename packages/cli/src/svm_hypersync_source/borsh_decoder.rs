@@ -180,17 +180,22 @@ fn value_to_param(
         }
         SvmFieldType::Struct(fields) => args_to_param(value, fields, defined_types)?,
         SvmFieldType::Enum(variants) => {
-            // Externally tagged: `{ VariantName: <body> }`.
+            // Upstream renders every variant externally tagged, `{ Name: <body> }`.
+            // A variant without fields (unit, or a struct variant with an empty
+            // field list - the wire format is identical) collapses to its bare
+            // name so handlers compare it as a string.
             let Value::Object(obj) = value else {
                 return None;
             };
             let (name, body) = obj.into_iter().next()?;
             let variant = variants.iter().find(|v| v.name == name)?;
-            let body = match &variant.fields {
-                None => ParamValue::Obj(vec![]),
-                Some(fields) => args_to_param(body, fields, defined_types)?,
-            };
-            ParamValue::Obj(vec![(name, body)])
+            match variant.fields.as_deref() {
+                None | Some([]) => ParamValue::Str(name),
+                Some(fields) => {
+                    let body = args_to_param(body, fields, defined_types)?;
+                    ParamValue::Obj(vec![(name, body)])
+                }
+            }
         }
         SvmFieldType::Defined(name) => {
             value_to_param(value, defined_types.get(name)?, defined_types)?
@@ -427,8 +432,8 @@ mod tests {
     }
 
     // `vec<u8>` is byte-for-byte the same wire format as `bytes`, and a
-    // fixed `[u8; N]` is a blob too, so neither may come back as `number[]`
-    // — nor as base58 when N happens to be 32.
+    // fixed `[u8; N]` is a blob too, so neither may come back as `number[]`,
+    // nor as base58 when N happens to be 32.
     #[test]
     fn u8_sequences_decode_as_raw_bytes() {
         let schema = schema_of(
@@ -480,11 +485,13 @@ mod tests {
                     {"name":"amount","type":"u64"}
                 ]}},
                 {"name":"mode","type":{"defined":"SwapMode"}},
-                {"name":"tag","type":{"defined":"SwapMode"}}
+                {"name":"tag","type":{"defined":"SwapMode"}},
+                {"name":"empty","type":{"defined":"SwapMode"}}
             ]"#,
             r#"{"SwapMode":{"enum":[
                 {"name":"In"},
-                {"name":"Out","fields":[{"name":"limit","type":"u64"}]}
+                {"name":"Out","fields":[{"name":"limit","type":"u64"}]},
+                {"name":"Empty","fields":[]}
             ]}}"#,
         );
         let mut data = vec![0x01];
@@ -500,6 +507,7 @@ mod tests {
         data.push(1); // mode: Out
         data.extend_from_slice(&(1u64 << 63).to_le_bytes()); // mode.limit
         data.push(0); // tag: In (unit variant)
+        data.push(2); // empty: struct variant with no fields
         assert_eq!(
             decode_with_schema(&schema, &instruction_with_data(data)),
             Decoded::Args(obj(vec![
@@ -526,7 +534,8 @@ mod tests {
                         obj(vec![("limit", ParamValue::from_u128(1u128 << 63))])
                     )])
                 ),
-                ("tag", obj(vec![("In", ParamValue::Obj(vec![]))])),
+                ("tag", ParamValue::Str("In".to_string())),
+                ("empty", ParamValue::Str("Empty".to_string())),
             ]))
         );
     }

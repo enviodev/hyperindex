@@ -2572,6 +2572,8 @@ struct ConfigBodies<'a> {
 /// - pubkey → `string` (base58)
 /// - Borsh `bytes`, `vec<u8>`, `[u8; N]` → `Uint8Array`
 /// - `vec<T>` → `readonly T[]`; `[T; N]` → a readonly N-tuple
+/// - enum variant without fields → its name as a string literal; with fields
+///   → `{ Name: { ...fields } }`
 fn field_type_to_ts_type(
     ty: &hypersync_client_solana::decode::FieldType,
     defined_types: &std::collections::BTreeMap<String, hypersync_client_solana::decode::FieldType>,
@@ -2613,19 +2615,20 @@ fn field_type_to_ts_type(
             }
             variants
                 .iter()
-                .map(|v| {
-                    let body = match &v.fields {
-                        None => "{}".to_string(),
-                        Some(fields) => {
-                            let body = fields
-                                .iter()
-                                .map(|f| ts_svm_field(f, defined_types, seen))
-                                .collect::<Vec<_>>()
-                                .join("; ");
-                            format!("{{ {body} }}")
-                        }
-                    };
-                    format!("{{ readonly {}: {body} }}", ts_safe_property_name(&v.name))
+                .map(|v| match v.fields.as_deref() {
+                    // Mirrors the decoder: a variant without fields is its bare name.
+                    None | Some([]) => ts_string_literal(&v.name),
+                    Some(fields) => {
+                        let body = fields
+                            .iter()
+                            .map(|f| ts_svm_field(f, defined_types, seen))
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        format!(
+                            "{{ readonly {}: {{ {body} }} }}",
+                            ts_safe_property_name(&v.name)
+                        )
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join(" | ")
@@ -2722,8 +2725,12 @@ fn ts_safe_property_name(name: &str) -> String {
     if is_bare_ident {
         name.to_string()
     } else {
-        format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+        ts_string_literal(name)
     }
+}
+
+fn ts_string_literal(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 #[cfg(test)]
@@ -3698,6 +3705,32 @@ type GlobalCounter @crossChain {
                 "readonly payload: Uint8Array",
                 "readonly amount: bigint",
             ]
+        );
+    }
+
+    #[test]
+    fn svm_enum_variants_render_as_literals_or_tagged_objects() {
+        use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
+        let ty = FieldType::Enum(vec![
+            EnumVariant {
+                name: "Bid".into(),
+                fields: None,
+            },
+            EnumVariant {
+                name: "say \"hi\"".into(),
+                fields: Some(vec![]),
+            },
+            EnumVariant {
+                name: "Limit".into(),
+                fields: Some(vec![NamedField {
+                    name: "price".into(),
+                    ty: FieldType::U64,
+                }]),
+            },
+        ]);
+        assert_eq!(
+            field_type_to_ts_type(&ty, &Default::default(), &mut vec![]),
+            r#""Bid" | "say \"hi\"" | { readonly Limit: { readonly price: bigint } }"#
         );
     }
 

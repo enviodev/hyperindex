@@ -91,6 +91,7 @@ module ResponseTypes = {
     blockhash: string,
     blockTime: Null.t<int>,
   }
+
 }
 
 module EventItems = {
