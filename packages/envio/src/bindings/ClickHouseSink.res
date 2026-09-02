@@ -144,11 +144,25 @@ external asString: unknown => string = "%identity"
 @val external toBigInt: unknown => bigint = "BigInt"
 @val external stringOf: unknown => string = "String"
 
-// Visits every node on the way into JSON text, which is the one place the two
-// values JSON cannot carry are still themselves. A bigint would make
-// `JSON.stringify` throw and fail the whole batch; a non-finite number is
-// quieter and worse — it renders as `null`, which the column then refuses for a
-// reason naming `null` rather than the NaN the handler actually wrote.
+// No column holds NaN or Infinity, but nothing downstream refuses them well: a
+// list renders one as `null` on the way into JSON text, which the column then
+// refuses for a reason naming `null` rather than what the handler wrote, and a
+// scalar Float64 takes the raw bytes and stores a value no reader can render.
+// Refused here instead, where the value is still itself, with one message for
+// both shapes.
+%%private(
+  let finiteOrThrow = (number: float, ~column) =>
+    if number->Float.isFinite {
+      number
+    } else {
+      JsError.throwWithMessage(
+        `${number->Float.toString} is not a finite number, so it cannot be stored in the \`${column}\` column. Store a finite number, or keep it out of the entity.`,
+      )
+    }
+)
+
+// Visits every node on the way into JSON text. A bigint would make
+// `JSON.stringify` throw and fail the whole batch, so it travels as its digits.
 %%private(
   let jsonSafe = (~column) =>
     (_, value: JSON.t) =>
@@ -156,14 +170,8 @@ external asString: unknown => string = "%identity"
       | #bigint =>
         value->(Utils.magic: JSON.t => unknown)->stringOf->(Utils.magic: string => JSON.t)
       | #number =>
-        let number = value->(Utils.magic: JSON.t => float)
-        if number->Float.isFinite {
-          value
-        } else {
-          JsError.throwWithMessage(
-            `${number->Float.toString} has no JSON form, so it cannot be stored in the \`${column}\` column. Store a finite number, or keep it out of the entity.`,
-          )
-        }
+        let _ = value->(Utils.magic: JSON.t => float)->finiteOrThrow(~column)
+        value
       | _ => value
       }
 )
@@ -250,7 +258,8 @@ let markNull = (builder, ~row) => {
 %%private(
   let writePresent = (builder, ~row, value: unknown) =>
     switch builder.kind {
-    | F64 => builder.floats->TypedArray.set(row, value->toNumber)
+    | F64 =>
+      builder.floats->TypedArray.set(row, value->toNumber->finiteOrThrow(~column=builder.name))
     | U64 =>
       builder.unsigned->TypedArray.set(
         row,
