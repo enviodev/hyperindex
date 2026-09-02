@@ -84,7 +84,8 @@ fn read_fixture(path: &str) -> String {
 #[test]
 fn parses_the_published_spl_idls() {
     let catalog = |file: &str| {
-        let idl = parse_idl(&read_fixture(&format!("test/idls/{file}")), "Spl").expect("parse");
+        let idl =
+            parse_idl("idl.json", &read_fixture(&format!("test/idls/{file}"))).expect("parse");
         (
             idl.address,
             idl.instructions.len(),
@@ -106,13 +107,14 @@ fn parses_the_published_spl_idls() {
                 Unusable::from([
                     (
                         "batch".to_string(),
-                        "args.data.item.instructionData.prefix: Borsh needs u32 here, got u8"
+                        "idl.json:2774:7: args.data.item.instructionData.prefix: Borsh needs u32 \
+                         here, got u8"
                             .to_string()
                     ),
                     (
                         "uiAmountToAmount".to_string(),
-                        "args.uiAmount: a bare stringTypeNode carries no length; Borsh needs it \
-                         wrapped in a sizePrefixTypeNode with a u32 prefix"
+                        "idl.json:2505:7: args.uiAmount: a bare stringTypeNode carries no length; \
+                         Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix"
                             .to_string()
                     ),
                 ]),
@@ -123,8 +125,8 @@ fn parses_the_published_spl_idls() {
                 Vec::new(),
                 Unusable::from([(
                     "addMemo".to_string(),
-                    "args.memo: a bare stringTypeNode carries no length; Borsh needs it wrapped \
-                     in a sizePrefixTypeNode with a u32 prefix"
+                    "idl.json:8:7: args.memo: a bare stringTypeNode carries no length; Borsh needs \
+                     it wrapped in a sizePrefixTypeNode with a u32 prefix"
                         .to_string()
                 )]),
             ),
@@ -132,9 +134,48 @@ fn parses_the_published_spl_idls() {
     );
 }
 
+/// A reason is reported against the file and the entry it is about, the way an
+/// ABI's is: `path:line:column` for an instruction or type the file was seen
+/// to hold, the path alone for what fails before any entry is read.
+#[test]
+fn points_each_reason_at_the_entry_in_the_file() {
+    let json = "{\n  \"instructions\": [\n    { \"name\": \"swap\", \"discriminator\": [1, 2, \
+                3] },\n    { \"name\": \"burn\", \"discriminator\": [4] }\n  ],\n  \"types\": \
+                [\n    { \"name\": \"Loop\", \"type\": { \"kind\": \"type\", \"alias\": { \
+                \"defined\": \"Loop\" } } }\n  ]\n}";
+    let fatal = |json: &str| {
+        format!(
+            "{:#}",
+            parse_idl("idls/pool.json", json).expect_err("fatal")
+        )
+    };
+
+    assert_eq!(
+        (
+            render(&parse_idl("idls/pool.json", json).expect("parse")),
+            fatal("not json"),
+            fatal("[]"),
+            fatal(r#"{ "instructions": [{ "name": "swap" }, { "name": "swap" }] }"#),
+        ),
+        (
+            "address: -\n\
+             instruction burn 0x04 () ()\n\
+             unusable instruction swap: idls/pool.json:3:5: its discriminator is 3 bytes, and \
+             dispatch matches only 1, 2, 4, or 8\n\
+             unusable type Loop: idls/pool.json:7:5: it recursively contains itself without an \
+             option or vec to terminate decoding\n"
+                .to_string(),
+            "idls/pool.json is not valid JSON: expected ident at line 1 column 2".to_string(),
+            "idls/pool.json: expected a JSON object at the IDL root".to_string(),
+            "idls/pool.json: IDL declares instruction 'swap' more than once".to_string(),
+        )
+    );
+}
+
 #[test]
 fn parses_a_codama_program_node_without_root_wrapper() {
     let idl = parse_idl(
+        "idl.json",
         r#"{
           "kind": "programNode",
           "name": "splToken",
@@ -159,7 +200,6 @@ fn parses_a_codama_program_node_without_root_wrapper() {
             "discriminators": [{ "kind": "fieldDiscriminatorNode", "name": "discriminator", "offset": 0 }]
           }]
         }"#,
-        "SplToken",
     )
     .expect("parse");
 
@@ -175,6 +215,7 @@ fn parses_a_codama_program_node_without_root_wrapper() {
 #[test]
 fn derives_discriminators_for_legacy_anchor_idl() {
     let idl = parse_idl(
+        "idl.json",
         r#"{
           "version": "0.1.0",
           "name": "legacy_program",
@@ -212,7 +253,6 @@ fn derives_discriminators_for_legacy_anchor_idl() {
             }
           }]
         }"#,
-        "LegacyProgram",
     )
     .expect("parse");
 
@@ -232,8 +272,8 @@ fn derives_discriminators_for_legacy_anchor_idl() {
 #[test]
 fn splits_acronym_runs_like_anchor_does() {
     let idl = parse_idl(
+        "idl.json",
         r#"{ "instructions": [{ "name": "raydiumCLMMSwap", "accounts": [], "args": [] }] }"#,
-        "Router",
     )
     .expect("parse");
     assert_eq!(
@@ -248,6 +288,7 @@ fn splits_acronym_runs_like_anchor_does() {
 #[test]
 fn parses_anchor_030_idl() {
     let idl = parse_idl(
+        "idl.json",
         r#"{
           "address": "MyProgram1111111111111111111111111111111111",
           "metadata": { "name": "my_program", "version": "0.1.0", "spec": "0.1.0" },
@@ -287,7 +328,6 @@ fn parses_anchor_030_idl() {
             "type": { "kind": "type", "alias": "pubkey" }
           }]
         }"#,
-        "MyProgram",
     )
     .expect("parse");
 
@@ -307,6 +347,7 @@ fn parses_anchor_030_idl() {
 #[test]
 fn parses_codama_spl_token_idl() {
     let idl = parse_idl(
+        "idl.json",
         r#"{
           "kind": "rootNode",
           "standard": "codama",
@@ -463,7 +504,6 @@ fn parses_codama_spl_token_idl() {
             ]
           }
         }"#,
-        "SplToken",
     )
     .expect("parse");
 
@@ -487,6 +527,7 @@ fn parses_codama_spl_token_idl() {
 #[test]
 fn a_constant_discriminator_spends_the_argument_it_covers() {
     let idl = parse_idl(
+        "idl.json",
         r#"{
           "kind": "programNode",
           "instructions": [{
@@ -508,7 +549,6 @@ fn a_constant_discriminator_spends_the_argument_it_covers() {
             }]
           }]
         }"#,
-        "SplToken",
     )
     .expect("parse");
 
@@ -523,6 +563,7 @@ fn a_constant_discriminator_spends_the_argument_it_covers() {
 #[test]
 fn demotes_a_discriminator_that_stops_inside_an_argument() {
     let idl = parse_idl(
+        "idl.json",
         r#"{
           "kind": "programNode",
           "instructions": [{
@@ -541,14 +582,13 @@ fn demotes_a_discriminator_that_stops_inside_an_argument() {
             }]
           }]
         }"#,
-        "SplToken",
     )
     .expect("parse");
 
     assert_eq!(
         render(&idl),
         "address: -\n\
-         unusable instruction transfer: the 1-byte discriminator stops inside argument \
+         unusable instruction transfer: idl.json:3:28: the 1-byte discriminator stops inside argument \
          'amount', which starts at byte 0 and is 8 bytes wide\n"
     );
 }
@@ -559,6 +599,7 @@ fn demotes_a_discriminator_that_stops_inside_an_argument() {
 #[test]
 fn names_the_size_dispatch_it_cannot_honour() {
     let idl = parse_idl(
+        "idl.json",
         r#"{
           "kind": "programNode",
           "instructions": [{
@@ -566,14 +607,13 @@ fn names_the_size_dispatch_it_cannot_honour() {
             "discriminators": [{ "kind": "sizeDiscriminatorNode", "size": 1 }]
           }]
         }"#,
-        "SplToken",
     )
     .expect("parse");
 
     assert_eq!(
         render(&idl),
         "address: -\n\
-         unusable instruction closeAccount: discriminators: dispatch matches a fixed-width \
+         unusable instruction closeAccount: idl.json:3:28: discriminators: dispatch matches a fixed-width \
          prefix of the data, not its length, so a sizeDiscriminatorNode cannot be honoured\n"
     );
 }
@@ -585,6 +625,7 @@ fn names_the_size_dispatch_it_cannot_honour() {
 #[test]
 fn rejects_a_type_link_into_another_program() {
     let idl = parse_idl(
+        "idl.json",
         r#"{
           "kind": "programNode",
           "instructions": [{
@@ -607,7 +648,6 @@ fn rejects_a_type_link_into_another_program() {
                 "type": { "kind": "numberTypeNode", "format": "u64" } }] }
           }]
         }"#,
-        "Minter",
     )
     .expect("parse");
 
@@ -615,7 +655,7 @@ fn rejects_a_type_link_into_another_program() {
         render(&idl),
         "address: -\n\
          type tokenMetadata = {supply: u64}\n\
-         unusable instruction mint: args.meta: 'tokenMetadata' is defined by program \
+         unusable instruction mint: idl.json:3:28: args.meta: 'tokenMetadata' is defined by program \
          'mplTokenMetadata', and this parser resolves type links against the program it is \
          parsing, where the name means something else\n"
     );
@@ -627,6 +667,7 @@ fn rejects_a_type_link_into_another_program() {
 #[test]
 fn rejects_a_discriminator_list_that_is_not_an_array() {
     let idl = parse_idl(
+        "idl.json",
         r#"{
           "kind": "programNode",
           "instructions": [{
@@ -634,14 +675,13 @@ fn rejects_a_discriminator_list_that_is_not_an_array() {
             "discriminators": {}
           }]
         }"#,
-        "SplToken",
     )
     .expect("parse");
 
     assert_eq!(
         render(&idl),
         "address: -\n\
-         unusable instruction transfer: discriminators: expected an array, got {}\n"
+         unusable instruction transfer: idl.json:3:28: discriminators: expected an array, got {}\n"
     );
 }
 
@@ -652,6 +692,7 @@ fn rejects_a_discriminator_list_that_is_not_an_array() {
 #[test]
 fn reads_shank_discriminants_instead_of_hashing_the_name() {
     let idl = parse_idl(
+        "idl.json",
         r#"{
           "version": "1.13.2",
           "name": "mpl_token_metadata",
@@ -671,7 +712,6 @@ fn reads_shank_discriminants_instead_of_hashing_the_name() {
             { "name": "undispatchable", "accounts": [], "args": [] }
           ]
         }"#,
-        "TokenMetadata",
     )
     .expect("parse");
 
@@ -680,7 +720,7 @@ fn reads_shank_discriminants_instead_of_hashing_the_name() {
         "address: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n\
          instruction burnNft 0x1d () ()\n\
          instruction createMetadataAccount 0x00 (metadata) (isMutable: bool)\n\
-         unusable instruction undispatchable: discriminant: this Shank IDL declares none, and \
+         unusable instruction undispatchable: idl.json:17:13: discriminant: this Shank IDL declares none, and \
          a hashed Anchor discriminator is not what a Shank program dispatches on\n"
     );
 }

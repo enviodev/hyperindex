@@ -160,7 +160,7 @@ fn refuses_layouts_the_runtime_would_misdecode() {
     let reported: Vec<String> = cases
         .iter()
         .map(|(label, json)| {
-            let idl = parse_idl(json, "Program").unwrap_or_else(|e| {
+            let idl = parse_idl("idl.json", json).unwrap_or_else(|e| {
                 panic!("{label} should set the instruction aside, not fail the file: {e:#}")
             });
             let (name, reason) = idl
@@ -175,22 +175,22 @@ fn refuses_layouts_the_runtime_would_misdecode() {
     assert_eq!(
         reported,
         vec![
-            "codama fixed option: probe: args.probed: a fixed option pads its body when absent, which Borsh does not encode",
-            "codama enum with a wide tag: probe: args.probed.size: Borsh needs u8 here, got u32",
-            "codama big-endian number: probe: args.probed: Borsh decodes numbers little-endian, got 'be'",
-            "codama bare string: probe: args.probed: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
-            "codama bare bytes: probe: args.probed: a bare bytesTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
-            "codama non-utf8 string: probe: args.probed: Borsh strings are utf8, got 'base58'",
-            "codama boolean wider than a byte: probe: args.probed.size: Borsh needs u8 here, got u32",
-            "codama enum variant with its own discriminator: probe: args.probed.Init: enumEmptyVariantTypeNode carries 'discriminator', which this parser does not model; decoding it would be a guess at the byte layout. Removing the key from a local copy of the IDL is the way through if it does not affect the layout",
-            "codama size prefix around a struct: probe: args.probed: a u32 size prefix frames a string or bytes in Borsh, got structTypeNode",
-            "codama big-endian length prefix: probe: args.probed.prefix: Borsh decodes numbers little-endian, got 'be'",
-            "codama enum tuple variant behind a wrapper: probe: args.probed.Wrapped: sizePrefixTypeNode carries 'items', which this parser does not model; decoding it would be a guess at the byte layout. Removing the key from a local copy of the IDL is the way through if it does not affect the layout",
-            "codama zeroable option: probe: args.probed: zeroable options are not Borsh-compatible and cannot be decoded",
-            "codama option with a wide tag: probe: args.probed.prefix: Borsh needs u8 here, got u32",
-            "codama vector with a narrow length prefix: probe: args.probed.prefix: Borsh needs u32 here, got u8",
-            "codama string with a narrow size prefix: probe: args.probed.prefix: Borsh needs u32 here, got u8",
-            "anchor generic parameter: swap: args.wrapped: generic parameter 'T' has no concrete layout to decode against",
+            "codama fixed option: probe: idl.json:1:53: args.probed: a fixed option pads its body when absent, which Borsh does not encode",
+            "codama enum with a wide tag: probe: idl.json:1:53: args.probed.size: Borsh needs u8 here, got u32",
+            "codama big-endian number: probe: idl.json:1:53: args.probed: Borsh decodes numbers little-endian, got 'be'",
+            "codama bare string: probe: idl.json:1:53: args.probed: a bare stringTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
+            "codama bare bytes: probe: idl.json:1:53: args.probed: a bare bytesTypeNode carries no length; Borsh needs it wrapped in a sizePrefixTypeNode with a u32 prefix",
+            "codama non-utf8 string: probe: idl.json:1:53: args.probed: Borsh strings are utf8, got 'base58'",
+            "codama boolean wider than a byte: probe: idl.json:1:53: args.probed.size: Borsh needs u8 here, got u32",
+            "codama enum variant with its own discriminator: probe: idl.json:1:53: args.probed.Init: enumEmptyVariantTypeNode carries 'discriminator', which this parser does not model; decoding it would be a guess at the byte layout. Removing the key from a local copy of the IDL is the way through if it does not affect the layout",
+            "codama size prefix around a struct: probe: idl.json:1:53: args.probed: a u32 size prefix frames a string or bytes in Borsh, got structTypeNode",
+            "codama big-endian length prefix: probe: idl.json:1:53: args.probed.prefix: Borsh decodes numbers little-endian, got 'be'",
+            "codama enum tuple variant behind a wrapper: probe: idl.json:1:53: args.probed.Wrapped: sizePrefixTypeNode carries 'items', which this parser does not model; decoding it would be a guess at the byte layout. Removing the key from a local copy of the IDL is the way through if it does not affect the layout",
+            "codama zeroable option: probe: idl.json:1:53: args.probed: zeroable options are not Borsh-compatible and cannot be decoded",
+            "codama option with a wide tag: probe: idl.json:1:53: args.probed.prefix: Borsh needs u8 here, got u32",
+            "codama vector with a narrow length prefix: probe: idl.json:1:53: args.probed.prefix: Borsh needs u32 here, got u8",
+            "codama string with a narrow size prefix: probe: idl.json:1:53: args.probed.prefix: Borsh needs u32 here, got u8",
+            "anchor generic parameter: swap: idl.json:1:20: args.wrapped: generic parameter 'T' has no concrete layout to decode against",
         ]
     );
 }
@@ -241,7 +241,7 @@ fn accepts_codama_nodes_that_cannot_change_the_layout() {
     let parsed: Vec<(&str, String)> = cases
         .iter()
         .map(|(label, json)| {
-            let idl = parse_idl(json, "Program").unwrap_or_else(|e| panic!("{label}: {e:#}"));
+            let idl = parse_idl("idl.json", json).unwrap_or_else(|e| panic!("{label}: {e:#}"));
             let ty = match idl.instructions.get("probe") {
                 Some(ix) => render_type(&ix.args[0].ty),
                 None => format!("SET ASIDE: {}", idl.unusable["probe"]),
@@ -270,6 +270,7 @@ fn accepts_codama_nodes_that_cannot_change_the_layout() {
 #[test]
 fn decodes_instruction_data_through_the_parsed_schema() {
     let idl = parse_idl(
+        "idl.json",
         r#"{
           "kind": "rootNode",
           "program": {
@@ -311,7 +312,6 @@ fn decodes_instruction_data_through_the_parsed_schema() {
             "definedTypes": []
           }
         }"#,
-        "Probe",
     )
     .expect("parse");
 

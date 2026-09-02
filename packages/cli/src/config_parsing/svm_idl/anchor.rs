@@ -24,13 +24,12 @@ use crate::utils::text::Capitalize;
 
 use super::{
     account_slot, collect_instructions, declared_array, declared_optional, le_bytes,
-    parse_defined_types, required_str, Dispatch, IdlAccount, ProgramIdl,
+    parse_defined_types, required_str, Dispatch, IdlAccount, Origin, ProgramIdl,
 };
 
-pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
-    let (defined_types, unusable_types) =
-        parse_defined_types(root.get("types"), "types", parse_type_def)?;
-    Ok(ProgramIdl {
+pub(super) fn parse(root: &Map<String, Value>, origin: &Origin) -> Result<ProgramIdl> {
+    let mut idl = ProgramIdl {
+        source: origin.source.clone(),
         address: root
             .get("address")
             .and_then(Value::as_str)
@@ -40,13 +39,18 @@ pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
                     .and_then(Value::as_str)
             })
             .map(str::to_string),
-        defined_types,
-        unusable_types,
-        ..parse_instructions(root)?
-    })
+        ..Default::default()
+    };
+    parse_defined_types(&mut idl, origin, root.get("types"), "types", parse_type_def)?;
+    parse_instructions(&mut idl, origin, root)?;
+    Ok(idl)
 }
 
-fn parse_instructions(root: &Map<String, Value>) -> Result<ProgramIdl> {
+fn parse_instructions(
+    idl: &mut ProgramIdl,
+    origin: &Origin,
+    root: &Map<String, Value>,
+) -> Result<()> {
     let arr = root
         .get("instructions")
         .and_then(Value::as_array)
@@ -57,6 +61,8 @@ fn parse_instructions(root: &Map<String, Value>) -> Result<ProgramIdl> {
         .and_then(Value::as_str)
         == Some("shank");
     collect_instructions(
+        idl,
+        origin,
         arr,
         |name, ix| match (ix.get("discriminator"), ix.get("discriminant")) {
             (Some(node), _) => Ok(Dispatch {

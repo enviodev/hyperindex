@@ -275,13 +275,8 @@ fn records_each_defect_against_what_carries_it() {
     let reported: Vec<String> = cases
         .iter()
         .map(|(label, json)| {
-            let outcome = match parse_idl(json, "Program") {
-                Err(e) => format!(
-                    "fatal: {}",
-                    format!("{e:#}")
-                        .strip_prefix("parsing IDL for program 'Program': ")
-                        .expect("every message is scoped to the program")
-                ),
+            let outcome = match parse_idl("idl.json", json) {
+                Err(e) => format!("fatal: {e:#}"),
                 Ok(idl) if !idl.unusable.is_empty() => idl
                     .unusable
                     .iter()
@@ -297,36 +292,36 @@ fn records_each_defect_against_what_carries_it() {
     assert_eq!(
         reported,
         vec![
-            "neither dialect: fatal: unrecognized IDL: expected an Anchor IDL (top-level 'instructions') or a Codama IDL (a 'rootNode' or 'programNode')",
-            "duplicate instruction name: fatal: IDL declares instruction 'swap' more than once",
-            "anchor coption: initializeMint set aside: args.freezeAuthority: `coption` is not Borsh-compatible and cannot be decoded",
-            "unknown primitive type: swap set aside: args.amount: unknown type 'u46'",
-            "discriminator wider than dispatch probes: swap set aside: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8",
-            "instruction with no discriminator at all: swap set aside: its discriminator is 0 bytes, and dispatch matches only 1, 2, 4, or 8",
-            "one discriminator a prefix of another: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferChecked set aside: its discriminator 0x0c02 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead",
-            "discriminator field not at offset 0: swap set aside: discriminators: discriminator part at offset 8 does not follow the previous part, which ends at 0; dispatch needs one contiguous prefix from offset 0",
-            "discriminator value too wide for its format: swap set aside: discriminators: discriminator value 300 does not fit in u8",
-            "instruction shadowed by one set aside for its args: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferChecked set aside: args.amount: `coption` is not Borsh-compatible and cannot be decoded",
-            "instruction whose discriminator cannot be read: sub set aside: discriminator: expected a byte (0-255), got 999",
-            "a sibling with a discriminator survives one without: raw set aside: its discriminator is 0 bytes, and dispatch matches only 1, 2, 4, or 8",
-            "size-only discriminator does not poison a sibling: sized set aside: discriminators: dispatch matches a fixed-width prefix of the data, not its length, so a sizeDiscriminatorNode cannot be honoured",
-            "one discriminator a prefix of several others: transfer set aside: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferAll set aside: its discriminator 0x0c03 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead; transferChecked set aside: its discriminator 0x0c02 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead",
-            "instruction shadowed by one of an undispatchable width: swap set aside: its discriminator 0x0102 is a prefix of 'swapV2''s 0x010203, so 'swapV2' takes every call that would have matched it; swapV2 set aside: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8",
-            "codama discriminator argument out of declaration order: swap set aside: the 1-byte discriminator stops inside argument 'amount', which starts at byte 0 and is 8 bytes wide",
-            "codama argument whose declared width overruns the address space: swap set aside: the 2-byte discriminator stops inside argument 'big', which starts at byte 1 and is 18446744073709551615 bytes wide",
-            "duplicate type name: fatal: IDL declares type 'Fee' more than once",
-            "duplicate account name: swap set aside: IDL declares account 'vault' more than once",
-            "codama argument reusing a discriminator name: swap set aside: IDL declares argument 'tag' more than once",
-            "codama discriminator offset that is not a byte position: swap set aside: discriminators: expected a non-negative integer 'offset', got -1",
-            "anchor composite group whose 'accounts' is not an array: swap set aside: accounts: expected an array, got null",
-            "codama account with an unreadable isOptional: swap set aside: accounts: 'isOptional' must be a boolean, got \"yes\"",
-            "anchor instruction whose 'args' is not an array: swap set aside: args: expected an array, got null",
-            "codama instruction whose 'arguments' is not an array: swap set aside: arguments: expected an array, got null",
-            "anchor enum whose 'variants' is not an array: swap set aside: it reaches type 'Side', which cannot be decoded: type 'Side' variants: expected an array, got null",
-            "anchor 'types' that is not an array: fatal: types: expected an array, got null",
-            "codama 'definedTypes' that is not an array: fatal: definedTypes: expected an array, got null",
-            "anchor account whose optional spellings disagree: swap set aside: accounts: 'optional' and 'isOptional' disagree on account 'vault'",
-            "anchor account whose second optional spelling is unreadable: swap set aside: accounts: 'isOptional' must be a boolean, got \"yes\"",
+            "neither dialect: fatal: idl.json: unrecognized IDL: expected an Anchor IDL (top-level 'instructions') or a Codama IDL (a 'rootNode' or 'programNode')",
+            "duplicate instruction name: fatal: idl.json: IDL declares instruction 'swap' more than once",
+            "anchor coption: initializeMint set aside: idl.json:1:20: args.freezeAuthority: `coption` is not Borsh-compatible and cannot be decoded",
+            "unknown primitive type: swap set aside: idl.json:1:20: args.amount: unknown type 'u46'",
+            "discriminator wider than dispatch probes: swap set aside: idl.json:1:20: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8",
+            "instruction with no discriminator at all: swap set aside: idl.json:1:53: its discriminator is 0 bytes, and dispatch matches only 1, 2, 4, or 8",
+            "one discriminator a prefix of another: transfer set aside: idl.json:2:18: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferChecked set aside: idl.json:5:18: its discriminator 0x0c02 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead",
+            "discriminator field not at offset 0: swap set aside: idl.json:1:53: discriminators: discriminator part at offset 8 does not follow the previous part, which ends at 0; dispatch needs one contiguous prefix from offset 0",
+            "discriminator value too wide for its format: swap set aside: idl.json:1:53: discriminators: discriminator value 300 does not fit in u8",
+            "instruction shadowed by one set aside for its args: transfer set aside: idl.json:2:18: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferChecked set aside: idl.json:4:18: args.amount: `coption` is not Borsh-compatible and cannot be decoded",
+            "instruction whose discriminator cannot be read: sub set aside: idl.json:3:18: discriminator: expected a byte (0-255), got 999",
+            "a sibling with a discriminator survives one without: raw set aside: idl.json:2:18: its discriminator is 0 bytes, and dispatch matches only 1, 2, 4, or 8",
+            "size-only discriminator does not poison a sibling: sized set aside: idl.json:5:18: discriminators: dispatch matches a fixed-width prefix of the data, not its length, so a sizeDiscriminatorNode cannot be honoured",
+            "one discriminator a prefix of several others: transfer set aside: idl.json:2:18: its discriminator 0x0c is a prefix of 'transferChecked''s 0x0c02, so 'transferChecked' takes every call that would have matched it; transferAll set aside: idl.json:4:18: its discriminator 0x0c03 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead; transferChecked set aside: idl.json:3:18: its discriminator 0x0c02 extends 'transfer''s 0x0c, so a 'transfer' call whose data continues those bytes arrives here instead",
+            "instruction shadowed by one of an undispatchable width: swap set aside: idl.json:2:18: its discriminator 0x0102 is a prefix of 'swapV2''s 0x010203, so 'swapV2' takes every call that would have matched it; swapV2 set aside: idl.json:3:18: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8",
+            "codama discriminator argument out of declaration order: swap set aside: idl.json:1:53: the 1-byte discriminator stops inside argument 'amount', which starts at byte 0 and is 8 bytes wide",
+            "codama argument whose declared width overruns the address space: swap set aside: idl.json:1:53: the 2-byte discriminator stops inside argument 'big', which starts at byte 1 and is 18446744073709551615 bytes wide",
+            "duplicate type name: fatal: idl.json: IDL declares type 'Fee' more than once",
+            "duplicate account name: swap set aside: idl.json:1:20: IDL declares account 'vault' more than once",
+            "codama argument reusing a discriminator name: swap set aside: idl.json:1:53: IDL declares argument 'tag' more than once",
+            "codama discriminator offset that is not a byte position: swap set aside: idl.json:1:53: discriminators: expected a non-negative integer 'offset', got -1",
+            "anchor composite group whose 'accounts' is not an array: swap set aside: idl.json:1:20: accounts: expected an array, got null",
+            "codama account with an unreadable isOptional: swap set aside: idl.json:1:53: accounts: 'isOptional' must be a boolean, got \"yes\"",
+            "anchor instruction whose 'args' is not an array: swap set aside: idl.json:1:20: args: expected an array, got null",
+            "codama instruction whose 'arguments' is not an array: swap set aside: idl.json:1:53: arguments: expected an array, got null",
+            "anchor enum whose 'variants' is not an array: swap set aside: idl.json:1:20: it reaches type 'Side', which cannot be decoded: idl.json:3:28: type 'Side' variants: expected an array, got null",
+            "anchor 'types' that is not an array: fatal: idl.json: types: expected an array, got null",
+            "codama 'definedTypes' that is not an array: fatal: idl.json: definedTypes: expected an array, got null",
+            "anchor account whose optional spellings disagree: swap set aside: idl.json:1:20: accounts: 'optional' and 'isOptional' disagree on account 'vault'",
+            "anchor account whose second optional spelling is unreadable: swap set aside: idl.json:1:20: accounts: 'isOptional' must be a boolean, got \"yes\"",
         ]
     );
 }
@@ -351,6 +346,7 @@ fn demotes_omitted_strategy_instructions_with_a_middle_optional() {
         )
     };
     let idl = parse_idl(
+        "idl.json",
         &format!(
             r#"{{ "kind": "rootNode", "program": {{ "instructions": [
                  {shifted}, {padded},
@@ -368,7 +364,6 @@ fn demotes_omitted_strategy_instructions_with_a_middle_optional() {
                 "02"
             ),
         ),
-        "Program",
     )
     .expect("parse");
 
@@ -377,7 +372,7 @@ fn demotes_omitted_strategy_instructions_with_a_middle_optional() {
         "address: -\n\
          instruction padded 0x02 (source, authority:?, destination) ()\n\
          instruction trailing 0x03 (account, rent:?) ()\n\
-         unusable instruction shifted: account 'authority' is optional and left out entirely \
+         unusable instruction shifted: idl.json:2:18: account 'authority' is optional and left out entirely \
          when absent, so every account after it shifts and this parser cannot tell which name a \
          slot carries\n"
     );
@@ -390,6 +385,7 @@ fn demotes_omitted_strategy_instructions_with_a_middle_optional() {
 #[test]
 fn names_a_grouped_account_for_the_group_that_declares_it() {
     let idl = parse_idl(
+        "idl.json",
         r#"{ "instructions": [
              { "name": "swap", "discriminator": [1], "accounts": [
                { "name": "from", "accounts": [{ "name": "authority" }] },
@@ -398,7 +394,6 @@ fn names_a_grouped_account_for_the_group_that_declares_it() {
                  { "name": "inner", "accounts": [{ "name": "mint" }] }] }] },
              { "name": "deposit", "discriminator": [2],
                "accounts": [{ "name": "vault" }] }] }"#,
-        "Program",
     )
     .expect("parse");
 
@@ -416,12 +411,12 @@ fn names_a_grouped_account_for_the_group_that_declares_it() {
 #[test]
 fn carries_an_optional_group_down_to_its_members() {
     let idl = parse_idl(
+        "idl.json",
         r#"{ "instructions": [
              { "name": "swap", "discriminator": [1], "accounts": [
                { "name": "payer" },
                { "name": "farms", "optional": true, "accounts": [
                  { "name": "state" }, { "name": "program" }] }] }] }"#,
-        "Program",
     )
     .expect("parse");
 
@@ -439,8 +434,8 @@ fn carries_an_optional_group_down_to_its_members() {
 #[test]
 fn reads_the_published_kamino_composite_instructions() {
     let idl = parse_idl(
+        "idl.json",
         &read_fixture("../../scenarios/svm_flow_xray/idls/kamino.json"),
-        "Kamino",
     )
     .expect("parse");
 
@@ -506,7 +501,7 @@ fn reads_the_scenario_idls_as_the_upstream_parser_does() {
     let mut catalog = Vec::new();
     for stem in ["jupiter", "kamino", "drift"] {
         let source = read_fixture(&format!("../../scenarios/svm_flow_xray/idls/{stem}.json"));
-        let ours = parse_idl(&source, stem).expect("parse");
+        let ours = parse_idl(&format!("{stem}.json"), &source).expect("parse");
         let upstream = schema_from_anchor_idl_json(&source).expect("upstream parse");
         let upstream: BTreeMap<&str, _> = upstream
             .instructions
@@ -620,7 +615,7 @@ fn mutated_fixtures_never_panic() {
             let json = fixture.to_string();
             // `parse_idl` must decide, not panic. A panic here fails the test
             // with the seed in the message so it can be replayed.
-            let outcome = std::panic::catch_unwind(|| parse_idl(&json, "Fuzzed").is_ok());
+            let outcome = std::panic::catch_unwind(|| parse_idl("idl.json", &json).is_ok());
             if let Some(original) = replaced {
                 replace_nth(&mut fixture, &mut target.clone(), &original, &mut None);
             }
@@ -667,7 +662,7 @@ fn resolves_shared_type_graphs_without_blowing_up() {
     // Bounded, because resolving per occurrence would not fail this assertion
     // — it would run for hours and surface as a CI timeout pointing nowhere.
     let started = std::time::Instant::now();
-    let idl = parse_idl(&json, "Deep").expect("parse");
+    let idl = parse_idl("idl.json", &json).expect("parse");
     assert_eq!(
         (
             idl.instructions.keys().collect::<Vec<_>>(),
@@ -710,7 +705,7 @@ fn settles_a_long_chain_of_unresolvable_types_in_one_pass() {
     // Bounded, because settling one name per pass would not fail an assertion
     // on the outcome — it would surface as a CI timeout pointing nowhere.
     let started = std::time::Instant::now();
-    let idl = parse_idl(&json, "Chain").expect("parse");
+    let idl = parse_idl("idl.json", &json).expect("parse");
     assert_eq!(
         (
             idl.unusable_types.len(),
@@ -730,6 +725,7 @@ fn settles_a_long_chain_of_unresolvable_types_in_one_pass() {
 #[test]
 fn prunes_types_it_cannot_resolve_from_the_registry() {
     let idl = parse_idl(
+        "idl.json",
         r#"{ "instructions": [{ "name": "swap", "discriminator": [1],
              "args": [{ "name": "fee", "type": { "defined": "Fee" } }] }],
              "types": [
@@ -737,7 +733,6 @@ fn prunes_types_it_cannot_resolve_from_the_registry() {
                  "fields": [{ "name": "bps", "type": "u16" }] } },
                { "name": "Orphan", "type": { "kind": "struct",
                  "fields": [{ "name": "x", "type": { "defined": "Missing" } }] } }] }"#,
-        "Program",
     )
     .expect("parse");
 
@@ -766,6 +761,7 @@ fn prunes_types_it_cannot_resolve_from_the_registry() {
 #[test]
 fn resolves_self_referential_types() {
     let idl = parse_idl(
+        "idl.json",
         r#"{ "instructions": [{ "name": "walk", "discriminator": [1],
              "args": [{ "name": "head", "type": { "defined": "Node" } }] }],
              "types": [
@@ -775,7 +771,6 @@ fn resolves_self_referential_types() {
                  { "name": "peer", "type": { "option": { "defined": "Other" } } }] } },
                { "name": "Other", "type": { "kind": "struct", "fields": [
                  { "name": "back", "type": { "option": { "defined": "Node" } } }] } }] }"#,
-        "Program",
     )
     .expect("parse");
 
@@ -817,12 +812,12 @@ fn demotes_a_type_chain_too_deep_to_walk() {
         .collect::<Vec<_>>()
         .join(",");
     let idl = parse_idl(
+        "idl.json",
         &format!(
             r#"{{ "instructions": [{{ "name": "go", "discriminator": [1],
                  "args": [{{ "name": "head", "type": {{ "defined": "T0" }} }}] }}],
                  "types": [{types}] }}"#
         ),
-        "Program",
     )
     .expect("parse");
 
@@ -834,8 +829,8 @@ fn demotes_a_type_chain_too_deep_to_walk() {
         (
             true,
             Some(
-                "it reaches type 'T0', which cannot be decoded: its references are nested too \
-                 deeply to decode: the walk stops after 256 levels"
+                "idl.json:1:20: it reaches type 'T0', which cannot be decoded: idl.json:3:28: its \
+                 references are nested too deeply to decode: the walk stops after 256 levels"
             )
         )
     );
@@ -846,6 +841,7 @@ fn demotes_a_type_chain_too_deep_to_walk() {
 #[test]
 fn blames_the_cycle_rather_than_the_type_that_reaches_it() {
     let idl = parse_idl(
+        "idl.json",
         r#"{ "instructions": [{ "name": "go", "discriminator": [1],
              "args": [{ "name": "c", "type": { "defined": "C" } }] }],
              "types": [
@@ -855,7 +851,6 @@ fn blames_the_cycle_rather_than_the_type_that_reaches_it() {
                  { "name": "a", "type": { "defined": "A" } }] } },
                { "name": "C", "type": { "kind": "struct", "fields": [
                  { "name": "a", "type": { "defined": "A" } }] } }] }"#,
-        "Program",
     )
     .expect("parse");
 
@@ -865,10 +860,13 @@ fn blames_the_cycle_rather_than_the_type_that_reaches_it() {
             idl.unusable_types.get("C").map(String::as_str),
         ),
         (
-            Some("it recursively contains itself without an option or vec to terminate decoding"),
             Some(
-                "it reaches type 'A', which cannot be decoded: it recursively contains itself \
-                 without an option or vec to terminate decoding"
+                "idl.json:4:16: it recursively contains itself without an option or vec to \
+                 terminate decoding"
+            ),
+            Some(
+                "idl.json:8:16: it reaches type 'A', which cannot be decoded: idl.json:4:16: it \
+                 recursively contains itself without an option or vec to terminate decoding"
             ),
         )
     );
@@ -881,12 +879,12 @@ fn blames_the_cycle_rather_than_the_type_that_reaches_it() {
 fn demotes_unbounded_recursive_types() {
     let program = |types: &str, arg: &str| {
         parse_idl(
+            "idl.json",
             &format!(
                 r#"{{ "instructions": [{{ "name": "go", "discriminator": [1],
                      "args": [{{ "name": "field", "type": {{ "defined": "{arg}" }} }}] }}],
                      "types": [{types}] }}"#
             ),
-            "Program",
         )
         .expect("parse")
     };
@@ -907,12 +905,14 @@ fn demotes_unbounded_recursive_types() {
         ],
         [
             format!(
-                "address: -\nunusable instruction go: it reaches type 'Loop', which cannot be \
-                 decoded: {cycles}\nunusable type Loop: {cycles}\n"
+                "address: -\nunusable instruction go: idl.json:1:20: it reaches type 'Loop', which \
+                 cannot be decoded: idl.json:3:32: {cycles}\nunusable type Loop: idl.json:3:32: \
+                 {cycles}\n"
             ),
             format!(
-                "address: -\nunusable instruction go: it reaches type 'Box', which cannot be \
-                 decoded: {cycles}\nunusable type Box: {cycles}\n"
+                "address: -\nunusable instruction go: idl.json:1:20: it reaches type 'Box', which \
+                 cannot be decoded: idl.json:3:32: {cycles}\nunusable type Box: idl.json:3:32: \
+                 {cycles}\n"
             ),
         ]
     );

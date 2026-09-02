@@ -108,32 +108,13 @@ fn raw_entries(text: &str) -> Option<Vec<&RawValue>> {
         })
 }
 
-fn line_and_column(text: &str, offset: usize) -> (usize, usize) {
-    let before = &text[..offset];
-    let line = before.matches('\n').count() + 1;
-    let start_of_line = before.rfind('\n').map_or(0, |newline| newline + 1);
-    // Columns count characters, the way an editor does, not bytes.
-    let column = before[start_of_line..].chars().count() + 1;
-    (line, column)
-}
-
-/// Where each entry begins. The entries are searched for in order, so two
-/// written identically resolve to their own positions instead of both to the
-/// first. Positions line up with `entries`, which adds and removes nothing.
+/// Where each entry begins. Positions line up with `entries`, which adds and
+/// removes nothing.
 fn positions(text: &str) -> Vec<(usize, usize)> {
     let Some(entries) = raw_entries(text) else {
         return Vec::new();
     };
-    let mut cursor = 0;
-    let mut found = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let offset = text[cursor..]
-            .find(entry.get())
-            .map_or(cursor, |index| cursor + index);
-        cursor = offset + entry.get().len();
-        found.push(line_and_column(text, offset));
-    }
-    found
+    crate::text_position::locate(text, entries.iter().map(|entry| entry.get()))
 }
 
 /// The parameter alloy could not read. Checking one at a time is what lets the

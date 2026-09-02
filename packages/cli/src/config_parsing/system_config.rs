@@ -1899,13 +1899,16 @@ fn resolve_program_schema(
         let resolved = source
             .read_project_relative_file(idl_path)
             .with_context(|| format!("reading IDL at '{idl_path}'"))?;
-        let idl = svm_idl::parse_idl(&resolved.raw, &program.name)?;
+        // Reported against the path as the config wrote it, the way an ABI is,
+        // rather than wherever the project happens to be checked out.
+        let path = path_utils::normalize_path(PathBuf::from(idl_path))
+            .display()
+            .to_string();
+        let idl = svm_idl::parse_idl(&path, &resolved.raw)?;
         return Ok(SvmAbi {
             program_id: program.program_id.clone(),
             idl,
-            source: SvmSchemaSource::AnchorIdl {
-                path: idl_path.to_string(),
-            },
+            source: SvmSchemaSource::AnchorIdl { path },
         });
     }
 
@@ -1916,7 +1919,7 @@ fn resolve_program_schema(
         {
             return Ok(SvmAbi {
                 program_id: program.program_id.clone(),
-                idl: program_idl_from_upstream(getter())?,
+                idl: program_idl_from_upstream(name, getter())?,
                 source: SvmSchemaSource::Bundled { name },
             });
         }
@@ -1947,7 +1950,7 @@ fn warn_about_unindexable(program: &human_config::svm::Program, abi: &SvmAbi) {
 /// uses. Upstream keys instructions by discriminator; everything here keys them
 /// by name, which is what a config names. Two upstream instructions sharing a
 /// name would collapse into one, so the count is checked rather than assumed.
-fn program_idl_from_upstream(schema: &SvmProgramSchema) -> Result<ProgramIdl> {
+fn program_idl_from_upstream(name: &str, schema: &SvmProgramSchema) -> Result<ProgramIdl> {
     let instructions: BTreeMap<String, svm_idl::IxIdl> = schema
         .instructions
         .values()
@@ -1977,6 +1980,7 @@ fn program_idl_from_upstream(schema: &SvmProgramSchema) -> Result<ProgramIdl> {
         ));
     }
     Ok(ProgramIdl::compiled_in(
+        name,
         schema.program_id.clone(),
         instructions,
         schema.defined_types.clone(),
@@ -4213,7 +4217,7 @@ type Foo {
             assert_eq!(
                 format!("{err:#}"),
                 "Layout for instruction 'swap': the schema declares it, but it cannot be \
-                 indexed: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8"
+                 indexed: idls/pool.json:2:22: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8"
             );
         }
 

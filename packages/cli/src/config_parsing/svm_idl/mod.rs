@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::{FieldType, NamedField};
+use serde_json::value::RawValue;
 use serde_json::{Map, Value};
 
 /// One account slot of an instruction, in declared order.
@@ -57,6 +58,70 @@ pub struct ProgramIdl {
     /// Known non-empty prefixes of set-aside instructions. Prefix collision
     /// is about the bytes on chain, not about whether we can decode the ix.
     declared_discriminators: BTreeMap<String, Vec<u8>>,
+    /// The file the IDL came from, and where each of its instructions and types
+    /// begins in it, so a reason can point at the entry the way an editor would.
+    source: String,
+    instruction_at: BTreeMap<String, (usize, usize)>,
+    type_at: BTreeMap<String, (usize, usize)>,
+}
+
+/// The file an IDL was read from and where its entries begin in it, in the
+/// order the file declares them.
+struct Origin {
+    source: String,
+    instructions: Vec<(usize, usize)>,
+    types: Vec<(usize, usize)>,
+}
+
+impl Origin {
+    fn of(source: &str, json: &str) -> Self {
+        let (instructions, types) = entry_texts(json);
+        Origin {
+            source: source.to_string(),
+            instructions: crate::text_position::locate(json, instructions),
+            types: crate::text_position::locate(json, types),
+        }
+    }
+}
+
+/// The text of each `instructions[]` and `types[]` / `definedTypes[]` entry,
+/// as the file wrote it, from whichever of the three layouts holds them.
+/// Reading fails leniently — a block that is not an array yields no
+/// positions, and the parser proper reports it.
+fn entry_texts(json: &str) -> (Vec<&str>, Vec<&str>) {
+    type Object<'a> = BTreeMap<&'a str, &'a RawValue>;
+    let Ok(mut node) = serde_json::from_str::<Object>(json) else {
+        return (Vec::new(), Vec::new());
+    };
+    for key in ["rootNode", "program"] {
+        if let Some(inner) = node
+            .get(key)
+            .and_then(|raw| serde_json::from_str::<Object>(raw.get()).ok())
+        {
+            node = inner;
+        }
+    }
+    let entries = |key: &str| -> Vec<&str> {
+        node.get(key)
+            .and_then(|raw| serde_json::from_str::<Vec<&RawValue>>(raw.get()).ok())
+            .map(|entries| entries.into_iter().map(RawValue::get).collect())
+            .unwrap_or_default()
+    };
+    let types = if node.contains_key("types") {
+        entries("types")
+    } else {
+        entries("definedTypes")
+    };
+    (entries("instructions"), types)
+}
+
+/// `idl.json:12:5: ` for an entry the file was seen to hold, `idl.json: `
+/// for one that could not be placed.
+fn located(source: &str, at: Option<&(usize, usize)>) -> String {
+    match at {
+        Some((line, column)) => format!("{source}:{line}:{column}: "),
+        None => format!("{source}: "),
+    }
 }
 
 /// Discriminator widths the router can probe for. Dispatch reads a fixed-width
@@ -80,8 +145,30 @@ pub(crate) fn describe_dispatchable_lens() -> String {
     format!("{rest}, or {last}")
 }
 
-pub fn parse_idl(json: &str, program_name: &str) -> Result<ProgramIdl> {
-    parse_and_validate(json).with_context(|| format!("parsing IDL for program '{program_name}'"))
+/// `source` names the file the IDL came from, and is what every reason is
+/// reported against.
+pub fn parse_idl(source: &str, json: &str) -> Result<ProgramIdl> {
+    let root: Value =
+        serde_json::from_str(json).map_err(|err| anyhow!("{source} is not valid JSON: {err}"))?;
+    let root = root
+        .as_object()
+        .ok_or_else(|| anyhow!("{source}: expected a JSON object at the IDL root"))?;
+    let origin = Origin::of(source, json);
+
+    let mut idl = if is_codama_root(root) {
+        codama::parse(root, &origin)
+    } else if root.contains_key("instructions") {
+        anchor::parse(root, &origin)
+    } else {
+        Err(anyhow!(
+            "unrecognized IDL: expected an Anchor IDL (top-level 'instructions') or a Codama IDL \
+             (a 'rootNode' or 'programNode')"
+        ))
+    }
+    .with_context(|| source.to_string())?;
+
+    validate(&mut idl);
+    Ok(idl)
 }
 
 impl ProgramIdl {
@@ -89,11 +176,13 @@ impl ProgramIdl {
     /// goes through the same checks, so a bundled schema cannot carry a
     /// collision or a discriminator width the router never probes for.
     pub fn compiled_in(
+        source: &str,
         address: String,
         instructions: BTreeMap<String, IxIdl>,
         defined_types: BTreeMap<String, FieldType>,
     ) -> Self {
         let mut idl = ProgramIdl {
+            source: source.to_string(),
             address: Some(address),
             instructions,
             defined_types,
@@ -103,6 +192,14 @@ impl ProgramIdl {
         idl
     }
 
+    fn instruction_located(&self, name: &str) -> String {
+        located(&self.source, self.instruction_at.get(name))
+    }
+
+    fn type_located(&self, name: &str) -> String {
+        located(&self.source, self.type_at.get(name))
+    }
+
     /// The instruction dispatched by these bytes, for a config that names an
     /// instruction differently from the IDL.
     pub fn dispatched_by(&self, discriminator: &[u8]) -> Option<&IxIdl> {
@@ -110,27 +207,6 @@ impl ProgramIdl {
             .values()
             .find(|ix| ix.discriminator == discriminator)
     }
-}
-
-fn parse_and_validate(json: &str) -> Result<ProgramIdl> {
-    let root: Value = serde_json::from_str(json).context("invalid JSON")?;
-    let root = root
-        .as_object()
-        .ok_or_else(|| anyhow!("expected a JSON object at the IDL root"))?;
-
-    let mut idl = if is_codama_root(root) {
-        codama::parse(root)
-    } else if root.contains_key("instructions") {
-        anchor::parse(root)
-    } else {
-        bail!(
-            "unrecognized IDL: expected an Anchor IDL (top-level 'instructions') or a Codama IDL \
-             (a 'rootNode' or 'programNode')"
-        )
-    }?;
-
-    validate(&mut idl);
-    Ok(idl)
 }
 
 fn is_codama_root(root: &Map<String, Value>) -> bool {
@@ -149,7 +225,8 @@ fn validate(idl: &mut ProgramIdl) {
             demoted.insert(
                 name.clone(),
                 format!(
-                    "its discriminator is {len} bytes, and dispatch matches only {}",
+                    "{}its discriminator is {len} bytes, and dispatch matches only {}",
+                    idl.instruction_located(name),
                     describe_dispatchable_lens()
                 ),
             );
@@ -172,6 +249,7 @@ fn validate(idl: &mut ProgramIdl) {
         .collect();
     for (name, reason) in prefix_collisions(declared) {
         if idl.instructions.contains_key(&name) {
+            let reason = format!("{}{reason}", idl.instruction_located(&name));
             demoted.entry(name).or_insert(reason);
         }
     }
@@ -191,7 +269,10 @@ fn validate(idl: &mut ProgramIdl) {
             .iter()
             .find_map(|r| unresolved_reason(idl, &bad_types, r))
         {
-            demoted.insert(name.clone(), reason);
+            demoted.insert(
+                name.clone(),
+                format!("{}{reason}", idl.instruction_located(name)),
+            );
         }
     }
 
@@ -344,7 +425,7 @@ fn unresolvable_types(idl: &ProgramIdl) -> Unusable {
         collect_defined_names(ty, &mut references);
         let reason = unbounded_recursion(ty, idl, &mut vec![name], false, &mut terminates, 0)
             .err()
-            .map(|stop| stop.reason(name))
+            .map(|stop| stop.reason(name, idl))
             .or_else(|| {
                 references
                     .iter()
@@ -352,7 +433,7 @@ fn unresolvable_types(idl: &ProgramIdl) -> Unusable {
             });
         match reason {
             Some(reason) => {
-                bad.insert(name.clone(), reason);
+                bad.insert(name.clone(), format!("{}{reason}", idl.type_located(name)));
             }
             None => {
                 for reference in references {
@@ -374,7 +455,8 @@ fn unresolvable_types(idl: &ProgramIdl) -> Unusable {
                 continue;
             }
             let reason = format!(
-                "it reaches type '{broken}', which cannot be decoded: {}",
+                "{}it reaches type '{broken}', which cannot be decoded: {}",
+                idl.type_located(referrer),
                 bad[broken.as_str()]
             );
             bad.insert(referrer.to_string(), reason);
@@ -440,13 +522,14 @@ enum WalkStop {
 }
 
 impl WalkStop {
-    fn reason(self, walked_from: &str) -> String {
+    fn reason(self, walked_from: &str, idl: &ProgramIdl) -> String {
         let cycles = "recursively contains itself without an option or vec to terminate decoding";
         match self {
             WalkStop::Cycle(name) if name == walked_from => format!("it {cycles}"),
-            WalkStop::Cycle(name) => {
-                format!("it reaches type '{name}', which cannot be decoded: it {cycles}")
-            }
+            WalkStop::Cycle(name) => format!(
+                "it reaches type '{name}', which cannot be decoded: {}it {cycles}",
+                idl.type_located(&name)
+            ),
             WalkStop::TooDeep => format!(
                 "its references are nested too deeply to decode: the walk stops after \
                  {MAX_REFERENCE_DEPTH} levels"
@@ -528,22 +611,27 @@ struct Dispatch {
 /// for the ones that cannot, and the bytes of those whose layout failed after
 /// their discriminator was read — kept so a collision can still name them.
 fn collect_instructions(
+    idl: &mut ProgramIdl,
+    origin: &Origin,
     entries: &[Value],
     mut dispatch_of: impl FnMut(&str, &Value) -> Result<Dispatch>,
     mut layout_of: impl FnMut(&Value, &Dispatch) -> Result<(Vec<IdlAccount>, Vec<NamedField>)>,
-) -> Result<ProgramIdl> {
-    let mut idl = ProgramIdl::default();
-    for entry in entries {
+) -> Result<()> {
+    for (index, entry) in entries.iter().enumerate() {
         let name = required_str(entry, "name")
             .context("instructions[].name")?
             .to_string();
         if idl.instructions.contains_key(&name) || idl.unusable.contains_key(&name) {
             bail!("IDL declares instruction '{name}' more than once");
         }
+        if let Some(at) = origin.instructions.get(index) {
+            idl.instruction_at.insert(name.clone(), *at);
+        }
         let dispatch = match dispatch_of(&name, entry) {
             Ok(dispatch) => dispatch,
             Err(e) => {
-                idl.unusable.insert(name, format!("{e:#}"));
+                let reason = format!("{}{e:#}", idl.instruction_located(&name));
+                idl.unusable.insert(name, reason);
                 continue;
             }
         };
@@ -565,14 +653,15 @@ fn collect_instructions(
                 );
             }
             Err(e) => {
-                idl.unusable.insert(name.clone(), format!("{e:#}"));
+                let reason = format!("{}{e:#}", idl.instruction_located(&name));
+                idl.unusable.insert(name.clone(), reason);
                 if !dispatch.bytes.is_empty() {
                     idl.declared_discriminators.insert(name, dispatch.bytes);
                 }
             }
         }
     }
-    Ok(idl)
+    Ok(())
 }
 
 /// The `types` / `definedTypes` block: every declared type by name, plus the
@@ -580,18 +669,22 @@ fn collect_instructions(
 /// type node is read is the dialect's business; that a type without a `type` is
 /// that type's defect rather than the file's is not.
 fn parse_defined_types(
+    idl: &mut ProgramIdl,
+    origin: &Origin,
     node: Option<&Value>,
     key: &str,
     mut parse_one: impl FnMut(&str, &Value) -> Result<FieldType>,
-) -> Result<(BTreeMap<String, FieldType>, Unusable)> {
-    let mut out = BTreeMap::new();
-    let mut unusable = Unusable::new();
-    for entry in declared_array(node).with_context(|| key.to_string())? {
+) -> Result<()> {
+    let entries = declared_array(node).with_context(|| key.to_string())?;
+    for (index, entry) in entries.iter().enumerate() {
         let name = required_str(entry, "name")
             .with_context(|| format!("{key}[].name"))?
             .to_string();
-        if out.contains_key(&name) || unusable.contains_key(&name) {
+        if idl.defined_types.contains_key(&name) || idl.unusable_types.contains_key(&name) {
             bail!("IDL declares type '{name}' more than once");
+        }
+        if let Some(at) = origin.types.get(index) {
+            idl.type_at.insert(name.clone(), *at);
         }
         let parsed = entry
             .get("type")
@@ -599,14 +692,15 @@ fn parse_defined_types(
             .and_then(|node| parse_one(&name, node));
         match parsed {
             Ok(ty) => {
-                out.insert(name, ty);
+                idl.defined_types.insert(name, ty);
             }
             Err(e) => {
-                unusable.insert(name, format!("{e:#}"));
+                let reason = format!("{}{e:#}", idl.type_located(&name));
+                idl.unusable_types.insert(name, reason);
             }
         }
     }
-    Ok((out, unusable))
+    Ok(())
 }
 
 /// A declared list of nodes. Absent means the file declares none; present but

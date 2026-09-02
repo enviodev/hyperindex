@@ -13,24 +13,28 @@ use serde_json::{Map, Value};
 
 use super::{
     account_slot, collect_instructions, declared_array, le_bytes, parse_defined_types,
-    required_str, Dispatch, IdlAccount, ProgramIdl,
+    required_str, Dispatch, IdlAccount, Origin, ProgramIdl,
 };
 
-pub(super) fn parse(root: &Map<String, Value>) -> Result<ProgramIdl> {
+pub(super) fn parse(root: &Map<String, Value>, origin: &Origin) -> Result<ProgramIdl> {
     let program = codama_program(root)?;
-    let (defined_types, unusable_types) =
-        parse_defined_types(program.get("definedTypes"), "definedTypes", |name, node| {
-            parse_type(node, &format!("definedTypes.{name}"))
-        })?;
-    Ok(ProgramIdl {
+    let mut idl = ProgramIdl {
+        source: origin.source.clone(),
         address: program
             .get("publicKey")
             .and_then(Value::as_str)
             .map(str::to_string),
-        defined_types,
-        unusable_types,
-        ..parse_instructions(program)?
-    })
+        ..Default::default()
+    };
+    parse_defined_types(
+        &mut idl,
+        origin,
+        program.get("definedTypes"),
+        "definedTypes",
+        |name, node| parse_type(node, &format!("definedTypes.{name}")),
+    )?;
+    parse_instructions(&mut idl, origin, program)?;
+    Ok(idl)
 }
 
 fn codama_program(root: &Map<String, Value>) -> Result<&Map<String, Value>> {
@@ -46,12 +50,18 @@ fn codama_program(root: &Map<String, Value>) -> Result<&Map<String, Value>> {
         .ok_or_else(|| anyhow!("Codama root node has no 'program'"))
 }
 
-fn parse_instructions(program: &Map<String, Value>) -> Result<ProgramIdl> {
+fn parse_instructions(
+    idl: &mut ProgramIdl,
+    origin: &Origin,
+    program: &Map<String, Value>,
+) -> Result<()> {
     let arr = program
         .get("instructions")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("Codama program has no 'instructions' array"))?;
     collect_instructions(
+        idl,
+        origin,
         arr,
         |_name, ix| {
             let (bytes, _) = parse_discriminators(ix).context("discriminators")?;
