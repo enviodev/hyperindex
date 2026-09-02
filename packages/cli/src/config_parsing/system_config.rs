@@ -17,6 +17,7 @@ use super::{
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
 };
+use crate::clickhouse::ch_type;
 use crate::utils::project_env::ProjectEnv;
 use crate::{
     config_parsing::human_config::evm::RpcTransactionField,
@@ -282,7 +283,7 @@ pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
 /// maximum active chain id and carried through the public config, so a resume
 /// against a schema built for the other mode is rejected rather than silently
 /// truncating ids.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ChainIdMode {
     Int32,
@@ -311,6 +312,14 @@ impl ChainIdMode {
         } else {
             Self::Int64
         })
+    }
+
+    /// Reads the mode back out of the form it is serialized in, which is how it
+    /// reaches the ClickHouse sink: through the generated config and the JS
+    /// runtime, both of which carry it as that string.
+    pub fn parse(mode: &str) -> Result<Self> {
+        serde_json::from_value(serde_json::Value::String(mode.to_string()))
+            .with_context(|| format!("unknown chain id mode `{mode}`"))
     }
 }
 
@@ -397,11 +406,6 @@ impl Storage {
         })
     }
 }
-
-/// Largest BigInt precision ClickHouse still stores as a numeric `Decimal`;
-/// above this (or with no precision) it falls back to `String`. Kept in sync
-/// with the BigInt branch of `getClickHouseFieldType` in ClickHouse.res.
-const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
 
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
@@ -646,6 +650,8 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     Ok(())
 }
 
+const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = crate::clickhouse::ch_type::MAX_DECIMAL_PRECISION;
+
 /// What to add to a field so ClickHouse stores it as a numeric Decimal. A
 /// BigDecimal needs both parameters — `@config(precision:)` alone is rejected
 /// by the field parser, so naming only it would send the user in a circle.
@@ -661,27 +667,23 @@ fn precision_fix(stored: &GqlScalar) -> String {
 
 /// ClickHouse stores a BigInt or BigDecimal whose precision is unset (or
 /// outside what its `Decimal` can express) as a String, which sorts
-/// lexicographically — wrong for anything in the sorting key. See the BigInt and
-/// BigDecimal branches of `getClickHouseFieldType` in ClickHouse.res.
+/// lexicographically — wrong for anything in the sorting key.
 ///
 /// Which column that applies to depends on `@storage(clickhouse: {orderBy})`:
-/// without it the sorting key is `id`, with it the listed columns replace `id`
-/// (see `makeCreateHistoryTableQuery`). Runs on the resolved schema, so a
-/// relation in the sorting key resolves to the id it actually stores.
+/// without it the sorting key is `id`, with it the listed columns replace `id`.
+/// Runs on the resolved schema, so a relation in the sorting key resolves to
+/// the id it actually stores.
 pub fn validate_clickhouse_sorting_key_scalars(
     storage: &Storage,
     schema: &Schema,
 ) -> anyhow::Result<()> {
     let clickhouse_default = storage.clickhouse.is_some_and(|b| b.entity_default);
-    // Mirrors getClickHouseFieldType: only a Decimal that fits keeps numeric
-    // ordering, and a BigDecimal's scale has to fit inside its precision.
     let stored_as_string = |scalar: &GqlScalar| match scalar {
-        GqlScalar::BigInt(precision) => {
-            !precision.is_some_and(|p| p <= CLICKHOUSE_DECIMAL_MAX_PRECISION)
-        }
-        GqlScalar::BigDecimal(config) => !config.is_some_and(|(precision, scale)| {
-            precision <= CLICKHOUSE_DECIMAL_MAX_PRECISION && scale <= precision
-        }),
+        GqlScalar::BigInt(precision) => ch_type::stored_as_string(*precision, 0),
+        GqlScalar::BigDecimal(config) => match config {
+            Some((precision, scale)) => ch_type::stored_as_string(Some(*precision), *scale),
+            None => true,
+        },
         _ => false,
     };
 
@@ -1412,32 +1414,10 @@ impl SystemConfig {
                                     .with_context(|| {
                                         format!("Layout for instruction '{}'", instr.name)
                                     })?;
-                                let byte_len = discriminator.as_ref().map_or(0, Vec::len) as u8;
                                 let normalized_discriminator =
                                     discriminator.map(|d| format!("0x{}", crate::hex::encode(&d)));
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
-                                    discriminator_byte_len: byte_len,
-                                    account_filters: instr
-                                        .account_filters
-                                        .as_ref()
-                                        .map(|filters| {
-                                            filters
-                                                .groups()
-                                                .into_iter()
-                                                .map(|group| {
-                                                    group
-                                                        .iter()
-                                                        .map(|af| SvmAccountFilter {
-                                                            position: af.position,
-                                                            values: af.values.clone(),
-                                                        })
-                                                        .collect()
-                                                })
-                                                .collect()
-                                        })
-                                        .unwrap_or_default(),
-                                    is_inner: instr.is_inner,
                                     accounts,
                                     args,
                                 };
@@ -1851,11 +1831,12 @@ impl EvmAbi {
                 let path = resolved.path;
                 let mut raw = resolved.raw;
 
+                let source = path_utils::normalize_path(PathBuf::from(abi_file_path))
+                    .display()
+                    .to_string();
+
                 // Abi files generated by the hardhat plugin can contain a nested abi field. This code to support that.
-                let typed = match serde_json::from_str::<AbiOrNestedAbi>(&raw).context(format!(
-                    "Failed to decode ABI file at \"{}\"",
-                    abi_file_path
-                ))? {
+                let typed = match crate::evm::abi::parse(Some(&source), &raw)? {
                     AbiOrNestedAbi::Abi(abi) => abi,
                     AbiOrNestedAbi::NestedAbi { abi } => {
                         raw = serde_json::to_string(&abi)
@@ -2424,25 +2405,10 @@ pub enum FuelEventKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SvmAccountFilter {
-    pub position: u8,
-    pub values: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
     /// instruction in the program.
     pub discriminator: Option<String>,
-    /// Length of the decoded discriminator in bytes (0 / 1 / 2 / 4 / 8). The
-    /// router precomputes a per-program ordering on this so dispatch tries
-    /// longest first.
-    pub discriminator_byte_len: u8,
-    /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
-    /// AND across positions. An empty outer list means "no account filter".
-    pub account_filters: Vec<Vec<SvmAccountFilter>>,
-    /// `None` matches both outer and inner (CPI-invoked) instructions.
-    pub is_inner: Option<bool>,
     /// Positional account names. Empty when the user supplied no schema and
     /// no bundled/IDL schema applies; in that case `decoded.accounts` is `{}`.
     pub accounts: Vec<String>,
@@ -3145,6 +3111,68 @@ mod test {
         assert_eq!(
             filesystem.to_public_config_json(false).unwrap(),
             memory.to_public_config_json(false).unwrap(),
+        );
+    }
+
+    const ABI_CONFIG: &str = r#"
+name: abi-test
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Comptroller
+        abi_file_path: ./abis/Comptroller.json
+        address: "0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b"
+        handler: ./src/handlers.ts
+        events:
+          - event: Failure(string action)
+"#;
+
+    fn parse_with_abi(abi: &str) -> anyhow::Result<SystemConfig> {
+        let files = HashMap::from([("abis/Comptroller.json".to_string(), abi.to_string())]);
+        SystemConfig::parse_yaml(
+            ABI_CONFIG,
+            Some("type T @entity { id: ID! }"),
+            &HashMap::new(),
+            &files,
+            false,
+        )
+    }
+
+    // The ABI spec lets an event that is not anonymous say so by omission, and
+    // hand-written ABI files do.
+    #[test]
+    fn indexes_a_contract_whose_abi_leaves_out_what_the_spec_lets_it() {
+        let config = parse_with_abi(
+            r#"[{"type": "event", "name": "Failure", "inputs": [{"name": "action", "type": "string"}]}]"#,
+        )
+        .expect("config");
+
+        assert_eq!(
+            config
+                .get_contract(&"Comptroller".to_string())
+                .expect("contract")
+                .events
+                .iter()
+                .map(|event| event.name.clone())
+                .collect::<Vec<_>>(),
+            vec!["Failure"]
+        );
+    }
+
+    #[test]
+    fn reports_which_entry_of_which_abi_file_is_unreadable() {
+        let err = parse_with_abi(
+            r#"[{"type": "event", "name": "Failure", "inputs": [{"name": "action", "type": "string"}]},
+                {"type": "wormhole", "name": "Warp"}]"#,
+        )
+        .expect_err("unreadable ABI");
+
+        assert_eq!(
+            format!("{err:#}"),
+            "Failed parsing abi types for events in contract Comptroller on network 1: \
+             abis/Comptroller.json:2:17: \"Warp\": unknown entry type \"wormhole\". Expected one \
+             of \"constructor\", \"fallback\", \"receive\", \"function\", \"event\", \"error\"."
         );
     }
 
@@ -3973,8 +4001,8 @@ type Foo {
             )
         }
 
-        /// Name, discriminator, its width in bytes, account names, arg names.
-        type SvmEvent = (String, Option<String>, u8, Vec<String>, Vec<String>);
+        /// Name, discriminator, account names, arg names.
+        type SvmEvent = (String, Option<String>, Vec<String>, Vec<String>);
 
         fn svm_events(config: &SystemConfig) -> Vec<SvmEvent> {
             config
@@ -3985,7 +4013,6 @@ type Foo {
                     EventKind::Svm(k) => (
                         e.name.clone(),
                         k.discriminator.clone(),
-                        k.discriminator_byte_len,
                         k.accounts.clone(),
                         k.args.iter().map(|a| a.name.clone()).collect(),
                     ),
@@ -4064,7 +4091,6 @@ type Foo {
                 vec![(
                     "swap".to_string(),
                     Some("0x2b04ed0b1ac91e62".to_string()),
-                    8,
                     vec!["payer".to_string(), "pool".to_string()],
                     vec!["amountIn".to_string(), "minOut".to_string()],
                 )]
@@ -4090,14 +4116,12 @@ type Foo {
                     (
                         "swap".to_string(),
                         Some("0xf8c69e91e17587c8".to_string()),
-                        8,
                         vec!["payer".to_string(), "pool".to_string()],
                         vec!["amount".to_string()],
                     ),
                     (
                         "deposit".to_string(),
                         Some("0xf223c68952e1f2b6".to_string()),
-                        8,
                         vec!["vault".to_string()],
                         Vec::new(),
                     ),
@@ -4121,7 +4145,6 @@ type Foo {
                 vec![(
                     "swap".to_string(),
                     Some("0xf8c69e91e17587c8".to_string()),
-                    8,
                     vec!["payer".to_string(), "pool".to_string()],
                     vec!["amount".to_string()],
                 )]
@@ -4166,7 +4189,6 @@ type Foo {
                 vec![(
                     "swap".to_string(),
                     Some("0x09".to_string()),
-                    1,
                     vec!["payer".to_string(), "pool".to_string()],
                     vec!["amount".to_string()],
                 )]
@@ -4229,7 +4251,6 @@ type Foo {
                 vec![(
                     "transfer".to_string(),
                     Some("0x03".to_string()),
-                    1,
                     vec!["source".to_string(), "destination".to_string()],
                     vec!["amount".to_string()],
                 )]
@@ -4255,7 +4276,7 @@ type Foo {
             let mut dispatched: Vec<_> = svm_events(&config)
                 .into_iter()
                 .filter(|(_, discriminator, ..)| discriminator.is_some())
-                .map(|(name, discriminator, _, accounts, args)| {
+                .map(|(name, discriminator, accounts, args)| {
                     (name, discriminator.unwrap(), accounts.len(), args.len())
                 })
                 .collect();
@@ -4328,7 +4349,6 @@ type Foo {
                 vec![(
                     "swap".to_string(),
                     Some("0x01".to_string()),
-                    1,
                     Vec::new(),
                     Vec::new(),
                 )]
@@ -4359,20 +4379,15 @@ type Foo {
                 .events
                 .iter()
                 .map(|e| match &e.kind {
-                    EventKind::Svm(k) => (
-                        e.name.as_str(),
-                        k.discriminator.as_deref(),
-                        k.discriminator_byte_len,
-                        k.account_filters.len(),
-                    ),
+                    EventKind::Svm(k) => (e.name.as_str(), k.discriminator.as_deref()),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
                 })
                 .collect();
             assert_eq!(
                 kinds,
                 vec![
-                    ("CreateMetadataAccountV3", Some("0x21"), 1, 0),
-                    ("UpdateMetadataAccountV2", Some("0x0f"), 1, 1),
+                    ("CreateMetadataAccountV3", Some("0x21")),
+                    ("UpdateMetadataAccountV2", Some("0x0f")),
                 ],
             );
 

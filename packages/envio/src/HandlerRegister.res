@@ -154,6 +154,7 @@ let buildOnEventRegistrationWith = (
       ~isWildcard,
       ~handler,
       ~contractRegister,
+      ~where,
       ~fieldSelection?,
       ~startBlock?,
     ) :> Internal.onEventRegistration)
@@ -320,7 +321,7 @@ let addOnEventRegistration = (
       )
     | Fuel =>
       JsError.throwWithMessage(
-        `The fields option of the "${eventName}" event registration on contract "${contractName}" is only supported on EVM. Select the fields in your config instead.`,
+        `The fields option of the "${eventName}" event registration on contract "${contractName}" is not supported on Fuel. Select the fields in your config instead.`,
       )
     }
   }
@@ -359,17 +360,18 @@ let addOnEventRegistration = (
   if !matched.contents {
     let (contractNames, eventNames) = registration->describeConfigured(~contractName)
     let listOr = (names, empty) =>
-      names->Utils.Array.isEmpty ? empty : names->Array.joinUnsafe(", ")
+      names->Utils.Array.isEmpty ? empty : names->Utils.Array.quotedJoin
+    let {contractNoun, eventNoun} = registration.config.ecosystem
     if eventNames->Utils.Array.isEmpty {
       JsError.throwWithMessage(
-        `Contract "${contractName}" is not configured on any chain, so its handler for "${eventName}" would never run. Add it to your config, or remove the registration. Configured contracts: ${listOr(
+        `${contractNoun->Utils.String.capitalize} "${contractName}" is not configured on any chain, so its handler for "${eventName}" would never run. Add it to your config, or remove the registration. Configured ${contractNoun}s: ${listOr(
             contractNames,
             "none",
           )}.`,
       )
     } else {
       JsError.throwWithMessage(
-        `Event "${eventName}" is not configured on contract "${contractName}", so its handler would never run. Add it to your config, or remove the registration. Configured events on "${contractName}": ${listOr(
+        `${eventNoun->Utils.String.capitalize} "${eventName}" is not configured on ${contractNoun} "${contractName}", so its handler would never run. Add it to your config, or remove the registration. Configured ${eventNoun}s on "${contractName}": ${listOr(
             eventNames,
             "none",
           )}.`,

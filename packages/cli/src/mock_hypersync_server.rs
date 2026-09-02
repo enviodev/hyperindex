@@ -28,9 +28,11 @@ use hypersync_net_types::hypersync_net_types_capnp;
 use hypersync_net_types::{BlockField, LogField, TransactionField};
 use napi_derive::napi;
 use serde_json::Value;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::watch;
+
+use crate::mock_http;
 
 const QUERY_PATH: &str = "/query/arrow-ipc";
 const HEIGHT_PATH: &str = "/height";
@@ -172,36 +174,6 @@ async fn serve(
     }
 }
 
-struct Request {
-    method: String,
-    path: String,
-    body: String,
-}
-
-/// Parse one request out of the buffer, returning how many bytes it consumed.
-/// `None` means the buffer doesn't hold a complete request yet.
-fn parse_request(buf: &[u8]) -> Option<(usize, Request)> {
-    let head_end = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
-    let head = String::from_utf8_lossy(&buf[..head_end]);
-    let mut lines = head.split("\r\n");
-    let mut request_line = lines.next().unwrap_or_default().split_whitespace();
-    let method = request_line.next().unwrap_or_default().to_string();
-    let path = request_line.next().unwrap_or_default().to_string();
-
-    let content_length = lines
-        .filter_map(|line| line.split_once(':'))
-        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-        .and_then(|(_, value)| value.trim().parse::<usize>().ok())
-        .unwrap_or(0);
-
-    let total = head_end + 4 + content_length;
-    if buf.len() < total {
-        return None;
-    }
-    let body = String::from_utf8_lossy(&buf[head_end + 4..total]).to_string();
-    Some((total, Request { method, path, body }))
-}
-
 async fn handle_connection(
     mut stream: TcpStream,
     state: Arc<Mutex<State>>,
@@ -209,18 +181,10 @@ async fn handle_connection(
 ) -> Result<()> {
     let mut buf: Vec<u8> = Vec::new();
     loop {
-        let request = loop {
-            if let Some((consumed, request)) = parse_request(&buf) {
-                buf.drain(..consumed);
-                break request;
-            }
-            let mut chunk = [0u8; 8192];
-            let read = stream.read(&mut chunk).await?;
-            if read == 0 {
-                return Ok(());
-            }
-            buf.extend_from_slice(&chunk[..read]);
+        let Some(request) = mock_http::read_request(&mut stream, &mut buf).await? else {
+            return Ok(());
         };
+        let body = String::from_utf8_lossy(&request.body).to_string();
 
         let path = request.path.split('?').next().unwrap_or_default();
         match (request.method.as_str(), path) {
@@ -241,7 +205,7 @@ async fn handle_connection(
             ("POST", QUERY_PATH) => {
                 let (spec, height) = {
                     let mut state = state.lock().unwrap();
-                    state.queries.push(request.body.clone());
+                    state.queries.push(body.clone());
                     (state.responses.pop_front(), state.height)
                 };
                 // A Cap'n Proto query body lands here too, and reads as a
@@ -252,16 +216,21 @@ async fn handle_connection(
                     // instead of with a page: rate limiting and
                     // payload-too-large are statuses the client acts on.
                     Some(raw) => {
-                        write_response_with(
+                        let headers: Vec<(&str, &str)> = raw
+                            .headers
+                            .iter()
+                            .map(|(name, value)| (name.as_str(), value.as_str()))
+                            .collect();
+                        mock_http::write_response(
                             &mut stream,
                             raw.status,
-                            &raw.headers,
+                            &headers,
                             raw.body.as_bytes(),
                         )
                         .await?
                     }
                     None => {
-                        let page = serde_json::from_str(&request.body)
+                        let page = serde_json::from_str(&body)
                             .context("expected a JSON query body")
                             .and_then(|query: Value| build_page(spec.as_ref(), &query, height));
                         match page {
@@ -332,33 +301,7 @@ async fn write_response(
     content_type: &str,
     body: &[u8],
 ) -> Result<()> {
-    write_response_with(
-        stream,
-        status,
-        &[("Content-Type".to_string(), content_type.to_string())],
-        body,
-    )
-    .await
-}
-
-async fn write_response_with(
-    stream: &mut TcpStream,
-    status: u16,
-    headers: &[(String, String)],
-    body: &[u8],
-) -> Result<()> {
-    let mut head = format!(
-        "HTTP/1.1 {status} {}\r\nContent-Length: {}\r\n",
-        if status == 200 { "OK" } else { "ERROR" },
-        body.len()
-    );
-    for (name, value) in headers {
-        head.push_str(&format!("{name}: {value}\r\n"));
-    }
-    head.push_str("\r\n");
-    stream.write_all(head.as_bytes()).await?;
-    stream.write_all(body).await?;
-    stream.flush().await?;
+    mock_http::write_response(stream, status, &[("Content-Type", content_type)], body).await?;
     Ok(())
 }
 

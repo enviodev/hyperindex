@@ -438,8 +438,8 @@ let rec makeFilterCondition = (
   // `LoadLayer.scopeFilter` is what puts this filter here, and the value is
   // range-checked to a non-negative safe integer, so it can carry nothing but
   // digits.
-  | Eq({fieldName, fieldValue}) if (getQueryFieldOrThrow(fieldName)).isChainId =>
-    `"${(getQueryFieldOrThrow(fieldName)).pgDbFieldName}" = ${fieldValue
+  | Eq({fieldName, fieldValue}) if getQueryFieldOrThrow(fieldName).isChainId =>
+    `"${getQueryFieldOrThrow(fieldName).pgDbFieldName}" = ${fieldValue
       ->ChainId.normalizeOrThrow
       ->ChainId.toString}`
   | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
@@ -1296,7 +1296,12 @@ let rec writeBatch = async (
     //valid event identifier, where all rows created after this eventIdentifier should
     //be deleted
     let rollbackTables = switch rollback {
-    | Some({targetCheckpointId: rollbackTargetCheckpointId, rolledBackAddresses}) =>
+    | Some({
+        targetCheckpointId: rollbackTargetCheckpointId,
+        scope,
+        rolledBackAddresses,
+        progressedChains,
+      }) =>
       Some(
         sql => {
           // Postgres owns history tables only for Postgres-backed entities;
@@ -1309,14 +1314,26 @@ let rec writeBatch = async (
                 ~pgSchema,
                 ~entityName=entityConfig.name,
                 ~entityIndex=entityConfig.index,
+                ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+                ~scope,
                 ~rollbackTargetCheckpointId,
               )
             })
           promises
           ->Array.push(
-            sql->InternalTable.Checkpoints.rollback(~pgSchema, ~rollbackTargetCheckpointId),
+            sql->InternalTable.Checkpoints.rollback(~pgSchema, ~scope, ~rollbackTargetCheckpointId),
           )
           ->ignore
+
+          // Runs before the batch's own progress write below, so a chain the
+          // batch also progressed keeps the batch's later value.
+          if progressedChains->Utils.Array.notEmpty {
+            promises
+            ->Array.push(
+              sql->InternalTable.Chains.setProgressedChains(~pgSchema, ~progressedChains),
+            )
+            ->ignore
+          }
 
           // Addresses are insert-only, so undoing their registrations is a
           // delete rather than a history replay. It runs before the batch's own
@@ -1476,7 +1493,11 @@ let rollbackKeyColumns = (entityConfig: Internal.entityConfig) =>
   | None => [Table.idFieldName]
   }
 
-let makeGetRollbackPreTargetRowsQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
+let makeGetRollbackPreTargetRowsQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~pgSchema,
+  ~scope: RollbackScope.t,
+) => {
   let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
     | Field(field) => field->Table.getPgDbFieldName->Some
@@ -1503,7 +1524,9 @@ let makeGetRollbackPreTargetRowsQuery = (~entityConfig: Internal.entityConfig, ~
 
   `SELECT DISTINCT ON (${keyColumnsCommaSeparated}) ${dataFieldsCommaSeparated}, "${EntityHistory.changeFieldName}"
   FROM "${pgSchema}"."${historyTableName}"
-  WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
+  WHERE "${EntityHistory.checkpointIdFieldName}" <= $1${scope->RollbackScope.predicate(
+      ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+    )}
     AND EXISTS (
       SELECT 1
       FROM "${pgSchema}"."${historyTableName}" h
@@ -1515,7 +1538,11 @@ let makeGetRollbackPreTargetRowsQuery = (~entityConfig: Internal.entityConfig, ~
 
 // Returns entity IDs that were created after the rollback target and have no history before it.
 // DELETE rows at or before the target are returned by the restore query and classified in ReScript.
-let makeGetRollbackRemovedIdsQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
+let makeGetRollbackRemovedIdsQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~pgSchema,
+  ~scope: RollbackScope.t,
+) => {
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
@@ -1528,7 +1555,9 @@ let makeGetRollbackRemovedIdsQuery = (~entityConfig: Internal.entityConfig, ~pgS
 
   `SELECT DISTINCT ${keyColumns->Array.map(c => `"${c}"`)->Array.joinUnsafe(", ")}
   FROM "${pgSchema}"."${historyTableName}"
-  WHERE "${EntityHistory.checkpointIdFieldName}" > $1
+  WHERE "${EntityHistory.checkpointIdFieldName}" > $1${scope->RollbackScope.predicate(
+      ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+    )}
     AND NOT EXISTS (
       SELECT 1
       FROM "${pgSchema}"."${historyTableName}" h
@@ -1807,7 +1836,7 @@ let make = (
 
     // Call sink.initialize before executing PG queries
     switch sink {
-    | Some(sink) => await sink.initialize(~chainConfigs, ~entities=chEntities, ~enums)
+    | Some(sink) => await sink.initialize(~entities=chEntities)
     | None => ()
     }
 
@@ -2334,7 +2363,7 @@ let make = (
 
     // Resume sink if present - needed to rollback any reorg changes
     switch sink {
-    | Some(sink) => await sink.resume(~checkpointId)
+    | Some(sink) => await sink.resume(~checkpointId, ~chains)
     | None => ()
     }
 
@@ -2380,26 +2409,33 @@ let make = (
       ~lastKnownValidBlockNumber,
     )
 
-  let getRollbackProgressDiff = (~rollbackTargetCheckpointId) =>
-    InternalTable.Checkpoints.getRollbackProgressDiff(sql, ~pgSchema, ~rollbackTargetCheckpointId)
+  let getRollbackProgressDiff = (~scope, ~rollbackTargetCheckpointId) =>
+    InternalTable.Checkpoints.getRollbackProgressDiff(
+      sql,
+      ~pgSchema,
+      ~scope,
+      ~rollbackTargetCheckpointId,
+    )
 
   let getRollbackData = async (
     ~entityConfig: Internal.entityConfig,
+    ~scope,
     ~rollbackTargetCheckpointId,
   ) => {
+    let params = scope->RollbackScope.params(~targetCheckpointId=rollbackTargetCheckpointId)
     let (removedIdRows, rollbackRows) = await Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
       sql
       ->Postgres.preparedUnsafe(
-        makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema, ~scope),
+        params,
       )
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
       // Get the latest pre-target row, including its SET or DELETE action.
       sql
       ->Postgres.preparedUnsafe(
-        makeGetRollbackPreTargetRowsQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        makeGetRollbackPreTargetRowsQuery(~entityConfig, ~pgSchema, ~scope),
+        params,
       )
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
     ))

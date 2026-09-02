@@ -66,24 +66,25 @@ describe("Non-string entity id support", () => {
     ).toBe(true)
   })
 
-  it("maps numeric ids to ClickHouse column types", t => {
-    t.expect((
-      ClickHouse.getClickHouseFieldType(~fieldType=Int32, ~isNullable=false, ~isArray=false),
-      ClickHouse.getClickHouseFieldType(
-        ~fieldType=BigInt({precision: 20}),
-        ~isNullable=false,
-        ~isArray=false,
-      ),
-    )).toEqual(("Int32", "Decimal(20,0)"))
-  })
-
-  it("degrades an unbounded BigInt id to a ClickHouse String column", t => {
-    // A BigInt without precision has no Decimal width, so ClickHouse falls back
-    // to String. This is expected (lexicographic ORDER BY) — pin it so the
-    // fallback isn't silently changed.
+  // Which of these becomes a Decimal and which falls back to String is Rust's
+  // to decide from the precision; what this side owes it is the precision.
+  it("carries a numeric id's precision to the ClickHouse sink", t => {
     t.expect(
-      ClickHouse.getClickHouseFieldType(~fieldType=BigInt({}), ~isNullable=false, ~isArray=false),
-    ).toBe("String")
+      [Table.Int32, BigInt({precision: 20}), BigInt({})]->Array.map(fieldType =>
+        ClickHouse.makeColumnSpec(~name="id", ~fieldType)
+      ),
+    ).toEqual([
+      {name: "id", fieldName: "id", fieldType: "Int32", isNullable: false, isArray: false},
+      {
+        name: "id",
+        fieldName: "id",
+        fieldType: "BigInt",
+        isNullable: false,
+        isArray: false,
+        precision: 20,
+      },
+      {name: "id", fieldName: "id", fieldType: "BigInt", isNullable: false, isArray: false},
+    ])
   })
 
   it("serializes a history set update keeping the numeric id value", t => {

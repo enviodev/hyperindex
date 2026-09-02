@@ -13,10 +13,9 @@ use std::collections::BTreeMap;
 use anyhow::{Context, Result};
 
 use hypersync_client_solana::decode::{
-    decode_instruction as upstream_decode, DecodedInstruction as UpstreamDecoded,
-    FieldType as SvmFieldType, InstructionSchema as UpstreamIxSchema,
-    NamedAccount as UpstreamAccount, NamedField as UpstreamNamedField,
-    ProgramSchema as UpstreamSchema,
+    decode_instruction as upstream_decode, FieldType as SvmFieldType,
+    InstructionSchema as UpstreamIxSchema, NamedAccount as UpstreamAccount,
+    NamedField as UpstreamNamedField, ProgramSchema as UpstreamSchema,
 };
 use hypersync_client_solana::simple_types::InstructionCall as UpstreamInstructionCall;
 
@@ -37,10 +36,10 @@ pub(crate) struct InstructionSchemaInput {
     pub args: Vec<ArgDef>,
 }
 
-/// Decode a raw instruction against a resolved schema. Called inline by the
-/// Solana client's `get_event_items`, so decoded instructions ride back on the
-/// query response instead of crossing the napi boundary one instruction at a
-/// time.
+/// Decode a raw instruction against a resolved schema into its args as a JSON
+/// object literal. Called inline by the Solana client's `get_event_items`, so
+/// decoded args ride back on the query response instead of crossing the napi
+/// boundary one instruction at a time.
 ///
 /// Any decode failure (unknown discriminator, account-count mismatch, trailing
 /// bytes, unresolved type) yields `None` rather than an error: real on-chain
@@ -50,38 +49,10 @@ pub(crate) struct InstructionSchemaInput {
 pub(crate) fn decode_with_schema(
     schema: &UpstreamSchema,
     instruction: &UpstreamInstructionCall,
-) -> Option<DecodedInstructionJson> {
-    upstream_decode(schema, instruction).ok().map(Into::into)
-}
-
-/// JS-facing shape of `DecodedInstruction`. Args + named accounts are passed
-/// as JSON strings to side-step napi-rs's lack of native `serde_json::Value`
-/// support; the runtime `JSON.parse`s them once into the per-handler shape.
-#[napi_derive::napi(object)]
-#[derive(Clone)]
-pub struct DecodedInstructionJson {
-    pub name: String,
-    /// `JSON.stringify`-able args object. Always a JSON object literal even
-    /// when the instruction has no args (`{}`).
-    pub args_json: String,
-    /// `JSON.stringify`-able `Record<string, string>` of named accounts.
-    pub accounts_json: String,
-    /// Accounts beyond the schema's named list. Empty when counts match.
-    pub extra_accounts: Vec<String>,
-}
-
-impl From<UpstreamDecoded> for DecodedInstructionJson {
-    fn from(d: UpstreamDecoded) -> Self {
-        let args_json = serde_json::to_string(&d.args).unwrap_or_else(|_| "{}".to_string());
-        let accounts_json =
-            serde_json::to_string(&d.named_accounts).unwrap_or_else(|_| "{}".to_string());
-        DecodedInstructionJson {
-            name: d.name,
-            args_json,
-            accounts_json,
-            extra_accounts: d.extra_accounts,
-        }
-    }
+) -> Option<String> {
+    upstream_decode(schema, instruction)
+        .ok()
+        .map(|decoded| serde_json::to_string(&decoded.args).unwrap_or_else(|_| "{}".to_string()))
 }
 
 pub(crate) fn build_program_schema(

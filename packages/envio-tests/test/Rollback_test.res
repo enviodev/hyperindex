@@ -2985,11 +2985,11 @@ describe("E2E rollback tests", () => {
         }
         storage.getRollbackTargetCheckpoint(~reorgChainId, ~lastKnownValidBlockNumber)
       },
-      getRollbackProgressDiff: (~rollbackTargetCheckpointId) => {
+      getRollbackProgressDiff: (~scope, ~rollbackTargetCheckpointId) => {
         if stallWriteBatch.contents->Option.isSome {
           rollbackReadBeforeFlush := true
         }
-        storage.getRollbackProgressDiff(~rollbackTargetCheckpointId)
+        storage.getRollbackProgressDiff(~scope, ~rollbackTargetCheckpointId)
       },
       writeBatch: (
         ~batch,

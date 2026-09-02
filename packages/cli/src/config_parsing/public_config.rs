@@ -283,13 +283,6 @@ struct SvmConfig<'a> {
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct SvmAccountFilterJson {
-    position: u8,
-    values: Vec<String>,
-}
-
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
 struct RpcConfig {
     url: String,
     #[serde(rename = "for")]
@@ -424,11 +417,6 @@ struct ContractEventItem {
 struct SvmEventItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     discriminator: Option<String>,
-    discriminator_byte_len: u8,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    account_filters: Vec<Vec<SvmAccountFilterJson>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    is_inner: Option<bool>,
     /// Positional account names, in the order the on-chain program expects.
     /// `[]` means the runtime won't expose `decoded.accounts.<name>`; the
     /// raw `instruction.accounts[i]` array is still available.
@@ -627,21 +615,6 @@ impl SystemConfig {
                                 EventKind::Svm(svm_kind) => {
                                     let svm_item = SvmEventItem {
                                         discriminator: svm_kind.discriminator.clone(),
-                                        discriminator_byte_len: svm_kind.discriminator_byte_len,
-                                        account_filters: svm_kind
-                                            .account_filters
-                                            .iter()
-                                            .map(|group| {
-                                                group
-                                                    .iter()
-                                                    .map(|af| SvmAccountFilterJson {
-                                                        position: af.position,
-                                                        values: af.values.clone(),
-                                                    })
-                                                    .collect()
-                                            })
-                                            .collect(),
-                                        is_inner: svm_kind.is_inner,
                                         accounts: svm_kind.accounts.clone(),
                                         args: svm_kind
                                             .args

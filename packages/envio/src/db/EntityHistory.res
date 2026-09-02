@@ -30,11 +30,20 @@ let unsafeCheckpointIdSchema =
     serializer: bigint => bigint->BigInt.toString,
   })
 
-let makeSetUpdateSchema = (~idSchema: S.t<EntityId.t>, entitySchema: S.t<'entity>): S.t<
-  Change.t<'entity>,
-> => {
+// `chainIdTag` carries the (column, chain id) of a per-chain entity whose rows
+// all belong to one chain: the column is then a constant of the schema rather
+// than a field read off every entity.
+let makeSetUpdateSchema = (
+  ~idSchema: S.t<EntityId.t>,
+  ~chainIdTag: option<(string, ChainId.t)>=?,
+  entitySchema: S.t<'entity>,
+): S.t<Change.t<'entity>> => {
   S.object(s => {
     s.tag(changeFieldName, RowAction.SET)
+    switch chainIdTag {
+    | Some((column, chainId)) => s.tag(column, chainId)
+    | None => ()
+    }
     Change.Set({
       checkpointId: s.field(checkpointIdFieldName, unsafeCheckpointIdSchema),
       entityId: s.field(Table.idFieldName, idSchema),
@@ -173,7 +182,7 @@ let backfillHistory = (
   ~ids: array<EntityId.t>,
 ) => {
   let idPgType = table->Table.getIdPgFieldType(~pgSchema)
-  let chainIdColumn = table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
+  let chainIdColumn = table->Table.getPgChainIdColumn
   let params = [table->Table.encodeIdsToJson(ids)->(Utils.magic: JSON.t => unknown)]
   sql
   ->Postgres.preparedUnsafe(
@@ -195,6 +204,8 @@ let rollback = (
   ~pgSchema,
   ~entityName,
   ~entityIndex,
+  ~chainIdColumn,
+  ~scope: RollbackScope.t,
   ~rollbackTargetCheckpointId: Internal.checkpointId,
 ) => {
   sql
@@ -202,8 +213,8 @@ let rollback = (
     `DELETE FROM "${pgSchema}"."${historyTableName(
         ~entityName,
         ~entityIndex,
-      )}" WHERE "${checkpointIdFieldName}" > $1;`,
-    [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+      )}" WHERE "${checkpointIdFieldName}" > $1${scope->RollbackScope.predicate(~chainIdColumn)};`,
+    scope->RollbackScope.params(~targetCheckpointId=rollbackTargetCheckpointId),
   )
   ->Utils.Promise.ignoreValue
 }

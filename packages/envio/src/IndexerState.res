@@ -793,6 +793,8 @@ let drainBatchRun = (state: t): Batch.t => {
   }
 }
 
+let pendingRollback = (state: t): option<Persistence.rollback> => state.rollback
+
 // Take the pending rollback diff to write, clearing it from the store.
 let takeRollback = (state: t): option<Persistence.rollback> => {
   let rollback = state.rollback
@@ -814,7 +816,8 @@ let beginRollbackDiff = (
   state: t,
   ~targetCheckpointId,
   ~diffCheckpointId,
-  ~progressBlockNumberByChainId,
+  ~scope,
+  ~progressedChains: array<InternalTable.Chains.progressedChain>,
   ~rolledBackAddresses,
 ) => {
   let perChainEntities = state.allEntities->EntityTables.perChain
@@ -829,10 +832,24 @@ let beginRollbackDiff = (
   | Some({rolledBackAddresses: pending}) => pending->Array.concat(rolledBackAddresses)
   | None => rolledBackAddresses
   }
+  // Same for the chains: this rollback recomputes progress from the checkpoints,
+  // so a chain the pending diff already moved can land on exactly the block it
+  // is now at and go unreported here. Its stored progress still needs
+  // correcting, so the pending rows carry over — this rollback's row for a
+  // chain wins, being the later reading of the same chain state.
+  let progressedChains = switch state.rollback {
+  | Some({progressedChains: pending}) =>
+    let byChainId = Dict.make()
+    pending->Array.forEach(chain => byChainId->ChainId.Dict.set(chain.chainId, chain))
+    progressedChains->Array.forEach(chain => byChainId->ChainId.Dict.set(chain.chainId, chain))
+    byChainId->Dict.valuesToArray
+  | None => progressedChains
+  }
   state.rollback = Some({
     targetCheckpointId,
     diffCheckpointId,
-    progressBlockNumberByChainId,
+    scope,
+    progressedChains,
     rolledBackAddresses,
   })
 }
