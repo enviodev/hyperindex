@@ -165,6 +165,18 @@ impl EntitySpec {
             .map(|column| (column.field_name.as_str(), column.name.as_str()))
             .collect()
     }
+
+    /// Only the fields an expression cannot name as-is. A field whose column
+    /// kept its name already reads as the column, and quoting it would also
+    /// claim every other meaning the bare word has — a field named `day` would
+    /// swallow the unit of `INTERVAL 30 day`.
+    fn renamed_column_by_field_name(&self) -> HashMap<&str, &str> {
+        self.columns
+            .iter()
+            .filter(|column| column.field_name != column.name)
+            .map(|column| (column.field_name.as_str(), column.name.as_str()))
+            .collect()
+    }
 }
 
 static EXPRESSION_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
@@ -224,18 +236,16 @@ pub fn create_history_table(
         ),
     };
 
+    let renamed = entity.renamed_column_by_field_name();
     let partition_by = match &entity.partition_by {
         Some(expression) => format!(
             "\nPARTITION BY {}",
-            resolve_expression_columns(expression, &by_field_name)
+            resolve_expression_columns(expression, &renamed)
         ),
         None => String::new(),
     };
     let ttl = match &entity.ttl {
-        Some(expression) => format!(
-            "\nTTL {}",
-            resolve_expression_columns(expression, &by_field_name)
-        ),
+        Some(expression) => format!("\nTTL {}", resolve_expression_columns(expression, &renamed)),
         None => String::new(),
     };
 
@@ -249,7 +259,7 @@ pub fn create_history_table(
             indexes,
             ",\n  INDEX {} {} TYPE {}{granularity}",
             quoted(&index.name),
-            resolve_expression_columns(&index.expr, &by_field_name),
+            resolve_expression_columns(&index.expr, &renamed),
             index.index_type
         )
         .expect("writing to a String cannot fail");
@@ -534,7 +544,7 @@ mod tests {
 
     #[test]
     fn expression_rewriting_leaves_everything_that_is_not_a_field_alone() {
-        let columns = HashMap::from([("createdAt", "created_at"), ("kind", "kind")]);
+        let columns = HashMap::from([("createdAt", "created_at")]);
         let resolved = [
             "toYYYYMM(createdAt)",
             "kind = 'createdAt'",
@@ -551,13 +561,49 @@ mod tests {
             resolved,
             [
                 "toYYYYMM(`created_at`)",
-                "`kind` = 'createdAt'",
+                "kind = 'createdAt'",
                 "`createdAt` + 1",
                 "toStartOfDay(`created_at`) + INTERVAL 7 DAY",
                 "toYYYYMM(\"created_at\")",
-                "`kind` = 'a' || \"createdAt\"",
-                r"`kind` = 'a\'createdAt b'",
+                "kind = 'a' || \"createdAt\"",
+                r"kind = 'a\'createdAt b'",
             ]
+        );
+    }
+
+    // A field whose column keeps its name already reads as that column in the
+    // expression, so rewriting it buys nothing — and quoting it turns every
+    // other meaning the bare word has into the column: a field named `day`
+    // would swallow the unit of `INTERVAL 30 day`.
+    #[test]
+    fn a_field_whose_column_keeps_its_name_is_not_rewritten() {
+        let mut entity = entity(
+            "Visit",
+            vec![
+                column("id", "String"),
+                column("day", "Int32"),
+                ColumnSpec {
+                    name: "created_at".to_string(),
+                    field_name: "createdAt".to_string(),
+                    field: field("Date"),
+                },
+            ],
+        );
+        entity.ttl = Some("createdAt + INTERVAL 30 day".to_string());
+        entity.partition_by = Some("day".to_string());
+        assert_eq!(
+            render(&entity, plain()),
+            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_history_Visit` (\n  \
+             `id` String,\n  \
+             `day` Int32,\n  \
+             `created_at` DateTime64(3, 'UTC'),\n  \
+             `envio_checkpoint_id` UInt64,\n  \
+             `envio_change` Enum8('SET' = 1, 'DELETE' = 2)\n\
+             )\n\
+             ENGINE = MergeTree()\n\
+             PARTITION BY day\n\
+             ORDER BY (`id`, `envio_checkpoint_id`)\n\
+             TTL `created_at` + INTERVAL 30 day"
         );
     }
 
