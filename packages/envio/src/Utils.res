@@ -495,6 +495,60 @@ let unwrapResultExn = res =>
 
 external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 
+module Bytes = {
+  let asUint8Array: unknown => option<Uint8Array.t> = %raw(`(value) =>
+    value instanceof Uint8Array
+      ? value.constructor === Uint8Array
+        ? value
+        : new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+      : undefined`)
+
+  let toHex = (bytes: Uint8Array.t) =>
+    NodeJs.Buffer.fromArrayBuffer(
+      bytes->TypedArray.buffer,
+      ~byteOffset=bytes->TypedArray.byteOffset,
+      ~length=bytes->TypedArray.byteLength,
+    )->NodeJs.Buffer.toHex
+
+  @get_index external byteAt: (Uint8Array.t, int) => int = ""
+
+  // A bytea[] parameter as the array literal Postgres parses itself. postgres.js
+  // serializes an array parameter with the element serializer of the type the
+  // server describes, and the bytea one expects a Uint8Array — yet it types the
+  // array after its first element, so an array of Uint8Arrays binds as a single
+  // bytea. Text binds untyped and reaches the server's array parser as it is.
+  let toPgArrayLiteral = (values: array<unknown>) =>
+    "{" ++
+    values
+    ->Array.map(value =>
+      switch value->(magic: unknown => Nullable.t<unknown>)->Nullable.toOption {
+      | None => "NULL"
+      | Some(value) =>
+        switch value->asUint8Array {
+        | Some(bytes) => `"\\\\x${bytes->toHex}"`
+        | None => JsError.throwWithMessage("Expected Uint8Array")
+        }
+      }
+    )
+    ->Array.join(",") ++ "}"
+
+  // Bytewise, the order Postgres sorts a bytea in.
+  let compare = (a: Uint8Array.t, b: Uint8Array.t) => {
+    let aLength = a->TypedArray.length
+    let bLength = b->TypedArray.length
+    let rec loop = index =>
+      if index === aLength || index === bLength {
+        Int.compare(aLength, bLength)
+      } else {
+        switch Int.compare(a->byteAt(index), b->byteAt(index)) {
+        | 0. => loop(index + 1)
+        | order => order
+        }
+      }
+    loop(0)
+  }
+}
+
 module Schema = {
   let variantTag = S.union([S.string, S.object(s => s.field("TAG", S.string))])
 
@@ -511,6 +565,37 @@ module Schema = {
       parser: value => value,
       serializer: value => value->(magic: option<'a> => Nullable.t<'a>)->Nullable.toOption,
     })
+
+  // Postgres hands a bytea back as a Buffer, while handlers are promised the
+  // plain Uint8Array of the entity type — Buffer's `slice` and `toString` behave
+  // differently.
+  let bytes = S.custom("Bytes", s => {
+    parser: unknown =>
+      switch unknown->Bytes.asUint8Array {
+      | Some(bytes) => bytes
+      | None => s.fail("Expected Uint8Array")
+      },
+    serializer: (bytes: Uint8Array.t) => bytes,
+  })
+
+  // A bytea[] value: a list field, or the values of an `in` filter.
+  let bytesArray = S.custom("BytesArray", s => {
+    parser: unknown =>
+      if unknown->Array.isArray {
+        unknown
+        ->(magic: unknown => array<unknown>)
+        ->Array.map(item =>
+          switch item->Bytes.asUint8Array {
+          | Some(bytes) => bytes
+          | None => s.fail("Expected Uint8Array")
+          }
+        )
+      } else {
+        s.fail("Expected array of Uint8Array")
+      },
+    serializer: (values: array<Uint8Array.t>) =>
+      values->(magic: array<Uint8Array.t> => array<unknown>)->Bytes.toPgArrayLiteral,
+  })
 
   // Don't use S.unknown, since it's not serializable to json
   // In a nutshell, this is completely unsafe.

@@ -29,7 +29,7 @@ metadata:
 | `Boolean!` | `boolean` | |
 | `BigInt!` | `bigint` | Use `@config(precision: N)` for custom precision |
 | `BigDecimal!` | `BigDecimal` | Use `@config(precision: N, scale: M)` |
-| `Bytes!` | `string` | Hex-encoded |
+| `Bytes!` | `string` | Hex-encoded; `Uint8Array` stored as raw bytes with `bytes_type: uint8array` in config.yaml (always on SVM) |
 | `Timestamp!` | `Date` | |
 | `Json!` | `any` | |
 

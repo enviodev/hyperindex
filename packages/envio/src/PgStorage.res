@@ -377,7 +377,7 @@ let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
 let rec makeFilterCondition = (
   ~filter: EntityFilter.t,
   ~table: Table.table,
-  ~params: array<JSON.t>,
+  ~params: array<unknown>,
 ) => {
   // Filters reference fields by API name, while the SQL references columns
   // by their possibly renamed db names.
@@ -398,7 +398,7 @@ let rec makeFilterCondition = (
     ~fieldValue: unknown,
     ~isArray,
   ) => {
-    let param = try fieldValue->S.reverseConvertToJsonOrThrow(
+    let param = try fieldValue->S.reverseConvertOrThrow(
       isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
     ) catch {
     | exn =>
@@ -587,7 +587,7 @@ let makeTableBatchSetQuery = (
   ~itemSchema: S.t<'item>,
   ~chainIdMode: ChainId.mode=Int32,
 ) => {
-  let {dbSchema, hasArrayField} =
+  let {dbSchema, hasArrayField, byteaColumnIndexes} =
     table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
 
   // Should move this to a better place
@@ -614,7 +614,22 @@ let makeTableBatchSetQuery = (
     {
       "query": makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents, ~chainIdMode),
       "convertOrThrow": S.compile(
-        S.unnest(dbSchema),
+        S.unnest(dbSchema)->S.preprocess(_ => {
+          serializer: columns => {
+            let columns = columns->(Utils.magic: unknown => array<unknown>)
+            byteaColumnIndexes->Array.forEach(index =>
+              columns->Array.setUnsafe(
+                index,
+                columns
+                ->Array.getUnsafe(index)
+                ->(Utils.magic: unknown => array<unknown>)
+                ->Utils.Bytes.toPgArrayLiteral
+                ->(Utils.magic: string => unknown),
+              )
+            )
+            columns->(Utils.magic: array<unknown> => unknown)
+          },
+        }),
         ~input=Value,
         ~output=Unknown,
         ~mode=Sync,

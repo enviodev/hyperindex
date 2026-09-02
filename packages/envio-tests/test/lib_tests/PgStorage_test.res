@@ -577,7 +577,7 @@ FROM "public"."envio_chains";`
 
         t.expect((condition, params)).toEqual((
           `"id" = ANY($1)`,
-          [["1", "2"]->(Utils.magic: array<string> => JSON.t)],
+          [["1", "2"]->(Utils.magic: array<string> => unknown)],
         ))
       },
     )
@@ -592,7 +592,7 @@ FROM "public"."envio_chains";`
           ~params,
         )
 
-        t.expect((condition, params)).toEqual((`"score" > $1`, [5->(Utils.magic: int => JSON.t)]))
+        t.expect((condition, params)).toEqual((`"score" > $1`, [5->(Utils.magic: int => unknown)]))
       },
     )
 
@@ -619,9 +619,9 @@ FROM "public"."envio_chains";`
         t.expect((condition, params)).toEqual((
           `("id" = $1 AND ("score" > $2 AND "score" < $3))`,
           [
-            "1"->(Utils.magic: string => JSON.t),
-            5->(Utils.magic: int => JSON.t),
-            10->(Utils.magic: int => JSON.t),
+            "1"->(Utils.magic: string => unknown),
+            5->(Utils.magic: int => unknown),
+            10->(Utils.magic: int => unknown),
           ],
         ))
       },
