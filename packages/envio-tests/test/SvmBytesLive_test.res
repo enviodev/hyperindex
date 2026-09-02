@@ -1,7 +1,7 @@
 // Live test against solana.hypersync.xyz over a pinned slot window holding
 // exactly one Wormhole `post_message` call, whose `payload` is a Borsh
-// `bytes` arg. Checks the arg reaches the handler as a Uint8Array with the
-// on-chain bytes, not as a hex string.
+// `bytes` arg. Checks the arg and the raw instruction data reach the handler
+// as Uint8Arrays with the on-chain bytes, not as hex strings.
 
 let _apiToken =
   Env.envioApiToken->Option.getOrThrow(
@@ -47,6 +47,9 @@ type Message {
   payloadLength: Int!
   payloadHead: String!
   consistencyLevel: Int!
+  dataIsUint8Array: Boolean!
+  dataLength: Int!
+  dataFirstByte: Int!
 }
 `,
   ~handlers=`
@@ -56,7 +59,7 @@ indexer.onInstruction(
   {
     program: "Wormhole",
     instruction: "postMessage",
-    fields: { instruction: ["args", "path"], transaction: ["signature"] },
+    fields: { instruction: ["args", "data", "path"], transaction: ["signature"] },
   },
   async ({ instruction, context }) => {
     const payload: Uint8Array = instruction.args.payload;
@@ -66,6 +69,9 @@ indexer.onInstruction(
       payloadLength: payload.length,
       payloadHead: Buffer.from(payload.subarray(0, 4)).toString("hex"),
       consistencyLevel: instruction.args.consistencyLevel,
+      dataIsUint8Array: instruction.data instanceof Uint8Array,
+      dataLength: instruction.data.length,
+      dataFirstByte: instruction.data[0] ?? -1,
     });
   },
 );
@@ -90,6 +96,9 @@ describe("SVM bytes args (live)", () => {
           payloadLength: 217,
           payloadHead: "9945ff10",
           consistencyLevel: 1,
+          dataIsUint8Array: true,
+          dataLength: 227,
+          dataFirstByte: 1,
         },
       ]);
     },

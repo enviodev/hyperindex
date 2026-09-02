@@ -70,7 +70,7 @@ indexer.onInstruction(
     account("opened-post", opened?.token?.postAmount ?? 0n, opened?.token?.preAmount === undefined ? "USER" : "ADMIN");
     account("closed-pre", closed?.token?.preAmount ?? 0n, closed?.token?.postAmount === undefined ? "USER" : "ADMIN");
     account("shape", BigInt(instruction.transaction.accountActivities.length), opened?.lamports === undefined ? "USER" : "ADMIN");
-    account("payload", BigInt(instruction.path[0] ?? -1), instruction.discriminator === "0x09" ? "USER" : "ADMIN");
+    account("payload", BigInt(instruction.path[0] ?? -1), instruction.discriminator === "0x09" && instruction.data instanceof Uint8Array && instruction.data.length === 1 && instruction.data[0] === 9 ? "USER" : "ADMIN");
     account("time", BigInt(instruction.block.time), instruction.logs.length === 0 ? "USER" : "ADMIN");
     account("args", instruction.args.amountIn, typeof instruction.args.minAmountOut === "bigint" ? "USER" : "ADMIN");
   },

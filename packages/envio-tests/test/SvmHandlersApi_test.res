@@ -460,7 +460,7 @@ if (0) {
       expectType<TypeEqual<typeof instruction.accountArguments, readonly string[]>>(true);
       expectType<TypeEqual<typeof instruction.discriminator, string>>(true);
       expectType<TypeEqual<typeof instruction.programId, string>>(true);
-      expectType<TypeEqual<typeof instruction.data, string>>(true);
+      expectType<TypeEqual<typeof instruction.data, Uint8Array>>(true);
       expectType<TypeEqual<typeof instruction.path, readonly number[]>>(true);
       expectType<TypeEqual<typeof instruction.isInner, boolean>>(true);
       expectType<TypeEqual<typeof instruction.transaction.signature, string>>(true);
@@ -567,7 +567,7 @@ type Unbound = SvmInstruction<typeof fields>;
 expectType<TypeEqual<Unbound["args"], unknown>>(true);
 
 type AllInstr = SvmInstruction<SvmAllFieldsSelection, "Swapper", "swap">;
-expectType<TypeEqual<AllInstr["data"], string>>(true);
+expectType<TypeEqual<AllInstr["data"], Uint8Array>>(true);
 expectType<TypeEqual<AllInstr["isInner"], boolean>>(true);
 expectType<TypeEqual<AllInstr["transaction"]["fee"], bigint>>(true);
 expectType<TypeEqual<AllInstr["block"]["height"], number>>(true);

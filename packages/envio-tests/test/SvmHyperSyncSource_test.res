@@ -55,7 +55,7 @@ let makeReg = (~eventConfig=makeEventConfig(), ~where=None, ~index=0) => {
     ~contractRegister=None,
     ~where,
   )
-  {...reg, Internal.index: index}
+  {...reg, Internal.index}
 }
 
 let mockResponse: SvmHyperSyncClient.EventItems.response = {
@@ -75,7 +75,7 @@ let mockResponse: SvmHyperSyncClient.EventItems.response = {
       path: [1],
       programId: metaplexProgramId,
       accounts: [],
-      data: "0x21",
+      data: Uint8Array.fromArray([0x21]),
       isInner: false,
       args: %raw(`{amount: 1n}`),
       logs: Null.null,
@@ -164,84 +164,81 @@ let programSet = {
 }
 
 describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
-  Async.it(
-    "passes the selection to the client and builds items by registration index",
-    async t => {
-      let reg = makeReg()
-      let source = makeSource(~onEventRegistrations=[reg])
+  Async.it("passes the selection to the client and builds items by registration index", async t => {
+    let reg = makeReg()
+    let source = makeSource(~onEventRegistrations=[reg])
 
-      let response = await source.getItemsOrThrow(
-        ~fromBlock=slot - 10,
-        ~toBlock=Some(slot + 10),
-        ~addressSet=programSet,
-        ~knownHeight=slot + 1000,
-        ~partitionId="0",
-        ~itemsTarget=Some(5000),
-        ~selection={
-          onEventRegistrations: [(reg :> Internal.onEventRegistration)],
-          dependsOnAddresses: true,
-        },
-        ~retry=0,
-        ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
-      )
+    let response = await source.getItemsOrThrow(
+      ~fromBlock=slot - 10,
+      ~toBlock=Some(slot + 10),
+      ~addressSet=programSet,
+      ~knownHeight=slot + 1000,
+      ~partitionId="0",
+      ~itemsTarget=Some(5000),
+      ~selection={
+        onEventRegistrations: [(reg :> Internal.onEventRegistration)],
+        dependsOnAddresses: true,
+      },
+      ~retry=0,
+      ~logger=Logging.createChild(~params={"test": "SvmHyperSyncSource"}),
+    )
 
-      let item = switch response.parsedQueueItems {
-      | [
-          Internal.Event({
-            blockNumber,
-            logIndex,
-            orderPath,
-            transactionIndex,
-            payload,
-            onEventRegistration,
-          }),
-        ] =>
-        let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
-        Some({
-          "blockNumber": blockNumber,
-          // A slot orders by (transactionIndex, path); the pair
-          // rides the item as (logIndex, orderPath).
-          "logIndex": logIndex,
-          "orderPath": orderPath,
-          "transactionIndex": transactionIndex,
-          // `block` is omitted here; it's materialised from the store at batch
-          // prep, which this test doesn't run.
-          "block": instruction.block,
-          "args": instruction.args,
-          "accounts": instruction.accounts,
-          "usesSourceRegistration": onEventRegistration === (reg :> Internal.onEventRegistration),
-        })
-      | _ => None
-      }
-
-      t.expect({
-        "item": item,
-        "query": capturedQueries->Array.getUnsafe(0),
-      }).toEqual({
-        "item": Some({
-          "blockNumber": slot,
-          "logIndex": 965,
-          "orderPath": [1],
-          "transactionIndex": 965,
-          "block": None,
-          "args": None,
-          "accounts": None,
-          "usesSourceRegistration": true,
+    let item = switch response.parsedQueueItems {
+    | [
+        Internal.Event({
+          blockNumber,
+          logIndex,
+          orderPath,
+          transactionIndex,
+          payload,
+          onEventRegistration,
         }),
-        // The slot range stays inclusive on the boundary; Rust converts to the
-        // wire's exclusive `toSlot`.
-        "query": (
-          {
-            fromSlot: slot - 10,
-            toSlot: Some(slot + 10),
-            maxNumInstructions: 5000,
-            registrationIndexes: [0],
-            clientFilteredContracts: None,
-          }: SvmHyperSyncClient.EventItems.query
-        ),
+      ] =>
+      let instruction = payload->(Utils.magic: Internal.eventPayload => Envio.svmInstruction)
+      Some({
+        "blockNumber": blockNumber,
+        // A slot orders by (transactionIndex, path); the pair
+        // rides the item as (logIndex, orderPath).
+        "logIndex": logIndex,
+        "orderPath": orderPath,
+        "transactionIndex": transactionIndex,
+        // `block` is omitted here; it's materialised from the store at batch
+        // prep, which this test doesn't run.
+        "block": instruction.block,
+        "args": instruction.args,
+        "accounts": instruction.accounts,
+        "usesSourceRegistration": onEventRegistration === (reg :> Internal.onEventRegistration),
       })
-    },
-  )
+    | _ => None
+    }
+
+    t.expect({
+      "item": item,
+      "query": capturedQueries->Array.getUnsafe(0),
+    }).toEqual({
+      "item": Some({
+        "blockNumber": slot,
+        "logIndex": 965,
+        "orderPath": [1],
+        "transactionIndex": 965,
+        "block": None,
+        "args": None,
+        "accounts": None,
+        "usesSourceRegistration": true,
+      }),
+      // The slot range stays inclusive on the boundary; Rust converts to the
+      // wire's exclusive `toSlot`.
+      "query": (
+        {
+          fromSlot: slot - 10,
+          toSlot: Some(slot + 10),
+          maxNumInstructions: 5000,
+          registrationIndexes: [0],
+          clientFilteredContracts: None,
+        }: SvmHyperSyncClient.EventItems.query
+      ),
+    })
+  })
 
   // The whole registration set crosses the boundary once at construction —
   // selections, field unions, decoders, and routing derive from it in Rust.
@@ -303,7 +300,9 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "argsJson": input.argsJson,
       "definedTypesJson": input.definedTypesJson,
     }).toEqual({
-      "accountFilters": [[{SvmHyperSyncClient.Registration.position: 1, values: [metaplexProgramId]}]],
+      "accountFilters": [
+        [{SvmHyperSyncClient.Registration.position: 1, values: [metaplexProgramId]}],
+      ],
       "isInner": Some(false),
       "transactionFields": ["signature", "transactionIndex"],
       "blockFields": ["height", "parentHash"],

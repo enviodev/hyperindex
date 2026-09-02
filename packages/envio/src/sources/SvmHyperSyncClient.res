@@ -91,7 +91,6 @@ module ResponseTypes = {
     blockhash: string,
     blockTime: Null.t<int>,
   }
-
 }
 
 module EventItems = {
@@ -128,7 +127,7 @@ module EventItems = {
     path: array<int>,
     programId: string,
     accounts: array<string>,
-    data: string,
+    data: Uint8Array.t,
     isInner: bool,
     // Borsh-decoded args as a JS value tree (wide integers as bigint), an
     // empty object when the routed registration reads no args. An instruction

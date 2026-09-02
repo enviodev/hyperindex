@@ -15,15 +15,6 @@ pub struct Block {
     pub block_time: Option<i64>,
 }
 
-pub(crate) fn to_hex(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(2 + bytes.len() * 2);
-    s.push_str("0x");
-    for b in bytes {
-        s.push_str(&format!("{:02x}", b));
-    }
-    s
-}
-
 pub(crate) fn bigint_u64(v: u64) -> BigInt {
     BigInt {
         sign_bit: false,
