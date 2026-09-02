@@ -384,15 +384,13 @@ let resume = async (
     ClickHouseSink.chainId: chain.id->ChainId.toString,
     progressBlockNumber: chain.progressBlockNumber,
   })
-  let historyTables =
-    entities->Array.map(entityConfig =>
-      EntityHistory.historyTableName(~entityName=entityConfig.name, ~entityIndex=entityConfig.index)
-    )
-  try await sink->ClickHouseSink.resume(
-    checkpointId->BigInt.toString,
+  try await sink->ClickHouseSink.resume({
+    checkpointId: checkpointId->BigInt.toString,
     chainProgress,
-    historyTables,
-  ) catch {
+    historyTables: entities->Array.map(entityConfig => entitySpec(~entityConfig).historyTable),
+    replicated: Env.ClickHouse.replicated(),
+    databaseEngine: ?Env.ClickHouse.databaseEngine(),
+  }) catch {
   | exn => {
       Logging.errorWithExn(exn, "Failed to resume ClickHouse storage")
       throw(

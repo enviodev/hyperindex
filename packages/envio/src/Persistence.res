@@ -108,14 +108,15 @@ type storage = {
     ~contractMapping: ContractMapping.t,
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
-  // Refuses, before touching any storage, a config the stored one can't be
-  // resumed against.
+  // `throwIfIncompatible` gets what the storage holds before any sink is
+  // resumed, so a config the stored one rules out is reported as such rather
+  // than as the sink tripping over tables it never created.
   resumeInitialState: (
     ~entities: array<Internal.entityConfig>,
-    ~contractMapping: ContractMapping.t,
-    ~envioInfo: JSON.t,
-    ~resetCommand: string,
-    ~runCommand: option<string>,
+    ~throwIfIncompatible: (
+      ~storedEnvioInfo: option<JSON.t>,
+      ~storedContractMapping: ContractMapping.t,
+    ) => unit,
   ) => promise<initialState>,
   // Returns rows matching the filter.
   // Field values are serialized and rows parsed with the table's field schemas.
@@ -281,10 +282,15 @@ let init = {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState(
             ~entities=persistence.allEntities,
-            ~contractMapping,
-            ~envioInfo,
-            ~resetCommand,
-            ~runCommand,
+            ~throwIfIncompatible=(~storedEnvioInfo, ~storedContractMapping) =>
+              Config.throwIfResumeIncompatible(
+                ~storedEnvioInfo,
+                ~storedContractMapping,
+                ~envioInfo,
+                ~contractMapping,
+                ~resetCommand,
+                ~runCommand,
+              ),
           )
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()

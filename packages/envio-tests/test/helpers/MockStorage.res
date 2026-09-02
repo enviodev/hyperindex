@@ -101,16 +101,16 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
           initializeResolveFns->Array.push(resolve)->ignore
         })
       }),
-      resumeInitialState: implement(#resumeInitialState, (
-        ~entities as _,
-        ~contractMapping as _,
-        ~envioInfo as _,
-        ~resetCommand as _,
-        ~runCommand as _,
-      ) => {
+      resumeInitialState: implement(#resumeInitialState, (~entities as _, ~throwIfIncompatible) => {
         resumeInitialStateCalls->Array.push(true)->ignore
         Promise.make((resolve, _reject) => {
           resumeInitialStateResolveFns->Array.push(resolve)->ignore
+        })->Promise.thenResolve((initialState: Persistence.initialState) => {
+          throwIfIncompatible(
+            ~storedEnvioInfo=initialState.envioInfo,
+            ~storedContractMapping=initialState.contractMapping,
+          )
+          initialState
         })
       }),
       dumpEffectCache: implement(#dumpEffectCache, () => {

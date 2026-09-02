@@ -5,7 +5,7 @@ mod mock_server;
 pub mod row_binary;
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -183,6 +183,17 @@ pub struct ChainProgressInput {
 }
 
 #[napi(object)]
+pub struct ResumeInput {
+    pub checkpoint_id: String,
+    pub chain_progress: Vec<ChainProgressInput>,
+    /// The history tables this schema owns. A table no entity claims is one an
+    /// older schema left behind, and a schema change means a resync anyway.
+    pub history_tables: Vec<String>,
+    pub replicated: bool,
+    pub database_engine: Option<String>,
+}
+
+#[napi(object)]
 pub struct ColumnValuesInput {
     pub numbers: Option<Float64Array>,
     pub unsigned64: Option<BigUint64Array>,
@@ -355,14 +366,10 @@ impl ClickHouseSink {
     }
 
     #[napi]
-    pub async fn resume(
-        &self,
-        checkpoint_id: String,
-        chain_progress: Vec<ChainProgressInput>,
-        history_tables: Vec<String>,
-    ) -> napi::Result<()> {
-        self.resume_inner(&checkpoint_id, &chain_progress, &history_tables)
+    pub async fn resume(&self, input: ResumeInput) -> napi::Result<()> {
+        self.resume_inner(input)
             .await
+            .map_err(|err| self.reinitialize_if_gone(err))
             .map_err(to_napi)
     }
 
@@ -529,11 +536,7 @@ impl ClickHouseSink {
         let checkpoint_columns =
             self.checkpoint_column_types(checkpoint_columns.into_iter().map(Into::into).collect())?;
 
-        let engine_name = database_engine.as_deref().map(ddl::database_engine_name);
-        // A Replicated database engine only replicates data when its tables use
-        // the ReplicatedMergeTree engine, so it implies replicated mode even
-        // when ENVIO_CLICKHOUSE_REPLICATED is unset.
-        let has_replicated_engine = engine_name == Some("Replicated");
+        let has_replicated_engine = has_replicated_engine(database_engine.as_deref());
         let replicated = env_replicated || has_replicated_engine;
         if has_replicated_engine && !env_replicated {
             (self.warn)(
@@ -718,90 +721,72 @@ impl ClickHouseSink {
         .to_string())
     }
 
-    /// The database being gone, rather than the request being wrong, is told
-    /// off the answer to a read the resume had to make anyway: nothing probes
-    /// the server's catalog for it. No schema of ours survives without it.
+    /// Code 81 is the database itself being gone, 60 one of its tables. No
+    /// schema of ours survives either, so both are answered with the way back
+    /// rather than with the statement that tripped over it.
     fn reinitialize_if_gone(&self, err: anyhow::Error) -> anyhow::Error {
+        let reinitialize = "Please run 'envio start -r' to reinitialize the indexer (it'll also \
+                            drop Postgres database).";
         match clickhouse_error_code(&format!("{err:#}")) {
             Some(81) => anyhow!(
-                "ClickHouse storage database \"{}\" not found. Please run \
-                 'envio start -r' to reinitialize the indexer (it'll also drop Postgres \
-                 database).",
+                "ClickHouse storage database \"{}\" not found. {reinitialize}",
                 self.database
             ),
+            Some(60) => err.context(format!(
+                "ClickHouse storage database \"{}\" is missing a table the indexer needs. \
+                 {reinitialize}",
+                self.database
+            )),
             _ => err,
         }
     }
 
-    async fn resume_inner(
-        &self,
-        checkpoint_id: &str,
-        chain_progress: &[ChainProgressInput],
-        history_tables: &[String],
-    ) -> Result<()> {
-        digits_only(checkpoint_id, "a checkpoint id")?;
+    async fn resume_inner(&self, input: ResumeInput) -> Result<()> {
+        let ResumeInput {
+            checkpoint_id,
+            chain_progress,
+            history_tables,
+            replicated,
+            database_engine,
+        } = input;
+        digits_only(&checkpoint_id, "a checkpoint id")?;
         let checkpoint_id = &self
-            .safe_checkpoint_id(checkpoint_id, chain_progress)
-            .await
-            .map_err(|err| self.reinitialize_if_gone(err))?;
+            .safe_checkpoint_id(&checkpoint_id, &chain_progress)
+            .await?;
 
-        // The tables are the ones this schema owns, passed in rather than
-        // discovered: a history table no entity claims is one an older schema
-        // left behind, and a schema change means a resync anyway.
-        let above = self
-            .post_statement(ddl::rows_above_checkpoint(
-                &self.database,
-                history_tables,
-                &self.history,
-                checkpoint_id,
-            ))
-            .await
-            .map_err(|err| self.reinitialize_if_gone(err))?;
-        // TabSeparated, one `name<TAB>count` per table, in whatever order the
-        // server answers the branches. The shape is fully known here, so
-        // anything else is an answer to refuse rather than a table to skip:
-        // a skipped trim leaves rolled-back rows visible.
-        let above: HashMap<&str, u64> = above
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(|line| {
-                let (name, count) = line
-                    .split_once('\t')
-                    .with_context(|| format!("Unexpected row count answer {line:?}"))?;
-                let count = count
-                    .trim()
-                    .parse()
-                    .with_context(|| format!("Unexpected row count answer {line:?}"))?;
-                Ok((name.trim(), count))
-            })
-            .collect::<Result<_>>()?;
-        let holds_rows = |table: &str| -> Result<bool> {
-            above
-                .get(table)
-                .map(|count| *count > 0)
-                .with_context(|| format!("No row count answered for table {table}"))
+        // A read answers for the replica it lands on, and the client's pool
+        // spreads consecutive statements across replicas. A replica still
+        // fetching the parts the last run wrote would answer "nothing above the
+        // checkpoint" for rows that are there, so replicated storage trims
+        // every table regardless: `mutations_sync = 2` waits on all replicas.
+        let holding = if replicated || has_replicated_engine(database_engine.as_deref()) {
+            history_tables
+                .iter()
+                .chain(std::iter::once(&self.history.checkpoints_table))
+                .cloned()
+                .collect()
+        } else {
+            self.tables_holding_rows_above(&history_tables, checkpoint_id)
+                .await?
         };
-
-        let mut to_trim = Vec::new();
-        for table in history_tables {
-            if holds_rows(table)? {
-                to_trim.push(table);
-            }
-        }
-        futures_util::future::try_join_all(to_trim.into_iter().map(|table| {
-            self.post_statement(ddl::trim_history_table(
-                &self.database,
-                table,
-                &self.history,
-                checkpoint_id,
-            ))
-        }))
+        futures_util::future::try_join_all(
+            history_tables
+                .iter()
+                .filter(|table| holding.contains(table.as_str()))
+                .map(|table| {
+                    self.post_statement(ddl::trim_history_table(
+                        &self.database,
+                        table,
+                        &self.history,
+                        checkpoint_id,
+                    ))
+                }),
+        )
         .await?;
 
         // Last, so that a resume interrupted before this point still has the
         // checkpoints proving which history rows the next one must remove.
-        if holds_rows(&self.history.checkpoints_table)? {
+        if holding.contains(self.history.checkpoints_table.as_str()) {
             self.post_statement(ddl::trim_checkpoints(
                 &self.database,
                 &self.history,
@@ -810,6 +795,51 @@ impl ClickHouseSink {
             .await?;
         }
         Ok(())
+    }
+
+    /// Which of the history tables, and whether the checkpoints table, hold a
+    /// row above the checkpoint. TabSeparated answers one `name<TAB>0|1` per
+    /// table, in whatever order the server ran the branches. The shape is
+    /// fully known here, so anything else is an answer to refuse rather than a
+    /// table to skip: a skipped trim leaves rolled-back rows visible.
+    async fn tables_holding_rows_above(
+        &self,
+        history_tables: &[String],
+        checkpoint_id: &str,
+    ) -> Result<HashSet<String>> {
+        let answer = self
+            .post_statement(ddl::holds_rows_above_checkpoint(
+                &self.database,
+                history_tables,
+                &self.history,
+                checkpoint_id,
+            ))
+            .await?;
+        let answered: HashMap<&str, bool> = answer
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let (table, holds) = line
+                    .split_once('\t')
+                    .with_context(|| format!("Unexpected row count answer {line:?}"))?;
+                let holds = match holds.trim() {
+                    "0" => false,
+                    "1" => true,
+                    _ => bail!("Unexpected row count answer {line:?}"),
+                };
+                Ok((table.trim(), holds))
+            })
+            .collect::<Result<_>>()?;
+        history_tables
+            .iter()
+            .chain(std::iter::once(&self.history.checkpoints_table))
+            .filter_map(|table| match answered.get(table.as_str()) {
+                Some(true) => Some(Ok(table.clone())),
+                Some(false) => None,
+                None => Some(Err(anyhow!("No row count answered for table {table}"))),
+            })
+            .collect()
     }
 
     fn table_schema(&self, handle: u32) -> Result<Arc<TableSchema>> {
@@ -1099,6 +1129,13 @@ fn retry_for(status: reqwest::StatusCode, body: &str) -> Retry {
 /// quote a `Code:` of its own, so the marker ClickHouse puts in every exception
 /// it writes is what makes the number the server's own verdict rather than
 /// someone else's.
+/// A Replicated database engine only replicates data when its tables use the
+/// ReplicatedMergeTree engine, so it implies replicated mode even when
+/// ENVIO_CLICKHOUSE_REPLICATED is unset.
+fn has_replicated_engine(database_engine: Option<&str>) -> bool {
+    database_engine.map(ddl::database_engine_name) == Some("Replicated")
+}
+
 fn clickhouse_error_code(body: &str) -> Option<u32> {
     if !body.contains("DB::Exception") {
         return None;
@@ -1198,13 +1235,13 @@ mod tests {
 
     /// Answers a resume's two reads: `first_uncovered` for the safe-checkpoint
     /// calculation (`0` when no checkpoint lies past a chain's recorded
-    /// progress), and `counts` for the rows each table holds above it.
+    /// progress), and `holds` for whether each table has rows above it.
     fn resume_answers(
         first_uncovered: &str,
-        counts: &[(&str, u64)],
+        holds: &[(&str, u8)],
     ) -> Arc<mock_server::StatementFn> {
         let first_uncovered = first_uncovered.to_string();
-        let counts = counts
+        let holds = holds
             .iter()
             .map(|(table, above)| format!("{table}\t{above}"))
             .collect::<Vec<_>>()
@@ -1212,12 +1249,26 @@ mod tests {
         Arc::new(move |statement: &str| {
             if statement.contains("minIf(") {
                 (200, first_uncovered.clone())
-            } else if statement.contains("count()") {
-                (200, counts.clone())
+            } else if statement.contains("_envio_holds") {
+                (200, holds.clone())
             } else {
                 (200, String::new())
             }
         })
+    }
+
+    fn resume_input(
+        checkpoint_id: String,
+        chain_progress: Vec<ChainProgressInput>,
+        history_tables: Vec<String>,
+    ) -> ResumeInput {
+        ResumeInput {
+            checkpoint_id,
+            chain_progress,
+            history_tables,
+            replicated: false,
+            database_engine: None,
+        }
     }
 
     fn progress(chain_id: &str, progress_block_number: i32) -> ChainProgressInput {
@@ -1237,7 +1288,7 @@ mod tests {
         .unwrap();
 
         let err = unreachable
-            .resume("42".to_string(), Vec::new(), Vec::new())
+            .resume(resume_input("42".to_string(), Vec::new(), Vec::new()))
             .await
             .unwrap_err();
 
@@ -1261,7 +1312,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume("42".to_string(), Vec::new(), Vec::new())
+            .resume(resume_input("42".to_string(), Vec::new(), Vec::new()))
             .await
             .unwrap_err();
 
@@ -1289,7 +1340,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume("42".to_string(), Vec::new(), Vec::new())
+            .resume(resume_input("42".to_string(), Vec::new(), Vec::new()))
             .await
             .unwrap_err();
 
@@ -1301,6 +1352,95 @@ mod tests {
             (true, true),
             "got: {}",
             err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_against_a_database_missing_a_table_says_how_to_reinitialize() {
+        let server = mock_server::MockClickHouse::answering_statements(Arc::new(|_: &str| {
+            (
+                404,
+                "Code: 60. DB::Exception: Unknown table expression identifier \
+                 'mock.envio_checkpoints' in scope SELECT count() FROM mock.envio_checkpoints. \
+                 (UNKNOWN_TABLE)"
+                    .to_string(),
+            )
+        }))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        let err = sink
+            .resume(resume_input("42".to_string(), Vec::new(), Vec::new()))
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            (
+                err.reason.contains("start -r"),
+                err.reason.contains("\"mock\" is missing a table"),
+                err.reason.contains("mock.envio_checkpoints"),
+            ),
+            (true, true, true),
+            "got: {}",
+            err.reason
+        );
+    }
+
+    /// The read that spares a clean restart its mutations answers for one
+    /// replica; another may still be fetching what the last run wrote.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_replicated_resume_trims_every_table_without_asking_which_hold_rows() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0",
+            &[
+                ("envio_history_a", 0),
+                ("envio_history_b", 0),
+                ("envio_checkpoints", 0),
+            ],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(ResumeInput {
+            database_engine: Some("Replicated('/clickhouse/{shard}', '{replica}')".to_string()),
+            ..resume_input(
+                "42".to_string(),
+                Vec::new(),
+                vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
+            )
+        })
+        .await
+        .unwrap();
+
+        let statements = server.statements_seen();
+        let mut mutations: Vec<&String> = statements
+            .iter()
+            .filter(|statement| statement.starts_with("ALTER") || statement.starts_with("DELETE"))
+            .collect();
+        mutations.sort();
+        assert_eq!(
+            (
+                statements
+                    .iter()
+                    .filter(|statement| statement.contains("_envio_holds"))
+                    .count(),
+                mutations,
+            ),
+            (
+                0,
+                vec![
+                    &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 42 \
+                      SETTINGS mutations_sync = 2"
+                        .to_string(),
+                    &"ALTER TABLE `mock`.`envio_history_b` DELETE WHERE `envio_checkpoint_id` > 42 \
+                      SETTINGS mutations_sync = 2"
+                        .to_string(),
+                    &"DELETE FROM `mock`.`envio_checkpoints` WHERE `id` > 42 \
+                      SETTINGS lightweight_deletes_sync = 2"
+                        .to_string(),
+                ]
+            ),
+            "replicated storage should trim blind, got: {statements:?}"
         );
     }
 
@@ -1317,11 +1457,11 @@ mod tests {
         .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(
+        sink.resume(resume_input(
             "42".to_string(),
             Vec::new(),
             vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
-        )
+        ))
         .await
         .unwrap();
 
@@ -1361,11 +1501,11 @@ mod tests {
         .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(
+        sink.resume(resume_input(
             "42".to_string(),
             Vec::new(),
             vec!["envio_history_a".to_string()],
-        )
+        ))
         .await
         .unwrap();
 
@@ -1393,11 +1533,11 @@ mod tests {
         .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(
+        sink.resume(resume_input(
             "42".to_string(),
             Vec::new(),
             vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
-        )
+        ))
         .await
         .unwrap();
 
@@ -1424,11 +1564,11 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume(
+            .resume(resume_input(
                 "42".to_string(),
                 Vec::new(),
                 vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
-            )
+            ))
             .await
             .unwrap_err();
 
@@ -1454,7 +1594,7 @@ mod tests {
         let server = mock_server::MockClickHouse::answering_statements(resume_answers(
             "0",
             &[
-                ("envio_history_a", 2),
+                ("envio_history_a", 1),
                 ("envio_history_b", 0),
                 ("envio_checkpoints", 0),
             ],
@@ -1462,11 +1602,11 @@ mod tests {
         .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(
+        sink.resume(resume_input(
             "42".to_string(),
             Vec::new(),
             vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
-        )
+        ))
         .await
         .unwrap();
 
@@ -1497,11 +1637,11 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         // What Postgres commits during backfill: no checkpoint at all.
-        sink.resume(
+        sink.resume(resume_input(
             "0".to_string(),
             vec![progress("1", 10), progress("137", -1)],
             vec!["envio_history_a".to_string()],
-        )
+        ))
         .await
         .unwrap();
 
@@ -1544,11 +1684,11 @@ mod tests {
         .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(
+        sink.resume(resume_input(
             "42".to_string(),
             vec![progress("1", 10)],
             vec!["envio_history_a".to_string()],
-        )
+        ))
         .await
         .unwrap();
 
@@ -1575,11 +1715,11 @@ mod tests {
         .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(
+        sink.resume(resume_input(
             "0".to_string(),
             vec![progress("1", 500)],
             vec!["envio_history_a".to_string()],
-        )
+        ))
         .await
         .unwrap();
 

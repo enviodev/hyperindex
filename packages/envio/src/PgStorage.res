@@ -1594,9 +1594,6 @@ let rollbackRemovedIdSchema: Table.table => S.t<EntityId.t> = Utils.WeakMap.memo
   S.object(s => s.field(Table.idFieldName, table->Table.getIdSchema))
 )
 
-let clickHouseEntities = (entities: array<Internal.entityConfig>) =>
-  entities->Array.filter(e => e.storage.clickhouse)
-
 let make = (
   ~sql: Postgres.sql,
   ~pgHost,
@@ -1806,11 +1803,9 @@ let make = (
     ~contractMapping,
     ~envioInfo,
   ): Persistence.initialState => {
-    // Per-entity storage routing: PG owns tables only for entities that
-    // opted into Postgres; the sink mirrors only those that opted into
-    // ClickHouse.
+    // PG owns tables only for entities that opted into Postgres; the sink
+    // picks its own out of the full list.
     let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
-    let chEntities = clickHouseEntities(entities)
 
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
       makeSchemaTableNamesQuery(~pgSchema),
@@ -1839,7 +1834,7 @@ let make = (
 
     // Call sink.initialize before executing PG queries
     switch sink {
-    | Some(sink) => await sink.initialize(~entities=chEntities)
+    | Some(sink) => await sink.initialize(~entities)
     | None => ()
     }
 
@@ -2303,13 +2298,7 @@ let make = (
     }
   }
 
-  let resumeInitialState = async (
-    ~entities,
-    ~contractMapping,
-    ~envioInfo,
-    ~resetCommand,
-    ~runCommand,
-  ): Persistence.initialState => {
+  let resumeInitialState = async (~entities, ~throwIfIncompatible): Persistence.initialState => {
     let (
       cache,
       chains,
@@ -2364,18 +2353,7 @@ let make = (
       ),
     ))
 
-    // Decided off what Postgres stored, ahead of the sink: a resume the config
-    // rules out has to be reported as such rather than as ClickHouse tripping
-    // over a table the changed schema names and it never created.
-    Config.throwIfResumeIncompatible(
-      ~storedEnvioInfo,
-      ~storedContractMapping,
-      ~envioInfo,
-      ~contractMapping,
-      ~resetCommand,
-      ~runCommand,
-      ~hasClickhouse=sink->Option.isSome,
-    )
+    throwIfIncompatible(~storedEnvioInfo, ~storedContractMapping)
 
     await reloadIndexCatalog()
 
@@ -2391,8 +2369,7 @@ let make = (
 
     // Resume sink if present - needed to rollback any reorg changes
     switch sink {
-    | Some(sink) =>
-      await sink.resume(~checkpointId, ~chains, ~entities=clickHouseEntities(entities))
+    | Some(sink) => await sink.resume(~checkpointId, ~chains, ~entities)
     | None => ()
     }
 

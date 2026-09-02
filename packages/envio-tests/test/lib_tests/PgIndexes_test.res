@@ -101,13 +101,10 @@ let setup = async (~pgSchema, ~fixtures=[], ~sql as client=sql, ~entities=allEnt
     let _ = await sql->Postgres.unsafe(fixtures->Array.getUnsafe(idx))
   }
   if fixtures->Utils.Array.notEmpty {
-    let _ = await storage.resumeInitialState(
-      ~entities,
-      ~contractMapping=config.contractMapping,
-      ~envioInfo=JSON.Encode.object(Dict.make()),
-      ~resetCommand="envio dev -r",
-      ~runCommand=None,
-    )
+    let _ = await storage.resumeInitialState(~entities, ~throwIfIncompatible=(
+      ~storedEnvioInfo as _,
+      ~storedContractMapping as _,
+    ) => ())
   }
   storage
 }
@@ -225,10 +222,7 @@ describe("Indexes built against a real schema", () => {
     ->catchMessage
     let _ = await storage.resumeInitialState(
       ~entities,
-      ~contractMapping=config.contractMapping,
-      ~envioInfo=JSON.Encode.object(Dict.make()),
-      ~resetCommand="envio dev -r",
-      ~runCommand=None,
+      ~throwIfIncompatible=(~storedEnvioInfo as _, ~storedContractMapping as _) => (),
     )
 
     let leftBehind = await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"])

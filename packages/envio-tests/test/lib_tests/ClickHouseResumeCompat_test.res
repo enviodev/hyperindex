@@ -46,38 +46,23 @@ type Extra {
 }
 `
 
-// What `envio start` stores and later diffs: the public config, with the
-// entities the schema declares.
-let parse = (~schema) => {
+let init = async (~schema, ~pgSchema, ~reset) => {
   let publicConfigJson = Core.fromUserApi(~schema, configYaml).config->JSON.parseOrThrow
-  (Config.fromPublic(publicConfigJson), publicConfigJson->Config.stripSensitiveData)
-}
-
-let created = []
-
-Async.afterAll(async () => {
-  let _ = await created
-  ->Array.map(async ((pgSchema, database)) => {
-    let _ = await sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
-    await TestClickHouse.drop(~database)
-  })
-  ->Promise.all
-  await sql->Postgres.endSql
-})
-
-let init = async (~config, ~envioInfo, ~pgSchema, ~database, ~reset) => {
-  TestClickHouse.use(~database)
+  let config = Config.fromPublic(publicConfigJson)
   let storage = PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false)
-  let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
-  await persistence->Persistence.init(
+  await PgStorage.makePersistenceFromConfig(~config, ~storage)->Persistence.init(
     ~chainConfigs=config.chainMap->ChainMap.values,
     ~contractMapping=config.contractMapping,
-    ~envioInfo,
+    ~envioInfo=publicConfigJson->Config.stripSensitiveData,
     ~resetCommand="envio start -r",
     ~runCommand=Some("envio start"),
     ~reset,
   )
 }
+
+Async.afterAll(async () => {
+  await sql->Postgres.endSql
+})
 
 describe("Resuming ClickHouse storage against a changed config", () => {
   let name = "refuses an added entity off the stored config, before ClickHouse is asked"
@@ -88,32 +73,33 @@ describe("Resuming ClickHouse storage against a changed config", () => {
     Async.it(name, async t => {
       let pgSchema = TestPgSchema.make()
       let database = TestClickHouse.make()
-      created->Array.push((pgSchema, database))->ignore
+      TestClickHouse.use(~database)
 
-      let (config, envioInfo) = parse(~schema=counterSchema)
-      await init(~config, ~envioInfo, ~pgSchema, ~database, ~reset=true)
-
-      let (changedConfig, changedEnvioInfo) = parse(~schema=counterAndExtraSchema)
+      await init(~schema=counterSchema, ~pgSchema, ~reset=true)
       let message = try {
-        await init(
-          ~config=changedConfig,
-          ~envioInfo=changedEnvioInfo,
-          ~pgSchema,
-          ~database,
-          ~reset=false,
-        )
+        await init(~schema=counterAndExtraSchema, ~pgSchema, ~reset=false)
         "the resume to fail, but it succeeded"
       } catch {
       | JsExn(e) => e->JsExn.message->Option.getOr("an error without a message")
       | Persistence.StorageError({message}) => message
       }
+      let _ = await sql->Postgres.unsafe(`DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`)
+      await TestClickHouse.drop(~database)
 
       t.expect(
-        message->String.includes(
-          "The following config changes are incompatible with the existing indexer data",
-        ),
-        ~message,
-      ).toBe(true)
+        message,
+      ).toBe(`The following config changes are incompatible with the existing indexer data:
+
+    - entities[1]
+
+Pick one:
+  1. Revert the changes above  # resume indexing where it left off
+  2. envio start -r            # delete all indexed data and start over
+  3. Run a second indexer alongside this one — keep both datasets:
+       ENVIO_PG_SCHEMA=<new_schema> \\
+       ENVIO_CLICKHOUSE_DATABASE=<new_db> \\
+       ENVIO_INDEXER_PORT=<new_port> \\
+       envio start`)
     })
   }
 })
