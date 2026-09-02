@@ -2625,7 +2625,7 @@ fn field_type_to_ts_type(
                 .iter()
                 .map(|v| match v.fields.as_deref() {
                     // Mirrors the decoder: a variant without fields is its bare name.
-                    None | Some([]) => format!("\"{}\"", v.name),
+                    None | Some([]) => ts_string_literal(&v.name),
                     Some(fields) => {
                         let body = fields
                             .iter()
@@ -2714,8 +2714,12 @@ fn ts_safe_property_name(name: &str) -> String {
     if is_bare_ident {
         name.to_string()
     } else {
-        format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+        ts_string_literal(name)
     }
+}
+
+fn ts_string_literal(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 #[cfg(test)]
@@ -3630,6 +3634,32 @@ type GlobalCounter @crossChain {
         assert!(
             !project_template.envio_types_dts.contains("readonly block:"),
             "SVM program table must not emit block"
+        );
+    }
+
+    #[test]
+    fn svm_enum_variants_render_as_literals_or_tagged_objects() {
+        use hypersync_client_solana::decode::{EnumVariant, FieldType, NamedField};
+        let ty = FieldType::Enum(vec![
+            EnumVariant {
+                name: "Bid".into(),
+                fields: None,
+            },
+            EnumVariant {
+                name: "say \"hi\"".into(),
+                fields: Some(vec![]),
+            },
+            EnumVariant {
+                name: "Limit".into(),
+                fields: Some(vec![NamedField {
+                    name: "price".into(),
+                    ty: FieldType::U64,
+                }]),
+            },
+        ]);
+        assert_eq!(
+            field_type_to_ts_type(&ty, &Default::default(), &mut vec![]),
+            r#""Bid" | "say \"hi\"" | { readonly Limit: { readonly price: bigint } }"#
         );
     }
 
