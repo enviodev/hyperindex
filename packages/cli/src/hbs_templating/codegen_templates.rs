@@ -2576,8 +2576,8 @@ struct ConfigBodies<'a> {
 /// Locked conventions:
 /// - sub-64-bit integers / floats → `number`
 /// - 64-/128-bit integers → `bigint`
-/// - pubkey + `[u8; 32]` → `string` (base58)
-/// - Borsh `bytes`, `vec<u8>`, `[u8; N]` (N ≠ 32) → `Uint8Array`
+/// - pubkey → `string` (base58)
+/// - Borsh `bytes`, `vec<u8>`, `[u8; N]` → `Uint8Array`
 fn field_type_to_ts_type(
     ty: &hypersync_client_solana::decode::FieldType,
     defined_types: &std::collections::BTreeMap<String, hypersync_client_solana::decode::FieldType>,
@@ -2594,9 +2594,6 @@ fn field_type_to_ts_type(
             "({}) | null",
             field_type_to_ts_type(inner, defined_types, seen)
         ),
-        F::Array { ty: inner, len } if matches!(**inner, F::U8) && *len == 32 => {
-            "string".to_string()
-        }
         F::Vec(inner) | F::Array { ty: inner, .. } if matches!(**inner, F::U8) => {
             "Uint8Array".to_string()
         }
@@ -3663,7 +3660,7 @@ type GlobalCounter @crossChain {
                 "(Uint8Array)[]",
                 "Uint8Array",
                 "Uint8Array",
-                "string",
+                "Uint8Array",
                 "(number)[]",
             ]
         );

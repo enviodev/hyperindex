@@ -145,11 +145,14 @@ fn value_to_param(
             Value::Null => ParamValue::Null,
             value => value_to_param(value, inner, defined_types)?,
         },
+        // The upstream decoder renders `[u8; 32]` as base58 on the assumption
+        // it is a pubkey. A schema declares a pubkey as `pubkey`, so a 32-byte
+        // array is a hash, root or seed, and gets the raw bytes like any blob.
         SvmFieldType::Array { ty: inner, len }
             if matches!(**inner, SvmFieldType::U8) && *len == 32 =>
         {
-            // `[u8; 32]` decodes as a base58 string (treated as a pubkey).
-            ParamValue::Str(value.as_str()?.to_string())
+            let bytes = bs58::decode(value.as_str()?).into_vec().ok()?;
+            (bytes.len() == 32).then_some(ParamValue::Bytes(bytes))?
         }
         SvmFieldType::Vec(inner) | SvmFieldType::Array { ty: inner, .. }
             if matches!(**inner, SvmFieldType::U8) =>
@@ -424,7 +427,8 @@ mod tests {
     }
 
     // `vec<u8>` is byte-for-byte the same wire format as `bytes`, and a
-    // fixed `[u8; N]` is a blob too, so neither may come back as `number[]`.
+    // fixed `[u8; N]` is a blob too, so neither may come back as `number[]`
+    // — nor as base58 when N happens to be 32.
     #[test]
     fn u8_sequences_decode_as_raw_bytes() {
         let schema = schema_of(
@@ -432,6 +436,7 @@ mod tests {
                 {"name":"vec","type":{"vec":"u8"}},
                 {"name":"fixed","type":{"array":["u8",4]}},
                 {"name":"nested","type":{"vec":{"array":["u8",2]}}},
+                {"name":"hash","type":{"array":["u8",32]}},
                 {"name":"notBytes","type":{"array":["u16",2]}}
             ]"#,
             "{}",
@@ -442,6 +447,7 @@ mod tests {
         data.extend_from_slice(&[1, 2, 3, 4]);
         data.extend_from_slice(&1u32.to_le_bytes());
         data.extend_from_slice(&[9, 8]);
+        data.extend_from_slice(&[0xab; 32]);
         data.extend_from_slice(&7u16.to_le_bytes());
         data.extend_from_slice(&8u16.to_le_bytes());
         assert_eq!(
@@ -453,6 +459,7 @@ mod tests {
                     "nested",
                     ParamValue::Arr(vec![ParamValue::Bytes(vec![9, 8])])
                 ),
+                ("hash", ParamValue::Bytes(vec![0xab; 32])),
                 (
                     "notBytes",
                     ParamValue::Arr(vec![ParamValue::Num(7.0), ParamValue::Num(8.0)])
