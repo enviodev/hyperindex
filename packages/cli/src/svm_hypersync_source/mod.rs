@@ -895,6 +895,9 @@ mod tests {
         );
     }
 
+    /// `(on_event_registration_index, logs as (kind, message))`
+    type RegistrationLogs = (i64, Option<Vec<(Option<String>, Option<String>)>>);
+
     #[test]
     fn logs_attach_only_to_opted_in_registrations() {
         // Two registrations fan out from the same instruction; only the
@@ -927,7 +930,7 @@ mod tests {
             ..Default::default()
         };
         let items = route(&store, &set, &[instr], vec![log, unscoped_log], &built).unwrap();
-        let views: Vec<(i64, Option<Vec<(Option<String>, Option<String>)>>)> = items
+        let views: Vec<RegistrationLogs> = items
             .iter()
             .map(|i| {
                 (

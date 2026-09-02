@@ -85,7 +85,6 @@ impl TopicFilters {
     /// against the store for the `effectiveStartBlock` gate. A client-filtered
     /// contract (`force_wildcard`) has no addresses in the set, so there the
     /// store answers ownership too.
-    #[allow(clippy::too_many_arguments)]
     fn matches(
         &self,
         topics: &[Option<LogArgument>],
@@ -185,7 +184,6 @@ impl OnEventRegistration {
     /// the address server-side, because a merged partition's addresses don't all
     /// start at the same block. A client-filtered contract has none of its
     /// addresses in the query, so there the store answers ownership on its own.
-    #[allow(clippy::too_many_arguments)]
     fn matches(
         &self,
         topic0: &[u8; 32],
