@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use napi::bindgen_prelude::Uint8Array;
 use napi_derive::napi;
 
 mod borsh_decoder;
@@ -478,7 +479,7 @@ pub struct EventItem {
     pub accounts: Vec<String>,
     /// Raw instruction data; decoded params ride on `args` when the
     /// registration carries a Borsh schema.
-    pub data: napi::bindgen_prelude::Uint8Array,
+    pub data: Uint8Array,
     pub is_inner: bool,
     /// Borsh-decoded args as a JS value tree (wide integers as bigint), an
     /// empty object when the routed registration reads no args or the program

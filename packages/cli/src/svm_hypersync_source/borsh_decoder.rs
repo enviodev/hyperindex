@@ -136,26 +136,27 @@ fn value_to_param(
             ParamValue::from_i128(value.as_str()?.parse().ok()?)
         }
         SvmFieldType::String | SvmFieldType::Pubkey => ParamValue::Str(value.as_str()?.to_string()),
-        // The upstream decoder renders `bytes` as `0x` hex; undo that so
-        // handlers get the raw bytes.
-        SvmFieldType::Bytes => {
-            ParamValue::Bytes(crate::hex::decode_prefixed(value.as_str()?, "bytes").ok()?)
-        }
         SvmFieldType::Option(inner) => match value {
             Value::Null => ParamValue::Null,
             value => value_to_param(value, inner, defined_types)?,
         },
-        // The upstream decoder renders `[u8; 32]` as base58 on the assumption
-        // it is a pubkey. A schema declares a pubkey as `pubkey`, so a 32-byte
-        // array is a hash, root or seed, and gets the raw bytes like any blob.
-        SvmFieldType::Array { ty: inner, len }
-            if matches!(**inner, SvmFieldType::U8) && *len == 32 =>
-        {
-            let bytes = bs58::decode(value.as_str()?).into_vec().ok()?;
-            (bytes.len() == 32).then_some(ParamValue::Bytes(bytes))?
+        // Every u8 sequence reaches handlers as raw bytes. The upstream decoder
+        // renders them three ways: `bytes` as `0x` hex, `[u8; 32]` as base58
+        // on the assumption it is a pubkey (a schema declares a real pubkey as
+        // `pubkey`, so a 32-byte array is a hash, root or seed), and any other
+        // `vec<u8>` / `[u8; N]` as a number array.
+        SvmFieldType::Bytes => {
+            ParamValue::Bytes(crate::hex::decode_prefixed(value.as_str()?, "bytes").ok()?)
         }
-        SvmFieldType::Vec(inner) | SvmFieldType::Array { ty: inner, .. }
-            if matches!(**inner, SvmFieldType::U8) =>
+        SvmFieldType::Array { ty, len } if matches!(**ty, SvmFieldType::U8) && *len == 32 => {
+            let bytes = bs58::decode(value.as_str()?).into_vec().ok()?;
+            if bytes.len() != 32 {
+                return None;
+            }
+            ParamValue::Bytes(bytes)
+        }
+        SvmFieldType::Vec(ty) | SvmFieldType::Array { ty, .. }
+            if matches!(**ty, SvmFieldType::U8) =>
         {
             let Value::Array(items) = value else {
                 return None;
