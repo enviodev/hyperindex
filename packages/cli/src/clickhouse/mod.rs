@@ -718,30 +718,22 @@ impl ClickHouseSink {
         .to_string())
     }
 
-    async fn resume_inner(
-        &self,
-        checkpoint_id: &str,
-        chain_progress: &[ChainProgressInput],
-        history_tables: &[String],
-    ) -> Result<()> {
-        self.resume_steps(checkpoint_id, chain_progress, history_tables)
-            .await
-            .map_err(|err| match clickhouse_error_code(&format!("{err:#}")) {
-                // The database is gone rather than the request being wrong, and
-                // no schema of ours survives without it. Reported off the answer
-                // to a read the resume already had to make, so nothing probes
-                // the server's catalog to find out.
-                Some(81) => anyhow!(
-                    "ClickHouse storage database \"{}\" not found. Please run \
-                     'envio start -r' to reinitialize the indexer (it'll also drop Postgres \
-                     database).",
-                    self.database
-                ),
-                _ => err,
-            })
+    /// The database being gone, rather than the request being wrong, is told
+    /// off the answer to a read the resume had to make anyway: nothing probes
+    /// the server's catalog for it. No schema of ours survives without it.
+    fn reinitialize_if_gone(&self, err: anyhow::Error) -> anyhow::Error {
+        match clickhouse_error_code(&format!("{err:#}")) {
+            Some(81) => anyhow!(
+                "ClickHouse storage database \"{}\" not found. Please run \
+                 'envio start -r' to reinitialize the indexer (it'll also drop Postgres \
+                 database).",
+                self.database
+            ),
+            _ => err,
+        }
     }
 
-    async fn resume_steps(
+    async fn resume_inner(
         &self,
         checkpoint_id: &str,
         chain_progress: &[ChainProgressInput],
@@ -750,7 +742,8 @@ impl ClickHouseSink {
         digits_only(checkpoint_id, "a checkpoint id")?;
         let checkpoint_id = &self
             .safe_checkpoint_id(checkpoint_id, chain_progress)
-            .await?;
+            .await
+            .map_err(|err| self.reinitialize_if_gone(err))?;
 
         // The tables are the ones this schema owns, passed in rather than
         // discovered: a history table no entity claims is one an older schema
@@ -762,34 +755,53 @@ impl ClickHouseSink {
                 &self.history,
                 checkpoint_id,
             ))
-            .await?;
+            .await
+            .map_err(|err| self.reinitialize_if_gone(err))?;
         // TabSeparated, one `name<TAB>count` per table, in whatever order the
-        // server answers the branches.
-        let holding_rows: std::collections::HashSet<&str> = above
+        // server answers the branches. The shape is fully known here, so
+        // anything else is an answer to refuse rather than a table to skip:
+        // a skipped trim leaves rolled-back rows visible.
+        let above: HashMap<&str, u64> = above
             .lines()
-            .filter_map(|line| line.trim().split_once('\t'))
-            .filter(|(_, count)| count.trim().parse::<u64>().unwrap_or_default() > 0)
-            .map(|(name, _)| name)
-            .collect();
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let (name, count) = line
+                    .split_once('\t')
+                    .with_context(|| format!("Unexpected row count answer {line:?}"))?;
+                let count = count
+                    .trim()
+                    .parse()
+                    .with_context(|| format!("Unexpected row count answer {line:?}"))?;
+                Ok((name.trim(), count))
+            })
+            .collect::<Result<_>>()?;
+        let holds_rows = |table: &str| -> Result<bool> {
+            above
+                .get(table)
+                .map(|count| *count > 0)
+                .with_context(|| format!("No row count answered for table {table}"))
+        };
 
-        futures_util::future::try_join_all(
-            history_tables
-                .iter()
-                .filter(|table| holding_rows.contains(table.as_str()))
-                .map(|table| {
-                    self.post_statement(ddl::trim_history_table(
-                        &self.database,
-                        table,
-                        &self.history,
-                        checkpoint_id,
-                    ))
-                }),
-        )
+        let mut to_trim = Vec::new();
+        for table in history_tables {
+            if holds_rows(table)? {
+                to_trim.push(table);
+            }
+        }
+        futures_util::future::try_join_all(to_trim.into_iter().map(|table| {
+            self.post_statement(ddl::trim_history_table(
+                &self.database,
+                table,
+                &self.history,
+                checkpoint_id,
+            ))
+        }))
         .await?;
 
         // Last, so that a resume interrupted before this point still has the
         // checkpoints proving which history rows the next one must remove.
-        if holding_rows.contains(self.history.checkpoints_table.as_str()) {
+        if holds_rows(&self.history.checkpoints_table)? {
             self.post_statement(ddl::trim_checkpoints(
                 &self.database,
                 &self.history,
@@ -1184,31 +1196,10 @@ mod tests {
         );
     }
 
-    /// Answers a resume's two reads: the safe-checkpoint calculation, and the
-    /// per-table count of rows above it. Every named table reports a row above
-    /// the line, so each is expected to be trimmed.
-    fn resume_answers(tables: &[&str]) -> Arc<mock_server::StatementFn> {
-        resume_answers_with(tables, "0")
-    }
-
-    /// `first_uncovered` is what the checkpoints table answers for the first
-    /// checkpoint past a chain's recorded progress: `0` for none.
-    fn resume_answers_with(
-        tables: &[&str],
-        first_uncovered: &str,
-    ) -> Arc<mock_server::StatementFn> {
-        let counts: Vec<(&str, u64)> = tables
-            .iter()
-            .copied()
-            .chain(std::iter::once("envio_checkpoints"))
-            .map(|table| (table, 1))
-            .collect();
-        resume_answers_counting(first_uncovered, &counts)
-    }
-
-    /// Answers the row counts verbatim, for the cases that turn on which tables
-    /// hold anything above the checkpoint.
-    fn resume_answers_counting(
+    /// Answers a resume's two reads: `first_uncovered` for the safe-checkpoint
+    /// calculation (`0` when no checkpoint lies past a chain's recorded
+    /// progress), and `counts` for the rows each table holds above it.
+    fn resume_answers(
         first_uncovered: &str,
         counts: &[(&str, u64)],
     ) -> Arc<mock_server::StatementFn> {
@@ -1234,10 +1225,6 @@ mod tests {
             chain_id: chain_id.to_string(),
             progress_block_number,
         }
-    }
-
-    fn history_tables(tables: &[&str]) -> Vec<String> {
-        tables.iter().map(|table| table.to_string()).collect()
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1319,17 +1306,21 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_trims_every_history_table_and_then_the_checkpoints() {
-        let server = mock_server::MockClickHouse::answering_statements(resume_answers(&[
-            "envio_history_a",
-            "envio_history_b",
-        ]))
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0",
+            &[
+                ("envio_history_a", 1),
+                ("envio_history_b", 1),
+                ("envio_checkpoints", 1),
+            ],
+        ))
         .await;
         let sink = sink_for(&server, 4);
 
         sink.resume(
             "42".to_string(),
             Vec::new(),
-            history_tables(&["envio_history_a", "envio_history_b"]),
+            vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
         )
         .await
         .unwrap();
@@ -1363,15 +1354,17 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_reads_nothing_out_of_the_servers_catalog() {
-        let server =
-            mock_server::MockClickHouse::answering_statements(resume_answers(&["envio_history_a"]))
-                .await;
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0",
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
         let sink = sink_for(&server, 4);
 
         sink.resume(
             "42".to_string(),
             Vec::new(),
-            history_tables(&["envio_history_a"]),
+            vec!["envio_history_a".to_string()],
         )
         .await
         .unwrap();
@@ -1389,7 +1382,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_with_nothing_above_the_checkpoint_rewrites_no_parts() {
-        let server = mock_server::MockClickHouse::answering_statements(resume_answers_counting(
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
             "0",
             &[
                 ("envio_history_a", 0),
@@ -1403,7 +1396,7 @@ mod tests {
         sink.resume(
             "42".to_string(),
             Vec::new(),
-            history_tables(&["envio_history_a", "envio_history_b"]),
+            vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
         )
         .await
         .unwrap();
@@ -1422,8 +1415,43 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_refuses_a_row_count_answer_missing_one_of_its_tables() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0",
+            &[("envio_history_a", 0), ("envio_checkpoints", 0)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        let err = sink
+            .resume(
+                "42".to_string(),
+                Vec::new(),
+                vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
+            )
+            .await
+            .unwrap_err();
+
+        let statements = server.statements_seen();
+        assert_eq!(
+            (
+                err.reason.clone(),
+                statements
+                    .iter()
+                    .filter(|statement| statement.starts_with("ALTER"))
+                    .count()
+            ),
+            (
+                "No row count answered for table envio_history_b".to_string(),
+                0
+            ),
+            "an answer short of a table is refused rather than read as empty, got: {statements:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_trims_only_the_tables_holding_rows_above_the_checkpoint() {
-        let server = mock_server::MockClickHouse::answering_statements(resume_answers_counting(
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
             "0",
             &[
                 ("envio_history_a", 2),
@@ -1437,7 +1465,7 @@ mod tests {
         sink.resume(
             "42".to_string(),
             Vec::new(),
-            history_tables(&["envio_history_a", "envio_history_b"]),
+            vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
         )
         .await
         .unwrap();
@@ -1461,9 +1489,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_during_backfill_keeps_what_each_chains_progress_covers() {
-        let server = mock_server::MockClickHouse::answering_statements(resume_answers_with(
-            &["envio_history_a"],
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
             "7",
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
         ))
         .await;
         let sink = sink_for(&server, 4);
@@ -1472,7 +1500,7 @@ mod tests {
         sink.resume(
             "0".to_string(),
             vec![progress("1", 10), progress("137", -1)],
-            history_tables(&["envio_history_a"]),
+            vec!["envio_history_a".to_string()],
         )
         .await
         .unwrap();
@@ -1509,9 +1537,9 @@ mod tests {
     /// for the first, so progress is what keeps the second one's rows.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_keeps_what_progress_covers_past_the_committed_checkpoint() {
-        let server = mock_server::MockClickHouse::answering_statements(resume_answers_with(
-            &["envio_history_a"],
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
             "99",
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
         ))
         .await;
         let sink = sink_for(&server, 4);
@@ -1519,7 +1547,7 @@ mod tests {
         sink.resume(
             "42".to_string(),
             vec![progress("1", 10)],
-            history_tables(&["envio_history_a"]),
+            vec!["envio_history_a".to_string()],
         )
         .await
         .unwrap();
@@ -1540,9 +1568,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_that_every_chains_progress_covers_trims_to_the_last_checkpoint() {
         // No checkpoint past a chain's progress, and 12 is the highest.
-        let server = mock_server::MockClickHouse::answering_statements(resume_answers_counting(
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
             "0\t12",
-            &[("envio_history_a", 1)],
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
         ))
         .await;
         let sink = sink_for(&server, 4);
@@ -1550,7 +1578,7 @@ mod tests {
         sink.resume(
             "0".to_string(),
             vec![progress("1", 500)],
-            history_tables(&["envio_history_a"]),
+            vec!["envio_history_a".to_string()],
         )
         .await
         .unwrap();

@@ -101,7 +101,13 @@ let setup = async (~pgSchema, ~fixtures=[], ~sql as client=sql, ~entities=allEnt
     let _ = await sql->Postgres.unsafe(fixtures->Array.getUnsafe(idx))
   }
   if fixtures->Utils.Array.notEmpty {
-    let _ = await storage.resumeInitialState(~entities)
+    let _ = await storage.resumeInitialState(
+      ~entities,
+      ~contractMapping=config.contractMapping,
+      ~envioInfo=JSON.Encode.object(Dict.make()),
+      ~resetCommand="envio dev -r",
+      ~runCommand=None,
+    )
   }
   storage
 }
@@ -217,7 +223,13 @@ describe("Indexes built against a real schema", () => {
     let failure = await sql
     ->Postgres.unsafe(`CREATE UNIQUE INDEX CONCURRENTLY "A_b_id" ON "${pgSchema}"."A"("b_id");`)
     ->catchMessage
-    let _ = await storage.resumeInitialState(~entities)
+    let _ = await storage.resumeInitialState(
+      ~entities,
+      ~contractMapping=config.contractMapping,
+      ~envioInfo=JSON.Encode.object(Dict.make()),
+      ~resetCommand="envio dev -r",
+      ~runCommand=None,
+    )
 
     let leftBehind = await findIndexes(~pgSchema, ~tableName="A", ~columns=["b_id"])
 
@@ -289,10 +301,7 @@ describe("Indexes built against a real schema", () => {
         ],
       ),
     }
-    let storage = await setup(
-      ~pgSchema,
-      ~entities=[entity],
-    )
+    let storage = await setup(~pgSchema, ~entities=[entity])
     let definition = IndexDefinition.single(~tableName, ~column="b_id")
 
     await storage.finalizeBackfill(~entities=[entity], ~chainIds=[], ~readyAt)
@@ -389,11 +398,7 @@ describe("Indexes built against a real schema", () => {
         query->String.includes("CREATE INDEX") &&
         query->String.includes(secondName),
     )
-    let storage = await setup(
-      ~pgSchema,
-      ~sql=flakySql,
-      ~entities=[entity],
-    )
+    let storage = await setup(~pgSchema, ~sql=flakySql, ~entities=[entity])
     let chainIds = config.chainMap->ChainMap.values->Array.map(chain => chain.id)
     let createdIndexNames = async () =>
       (await loadCatalog(pgSchema))

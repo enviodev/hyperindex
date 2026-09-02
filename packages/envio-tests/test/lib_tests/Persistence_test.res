@@ -29,7 +29,13 @@ describe("Test Persistence layer init", () => {
 
     let envioInfo = JSON.Encode.object(Dict.make())
     let p =
-      persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+      persistence->Persistence.init(
+        ~chainConfigs=[],
+        ~contractMapping=ContractMapping.empty,
+        ~envioInfo,
+        ~resetCommand=resetCmd,
+        ~runCommand=runCmd,
+      )
 
     t.expect(
       storageMock.isInitializedCalls,
@@ -92,7 +98,13 @@ describe("Test Persistence layer init", () => {
     // Can resolve the promise now
     await p
 
-    await persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+    await persistence->Persistence.init(
+      ~chainConfigs=[],
+      ~contractMapping=ContractMapping.empty,
+      ~envioInfo,
+      ~resetCommand=resetCmd,
+      ~runCommand=runCmd,
+    )
     t.expect(
       (
         storageMock.isInitializedCalls->Array.length,
@@ -108,7 +120,8 @@ describe("Test Persistence layer init", () => {
         ~chainConfigs=[],
         ~contractMapping=ContractMapping.empty,
         ~envioInfo,
-        ~resetCommand=resetCmd, ~runCommand=runCmd,
+        ~resetCommand=resetCmd,
+        ~runCommand=runCmd,
       )
     t.expect(
       (
@@ -138,12 +151,30 @@ describe("Test Persistence layer init", () => {
     let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
 
     let p =
-      persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+      persistence->Persistence.init(
+        ~chainConfigs=[],
+        ~contractMapping=ContractMapping.empty,
+        ~envioInfo,
+        ~resetCommand=resetCmd,
+        ~runCommand=runCmd,
+      )
     // Additional calls to init should not do anything
     let _ =
-      persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+      persistence->Persistence.init(
+        ~chainConfigs=[],
+        ~contractMapping=ContractMapping.empty,
+        ~envioInfo,
+        ~resetCommand=resetCmd,
+        ~runCommand=runCmd,
+      )
     let _ =
-      persistence->Persistence.init(~chainConfigs=[], ~contractMapping=ContractMapping.empty, ~envioInfo, ~resetCommand=resetCmd, ~runCommand=runCmd)
+      persistence->Persistence.init(
+        ~chainConfigs=[],
+        ~contractMapping=ContractMapping.empty,
+        ~envioInfo,
+        ~resetCommand=resetCmd,
+        ~runCommand=runCmd,
+      )
 
     storageMock.resolveIsInitialized(true)
     // Let resumeInitialState register its resolver.
@@ -177,57 +208,39 @@ Although it should load effect caches metadata.`,
 
   // Drive a single resume whose payload carries `~storedEnvioInfo`, then
   // capture whatever Persistence.init throws.
-  let resumeWith = async (
+  // The message a resume against `~storedEnvioInfo` fails with under the
+  // current config, or `None` when it is allowed through.
+  let resumeWith = (
     ~storedEnvioInfo: option<JSON.t>,
     ~current: JSON.t,
     ~resetCommand=resetCmd,
     ~runCommand=runCmd,
-  ) => {
-    let storageMock = MockStorage.make([#isInitialized, #resumeInitialState])
-    let persistence = Persistence.make(~userEntities=[], ~allEnums=[], ~storage=storageMock.storage)
-    // Attach before resolving the mock: throwIfIncompatible rejects this
-    // promise, and an unattached rejection would surface as unhandled.
-    let settled = (
-      async () =>
-        switch await persistence->Persistence.init(
-          ~chainConfigs=[],
-          ~contractMapping=ContractMapping.empty,
-          ~envioInfo=current,
-          ~resetCommand,
-          ~runCommand,
-        ) {
-        | () => None
-        | exception exn => Some(exn)
-        }
-    )()
-    storageMock.resolveIsInitialized(true)
-    await Utils.delay(0)
-    let initialState: Persistence.initialState = {
-      cleanRun: false,
-      contractMapping: ContractMapping.empty,
-      envioInfo: storedEnvioInfo,
-      chains: [],
-      cache: Dict.make(),
-      reorgCheckpoints: [],
-      checkpointId: 0n,
+    ~hasClickhouse=false,
+  ) =>
+    try {
+      Config.throwIfResumeIncompatible(
+        ~storedEnvioInfo,
+        ~storedContractMapping=ContractMapping.empty,
+        ~envioInfo=current,
+        ~contractMapping=ContractMapping.empty,
+        ~resetCommand,
+        ~runCommand,
+        ~hasClickhouse,
+      )
+      None
+    } catch {
+    | JsExn(e) => Some(e->JsExn.message->Option.getOr(""))
     }
-    storageMock.resolveLoadInitialState(initialState)
 
-    let raised = await settled
-    let message = switch raised {
-    | Some(JsExn(e)) => e->JsExn.message->Option.getOr("")
-    | _ => ""
-    }
-    (raised, message, storageMock)
-  }
-
-  Async.it("Throws version-mismatch incompat error when the stored config is unreadable", async t => {
-    let (_, message, _) = await resumeWith(
-      ~storedEnvioInfo=None,
-      ~current=JSON.parseOrThrow(`{"name": "demo"}`),
-    )
-    t.expect(message, ~message="full incompat message with older-version bullet").toBe(
-      `The following config changes are incompatible with the existing indexer data:
+  Async.it(
+    "Throws version-mismatch incompat error when the stored config is unreadable",
+    async t => {
+      let message = resumeWith(
+        ~storedEnvioInfo=None,
+        ~current=JSON.parseOrThrow(`{"name": "demo"}`),
+      )
+      t.expect(message, ~message="full incompat message with older-version bullet").toEqual(
+        Some(`The following config changes are incompatible with the existing indexer data:
 
     - storage was initialized by an older envio version
 
@@ -237,16 +250,17 @@ Pick one:
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`,
-    )
-  })
+       envio dev`),
+      )
+    },
+  )
 
   Async.it("Throws on resume when stored envio_info diverges from the current config", async t => {
     let stored = JSON.parseOrThrow(`{"name": "old", "evm": {}}`)
     let current = JSON.parseOrThrow(`{"name": "new", "evm": {}}`)
-    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(message, ~message="full incompat message naming the diverged path").toBe(
-      `The following config changes are incompatible with the existing indexer data:
+    let message = resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="full incompat message naming the diverged path").toEqual(
+      Some(`The following config changes are incompatible with the existing indexer data:
 
     - name
 
@@ -256,16 +270,16 @@ Pick one:
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`,
+       envio dev`),
     )
   })
 
   Async.it("Throws naming chains.<id> when a new chain is added", async t => {
     let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}}`)
     let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}}}`)
-    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(message, ~message="full incompat message naming the new chain key").toBe(
-      `The following config changes are incompatible with the existing indexer data:
+    let message = resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="full incompat message naming the new chain key").toEqual(
+      Some(`The following config changes are incompatible with the existing indexer data:
 
     - evm.chains.10
 
@@ -275,16 +289,16 @@ Pick one:
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`,
+       envio dev`),
     )
   })
 
   Async.it("Throws naming chains.<id> when an existing chain is removed", async t => {
     let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}, "10": {"id": 10}}}}`)
     let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}}`)
-    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(message, ~message="full incompat message naming the removed chain key").toBe(
-      `The following config changes are incompatible with the existing indexer data:
+    let message = resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="full incompat message naming the removed chain key").toEqual(
+      Some(`The following config changes are incompatible with the existing indexer data:
 
     - evm.chains.10
 
@@ -294,16 +308,16 @@ Pick one:
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`,
+       envio dev`),
     )
   })
 
   Async.it("Priority: name+entities diff → only name bullet shown", async t => {
     let stored = JSON.parseOrThrow(`{"name": "old", "entities": [{"name": "A"}]}`)
     let current = JSON.parseOrThrow(`{"name": "new", "entities": [{"name": "B"}]}`)
-    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(message, ~message="entities tier suppressed when name differs").toBe(
-      `The following config changes are incompatible with the existing indexer data:
+    let message = resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="entities tier suppressed when name differs").toEqual(
+      Some(`The following config changes are incompatible with the existing indexer data:
 
     - name
 
@@ -313,16 +327,16 @@ Pick one:
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`,
+       envio dev`),
     )
   })
 
   Async.it("Priority: storage+evm diff → only storage bullets shown", async t => {
     let stored = JSON.parseOrThrow(`{"storage": {"a": 1}, "evm": {"chains": {"1": {"id": 1}}}}`)
     let current = JSON.parseOrThrow(`{"storage": {"a": 2}, "evm": {"chains": {"1": {"id": 2}}}}`)
-    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(message, ~message="evm tier suppressed when storage differs").toBe(
-      `The following config changes are incompatible with the existing indexer data:
+    let message = resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="evm tier suppressed when storage differs").toEqual(
+      Some(`The following config changes are incompatible with the existing indexer data:
 
     - storage.a
 
@@ -332,20 +346,16 @@ Pick one:
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`,
+       envio dev`),
     )
   })
 
   Async.it("Priority: evm+entities diff → only evm bullets shown", async t => {
-    let stored = JSON.parseOrThrow(
-      `{"evm": {"chains": {"1": {"id": 1}}}, "entities": [{"name": "A"}]}`,
-    )
-    let current = JSON.parseOrThrow(
-      `{"evm": {"chains": {"1": {"id": 2}}}, "entities": [{"name": "B"}]}`,
-    )
-    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(message, ~message="entities tier suppressed when evm differs").toBe(
-      `The following config changes are incompatible with the existing indexer data:
+    let stored = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 1}}}, "entities": [{"name": "A"}]}`)
+    let current = JSON.parseOrThrow(`{"evm": {"chains": {"1": {"id": 2}}}, "entities": [{"name": "B"}]}`)
+    let message = resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(message, ~message="entities tier suppressed when evm differs").toEqual(
+      Some(`The following config changes are incompatible with the existing indexer data:
 
     - evm.chains.1.id
 
@@ -355,7 +365,7 @@ Pick one:
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`,
+       envio dev`),
     )
   })
 
@@ -376,12 +386,12 @@ Pick one:
         "fuel": {"chains": {"1": {"id": 1}}},
         "entities": [{"name": "B"}, {"name": "C"}]
       }`)
-      let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
+      let message = resumeWith(~storedEnvioInfo=Some(stored), ~current)
       t.expect(
         message,
         ~message="lower tiers (name/storage/ecosystem/entities) suppressed by version diff",
-      ).toBe(
-        `The following config changes are incompatible with the existing indexer data:
+      ).toEqual(
+        Some(`The following config changes are incompatible with the existing indexer data:
 
     - version
 
@@ -391,7 +401,7 @@ Pick one:
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`,
+       envio dev`),
       )
     },
   )
@@ -399,9 +409,12 @@ Pick one:
   Async.it("Fallback: unknown top-level keys are rendered when no known tier differs", async t => {
     let stored = JSON.parseOrThrow(`{"name": "x", "customA": 1, "customB": {"k": 1}}`)
     let current = JSON.parseOrThrow(`{"name": "x", "customA": 2, "customB": {"k": 2}}`)
-    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(message, ~message="extras fallback lists unknown top-level keys in sorted order").toBe(
-      `The following config changes are incompatible with the existing indexer data:
+    let message = resumeWith(~storedEnvioInfo=Some(stored), ~current)
+    t.expect(
+      message,
+      ~message="extras fallback lists unknown top-level keys in sorted order",
+    ).toEqual(
+      Some(`The following config changes are incompatible with the existing indexer data:
 
     - customA
     - customB.k
@@ -412,36 +425,36 @@ Pick one:
   3. Run a second indexer alongside this one — keep both datasets:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`,
+       envio dev`),
     )
   })
 
   Async.it("Migrate flow: option 3 hidden, option 2 shows db-migrate setup", async t => {
     let stored = JSON.parseOrThrow(`{"name": "old"}`)
     let current = JSON.parseOrThrow(`{"name": "new"}`)
-    let (_, message, _) = await resumeWith(
+    let message = resumeWith(
       ~storedEnvioInfo=Some(stored),
       ~current,
       ~resetCommand="envio local db-migrate setup",
       ~runCommand=None,
     )
-    t.expect(message, ~message="migrate context: no option 3, option 2 is setup command").toBe(
-      `The following config changes are incompatible with the existing indexer data:
+    t.expect(message, ~message="migrate context: no option 3, option 2 is setup command").toEqual(
+      Some(`The following config changes are incompatible with the existing indexer data:
 
     - name
 
 Pick one:
   1. Revert the changes above      # resume indexing where it left off
-  2. envio local db-migrate setup  # delete all indexed data and start over`,
+  2. envio local db-migrate setup  # delete all indexed data and start over`),
     )
   })
 
   Async.it("Clickhouse: option 3 includes ENVIO_CLICKHOUSE_DATABASE line", async t => {
-    let stored = JSON.parseOrThrow(`{"name": "old", "storage": {"clickhouse": true}}`)
-    let current = JSON.parseOrThrow(`{"name": "new", "storage": {"clickhouse": true}}`)
-    let (_, message, _) = await resumeWith(~storedEnvioInfo=Some(stored), ~current)
-    t.expect(message, ~message="clickhouse env var line shown when storage.clickhouse set").toBe(
-      `The following config changes are incompatible with the existing indexer data:
+    let stored = JSON.parseOrThrow(`{"name": "old"}`)
+    let current = JSON.parseOrThrow(`{"name": "new"}`)
+    let message = resumeWith(~storedEnvioInfo=Some(stored), ~current, ~hasClickhouse=true)
+    t.expect(message, ~message="clickhouse env var line shown when storage.clickhouse set").toEqual(
+      Some(`The following config changes are incompatible with the existing indexer data:
 
     - name
 
@@ -452,7 +465,7 @@ Pick one:
        ENVIO_PG_SCHEMA=<new_schema> \\
        ENVIO_CLICKHOUSE_DATABASE=<new_db> \\
        ENVIO_INDEXER_PORT=<new_port> \\
-       envio dev`,
+       envio dev`),
     )
   })
 
@@ -476,13 +489,9 @@ Pick one:
         }}}
       }`),
     )
-    let (raised, _message, storageMock) = await resumeWith(
-      ~storedEnvioInfo=Some(stored),
-      ~current,
-    )
     t.expect(
-      (raised, storageMock.resumeInitialStateCalls->Array.length),
-      ~message="rpc/hypersync edits should not throw and resumeInitialState runs once",
-    ).toEqual((None, 1))
+      resumeWith(~storedEnvioInfo=Some(stored), ~current),
+      ~message="rpc/hypersync edits should not throw",
+    ).toEqual(None)
   })
 })

@@ -1594,6 +1594,9 @@ let rollbackRemovedIdSchema: Table.table => S.t<EntityId.t> = Utils.WeakMap.memo
   S.object(s => s.field(Table.idFieldName, table->Table.getIdSchema))
 )
 
+let clickHouseEntities = (entities: array<Internal.entityConfig>) =>
+  entities->Array.filter(e => e.storage.clickhouse)
+
 let make = (
   ~sql: Postgres.sql,
   ~pgHost,
@@ -1807,7 +1810,7 @@ let make = (
     // opted into Postgres; the sink mirrors only those that opted into
     // ClickHouse.
     let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
-    let chEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.clickhouse)
+    let chEntities = clickHouseEntities(entities)
 
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
       makeSchemaTableNamesQuery(~pgSchema),
@@ -2300,8 +2303,20 @@ let make = (
     }
   }
 
-  let resumeInitialState = async (~entities): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints, (envioInfo, contractMapping)) = await Promise.all5((
+  let resumeInitialState = async (
+    ~entities,
+    ~contractMapping,
+    ~envioInfo,
+    ~resetCommand,
+    ~runCommand,
+  ): Persistence.initialState => {
+    let (
+      cache,
+      chains,
+      checkpointIdResult,
+      reorgCheckpoints,
+      (storedEnvioInfo, storedContractMapping),
+    ) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
@@ -2349,6 +2364,19 @@ let make = (
       ),
     ))
 
+    // Decided off what Postgres stored, ahead of the sink: a resume the config
+    // rules out has to be reported as such rather than as ClickHouse tripping
+    // over a table the changed schema names and it never created.
+    Config.throwIfResumeIncompatible(
+      ~storedEnvioInfo,
+      ~storedContractMapping,
+      ~envioInfo,
+      ~contractMapping,
+      ~resetCommand,
+      ~runCommand,
+      ~hasClickhouse=sink->Option.isSome,
+    )
+
     await reloadIndexCatalog()
 
     let checkpointId = (checkpointIdResult->Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
@@ -2364,11 +2392,7 @@ let make = (
     // Resume sink if present - needed to rollback any reorg changes
     switch sink {
     | Some(sink) =>
-      await sink.resume(
-        ~checkpointId,
-        ~chains,
-        ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.clickhouse),
-      )
+      await sink.resume(~checkpointId, ~chains, ~entities=clickHouseEntities(entities))
     | None => ()
     }
 
@@ -2378,8 +2402,8 @@ let make = (
       cache,
       chains,
       checkpointId,
-      contractMapping,
-      envioInfo,
+      contractMapping: storedContractMapping,
+      envioInfo: storedEnvioInfo,
     }
   }
 

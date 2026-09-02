@@ -384,11 +384,10 @@ let resume = async (
     ClickHouseSink.chainId: chain.id->ChainId.toString,
     progressBlockNumber: chain.progressBlockNumber,
   })
-  // The tables this schema owns. One left behind by an older schema is not ours
-  // to trim, and a schema change means a resync.
-  let historyTables = entities->Array.map(entityConfig =>
-    EntityHistory.historyTableName(~entityName=entityConfig.name, ~entityIndex=entityConfig.index)
-  )
+  let historyTables =
+    entities->Array.map(entityConfig =>
+      EntityHistory.historyTableName(~entityName=entityConfig.name, ~entityIndex=entityConfig.index)
+    )
   try await sink->ClickHouseSink.resume(
     checkpointId->BigInt.toString,
     chainProgress,

@@ -1333,6 +1333,27 @@ let throwIfIncompatible = (
   }
 }
 
+// Whether the indexer state a storage holds can be resumed against the
+// current config. `~hasClickhouse` is whether a ClickHouse sink is attached.
+let throwIfResumeIncompatible = (
+  ~storedEnvioInfo: option<JSON.t>,
+  ~storedContractMapping: ContractMapping.t,
+  ~envioInfo: JSON.t,
+  ~contractMapping: ContractMapping.t,
+  ~resetCommand: string,
+  ~runCommand: option<string>,
+  ~hasClickhouse: bool,
+) => {
+  let changedPaths = switch storedEnvioInfo {
+  | None => ["storage was initialized by an older envio version"]
+  | Some(stored) => diffPaths(~stored, ~current=envioInfo)
+  }
+  throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
+  if !(storedContractMapping->ContractMapping.isEqual(contractMapping)) {
+    throwIfIncompatible(["contracts"], ~resetCommand, ~runCommand, ~hasClickhouse)
+  }
+}
+
 // The returned value is a pure function of the JSON: it holds only event
 // definitions, never handler/contractRegister/where state (that's layered on
 // separately as `HandlerRegister.registrationsByChainId`). That purity is

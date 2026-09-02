@@ -337,13 +337,6 @@ pub fn insert_query(
     )
 }
 
-/// Trims one history table's rows past the checkpoint being resumed from.
-///
-/// `ALTER ... DELETE` schedules a mutation rather than running one, so without
-/// `mutations_sync` the statement returns while the rows are still there and
-/// resume would report a rewind it has only asked for. Waiting for every
-/// replica (`2`) is what makes the storage actually be at the checkpoint by the
-/// time the indexer starts writing again.
 /// One read that answers, for every table a resume could trim, how many rows sit
 /// above the checkpoint it trims to. A table answering zero needs no mutation,
 /// and on a clean restart every one of them does — which is what keeps a resume
@@ -377,6 +370,13 @@ pub fn rows_above_checkpoint(
     )
 }
 
+/// Trims one history table's rows past the checkpoint being resumed from.
+///
+/// `ALTER ... DELETE` schedules a mutation rather than running one, so without
+/// `mutations_sync` the statement returns while the rows are still there and
+/// resume would report a rewind it has only asked for. Waiting for every
+/// replica (`2`) is what makes the storage actually be at the checkpoint by the
+/// time the indexer starts writing again.
 pub fn trim_history_table(
     database: &str,
     table: &str,

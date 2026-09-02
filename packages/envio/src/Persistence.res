@@ -108,7 +108,15 @@ type storage = {
     ~contractMapping: ContractMapping.t,
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
-  resumeInitialState: (~entities: array<Internal.entityConfig>) => promise<initialState>,
+  // Refuses, before touching any storage, a config the stored one can't be
+  // resumed against.
+  resumeInitialState: (
+    ~entities: array<Internal.entityConfig>,
+    ~contractMapping: ContractMapping.t,
+    ~envioInfo: JSON.t,
+    ~resetCommand: string,
+    ~runCommand: option<string>,
+  ) => promise<initialState>,
   // Returns rows matching the filter.
   // Field values are serialized and rows parsed with the table's field schemas.
   @raises("StorageError")
@@ -273,27 +281,11 @@ let init = {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
           let initialState = await persistence.storage.resumeInitialState(
             ~entities=persistence.allEntities,
+            ~contractMapping,
+            ~envioInfo,
+            ~resetCommand,
+            ~runCommand,
           )
-          let changedPaths = switch initialState.envioInfo {
-          | None => ["storage was initialized by an older envio version"]
-          | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
-          }
-          let hasClickhouse = switch envioInfo {
-          | Object(d) =>
-            switch d->Dict.get("storage") {
-            | Some(Object(s)) =>
-              switch s->Dict.get("clickhouse") {
-              | Some(Boolean(true)) => true
-              | _ => false
-              }
-            | _ => false
-            }
-          | _ => false
-          }
-          Config.throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
-          if !(initialState.contractMapping->ContractMapping.isEqual(contractMapping)) {
-            Config.throwIfIncompatible(["contracts"], ~resetCommand, ~runCommand, ~hasClickhouse)
-          }
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {
