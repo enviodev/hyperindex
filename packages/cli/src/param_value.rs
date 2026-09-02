@@ -1,6 +1,6 @@
 use std::ffi::CString;
 
-use napi::bindgen_prelude::{BigInt, FromNapiValue, Null, ToNapiValue};
+use napi::bindgen_prelude::{BigInt, FromNapiValue, Null, ToNapiValue, Uint8Array};
 
 /// A decoded parameter tree crossing the napi boundary as real JS values, so
 /// wide integers arrive as `bigint` instead of decimal strings.
@@ -14,6 +14,7 @@ pub enum ParamValue {
     },
     Num(f64),
     Str(String),
+    Bytes(Vec<u8>),
     Arr(Vec<ParamValue>),
     Obj(Vec<(String, ParamValue)>),
     Null,
@@ -59,6 +60,7 @@ impl ToNapiValue for ParamValue {
             }
             ParamValue::Num(v) => f64::to_napi_value(raw_env, v),
             ParamValue::Str(v) => String::to_napi_value(raw_env, v),
+            ParamValue::Bytes(v) => Uint8Array::to_napi_value(raw_env, Uint8Array::from(v)),
             ParamValue::Arr(items) => Vec::<ParamValue>::to_napi_value(raw_env, items),
             ParamValue::Obj(entries) => {
                 let mut obj = std::ptr::null_mut();

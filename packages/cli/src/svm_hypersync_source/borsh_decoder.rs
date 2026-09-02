@@ -135,8 +135,11 @@ fn value_to_param(
         SvmFieldType::I64 | SvmFieldType::I128 => {
             ParamValue::from_i128(value.as_str()?.parse().ok()?)
         }
-        SvmFieldType::String | SvmFieldType::Bytes | SvmFieldType::Pubkey => {
-            ParamValue::Str(value.as_str()?.to_string())
+        SvmFieldType::String | SvmFieldType::Pubkey => ParamValue::Str(value.as_str()?.to_string()),
+        // The upstream decoder renders `bytes` as `0x` hex; undo that so
+        // handlers get the raw bytes.
+        SvmFieldType::Bytes => {
+            ParamValue::Bytes(crate::hex::decode_prefixed(value.as_str()?, "bytes").ok()?)
         }
         SvmFieldType::Option(inner) => match value {
             Value::Null => ParamValue::Null,
@@ -379,6 +382,30 @@ mod tests {
                 ("maxU128", ParamValue::from_u128(u128::MAX)),
                 ("negI64", ParamValue::from_i128(-2)),
                 ("negI128", ParamValue::from_i128(-(1i128 << 100))),
+            ]))
+        );
+    }
+
+    // Borsh `bytes` reaches handlers as a Uint8Array, not a hex string:
+    // Solana tooling takes raw bytes and nothing on that side speaks hex.
+    #[test]
+    fn bytes_decode_as_raw_bytes() {
+        let schema = schema_of(
+            r#"[
+                {"name":"payload","type":"bytes"},
+                {"name":"empty","type":"bytes"}
+            ]"#,
+            "{}",
+        );
+        let mut data = vec![0x01];
+        data.extend_from_slice(&3u32.to_le_bytes());
+        data.extend_from_slice(&[0xde, 0xad, 0x00]);
+        data.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(
+            decode_with_schema(&schema, &instruction_with_data(data)),
+            Decoded::Args(obj(vec![
+                ("payload", ParamValue::Bytes(vec![0xde, 0xad, 0x00])),
+                ("empty", ParamValue::Bytes(vec![])),
             ]))
         );
     }

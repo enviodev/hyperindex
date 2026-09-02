@@ -2577,7 +2577,7 @@ struct ConfigBodies<'a> {
 /// - sub-64-bit integers / floats → `number`
 /// - 64-/128-bit integers → `bigint`
 /// - pubkey + `[u8; 32]` → `string` (base58)
-/// - `Vec<u8>` (Borsh `bytes`) → `string` (hex)
+/// - Borsh `bytes` → `Uint8Array`
 fn field_type_to_ts_type(
     ty: &hypersync_client_solana::decode::FieldType,
     defined_types: &std::collections::BTreeMap<String, hypersync_client_solana::decode::FieldType>,
@@ -2588,7 +2588,8 @@ fn field_type_to_ts_type(
         F::Bool => "boolean".to_string(),
         F::U8 | F::U16 | F::U32 | F::I8 | F::I16 | F::I32 | F::F32 | F::F64 => "number".to_string(),
         F::U64 | F::U128 | F::I64 | F::I128 => "bigint".to_string(),
-        F::String | F::Bytes | F::Pubkey => "string".to_string(),
+        F::String | F::Pubkey => "string".to_string(),
+        F::Bytes => "Uint8Array".to_string(),
         F::Option(inner) => format!(
             "({}) | null",
             field_type_to_ts_type(inner, defined_types, seen)
@@ -3627,6 +3628,22 @@ type GlobalCounter @crossChain {
         assert!(
             !project_template.envio_types_dts.contains("readonly block:"),
             "SVM program table must not emit block"
+        );
+    }
+
+    #[test]
+    fn svm_bytes_arg_types_as_uint8array() {
+        use hypersync_client_solana::decode::FieldType as F;
+        let defined = std::collections::BTreeMap::new();
+        let rendered = [
+            F::Bytes,
+            F::Option(Box::new(F::Bytes)),
+            F::Vec(Box::new(F::Bytes)),
+        ]
+        .map(|ty| field_type_to_ts_type(&ty, &defined, &mut Vec::new()));
+        assert_eq!(
+            rendered,
+            ["Uint8Array", "(Uint8Array) | null", "(Uint8Array)[]"]
         );
     }
 
