@@ -2577,7 +2577,7 @@ struct ConfigBodies<'a> {
 /// - sub-64-bit integers / floats → `number`
 /// - 64-/128-bit integers → `bigint`
 /// - pubkey + `[u8; 32]` → `string` (base58)
-/// - Borsh `bytes` → `Uint8Array`
+/// - Borsh `bytes`, `vec<u8>`, `[u8; N]` (N ≠ 32) → `Uint8Array`
 fn field_type_to_ts_type(
     ty: &hypersync_client_solana::decode::FieldType,
     defined_types: &std::collections::BTreeMap<String, hypersync_client_solana::decode::FieldType>,
@@ -2594,13 +2594,14 @@ fn field_type_to_ts_type(
             "({}) | null",
             field_type_to_ts_type(inner, defined_types, seen)
         ),
-        F::Vec(inner) => format!("({})[]", field_type_to_ts_type(inner, defined_types, seen)),
-        F::Array { ty: inner, len } => {
-            if matches!(**inner, F::U8) && *len == 32 {
-                "string".to_string()
-            } else {
-                format!("({})[]", field_type_to_ts_type(inner, defined_types, seen))
-            }
+        F::Array { ty: inner, len } if matches!(**inner, F::U8) && *len == 32 => {
+            "string".to_string()
+        }
+        F::Vec(inner) | F::Array { ty: inner, .. } if matches!(**inner, F::U8) => {
+            "Uint8Array".to_string()
+        }
+        F::Vec(inner) | F::Array { ty: inner, .. } => {
+            format!("({})[]", field_type_to_ts_type(inner, defined_types, seen))
         }
         F::Struct(fields) => {
             let body = fields
@@ -3639,11 +3640,32 @@ type GlobalCounter @crossChain {
             F::Bytes,
             F::Option(Box::new(F::Bytes)),
             F::Vec(Box::new(F::Bytes)),
+            F::Vec(Box::new(F::U8)),
+            F::Array {
+                ty: Box::new(F::U8),
+                len: 4,
+            },
+            F::Array {
+                ty: Box::new(F::U8),
+                len: 32,
+            },
+            F::Array {
+                ty: Box::new(F::U16),
+                len: 2,
+            },
         ]
         .map(|ty| field_type_to_ts_type(&ty, &defined, &mut Vec::new()));
         assert_eq!(
             rendered,
-            ["Uint8Array", "(Uint8Array) | null", "(Uint8Array)[]"]
+            [
+                "Uint8Array",
+                "(Uint8Array) | null",
+                "(Uint8Array)[]",
+                "Uint8Array",
+                "Uint8Array",
+                "string",
+                "(number)[]",
+            ]
         );
     }
 

@@ -151,6 +151,19 @@ fn value_to_param(
             // `[u8; 32]` decodes as a base58 string (treated as a pubkey).
             ParamValue::Str(value.as_str()?.to_string())
         }
+        SvmFieldType::Vec(inner) | SvmFieldType::Array { ty: inner, .. }
+            if matches!(**inner, SvmFieldType::U8) =>
+        {
+            let Value::Array(items) = value else {
+                return None;
+            };
+            ParamValue::Bytes(
+                items
+                    .into_iter()
+                    .map(|item| u8::try_from(item.as_u64()?).ok())
+                    .collect::<Option<_>>()?,
+            )
+        }
         SvmFieldType::Vec(inner) | SvmFieldType::Array { ty: inner, .. } => {
             let Value::Array(items) = value else {
                 return None;
@@ -406,6 +419,44 @@ mod tests {
             Decoded::Args(obj(vec![
                 ("payload", ParamValue::Bytes(vec![0xde, 0xad, 0x00])),
                 ("empty", ParamValue::Bytes(vec![])),
+            ]))
+        );
+    }
+
+    // `vec<u8>` is byte-for-byte the same wire format as `bytes`, and a
+    // fixed `[u8; N]` is a blob too, so neither may come back as `number[]`.
+    #[test]
+    fn u8_sequences_decode_as_raw_bytes() {
+        let schema = schema_of(
+            r#"[
+                {"name":"vec","type":{"vec":"u8"}},
+                {"name":"fixed","type":{"array":["u8",4]}},
+                {"name":"nested","type":{"vec":{"array":["u8",2]}}},
+                {"name":"notBytes","type":{"array":["u16",2]}}
+            ]"#,
+            "{}",
+        );
+        let mut data = vec![0x01];
+        data.extend_from_slice(&2u32.to_le_bytes());
+        data.extend_from_slice(&[0xff, 0x00]);
+        data.extend_from_slice(&[1, 2, 3, 4]);
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&[9, 8]);
+        data.extend_from_slice(&7u16.to_le_bytes());
+        data.extend_from_slice(&8u16.to_le_bytes());
+        assert_eq!(
+            decode_with_schema(&schema, &instruction_with_data(data)),
+            Decoded::Args(obj(vec![
+                ("vec", ParamValue::Bytes(vec![0xff, 0x00])),
+                ("fixed", ParamValue::Bytes(vec![1, 2, 3, 4])),
+                (
+                    "nested",
+                    ParamValue::Arr(vec![ParamValue::Bytes(vec![9, 8])])
+                ),
+                (
+                    "notBytes",
+                    ParamValue::Arr(vec![ParamValue::Num(7.0), ParamValue::Num(8.0)])
+                ),
             ]))
         );
     }
