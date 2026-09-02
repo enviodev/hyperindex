@@ -181,7 +181,7 @@ fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
         ChType::Bool => (0, 1),
         ChType::UInt32 => (0, u32::MAX as i128),
         ChType::UInt64 => (0, u64::MAX as i128),
-        ChType::DateTime64 => (i64::MIN as i128, i64::MAX as i128),
+        ChType::DateTime64 => (DATETIME64_MIN_MS, DATETIME64_MAX_MS),
         ChType::Decimal { precision, .. } => {
             let limit = POW10
                 .get(*precision as usize)
@@ -200,9 +200,45 @@ fn int_bounds(ch_type: &ChType) -> Result<(i128, i128)> {
     })
 }
 
+/// The column's Int64 tick holds far more than the dates ClickHouse gives
+/// meaning to: outside 1900-01-01..2299-12-31 the server stores the tick as
+/// given and its date functions read it back as some other date.
+const DATETIME64_MIN_MS: i128 = -2_208_988_800_000;
+const DATETIME64_MAX_MS: i128 = 10_413_791_999_999;
+
+fn iso_millis(ticks: i64) -> String {
+    let days = ticks.div_euclid(86_400_000);
+    let ms = ticks.rem_euclid(86_400_000);
+    // Days since 1970-01-01 to a civil date, via a 400-year era whose day
+    // count is fixed; March-based so leap days fall at the end of the year.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
+        ms / 3_600_000,
+        ms / 60_000 % 60,
+        ms / 1000 % 60,
+        ms % 1000
+    )
+}
+
 fn put_int(out: &mut Vec<u8>, value: i128, ch_type: &ChType) -> Result<()> {
     let (min, max) = int_bounds(ch_type)?;
     if value < min || value > max {
+        if let (ChType::DateTime64, Ok(ticks)) = (ch_type, i64::try_from(value)) {
+            bail!(
+                "{} is outside the range a DateTime64 column can hold, 1900-01-01 through \
+                 2299-12-31",
+                iso_millis(ticks)
+            );
+        }
         bail!("{value} is out of range for a {ch_type:?} column");
     }
     put_int_raw(out, value, fixed_width(ch_type)?);
@@ -849,6 +885,44 @@ mod tests {
         )
         .unwrap();
         assert_eq!(encoded.body, 1234567890123i64.to_le_bytes().to_vec());
+    }
+
+    // RowBinary takes any Int64 tick, and ClickHouse stores one past its range
+    // without complaint; the date it then reads back is a different one.
+    #[test]
+    fn rejects_a_date_outside_what_datetime64_represents() {
+        let refused: Vec<String> = [253402214400000.0, -2208988800001.0]
+            .into_iter()
+            .map(|ticks| {
+                let err =
+                    encode(&[f64_column("t", "DateTime64(3, 'UTC')", &[ticks])], 1).unwrap_err();
+                format!("{err:#}")
+            })
+            .collect();
+        assert_eq!(
+            refused,
+            [
+                "encoding column `t` row 0: 9999-12-31T00:00:00.000Z is outside the range a \
+                 DateTime64 column can hold, 1900-01-01 through 2299-12-31",
+                "encoding column `t` row 0: 1899-12-31T23:59:59.999Z is outside the range a \
+                 DateTime64 column can hold, 1900-01-01 through 2299-12-31",
+            ]
+        );
+    }
+
+    #[test]
+    fn accepts_the_exact_bounds_of_datetime64() {
+        let encoded = encode(
+            &[
+                f64_column("min", "DateTime64(3, 'UTC')", &[-2208988800000.0]),
+                f64_column("max", "DateTime64(3, 'UTC')", &[10413791999999.0]),
+            ],
+            1,
+        )
+        .unwrap();
+        let mut expected = (-2208988800000i64).to_le_bytes().to_vec();
+        expected.extend_from_slice(&10413791999999i64.to_le_bytes());
+        assert_eq!(encoded.body, expected);
     }
 
     #[test]
