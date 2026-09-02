@@ -60,6 +60,36 @@ indexer.onInstruction(
 `)
     t.expect(actual->String.includes("missing")).toBe(true)
   })
+
+  // An instruction that declares no args has nothing to decode, so selecting
+  // `args` can only ever hand back an empty object. Reject the selection
+  // rather than let a handler read a value that means nothing.
+  it("rejects selecting args on an instruction that declares none", t => {
+    let actual = typeErrorOf(`
+import { indexer } from "envio";
+
+indexer.onInstruction(
+  { program: "Swapper", instruction: "bare", fields: { instruction: ["args"] } },
+  async () => {},
+);
+`)
+    t.expect(actual->String.includes("args")).toBe(true)
+  })
+
+  it("keeps args selectable on an instruction that declares them", t => {
+    let actual = typeErrorOf(`
+import { indexer } from "envio";
+
+indexer.onInstruction(
+  { program: "Swapper", instruction: "swap", fields: { instruction: ["args"] } },
+  async ({ instruction }) => {
+    const amountIn: bigint = instruction.args.amountIn;
+    void amountIn;
+  },
+);
+`)
+    t.expect(actual).toBe("the type check to fail, but it succeeded")
+  })
 })
 
 InternalTestIndexer.fromUserApi(

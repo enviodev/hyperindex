@@ -1263,13 +1263,33 @@ export type SvmBlockFieldName =
   | "parentHash";
 export type SvmLogFieldName = "kind" | "message";
 
-export type SvmFieldsSelection = {
-  readonly instruction?: readonly SvmInstructionFieldName[];
+/** Offered in place of the `args` field name for an instruction that declares
+ * no args in config.yaml, so a selection naming it fails with the reason. */
+export type SvmArgsNotDeclared =
+  "Field 'args' is unavailable: this instruction declares no args in config.yaml, so there is nothing to decode.";
+
+/** The instruction fields a registration may select. An instruction with no
+ * declared args carries `never` for them, and `args` drops out of the
+ * selectable names — reading it could only ever yield an empty object. */
+type SvmSelectableInstructionField<ProgInstr> = ProgInstr extends {
+  readonly args: infer A;
+}
+  ? [A] extends [never]
+    ? Exclude<SvmInstructionFieldName, "args"> | SvmArgsNotDeclared
+    : SvmInstructionFieldName
+  : SvmInstructionFieldName;
+
+/** {@link SvmFieldsSelection}, narrowed to what one configured instruction
+ * offers. */
+export type SvmFieldsSelectionFor<ProgInstr> = {
+  readonly instruction?: readonly SvmSelectableInstructionField<ProgInstr>[];
   readonly transaction?: readonly SvmTransactionFieldName[];
   readonly accountActivity?: readonly SvmAccountActivityFieldName[];
   readonly block?: readonly SvmBlockFieldName[];
   readonly log?: readonly SvmLogFieldName[];
 };
+
+export type SvmFieldsSelection = SvmFieldsSelectionFor<SvmAnyProgramInstruction>;
 
 /** A {@link SvmFieldsSelection} with every field selected.
  *
@@ -1539,7 +1559,7 @@ export type SvmOnInstructionOptions<
  *       async ({ instruction, context }) => { ... };
  */
 export type SvmOnInstructionHandler<
-  Fields extends SvmFieldsSelection,
+  Fields extends SvmFieldsSelectionFor<SvmConfiguredInstruction<Program, Instruction>>,
   Program extends keyof SvmProgramsT & string = never,
   Instruction extends keyof SvmProgramsT[Program] & string = never,
 > = SvmOnInstructionHandlerFor<
@@ -1775,7 +1795,7 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                 readonly onInstruction: <
                   P extends keyof Programs & string,
                   I extends keyof Programs[P] & string,
-                  const F extends SvmFieldsSelection = {},
+                  const F extends SvmFieldsSelectionFor<Programs[P][I]> = {},
                 >(
                   options: SvmOnInstructionOptions<P, I, F>,
                   handler: SvmOnInstructionHandlerFor<
