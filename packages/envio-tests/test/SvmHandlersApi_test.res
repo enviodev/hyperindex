@@ -21,6 +21,15 @@ chains:
               accounts:
                 - source
                 - destination
+            - name: shape
+              discriminator: "0x0a"
+              args:
+                - { name: hash, type: { array: [u8, 32] } }
+                - { name: pair, type: { array: [u16, 2] } }
+                - { name: ids, type: { vec: u64 } }
+                - { name: payload, type: bytes }
+              accounts:
+                - source
 `
 
 let check = handlers =>
@@ -386,6 +395,28 @@ type _Block = Swap["block"];
 
 expectType<TypeEqual<SvmAllTransactionFields["signature"], string>>(true);
 expectType<TypeEqual<keyof SvmAllTransactionFields, "transactionIndex" | "signature" | "feePayer" | "success" | "err" | "fee" | "computeUnitsConsumed" | "accountKeys" | "recentBlockhash" | "version" | "allSignatures">>(true);
+`)
+  )
+
+  it("types u8 sequences as Uint8Array, vecs as readonly arrays and fixed arrays as tuples", _ =>
+    check(`
+import type { Global } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+type Programs = Global extends { config: { svm: { programs: infer P } } } ? P : never;
+type Shape = Programs["Swapper"]["shape"]["args"];
+
+expectType<
+  TypeEqual<
+    Shape,
+    {
+      readonly hash: Uint8Array;
+      readonly pair: readonly [number, number];
+      readonly ids: readonly bigint[];
+      readonly payload: Uint8Array;
+    }
+  >
+>(true);
 `)
   )
 

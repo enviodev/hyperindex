@@ -2301,14 +2301,7 @@ type testIndexer = {{
                             let fields = svm_kind
                                 .args
                                 .iter()
-                                .map(|f| {
-                                    let ts = field_type_to_ts_type(
-                                        &f.ty,
-                                        &svm_abi.defined_types,
-                                        &mut Vec::new(),
-                                    );
-                                    format!("readonly {}: {}", ts_safe_property_name(&f.name), ts)
-                                })
+                                .map(|f| ts_svm_field(f, &svm_abi.defined_types, &mut Vec::new()))
                                 .collect::<Vec<_>>()
                                 .join("; ");
                             format!("{{ {fields} }}")
@@ -2578,6 +2571,7 @@ struct ConfigBodies<'a> {
 /// - 64-/128-bit integers → `bigint`
 /// - pubkey → `string` (base58)
 /// - Borsh `bytes`, `vec<u8>`, `[u8; N]` → `Uint8Array`
+/// - `vec<T>` → `readonly T[]`; `[T; N]` → a readonly N-tuple
 fn field_type_to_ts_type(
     ty: &hypersync_client_solana::decode::FieldType,
     defined_types: &std::collections::BTreeMap<String, hypersync_client_solana::decode::FieldType>,
@@ -2597,19 +2591,18 @@ fn field_type_to_ts_type(
         F::Vec(inner) | F::Array { ty: inner, .. } if matches!(**inner, F::U8) => {
             "Uint8Array".to_string()
         }
-        F::Vec(inner) | F::Array { ty: inner, .. } => {
-            format!("({})[]", field_type_to_ts_type(inner, defined_types, seen))
+        F::Vec(inner) => format!(
+            "readonly ({})[]",
+            field_type_to_ts_type(inner, defined_types, seen)
+        ),
+        F::Array { ty: inner, len } => {
+            let element = field_type_to_ts_type(inner, defined_types, seen);
+            format!("readonly [{}]", vec![element; *len].join(", "))
         }
         F::Struct(fields) => {
             let body = fields
                 .iter()
-                .map(|f| {
-                    format!(
-                        "readonly {}: {}",
-                        ts_safe_property_name(&f.name),
-                        field_type_to_ts_type(&f.ty, defined_types, seen)
-                    )
-                })
+                .map(|f| ts_svm_field(f, defined_types, seen))
                 .collect::<Vec<_>>()
                 .join("; ");
             format!("{{ {body} }}")
@@ -2626,13 +2619,7 @@ fn field_type_to_ts_type(
                         Some(fields) => {
                             let body = fields
                                 .iter()
-                                .map(|f| {
-                                    format!(
-                                        "readonly {}: {}",
-                                        ts_safe_property_name(&f.name),
-                                        field_type_to_ts_type(&f.ty, defined_types, seen)
-                                    )
-                                })
+                                .map(|f| ts_svm_field(f, defined_types, seen))
                                 .collect::<Vec<_>>()
                                 .join("; ");
                             format!("{{ {body} }}")
@@ -2660,6 +2647,31 @@ fn field_type_to_ts_type(
             }
         }
     }
+}
+
+/// One `readonly name: type` member of a generated args object. A fixed-size
+/// byte array renders as `Uint8Array`, which drops its length from the type,
+/// so the length rides along as a doc comment.
+fn ts_svm_field(
+    field: &hypersync_client_solana::decode::NamedField,
+    defined_types: &std::collections::BTreeMap<String, hypersync_client_solana::decode::FieldType>,
+    seen: &mut Vec<String>,
+) -> String {
+    use hypersync_client_solana::decode::FieldType as F;
+    fn fixed_bytes_len(ty: &F) -> Option<usize> {
+        match ty {
+            F::Array { ty, len } if matches!(**ty, F::U8) => Some(*len),
+            F::Option(inner) => fixed_bytes_len(inner),
+            _ => None,
+        }
+    }
+    let doc =
+        fixed_bytes_len(&field.ty).map_or(String::new(), |len| format!("/** {len} bytes */ "));
+    format!(
+        "{doc}readonly {}: {}",
+        ts_safe_property_name(&field.name),
+        field_type_to_ts_type(&field.ty, defined_types, seen)
+    )
 }
 
 /// One selected field line of a generated `.d.ts` record: a doc comment plus the
@@ -3630,26 +3642,23 @@ type GlobalCounter @crossChain {
     }
 
     #[test]
-    fn svm_bytes_arg_types_as_uint8array() {
-        use hypersync_client_solana::decode::FieldType as F;
+    fn svm_arg_types_render_bytes_vecs_and_fixed_arrays() {
+        use hypersync_client_solana::decode::{FieldType as F, NamedField};
         let defined = std::collections::BTreeMap::new();
+        let array = |ty: F, len: usize| F::Array {
+            ty: Box::new(ty),
+            len,
+        };
         let rendered = [
             F::Bytes,
             F::Option(Box::new(F::Bytes)),
             F::Vec(Box::new(F::Bytes)),
             F::Vec(Box::new(F::U8)),
-            F::Array {
-                ty: Box::new(F::U8),
-                len: 4,
-            },
-            F::Array {
-                ty: Box::new(F::U8),
-                len: 32,
-            },
-            F::Array {
-                ty: Box::new(F::U16),
-                len: 2,
-            },
+            F::Vec(Box::new(F::U64)),
+            array(F::U8, 4),
+            array(F::U8, 32),
+            array(F::U16, 2),
+            array(F::Pubkey, 3),
         ]
         .map(|ty| field_type_to_ts_type(&ty, &defined, &mut Vec::new()));
         assert_eq!(
@@ -3657,11 +3666,37 @@ type GlobalCounter @crossChain {
             [
                 "Uint8Array",
                 "(Uint8Array) | null",
-                "(Uint8Array)[]",
+                "readonly (Uint8Array)[]",
+                "Uint8Array",
+                "readonly (bigint)[]",
                 "Uint8Array",
                 "Uint8Array",
-                "Uint8Array",
-                "(number)[]",
+                "readonly [number, number]",
+                "readonly [string, string, string]",
+            ]
+        );
+        // The Uint8Array type drops the array's length, so a fixed-size byte
+        // field carries it as a doc comment; nothing else gets one.
+        let fields = [
+            ("hash", array(F::U8, 32)),
+            ("seed", F::Option(Box::new(array(F::U8, 8)))),
+            ("payload", F::Bytes),
+            ("amount", F::U64),
+        ]
+        .map(|(name, ty)| {
+            let field = NamedField {
+                name: name.to_string(),
+                ty,
+            };
+            ts_svm_field(&field, &defined, &mut Vec::new())
+        });
+        assert_eq!(
+            fields,
+            [
+                "/** 32 bytes */ readonly hash: Uint8Array",
+                "/** 8 bytes */ readonly seed: (Uint8Array) | null",
+                "readonly payload: Uint8Array",
+                "readonly amount: bigint",
             ]
         );
     }
