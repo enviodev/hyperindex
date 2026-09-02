@@ -46,6 +46,17 @@ type TransferChOnly @crossChain @storage(clickhouse: true) {
   value: BigInt!
 }
 
+# Written under the sender's address on every transfer, so ids repeat across
+# events and the two backends have to agree on which write won: Postgres keeps
+# one upserted row, ClickHouse keeps every change and its view picks the highest
+# checkpoint. A zero-value transfer deletes the row, which is the only way a
+# DELETE row reaches the ClickHouse history table.
+type Holder @crossChain @storage(postgres: true, clickhouse: true) {
+  id: ID!
+  lastBlock: Int!
+  lastValue: BigInt!
+}
+
 # @internal: stored in Postgres and written from handlers like any entity,
 # but never tracked in Hasura, so it must not appear in the GraphQL schema.
 type TransferInternal @crossChain @internal @storage(postgres: true) {

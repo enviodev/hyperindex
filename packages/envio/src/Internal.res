@@ -573,15 +573,6 @@ type svmInstructionEventConfig = {
   programId: SvmTypes.Pubkey.t,
   /** Hex-encoded discriminator. `None` matches every instruction in the program. */
   discriminator: option<string>,
-  /** Length of the discriminator in bytes (0 / 1 / 2 / 4 / 8). Drives the
-   `dN` selector at query time and the dispatch-key precomputation in the
-   router. */
-  discriminatorByteLen: int,
-  /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
-   AND across positions. Empty outer array means "no account filter". */
-  accountFilters: array<svmAccountFilterGroup>,
-  /** `None` matches both outer and inner (CPI-invoked) instructions. */
-  isInner: option<bool>,
   /** Positional account names from the Borsh schema, in declared order.
    `[]` means no schema is attached for this instruction. */
   accounts: array<string>,
@@ -597,10 +588,11 @@ type svmInstructionEventConfig = {
 // Per-(event, chain) registration produced when user handler code registers an
 // event (`onEvent`) or a dynamic contract registers. References its definition
 // by value as `.eventConfig` and adds the handler binding plus the
-// registration/`where`-derived fetch state. Not `private`: Fuel/SVM
-// registrations add no ecosystem-specific fields (so they're bare aliases that
-// must stay directly constructable), and the evm→base cast in sources is sound
-// by ecosystem homogeneity — an EVM chain only ever holds `evmOnEventRegistration`s.
+// registration/`where`-derived fetch state. Not `private`: Fuel registrations
+// add no ecosystem-specific fields (so the alias must stay directly
+// constructable), and the ecosystem→base casts in sources are sound by
+// ecosystem homogeneity — an EVM chain only ever holds
+// `evmOnEventRegistration`s.
 type onEventRegistration = {
   // Chain-scoped sequential index — the registration's position in the
   // chain's onEventRegistrations array, assigned when registration finishes
@@ -639,11 +631,18 @@ type evmOnEventRegistration = {
   resolvedWhere: resolvedWhere,
 }
 
-// Fuel and SVM registrations add no ecosystem-specific fetch state (their
-// filters are config-derived and live on the definition), so they're bare
-// aliases of the base registration.
+// Fuel registrations add no ecosystem-specific fetch state, so it's a bare
+// alias of the base registration.
 type fuelOnEventRegistration = onEventRegistration
-type svmOnEventRegistration = onEventRegistration
+
+type svmOnEventRegistration = {
+  ...onEventRegistration,
+  /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
+   AND across positions. Empty outer array means "no account filter". */
+  accountFilters: array<svmAccountFilterGroup>,
+  /** `None` matches both outer and inner (CPI-invoked) instructions. */
+  isInner: option<bool>,
+}
 
 type svmProgramConfig = {
   name: string,

@@ -4,10 +4,10 @@
 # Paste these as siblings of the Jupiter/Drift/Kamino (idl:) entries under
 #   chains[0].experimental.programs
 # Schema verified against packages/envio/svm.schema.json:
-#   instruction keys = { name, discriminator, args:[{name,type}], accounts:[str], is_inner, account_filters }
+#   instruction keys = { name, discriminator, args:[{name,type}], accounts:[str] }
 #   args .type accepts bare-string primitives ("u64","u8",...).
-# Payload selection lives on handler `fields`, not YAML.
-# is_inner is left absent on all (== null == matches both inner+outer), per spec.
+# Payload selection lives on handler `fields`, and account / inner-vs-outer
+# narrowing on handler `where`, not YAML.
 
         # ---------------------------------------------------------------------
         # SPL Token program

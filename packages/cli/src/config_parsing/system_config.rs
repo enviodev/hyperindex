@@ -17,6 +17,7 @@ use super::{
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
 };
+use crate::clickhouse::ch_type;
 use crate::utils::project_env::ProjectEnv;
 use crate::{
     config_parsing::human_config::evm::RpcTransactionField,
@@ -281,7 +282,7 @@ pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
 /// maximum active chain id and carried through the public config, so a resume
 /// against a schema built for the other mode is rejected rather than silently
 /// truncating ids.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ChainIdMode {
     Int32,
@@ -310,6 +311,14 @@ impl ChainIdMode {
         } else {
             Self::Int64
         })
+    }
+
+    /// Reads the mode back out of the form it is serialized in, which is how it
+    /// reaches the ClickHouse sink: through the generated config and the JS
+    /// runtime, both of which carry it as that string.
+    pub fn parse(mode: &str) -> Result<Self> {
+        serde_json::from_value(serde_json::Value::String(mode.to_string()))
+            .with_context(|| format!("unknown chain id mode `{mode}`"))
     }
 }
 
@@ -396,11 +405,6 @@ impl Storage {
         })
     }
 }
-
-/// Largest BigInt precision ClickHouse still stores as a numeric `Decimal`;
-/// above this (or with no precision) it falls back to `String`. Kept in sync
-/// with the BigInt branch of `getClickHouseFieldType` in ClickHouse.res.
-const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
 
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
@@ -645,6 +649,8 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     Ok(())
 }
 
+const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = crate::clickhouse::ch_type::MAX_DECIMAL_PRECISION;
+
 /// What to add to a field so ClickHouse stores it as a numeric Decimal. A
 /// BigDecimal needs both parameters — `@config(precision:)` alone is rejected
 /// by the field parser, so naming only it would send the user in a circle.
@@ -660,27 +666,23 @@ fn precision_fix(stored: &GqlScalar) -> String {
 
 /// ClickHouse stores a BigInt or BigDecimal whose precision is unset (or
 /// outside what its `Decimal` can express) as a String, which sorts
-/// lexicographically — wrong for anything in the sorting key. See the BigInt and
-/// BigDecimal branches of `getClickHouseFieldType` in ClickHouse.res.
+/// lexicographically — wrong for anything in the sorting key.
 ///
 /// Which column that applies to depends on `@storage(clickhouse: {orderBy})`:
-/// without it the sorting key is `id`, with it the listed columns replace `id`
-/// (see `makeCreateHistoryTableQuery`). Runs on the resolved schema, so a
-/// relation in the sorting key resolves to the id it actually stores.
+/// without it the sorting key is `id`, with it the listed columns replace `id`.
+/// Runs on the resolved schema, so a relation in the sorting key resolves to
+/// the id it actually stores.
 pub fn validate_clickhouse_sorting_key_scalars(
     storage: &Storage,
     schema: &Schema,
 ) -> anyhow::Result<()> {
     let clickhouse_default = storage.clickhouse.is_some_and(|b| b.entity_default);
-    // Mirrors getClickHouseFieldType: only a Decimal that fits keeps numeric
-    // ordering, and a BigDecimal's scale has to fit inside its precision.
     let stored_as_string = |scalar: &GqlScalar| match scalar {
-        GqlScalar::BigInt(precision) => {
-            !precision.is_some_and(|p| p <= CLICKHOUSE_DECIMAL_MAX_PRECISION)
-        }
-        GqlScalar::BigDecimal(config) => !config.is_some_and(|(precision, scale)| {
-            precision <= CLICKHOUSE_DECIMAL_MAX_PRECISION && scale <= precision
-        }),
+        GqlScalar::BigInt(precision) => ch_type::stored_as_string(*precision, 0),
+        GqlScalar::BigDecimal(config) => match config {
+            Some((precision, scale)) => ch_type::stored_as_string(Some(*precision), *scale),
+            None => true,
+        },
         _ => false,
     };
 
@@ -1403,42 +1405,16 @@ impl SystemConfig {
                             .instructions
                             .iter()
                             .map(|instr| -> Result<Event> {
-                                let (normalized_discriminator, byte_len) =
-                                    match &instr.discriminator {
-                                        Some(d) => {
-                                            let hex = d.strip_prefix("0x").unwrap_or(d);
-                                            let byte_len = (hex.len() / 2) as u8;
-                                            (Some(format!("0x{hex}")), byte_len)
-                                        }
-                                        None => (None, 0u8),
-                                    };
+                                let normalized_discriminator = instr
+                                    .discriminator
+                                    .as_deref()
+                                    .map(|d| format!("0x{}", d.strip_prefix("0x").unwrap_or(d)));
                                 let (accounts, args) = resolve_instruction_layout(instr, &svm_abi)
                                     .with_context(|| {
                                         format!("Layout for instruction '{}'", instr.name)
                                     })?;
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
-                                    discriminator_byte_len: byte_len,
-                                    account_filters: instr
-                                        .account_filters
-                                        .as_ref()
-                                        .map(|filters| {
-                                            filters
-                                                .groups()
-                                                .into_iter()
-                                                .map(|group| {
-                                                    group
-                                                        .iter()
-                                                        .map(|af| SvmAccountFilter {
-                                                            position: af.position,
-                                                            values: af.values.clone(),
-                                                        })
-                                                        .collect()
-                                                })
-                                                .collect()
-                                        })
-                                        .unwrap_or_default(),
-                                    is_inner: instr.is_inner,
                                     accounts,
                                     args,
                                 };
@@ -2300,25 +2276,10 @@ pub enum FuelEventKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SvmAccountFilter {
-    pub position: u8,
-    pub values: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
     /// instruction in the program.
     pub discriminator: Option<String>,
-    /// Length of the decoded discriminator in bytes (0 / 1 / 2 / 4 / 8). The
-    /// router precomputes a per-program ordering on this so dispatch tries
-    /// longest first.
-    pub discriminator_byte_len: u8,
-    /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
-    /// AND across positions. An empty outer list means "no account filter".
-    pub account_filters: Vec<Vec<SvmAccountFilter>>,
-    /// `None` matches both outer and inner (CPI-invoked) instructions.
-    pub is_inner: Option<bool>,
     /// Positional account names. Empty when the user supplied no schema and
     /// no bundled/IDL schema applies; in that case `decoded.accounts` is `{}`.
     pub accounts: Vec<String>,
@@ -3913,20 +3874,15 @@ type Foo {
                 .events
                 .iter()
                 .map(|e| match &e.kind {
-                    EventKind::Svm(k) => (
-                        e.name.as_str(),
-                        k.discriminator.as_deref(),
-                        k.discriminator_byte_len,
-                        k.account_filters.len(),
-                    ),
+                    EventKind::Svm(k) => (e.name.as_str(), k.discriminator.as_deref()),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
                 })
                 .collect();
             assert_eq!(
                 kinds,
                 vec![
-                    ("CreateMetadataAccountV3", Some("0x21"), 1, 0),
-                    ("UpdateMetadataAccountV2", Some("0x0f"), 1, 1),
+                    ("CreateMetadataAccountV3", Some("0x21")),
+                    ("UpdateMetadataAccountV2", Some("0x0f")),
                 ],
             );
 

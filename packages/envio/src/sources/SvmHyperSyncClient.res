@@ -56,8 +56,8 @@ module Registration = {
         isWildcard: reg.isWildcard,
         startBlock: reg.startBlock,
         discriminator: ?eventConfig.discriminator,
-        isInner: ?eventConfig.isInner,
-        accountFilters: eventConfig.accountFilters->Array.map(group =>
+        isInner: ?reg.isInner,
+        accountFilters: reg.accountFilters->Array.map(group =>
           group->Array.map(
             (filter): accountFilter => {
               position: filter.position,
@@ -83,61 +83,6 @@ module Registration = {
     })
 }
 
-module QueryTypes = {
-  type blockField =
-    | @as("slot") Slot
-    | @as("blockhash") Blockhash
-    | @as("parent_slot") ParentSlot
-    | @as("parent_blockhash") ParentBlockhash
-    | @as("block_time") BlockTime
-    | @as("block_height") BlockHeight
-
-  type transactionField =
-    | @as("slot") Slot
-    | @as("transaction_index") TransactionIndex
-    | @as("signatures") Signatures
-    | @as("fee_payer") FeePayer
-    | @as("success") Success
-    | @as("err") Err
-    | @as("fee") Fee
-    | @as("compute_units_consumed") ComputeUnitsConsumed
-    | @as("account_keys") AccountKeys
-    | @as("recent_blockhash") RecentBlockhash
-    | @as("version") Version
-    | @as("loaded_addresses_writable") LoadedAddressesWritable
-    | @as("loaded_addresses_readonly") LoadedAddressesReadonly
-
-  type fieldSelection = {block?: array<blockField>, transaction?: array<transactionField>}
-
-  /** Filter for selecting instruction calls. All non-empty fields are AND-ed:
-   an instruction must match at least one value in every non-empty field.
-
-   Discriminator filters (d1..d8) take hex-encoded byte prefixes ("0x" optional).
-   Account filters (a0..a9) take base58 pubkey strings. */
-  type instructionSelection = {
-    executingAccount?: array<string>,
-    d1?: array<string>,
-    d2?: array<string>,
-    d4?: array<string>,
-    d8?: array<string>,
-    isInner?: bool,
-    /** Success of the parent transaction; absent matches both. */
-    txSuccess?: bool,
-  }
-
-  // The `get` query surface, used only for block-data range queries; event
-  // fetching goes through `getEventItems`, which builds its query in Rust.
-  type query = {
-    fromSlot: int,
-    toSlot?: int,
-    instructionCalls?: array<instructionSelection>,
-    includeAllBlocks?: bool,
-    fields?: fieldSelection,
-    maxNumBlocks?: int,
-    maxNumInstructions?: int,
-  }
-}
-
 module ResponseTypes = {
   // Lean per-slot header for reorg detection and each item's slot/time; the
   // selectable fields live in the block store and are materialised on demand.
@@ -147,36 +92,6 @@ module ResponseTypes = {
     blockTime: Null.t<int>,
   }
 
-  type instructionCall = {
-    slot: int,
-    transactionIndex: int,
-    instructionAddress: array<int>,
-    /** The invoked program's account. */
-    executingAccount: string,
-    accountArguments: array<string>,
-    data: string,
-    d1: Null.t<string>,
-    d2: Null.t<string>,
-    d4: Null.t<string>,
-    d8: Null.t<string>,
-    isInner: bool,
-    /** Success of the parent transaction, not of this invocation. */
-    txSuccess: bool,
-    /** Per-invocation failure reason (e.g. "custom program error: 0x1"). */
-    error: Null.t<string>,
-    computeUnitsConsumed: Null.t<bigint>,
-  }
-
-  type queryResponseData = {
-    blocks: array<block>,
-    instructionCalls: array<instructionCall>,
-  }
-
-  type queryResponse = {
-    nextSlot: int,
-    responseBytes: int,
-    data: queryResponseData,
-  }
 }
 
 module EventItems = {
@@ -234,16 +149,11 @@ module EventItems = {
   }
 }
 
-type query = QueryTypes.query
-type queryResponse = ResponseTypes.queryResponse
-
 type t = {
   getHeight: unit => promise<int>,
   // Block-hash query construction, pagination, and cursor-backed skipped-slot
   // coverage live in Rust.
   getBlockHashes: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<RequestStat.t>)>,
-  // Block-data range queries only; the store pages it returns are empty.
-  get: (~query: query) => promise<(queryResponse, TransactionStore.t, BlockStore.t)>,
   // Returns the routed items plus pages of raw transactions and blocks (kept
   // in Rust), keyed by (slot, transactionIndex) / slot, materialised at batch
   // prep.

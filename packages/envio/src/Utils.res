@@ -253,6 +253,10 @@ module Array = {
 
   let immutableEmpty: array<unknown> = []
 
+  /** Render names for an error message: `"a", "b"`. */
+  let quotedJoin = (names: array<string>) =>
+    names->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
+
   @send
   external forEachAsync: (array<'a>, 'a => promise<unit>) => unit = "forEach"
 
@@ -514,6 +518,19 @@ module Schema = {
     S.json(~validate=false)
     ->(magic: S.t<JSON.t> => S.t<Date.t>)
     ->S.preprocess(_ => {serializer: date => date->magic->Date.toISOString})
+
+  // JSON `null` is a document, and Postgres stores it as one. Reaching the
+  // ClickHouse sink as a JS `null` it would instead read as a field the handler
+  // never set, which a String column has no way to hold — so it travels as the
+  // text it would have been serialized to. Every other document is left for the
+  // sink to serialize.
+  let clickHouseJson = S.json(~validate=false)->S.preprocess(_ => {
+    serializer: value =>
+      switch value->(magic: unknown => Nullable.t<unknown>)->Nullable.toOption {
+      | None => "null"->magic
+      | Some(json) => json
+      },
+  })
 
   // ClickHouse expects timestamps as numbers (milliseconds), not ISO strings
   let clickHouseDate =

@@ -198,7 +198,7 @@ let make = (
         ~fieldSelection=onEventRegistration.fieldSelection,
       )
       Internal.Event({
-        onEventRegistration,
+        onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         chainId,
         blockNumber: item.slot,
         // A slot orders by `(transactionIndex, path)` — the
