@@ -24,31 +24,36 @@ use crate::utils::text::Capitalize;
 
 use super::{
     account_slot, collect_instructions, declared_array, declared_optional, le_bytes,
-    parse_defined_types, required_str, Dispatch, IdlAccount, Origin, ProgramIdl,
+    parse_defined_types, required_str, Dispatch, IdlAccount, Positions, ProgramIdl,
 };
 
-pub(super) fn parse(root: &Map<String, Value>, origin: &Origin) -> Result<ProgramIdl> {
-    let mut idl = ProgramIdl {
-        source: origin.source.clone(),
-        address: root
-            .get("address")
-            .and_then(Value::as_str)
-            .or_else(|| {
-                root.get("metadata")
-                    .and_then(|m| m.get("address"))
-                    .and_then(Value::as_str)
-            })
-            .map(str::to_string),
-        ..Default::default()
-    };
-    parse_defined_types(&mut idl, origin, root.get("types"), "types", parse_type_def)?;
-    parse_instructions(&mut idl, origin, root)?;
-    Ok(idl)
+pub(super) fn parse(
+    idl: &mut ProgramIdl,
+    positions: &Positions,
+    root: &Map<String, Value>,
+) -> Result<()> {
+    idl.address = root
+        .get("address")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            root.get("metadata")
+                .and_then(|m| m.get("address"))
+                .and_then(Value::as_str)
+        })
+        .map(str::to_string);
+    parse_defined_types(
+        idl,
+        &positions.types,
+        root.get("types"),
+        "types",
+        parse_type_def,
+    )?;
+    parse_instructions(idl, &positions.instructions, root)
 }
 
 fn parse_instructions(
     idl: &mut ProgramIdl,
-    origin: &Origin,
+    positions: &[(usize, usize)],
     root: &Map<String, Value>,
 ) -> Result<()> {
     let arr = root
@@ -62,7 +67,7 @@ fn parse_instructions(
         == Some("shank");
     collect_instructions(
         idl,
-        origin,
+        positions,
         arr,
         |name, ix| match (ix.get("discriminator"), ix.get("discriminant")) {
             (Some(node), _) => Ok(Dispatch {

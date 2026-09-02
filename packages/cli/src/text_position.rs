@@ -1,6 +1,5 @@
-//! Where a JSON entry begins in the text it was read from — line and column,
-//! the way an editor counts them — so a message about the entry can point into
-//! the file.
+//! Where an entry begins in the text it was read from, as a line and column,
+//! so a message about the entry can point into the file.
 
 pub(crate) fn line_and_column(text: &str, offset: usize) -> (usize, usize) {
     let before = &text[..offset];

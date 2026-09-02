@@ -372,8 +372,8 @@ fn demotes_omitted_strategy_instructions_with_a_middle_optional() {
         "address: -\n\
          instruction padded 0x02 (source, authority:?, destination) ()\n\
          instruction trailing 0x03 (account, rent:?) ()\n\
-         unusable instruction shifted: idl.json:2:18: account 'authority' is optional and left out entirely \
-         when absent, so every account after it shifts and this parser cannot tell which name a \
+         unusable instruction shifted: idl.json:2:18: account 'authority' is optional and left out \
+         entirely when absent, so every account after it shifts and this parser cannot tell which name a \
          slot carries\n"
     );
 }

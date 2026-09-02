@@ -108,15 +108,6 @@ fn raw_entries(text: &str) -> Option<Vec<&RawValue>> {
         })
 }
 
-/// Where each entry begins. Positions line up with `entries`, which adds and
-/// removes nothing.
-fn positions(text: &str) -> Vec<(usize, usize)> {
-    let Some(entries) = raw_entries(text) else {
-        return Vec::new();
-    };
-    crate::text_position::locate(text, entries.iter().map(|entry| entry.get()))
-}
-
 /// The parameter alloy could not read. Checking one at a time is what lets the
 /// message name it, rather than repeating serde's account of the whole entry.
 /// A parameter reads as one of two shapes, and only an event's may be indexed,
@@ -190,7 +181,9 @@ fn explain(source: Option<&str>, text: &str, err: &serde_json::Error) -> anyhow:
              holding one.{hint}"
         );
     };
-    let positions = positions(text);
+    let positions = raw_entries(text).map_or_else(Vec::new, |entries| {
+        crate::text_position::locate(text, entries.iter().map(|entry| entry.get()))
+    });
     let at = |index: usize| match (source, positions.get(index)) {
         (Some(source), Some((line, column))) => format!("{source}:{line}:{column}: "),
         (Some(source), None) => format!("{source}: "),

@@ -13,28 +13,27 @@ use serde_json::{Map, Value};
 
 use super::{
     account_slot, collect_instructions, declared_array, le_bytes, parse_defined_types,
-    required_str, Dispatch, IdlAccount, Origin, ProgramIdl,
+    required_str, Dispatch, IdlAccount, Positions, ProgramIdl,
 };
 
-pub(super) fn parse(root: &Map<String, Value>, origin: &Origin) -> Result<ProgramIdl> {
+pub(super) fn parse(
+    idl: &mut ProgramIdl,
+    positions: &Positions,
+    root: &Map<String, Value>,
+) -> Result<()> {
     let program = codama_program(root)?;
-    let mut idl = ProgramIdl {
-        source: origin.source.clone(),
-        address: program
-            .get("publicKey")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        ..Default::default()
-    };
+    idl.address = program
+        .get("publicKey")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     parse_defined_types(
-        &mut idl,
-        origin,
+        idl,
+        &positions.types,
         program.get("definedTypes"),
         "definedTypes",
         |name, node| parse_type(node, &format!("definedTypes.{name}")),
     )?;
-    parse_instructions(&mut idl, origin, program)?;
-    Ok(idl)
+    parse_instructions(idl, &positions.instructions, program)
 }
 
 fn codama_program(root: &Map<String, Value>) -> Result<&Map<String, Value>> {
@@ -52,7 +51,7 @@ fn codama_program(root: &Map<String, Value>) -> Result<&Map<String, Value>> {
 
 fn parse_instructions(
     idl: &mut ProgramIdl,
-    origin: &Origin,
+    positions: &[(usize, usize)],
     program: &Map<String, Value>,
 ) -> Result<()> {
     let arr = program
@@ -61,7 +60,7 @@ fn parse_instructions(
         .ok_or_else(|| anyhow!("Codama program has no 'instructions' array"))?;
     collect_instructions(
         idl,
-        origin,
+        positions,
         arr,
         |_name, ix| {
             let (bytes, _) = parse_discriminators(ix).context("discriminators")?;

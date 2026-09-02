@@ -139,10 +139,18 @@ fn parses_the_published_spl_idls() {
 /// to hold, the path alone for what fails before any entry is read.
 #[test]
 fn points_each_reason_at_the_entry_in_the_file() {
-    let json = "{\n  \"instructions\": [\n    { \"name\": \"swap\", \"discriminator\": [1, 2, \
-                3] },\n    { \"name\": \"burn\", \"discriminator\": [4] }\n  ],\n  \"types\": \
-                [\n    { \"name\": \"Loop\", \"type\": { \"kind\": \"type\", \"alias\": { \
-                \"defined\": \"Loop\" } } }\n  ]\n}";
+    let json = [
+        "{",
+        "  \"instructions\": [",
+        "    { \"name\": \"swap\", \"discriminator\": [1, 2, 3] },",
+        "    { \"name\": \"burn\", \"discriminator\": [4] }",
+        "  ],",
+        "  \"types\": [",
+        "    { \"name\": \"Loop\", \"type\": { \"kind\": \"type\", \"alias\": { \"defined\": \"Loop\" } } }",
+        "  ]",
+        "}",
+    ]
+    .join("\n");
     let fatal = |json: &str| {
         format!(
             "{:#}",
@@ -152,10 +160,9 @@ fn points_each_reason_at_the_entry_in_the_file() {
 
     assert_eq!(
         (
-            render(&parse_idl("idls/pool.json", json).expect("parse")),
+            render(&parse_idl("idls/pool.json", &json).expect("parse")),
             fatal("not json"),
             fatal("[]"),
-            fatal(r#"{ "instructions": [{ "name": "swap" }, { "name": "swap" }] }"#),
         ),
         (
             "address: -\n\
@@ -166,9 +173,35 @@ fn points_each_reason_at_the_entry_in_the_file() {
              option or vec to terminate decoding\n"
                 .to_string(),
             "idls/pool.json is not valid JSON: expected ident at line 1 column 2".to_string(),
-            "idls/pool.json: expected a JSON object at the IDL root".to_string(),
-            "idls/pool.json: IDL declares instruction 'swap' more than once".to_string(),
+            "idls/pool.json must hold a JSON object at its root".to_string(),
         )
+    );
+}
+
+/// A bundled schema has no file to point into, so its reasons carry the name
+/// it is bundled under.
+#[test]
+fn names_a_bundled_schema_in_its_reasons() {
+    let idl = ProgramIdl::compiled_in(
+        "metaplex_token_metadata",
+        "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
+        BTreeMap::from([(
+            "burn".to_string(),
+            IxIdl {
+                discriminator: vec![1, 2, 3],
+                derived: false,
+                accounts: Vec::new(),
+                args: Vec::new(),
+            },
+        )]),
+        BTreeMap::new(),
+    );
+
+    assert_eq!(
+        render(&idl),
+        "address: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n\
+         unusable instruction burn: metaplex_token_metadata: its discriminator is 3 bytes, and \
+         dispatch matches only 1, 2, 4, or 8\n"
     );
 }
 
@@ -588,8 +621,8 @@ fn demotes_a_discriminator_that_stops_inside_an_argument() {
     assert_eq!(
         render(&idl),
         "address: -\n\
-         unusable instruction transfer: idl.json:3:28: the 1-byte discriminator stops inside argument \
-         'amount', which starts at byte 0 and is 8 bytes wide\n"
+         unusable instruction transfer: idl.json:3:28: the 1-byte discriminator stops inside \
+         argument 'amount', which starts at byte 0 and is 8 bytes wide\n"
     );
 }
 
@@ -613,8 +646,8 @@ fn names_the_size_dispatch_it_cannot_honour() {
     assert_eq!(
         render(&idl),
         "address: -\n\
-         unusable instruction closeAccount: idl.json:3:28: discriminators: dispatch matches a fixed-width \
-         prefix of the data, not its length, so a sizeDiscriminatorNode cannot be honoured\n"
+         unusable instruction closeAccount: idl.json:3:28: discriminators: dispatch matches a \
+         fixed-width prefix of the data, not its length, so a sizeDiscriminatorNode cannot be honoured\n"
     );
 }
 
@@ -655,8 +688,8 @@ fn rejects_a_type_link_into_another_program() {
         render(&idl),
         "address: -\n\
          type tokenMetadata = {supply: u64}\n\
-         unusable instruction mint: idl.json:3:28: args.meta: 'tokenMetadata' is defined by program \
-         'mplTokenMetadata', and this parser resolves type links against the program it is \
+         unusable instruction mint: idl.json:3:28: args.meta: 'tokenMetadata' is defined by \
+         program 'mplTokenMetadata', and this parser resolves type links against the program it is \
          parsing, where the name means something else\n"
     );
 }
@@ -720,8 +753,8 @@ fn reads_shank_discriminants_instead_of_hashing_the_name() {
         "address: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n\
          instruction burnNft 0x1d () ()\n\
          instruction createMetadataAccount 0x00 (metadata) (isMutable: bool)\n\
-         unusable instruction undispatchable: idl.json:17:13: discriminant: this Shank IDL declares none, and \
-         a hashed Anchor discriminator is not what a Shank program dispatches on\n"
+         unusable instruction undispatchable: idl.json:17:13: discriminant: this Shank IDL \
+         declares none, and a hashed Anchor discriminator is not what a Shank program dispatches on\n"
     );
 }
 
