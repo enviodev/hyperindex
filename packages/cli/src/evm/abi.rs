@@ -1,6 +1,7 @@
 use alloy_json_abi::{AbiItem, JsonAbi};
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
+use serde_json::value::RawValue;
 use serde_json::{Map, Value};
 
 #[derive(Deserialize)]
@@ -89,17 +90,50 @@ fn quoted(types: &[&str]) -> String {
         .join(", ")
 }
 
-/// Where in the file to look: the entry's position in the ABI array, which is
-/// the one locator every entry has, and its name when it has one.
-fn locate(index: usize, item: &Map<String, Value>) -> String {
-    let named = match item.get("name").and_then(Value::as_str) {
-        Some(name) => format!(" \"{name}\""),
-        None => match item.get("type").and_then(Value::as_str) {
-            Some(kind) => format!(" ({kind})"),
-            None => String::new(),
-        },
+/// The entries as the file wrote them. `RawValue` keeps each one's original
+/// text, which is what lets a message point into the file.
+fn raw_entries(text: &str) -> Option<Vec<&RawValue>> {
+    #[derive(Deserialize)]
+    struct Nested<'a> {
+        #[serde(borrow)]
+        abi: Vec<&'a RawValue>,
+    }
+
+    serde_json::from_str::<Vec<&RawValue>>(text)
+        .ok()
+        .or_else(|| {
+            serde_json::from_str::<Nested>(text)
+                .ok()
+                .map(|nested| nested.abi)
+        })
+}
+
+fn line_and_column(text: &str, offset: usize) -> (usize, usize) {
+    let before = &text[..offset];
+    let line = before.matches('\n').count() + 1;
+    let start_of_line = before.rfind('\n').map_or(0, |newline| newline + 1);
+    // Columns count characters, the way an editor does, not bytes.
+    let column = before[start_of_line..].chars().count() + 1;
+    (line, column)
+}
+
+/// Where each entry begins. The entries are searched for in order, so two
+/// written identically resolve to their own positions instead of both to the
+/// first. Positions line up with `entries`, which adds and removes nothing.
+fn positions(text: &str) -> Vec<(usize, usize)> {
+    let Some(entries) = raw_entries(text) else {
+        return Vec::new();
     };
-    format!("abi[{index}]{named}")
+    let mut cursor = 0;
+    let mut found = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let offset = text[cursor..]
+            .find(entry.get())
+            .map_or(cursor, |index| cursor + index);
+        cursor = offset + entry.get().len();
+        found.push(line_and_column(text, offset));
+    }
+    found
 }
 
 /// The parameter alloy could not read. Checking one at a time is what lets the
@@ -116,7 +150,8 @@ fn bad_parameter(item: &Map<String, Value>, is_event: bool) -> Option<String> {
     for param in params {
         let as_param = serde_json::from_value::<alloy_json_abi::Param>(param.clone()).is_ok();
         let as_event = serde_json::from_value::<alloy_json_abi::EventParam>(param.clone()).is_ok();
-        if if is_event { as_event } else { as_param } {
+        let reads_as_its_own_shape = if is_event { as_event } else { as_param };
+        if reads_as_its_own_shape {
             continue;
         }
         let name = param.get("name").and_then(Value::as_str).unwrap_or("");
@@ -133,49 +168,71 @@ fn bad_parameter(item: &Map<String, Value>, is_event: bool) -> Option<String> {
     None
 }
 
-fn describe(index: usize, item: &Map<String, Value>, err: &serde_json::Error) -> anyhow::Error {
-    let at = locate(index, item);
+fn describe(at: &str, item: &Map<String, Value>, err: &serde_json::Error) -> anyhow::Error {
+    let named = match item.get("name").and_then(Value::as_str) {
+        Some(name) => format!("\"{name}\": "),
+        None => String::new(),
+    };
     let kind = item.get("type").and_then(Value::as_str).unwrap_or_default();
     if !ENTRY_TYPES.contains(&kind) {
         return anyhow!(
-            "{at} has an unknown type \"{kind}\". Expected one of {}.",
+            "{at}{named}unknown entry type \"{kind}\". Expected one of {}.",
             quoted(&ENTRY_TYPES)
         );
     }
     match bad_parameter(item, kind == "event") {
-        Some(problem) => anyhow!("{at}: {problem}."),
+        Some(problem) => anyhow!("{at}{named}{problem}."),
         // serde quotes with backticks and names its own machinery, so the rare
         // error this does not recognise is at least quoted like the file is.
-        None => anyhow!("{at} is invalid: {}.", err.to_string().replace('`', "\"")),
+        None => anyhow!(
+            "{at}{named}entry is invalid: {}.",
+            err.to_string().replace('`', "\"")
+        ),
     }
 }
 
 /// `AbiOrNestedAbi` is untagged, so serde reports only that the file matched no
 /// variant, and reading the array as a whole names no entry. Reading one entry
-/// at a time says which entry the file has to fix.
-fn explain(text: &str, err: &serde_json::Error) -> anyhow::Error {
+/// at a time says which entry to fix, and where in the file it is.
+fn explain(source: Option<&str>, text: &str, err: &serde_json::Error) -> anyhow::Error {
+    let subject = source.unwrap_or("The ABI");
     let Ok(mut parsed) = serde_json::from_str::<Value>(text) else {
-        return anyhow!("The file is not valid JSON: {err}.");
+        return anyhow!("{subject} is not valid JSON: {err}.");
     };
     let Some(items) = entries(&mut parsed) else {
+        let hint = match source {
+            Some(_) => " Check the \"abi_file_path\" in your config.",
+            None => "",
+        };
         return anyhow!(
-            "The file must hold a JSON array of ABI entries, or an object with an \"abi\" field \
-             holding one. Check the \"abi_file_path\" in your config."
+            "{subject} must hold a JSON array of ABI entries, or an object with an \"abi\" field \
+             holding one.{hint}"
         );
+    };
+    let positions = positions(text);
+    let at = |index: usize| match (source, positions.get(index)) {
+        (Some(source), Some((line, column))) => format!("{source}:{line}:{column}: "),
+        (Some(source), None) => format!("{source}: "),
+        (None, _) => String::new(),
     };
     for (index, item) in items.iter().enumerate() {
         let Some(object) = item.as_object() else {
-            return anyhow!("abi[{index}] is not a JSON object.");
+            return anyhow!("{}an ABI entry must be a JSON object.", at(index));
         };
         if let Err(entry_err) = serde_json::from_value::<AbiItem>(item.clone()) {
-            return describe(index, object, &entry_err);
+            return describe(&at(index), object, &entry_err);
         }
     }
-    anyhow!("{}.", err.to_string().replace('`', "\""))
+    anyhow!(
+        "{subject} is invalid: {}.",
+        err.to_string().replace('`', "\"")
+    )
 }
 
-/// Reads an ABI file, filling in what its writer left out.
-pub fn parse(text: &str) -> Result<AbiOrNestedAbi> {
+/// Reads an ABI, filling in what its writer left out. `source` names the file
+/// it came from, and is what an unreadable entry is reported against; an ABI
+/// with no file behind it passes `None`.
+pub fn parse(source: Option<&str>, text: &str) -> Result<AbiOrNestedAbi> {
     let err = match serde_json::from_str::<AbiOrNestedAbi>(text) {
         Ok(abi) => return Ok(abi),
         Err(err) => err,
@@ -186,7 +243,7 @@ pub fn parse(text: &str) -> Result<AbiOrNestedAbi> {
         .map(serde_json::from_str::<AbiOrNestedAbi>)
     {
         Some(Ok(abi)) => Ok(abi),
-        _ => Err(explain(text, &err)),
+        _ => Err(explain(source, text, &err)),
     }
 }
 
@@ -194,13 +251,24 @@ pub fn parse(text: &str) -> Result<AbiOrNestedAbi> {
 mod tests {
     use super::*;
 
+    fn read(text: &str) -> AbiOrNestedAbi {
+        parse(Some("abis/Token.json"), text).expect("a readable ABI")
+    }
+
     fn events(abi: AbiOrNestedAbi) -> Vec<String> {
         let (AbiOrNestedAbi::Abi(abi) | AbiOrNestedAbi::NestedAbi { abi }) = abi;
         abi.events().map(|event| event.name.clone()).collect()
     }
 
     fn error(text: &str) -> String {
-        let Err(err) = parse(text) else {
+        let Err(err) = parse(Some("abis/Token.json"), text) else {
+            panic!("expected an unreadable ABI to fail");
+        };
+        err.to_string()
+    }
+
+    fn error_without_a_file(text: &str) -> String {
+        let Err(err) = parse(None, text) else {
             panic!("expected an unreadable ABI to fail");
         };
         err.to_string()
@@ -208,7 +276,7 @@ mod tests {
 
     #[test]
     fn reads_an_abi_a_truffle_era_toolchain_wrote() {
-        let abi = parse(
+        let abi = read(
             r#"[
               {
                 "constant": true,
@@ -228,8 +296,7 @@ mod tests {
                 "signature": "0x45b96fe4"
               }
             ]"#,
-        )
-        .unwrap();
+        );
 
         assert_eq!(events(abi), vec!["Failure"]);
     }
@@ -239,15 +306,14 @@ mod tests {
     // with no type at all, which the spec reads as a function.
     #[test]
     fn reads_an_abi_that_leaves_out_what_the_spec_lets_it() {
-        let abi = parse(
+        let abi = read(
             r#"[
               {"name": "admin", "outputs": [{"name": "", "type": "address"}], "stateMutability": "view"},
               {"type": "function", "name": "renounce"},
               {"type": "event", "name": "Failure"},
               {"type": "event", "name": "Transfer", "inputs": [{"name": "to", "type": "address", "indexed": true}]}
             ]"#,
-        )
-        .unwrap();
+        );
 
         assert_eq!(events(abi), vec!["Failure", "Transfer"]);
     }
@@ -256,7 +322,7 @@ mod tests {
     // concatenated, list the constructor twice.
     #[test]
     fn reads_an_abi_that_repeats_its_constructor_fallback_and_receive() {
-        let abi = parse(
+        let abi = read(
             r#"[
               {"inputs": [], "payable": false, "stateMutability": "nonpayable", "type": "constructor"},
               {"payable": true, "stateMutability": "payable", "type": "fallback"},
@@ -266,15 +332,14 @@ mod tests {
               {"stateMutability": "payable", "type": "receive"},
               {"anonymous": false, "inputs": [], "name": "Failure", "type": "event"}
             ]"#,
-        )
-        .unwrap();
+        );
 
         assert_eq!(events(abi), vec!["Failure"]);
     }
 
     #[test]
     fn reads_a_nested_abi_that_repeats_its_constructor() {
-        let abi = parse(
+        let abi = read(
             r#"{
               "contractName": "Comptroller",
               "abi": [
@@ -284,20 +349,47 @@ mod tests {
               ],
               "bytecode": "0x60806040"
             }"#,
-        )
-        .unwrap();
+        );
 
         assert_eq!(events(abi), vec!["Failure"]);
     }
 
     #[test]
-    fn names_the_entry_whose_type_is_not_an_abi_entry_type() {
+    fn points_at_the_line_the_unreadable_entry_begins_on() {
         assert_eq!(
             error(
-                r#"[{"name": "Failure", "type": "event"}, {"type": "wormhole", "name": "Warp"}]"#
+                "[\n  {\"type\": \"event\", \"name\": \"Failure\", \"inputs\": []},\n  \
+                 {\"type\": \"wormhole\", \"name\": \"Warp\"}\n]"
             ),
-            "abi[1] \"Warp\" has an unknown type \"wormhole\". Expected one of \"constructor\", \
-             \"fallback\", \"receive\", \"function\", \"event\", \"error\"."
+            "abis/Token.json:3:3: \"Warp\": unknown entry type \"wormhole\". Expected one of \
+             \"constructor\", \"fallback\", \"receive\", \"function\", \"event\", \"error\"."
+        );
+    }
+
+    // Entries are found in order, so entries written identically do not all
+    // resolve to the position of the first.
+    #[test]
+    fn points_past_entries_written_identically() {
+        assert_eq!(
+            error(
+                "[\n  {\"type\": \"event\", \"name\": \"Ping\", \"inputs\": []},\n  \
+                 {\"type\": \"event\", \"name\": \"Ping\", \"inputs\": []},\n  \
+                 {\"type\": \"wormhole\", \"name\": \"Warp\"}\n]"
+            ),
+            "abis/Token.json:4:3: \"Warp\": unknown entry type \"wormhole\". Expected one of \
+             \"constructor\", \"fallback\", \"receive\", \"function\", \"event\", \"error\"."
+        );
+    }
+
+    #[test]
+    fn points_into_a_nested_abi() {
+        assert_eq!(
+            error(
+                "{\n  \"contractName\": \"Comptroller\",\n  \"abi\": [\n    \
+                 {\"type\": \"wormhole\", \"name\": \"Warp\"}\n  ]\n}"
+            ),
+            "abis/Token.json:4:5: \"Warp\": unknown entry type \"wormhole\". Expected one of \
+             \"constructor\", \"fallback\", \"receive\", \"function\", \"event\", \"error\"."
         );
     }
 
@@ -305,21 +397,32 @@ mod tests {
     fn names_the_parameter_whose_type_is_malformed() {
         assert_eq!(
             error(
-                r#"[{"name": "Transfer", "type": "event", "inputs": [{"name": "to", "type": "address"}, {"name": "value", "type": "uint256["}]}]"#
+                "[\n  {\"name\": \"Transfer\", \"type\": \"event\", \"inputs\": \
+                 [{\"name\": \"to\", \"type\": \"address\"}, {\"name\": \"value\", \"type\": \"uint256[\"}]}\n]"
             ),
-            "abi[0] \"Transfer\": parameter \"value\" has an invalid type \"uint256[\"."
+            "abis/Token.json:2:3: \"Transfer\": parameter \"value\" has an invalid type \"uint256[\"."
         );
     }
 
-    // Only an event's parameter can be indexed, so alloy refuses a function's
-    // that is; the type it names is not the problem.
+    #[test]
+    fn names_the_parameter_that_has_no_type() {
+        assert_eq!(
+            error(
+                "[\n  {\"name\": \"transfer\", \"type\": \"function\", \"inputs\": [{\"name\": \"to\"}]}\n]"
+            ),
+            "abis/Token.json:2:3: \"transfer\": parameter \"to\" has no \"type\"."
+        );
+    }
+
     #[test]
     fn says_when_a_parameter_carries_indexed_and_may_not() {
         assert_eq!(
             error(
-                r#"[{"name": "transfer", "type": "function", "inputs": [{"name": "to", "type": "address", "indexed": true}]}]"#
+                "[\n  {\"name\": \"transfer\", \"type\": \"function\", \"inputs\": \
+                 [{\"name\": \"to\", \"type\": \"address\", \"indexed\": true}]}\n]"
             ),
-            "abi[0] \"transfer\": parameter \"to\" has \"indexed\", which only an event's parameter can have."
+            "abis/Token.json:2:3: \"transfer\": parameter \"to\" has \"indexed\", which only an \
+             event's parameter can have."
         );
     }
 
@@ -329,17 +432,11 @@ mod tests {
     fn says_when_a_parameter_carries_indexed_set_to_false() {
         assert_eq!(
             error(
-                r#"[{"name": "transfer", "type": "function", "inputs": [{"name": "to", "type": "address", "indexed": false}]}]"#
+                "[\n  {\"name\": \"transfer\", \"type\": \"function\", \"inputs\": \
+                 [{\"name\": \"to\", \"type\": \"address\", \"indexed\": false}]}\n]"
             ),
-            "abi[0] \"transfer\": parameter \"to\" has \"indexed\", which only an event's parameter can have."
-        );
-    }
-
-    #[test]
-    fn names_the_parameter_that_has_no_type() {
-        assert_eq!(
-            error(r#"[{"name": "transfer", "type": "function", "inputs": [{"name": "to"}]}]"#),
-            "abi[0] \"transfer\": parameter \"to\" has no \"type\"."
+            "abis/Token.json:2:3: \"transfer\": parameter \"to\" has \"indexed\", which only an \
+             event's parameter can have."
         );
     }
 
@@ -347,7 +444,7 @@ mod tests {
     fn says_when_the_file_is_not_json() {
         assert_eq!(
             error("not json"),
-            "The file is not valid JSON: expected ident at line 1 column 2."
+            "abis/Token.json is not valid JSON: expected ident at line 1 column 2."
         );
     }
 
@@ -355,8 +452,29 @@ mod tests {
     fn says_when_the_file_holds_no_abi() {
         assert_eq!(
             error(r#"{"contractName": "Comptroller", "bytecode": "0x60806040"}"#),
-            "The file must hold a JSON array of ABI entries, or an object with an \"abi\" field \
-             holding one. Check the \"abi_file_path\" in your config."
+            "abis/Token.json must hold a JSON array of ABI entries, or an object with an \"abi\" \
+             field holding one. Check the \"abi_file_path\" in your config."
+        );
+    }
+
+    // An ABI a block explorer served has no file to open, so it is reported
+    // without a position.
+    #[test]
+    fn reports_an_entry_of_an_abi_that_has_no_file_behind_it() {
+        assert_eq!(
+            error_without_a_file(r#"[{"type": "wormhole", "name": "Warp"}]"#),
+            "\"Warp\": unknown entry type \"wormhole\". Expected one of \"constructor\", \
+             \"fallback\", \"receive\", \"function\", \"event\", \"error\"."
+        );
+    }
+
+    // ... and nothing to fix in the config either.
+    #[test]
+    fn reports_an_abi_that_has_no_file_behind_it_and_holds_no_entries() {
+        assert_eq!(
+            error_without_a_file(r#"{"contractName": "Comptroller"}"#),
+            "The ABI must hold a JSON array of ABI entries, or an object with an \"abi\" field \
+             holding one."
         );
     }
 }
