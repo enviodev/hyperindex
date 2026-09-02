@@ -2292,9 +2292,9 @@ type testIndexer = {{
                             EventKind::Svm(k) => k,
                             _ => continue,
                         };
-                        // No declared args means nothing to decode, which the
-                        // type layer reads to drop `args` from the fields a
-                        // registration may select.
+                        // No declared args means nothing to decode; registration
+                        // rejects selecting the field, and `never` keeps a
+                        // handler from reading it as an object.
                         let args_ts = if svm_kind.args.is_empty() {
                             "never".to_string()
                         } else {
