@@ -84,7 +84,7 @@ let toSvmInstruction = (
     out->setField("isInner", item.isInner)
   }
   if hasSelection("args") {
-    out->setField("args", item.argsJson->JSON.parseOrThrow)
+    out->setField("args", item.args)
   }
   if hasSelection("accounts") {
     out->setField(

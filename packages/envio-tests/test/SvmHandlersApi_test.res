@@ -377,7 +377,7 @@ type Programs = Global extends { config: { svm: { programs: infer P } } } ? P : 
 type Swap = Programs["Swapper"]["swap"];
 
 expectType<TypeEqual<keyof Swap, "args" | "accounts">>(true);
-expectType<TypeEqual<Swap["args"], { readonly amountIn: string; readonly minAmountOut: string }>>(true);
+expectType<TypeEqual<Swap["args"], { readonly amountIn: bigint; readonly minAmountOut: bigint }>>(true);
 expectType<TypeEqual<Swap["accounts"], { readonly source: string; readonly destination: string }>>(true);
 // @ts-expect-error - transaction is not config-bound; handler fields.transaction selects it
 type _Tx = Swap["transaction"];
@@ -453,7 +453,7 @@ if (0) {
       },
     },
     async ({ instruction }) => {
-      expectType<TypeEqual<typeof instruction.args, { readonly amountIn: string; readonly minAmountOut: string }>>(true);
+      expectType<TypeEqual<typeof instruction.args, { readonly amountIn: bigint; readonly minAmountOut: bigint }>>(true);
       expectType<TypeEqual<typeof instruction.accounts.source.address, string>>(true);
       expectType<TypeEqual<typeof instruction.accounts.source.accountName, "source">>(true);
       expectType<TypeEqual<typeof instruction.accounts.source.instructionAccountIndex, number>>(true);
@@ -528,7 +528,7 @@ const fields = {
 const handle = async (
   instruction: SvmInstruction<typeof fields, "Swapper", "swap">,
 ) => {
-  expectType<TypeEqual<typeof instruction.args, { readonly amountIn: string; readonly minAmountOut: string }>>(true);
+  expectType<TypeEqual<typeof instruction.args, { readonly amountIn: bigint; readonly minAmountOut: bigint }>>(true);
   expectType<TypeEqual<typeof instruction.programId, string>>(true);
   expectType<TypeEqual<typeof instruction.transaction.signature, string>>(true);
   expectType<TypeEqual<typeof instruction.logs[number]["message"], string>>(true);
@@ -539,7 +539,7 @@ const handle = async (
 
 const handleSwap: SvmOnInstructionHandler<typeof fields, "Swapper", "swap"> =
   async ({ instruction, context }) => {
-    expectType<TypeEqual<typeof instruction.args, { readonly amountIn: string; readonly minAmountOut: string }>>(true);
+    expectType<TypeEqual<typeof instruction.args, { readonly amountIn: bigint; readonly minAmountOut: bigint }>>(true);
     expectType<TypeEqual<typeof context.isPreload, boolean>>(true);
     await handle(instruction);
   };
