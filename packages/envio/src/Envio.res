@@ -86,7 +86,9 @@ type svmInstruction = {
   data?: string,
   path?: array<int>,
   isInner?: bool,
-  args?: JSON.t,
+  // Decoded Borsh args; wide integers (u64/u128/i64/i128) are bigint, so the
+  // tree is not valid JSON.
+  args?: unknown,
   accounts?: dict<svmInstructionAccount>,
   accountArguments?: array<SvmTypes.Pubkey.t>,
   transaction?: svmTransaction,
@@ -285,7 +287,7 @@ type svmSimulateItem = {
   programId?: string,
   data?: string,
   isInner?: bool,
-  args?: JSON.t,
+  args?: unknown,
   accounts?: dict<{address: string}>,
   accountArguments?: array<string>,
   logs?: array<{kind?: string, message?: string}>,
