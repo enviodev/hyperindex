@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -18,7 +18,6 @@ pub(crate) mod mod_helpers {
     }
 }
 
-use hypersync_client_solana::decode::ProgramSchema as UpstreamSchema;
 use hypersync_client_solana::simple_types as simple;
 use hypersync_client_solana::RateLimitInfo;
 use hypersync_solana_net_types::field_selection::SolanaFieldSelection;
@@ -27,13 +26,11 @@ use hypersync_solana_net_types::query::SolanaQuery;
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
 use crate::block_hash_pagination::{paginate_block_hashes, HashPage};
 use crate::block_store::BlockStore;
-use crate::config_parsing::human_config::svm::{ArgDef, ArgType};
 use crate::request_stats::{rate_limited_err, source_behind_head_err, RequestStat};
 use crate::transaction_store::TransactionStore;
-use borsh_decoder::InstructionSchemaInput;
 use config::SvmClientConfig;
 use query::SvmQuery;
-use selection::{route_instruction, SelectionBuilder, SvmOnEventRegistrationInput};
+use selection::{route_instruction, SelectionBuilder, SvmProgramInput};
 use types::to_hex;
 
 /// Move the response's transactions and account activity into a
@@ -62,86 +59,6 @@ fn build_svm_store(
     store.insert_svm_txs(transactions);
     store.insert_svm_account_activity(account_activity);
     store
-}
-
-/// Per-program Borsh schemas from the registrations that carry schema pieces
-/// (`accounts`/`args`), keyed by base58 program id. A registration without a
-/// schema (or without a discriminator to dispatch on) contributes nothing;
-/// the program's `definedTypes` come from its first schema-carrying
-/// registration — every registration of a program duplicates the same
-/// registry.
-fn build_schemas(
-    registrations: &[SvmOnEventRegistrationInput],
-) -> Result<HashMap<String, UpstreamSchema>> {
-    struct ProgramParts {
-        defined_types: BTreeMap<String, ArgType>,
-        instructions: Vec<InstructionSchemaInput>,
-    }
-    let mut parts_by_program: Vec<(String, ProgramParts)> = Vec::new();
-
-    for reg in registrations {
-        if reg.program_id.is_empty() {
-            continue;
-        }
-        let has_schema = !reg.accounts.is_empty() || reg.args_json.is_some();
-        let discriminator = reg.discriminator.as_deref().unwrap_or_default();
-        if !has_schema || discriminator.is_empty() {
-            continue;
-        }
-        let args: Vec<ArgDef> = reg
-            .args_json
-            .as_deref()
-            .map(|json| {
-                serde_json::from_str(json)
-                    .with_context(|| format!("parse args schema for {}", reg.instruction_name))
-            })
-            .transpose()?
-            .unwrap_or_default();
-        let instruction = InstructionSchemaInput {
-            name: reg.instruction_name.clone(),
-            discriminator: discriminator.to_string(),
-            accounts: reg.accounts.clone(),
-            args,
-        };
-        match parts_by_program
-            .iter_mut()
-            .find(|(program_id, _)| program_id == &reg.program_id)
-        {
-            Some((_, parts)) => parts.instructions.push(instruction),
-            None => {
-                let defined_types: BTreeMap<String, ArgType> = reg
-                    .defined_types_json
-                    .as_deref()
-                    .map(|json| {
-                        serde_json::from_str(json).with_context(|| {
-                            format!("parse defined types for {}", reg.instruction_name)
-                        })
-                    })
-                    .transpose()?
-                    .unwrap_or_default();
-                parts_by_program.push((
-                    reg.program_id.clone(),
-                    ProgramParts {
-                        defined_types,
-                        instructions: vec![instruction],
-                    },
-                ));
-            }
-        }
-    }
-
-    parts_by_program
-        .into_iter()
-        .map(|(program_id, parts)| {
-            let schema = borsh_decoder::build_program_schema(
-                program_id.clone(),
-                &parts.defined_types,
-                parts.instructions,
-            )
-            .with_context(|| format!("build program schema for {program_id}"))?;
-            Ok((program_id, schema))
-        })
-        .collect()
 }
 
 /// The marker the client leaves in the error chain on a 429. It exposes no
@@ -189,7 +106,6 @@ impl SvmHyperSyncClient {
 #[napi]
 pub struct SvmHyperSyncClient {
     inner: Arc<hypersync_client_solana::Client>,
-    schemas: HashMap<String, UpstreamSchema>,
     selection_builder: SelectionBuilder,
     /// The chain's address index, shared with the fetch state. Read by the
     /// per-instruction owner gate.
@@ -202,10 +118,10 @@ impl SvmHyperSyncClient {
     pub fn new(
         cfg: SvmClientConfig,
         user_agent: String,
-        event_registrations: Vec<SvmOnEventRegistrationInput>,
+        programs: Vec<SvmProgramInput>,
         address_store: &AddressStore,
     ) -> napi::Result<SvmHyperSyncClient> {
-        Self::from_config(cfg, user_agent, event_registrations, address_store)
+        Self::from_config(cfg, user_agent, programs, address_store)
     }
 
     /// Factory taking a custom user agent, mirroring EVM's `new_with_agent`.
@@ -215,16 +131,13 @@ impl SvmHyperSyncClient {
     pub fn from_config(
         cfg: SvmClientConfig,
         user_agent: String,
-        event_registrations: Vec<SvmOnEventRegistrationInput>,
+        programs: Vec<SvmProgramInput>,
         address_store: &AddressStore,
     ) -> napi::Result<SvmHyperSyncClient> {
-        let schemas = build_schemas(&event_registrations)
-            .context("build program schemas")
-            .map_err(map_err)?;
         let handle = address_store.handle();
         let selection_builder = {
             let store = handle.read().unwrap();
-            SelectionBuilder::from_registrations(&event_registrations, &store)
+            SelectionBuilder::from_programs(&programs, &store)
                 .context("build selection builder")
                 .map_err(map_err)?
         };
@@ -233,7 +146,6 @@ impl SvmHyperSyncClient {
             .map_err(map_err)?;
         Ok(SvmHyperSyncClient {
             inner: Arc::new(inner),
-            schemas,
             selection_builder,
             address_store: handle,
         })
@@ -380,7 +292,6 @@ impl SvmHyperSyncClient {
                 &resp.instruction_calls,
                 std::mem::take(&mut resp.logs),
                 &built,
-                &self.schemas,
                 &set_cache,
                 &client_filtered,
                 &store,
@@ -481,11 +392,10 @@ pub struct EventItem {
     /// `args` when the registration carries a Borsh schema.
     pub data: String,
     pub is_inner: bool,
-    /// Borsh-decoded args as a JS value tree (wide integers as bigint), an
-    /// empty object when the routed registration reads no args or the program
-    /// carries no schema. An instruction the schema rejects never becomes an
-    /// item at all.
-    pub args: crate::param_value::ParamValue,
+    /// Borsh-decoded args as a JS value tree (wide integers as bigint);
+    /// `Some` exactly when the routed registration selected `args`. An
+    /// instruction its layout rejects never becomes an item at all.
+    pub args: Option<crate::param_value::ParamValue>,
     /// Logs scoped to this instruction; `Some` only when the routed
     /// registration selected `fields.log`.
     pub logs: Option<Vec<LogItem>>,
@@ -512,27 +422,29 @@ fn project_logs(logs: &[LogItem], columns: &[&str]) -> Vec<LogItem> {
         .collect()
 }
 
-/// Fans each committed instruction out to the registrations it routes to.
-/// Logs group per (slot, transactionIndex, path) and attach only
-/// to items whose registration selected `fields.log`; logs without an
-/// instruction address attach to no instruction (rare; usually only system
-/// messages). Borsh decoding runs once per instruction against its program's
-/// schema, and only when a routed registration selected `fields.instruction`
-/// `args`.
+/// Fans each committed instruction call out to every selected instruction
+/// whose prefix it carries, and within each to the registrations it routes
+/// to. Logs group per (slot, transactionIndex, path) and attach only to items
+/// whose registration selected `fields.log`; logs without an instruction
+/// address attach to no instruction (rare; usually only system messages).
+/// Borsh decoding runs once per matched instruction, and only when one of its
+/// routed registrations selected `args`.
 fn build_event_items(
     instruction_calls: &[simple::InstructionCall],
     logs: Vec<simple::Log>,
     built: &selection::BuiltSelection,
-    schemas: &HashMap<String, UpstreamSchema>,
     set_cache: &SetCache,
     client_filtered: &crate::client_filtered_contracts::ClientFilteredContracts,
     address_store: &StoreInner,
 ) -> Result<Vec<EventItem>> {
     let mut logs_by_key: HashMap<(u64, u32, Vec<u32>), Vec<LogItem>> = HashMap::new();
-    for log in logs {
-        if let (Some(slot), Some(transaction_index), Some(instruction_address)) =
-            (log.slot, log.transaction_index, log.instruction_address)
-        {
+    if !built.log_columns.is_empty() {
+        for log in logs {
+            let (Some(slot), Some(transaction_index), Some(instruction_address)) =
+                (log.slot, log.transaction_index, log.instruction_address)
+            else {
+                continue;
+            };
             logs_by_key
                 .entry((slot, transaction_index, instruction_address))
                 .or_default()
@@ -565,7 +477,7 @@ fn build_event_items(
             block: slot,
         };
         let routed = route_instruction(
-            &built.registrations,
+            &built.instructions,
             instr,
             &address,
             client_filtered,
@@ -574,26 +486,11 @@ fn build_event_items(
         if routed.is_empty() {
             continue;
         }
-        let decoded = if routed.iter().any(|reg| reg.selects_args) {
-            match schemas.get(&instr.executing_account) {
-                Some(schema) => match borsh_decoder::decode_with_schema(schema, raw) {
-                    borsh_decoder::Decoded::Args(args) => Some(args),
-                    // Args were asked for and the schema rejected the data, so
-                    // there is nothing truthful to hand a handler. Drop the
-                    // instruction rather than run it with empty args - for
-                    // every registration it routed to, not just the ones
-                    // reading args.
-                    borsh_decoder::Decoded::Failed => continue,
-                    // The registration declared no args to decode, so there is
-                    // nothing to fail at and nothing to drop.
-                    borsh_decoder::Decoded::Uncovered => None,
-                },
-                None => None,
-            }
-        } else {
-            None
-        };
-        let logs = if routed.iter().any(|reg| !reg.log_columns.is_empty()) {
+        let logs = if routed
+            .iter()
+            .flat_map(|(_, registrations)| registrations)
+            .any(|reg| !reg.log_columns.is_empty())
+        {
             logs_by_key
                 .get(&(
                     instr.slot,
@@ -604,40 +501,48 @@ fn build_event_items(
         } else {
             None
         };
-        for reg in routed {
-            items.push(EventItem {
-                on_event_registration_index: reg.index,
-                slot,
-                transaction_index: i64::from(instr.transaction_index),
-                path: instr
-                    .instruction_address
-                    .iter()
-                    .map(|&v| i64::from(v))
-                    .collect(),
-                program_id: instr.executing_account.clone(),
-                accounts: instr.account_arguments.clone(),
-                data: to_hex(&instr.data),
-                is_inner: instr.is_inner,
-                args: if reg.selects_args {
-                    // A registration that declared no args reads an empty
-                    // object, which is what its generated type promises; one
-                    // whose schema rejected the data never got here.
-                    decoded
-                        .clone()
-                        .unwrap_or(crate::param_value::ParamValue::Obj(vec![]))
-                } else {
-                    // Unselected, so the payload omits the key and this is
-                    // never read.
-                    crate::param_value::ParamValue::Null
+        let fanned_out_from = items.len();
+        for (_, registrations) in routed {
+            // Every registration of an instruction shares its layout, so one
+            // decode serves them all, and `None` here means none of them
+            // reads args.
+            let decoded = match registrations.iter().find_map(|reg| reg.args.as_ref()) {
+                None => None,
+                Some(schema) => match schema.decode(&instr.data) {
+                    Some(args) => Some(args),
+                    // This layout rejected the data, so there is nothing
+                    // truthful to hand its handlers. Another instruction
+                    // matching the same call decodes on its own.
+                    None => continue,
                 },
-                logs: if !reg.log_columns.is_empty() {
-                    logs.as_deref()
-                        .map(|logs| project_logs(logs, &reg.log_columns))
-                } else {
-                    None
-                },
-            });
+            };
+            for reg in registrations {
+                items.push(EventItem {
+                    on_event_registration_index: reg.index,
+                    slot,
+                    transaction_index: i64::from(instr.transaction_index),
+                    path: instr
+                        .instruction_address
+                        .iter()
+                        .map(|&v| i64::from(v))
+                        .collect(),
+                    program_id: instr.executing_account.clone(),
+                    accounts: instr.account_arguments.clone(),
+                    data: to_hex(&instr.data),
+                    is_inner: instr.is_inner,
+                    args: decoded.clone().filter(|_| reg.args.is_some()),
+                    logs: if !reg.log_columns.is_empty() {
+                        logs.as_deref()
+                            .map(|logs| project_logs(logs, &reg.log_columns))
+                    } else {
+                        None
+                    },
+                });
+            }
         }
+        // Item order within a call follows registration index whatever
+        // instruction each registration hangs off.
+        items[fanned_out_from..].sort_by_key(|item| item.on_event_registration_index);
     }
     Ok(items)
 }
@@ -797,19 +702,11 @@ mod tests {
         assert!(error.reason.contains("connection reset"), "{error}");
     }
 
-    fn reg_input(
-        index: i64,
-        discriminator: &str,
-        include_logs: bool,
-    ) -> SvmOnEventRegistrationInput {
-        SvmOnEventRegistrationInput {
+    fn registration(index: i64, include_logs: bool) -> selection::SvmOnEventRegistrationInput {
+        selection::SvmOnEventRegistrationInput {
             index,
-            instruction_name: format!("I{index}"),
-            contract_name: "TokenMetadata".to_string(),
-            program_id: TOKEN_METADATA_PROGRAM.to_string(),
             is_wildcard: true,
             start_block: None,
-            discriminator: Some(discriminator.to_string()),
             is_inner: None,
             account_filters: vec![],
             transaction_fields: vec![],
@@ -821,9 +718,50 @@ mod tests {
                 vec![]
             },
             instruction_fields: vec![],
-            accounts: vec![],
-            args_json: None,
+        }
+    }
+
+    fn reads_args(
+        mut registration: selection::SvmOnEventRegistrationInput,
+    ) -> selection::SvmOnEventRegistrationInput {
+        registration.instruction_fields = vec!["args".to_string()];
+        registration
+    }
+
+    fn instruction(
+        name: &str,
+        discriminator: Option<&str>,
+        args_json: Option<&str>,
+        registrations: Vec<selection::SvmOnEventRegistrationInput>,
+    ) -> selection::SvmInstructionInput {
+        selection::SvmInstructionInput {
+            name: name.to_string(),
+            discriminator: discriminator.map(str::to_string),
+            args_json: args_json.map(str::to_string),
+            registrations,
+        }
+    }
+
+    /// One keyed instruction of the Token Metadata program.
+    fn keyed(
+        index: i64,
+        discriminator: &str,
+        include_logs: bool,
+    ) -> selection::SvmInstructionInput {
+        instruction(
+            &format!("I{index}"),
+            Some(discriminator),
+            None,
+            vec![registration(index, include_logs)],
+        )
+    }
+
+    fn program(name: &str, instructions: Vec<selection::SvmInstructionInput>) -> SvmProgramInput {
+        SvmProgramInput {
+            name: name.to_string(),
+            program_id: TOKEN_METADATA_PROGRAM.to_string(),
             defined_types_json: None,
+            instructions,
         }
     }
 
@@ -846,6 +784,17 @@ mod tests {
         (store, set)
     }
 
+    fn build(
+        store: &AddressStore,
+        programs: &[SvmProgramInput],
+        indexes: &[i64],
+    ) -> selection::BuiltSelection {
+        SelectionBuilder::from_programs(programs, &store.handle().read().unwrap())
+            .unwrap()
+            .build(indexes)
+            .unwrap()
+    }
+
     fn route(
         store: &AddressStore,
         set: &AddressSet,
@@ -859,7 +808,6 @@ mod tests {
             instructions,
             logs,
             built,
-            &HashMap::new(),
             set.cache(),
             &Default::default(),
             &address_store,
@@ -880,16 +828,27 @@ mod tests {
         }
     }
 
+    fn decoded_args(items: &[EventItem]) -> Vec<(i64, Option<ParamValue>)> {
+        items
+            .iter()
+            .map(|item| (item.on_event_registration_index, item.args.clone()))
+            .collect()
+    }
+
+    fn amount(value: u128) -> ParamValue {
+        ParamValue::Obj(vec![("amount".to_string(), ParamValue::from_u128(value))])
+    }
+
+    const AMOUNT: &str = r#"[{"name":"amount","type":"u64"}]"#;
+
     #[test]
     fn instructions_of_failed_transactions_are_dropped() {
         let (store, set) = fixture(&["TokenMetadata"]);
-        let built = SelectionBuilder::from_registrations(
-            &[reg_input(0, "0x21", false)],
-            &store.handle().read().unwrap(),
-        )
-        .unwrap()
-        .build(&[0])
-        .unwrap();
+        let built = build(
+            &store,
+            &[program("TokenMetadata", vec![keyed(0, "0x21", false)])],
+            &[0],
+        );
         let committed = committed_instruction(&[0x21]);
         let mut uncommitted = committed_instruction(&[0x21]);
         uncommitted.tx_success = Some(false);
@@ -913,17 +872,14 @@ mod tests {
         // Two registrations fan out from the same instruction; only the
         // `fields.log` one carries the instruction-scoped log.
         let (store, set) = fixture(&["TokenMetadata", "Other"]);
-        let built = SelectionBuilder::from_registrations(
-            &[reg_input(0, "0x21", true), {
-                let mut with_different_contract = reg_input(1, "0x21", false);
-                with_different_contract.contract_name = "Other".to_string();
-                with_different_contract
-            }],
-            &store.handle().read().unwrap(),
-        )
-        .unwrap()
-        .build(&[0, 1])
-        .unwrap();
+        let built = build(
+            &store,
+            &[
+                program("TokenMetadata", vec![keyed(0, "0x21", true)]),
+                program("Other", vec![keyed(1, "0x21", false)]),
+            ],
+            &[0, 1],
+        );
         let instr = committed_instruction(&[0x21]);
         let log = simple::Log {
             slot: Some(42),
@@ -978,13 +934,11 @@ mod tests {
         // gets no logs at all. Verified against solana.hypersync.xyz: at slot
         // ~441_370_000 not one log row carries the column.
         let (store, set) = fixture(&["TokenMetadata"]);
-        let built = SelectionBuilder::from_registrations(
-            &[reg_input(0, "0x21", true)],
-            &store.handle().read().unwrap(),
-        )
-        .unwrap()
-        .build(&[0])
-        .unwrap();
+        let built = build(
+            &store,
+            &[program("TokenMetadata", vec![keyed(0, "0x21", true)])],
+            &[0],
+        );
         let instr = committed_instruction(&[0x21]);
         let log = simple::Log {
             slot: Some(42),
@@ -1010,15 +964,16 @@ mod tests {
     #[test]
     fn kind_only_log_selection_omits_message() {
         let (store, set) = fixture(&["TokenMetadata"]);
-        let mut input = reg_input(0, "0x21", false);
-        input.log_fields = vec!["kind".to_string()];
-        let built = SelectionBuilder::from_registrations(
-            std::slice::from_ref(&input),
-            &store.handle().read().unwrap(),
-        )
-        .unwrap()
-        .build(&[0])
-        .unwrap();
+        let mut kind_only = registration(0, false);
+        kind_only.log_fields = vec!["kind".to_string()];
+        let built = build(
+            &store,
+            &[program(
+                "TokenMetadata",
+                vec![instruction("I0", Some("0x21"), None, vec![kind_only])],
+            )],
+            &[0],
+        );
         let instr = committed_instruction(&[0x21]);
         let log = simple::Log {
             slot: Some(42),
@@ -1039,178 +994,174 @@ mod tests {
     }
 
     #[test]
-    fn borsh_decode_runs_only_when_args_are_selected() {
-        let (store, set) = fixture(&["TokenMetadata", "Other"]);
-        let mut with_args = reg_input(0, "0x21", false);
-        with_args.instruction_fields = vec!["args".to_string()];
-        with_args.accounts = vec!["metadata".to_string()];
-        with_args.args_json = Some(r#"[{"name":"amount","type":"u64"}]"#.to_string());
-        let mut without_args = with_args.clone();
-        without_args.index = 1;
-        without_args.instruction_name = "I1".to_string();
-        without_args.instruction_fields = vec![];
-        without_args.contract_name = "Other".to_string();
-        let schemas = build_schemas(&[with_args.clone(), without_args.clone()]).unwrap();
-        let built = SelectionBuilder::from_registrations(
-            &[with_args, without_args],
+    fn args_reach_only_the_registrations_that_select_them() {
+        // Two registrations of one instruction: the payload omits `args` for
+        // the one that never reads it, so it carries nothing rather than a
+        // decoded-looking empty object.
+        let (store, set) = fixture(&["TokenMetadata"]);
+        let built = build(
+            &store,
+            &[program(
+                "TokenMetadata",
+                vec![instruction(
+                    "Create",
+                    Some("0x21"),
+                    Some(AMOUNT),
+                    vec![reads_args(registration(0, false)), registration(1, false)],
+                )],
+            )],
+            &[0, 1],
+        );
+        let instr = committed_instruction(&[0x21, 1, 0, 0, 0, 0, 0, 0, 0]);
+        let items = route(&store, &set, &[instr], vec![], &built).unwrap();
+        assert_eq!(decoded_args(&items), vec![(0, Some(amount(1))), (1, None)]);
+    }
+
+    #[test]
+    fn selecting_args_on_an_instruction_without_a_layout_is_rejected() {
+        let (store, _set) = fixture(&["TokenMetadata"]);
+        let err = SelectionBuilder::from_programs(
+            &[program(
+                "TokenMetadata",
+                vec![instruction(
+                    "Bare",
+                    Some("0x21"),
+                    None,
+                    vec![reads_args(registration(0, false))],
+                )],
+            )],
             &store.handle().read().unwrap(),
         )
-        .unwrap()
-        .build(&[0, 1])
+        .err()
         .unwrap();
-        let mut instr = committed_instruction(&[0x21, 1, 0, 0, 0, 0, 0, 0, 0]);
-        instr.account_arguments = Some(vec![]);
-        let address_store = store.handle();
-        let address_store = address_store.read().unwrap();
-        let items = build_event_items(
-            std::slice::from_ref(&instr),
+        assert!(
+            format!("{err:#}")
+                .contains("registration 0 selects `args` but instruction Bare declares none"),
+            "{err:#}"
+        );
+    }
+
+    // SPL Memo shape: no discriminator, the whole data is the args. It fires
+    // alongside a keyed instruction of the same program that also matches.
+    #[test]
+    fn a_program_wide_instruction_decodes_from_offset_zero_and_fans_out_with_keyed_ones() {
+        let (store, set) = fixture(&["TokenMetadata"]);
+        let built = build(
+            &store,
+            &[program(
+                "TokenMetadata",
+                vec![
+                    instruction(
+                        "Create",
+                        Some("0x21"),
+                        Some(AMOUNT),
+                        vec![reads_args(registration(0, false))],
+                    ),
+                    instruction(
+                        "Any",
+                        None,
+                        Some(r#"[{"name":"raw","type":{"vec":"u8"}}]"#),
+                        vec![reads_args(registration(1, false))],
+                    ),
+                ],
+            )],
+            &[0, 1],
+        );
+        let mut any_data = 2u32.to_le_bytes().to_vec();
+        any_data.extend_from_slice(&[0x21, 0x01]);
+        let items = route(
+            &store,
+            &set,
+            &[
+                committed_instruction(&[0x21, 1, 0, 0, 0, 0, 0, 0, 0]),
+                committed_instruction(&any_data),
+            ],
             vec![],
             &built,
-            &schemas,
-            set.cache(),
-            &Default::default(),
-            &address_store,
         )
         .unwrap();
-        let decoded = items
-            .iter()
-            .map(|item| (item.on_event_registration_index, item.args.clone()))
-            .collect::<Vec<_>>();
         assert_eq!(
-            decoded,
+            decoded_args(&items),
             vec![
+                (0, Some(amount(1))),
+                // The same call, as `Any` reads it: a 9-byte vec is what the
+                // data isn't, so the layout rejects it and `Any` is skipped.
                 (
-                    0,
-                    ParamValue::Obj(vec![("amount".to_string(), ParamValue::from_u128(1))])
+                    1,
+                    Some(ParamValue::Obj(vec![(
+                        "raw".to_string(),
+                        ParamValue::Arr(vec![ParamValue::Num(0x21.into()), ParamValue::Num(1.0)])
+                    )]))
                 ),
-                // A registration that reads no args never has the value read
-                // (the payload omits the key), so it carries the null
-                // placeholder rather than a decoded-looking empty object.
-                (1, ParamValue::Null),
             ]
         );
     }
 
-    // A registration declaring neither args nor accounts carries no schema
-    // piece, so its program's schema has no entry for the discriminator. That
-    // is "nothing declared to decode", not a decode failure: the instruction
-    // must still reach its handler.
+    // An Anchor upgrade keeps the discriminator (a hash of the name) while
+    // changing the args, so two layouts share one prefix. Each call decodes
+    // under exactly the layout that fits it.
     #[test]
-    fn an_instruction_the_program_schema_does_not_cover_keeps_empty_args() {
-        let (store, set) = fixture(&["TokenMetadata", "Other"]);
-        let mut with_args = reg_input(0, "0x21", false);
-        with_args.instruction_fields = vec!["args".to_string()];
-        with_args.args_json = Some(r#"[{"name":"amount","type":"u64"}]"#.to_string());
-        // Same program, a discriminator the schema never learns about.
-        let mut schemaless = with_args.clone();
-        schemaless.index = 1;
-        schemaless.instruction_name = "I1".to_string();
-        schemaless.discriminator = Some("0x0f".to_string());
-        schemaless.accounts = vec![];
-        schemaless.args_json = None;
-        let schemas = build_schemas(&[with_args.clone(), schemaless.clone()]).unwrap();
-        let built = SelectionBuilder::from_registrations(
-            &[with_args, schemaless],
-            &store.handle().read().unwrap(),
-        )
-        .unwrap()
-        .build(&[0, 1])
-        .unwrap();
-        let mut instr = committed_instruction(&[0x0f]);
-        instr.account_arguments = Some(vec![]);
-        let address_store = store.handle();
-        let address_store = address_store.read().unwrap();
-        let items = build_event_items(
-            std::slice::from_ref(&instr),
+    fn instructions_sharing_a_prefix_each_decode_with_their_own_layout() {
+        let (store, set) = fixture(&["TokenMetadata"]);
+        let built = build(
+            &store,
+            &[program(
+                "TokenMetadata",
+                vec![
+                    instruction(
+                        "SwapV1",
+                        Some("0x09"),
+                        Some(AMOUNT),
+                        vec![reads_args(registration(0, false))],
+                    ),
+                    instruction(
+                        "SwapV2",
+                        Some("0x09"),
+                        Some(r#"[{"name":"amount","type":"u64"},{"name":"minOut","type":"u64"}]"#),
+                        vec![reads_args(registration(1, false))],
+                    ),
+                    // Reads no args, so no layout can reject it.
+                    instruction("Every", None, None, vec![registration(2, false)]),
+                ],
+            )],
+            &[0, 1, 2],
+        );
+        let mut v1 = vec![0x09];
+        v1.extend_from_slice(&1u64.to_le_bytes());
+        let mut v2 = v1.clone();
+        v2.extend_from_slice(&2u64.to_le_bytes());
+        let mut v2_call = committed_instruction(&v2);
+        v2_call.transaction_index = Some(8);
+        let items = route(
+            &store,
+            &set,
+            &[committed_instruction(&v1), v2_call],
             vec![],
             &built,
-            &schemas,
-            set.cache(),
-            &Default::default(),
-            &address_store,
         )
-        .unwrap();
-        let decoded = items
-            .iter()
-            .map(|item| (item.on_event_registration_index, item.args.clone()))
-            .collect::<Vec<_>>();
-        assert_eq!(decoded, vec![(1, ParamValue::Obj(vec![]))]);
-    }
-
-    #[test]
-    fn an_instruction_the_schema_cannot_decode_is_dropped() {
-        let (store, set) = fixture(&["TokenMetadata", "Other"]);
-        let mut with_args = reg_input(0, "0x21", false);
-        with_args.instruction_fields = vec!["args".to_string()];
-        with_args.args_json = Some(r#"[{"name":"amount","type":"u64"}]"#.to_string());
-        // Fans out to a second registration that reads no args: the whole
-        // instruction goes, not just the args-reading half of it.
-        let mut without_args = with_args.clone();
-        without_args.index = 1;
-        without_args.instruction_name = "I1".to_string();
-        without_args.instruction_fields = vec![];
-        without_args.contract_name = "Other".to_string();
-        let schemas = build_schemas(&[with_args.clone(), without_args.clone()]).unwrap();
-        let built = SelectionBuilder::from_registrations(
-            &[with_args, without_args],
-            &store.handle().read().unwrap(),
-        )
-        .unwrap()
-        .build(&[0, 1])
-        .unwrap();
-        // A u64 arg needs eight bytes after the discriminator; this carries one.
-        let mut truncated = committed_instruction(&[0x21, 1]);
-        truncated.account_arguments = Some(vec![]);
-        let address_store = store.handle();
-        let address_store = address_store.read().unwrap();
-        let items = build_event_items(
-            std::slice::from_ref(&truncated),
-            vec![],
-            &built,
-            &schemas,
-            set.cache(),
-            &Default::default(),
-            &address_store,
-        )
-        .unwrap();
-        assert_eq!(items.len(), 0);
-    }
-
-    #[test]
-    fn schemas_group_instructions_per_program_and_skip_schemaless() {
-        let with_schema =
-            |index: i64, name: &str, discriminator: &str| selection::SvmOnEventRegistrationInput {
-                index,
-                instruction_name: name.to_string(),
-                contract_name: "TokenMetadata".to_string(),
-                program_id: TOKEN_METADATA_PROGRAM.to_string(),
-                is_wildcard: false,
-                start_block: None,
-                discriminator: Some(discriminator.to_string()),
-                is_inner: None,
-                account_filters: vec![],
-                transaction_fields: vec![],
-                block_fields: vec![],
-                account_activity_fields: vec![],
-                log_fields: vec![],
-                instruction_fields: vec![],
-                accounts: vec!["metadata".to_string()],
-                args_json: Some(r#"[{"name":"amount","type":"u64"}]"#.to_string()),
-                defined_types_json: None,
-            };
-        let mut schemaless = with_schema(2, "NoSchema", "0x03");
-        schemaless.accounts = vec![];
-        schemaless.args_json = None;
-
-        let schemas = build_schemas(&[
-            with_schema(0, "CreateV1", "0x21"),
-            with_schema(1, "UpdateV1", "0x0f"),
-            schemaless,
-        ])
         .unwrap();
         assert_eq!(
-            schemas.keys().collect::<Vec<_>>(),
-            vec![TOKEN_METADATA_PROGRAM]
+            items
+                .iter()
+                .map(|item| (
+                    item.transaction_index,
+                    item.on_event_registration_index,
+                    item.args.clone()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (7, 0, Some(amount(1))),
+                (7, 2, None),
+                (
+                    8,
+                    1,
+                    Some(ParamValue::Obj(vec![
+                        ("amount".to_string(), ParamValue::from_u128(1)),
+                        ("minOut".to_string(), ParamValue::from_u128(2)),
+                    ]))
+                ),
+                (8, 2, None),
+            ]
         );
     }
 

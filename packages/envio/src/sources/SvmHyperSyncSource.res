@@ -10,10 +10,9 @@ type options = {
   addressStore: AddressStore.t,
 }
 
-let namedAccounts = (
-  ~idlNames: array<string>,
-  ~accountArguments: array<string>,
-): dict<Envio.svmInstructionAccount> => {
+let namedAccounts = (~idlNames: array<string>, ~accountArguments: array<string>): dict<
+  Envio.svmInstructionAccount,
+> => {
   let out = Dict.make()
   idlNames->Array.forEachWithIndex((name, i) =>
     switch accountArguments->Array.get(i) {
@@ -32,7 +31,10 @@ let namedAccounts = (
   out
 }
 
-let selectedLog = (log: SvmHyperSyncClient.EventItems.log, ~logFields: Utils.Set.t<string>): Envio.svmLog => {
+let selectedLog = (
+  log: SvmHyperSyncClient.EventItems.log,
+  ~logFields: Utils.Set.t<string>,
+): Envio.svmLog => {
   let out = Dict.make()
   if logFields->Utils.Set.has("kind") {
     switch log.kind->Null.toOption {
@@ -83,8 +85,9 @@ let toSvmInstruction = (
   if hasSelection("isInner") {
     out->setField("isInner", item.isInner)
   }
-  if hasSelection("args") {
-    out->setField("args", item.args)
+  switch item.args->Null.toOption {
+  | Some(args) => out->setField("args", args)
+  | None => ()
   }
   if hasSelection("accounts") {
     out->setField(
@@ -125,9 +128,7 @@ let make = (
     ~url=endpointUrl,
     ~apiToken?,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~eventRegistrations=SvmHyperSyncClient.Registration.fromOnEventRegistrations(
-      onEventRegistrations,
-    ),
+    ~programs=SvmHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~addressStore,
   )
 
@@ -236,8 +237,8 @@ let make = (
 
   // Called through the client rather than passed as a value: the client is a
   // napi class, so a detached method reference loses the instance it belongs to.
-  let getBlockHashes = HyperSync.makeGetBlockHashes(
-    ~query=(~blockNumbers) => client.getBlockHashes(~blockNumbers),
+  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=(~blockNumbers) =>
+    client.getBlockHashes(~blockNumbers)
   )
 
   {
