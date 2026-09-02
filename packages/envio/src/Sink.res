@@ -1,44 +1,53 @@
 type t = {
   name: string,
-  initialize: (
-    ~chainConfigs: array<Config.chain>=?,
-    ~entities: array<Internal.entityConfig>=?,
-    ~enums: array<Table.enumConfig<Table.enum>>=?,
+  initialize: (~entities: array<Internal.entityConfig>) => promise<unit>,
+  resume: (
+    ~checkpointId: Internal.checkpointId,
+    ~chains: array<Persistence.initialChainState>,
   ) => promise<unit>,
-  resume: (~checkpointId: Internal.checkpointId) => promise<unit>,
   writeBatch: (
     ~batch: Batch.t,
     ~updatedEntities: array<Persistence.updatedEntity>,
   ) => promise<unit>,
 }
 
-let makeClickHouse = (~host, ~database, ~username, ~password, ~chainIdMode: ChainId.mode=Int32): t => {
-  let client = ClickHouse.createClient({
-    url: host,
-    username,
-    password,
-  })
-
-  // Don't pass database to the client; it would fail if the database doesn't
-  // exist yet. Each query qualifies the name explicitly or runs USE first.
-
-  let cache = Dict.make()
+let makeClickHouse = (
+  ~host,
+  ~database,
+  ~username,
+  ~password,
+  ~chainIdMode: ChainId.mode=Int32,
+): t => {
+  let sink = ClickHouse.makeSink(~host, ~username, ~password, ~database, ~chainIdMode)
+  let registry = ClickHouse.makeRegistry()
 
   {
     name: "clickhouse",
-    initialize: (~chainConfigs as _=[], ~entities=[], ~enums=[]) => {
-      ClickHouse.initialize(client, ~database, ~entities, ~enums, ~chainIdMode)
+    initialize: (~entities) => {
+      ClickHouse.initialize(sink, ~entities)
     },
-    resume: (~checkpointId) => {
-      ClickHouse.resume(client, ~database, ~checkpointId)
+    resume: (~checkpointId, ~chains) => {
+      ClickHouse.resume(sink, ~checkpointId, ~chains)
     },
     writeBatch: async (~batch, ~updatedEntities) => {
-      await Promise.all(
-        updatedEntities->Array.map(({entityConfig, scope, changes}) => {
-          ClickHouse.setUpdatesOrThrow(client, ~cache, ~changes, ~entityConfig, ~scope, ~database)
-        }),
-      )->Utils.Promise.ignoreValue
-      await ClickHouse.setCheckpointsOrThrow(client, ~batch, ~database)
+      // Staging reads JS values, so it holds the isolate and runs here. The
+      // encode and the round trips happen in Rust, which also keeps the
+      // checkpoints behind the rows they cover.
+      let entities = []
+      let checkpoints = try {
+        updatedEntities->Array.forEach(({entityConfig, scope, changes}) =>
+          switch ClickHouse.stageUpdatesOrThrow(sink, ~registry, ~changes, ~entityConfig, ~scope) {
+          | Some(handle) => entities->Array.push(handle)
+          | None => ()
+          }
+        )
+        ClickHouse.stageCheckpointsOrThrow(sink, ~registry, ~batch)
+      } catch {
+      | exn =>
+        sink->ClickHouseSink.discard(entities)
+        throw(exn)
+      }
+      await ClickHouse.writeStagedOrThrow(sink, ~entities, ~checkpoints)
     },
   }
 }

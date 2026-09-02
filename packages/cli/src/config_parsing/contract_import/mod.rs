@@ -4,7 +4,8 @@ use std::env;
 
 use crate::{
     cli_args::interactive_init::validation::filter_duplicate_events,
-    config_parsing::chain_helpers::NetworkWithExplorer, evm::address::Address,
+    config_parsing::chain_helpers::NetworkWithExplorer,
+    evm::{abi::AbiOrNestedAbi, address::Address},
 };
 use alloy_json_abi::JsonAbi;
 use anyhow::{anyhow, Context};
@@ -70,8 +71,12 @@ pub async fn contract_import(
 
     match contract_import_response {
         ContractImportResponse::Contract { name, abi } => {
-            let mut abi: JsonAbi =
-                serde_json::from_str(&abi).context("Failed parsing contract ABI")?;
+            let mut abi = match crate::evm::abi::parse(None, &abi)
+                .context("Failed to read the ABI the block explorer returned")?
+            {
+                AbiOrNestedAbi::Abi(abi) => abi,
+                AbiOrNestedAbi::NestedAbi { abi } => abi,
+            };
 
             abi.events = filter_duplicate_events(abi.events);
 
