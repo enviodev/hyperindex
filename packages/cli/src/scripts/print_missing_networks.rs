@@ -136,7 +136,7 @@ impl Diff {
 }
 
 pub fn format_extra_chain(chain: &HypersyncChain) -> String {
-    format!("{:?} (ID: {})", chain.get_plain_name(), *chain as u64)
+    format!("{} (ID: {})", chain.get_plain_name(), *chain as u64)
 }
 
 pub async fn run() -> Result<()> {

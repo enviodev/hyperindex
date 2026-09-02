@@ -24,7 +24,8 @@ async fn all_supported_endpoints_are_healthy() {
     // Iterating HypersyncChain::iter() alone only covers chains already in
     // the enum, so chains added to the HyperSync API but missing from the
     // enum slip through, and chains the API dropped stay in the enum until
-    // their endpoint dies. Fail on either kind of drift before probing.
+    // their endpoint dies. Report either kind of drift alongside the probe
+    // results.
     let diff = Diff::get()
         .await
         .expect("Failed to fetch chain diff from HyperSync API");
@@ -46,12 +47,8 @@ async fn all_supported_endpoints_are_healthy() {
                 .join("\n")
         ));
     }
-    if !drift.is_empty() {
-        panic!("{}", drift.join("\n\n"));
-    }
-
-    // Probe every endpoint before reporting, so one dead chain doesn't mask
-    // the rest.
+    // Probe every endpoint before reporting, so neither drift nor one dead
+    // chain masks the rest.
     let mut failures = Vec::new();
     for network in HypersyncChain::iter() {
         let url = network_to_hypersync_url(&network);
@@ -84,10 +81,13 @@ async fn all_supported_endpoints_are_healthy() {
         }
     }
     if !failures.is_empty() {
-        panic!(
-            "{} unhealthy endpoints:\n{}",
+        drift.push(format!(
+            "Unhealthy endpoints ({}):\n{}",
             failures.len(),
             failures.join("\n")
-        );
+        ));
+    }
+    if !drift.is_empty() {
+        panic!("{}", drift.join("\n\n"));
     }
 }
