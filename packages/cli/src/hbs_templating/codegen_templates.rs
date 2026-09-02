@@ -2578,6 +2578,8 @@ struct ConfigBodies<'a> {
 /// - 64-/128-bit integers → `bigint`
 /// - pubkey + `[u8; 32]` → `string` (base58)
 /// - `Vec<u8>` (Borsh `bytes`) → `string` (hex)
+/// - enum variant without fields → its name as a string literal; with fields
+///   → `{ Name: { ...fields } }`
 fn field_type_to_ts_type(
     ty: &hypersync_client_solana::decode::FieldType,
     defined_types: &std::collections::BTreeMap<String, hypersync_client_solana::decode::FieldType>,
@@ -2621,25 +2623,26 @@ fn field_type_to_ts_type(
             }
             variants
                 .iter()
-                .map(|v| {
-                    let body = match &v.fields {
-                        None => "{}".to_string(),
-                        Some(fields) => {
-                            let body = fields
-                                .iter()
-                                .map(|f| {
-                                    format!(
-                                        "readonly {}: {}",
-                                        ts_safe_property_name(&f.name),
-                                        field_type_to_ts_type(&f.ty, defined_types, seen)
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join("; ");
-                            format!("{{ {body} }}")
-                        }
-                    };
-                    format!("{{ readonly {}: {body} }}", ts_safe_property_name(&v.name))
+                .map(|v| match v.fields.as_deref() {
+                    // Mirrors the decoder: a variant without fields is its bare name.
+                    None | Some([]) => format!("\"{}\"", v.name),
+                    Some(fields) => {
+                        let body = fields
+                            .iter()
+                            .map(|f| {
+                                format!(
+                                    "readonly {}: {}",
+                                    ts_safe_property_name(&f.name),
+                                    field_type_to_ts_type(&f.ty, defined_types, seen)
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        format!(
+                            "{{ readonly {}: {{ {body} }} }}",
+                            ts_safe_property_name(&v.name)
+                        )
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join(" | ")
