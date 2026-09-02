@@ -221,7 +221,10 @@ pub enum Network {
     #[subenum(HypersyncChain)]
     Katana = 747474,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    // HyperSync no longer serves Kroma (255.hypersync.xyz refuses
+    // connections and it's gone from active_chains), so it's not a
+    // HypersyncChain. Still resolvable via explorer.
+    #[subenum(NetworkWithExplorer)]
     Kroma = 255,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
