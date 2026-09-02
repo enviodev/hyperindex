@@ -83,7 +83,7 @@ type svmInstruction = {
   instructionName: string,
   discriminator: string,
   programId?: SvmTypes.Pubkey.t,
-  data?: string,
+  data?: Uint8Array.t,
   path?: array<int>,
   isInner?: bool,
   // Decoded Borsh args; wide integers (u64/u128/i64/i128) are bigint, so the
@@ -285,7 +285,7 @@ type svmSimulateItem = {
   slot?: int,
   path?: array<int>,
   programId?: string,
-  data?: string,
+  data?: Uint8Array.t,
   isInner?: bool,
   args?: unknown,
   accounts?: dict<{address: string}>,
