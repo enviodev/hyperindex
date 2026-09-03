@@ -161,18 +161,18 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
       },
       reset: () => JsError.throwWithMessage("Not implemented"),
       setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
-      pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
+      pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
       pruneStaleEntityHistory: async (
         ~entityName as _,
         ~entityIndex as _,
         ~chainIdColumn as _,
-        ~safeCheckpointId as _,
+        ~safeCheckpoints as _,
       ) => (),
       getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
         JsError.throwWithMessage("Not implemented"),
-      getRollbackProgressDiff: (~scope as _, ~rollbackTargetCheckpointId as _) =>
+      getRollbackProgressDiff: (~floors as _) =>
         JsError.throwWithMessage("Not implemented"),
-      getRollbackData: (~entityConfig as _, ~scope as _, ~rollbackTargetCheckpointId as _) =>
+      getRollbackData: (~entityConfig as _, ~floors as _) =>
         JsError.throwWithMessage("Not implemented"),
       writeBatch: (
         ~batch as _,

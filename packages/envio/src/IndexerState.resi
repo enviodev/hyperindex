@@ -1,7 +1,6 @@
 // The indexer state. `t` is opaque: other modules read it through the accessors
 // and change it only through the transitions and setters exposed here.
 
-
 type rollbackState =
   | NoRollback
   | ReorgDetected({chainId: ChainId.t, blockNumber: int})
@@ -67,7 +66,7 @@ let createBatch: (
   ~batchSizeTarget: int,
   ~isRollback: bool,
 ) => Batch.t
-let getSafeCheckpointId: t => option<Internal.checkpointId>
+let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpointId>)>
 
 // Accessors.
 let config: t => Config.t
@@ -141,9 +140,8 @@ let takeRollback: t => option<Persistence.rollback>
 let markCommitted: (t, ~upToCheckpointId: Internal.checkpointId) => unit
 let beginRollbackDiff: (
   t,
-  ~targetCheckpointId: Internal.checkpointId,
   ~diffCheckpointId: Internal.checkpointId,
-  ~scope: RollbackScope.t,
+  ~floors: RollbackFloors.t,
   ~progressedChains: array<InternalTable.Chains.progressedChain>,
   ~rolledBackAddresses: array<AddressRows.key>,
 ) => unit

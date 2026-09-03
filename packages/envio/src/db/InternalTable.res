@@ -685,34 +685,30 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
   // Optional to match the entity tables', where a cross-chain entity has none.
   let chainIdColumn = Some((#chain_id: field :> string))
 
-  let rollback = (
-    sql,
-    ~pgSchema,
-    ~scope: RollbackScope.t,
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => {
+  let rollback = (sql, ~pgSchema, ~floors: RollbackFloors.t) => {
+    let tableRef = `"${pgSchema}"."${table.tableName}"`
+    let bounds = floors.floors->CheckpointBounds.sql(~chainIdColumn, ~tableRef)
     sql
     ->Postgres.preparedUnsafe(
-      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1${scope->RollbackScope.predicate(
-          ~chainIdColumn,
-        )};`,
-      scope->RollbackScope.params(~targetCheckpointId=rollbackTargetCheckpointId),
+      `DELETE FROM ${tableRef}${bounds.using} WHERE "${(#id: field :> string)}" > ${bounds.checkpointId}${bounds.usingMatch};`,
+      floors.floors->CheckpointBounds.params,
     )
     ->Utils.Promise.ignoreValue
   }
 
-  let makePruneStaleCheckpointsQuery = (~pgSchema) => {
-    `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" < $1;`
+  let makePruneStaleCheckpointsQuery = (~pgSchema, ~safeCheckpoints: CheckpointBounds.t) => {
+    let tableRef = `"${pgSchema}"."${table.tableName}"`
+    let bounds = safeCheckpoints->CheckpointBounds.sql(~chainIdColumn, ~tableRef)
+    `DELETE FROM ${tableRef}${bounds.using} WHERE "${(#id: field :> string)}" < ${bounds.checkpointId}${bounds.usingMatch};`
   }
 
-  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpointId: bigint) => {
+  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpoints) =>
     sql
     ->Postgres.preparedUnsafe(
-      makePruneStaleCheckpointsQuery(~pgSchema),
-      [safeCheckpointId->BigInt.toString]->Obj.magic,
+      makePruneStaleCheckpointsQuery(~pgSchema, ~safeCheckpoints),
+      safeCheckpoints->CheckpointBounds.params,
     )
     ->Utils.Promise.ignoreValue
-  }
 
   let makeGetRollbackTargetCheckpointQuery = (~pgSchema) => {
     `SELECT "${(#id: field :> string)}" FROM "${pgSchema}"."${table.tableName}"
@@ -741,26 +737,22 @@ LIMIT 1;`
     })
   }
 
-  let makeGetRollbackProgressDiffQuery = (~pgSchema, ~scope: RollbackScope.t) => {
+  let makeGetRollbackProgressDiffQuery = (~pgSchema, ~floors: RollbackFloors.t) => {
+    let bounds = floors.floors->CheckpointBounds.sql(~chainIdColumn, ~tableRef="t")
     `SELECT 
-  "${(#chain_id: field :> string)}"::float8 as "${(#chain_id: field :> string)}",
-  SUM("${(#events_processed: field :> string)}") as events_processed_diff,
-  MIN("${(#block_number: field :> string)}") - 1 as new_progress_block_number
-FROM "${pgSchema}"."${table.tableName}"
-WHERE "${(#id: field :> string)}" > $1${scope->RollbackScope.predicate(~chainIdColumn)}
-GROUP BY "${(#chain_id: field :> string)}";`
+  t."${(#chain_id: field :> string)}"::float8 as "${(#chain_id: field :> string)}",
+  SUM(t."${(#events_processed: field :> string)}") as events_processed_diff,
+  MIN(t."${(#block_number: field :> string)}") - 1 as new_progress_block_number
+FROM "${pgSchema}"."${table.tableName}" t${bounds.join}
+WHERE t."${(#id: field :> string)}" > ${bounds.checkpointId}
+GROUP BY t."${(#chain_id: field :> string)}";`
   }
 
-  let getRollbackProgressDiff = (
-    sql,
-    ~pgSchema,
-    ~scope: RollbackScope.t,
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => {
+  let getRollbackProgressDiff = (sql, ~pgSchema, ~floors: RollbackFloors.t) =>
     sql
     ->Postgres.preparedUnsafe(
-      makeGetRollbackProgressDiffQuery(~pgSchema, ~scope),
-      scope->RollbackScope.params(~targetCheckpointId=rollbackTargetCheckpointId),
+      makeGetRollbackProgressDiffQuery(~pgSchema, ~floors),
+      floors.floors->CheckpointBounds.params,
     )
     ->(
       Utils.magic: promise<unknown> => promise<
@@ -771,7 +763,6 @@ GROUP BY "${(#chain_id: field :> string)}";`
         }>,
       >
     )
-  }
 }
 
 module RawEvents = {
