@@ -7,6 +7,10 @@ open Vitest
 let scenario = Scenario.make(
   ~configYaml=`
 name: clickhouse-expression-field
+storage:
+  postgres:
+    default: true
+  clickhouse: true
 chains:
   - id: 1
     rpc:
