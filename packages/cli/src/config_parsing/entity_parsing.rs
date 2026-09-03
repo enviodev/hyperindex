@@ -3755,7 +3755,7 @@ type TestEntity { id: ID! }
             DEFAULT_SCHEMA_PATH,
         )
         .unwrap();
-        assert_eq!(entity.internal, false);
+        assert!(!entity.internal);
     }
 
     #[test]
@@ -3769,7 +3769,7 @@ type TestEntity @internal { id: ID! }
             DEFAULT_SCHEMA_PATH,
         )
         .unwrap();
-        assert_eq!(entity.internal, true);
+        assert!(entity.internal);
     }
 
     #[test]
