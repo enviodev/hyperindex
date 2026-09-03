@@ -1,89 +1,97 @@
-//! Borsh instruction decoder bridge.
+//! Borsh instruction args decoder.
 //!
-//! `build_program_schema` assembles an upstream `ProgramSchema` from the
-//! per-instruction schema pieces carried on the event registrations. The
-//! Solana client builds these once at creation time and keeps them keyed by
-//! program id; `get_event_items` then decodes each routed instruction inline
-//! via `decode_with_schema`, so the `DecodedInstruction` shape rides back on
-//! the query response instead of crossing the napi boundary one call at a
-//! time.
+//! Every config instruction carries its own `ArgsSchema`; the Solana client
+//! builds them once at creation and `get_event_items` decodes each routed
+//! instruction inline, so decoded args ride back on the query response instead
+//! of crossing the napi boundary one instruction at a time.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
 use hypersync_client_solana::decode::{
-    decode_instruction as upstream_decode, EnumVariant as UpstreamEnumVariant,
-    FieldType as SvmFieldType, InstructionSchema as UpstreamIxSchema,
-    NamedAccount as UpstreamAccount, NamedField as UpstreamNamedField,
-    ProgramSchema as UpstreamSchema,
+    decode_field, EnumVariant as UpstreamEnumVariant, FieldType as SvmFieldType,
+    NamedField as UpstreamNamedField,
 };
-use hypersync_client_solana::simple_types::InstructionCall as UpstreamInstructionCall;
 
 use crate::config_parsing::human_config::svm::{ArgComposite, ArgDef, ArgPrimitive, ArgType};
 use crate::param_value::ParamValue;
 
-use super::mod_helpers::hex_to_bytes;
+/// A program's nominal types, shared by every instruction of the program.
+pub(crate) type DefinedTypes = BTreeMap<String, SvmFieldType>;
 
-/// One instruction's schema piece, assembled from a registration's
-/// `accounts`/`args` at client creation.
+pub(crate) fn parse_defined_types(json: Option<&str>) -> Result<DefinedTypes> {
+    let types: BTreeMap<String, ArgType> = match json {
+        Some(json) => serde_json::from_str(json).context("parse defined types")?,
+        None => BTreeMap::new(),
+    };
+    types
+        .iter()
+        .map(|(name, ty)| {
+            arg_type_to_field_type(ty)
+                .map(|ft| (name.clone(), ft))
+                .with_context(|| format!("translating defined type '{name}'"))
+        })
+        .collect()
+}
+
+/// The Borsh layout of one config instruction's args: the bytes after the
+/// instruction's data prefix, walked in declared order.
 #[derive(Debug)]
-pub(crate) struct InstructionSchemaInput {
-    pub name: String,
-    /// Hex (`0x`-prefixed or bare) — the bytes the dispatcher matches against
-    /// the head of `instruction.data`.
-    pub discriminator: String,
-    pub accounts: Vec<String>,
-    pub args: Vec<ArgDef>,
+pub(crate) struct ArgsSchema {
+    prefix_len: usize,
+    fields: Vec<UpstreamNamedField>,
+    defined_types: Arc<DefinedTypes>,
 }
 
-/// What decoding one instruction against its program's schema produced.
-#[derive(Debug, PartialEq)]
-pub(crate) enum Decoded {
-    Args(ParamValue),
-    /// The program's schema carries no entry for this discriminator, so the
-    /// registration declared neither args nor accounts. Nothing was asked to be
-    /// decoded and nothing failed.
-    Uncovered,
-    /// The schema covers the discriminator but rejected the data.
-    Failed,
-}
+impl ArgsSchema {
+    pub(crate) fn new(
+        prefix_len: usize,
+        args: &[ArgDef],
+        defined_types: Arc<DefinedTypes>,
+    ) -> Result<Self> {
+        let fields = args
+            .iter()
+            .map(|a| {
+                Ok(UpstreamNamedField {
+                    name: a.name.clone(),
+                    ty: arg_type_to_field_type(&a.ty)
+                        .with_context(|| format!("translating arg '{}'", a.name))?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self {
+            prefix_len,
+            fields,
+            defined_types,
+        })
+    }
 
-/// Decode a raw instruction against a resolved schema into its args as a
-/// `ParamValue` tree. Called inline by the Solana client's `get_event_items`,
-/// so decoded args ride back on the query response instead of crossing the
-/// napi boundary one instruction at a time.
-///
-/// The upstream decoder renders wide integers as decimal JSON strings and
-/// leaves the bigint conversion to the consumer; `args_to_param` re-walks its
-/// output against the instruction's field types to make that conversion.
-///
-/// A decode failure (account-count mismatch, trailing bytes, unresolved type)
-/// yields `Failed` rather than an error: real on-chain calls drift from schemas
-/// in small ways (Metaplex `rent` slot was optional in some versions, etc.), and
-/// a single bad row should not kill the worker. The caller drops such an
-/// instruction instead of running handlers on args it could not decode.
-pub(crate) fn decode_with_schema(
-    schema: &UpstreamSchema,
-    instruction: &UpstreamInstructionCall,
-) -> Decoded {
-    // Dispatch as upstream does (longest discriminator prefix wins) to recover
-    // the instruction schema, and to tell an undeclared instruction apart from
-    // one whose data the schema rejects.
-    let data = instruction.data.as_deref().unwrap_or_default();
-    let ix = schema.disc_lens.iter().find_map(|&len| {
-        data.get(..len)
-            .and_then(|prefix| schema.instructions.get(prefix))
-    });
-    let Some(ix) = ix else {
-        return Decoded::Uncovered;
-    };
-    let Ok(decoded) = upstream_decode(schema, instruction) else {
-        return Decoded::Failed;
-    };
-    match args_to_param(decoded.args, &ix.args, &schema.defined_types) {
-        Some(args) => Decoded::Args(args),
-        None => Decoded::Failed,
+    /// Decode an instruction's data into its args as a `ParamValue` tree, wide
+    /// integers as bigint. `None` when the layout rejects the data: too few
+    /// bytes, trailing bytes, an unknown enum tag. Real on-chain calls drift
+    /// from layouts in small ways (a program upgrade that kept its
+    /// discriminator, a hand-rolled wrapper), and one bad row must not kill the
+    /// worker, so the caller drops the instruction for this layout only.
+    ///
+    /// The upstream decoder renders wide integers as decimal JSON strings and
+    /// leaves the bigint conversion to the consumer; the output is re-walked
+    /// against the field types to make that conversion.
+    pub(crate) fn decode(&self, data: &[u8]) -> Option<ParamValue> {
+        let mut buf = data.get(self.prefix_len..)?;
+        let mut out = Vec::with_capacity(self.fields.len());
+        for field in &self.fields {
+            let value = decode_field(&field.ty, &self.defined_types, &mut buf).ok()?;
+            out.push((
+                field.name.clone(),
+                value_to_param(value, &field.ty, &self.defined_types)?,
+            ));
+        }
+        if !buf.is_empty() {
+            return None;
+        }
+        Some(ParamValue::Obj(out))
     }
 }
 
@@ -204,68 +212,6 @@ fn value_to_param(
     })
 }
 
-pub(crate) fn build_program_schema(
-    program_id: String,
-    defined_types: &BTreeMap<String, ArgType>,
-    instruction_inputs: Vec<InstructionSchemaInput>,
-) -> Result<UpstreamSchema> {
-    let defined_types: BTreeMap<String, SvmFieldType> = defined_types
-        .iter()
-        .map(|(name, ty)| {
-            arg_type_to_field_type(ty)
-                .map(|ft| (name.clone(), ft))
-                .with_context(|| format!("translating defined type '{name}'"))
-        })
-        .collect::<Result<_>>()?;
-
-    let mut instructions: BTreeMap<Vec<u8>, UpstreamIxSchema> = BTreeMap::new();
-    for ix in instruction_inputs {
-        let discriminator = hex_to_bytes(&ix.discriminator)
-            .with_context(|| format!("instruction '{}' discriminator", ix.name))?;
-        let accounts = ix
-            .accounts
-            .into_iter()
-            .map(|name| UpstreamAccount {
-                name,
-                writable: false,
-                signer: false,
-                // The wire format drops per-account writable/signer/optional
-                // flags. Marking every account as `optional` lets the upstream
-                // `required_account_count` rule accept *any* trailing tail,
-                // matching real-world callers that omit sysvar slots.
-                // Real-world surplus accounts still go to `extra_accounts`.
-                optional: true,
-            })
-            .collect();
-        let args = ix
-            .args
-            .into_iter()
-            .map(|a| {
-                Ok(UpstreamNamedField {
-                    name: a.name.clone(),
-                    ty: arg_type_to_field_type(&a.ty)
-                        .with_context(|| format!("translating arg '{}'", a.name))?,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        instructions.insert(
-            discriminator.clone(),
-            UpstreamIxSchema {
-                name: ix.name,
-                discriminator,
-                accounts,
-                args,
-            },
-        );
-    }
-
-    Ok(UpstreamSchema::build(
-        program_id,
-        instructions,
-        defined_types,
-    ))
-}
-
 fn arg_type_to_field_type(ty: &ArgType) -> Result<SvmFieldType> {
     Ok(match ty {
         ArgType::Primitive(p) => match p {
@@ -343,31 +289,10 @@ fn arg_type_to_field_type(ty: &ArgType) -> Result<SvmFieldType> {
 mod tests {
     use super::*;
 
-    const PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
-
-    fn schema_of(args_json: &str, defined_types_json: &str) -> UpstreamSchema {
+    fn schema_of(args_json: &str, defined_types_json: &str) -> ArgsSchema {
         let args: Vec<ArgDef> = serde_json::from_str(args_json).unwrap();
-        let defined_types: BTreeMap<String, ArgType> =
-            serde_json::from_str(defined_types_json).unwrap();
-        build_program_schema(
-            PROGRAM.to_string(),
-            &defined_types,
-            vec![InstructionSchemaInput {
-                name: "Ix".to_string(),
-                discriminator: "0x01".to_string(),
-                accounts: vec![],
-                args,
-            }],
-        )
-        .unwrap()
-    }
-
-    fn instruction_with_data(data: Vec<u8>) -> UpstreamInstructionCall {
-        UpstreamInstructionCall {
-            data: Some(data),
-            account_arguments: Some(vec![]),
-            ..Default::default()
-        }
+        let defined_types = parse_defined_types(Some(defined_types_json)).unwrap();
+        ArgsSchema::new(1, &args, Arc::new(defined_types)).unwrap()
     }
 
     fn obj(entries: Vec<(&str, ParamValue)>) -> ParamValue {
@@ -398,8 +323,8 @@ mod tests {
         data.extend_from_slice(&(-2i64).to_le_bytes());
         data.extend_from_slice(&(-(1i128 << 100)).to_le_bytes());
         assert_eq!(
-            decode_with_schema(&schema, &instruction_with_data(data)),
-            Decoded::Args(obj(vec![
+            schema.decode(&data),
+            Some(obj(vec![
                 ("maxU64", ParamValue::from_u128(u128::from(u64::MAX))),
                 ("maxU128", ParamValue::from_u128(u128::MAX)),
                 ("negI64", ParamValue::from_i128(-2)),
@@ -424,8 +349,8 @@ mod tests {
         data.extend_from_slice(&[0xde, 0xad, 0x00]);
         data.extend_from_slice(&0u32.to_le_bytes());
         assert_eq!(
-            decode_with_schema(&schema, &instruction_with_data(data)),
-            Decoded::Args(obj(vec![
+            schema.decode(&data),
+            Some(obj(vec![
                 ("payload", ParamValue::Bytes(vec![0xde, 0xad, 0x00])),
                 ("empty", ParamValue::Bytes(vec![])),
             ]))
@@ -457,8 +382,8 @@ mod tests {
         data.extend_from_slice(&7u16.to_le_bytes());
         data.extend_from_slice(&8u16.to_le_bytes());
         assert_eq!(
-            decode_with_schema(&schema, &instruction_with_data(data)),
-            Decoded::Args(obj(vec![
+            schema.decode(&data),
+            Some(obj(vec![
                 ("vec", ParamValue::Bytes(vec![0xff, 0x00])),
                 ("fixed", ParamValue::Bytes(vec![1, 2, 3, 4])),
                 (
@@ -510,8 +435,8 @@ mod tests {
         data.push(0); // tag: In (unit variant)
         data.push(2); // empty: struct variant with no fields
         assert_eq!(
-            decode_with_schema(&schema, &instruction_with_data(data)),
-            Decoded::Args(obj(vec![
+            schema.decode(&data),
+            Some(obj(vec![
                 ("absent", ParamValue::Null),
                 ("present", ParamValue::from_u128(7)),
                 (
@@ -538,6 +463,41 @@ mod tests {
                 ("tag", ParamValue::Str("In".to_string())),
                 ("empty", ParamValue::Str("Empty".to_string())),
             ]))
+        );
+    }
+
+    // SPL Memo: no discriminator, the whole data is the args.
+    #[test]
+    fn a_zero_length_prefix_decodes_the_whole_data() {
+        let args: Vec<ArgDef> =
+            serde_json::from_str(r#"[{"name":"text","type":"string"}]"#).unwrap();
+        let schema = ArgsSchema::new(0, &args, Arc::new(DefinedTypes::new())).unwrap();
+        let mut data = 5u32.to_le_bytes().to_vec();
+        data.extend_from_slice(b"hello");
+        assert_eq!(
+            schema.decode(&data),
+            Some(obj(vec![("text", ParamValue::Str("hello".to_string()))]))
+        );
+    }
+
+    #[test]
+    fn short_and_trailing_data_are_rejected() {
+        let schema = schema_of(r#"[{"name":"amount","type":"u64"}]"#, "{}");
+        let mut exact = vec![0x01];
+        exact.extend_from_slice(&1u64.to_le_bytes());
+        let mut trailing = exact.clone();
+        trailing.push(0);
+        assert_eq!(
+            (
+                schema.decode(&[0x01, 1]),
+                schema.decode(&trailing),
+                schema.decode(&exact)
+            ),
+            (
+                None,
+                None,
+                Some(obj(vec![("amount", ParamValue::from_u128(1))]))
+            )
         );
     }
 }
