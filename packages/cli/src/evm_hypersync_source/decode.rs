@@ -726,7 +726,7 @@ mod tests {
         assert_eq!(routed.index, 7);
         match routed.params {
             ParamValue::Obj(fields) => match fields.as_slice() {
-                [(owner, ParamValue::Str(owner_hex)), (value, ParamValue::BigInt(_))]
+                [(owner, ParamValue::Str(owner_hex)), (value, ParamValue::BigInt { .. })]
                     if owner == "owner" && value == "value" =>
                 {
                     assert_eq!(owner_hex, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");

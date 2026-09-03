@@ -128,12 +128,13 @@ module EventItems = {
     path: array<int>,
     programId: string,
     accounts: array<string>,
-    data: string,
+    data: Uint8Array.t,
     isInner: bool,
-    // Borsh-decoded args as a JSON object literal, `{}` when the routed
-    // registration reads no args. An instruction the schema rejects is dropped
-    // in Rust, so a selected `args` is always decoded.
-    argsJson: string,
+    // Borsh-decoded args as a JS value tree (wide integers as bigint), an
+    // empty object when the routed registration reads no args. An instruction
+    // the schema rejects is dropped in Rust, so a selected `args` is always
+    // decoded.
+    args: unknown,
     // Non-null only when the routed registration selected `fields.log`.
     logs: Null.t<array<log>>,
   }

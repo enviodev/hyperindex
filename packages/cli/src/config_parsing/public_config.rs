@@ -741,6 +741,7 @@ impl SystemConfig {
                             match &f.field_type {
                                 Primitive::Boolean => ("boolean".into(), None, None, None, None),
                                 Primitive::String => ("string".into(), None, None, None, None),
+                                Primitive::Bytes => ("bytes".into(), None, None, None, None),
                                 Primitive::Int32 => ("int".into(), None, None, None, None),
                                 Primitive::BigInt { precision } => {
                                     ("bigint".into(), None, None, *precision, None)
