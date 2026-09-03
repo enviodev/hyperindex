@@ -3,7 +3,8 @@ name: indexer-configuration
 description: >-
   Use when writing or editing config.yaml. Chain/contract structure, addresses,
   start_block, event selection, field_selection, custom event names, env vars,
-  address_format, schema/output paths, YAML validation, and deprecated options.
+  address_format, bytes_type, schema/output paths, YAML validation, and
+  deprecated options.
 metadata:
   managed-by: envio
 ---
@@ -17,6 +18,7 @@ name: my-indexer
 description: Optional description
 schema: schema.graphql         # custom path (default: schema.graphql)
 address_format: checksum       # checksum (default) | lowercase
+bytes_type: hex                # hex (default) | uint8array — see bytes_type
 
 contracts:
   - name: MyContract
@@ -96,6 +98,21 @@ field_selection:
 ```
 
 See the `indexer-transactions` skill for `fields` and the full field lists.
+
+## bytes_type
+
+How the `Bytes` scalar in schema.graphql reaches handlers and storage:
+
+- `hex` (default): `0x`-prefixed hex strings, stored as text.
+- `uint8array`: `Uint8Array` values in handlers, stored as raw bytes (`BYTEA` in
+  Postgres, `String` in ClickHouse). Halves the storage of addresses and hashes.
+
+```yaml
+bytes_type: uint8array
+```
+
+Available on EVM and Fuel. SVM always uses `Uint8Array` and has no option.
+Changing it changes the column types, so resync from scratch.
 
 ## Environment Variables
 

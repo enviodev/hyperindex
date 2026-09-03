@@ -12,6 +12,7 @@ pub enum ColumnValues {
     U64(Vec<u64>),
     I64(Vec<i64>),
     Text(Vec<String>),
+    Bytes(Vec<Vec<u8>>),
 }
 
 impl ColumnValues {
@@ -21,6 +22,7 @@ impl ColumnValues {
             ColumnValues::U64(_) => ColumnKind::U64,
             ColumnValues::I64(_) => ColumnKind::I64,
             ColumnValues::Text(_) => ColumnKind::Text,
+            ColumnValues::Bytes(_) => ColumnKind::Bytes,
         }
     }
 
@@ -30,6 +32,7 @@ impl ColumnValues {
             ColumnValues::U64(v) => v.len(),
             ColumnValues::I64(v) => v.len(),
             ColumnValues::Text(v) => v.len(),
+            ColumnValues::Bytes(v) => v.len(),
         }
     }
 }
@@ -78,9 +81,13 @@ pub fn read_varint(bytes: &[u8]) -> Result<(u64, usize)> {
     bail!("varint runs past the end of the buffer")
 }
 
-fn put_string(out: &mut Vec<u8>, value: &str) {
+fn put_bytes(out: &mut Vec<u8>, value: &[u8]) {
     put_varint(out, value.len() as u64);
-    out.extend_from_slice(value.as_bytes());
+    out.extend_from_slice(value);
+}
+
+fn put_string(out: &mut Vec<u8>, value: &str) {
+    put_bytes(out, value.as_bytes());
 }
 
 fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
@@ -131,6 +138,13 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
         false if magnitude <= i128::MAX as u128 => magnitude as i128,
         _ => bail!("decimal `{text}` overflows Int128"),
     };
+    // Rounded half away from zero on the first dropped digit, as Postgres
+    // rounds a numeric(P, S) — the entity lands in both stores, and ClickHouse's
+    // own cast, which truncates, would leave this one an ulp under the other.
+    let mut round_away = frac_part
+        .as_bytes()
+        .get(kept_frac)
+        .is_some_and(|d| *d >= b'5');
     match shift.cmp(&0) {
         std::cmp::Ordering::Greater => {
             for _ in 0..shift {
@@ -143,15 +157,21 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
             }
         }
         std::cmp::Ordering::Less => {
-            // Truncates toward zero, matching ClickHouse's own cast.
             for _ in 0..-shift {
                 if value == 0 {
+                    round_away = false;
                     break;
                 }
+                round_away = (value % 10).abs() >= 5;
                 value /= 10;
             }
         }
         std::cmp::Ordering::Equal => {}
+    }
+    if round_away {
+        value = value
+            .checked_add(if negative { -1 } else { 1 })
+            .context("decimal overflows the column's precision")?;
     }
     Ok(value)
 }
@@ -272,6 +292,18 @@ fn encode_json_value(out: &mut Vec<u8>, ch_type: &ChType, value: &serde_json::Va
         }
         (ChType::String, Value::String(text)) => put_string(out, text),
         (ChType::String, _) => put_string(out, &value.to_string()),
+        // A Uint8Array inside a JSON document arrives as its byte values.
+        (ChType::Bytes, Value::Array(items)) => {
+            let bytes = items
+                .iter()
+                .map(|item| {
+                    item.as_u64()
+                        .and_then(|byte| u8::try_from(byte).ok())
+                        .with_context(|| format!("`{item}` is not a byte"))
+                })
+                .collect::<Result<Vec<u8>>>()?;
+            put_bytes(out, &bytes)
+        }
         (ChType::Enum { .. } | ChType::Decimal { .. }, Value::String(text)) => {
             encode_text_scalar(out, ch_type, text)?
         }
@@ -314,7 +346,7 @@ fn put_default(out: &mut Vec<u8>, ch_type: &ChType) -> Result<()> {
     match ch_type {
         ChType::Nullable(_) => out.push(1),
         ChType::Array(_) => put_varint(out, 0),
-        ChType::String => put_varint(out, 0),
+        ChType::String | ChType::Bytes => put_varint(out, 0),
         ChType::Float64 => out.extend_from_slice(&0f64.to_le_bytes()),
         // An Enum's default is its first variant, numbered 1, which is how
         // ClickHouse fills an omitted enum column.
@@ -371,6 +403,10 @@ fn encode_cell(out: &mut Vec<u8>, column: &Column, row: usize) -> Result<()> {
             encode_json_value(out, ch_type, &parsed)?;
         }
         (ColumnValues::Text(v), other) => encode_text_scalar(out, other, &v[row])?,
+        (ColumnValues::Bytes(v), ChType::Bytes) => put_bytes(out, &v[row]),
+        (ColumnValues::Bytes(_), other) => {
+            bail!("raw bytes are not a value a {other:?} column can hold")
+        }
     }
     Ok(())
 }
@@ -446,6 +482,68 @@ mod tests {
 
     fn f64_column(name: &str, ty: &str, values: &[f64]) -> Column<'static> {
         owned_column(name, ty, ColumnValues::F64(values.to_vec()))
+    }
+
+    fn bytes_column(name: &str, ty: ChType, values: &[&[u8]]) -> Column<'static> {
+        Column {
+            name: Cow::Owned(name.to_string()),
+            ch_type: Cow::Owned(ty),
+            values: ColumnValues::Bytes(values.iter().map(|v| v.to_vec()).collect()),
+            nulls: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn encodes_raw_bytes_with_a_varint_length() {
+        let encoded = encode(
+            &[bytes_column(
+                "data",
+                ChType::Bytes,
+                &[&[0xff, 0x00, 0x10], &[]],
+            )],
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            (encoded.body, encoded.row_offsets),
+            (vec![3, 0xff, 0x00, 0x10, 0].into(), vec![0, 4])
+        );
+    }
+
+    #[test]
+    fn a_null_bytes_cell_writes_the_null_marker() {
+        let mut column = bytes_column("data", ChType::Nullable(Box::new(ChType::Bytes)), &[&[1]]);
+        column.nulls = vec![1];
+        let encoded = encode(&[column], 1).unwrap();
+        assert_eq!(encoded.body, vec![1]);
+    }
+
+    #[test]
+    fn a_bytes_list_arrives_as_json_byte_values() {
+        let column = owned_column(
+            "chunks",
+            "Array(String)",
+            ColumnValues::Text(vec!["[[1,255],[]]".to_string()]),
+        );
+        let column = Column {
+            ch_type: Cow::Owned(ChType::Array(Box::new(ChType::Bytes))),
+            ..column
+        };
+        let encoded = encode(&[column], 1).unwrap();
+        assert_eq!(encoded.body, vec![2, 2, 1, 255, 0]);
+    }
+
+    #[test]
+    fn a_bytes_list_element_past_a_byte_is_an_error() {
+        let column = Column {
+            ch_type: Cow::Owned(ChType::Array(Box::new(ChType::Bytes))),
+            ..text_column("chunks", "Array(String)", &["[[256]]"])
+        };
+        let error = encode(&[column], 1).unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "encoding column `chunks` row 0: `256` is not a byte"
+        );
     }
 
     #[test]
@@ -549,10 +647,46 @@ mod tests {
         );
     }
 
+    // Postgres rounds a numeric(P, S) half away from zero, and an entity lands
+    // in both stores: the value ClickHouse holds has to be the one Postgres
+    // holds, not one ulp under it.
     #[test]
-    fn truncates_a_decimal_below_the_column_scale() {
-        let encoded = encode(&[text_column("a", "Decimal(9, 1)", &["1.29"])], 1).unwrap();
-        assert_eq!(encoded.body, 12i32.to_le_bytes().to_vec());
+    fn rounds_a_decimal_below_the_column_scale_as_postgres_does() {
+        let scaled: Vec<i128> = [
+            "1.29", "1.25", "-1.25", "1.24999", "0.05", "-0.05", "9.95", "2.5e-1", "1.25e-1",
+            "5e-3",
+        ]
+        .into_iter()
+        .map(|text| decimal_to_i128(text, 1).unwrap())
+        .collect();
+        assert_eq!(scaled, vec![13, 13, -13, 12, 1, -1, 100, 3, 1, 0]);
+    }
+
+    #[test]
+    fn a_rounded_decimal_that_outgrows_the_column_is_refused() {
+        let err = encode(&[text_column("a", "Decimal(3, 2)", &["9.995"])], 1).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("out of range"),
+            "expected a range error, got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn rounds_a_decimal_array_element_as_postgres_does() {
+        let encoded = encode(
+            &[text_column(
+                "xs",
+                "Array(Decimal(18, 2))",
+                &["[1.005,\"-1.005\"]"],
+            )],
+            1,
+        )
+        .unwrap();
+        let mut expected = vec![2];
+        for scaled in [101i64, -101] {
+            expected.extend_from_slice(&scaled.to_le_bytes());
+        }
+        assert_eq!(encoded.body, expected);
     }
 
     #[test]
@@ -953,7 +1087,7 @@ mod tests {
     fn a_decimal_with_more_fractional_digits_than_the_scale_keeps_its_value() {
         let value = format!("1.{}", "9".repeat(60));
         let encoded = encode(&[text_column("d", "Decimal(38, 2)", &[&value])], 1).unwrap();
-        assert_eq!(encoded.body, 199i128.to_le_bytes().to_vec());
+        assert_eq!(encoded.body, 200i128.to_le_bytes().to_vec());
     }
 
     #[test]

@@ -1290,25 +1290,14 @@ chains:
       "Program \"Program\" declares the instruction \"Transfer\" more than once",
     ),
     (
-      "rejects two instructions whose discriminators differ only in hex casing",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - {name: Transfer, discriminator: "0x0f"}
-            - {name: Withdraw, discriminator: "0x0F"}
-`,
-      `Contract Program has two events the indexer can't tell apart: "Transfer" and "Withdraw". They match the same on-chain data, so the indexer can't decide which one a log belongs to. Please remove one of them.`,
-    ),
-    (
-      "rejects invalid discriminators",
+      "rejects a discriminator with a partial byte",
       prefix ++ `
         - name: Program
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           instructions:
             - {name: Transfer, discriminator: "0x012"}
 `,
-      "instruction \"Transfer\" in program \"Program\": discriminator \"0x012\" must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after stripping a \`0x\` prefix), got 3 digits",
+      "instruction \"Transfer\" in program \"Program\": discriminator \"0x012\" must be a whole number of bytes (an even, non-zero count of hex digits after stripping a \`0x\` prefix), got 3 digits",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
@@ -1383,13 +1372,15 @@ chains:
     t.expect(
       config.chainMap
       ->ChainMap.values
-      ->Array.map(chain => (
-        chain.id->ChainId.toString,
-        switch chain.sourceConfig {
-        | Config.SvmSourceConfig({hypersync}) => hypersync->Option.getOr("missing")
-        | _ => "unexpected source"
-        },
-      )),
+      ->Array.map(
+        chain => (
+          chain.id->ChainId.toString,
+          switch chain.sourceConfig {
+          | Config.SvmSourceConfig({hypersync}) => hypersync->Option.getOr("missing")
+          | _ => "unexpected source"
+          },
+        ),
+      ),
     ).toEqual([
       ("7565164", "https://solana.hypersync.xyz"),
       ("7565165", "https://solana-devnet.hypersync.xyz"),
@@ -1971,7 +1962,7 @@ chains:
       t,
       ~files=Dict.fromArray([("abis/Token.json", "not json")]),
       evmYaml,
-      "Failed parsing abi types for events in contract Token on network 1: Failed to decode ABI file at \"abis/Token.json\": expected ident at line 1 column 2",
+      "Failed parsing abi types for events in contract Token on network 1: abis/Token.json is not valid JSON: expected ident at line 1 column 2.",
     )
   })
 

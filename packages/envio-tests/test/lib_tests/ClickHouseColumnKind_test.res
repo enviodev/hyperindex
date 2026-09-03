@@ -28,14 +28,14 @@ let samples = (fieldType: Table.fieldType): array<Table.fieldType> =>
   | Serial
   | BigSerial
   | Json
-  | Date => [fieldType]
+  | Date
+  | Bytea => [fieldType]
   // The bounded forms map to Decimal and the rest fall back to String, so each
   // branch needs covering on both sides of its precision limit.
   | BigInt(_) => [BigInt({}), BigInt({precision: 20}), BigInt({precision: 40})]
   | BigDecimal(_) => [BigDecimal({}), BigDecimal({config: (18, 4)}), BigDecimal({config: (40, 4)})]
   | Enum(_) => [Enum({config: enumConfig})]
-  | SmallInt
-  | Bytea => []
+  | SmallInt => []
   }
 
 let fieldTypes =
@@ -54,6 +54,7 @@ let fieldTypes =
     BigSerial,
     Json,
     Date,
+    Bytea,
     Enum({config: enumConfig}),
   ]
   ->Array.map(samples)
@@ -133,11 +134,11 @@ describe("ClickHouse column type contract", () => {
   // text and store them as something else.
   it("refuses a wire kind it does not know", t => {
     let message = try {
-      let _ = ClickHouseSink.kindOfOrdinal(4)
+      let _ = ClickHouseSink.kindOfOrdinal(5)
       "decoded without complaint"
     } catch {
     | exn => (exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"]
     }
-    t.expect(message).toBe("Unknown ClickHouse column kind 4")
+    t.expect(message).toBe("Unknown ClickHouse column kind 5")
   })
 })

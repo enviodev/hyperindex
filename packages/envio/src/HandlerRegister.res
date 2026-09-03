@@ -336,6 +336,21 @@ let addOnEventRegistration = (
       | None => ()
       | Some(eventConfig) =>
         matched := true
+        switch (registration.config.ecosystem.name, fieldSelection) {
+        | (Svm, Some(fieldSelection)) if fieldSelection.instructionFields->Utils.Set.has("args") =>
+          let svmEventConfig =
+            eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+          let declaresArgs = switch svmEventConfig.args {
+          | JSON.Array(args) => args->Array.length > 0
+          | _ => false
+          }
+          if !declaresArgs {
+            JsError.throwWithMessage(
+              `Invalid "args" field in the fields.instruction option of the "${eventName}" instruction on program "${contractName}". The instruction declares no args in config.yaml, so there is nothing to decode. Remove "args" from the selection, or declare the instruction's args.`,
+            )
+          }
+        | _ => ()
+        }
         let reg = buildOnEventRegistrationWith(
           ~config=registration.config,
           ~chainId=chainConfig.id,

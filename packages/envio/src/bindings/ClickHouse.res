@@ -1,33 +1,31 @@
-let makeClickHouseEntitySchema = (table: Table.table, ~skipColumn: option<string>=?): S.t<
-  Internal.entity,
-> => {
+let clickHouseFieldSchema = (f: Table.field) => {
+  let shaped = baseSchema =>
+    if f.isNullable {
+      Utils.Schema.nullTolerant(baseSchema)->S.toUnknown
+    } else if f.isArray {
+      S.array(baseSchema)->S.toUnknown
+    } else {
+      baseSchema
+    }
+  switch f.fieldType {
+  | Date => shaped(Utils.Schema.clickHouseDate->S.toUnknown)
+  | Bytea => shaped(S.json(~validate=false)->S.toUnknown)
+  | ChainId => ChainId.schema->S.toUnknown
+  | Json if !f.isArray => Utils.Schema.clickHouseJson->S.toUnknown
+  | _ => f.fieldSchema
+  }
+}
+
+let makeClickHouseEntitySchema = (table: Table.table): S.t<Internal.entity> => {
   S.object(s => {
     let dict = Dict.make()
     table.fields->Array.forEach(field => {
       switch field {
-      | Field(f) if Some(f->Table.getClickHouseDbFieldName) != skipColumn => {
-          let fieldName = f->Table.getClickHouseDbFieldName
-          let fieldSchema = switch f.fieldType {
-          | Date => {
-              let dateSchema = Utils.Schema.clickHouseDate->S.toUnknown
-              if f.isNullable {
-                Utils.Schema.nullTolerant(dateSchema)->S.toUnknown
-              } else if f.isArray {
-                S.array(dateSchema)->S.toUnknown
-              } else {
-                dateSchema
-              }
-            }
-          | ChainId => ChainId.schema->S.toUnknown
-          // Not wrapped in `S.null` even when the field is nullable: the column
-          // is a String either way, and both ways of saying nothing travel as
-          // the text of JSON null.
-          | Json if !f.isArray => Utils.Schema.clickHouseJson->S.toUnknown
-          | _ => f.fieldSchema
-          }
-          dict->Dict.set(f->Table.getApiFieldName, s.field(fieldName, fieldSchema))
-        }
-      | Field(_) => ()
+      | Field(f) =>
+        dict->Dict.set(
+          f->Table.getApiFieldName,
+          s.field(f->Table.getClickHouseDbFieldName, clickHouseFieldSchema(f)),
+        )
       | DerivedFrom(_) => ()
       }
     })
@@ -56,11 +54,9 @@ let makeColumnSpec = (
   | Boolean => "Boolean"
   | Uint32 => "Uint32"
   | UInt52 => "UInt52"
-  | SmallInt
-  | Bytea =>
-    JsError.throwWithMessage(
-      "ClickHouse doesn't support the internal SmallInt and Bytea column types",
-    )
+  | SmallInt =>
+    JsError.throwWithMessage("ClickHouse doesn't support the internal SmallInt column type")
+  | Bytea => "Bytea"
   | UInt64 => "UInt64"
   | Int32 => "Int32"
   | ChainId => "ChainId"
@@ -161,9 +157,11 @@ let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySp
   }
 }
 
+type cell = Change.t<Internal.entity> => unknown
+
 type converters = {
-  convertSetOrThrow: Change.t<Internal.entity> => dict<unknown>,
-  convertDeleteOrThrow: Change.t<Internal.entity> => dict<unknown>,
+  setCells: array<cell>,
+  deleteCells: array<cell>,
 }
 
 type registry = {
@@ -178,53 +176,110 @@ let makeRegistry = () => {
   converters: Dict.make(),
 }
 
-let compileToColumnValues = schema =>
-  S.compile(schema, ~input=Value, ~output=Json, ~typeValidation=false, ~mode=Sync)->(
-    Utils.magic: (Change.t<Internal.entity> => JSON.t) => Change.t<Internal.entity> => dict<unknown>
-  )
+@get external changeEntity: Change.t<Internal.entity> => dict<unknown> = "entity"
 
-let makeConverters = (
-  ~entityConfig: Internal.entityConfig,
-  ~scope: Internal.chainScope,
-): converters => {
-  let idSchema = entityConfig.table->Table.getIdSchema
-  let chainIdTag = switch (
-    entityConfig.table->Table.getChainIdField,
-    scope->Internal.chainScopeChainId,
-  ) {
-  | (Some(field), Some(chainId)) => Some((field->Table.getClickHouseDbFieldName, chainId))
-  | _ => None
-  }
+%%private(let absent: unknown = %raw(`undefined`))
 
-  {
-    convertSetOrThrow: compileToColumnValues(
-      EntityHistory.makeSetUpdateSchema(
-        ~idSchema,
-        ~chainIdTag?,
-        makeClickHouseEntitySchema(
-          entityConfig.table,
-          ~skipColumn=?chainIdTag->Option.map(((column, _)) => column),
-        ),
-      ),
-    ),
-    convertDeleteOrThrow: compileToColumnValues(
-      S.object(s => {
-        s.tag(EntityHistory.changeFieldName, EntityHistory.RowAction.DELETE)
-        switch chainIdTag {
-        | Some((column, chainId)) => s.tag(column, chainId)
-        | None => ()
+%%private(
+  let compileSerializer = schema =>
+    S.compile(schema, ~input=Value, ~output=Json, ~typeValidation=false, ~mode=Sync)->(
+      Utils.magic: (unknown => JSON.t) => unknown => unknown
+    )
+)
+
+%%private(
+  let makeConverters = (
+    ~entityConfig: Internal.entityConfig,
+    ~scope: Internal.chainScope,
+    ~table: ClickHouseSink.table,
+  ): converters => {
+    let {name: tableName, columns} = table
+    let sourceTable = entityConfig.table
+    let chainIdTag = switch (
+      sourceTable->Table.getChainIdField,
+      scope->Internal.chainScopeChainId,
+    ) {
+    | (Some(field), Some(chainId)) =>
+      Some((field->Table.getClickHouseDbFieldName, chainId->(Utils.magic: ChainId.t => unknown)))
+    | _ => None
+    }
+    let fieldsByColumn = Dict.make()
+    sourceTable.fields->Array.forEach(field =>
+      switch field {
+      | Table.Field(f) => fieldsByColumn->Dict.set(f->Table.getClickHouseDbFieldName, f)
+      | DerivedFrom(_) => ()
+      }
+    )
+
+    let setCells = []
+    let deleteCells = []
+    let registeredNames = columns->Array.map(column => column.name)->Utils.Set.fromArray
+    columns->Array.forEach(({name}) => {
+      let (set, delete) = if name === EntityHistory.checkpointIdFieldName {
+        let cell = change => change->Change.getCheckpointId->(Utils.magic: bigint => unknown)
+        (cell, cell)
+      } else if name === EntityHistory.changeFieldName {
+        (
+          _ => (EntityHistory.RowAction.SET :> string)->(Utils.magic: string => unknown),
+          _ => (EntityHistory.RowAction.DELETE :> string)->(Utils.magic: string => unknown),
+        )
+      } else {
+        switch (chainIdTag, fieldsByColumn->Utils.Dict.dangerouslyGetNonOption(name)) {
+        | (Some((column, chainId)), _) if column === name => (_ => chainId, _ => chainId)
+        | (_, Some(f)) =>
+          let serialize = compileSerializer(clickHouseFieldSchema(f))
+          let apiName = f->Table.getApiFieldName
+          if apiName === Table.idFieldName {
+            let cell = change =>
+              serialize(change->Change.getEntityId->(Utils.magic: EntityId.t => unknown))
+            (cell, cell)
+          } else {
+            (change => serialize(change->changeEntity->Dict.getUnsafe(apiName)), _ => absent)
+          }
+        | (_, None) =>
+          JsError.throwWithMessage(
+            `ClickHouse table "${tableName}" registered a column "${name}" that entity "${entityConfig.name}" has no value for`,
+          )
         }
-        Change.Delete({
-          entityId: s.field(Table.idFieldName, idSchema),
-          checkpointId: s.field(
-            EntityHistory.checkpointIdFieldName,
-            EntityHistory.unsafeCheckpointIdSchema,
-          ),
-        })
-      }),
-    ),
+      }
+      setCells->Array.push(set)
+      deleteCells->Array.push(delete)
+    })
+
+    fieldsByColumn->Dict.forEachWithKey((f, column) =>
+      if !(registeredNames->Utils.Set.has(column)) {
+        JsError.throwWithMessage(
+          `ClickHouse table "${tableName}" registered no column for field "${f.fieldName}" of entity "${entityConfig.name}"`,
+        )
+      }
+    )
+
+    {setCells, deleteCells}
   }
-}
+)
+
+%%private(
+  let fillBuilders = (
+    ~table: ClickHouseSink.table,
+    ~converters,
+    ~changes: array<Change.t<Internal.entity>>,
+  ) => {
+    let rows = changes->Array.length
+    let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
+    let columns = builders->Array.length
+    for row in 0 to rows - 1 {
+      let change = changes->Array.getUnsafe(row)
+      let (cells, write) = switch change {
+      | Change.Set(_) => (converters.setCells, ClickHouseSink.writeValue)
+      | Delete(_) => (converters.deleteCells, ClickHouseSink.writeDeletedValue)
+      }
+      for column in 0 to columns - 1 {
+        builders->Array.getUnsafe(column)->write(~row, (cells->Array.getUnsafe(column))(change))
+      }
+    }
+    builders
+  }
+)
 
 let entityTable = (sink, ~registry, ~entityConfig: Internal.entityConfig) =>
   switch registry.entities->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) {
@@ -300,31 +355,15 @@ let stageUpdatesOrThrow = (
     let table = sink->entityTable(~registry, ~entityConfig)
     let tableName = table.name
     let cacheKey = `${entityConfig.name}|${scope->Internal.chainScopeToString}`
-    let {
-      convertSetOrThrow,
-      convertDeleteOrThrow,
-    } = switch registry.converters->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
-    | Some(cached) => cached
-    | None =>
-      let cached = makeConverters(~entityConfig, ~scope)
-      registry.converters->Dict.set(cacheKey, cached)
-      cached
-    }
-
     try {
-      let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
-      let columns = builders->Array.length
-      for row in 0 to rows - 1 {
-        let change = changes->Array.getUnsafe(row)
-        let (values, write) = switch change {
-        | Change.Set(_) => (convertSetOrThrow(change), ClickHouseSink.writeValue)
-        | Delete(_) => (convertDeleteOrThrow(change), ClickHouseSink.writeDeletedValue)
-        }
-        for column in 0 to columns - 1 {
-          let builder = builders->Array.getUnsafe(column)
-          builder->write(~row, values->Dict.getUnsafe(builder.name))
-        }
+      let converters = switch registry.converters->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
+      | Some(cached) => cached
+      | None =>
+        let cached = makeConverters(~entityConfig, ~scope, ~table)
+        registry.converters->Dict.set(cacheKey, cached)
+        cached
       }
+      let builders = fillBuilders(~table, ~converters, ~changes)
       Some(sink->stageBuilders(~table, ~builders, ~rows))
     } catch {
     | exn =>
@@ -378,12 +417,19 @@ let resume = async (
   sink,
   ~checkpointId: Internal.checkpointId,
   ~chains: array<Persistence.initialChainState>,
+  ~entities: array<Internal.entityConfig>,
 ) => {
   let chainProgress = chains->Array.map(chain => {
     ClickHouseSink.chainId: chain.id->ChainId.toString,
     progressBlockNumber: chain.progressBlockNumber,
   })
-  try await sink->ClickHouseSink.resume(checkpointId->BigInt.toString, chainProgress) catch {
+  try await sink->ClickHouseSink.resume({
+    checkpointId: checkpointId->BigInt.toString,
+    chainProgress,
+    historyTables: entities->Array.map(entityConfig => entitySpec(~entityConfig).historyTable),
+    replicated: Env.ClickHouse.replicated(),
+    databaseEngine: ?Env.ClickHouse.databaseEngine(),
+  }) catch {
   | exn => {
       Logging.errorWithExn(exn, "Failed to resume ClickHouse storage")
       throw(
