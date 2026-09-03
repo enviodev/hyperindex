@@ -1207,12 +1207,13 @@ pub mod svm {
         #[schemars(
             description = "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" \
                            optional), of any whole number of bytes; an 8-byte value matches the \
-                           standard Anchor discriminator. Omit it to match every instruction of \
-                           the program. Every instruction whose prefix an on-chain call carries \
-                           receives it, so a program-wide entry fires alongside a keyed one, and \
-                           two entries may share a prefix (say, the layouts before and after a \
-                           program upgrade): each decodes with its own `args`, and one whose \
-                           layout rejects the data is skipped for that call."
+                           standard Anchor discriminator. With `idl:` on the program, omit the \
+                           discriminator to use the IDL's prefix. Without `idl:`, omit it to \
+                           match every instruction of the program. Every instruction whose prefix \
+                           an on-chain call carries receives it, so a program-wide entry fires \
+                           alongside a keyed one, and two entries may share a prefix (say, the \
+                           layouts before and after a program upgrade): each decodes with its own \
+                           `args`, and one whose layout rejects the data is skipped for that call."
         )]
         pub discriminator: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]

@@ -1405,13 +1405,8 @@ impl SystemConfig {
                         .unwrap_or(&[]);
                     let mut chain_contracts = Vec::new();
                     for program in programs {
-                        let svm_abi =
-                            resolve_program_schema(program, source).with_context(|| {
-                                format!(
-                                    "Resolving Borsh schema for program '{}' ({})",
-                                    program.name, program.program_id
-                                )
-                            })?;
+                        let svm_abi = resolve_program_schema(program, source)
+                            .with_context(|| format!("Program '{}'", program.name))?;
                         let listed = listed_instructions(program, &svm_abi);
                         let events = listed
                             .iter()
@@ -1420,10 +1415,12 @@ impl SystemConfig {
                                     discriminator,
                                     accounts,
                                     args,
-                                } = resolve_instruction(instr, &program.name, &svm_abi)
-                                    .with_context(|| {
-                                        format!("Layout for instruction '{}'", instr.name)
-                                    })?;
+                                } = resolve_instruction(instr, &svm_abi).with_context(|| {
+                                    format!(
+                                        "Program '{}', instruction '{}'",
+                                        program.name, instr.name
+                                    )
+                                })?;
                                 let normalized_discriminator =
                                     discriminator.map(|d| format!("0x{}", crate::hex::encode(&d)));
                                 let svm_kind = SvmEventKind {
@@ -1880,8 +1877,8 @@ fn resolve_program_schema(
     if let Some(idl_path) = program.idl.as_deref() {
         if any_instruction_carries_schema {
             return Err(anyhow!(
-                "Program '{}': `idl` is mutually exclusive with per-instruction `accounts`/`args` \
-                 overrides. Use one or the other.",
+                "program '{}' has both 'idl' and per-instruction 'accounts'/'args'. Use the IDL, \
+                 or write the layout in config.yaml, not both.",
                 program.name
             ));
         }
@@ -1915,8 +1912,7 @@ fn resolve_program_schema(
 fn warn_about_unindexable(program: &human_config::svm::Program, abi: &SvmAbi) {
     for (name, reason) in &abi.idl.unusable {
         eprintln!(
-            "Warning: program '{}' cannot index the instruction '{name}' its schema declares: \
-             {reason}",
+            "Warning: program '{}' will not index '{name}' from the IDL: {reason}",
             program.name
         );
     }
@@ -1940,7 +1936,6 @@ struct ResolvedInstruction {
 ///    declared.
 fn resolve_instruction(
     instr: &human_config::svm::Instruction,
-    program_name: &str,
     abi: &SvmAbi,
 ) -> Result<ResolvedInstruction> {
     let declared = instr
@@ -1961,17 +1956,14 @@ fn resolve_instruction(
     }
     if instr.accounts.is_some() != instr.args.is_some() {
         return Err(anyhow!(
-            "`accounts` and `args` must be provided together (or both omitted to fall back to an \
-             IDL schema)."
+            "set both 'accounts' and 'args', or omit both to take them from the IDL."
         ));
     }
 
     // The reasons the parser recorded are worth nothing unless the user who
     // asked for the instruction reads them.
     if let Some(reason) = abi.idl.unusable.get(&instr.name) {
-        return Err(anyhow!(
-            "the schema declares it, but it cannot be indexed: {reason}"
-        ));
+        return Err(anyhow!("the IDL cannot index this instruction: {reason}"));
     }
 
     let layout = |ix: &svm_idl::IxIdl, discriminator| ResolvedInstruction {
@@ -2018,9 +2010,8 @@ fn resolve_instruction(
             }
             Some(declared) => {
                 return Err(anyhow!(
-                    "the config gives discriminator 0x{}, but the IDL declares '{}' as 0x{}",
+                    "config.yaml has discriminator 0x{}, but the IDL has 0x{}",
                     crate::hex::encode(&declared),
-                    instr.name,
                     crate::hex::encode(&ix.discriminator),
                 ))
             }
@@ -2029,8 +2020,7 @@ fn resolve_instruction(
 
     if abi.source != SvmSchemaSource::Inline {
         return Err(anyhow!(
-            "instruction '{}' is not declared by the schema for program '{program_name}'{}",
-            instr.name,
+            "not in the IDL{}",
             suggest_instruction_name(&instr.name, &abi.idl)
         ));
     }
@@ -4170,8 +4160,7 @@ type Foo {
 
             assert_eq!(
                 format!("{err:#}"),
-                "Layout for instruction 'swp': instruction 'swp' is not declared by the schema \
-                 for program 'Pool'. Did you mean 'swap'?"
+                "Program 'Pool', instruction 'swp': not in the IDL. Did you mean 'swap'?"
             );
         }
 
@@ -4212,8 +4201,8 @@ type Foo {
 
             assert_eq!(
                 format!("{err:#}"),
-                "Layout for instruction 'swap': the config gives discriminator \
-                 0xdeadbeefdeadbeef, but the IDL declares 'swap' as 0x0102030405060708"
+                "Program 'Pool', instruction 'swap': config.yaml has discriminator \
+                 0xdeadbeefdeadbeef, but the IDL has 0x0102030405060708"
             );
         }
 
@@ -4258,9 +4247,9 @@ type Foo {
 
             assert_eq!(
                 format!("{err:#}"),
-                "Layout for instruction 'swap': the schema declares it, but it cannot be \
-                 indexed: idls/pool.json:2:22: args.amount: `coption` is not Borsh-compatible and \
-                 cannot be decoded"
+                "Program 'Pool', instruction 'swap': the IDL cannot index this instruction: \
+                 idls/pool.json:2:22: args.amount: `coption` is not Borsh-compatible and cannot \
+                 be decoded"
             );
         }
 

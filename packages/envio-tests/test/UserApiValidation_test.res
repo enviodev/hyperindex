@@ -1995,7 +1995,7 @@ chains:
           idl: idls/program.json
           instructions: []
 `,
-      "Resolving Borsh schema for program 'Program' (metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s): reading IDL at 'idls/program.json': Virtual config file \"idls/program.json\" was not provided",
+      "Program 'Program': reading IDL at 'idls/program.json': Virtual config file \"idls/program.json\" was not provided",
     )
   })
 
@@ -2021,7 +2021,7 @@ chains:
               accounts: []
               args: []
 `,
-      "Resolving Borsh schema for program 'Program' (metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s): Program 'Program': \`idl\` is mutually exclusive with per-instruction \`accounts\`/\`args\` overrides. Use one or the other.",
+      "Program 'Program': program 'Program' has both 'idl' and per-instruction 'accounts'/'args'. Use the IDL, or write the layout in config.yaml, not both.",
     )
   })
 
@@ -2044,7 +2044,7 @@ chains:
             - name: Transfer
               accounts: []
 `,
-      "Layout for instruction 'Transfer': Instruction 'Transfer': \`accounts\` and \`args\` must be provided together (or both omitted to fall back to an IDL schema).",
+      "Program 'Program', instruction 'Transfer': set both 'accounts' and 'args', or omit both to take them from the IDL.",
     )
   })
 })

@@ -309,7 +309,10 @@ fn le_bytes(ty: &FieldType, value: i128) -> Result<Vec<u8>> {
         FieldType::I16 => (2, i16::MIN as i128, i16::MAX as i128),
         FieldType::I32 => (4, i32::MIN as i128, i32::MAX as i128),
         FieldType::I64 => (8, i64::MIN as i128, i64::MAX as i128),
-        other => bail!("a discriminator is a whole number, and this one is typed {other:?}"),
+        other => bail!(
+            "a discriminator is a whole number, and this one is typed {}",
+            render_integer(other)
+        ),
     };
     if value < min || value > max {
         bail!(
