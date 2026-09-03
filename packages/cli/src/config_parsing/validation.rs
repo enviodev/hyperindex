@@ -201,10 +201,10 @@ pub fn is_valid_solana_pubkey(s: &str) -> bool {
 
 pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
     let hex = s.strip_prefix("0x").unwrap_or(s);
-    if !matches!(hex.len(), 2 | 4 | 8 | 16) {
+    if hex.is_empty() || !hex.len().is_multiple_of(2) {
         return Err(anyhow!(
-            "discriminator {:?} must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after \
-             stripping a `0x` prefix), got {} digits",
+            "discriminator {:?} must be a whole number of bytes (an even, non-zero count of hex \
+             digits after stripping a `0x` prefix), got {} digits",
             s,
             hex.len()
         ));
@@ -427,7 +427,7 @@ mod tests {
     #[test]
     fn contract_named_like_a_prototype_key_is_rejected() {
         let result = super::validate_names_valid_rescript(
-            &vec!["MyContract".to_string(), "__proto__".to_string()],
+            &["MyContract".to_string(), "__proto__".to_string()],
             "contract".to_string(),
         );
         assert_eq!(
@@ -441,7 +441,7 @@ mod tests {
     #[test]
     fn test_contract_names_validation() {
         let valid_result = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -451,7 +451,7 @@ mod tests {
         assert!(valid_result.is_ok());
 
         let reserved_names = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -470,7 +470,7 @@ mod tests {
         );
 
         let invalid_names = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -524,8 +524,15 @@ mod tests {
         }
 
         #[test]
-        fn discriminator_accepts_valid_lengths() {
-            for s in ["0x0f", "0x0fff", "0x0fffffff", "0x0fffffffffffffff"] {
+        fn discriminator_accepts_any_whole_byte_length() {
+            // Serum v3 dispatches on a version byte plus a 4-byte tag: 5 bytes.
+            for s in [
+                "0x0f",
+                "0x0fff",
+                "0x0fffff",
+                "0x000a000000",
+                "0x0fffffffffffffff",
+            ] {
                 assert!(
                     validate_svm_discriminator(s).is_ok(),
                     "expected {s:?} to be valid"
@@ -536,8 +543,8 @@ mod tests {
         }
 
         #[test]
-        fn discriminator_rejects_invalid_lengths_and_chars() {
-            for s in ["0x", "0x0", "0x012", "0xggggggg"] {
+        fn discriminator_rejects_partial_bytes_and_non_hex() {
+            for s in ["0x", "0x0", "0x012", "0xgggggggg"] {
                 assert!(
                     validate_svm_discriminator(s).is_err(),
                     "expected {s:?} to be rejected"

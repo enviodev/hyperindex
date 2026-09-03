@@ -12,7 +12,7 @@ use super::{
             RpcSelection,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
-        svm, HumanConfig,
+        svm, BytesType, HumanConfig,
     },
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
@@ -82,6 +82,7 @@ trait ConfigSource {
         &self,
         configured_path: &Option<String>,
         default_scope: DefaultChainScope,
+        bytes_type: BytesType,
     ) -> Result<Schema>;
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
     fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
@@ -121,9 +122,15 @@ impl ConfigSource for FilesystemConfigSource<'_> {
         &self,
         configured_path: &Option<String>,
         default_scope: DefaultChainScope,
+        bytes_type: BytesType,
     ) -> Result<Schema> {
-        Schema::parse_from_file(self.project_paths, configured_path, default_scope)
-            .context("Parsing schema file for config")
+        Schema::parse_from_file(
+            self.project_paths,
+            configured_path,
+            default_scope,
+            bytes_type,
+        )
+        .context("Parsing schema file for config")
     }
 
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
@@ -210,14 +217,18 @@ impl ConfigSource for MemoryConfigSource<'_> {
         &self,
         configured_path: &Option<String>,
         default_scope: DefaultChainScope,
+        bytes_type: BytesType,
     ) -> Result<Schema> {
         // Parsed as given: schema errors carry the line and column they were
         // raised at, and trimming first would report them against text the
         // caller never wrote.
         match self.schema {
-            Some(schema) if !schema.trim().is_empty() => {
-                Schema::from_string_at(schema, default_scope, &schema_source_label(configured_path))
-            }
+            Some(schema) if !schema.trim().is_empty() => Schema::from_string_at(
+                schema,
+                default_scope,
+                bytes_type,
+                &schema_source_label(configured_path),
+            ),
             _ => Ok(Schema::empty()),
         }
     }
@@ -1575,7 +1586,11 @@ impl SystemConfig {
 
         let base_config = human_config.get_base_config();
         let default_scope = base_config.default_chain_scope();
-        let schema = source.load_schema(&base_config.schema, default_scope)?;
+        let schema = source.load_schema(
+            &base_config.schema,
+            default_scope,
+            human_config.bytes_type(),
+        )?;
         Self::from_human_config_with_source(human_config, schema, source)
     }
 }
@@ -2204,13 +2219,15 @@ impl Contract {
         }
 
         // Two events on one contract that share a dispatch key are
-        // indistinguishable at routing time — one log/instruction would decode
-        // to both — so reject them here. The key mirrors the runtime `eventId`:
-        // sighash plus indexed-topic count for EVM, the discriminator for SVM
-        // (already program-scoped, since these are one program's instructions),
-        // the sighash for Fuel (a `LogData` logId or a fixed `mint`/`burn`/…).
-        // Names are unique by the check above, so a collision here is always
-        // between two differently-named events.
+        // indistinguishable at routing time — one log would decode to both —
+        // so reject them here. The key mirrors the runtime `eventId`: sighash
+        // plus indexed-topic count for EVM, the sighash for Fuel (a `LogData`
+        // logId or a fixed `mint`/`burn`/…). SVM instructions are exempt: a
+        // call routes to every instruction whose prefix it carries, each
+        // decoding with its own layout and dropped on its own when the layout
+        // rejects the data, so two instructions sharing a prefix are two
+        // instructions, not an ambiguity. Names are unique by the check above,
+        // so a collision here is always between two differently-named events.
         let mut seen_by_dispatch_key: HashMap<String, String> = HashMap::new();
         for event in &events {
             let dispatch_key = match &event.kind {
@@ -2218,14 +2235,7 @@ impl Contract {
                     let indexed_count = params.iter().filter(|p| p.indexed).count();
                     Some(format!("{}_{}", event.sighash, indexed_count))
                 }
-                // The router decodes the discriminator to bytes before matching,
-                // so `0x0f` and `0x0F` collide — lowercase before keying.
-                EventKind::Svm(svm) => Some(
-                    svm.discriminator
-                        .as_ref()
-                        .map(|d| d.to_lowercase())
-                        .unwrap_or_else(|| "none".to_string()),
-                ),
+                EventKind::Svm(_) => None,
                 EventKind::Fuel(_) => Some(event.sighash.clone()),
             };
             if let Some(dispatch_key) = dispatch_key {
@@ -3590,6 +3600,7 @@ chains:
     mod internal_relationship_validation {
         use super::super::validate_internal_relationships;
         use crate::config_parsing::entity_parsing::{DefaultChainScope, Schema};
+        use crate::config_parsing::human_config::BytesType;
 
         #[test]
         fn public_reference_to_internal_entity_rejected() {
@@ -3603,6 +3614,7 @@ type Secret @internal {
   id: ID!
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             let err = validate_internal_relationships(&schema)
@@ -3627,6 +3639,7 @@ type Order @internal {
   trader: Trader!
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             let err = validate_internal_relationships(&schema)
@@ -3655,6 +3668,7 @@ type SecretB @internal {
   entries: [SecretA!]! @derivedFrom(field: "other")
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             assert!(validate_internal_relationships(&schema).is_ok());
@@ -3667,12 +3681,12 @@ type SecretB @internal {
         use super::super::{validate_db_column_names, Storage};
         use crate::config_parsing::{
             entity_parsing::{DefaultChainScope, Schema},
-            human_config::ColumnNameFormat,
+            human_config::{BytesType, ColumnNameFormat},
         };
 
         // Cross-chain: these fixtures declare no chain column.
         fn parse_schema(schema: &str) -> Schema {
-            Schema::from_string(schema, DefaultChainScope::CrossChain).unwrap()
+            Schema::from_string(schema, DefaultChainScope::CrossChain, BytesType::Hex).unwrap()
         }
 
         fn storage(column_name_format: ColumnNameFormat) -> Storage {
@@ -3760,7 +3774,7 @@ type Transfer {
         use super::super::{validate_clickhouse_nullable_arrays, Storage, StorageBackend};
         use crate::config_parsing::{
             entity_parsing::{DefaultChainScope, Schema},
-            human_config::ColumnNameFormat,
+            human_config::{BytesType, ColumnNameFormat},
         };
 
         fn backend(entity_default: bool) -> Option<StorageBackend> {
@@ -3786,6 +3800,7 @@ type Foo @storage(postgres: true, clickhouse: true) {
   tags: [String!]!
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, false), &schema).is_ok());
@@ -3802,6 +3817,7 @@ type Foo @storage(postgres: true) {
   tags: [String!]
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_ok());
@@ -3819,6 +3835,7 @@ type Foo {
   tags: [String!]
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_err());
@@ -3834,6 +3851,7 @@ type Foo {
   tags: [String!]
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             let storage = Storage {

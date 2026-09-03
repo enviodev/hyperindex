@@ -22,8 +22,9 @@ type fieldType =
   | Uint32
   | UInt52
   | SmallInt
-  // Raw bytes. Only the internal tables use it — the one column that stores an
-  // address in the binary form the Rust address store keys on.
+  // Raw bytes: the `Bytes` scalar under `bytes_type: uint8array`, and the
+  // internal column that stores an address in the binary form the Rust address
+  // store keys on.
   | Bytea
   | UInt64
   | Int32
@@ -363,7 +364,10 @@ let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
         field->getApiFieldName,
         {
           fieldSchema: field.fieldSchema,
-          arrayFieldSchema: S.array(field.fieldSchema)->S.toUnknown,
+          arrayFieldSchema: switch field.fieldType {
+          | Bytea => Utils.Schema.bytesArray->S.toUnknown
+          | _ => S.array(field.fieldSchema)->S.toUnknown
+          },
           pgDbFieldName: field->getPgDbFieldName,
           isChainId: field.isChainId,
         },
@@ -434,6 +438,7 @@ type sqlParams<'entity> = {
   quotedFieldNames: array<string>,
   quotedNonPrimaryFieldNames: array<string>,
   arrayFieldTypes: array<string>,
+  byteaColumnIndexes: array<int>,
   hasArrayField: bool,
 }
 
@@ -441,6 +446,9 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
   let quotedFieldNames = []
   let quotedNonPrimaryFieldNames = []
   let arrayFieldTypes = []
+  // Positions of the bytea columns among the unnest parameters, which the
+  // caller binds as array literals (see `Utils.Bytes.toPgArrayLiteral`).
+  let byteaColumnIndexes = []
   let hasArrayField = ref(false)
 
   let dbSchema: S.t<dict<unknown>> = S.schema(s =>
@@ -474,6 +482,12 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
         let field = switch table->getFieldByApiName(location) {
         | Some(field) => field
         | None => throw(NonExistingTableField(location))
+        }
+        switch field {
+        | Field({isArray: true}) => hasArrayField := true
+        | Field({fieldType: Bytea}) =>
+          byteaColumnIndexes->Array.push(arrayFieldTypes->Array.length)->ignore
+        | _ => ()
         }
 
         // Schema locations use API field names, while the SQL references
@@ -524,6 +538,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
     quotedFieldNames,
     quotedNonPrimaryFieldNames,
     arrayFieldTypes,
+    byteaColumnIndexes,
     hasArrayField: hasArrayField.contents,
   }
 }

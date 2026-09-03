@@ -562,6 +562,65 @@ FROM "public"."envio_chains";`
       ],
     )
 
+    // A bytea column binds as the Uint8Array postgres.js serializes, and a
+    // bytea[] one as the array literal Postgres parses itself — postgres.js
+    // types an array parameter after its first element, so an array of
+    // Uint8Arrays would bind as a single bytea. An `in` over a list column
+    // nests one dimension deeper, and Postgres arrays are rectangular, so its
+    // candidates all have the same length.
+    let bytesTable = Table.mkTable(
+      "blobs",
+      ~fields=[
+        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+        Table.mkField("tag", Bytea, ~fieldSchema=Utils.Schema.bytes),
+        Table.mkField("chunks", Bytea, ~isArray=true, ~fieldSchema=Utils.Schema.bytesArray),
+      ],
+    )
+
+    Async.it("Binds bytea values as bytes and bytea arrays as array literals", async t => {
+      let params = []
+      let condition = PgStorage.makeFilterCondition(
+        ~filter=And({
+          filters: [
+            Eq({
+              fieldName: "tag",
+              fieldValue: Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
+            }),
+            In({
+              fieldName: "tag",
+              fieldValue: [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
+                Utils.magic: array<Uint8Array.t> => array<unknown>
+              ),
+            }),
+            Eq({
+              fieldName: "chunks",
+              fieldValue: [Uint8Array.fromArray([3])]->(
+                Utils.magic: array<Uint8Array.t> => unknown
+              ),
+            }),
+            In({
+              fieldName: "chunks",
+              fieldValue: [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
+                Utils.magic: array<array<Uint8Array.t>> => array<unknown>
+              ),
+            }),
+          ],
+        }),
+        ~table=bytesTable,
+        ~params,
+      )
+
+      t.expect((condition, params)).toEqual((
+        `("tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND "chunks" = ANY($4))`,
+        [
+          Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
+          `{"\\\\x0102","\\\\x"}`->(Utils.magic: string => unknown),
+          `{"\\\\x03"}`->(Utils.magic: string => unknown),
+          `{{"\\\\x04"},{"\\\\x05"}}`->(Utils.magic: string => unknown),
+        ],
+      ))
+    })
+
     Async.it(
       "Should create condition and params for loading multiple records by IDs",
       async t => {
@@ -577,7 +636,7 @@ FROM "public"."envio_chains";`
 
         t.expect((condition, params)).toEqual((
           `"id" = ANY($1)`,
-          [["1", "2"]->(Utils.magic: array<string> => JSON.t)],
+          [["1", "2"]->(Utils.magic: array<string> => unknown)],
         ))
       },
     )
@@ -592,7 +651,7 @@ FROM "public"."envio_chains";`
           ~params,
         )
 
-        t.expect((condition, params)).toEqual((`"score" > $1`, [5->(Utils.magic: int => JSON.t)]))
+        t.expect((condition, params)).toEqual((`"score" > $1`, [5->(Utils.magic: int => unknown)]))
       },
     )
 
@@ -619,9 +678,9 @@ FROM "public"."envio_chains";`
         t.expect((condition, params)).toEqual((
           `("id" = $1 AND ("score" > $2 AND "score" < $3))`,
           [
-            "1"->(Utils.magic: string => JSON.t),
-            5->(Utils.magic: int => JSON.t),
-            10->(Utils.magic: int => JSON.t),
+            "1"->(Utils.magic: string => unknown),
+            5->(Utils.magic: int => unknown),
+            10->(Utils.magic: int => unknown),
           ],
         ))
       },
