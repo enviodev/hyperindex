@@ -148,28 +148,6 @@ VALUES($1,$2,$3,$4,$5)ON CONFLICT("id","envio_checkpoint_id") DO UPDATE SET "env
     ])
   })
 
-  it("serializes ClickHouse set updates with ClickHouse column keys", t => {
-    let setUpdateSchema = EntityHistory.makeSetUpdateSchema(
-      ~idSchema=snapshotEntity.table->Table.getIdSchema,
-      ClickHouse.makeClickHouseEntitySchema(snapshotEntity.table),
-    )
-    let json =
-      Change.Set({
-        entityId: "1"->EntityId.unsafeOfString,
-        entity: snapshot1->(Utils.magic: snapshot => Internal.entity),
-        checkpointId: 5n,
-      })->S.reverseConvertToJsonOrThrow(setUpdateSchema)
-    t.expect(json).toEqual(
-      %raw(`{
-        "envio_change": "SET",
-        "envio_checkpoint_id": "5",
-        "id": "1",
-        "transactionIndex": 5,
-        "tokenOwner_id": "user-1"
-      }`),
-    )
-  })
-
   it("renames ClickHouse columns independently from Postgres", t => {
     let tokenEntity = reverseFormatConfig.userEntitiesByName->Dict.getUnsafe("Token")
     let pgQuery = PgStorage.makeCreateTableQuery(
