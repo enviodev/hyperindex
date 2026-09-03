@@ -9,13 +9,8 @@ let clickHouseFieldSchema = (f: Table.field) => {
     }
   switch f.fieldType {
   | Date => shaped(Utils.Schema.clickHouseDate->S.toUnknown)
-  // The sink takes the Uint8Arrays themselves, where the table schema
-  // binds a list as a Postgres array literal and is not a JSON schema.
   | Bytea => shaped(S.json(~validate=false)->S.toUnknown)
   | ChainId => ChainId.schema->S.toUnknown
-  // Not wrapped in `S.null` even when the field is nullable: the column
-  // is a String either way, and both ways of saying nothing travel as
-  // the text of JSON null.
   | Json if !f.isArray => Utils.Schema.clickHouseJson->S.toUnknown
   | _ => f.fieldSchema
   }
@@ -162,9 +157,6 @@ let entitySpec = (~entityConfig: Internal.entityConfig): ClickHouseSink.entitySp
   }
 }
 
-// One reader per registered column, in registration order: a row is staged by
-// asking each column for its value rather than serializing the row to a record
-// the columns are then looked up in.
 type cell = Change.t<Internal.entity> => unknown
 
 type converters = {
@@ -195,95 +187,99 @@ let makeRegistry = () => {
     )
 )
 
-// Built against the columns the table registered, so each column is matched to
-// its source by name once here and by position on every row after. A column
-// with no source, or a field with no column, is refused up front: matched by
-// position alone, either would stage one column's values under another's name.
-let makeConverters = (
-  ~entityConfig: Internal.entityConfig,
-  ~scope: Internal.chainScope,
-  ~table: ClickHouseSink.table,
-): converters => {
-  let {name: tableName, columns} = table
-  let table = entityConfig.table
-  let chainIdTag = switch (table->Table.getChainIdField, scope->Internal.chainScopeChainId) {
-  | (Some(field), Some(chainId)) =>
-    Some((field->Table.getClickHouseDbFieldName, chainId->(Utils.magic: ChainId.t => unknown)))
-  | _ => None
-  }
-  let fieldsByColumn = Dict.make()
-  table.fields->Array.forEach(field =>
-    switch field {
-    | Table.Field(f) => fieldsByColumn->Dict.set(f->Table.getClickHouseDbFieldName, f)
-    | DerivedFrom(_) => ()
+%%private(
+  let makeConverters = (
+    ~entityConfig: Internal.entityConfig,
+    ~scope: Internal.chainScope,
+    ~table: ClickHouseSink.table,
+  ): converters => {
+    let {name: tableName, columns} = table
+    let sourceTable = entityConfig.table
+    let chainIdTag = switch (
+      sourceTable->Table.getChainIdField,
+      scope->Internal.chainScopeChainId,
+    ) {
+    | (Some(field), Some(chainId)) =>
+      Some((field->Table.getClickHouseDbFieldName, chainId->(Utils.magic: ChainId.t => unknown)))
+    | _ => None
     }
-  )
+    let fieldsByColumn = Dict.make()
+    sourceTable.fields->Array.forEach(field =>
+      switch field {
+      | Table.Field(f) => fieldsByColumn->Dict.set(f->Table.getClickHouseDbFieldName, f)
+      | DerivedFrom(_) => ()
+      }
+    )
 
-  let setCells = []
-  let deleteCells = []
-  columns->Array.forEach(({name}) => {
-    let (set, delete) = if name === EntityHistory.checkpointIdFieldName {
-      let cell = change => change->Change.getCheckpointId->(Utils.magic: bigint => unknown)
-      (cell, cell)
-    } else if name === EntityHistory.changeFieldName {
-      (
-        _ => (EntityHistory.RowAction.SET :> string)->(Utils.magic: string => unknown),
-        _ => (EntityHistory.RowAction.DELETE :> string)->(Utils.magic: string => unknown),
-      )
-    } else {
-      switch (chainIdTag, fieldsByColumn->Utils.Dict.dangerouslyGetNonOption(name)) {
-      | (Some((column, chainId)), _) if column === name => (_ => chainId, _ => chainId)
-      | (_, Some(f)) =>
-        let serialize = compileSerializer(clickHouseFieldSchema(f))
-        let apiName = f->Table.getApiFieldName
-        if apiName === Table.idFieldName {
-          let cell = change =>
-            serialize(change->Change.getEntityId->(Utils.magic: EntityId.t => unknown))
-          (cell, cell)
-        } else {
-          (change => serialize(change->changeEntity->Dict.getUnsafe(apiName)), _ => absent)
+    let setCells = []
+    let deleteCells = []
+    let registeredNames = columns->Array.map(column => column.name)->Utils.Set.fromArray
+    columns->Array.forEach(({name}) => {
+      let (set, delete) = if name === EntityHistory.checkpointIdFieldName {
+        let cell = change => change->Change.getCheckpointId->(Utils.magic: bigint => unknown)
+        (cell, cell)
+      } else if name === EntityHistory.changeFieldName {
+        (
+          _ => (EntityHistory.RowAction.SET :> string)->(Utils.magic: string => unknown),
+          _ => (EntityHistory.RowAction.DELETE :> string)->(Utils.magic: string => unknown),
+        )
+      } else {
+        switch (chainIdTag, fieldsByColumn->Utils.Dict.dangerouslyGetNonOption(name)) {
+        | (Some((column, chainId)), _) if column === name => (_ => chainId, _ => chainId)
+        | (_, Some(f)) =>
+          let serialize = compileSerializer(clickHouseFieldSchema(f))
+          let apiName = f->Table.getApiFieldName
+          if apiName === Table.idFieldName {
+            let cell = change =>
+              serialize(change->Change.getEntityId->(Utils.magic: EntityId.t => unknown))
+            (cell, cell)
+          } else {
+            (change => serialize(change->changeEntity->Dict.getUnsafe(apiName)), _ => absent)
+          }
+        | (_, None) =>
+          JsError.throwWithMessage(
+            `ClickHouse table "${tableName}" registered a column "${name}" that entity "${entityConfig.name}" has no value for`,
+          )
         }
-      | (_, None) =>
+      }
+      setCells->Array.push(set)
+      deleteCells->Array.push(delete)
+    })
+
+    fieldsByColumn->Dict.forEachWithKey((f, column) =>
+      if !(registeredNames->Utils.Set.has(column)) {
         JsError.throwWithMessage(
-          `ClickHouse table "${tableName}" registered a column "${name}" that entity "${entityConfig.name}" has no value for`,
+          `ClickHouse table "${tableName}" registered no column for field "${f.fieldName}" of entity "${entityConfig.name}"`,
         )
       }
-    }
-    setCells->Array.push(set)
-    deleteCells->Array.push(delete)
-  })
+    )
 
-  fieldsByColumn->Dict.forEachWithKey((f, column) =>
-    if !(columns->Array.some(registered => registered.name === column)) {
-      JsError.throwWithMessage(
-        `ClickHouse table "${tableName}" registered no column for field "${f.fieldName}" of entity "${entityConfig.name}"`,
-      )
-    }
-  )
-
-  {setCells, deleteCells}
-}
-
-let fillBuilders = (
-  ~table: ClickHouseSink.table,
-  ~converters,
-  ~changes: array<Change.t<Internal.entity>>,
-) => {
-  let rows = changes->Array.length
-  let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
-  let columns = builders->Array.length
-  for row in 0 to rows - 1 {
-    let change = changes->Array.getUnsafe(row)
-    let (cells, write) = switch change {
-    | Change.Set(_) => (converters.setCells, ClickHouseSink.writeValue)
-    | Delete(_) => (converters.deleteCells, ClickHouseSink.writeDeletedValue)
-    }
-    for column in 0 to columns - 1 {
-      builders->Array.getUnsafe(column)->write(~row, (cells->Array.getUnsafe(column))(change))
-    }
+    {setCells, deleteCells}
   }
-  builders
-}
+)
+
+%%private(
+  let fillBuilders = (
+    ~table: ClickHouseSink.table,
+    ~converters,
+    ~changes: array<Change.t<Internal.entity>>,
+  ) => {
+    let rows = changes->Array.length
+    let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
+    let columns = builders->Array.length
+    for row in 0 to rows - 1 {
+      let change = changes->Array.getUnsafe(row)
+      let (cells, write) = switch change {
+      | Change.Set(_) => (converters.setCells, ClickHouseSink.writeValue)
+      | Delete(_) => (converters.deleteCells, ClickHouseSink.writeDeletedValue)
+      }
+      for column in 0 to columns - 1 {
+        builders->Array.getUnsafe(column)->write(~row, (cells->Array.getUnsafe(column))(change))
+      }
+    }
+    builders
+  }
+)
 
 let entityTable = (sink, ~registry, ~entityConfig: Internal.entityConfig) =>
   switch registry.entities->Utils.Dict.dangerouslyGetNonOption(entityConfig.name) {
@@ -359,15 +355,14 @@ let stageUpdatesOrThrow = (
     let table = sink->entityTable(~registry, ~entityConfig)
     let tableName = table.name
     let cacheKey = `${entityConfig.name}|${scope->Internal.chainScopeToString}`
-    let converters = switch registry.converters->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
-    | Some(cached) => cached
-    | None =>
-      let cached = makeConverters(~entityConfig, ~scope, ~table)
-      registry.converters->Dict.set(cacheKey, cached)
-      cached
-    }
-
     try {
+      let converters = switch registry.converters->Utils.Dict.dangerouslyGetNonOption(cacheKey) {
+      | Some(cached) => cached
+      | None =>
+        let cached = makeConverters(~entityConfig, ~scope, ~table)
+        registry.converters->Dict.set(cacheKey, cached)
+        cached
+      }
       let builders = fillBuilders(~table, ~converters, ~changes)
       Some(sink->stageBuilders(~table, ~builders, ~rows))
     } catch {
