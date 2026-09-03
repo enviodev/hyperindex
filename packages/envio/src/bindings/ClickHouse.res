@@ -7,17 +7,19 @@ let makeClickHouseEntitySchema = (table: Table.table, ~skipColumn: option<string
       switch field {
       | Field(f) if Some(f->Table.getClickHouseDbFieldName) != skipColumn => {
           let fieldName = f->Table.getClickHouseDbFieldName
-          let fieldSchema = switch f.fieldType {
-          | Date => {
-              let dateSchema = Utils.Schema.clickHouseDate->S.toUnknown
-              if f.isNullable {
-                Utils.Schema.nullTolerant(dateSchema)->S.toUnknown
-              } else if f.isArray {
-                S.array(dateSchema)->S.toUnknown
-              } else {
-                dateSchema
-              }
+          let shaped = baseSchema =>
+            if f.isNullable {
+              Utils.Schema.nullTolerant(baseSchema)->S.toUnknown
+            } else if f.isArray {
+              S.array(baseSchema)->S.toUnknown
+            } else {
+              baseSchema
             }
+          let fieldSchema = switch f.fieldType {
+          | Date => shaped(Utils.Schema.clickHouseDate->S.toUnknown)
+          // The sink takes the Uint8Arrays themselves, where the table schema
+          // binds a list as a Postgres array literal and is not a JSON schema.
+          | Bytea => shaped(S.json(~validate=false)->S.toUnknown)
           | ChainId => ChainId.schema->S.toUnknown
           // Not wrapped in `S.null` even when the field is nullable: the column
           // is a String either way, and both ways of saying nothing travel as
@@ -56,11 +58,9 @@ let makeColumnSpec = (
   | Boolean => "Boolean"
   | Uint32 => "Uint32"
   | UInt52 => "UInt52"
-  | SmallInt
-  | Bytea =>
-    JsError.throwWithMessage(
-      "ClickHouse doesn't support the internal SmallInt and Bytea column types",
-    )
+  | SmallInt =>
+    JsError.throwWithMessage("ClickHouse doesn't support the internal SmallInt column type")
+  | Bytea => "Bytea"
   | UInt64 => "UInt64"
   | Int32 => "Int32"
   | ChainId => "ChainId"

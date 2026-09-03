@@ -199,6 +199,7 @@ pub struct ColumnValuesInput {
     pub unsigned64: Option<BigUint64Array>,
     pub signed64: Option<BigInt64Array>,
     pub texts: Option<Vec<String>>,
+    pub bytes: Option<Vec<Uint8Array>>,
     pub nulls: Option<Uint8Array>,
 }
 
@@ -400,18 +401,23 @@ impl ClickHouseSink {
                 unsigned64,
                 signed64,
                 texts,
+                bytes,
                 nulls,
             } = column;
             let name = &spec.name;
-            let values = match (numbers, unsigned64, signed64, texts) {
-                (Some(v), None, None, None) => ColumnValues::F64(v.to_vec()),
-                (None, Some(v), None, None) => ColumnValues::U64(v.to_vec()),
-                (None, None, Some(v), None) => ColumnValues::I64(v.to_vec()),
-                (None, None, None, Some(v)) => ColumnValues::Text(v),
+            let values = match (numbers, unsigned64, signed64, texts, bytes) {
+                (Some(v), None, None, None, None) => ColumnValues::F64(v.to_vec()),
+                (None, Some(v), None, None, None) => ColumnValues::U64(v.to_vec()),
+                (None, None, Some(v), None, None) => ColumnValues::I64(v.to_vec()),
+                (None, None, None, Some(v), None) => ColumnValues::Text(v),
+                (None, None, None, None, Some(v)) => {
+                    ColumnValues::Bytes(v.into_iter().map(|b| b.to_vec()).collect())
+                }
                 _ => {
                     return Err(napi::Error::from_reason(format!(
-                    "Column `{name}` must carry exactly one of numbers/unsigned64/signed64/texts"
-                )))
+                        "Column `{name}` must carry exactly one of \
+                         numbers/unsigned64/signed64/texts/bytes"
+                    )))
                 }
             };
             let staged_kind = values.kind();
@@ -1160,6 +1166,7 @@ mod tests {
             unsigned64: None,
             signed64: None,
             texts: Some(values.iter().map(|v| v.to_string()).collect()),
+            bytes: None,
             nulls: None,
         }
     }
