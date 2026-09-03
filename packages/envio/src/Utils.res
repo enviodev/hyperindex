@@ -517,7 +517,11 @@ module Bytes = {
   // server describes, and the bytea one expects a Uint8Array — yet it types the
   // array after its first element, so an array of Uint8Arrays binds as a single
   // bytea. Text binds untyped and reaches the server's array parser as it is.
-  let toPgArrayLiteral = (values: array<unknown>) =>
+  //
+  // Nests, since an `in` filter over a list column carries one array per
+  // candidate value. A sub-array is written unquoted, which is how Postgres
+  // spells a dimension rather than an element.
+  let rec toPgArrayLiteral = (values: array<unknown>) =>
     "{" ++
     values
     ->Array.map(value =>
@@ -526,7 +530,12 @@ module Bytes = {
       | Some(value) =>
         switch value->asUint8Array {
         | Some(bytes) => `"\\\\x${bytes->toHex}"`
-        | None => JsError.throwWithMessage("Expected Uint8Array")
+        | None =>
+          if value->Array.isArray {
+            value->(magic: unknown => array<unknown>)->toPgArrayLiteral
+          } else {
+            JsError.throwWithMessage("Expected Uint8Array")
+          }
         }
       }
     )
@@ -578,7 +587,10 @@ module Schema = {
     serializer: (bytes: Uint8Array.t) => bytes,
   })
 
-  // A bytea[] value: a list field, or the values of an `in` filter.
+  // A bytea[] value: a list column, or the values an `in` filter compares
+  // against — one array per candidate when the column is itself a list, which
+  // the literal writer nests. Only a column is ever read back, so the parser
+  // takes the one level a bytea[] column returns.
   let bytesArray = S.custom("BytesArray", s => {
     parser: unknown =>
       if unknown->Array.isArray {

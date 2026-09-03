@@ -29,7 +29,7 @@ metadata:
 | `Boolean!` | `boolean` | |
 | `BigInt!` | `bigint` | Use `@config(precision: N)` for custom precision |
 | `BigDecimal!` | `BigDecimal` | Use `@config(precision: N, scale: M)` |
-| `Bytes!` | `string` | Hex-encoded; `Uint8Array` stored as raw bytes with `bytes_type: uint8array` in config.yaml (always on SVM) |
+| `Bytes!` | `string` or `Uint8Array` | Depends on `bytes_type` in config.yaml: `hex` (the EVM/Fuel default) gives a hex-encoded `string`, `uint8array` gives a `Uint8Array` stored as raw bytes. SVM is always `Uint8Array` |
 | `Timestamp!` | `Date` | |
 | `Json!` | `any` | |
 
