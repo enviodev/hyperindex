@@ -28,6 +28,94 @@ expression: json
         "abi": null,
         "events": [
           {
+            "name": "Burn",
+            "sighash": "0x29",
+            "kind": "svmInstruction",
+            "svm": {
+              "discriminator": "0x29",
+              "accounts": [
+                "authority",
+                "collection_metadata",
+                "metadata",
+                "edition",
+                "mint",
+                "token",
+                "master_edition",
+                "master_edition_mint",
+                "master_edition_token",
+                "edition_marker",
+                "token_record",
+                "system_program",
+                "sysvar_instructions",
+                "spl_token_program"
+              ],
+              "args": [
+                {
+                  "name": "burn_args",
+                  "type": {
+                    "defined": "BurnArgs"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "CreateMasterEditionV3",
+            "sighash": "0x11",
+            "kind": "svmInstruction",
+            "svm": {
+              "discriminator": "0x11",
+              "accounts": [
+                "edition",
+                "mint",
+                "update_authority",
+                "mint_authority",
+                "payer",
+                "metadata",
+                "token_program",
+                "system_program",
+                "rent"
+              ],
+              "args": [
+                {
+                  "name": "max_supply",
+                  "type": {
+                    "option": "u64"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "name": "CreateMetadataAccount",
+            "sighash": "0x00",
+            "kind": "svmInstruction",
+            "svm": {
+              "discriminator": "0x00",
+              "accounts": [
+                "metadata",
+                "mint",
+                "mint_authority",
+                "payer",
+                "update_authority",
+                "system_program",
+                "rent"
+              ],
+              "args": [
+                {
+                  "name": "data",
+                  "type": {
+                    "defined": "Data"
+                  }
+                },
+                {
+                  "name": "is_mutable",
+                  "type": "bool"
+                }
+              ]
+            }
+          },
+          {
             "name": "CreateMetadataAccountV3",
             "sighash": "0x21",
             "kind": "svmInstruction",
@@ -101,6 +189,23 @@ expression: json
                     "option": "bool"
                   }
                 }
+              ]
+            }
+          },
+          {
+            "name": "VerifyCollection",
+            "sighash": "0x12",
+            "kind": "svmInstruction",
+            "svm": {
+              "discriminator": "0x12",
+              "accounts": [
+                "metadata",
+                "collection_authority",
+                "payer",
+                "collection_mint",
+                "collection",
+                "collection_master_edition_account",
+                "collection_authority_record"
               ]
             }
           }

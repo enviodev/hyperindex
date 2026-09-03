@@ -1177,13 +1177,22 @@ pub mod svm {
         pub handler: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional path (relative to config.yaml) to an Anchor IDL JSON file. \
-                           When present, codegen parses the IDL and derives `accounts`/`args` for \
-                           every named instruction. Mutually exclusive with per-instruction \
-                           `accounts`/`args` overrides."
+            description = "Optional path (relative to config.yaml) to an IDL JSON file (Anchor \
+                           0.30+, legacy Anchor, Shank, or Codama). When present, naming an \
+                           instruction in `onInstruction` is enough: discriminator, accounts, and \
+                           args come from the file. Mutually exclusive with per-instruction \
+                           `accounts`/`args` overrides. Omit `instructions` to expose every \
+                           usable instruction the IDL declares."
         )]
         pub idl: Option<String>,
-        #[schemars(description = "A list of instructions that should be indexed on this program.")]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schemars(
+            description = "Instructions to index. With `idl:` or a bundled schema, omit this \
+                           list: every usable instruction the schema declares is available to \
+                           `onInstruction`. A listed name that the schema does not declare is an \
+                           error. Without a schema, each entry must carry `discriminator` and/or \
+                           `accounts`/`args`."
+        )]
         pub instructions: Vec<Instruction>,
     }
 

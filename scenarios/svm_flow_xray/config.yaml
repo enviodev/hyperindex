@@ -22,29 +22,12 @@ chains:
         - name: Jupiter
           program_id: JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4
           idl: idls/jupiter.json
-          # Naming an instruction the IDL declares is enough: the discriminator
-          # comes from the IDL, including the sha256("global:<snake_case>")[..8]
-          # a legacy Anchor file leaves implicit.
-          instructions:
-            - name: route
-            - name: sharedAccountsRoute
         - name: Kamino
           program_id: KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD
           idl: idls/kamino.json
-          instructions:
-            - name: depositReserveLiquidityAndObligationCollateral
-            - name: borrowObligationLiquidity
-            - name: repayObligationLiquidity
-            - name: withdrawObligationCollateralAndRedeemReserveCollateral
         - name: Drift
           program_id: dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH
           idl: idls/drift.json
-          instructions:
-            - name: placePerpOrder
-            - name: fillPerpOrder
-            - name: liquidatePerp
-            - name: liquidateSpot
-            - name: settlePnl
         # --- inline-decoded programs (no Anchor IDL) ---
         # SplToken + System are intentionally NOT matched: they are the
         # highest-frequency instructions on Solana and overwhelm the backfill.

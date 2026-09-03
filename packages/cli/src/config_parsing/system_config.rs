@@ -1413,8 +1413,8 @@ impl SystemConfig {
                                     program.name, program.program_id
                                 )
                             })?;
-                        let events = program
-                            .instructions
+                        let listed = listed_instructions(program, &svm_abi);
+                        let events = listed
                             .iter()
                             .map(|instr| -> Result<Event> {
                                 let ResolvedInstruction {
@@ -2108,23 +2108,76 @@ fn resolve_instruction(
     }
 
     if abi.source != SvmSchemaSource::Inline {
-        let dispatch = match &declared {
-            Some(_) => "It will be dispatched on its discriminator",
-            None => {
-                "It carries no discriminator, so it will match every instruction of the program"
-            }
-        };
-        eprintln!(
-            "Warning: instruction '{}' is not declared by the schema for program '{program_name}'. \
-             {dispatch}, with no decoded accounts or arguments.",
-            instr.name
-        );
+        return Err(anyhow!(
+            "instruction '{}' is not declared by the schema for program '{program_name}'{}",
+            instr.name,
+            suggest_instruction_name(&instr.name, &abi.idl)
+        ));
     }
     Ok(ResolvedInstruction {
         discriminator: declared,
         accounts: Vec::new(),
         args: Vec::new(),
     })
+}
+
+/// YAML `instructions` when the user listed them. Otherwise every usable
+/// instruction the schema declares, so `onInstruction` can name them without
+/// repeating the catalog in config.yaml.
+fn listed_instructions(
+    program: &human_config::svm::Program,
+    abi: &SvmAbi,
+) -> Vec<human_config::svm::Instruction> {
+    if !program.instructions.is_empty() {
+        return program.instructions.clone();
+    }
+    if abi.source == SvmSchemaSource::Inline {
+        return Vec::new();
+    }
+    abi.idl
+        .instructions
+        .keys()
+        .map(|name| human_config::svm::Instruction {
+            name: name.clone(),
+            discriminator: None,
+            accounts: None,
+            args: None,
+        })
+        .collect()
+}
+
+fn suggest_instruction_name(name: &str, idl: &ProgramIdl) -> String {
+    let mut best: Option<(&str, usize)> = None;
+    for candidate in idl.instructions.keys().chain(idl.unusable.keys()) {
+        let d = edit_distance(name, candidate);
+        if d == 0 {
+            continue;
+        }
+        match best {
+            Some((_, best_d)) if d >= best_d => {}
+            _ => best = Some((candidate.as_str(), d)),
+        }
+    }
+    match best {
+        Some((candidate, d)) if d <= 2 => format!(". Did you mean '{candidate}'?"),
+        _ => String::new(),
+    }
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
 }
 
 fn yaml_arg_to_named_field(arg: &human_config::svm::ArgDef) -> Result<SvmNamedField> {
@@ -4151,6 +4204,59 @@ type Foo {
             );
         }
 
+        /// The IDL already names the instructions. Repeating them in YAML is
+        /// optional: omit the list and every usable instruction is available
+        /// to `onInstruction`.
+        #[test]
+        fn omits_yaml_instructions_to_expose_the_idl_catalog() {
+            let yaml = "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+                 0\n    experimental:\n      hypersync_config:\n        url: \
+                 https://solana.hypersync.xyz\n      programs:\n        - name: Pool\n          \
+                 program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n          idl: \
+                 idls/pool.json\n";
+            let config = SystemConfig::parse_yaml(
+                yaml,
+                Some("type Foo @entity { id: ID! }"),
+                &HashMap::new(),
+                &HashMap::from([("idls/pool.json".to_string(), LEGACY_ANCHOR_IDL.to_string())]),
+                false,
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0xf223c68952e1f2b6".to_string()),
+                        vec!["vault".to_string()],
+                        Vec::new(),
+                    ),
+                    (
+                        "swap".to_string(),
+                        Some("0xf8c69e91e17587c8".to_string()),
+                        vec!["payer".to_string(), "pool".to_string()],
+                        vec!["amount".to_string()],
+                    ),
+                ]
+            );
+        }
+
+        /// A typo of an IDL instruction used to wildcard the program. Naming
+        /// is how handlers select a catalog entry, so a misspelling is an
+        /// error, with a nearby name when there is one.
+        #[test]
+        fn refuses_an_instruction_name_the_idl_does_not_declare() {
+            let err = program_reading_idl(LEGACY_ANCHOR_IDL, "            - name: swp\n")
+                .expect_err("unknown name");
+
+            assert_eq!(
+                format!("{err:#}"),
+                "Layout for instruction 'swp': instruction 'swp' is not declared by the schema \
+                 for program 'Pool'. Did you mean 'swap'?"
+            );
+        }
+
         /// Hex is hex in either case, and the config schema accepts both. A
         /// spelling difference is not a disagreement with the IDL.
         #[test]
@@ -4280,10 +4386,9 @@ type Foo {
             );
         }
 
-        /// The real config, over three published IDLs. It pins the bytes each
-        /// of its eleven IDL-backed instructions derives, against the
-        /// hand-computed sha256 prefixes they were dispatched on. The three
-        /// programs with no IDL bring their own discriminator.
+        /// The real config, over three published IDLs. Omitting YAML
+        /// `instructions` exposes the catalog; this pins the bytes the
+        /// scenario's handlers still name, plus the three inline swaps.
         #[test]
         fn derives_the_scenario_config_discriminators_from_its_idls() {
             let project_paths = ParsedProjectPaths::new(
@@ -4296,60 +4401,81 @@ type Foo {
             .expect("paths");
             let config = SystemConfig::parse_from_project_files(&project_paths).expect("parse");
 
-            let mut dispatched: Vec<_> = svm_events(&config)
+            let dispatched: Vec<_> = svm_events(&config)
                 .into_iter()
                 .filter(|(_, discriminator, ..)| discriminator.is_some())
                 .map(|(name, discriminator, accounts, args)| {
                     (name, discriminator.unwrap(), accounts.len(), args.len())
                 })
                 .collect();
-            dispatched.sort();
+
+            let names = [
+                "borrowObligationLiquidity",
+                "depositReserveLiquidityAndObligationCollateral",
+                "fillPerpOrder",
+                "liquidatePerp",
+                "liquidateSpot",
+                "placePerpOrder",
+                "repayObligationLiquidity",
+                "route",
+                "settlePnl",
+                "sharedAccountsRoute",
+                "swap",
+                "withdrawObligationCollateralAndRedeemReserveCollateral",
+            ];
+            let mut pinned: Vec<_> = dispatched
+                .iter()
+                .filter(|row| names.contains(&row.0.as_str()))
+                .cloned()
+                .collect();
+            pinned.sort();
 
             assert_eq!(
-                dispatched,
-                vec![
-                    (
-                        "borrowObligationLiquidity".into(),
-                        "0x797f12cc49f5e141".into(),
-                        12,
-                        1
-                    ),
-                    (
-                        "depositReserveLiquidityAndObligationCollateral".into(),
-                        "0x81c70402de271a2e".into(),
-                        14,
-                        1
-                    ),
-                    ("fillPerpOrder".into(), "0x0dbcf86786d96af0".into(), 6, 2),
-                    ("liquidatePerp".into(), "0x4b2377f7bf128b02".into(), 6, 3),
-                    ("liquidateSpot".into(), "0x6b00802923e5fb12".into(), 6, 4),
-                    ("placePerpOrder".into(), "0x45a15dca787e4cb9".into(), 3, 1),
-                    (
-                        "repayObligationLiquidity".into(),
-                        "0x91b20de14cf09348".into(),
-                        9,
-                        1
-                    ),
-                    ("route".into(), "0xe517cb977ae3ad2a".into(), 9, 5),
-                    ("settlePnl".into(), "0x2b3dea2d0f5f9899".into(), 4, 1),
-                    (
-                        "sharedAccountsRoute".into(),
-                        "0xc1209b3341d69c81".into(),
-                        13,
-                        6
-                    ),
-                    // Raydium, Orca and Meteora ship no IDL, so these three keep
-                    // the discriminator the config spells out.
-                    ("swap".into(), "0x09".into(), 18, 2),
-                    ("swap".into(), "0xf8c69e91e17587c8".into(), 0, 0),
-                    ("swap".into(), "0xf8c69e91e17587c8".into(), 0, 0),
-                    (
-                        "withdrawObligationCollateralAndRedeemReserveCollateral".into(),
-                        "0x4b5d5ddc2296dac4".into(),
-                        14,
-                        1
-                    ),
-                ]
+                (dispatched.len() > 14, pinned),
+                (
+                    true,
+                    vec![
+                        (
+                            "borrowObligationLiquidity".into(),
+                            "0x797f12cc49f5e141".into(),
+                            12,
+                            1
+                        ),
+                        (
+                            "depositReserveLiquidityAndObligationCollateral".into(),
+                            "0x81c70402de271a2e".into(),
+                            14,
+                            1
+                        ),
+                        ("fillPerpOrder".into(), "0x0dbcf86786d96af0".into(), 6, 2),
+                        ("liquidatePerp".into(), "0x4b2377f7bf128b02".into(), 6, 3),
+                        ("liquidateSpot".into(), "0x6b00802923e5fb12".into(), 6, 4),
+                        ("placePerpOrder".into(), "0x45a15dca787e4cb9".into(), 3, 1),
+                        (
+                            "repayObligationLiquidity".into(),
+                            "0x91b20de14cf09348".into(),
+                            9,
+                            1
+                        ),
+                        ("route".into(), "0xe517cb977ae3ad2a".into(), 9, 5),
+                        ("settlePnl".into(), "0x2b3dea2d0f5f9899".into(), 4, 1),
+                        (
+                            "sharedAccountsRoute".into(),
+                            "0xc1209b3341d69c81".into(),
+                            13,
+                            6
+                        ),
+                        ("swap".into(), "0x09".into(), 18, 2),
+                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, 0),
+                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, 0),
+                        (
+                            "withdrawObligationCollateralAndRedeemReserveCollateral".into(),
+                            "0x4b5d5ddc2296dac4".into(),
+                            14,
+                            1
+                        ),
+                    ]
+                )
             );
         }
 
@@ -4390,28 +4516,26 @@ type Foo {
                     .expect("paths");
             let config = SystemConfig::parse_from_project_files(&project_paths).expect("parse");
 
-            // Single chain, single program -> one contract with two events.
             let contracts = config.contracts.values().collect::<Vec<_>>();
-            assert_eq!(contracts.len(), 1);
             let token_metadata = contracts[0];
-            assert_eq!(token_metadata.name, "TokenMetadata");
-            assert!(matches!(token_metadata.abi, Abi::Svm(_)));
-            assert_eq!(token_metadata.events.len(), 2);
-
             let kinds: Vec<_> = token_metadata
                 .events
                 .iter()
                 .map(|e| match &e.kind {
-                    EventKind::Svm(k) => (e.name.as_str(), k.discriminator.as_deref()),
+                    EventKind::Svm(k) => (e.name.clone(), k.discriminator.clone()),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
                 })
                 .collect();
             assert_eq!(
-                kinds,
-                vec![
-                    ("CreateMetadataAccountV3", Some("0x21")),
-                    ("UpdateMetadataAccountV2", Some("0x0f")),
-                ],
+                (
+                    contracts.len(),
+                    token_metadata.name.as_str(),
+                    matches!(token_metadata.abi, Abi::Svm(_)),
+                    kinds.contains(&("CreateMetadataAccountV3".into(), Some("0x21".into()))),
+                    kinds.contains(&("UpdateMetadataAccountV2".into(), Some("0x0f".into()))),
+                    kinds.len() > 2,
+                ),
+                (1, "TokenMetadata", true, true, true, true)
             );
 
             // Chain data carries the program_id on the contract-side address,
