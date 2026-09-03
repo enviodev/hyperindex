@@ -7,16 +7,10 @@ let staleTimeout = 60_000
 let subscribeRequestId = 1
 let subscribeRequestIdText = subscribeRequestId->Int.toString
 
-let isText: unknown => bool = %raw(`(data) => typeof data === "string"`)
-
-// A JSON-RPC id is any scalar, and gateways do echo an int id back as a string.
-// Both spellings name the same request, so both have to be read.
-type responseId = IntId(int) | StringId(string)
-
 type wsMessage =
   | NewHead(int)
   // A response to some request, carrying the id it answers when it names one.
-  | Response({id: option<responseId>, isError: bool})
+  | Response({id: option<string>, isError: bool})
 
 let subscribeRequestJson =
   {"jsonrpc": "2.0", "id": subscribeRequestId, "method": "eth_subscribe", "params": ["newHeads"]}
@@ -28,17 +22,13 @@ let subscribeRequestJson =
   } => JSON.t)
   ->JSON.stringify
 
+// A JSON-RPC id is any scalar, and gateways do echo an int id back as a string.
+// Both spellings name the same request, so both are read as the one text.
 // Nullable, not merely optional: JSON-RPC answers a request whose id it could
 // not read with an explicit null.
 let responseIdSchema = S.nullable(
-  S.union([S.int->S.shape(id => IntId(id)), S.string->S.shape(id => StringId(id))]),
+  S.union([S.string, S.int->S.transform(_ => {parser: id => id->Int.toString})]),
 )
-
-let namesSubscribe = id =>
-  switch id {
-  | IntId(id) => id === subscribeRequestId
-  | StringId(id) => id === subscribeRequestIdText
-  }
 
 // The subscribe is the only request this socket ever sends, so an error naming
 // its id — or naming none at all, which is how JSON-RPC answers a request it
@@ -46,7 +36,7 @@ let namesSubscribe = id =>
 let refusesSubscribe = id =>
   switch id {
   | None => true
-  | Some(id) => id->namesSubscribe
+  | Some(id) => id === subscribeRequestIdText
   }
 
 let wsMessageSchema = S.union([
@@ -91,7 +81,7 @@ let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
     ws->WebSocket.onopen(() => ws->WebSocket.send(subscribeRequestJson))
 
     ws->WebSocket.onmessage(event =>
-      if event.data->isText {
+      if event.data->typeof === #string {
         let text = event.data->(Utils.magic: unknown => string)
         let message = Utils.Option.catchToNone(
           () => text->JSON.parseOrThrow->S.parseOrThrow(wsMessageSchema),
@@ -102,7 +92,7 @@ let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
         // and only the answer to the subscribe says that it has. A success frame
         // answering anything else would otherwise report a stream as live
         // without one ever having been subscribed.
-        | Some(Response({id: Some(id), isError: false})) if id->namesSubscribe =>
+        | Some(Response({id: Some(id), isError: false})) if id === subscribeRequestIdText =>
           driver.onConnected()
         | Some(Response({id, isError: true})) if id->refusesSubscribe =>
           driver.onFailure(~reason=SubscribeRejected, ~detail=text)

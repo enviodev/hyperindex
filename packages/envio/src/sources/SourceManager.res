@@ -803,11 +803,10 @@ let waitForNewBlock = (sourceManager: t, ~knownHeight, ~isRealtime, ~reducedPoll
               }
             }, Utils.jitter(stallTimeout)))
 
-      // Punctual, unlike the poke it used to share a timer with:
-      // newBlockStallTimeout is a promise to the operator about when they hear
-      // about a quiet chain, and spreading that would report it early. Fires once
-      // — the warning is worth saying once per wait, and a fallback stays
-      // recruited.
+      // Punctual, unlike the poke above: newBlockStallTimeout is a promise to the
+      // operator about when they hear about a quiet chain, and spreading that
+      // would report it early. Fires once — the warning is worth saying once per
+      // wait, and a fallback stays recruited.
       let armStallTimeout = () =>
         stallTimeoutId := Some(setTimeout(() => {
               stallTimeoutId := None

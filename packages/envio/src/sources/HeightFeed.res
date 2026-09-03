@@ -78,9 +78,9 @@ type t = {
   mutable knownHeight: int,
   mutable waiters: array<waiter>,
   mutable stream: streamState,
-  // Bumped whenever the stream changes hands. A height request made for one
-  // connection can land after another has replaced it, and what it said about
-  // the connection that asked is no longer about the one in place.
+  // Bumped for every connection this feed sees come up. A height request made
+  // for one connection can land after another has replaced it, and what it said
+  // about the connection that asked is no longer about the one in place.
   mutable generation: int,
   mutable closeStream: option<unit => unit>,
   mutable polling: bool,
@@ -94,9 +94,10 @@ type t = {
   // A stopped feed never subscribes again: `stop` is the capability verdict that
   // benched its source.
   mutable stopped: bool,
-  // Whether an operator has been told once that this source's stream sends
-  // something this cannot read. The condition repeats every staleness window.
+  // Whether an operator has been told once about a stream condition that never
+  // heals on its own. Each of them repeats for as long as its cause is there.
   mutable unreadableWarned: bool,
+  mutable subscribeRejectedWarned: bool,
 }
 
 let make = (~source: Source.t, ~recordRequestStats, ~getHeightRetryInterval): t => {
@@ -116,6 +117,7 @@ let make = (~source: Source.t, ~recordRequestStats, ~getHeightRetryInterval): t 
   disconnects: Dict.make(),
   stopped: false,
   unreadableWarned: false,
+  subscribeRejectedWarned: false,
 }
 
 type streamSample = {connectCount: int, disconnectsByReason: array<(string, int)>}
@@ -249,7 +251,7 @@ let pollTimeoutMillis = 60_000
 // that never settles costs one request rather than the loop waiting on it — or,
 // on the catch-up path that nothing waits on, a promise per connect that is
 // never released.
-let heightWithin = (feed: t, ~millis): promise<pollOutcome> => {
+let heightWithin = (feed: t): promise<pollOutcome> => {
   let timeoutId = ref(None)
   let timedOut = ref(false)
   let request = feed.source.getHeightOrThrow()
@@ -270,12 +272,9 @@ let heightWithin = (feed: t, ~millis): promise<pollOutcome> => {
     Promise.make((resolve, _reject) => timeoutId := Some(setTimeout(() => {
             timedOut := true
             resolve(TimedOut)
-          }, millis))),
+          }, pollTimeoutMillis))),
   ])->Promise.thenResolve(outcome => {
-    switch timeoutId.contents {
-    | Some(id) => clearTimeout(id)
-    | None => ()
-    }
+    timeoutId->Utils.clearTimeoutRef
     outcome
   })
 }
@@ -312,30 +311,31 @@ let nextRetryInterval = (feed: t) => {
   retryInterval
 }
 
+// The wait a poll that did not answer earns, and the line that says why it was
+// earned. Both ways a poll can fail come through here, so the ramp and what is
+// said about it stay one thing.
+let backOff = (feed: t, ~what, ~exn=?) => {
+  let retryInterval = feed->nextRetryInterval
+  feed.logger->Logging.childTrace({
+    "msg": `Height retrieval from ${feed.source.name} source ${what}. Retrying in ${retryInterval->Int.toString}ms.`,
+    "err": exn->Option.map(Utils.prettifyExn),
+  })
+  (retryInterval, Backoff)
+}
+
 // One poll, and what the loop should wait before the next: the source's own
 // cadence after an answer, or the escalating backoff a failing endpoint earns.
 // It is usually the same endpoint whose stream just dropped, so asking again at
 // the polling interval would lean on something already in trouble.
 let pollOnce = async (feed: t) => {
   let generation = feed.generation
-  switch await feed->heightWithin(~millis=pollTimeoutMillis) {
+  switch await feed->heightWithin {
   | Answered(res) =>
     feed->recordAnswer(~generation, res)
     (feed->currentInterval, Cadence)
   | TimedOut =>
-    let retryInterval = feed->nextRetryInterval
-    feed.logger->Logging.childTrace({
-      "msg": `Height retrieval from ${feed.source.name} source did not answer within ${(pollTimeoutMillis / 1000)
-          ->Int.toString}s. Retrying in ${retryInterval->Int.toString}ms.`,
-    })
-    (retryInterval, Backoff)
-  | Failed(exn) =>
-    let retryInterval = feed->nextRetryInterval
-    feed.logger->Logging.childTrace({
-      "msg": `Height retrieval from ${feed.source.name} source failed. Retrying in ${retryInterval->Int.toString}ms.`,
-      "err": exn->Utils.prettifyExn,
-    })
-    (retryInterval, Backoff)
+    feed->backOff(~what=`did not answer within ${(pollTimeoutMillis / 1000)->Int.toString}s`)
+  | Failed(exn) => feed->backOff(~what="failed", ~exn)
   }
 }
 
@@ -382,7 +382,7 @@ let syncPolling = (feed: t) =>
 // does not make the endpoint answer sooner.
 let catchUpWhileIdle = async (feed: t) => {
   let generation = feed.generation
-  switch await feed->heightWithin(~millis=pollTimeoutMillis) {
+  switch await feed->heightWithin {
   | Answered(res) => feed->recordAnswer(~generation, res)
   // Nobody is waiting, so nothing is owed and there is nothing to retry: the
   // next wait polls on its own, and the next height the stream pushes lands
@@ -428,7 +428,6 @@ let markStreamDown = (feed: t, ~reason) => {
   | NeverEnabled | Disconnected => ()
   }
   feed.stream = Disconnected
-  feed.generation = feed.generation + 1
   // The connection they gave up on is gone; the one that replaces it starts with
   // a head of its own to account for.
   feed->trustStreamAgain
@@ -462,13 +461,19 @@ let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>
     // The counters say a stream is flapping and how often, but only the
     // provider's own words say why, and a frame nobody could read is
     // unrecoverable from a bucketed label. An outage is the indexer's to absorb
-    // — it polls instead — but a provider sending heights in a shape this does
-    // not parse never heals on its own, and silently polling forever against a
-    // stream that could be working is worth one line an operator can see. Once:
-    // it repeats every staleness window for as long as the shape is wrong.
+    // — it polls instead — so these go out at trace, except for the two that
+    // never heal on their own: silently polling forever against a stream that
+    // could be working is worth one line an operator can see. Once each: both
+    // conditions repeat on every retry for as long as their cause is there.
     let log = switch reason {
     | Unreadable if !feed.unreadableWarned =>
       feed.unreadableWarned = true
+      Logging.childWarn
+    // Refused without this feed ever having had a connection accepted, which
+    // makes it the endpoint's answer about itself rather than a bad moment: the
+    // url cannot serve heights, and no amount of retrying will change that.
+    | SubscribeRejected if !feed.subscribeRejectedWarned && feed.connects === 0 =>
+      feed.subscribeRejectedWarned = true
       Logging.childWarn
     | _ => Logging.childTrace
     }

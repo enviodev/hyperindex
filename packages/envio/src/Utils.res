@@ -39,7 +39,6 @@ let clearTimeoutRef = timeoutId => {
 // days. Every caller's delay reaches its cap long before this.
 let maxBackoffExponent = 20
 
-// `base` doubled `exp` times, capped.
 let expBackoff = (~base, ~exp, ~maxMillis) =>
   Pervasives.min(
     base * Math.pow(2.0, ~exp=Pervasives.min(exp, maxBackoffExponent)->Int.toFloat)->Float.toInt,
@@ -812,8 +811,6 @@ let prettifyExn = exn => {
   }
 }
 
-// The message a throw carries, for the places that want to put it in a string
-// rather than re-throw it.
 let exnMessage = exn =>
   switch exn->JsExn.anyToExnInternal {
   | JsExn(jsExn) => jsExn->JsExn.message

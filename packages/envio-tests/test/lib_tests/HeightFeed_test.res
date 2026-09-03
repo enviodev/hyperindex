@@ -890,3 +890,78 @@ describe("HeightFeed poll failures", () => {
     ))
   })
 })
+
+describe("HeightFeed operator warnings", () => {
+  // A feed builds its logger out of the global one when it is made, so a test
+  // that wants to read what an operator was told installs its own first.
+  let captureWarnings = () => {
+    let warnings = []
+    let ignoreMessage = _ => ()
+    let loggerRef = ref(None)
+    let logger = {
+      "trace": ignoreMessage,
+      "debug": ignoreMessage,
+      "info": ignoreMessage,
+      "warn": message =>
+        warnings
+        ->Array.push(message->(Utils.magic: Pino.pinoMessageBlob => {"reason": string}))
+        ->ignore,
+      "error": ignoreMessage,
+      "fatal": ignoreMessage,
+      "child": _ => loggerRef.contents->Option.getOrThrow,
+    }->(
+      Utils.magic: {
+        "trace": Pino.pinoMessageBlob => unit,
+        "debug": Pino.pinoMessageBlob => unit,
+        "info": Pino.pinoMessageBlob => unit,
+        "warn": Pino.pinoMessageBlob => unit,
+        "error": Pino.pinoMessageBlob => unit,
+        "fatal": Pino.pinoMessageBlob => unit,
+        "child": Pino.childParams => Pino.t,
+      } => Pino.t
+    )
+    loggerRef := Some(logger)
+    Logging.setLogger(logger)
+    warnings
+  }
+
+  let originalLogger = Logging.getLogger()
+  afterEach(() => Logging.setLogger(originalLogger))
+
+  Async.it("Says once that a provider is refusing the subscription", async t => {
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let warnings = captureWarnings()
+    let (feed, _stats) = makeFeed(mock)
+    feed->HeightFeed.enableStream
+
+    // A url that cannot serve heights answers every retry the same way, and the
+    // retries go on for the life of the process.
+    mock.setHeightSubscriptionStatus(Down({reason: SubscribeRejected, detail: "not supported"}))
+    mock.setHeightSubscriptionStatus(Down({reason: SubscribeRejected, detail: "not supported"}))
+    mock.setHeightSubscriptionStatus(Down({reason: SubscribeRejected, detail: "not supported"}))
+
+    t.expect(warnings->Array.map(warning => warning["reason"])).toStrictEqual([
+      "subscribe-rejected",
+    ])
+  })
+
+  Async.it("Stays quiet about a refusal from a stream that has served before", async t => {
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let warnings = captureWarnings()
+    let (feed, _stats) = makeFeed(mock)
+    feed->HeightFeed.enableStream
+
+    // This endpoint does serve subscriptions, so a refusal is a moment rather
+    // than a verdict on the url, and the retry behind it is expected to work.
+    mock.setHeightSubscriptionStatus(Live)
+    mock.setHeightSubscriptionStatus(Down({reason: SubscribeRejected}))
+
+    t.expect(warnings->Array.map(warning => warning["reason"])).toStrictEqual([])
+  })
+})
