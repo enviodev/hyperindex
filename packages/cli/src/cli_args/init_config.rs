@@ -178,6 +178,7 @@ pub mod evm {
                 save_full_history: None,
                 field_selection: None,
                 raw_events: None,
+                bytes_type: None,
                 address_format: None,
             })
         }
@@ -318,6 +319,7 @@ pub mod fuel {
                 ecosystem: EcosystemTag::Fuel,
                 contracts: None,
                 raw_events: None,
+                bytes_type: None,
                 chains: network_configs,
             }
         }

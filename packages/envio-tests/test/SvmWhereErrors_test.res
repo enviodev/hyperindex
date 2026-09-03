@@ -70,6 +70,28 @@ import { it, describe } from "vitest";
 import { indexer } from "envio";
 
 describe("SVM onInstruction where", () => {
+  // An instruction that declares no args has nothing to decode, so selecting
+  // \`args\` could only ever hand back an empty object.
+  it("rejects selecting args on an instruction that declares none", (t) => {
+    t.expect(() =>
+      indexer.onInstruction(
+        { program: "Swapper", instruction: "bare", fields: { instruction: ["args"] } },
+        async () => {},
+      ),
+    ).toThrowError(
+      \`Invalid "args" field in the fields.instruction option of the "bare" instruction on program "Swapper". The instruction declares no args in config.yaml, so there is nothing to decode. Remove "args" from the selection, or declare the instruction's args.\`,
+    );
+  });
+
+  it("keeps args selectable on an instruction that declares them", (t) => {
+    t.expect(() =>
+      indexer.onInstruction(
+        { program: "Swapper", instruction: "swap", fields: { instruction: ["args"] } },
+        async () => {},
+      ),
+    ).not.toThrow();
+  });
+
   it("rejects a non-object where", (t) => {
     t.expect(() =>
       indexer.onInstruction(
