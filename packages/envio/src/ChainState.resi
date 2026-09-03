@@ -157,10 +157,18 @@ let enterReorgThreshold: t => unit
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: (t, ~readyAt: Date.t) => unit
-let rollback: (
-  t,
-  ~newProgressBlockNumber: option<int>,
-  ~eventsProcessedDiff: option<float>,
-  ~rollbackTargetBlockNumber: int,
-  ~isReorgChain: bool,
-) => array<AddressRows.key>
+// What a rollback's progress diff says about one chain: the block its surviving
+// checkpoints put it back to, and the events the deleted ones carried away. One
+// record because one diff row yields both — they are never known separately.
+type progressDiff = {blockNumber: int, eventsProcessed: float}
+
+// Where a rollback leaves one chain.
+type rolledBackTo =
+  | RecomputedProgress(progressDiff)
+  // The reorg chain with no checkpoint left at or below the target, so only the
+  // fork block says where it goes.
+  | ForkBlock(int)
+  // A chain this rollback doesn't reach.
+  | Untouched
+
+let rollback: (t, ~rolledBackTo: rolledBackTo) => array<AddressRows.key>

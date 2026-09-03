@@ -6,6 +6,8 @@ use serde_json::Value;
 
 /// Encodes a user-facing handler filter value into the topic representation
 /// used by Solidity for an indexed event parameter.
+// Reached only through the addon's C ABI, which the test target does not build.
+#[allow(dead_code)]
 #[napi]
 pub fn encode_indexed_topic(abi_type: String, value: Value) -> napi::Result<String> {
     encode_indexed_topic_inner(&abi_type, value)

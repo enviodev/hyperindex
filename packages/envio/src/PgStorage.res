@@ -377,7 +377,7 @@ let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
 let rec makeFilterCondition = (
   ~filter: EntityFilter.t,
   ~table: Table.table,
-  ~params: array<JSON.t>,
+  ~params: array<unknown>,
 ) => {
   // Filters reference fields by API name, while the SQL references columns
   // by their possibly renamed db names.
@@ -398,7 +398,7 @@ let rec makeFilterCondition = (
     ~fieldValue: unknown,
     ~isArray,
   ) => {
-    let param = try fieldValue->S.reverseConvertToJsonOrThrow(
+    let param = try fieldValue->S.reverseConvertOrThrow(
       isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
     ) catch {
     | exn =>
@@ -438,8 +438,8 @@ let rec makeFilterCondition = (
   // `LoadLayer.scopeFilter` is what puts this filter here, and the value is
   // range-checked to a non-negative safe integer, so it can carry nothing but
   // digits.
-  | Eq({fieldName, fieldValue}) if (getQueryFieldOrThrow(fieldName)).isChainId =>
-    `"${(getQueryFieldOrThrow(fieldName)).pgDbFieldName}" = ${fieldValue
+  | Eq({fieldName, fieldValue}) if getQueryFieldOrThrow(fieldName).isChainId =>
+    `"${getQueryFieldOrThrow(fieldName).pgDbFieldName}" = ${fieldValue
       ->ChainId.normalizeOrThrow
       ->ChainId.toString}`
   | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
@@ -587,7 +587,7 @@ let makeTableBatchSetQuery = (
   ~itemSchema: S.t<'item>,
   ~chainIdMode: ChainId.mode=Int32,
 ) => {
-  let {dbSchema, hasArrayField} =
+  let {dbSchema, hasArrayField, byteaColumnIndexes} =
     table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
 
   // Should move this to a better place
@@ -614,7 +614,22 @@ let makeTableBatchSetQuery = (
     {
       "query": makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents, ~chainIdMode),
       "convertOrThrow": S.compile(
-        S.unnest(dbSchema),
+        S.unnest(dbSchema)->S.preprocess(_ => {
+          serializer: columns => {
+            let columns = columns->(Utils.magic: unknown => array<unknown>)
+            byteaColumnIndexes->Array.forEach(index =>
+              columns->Array.setUnsafe(
+                index,
+                columns
+                ->Array.getUnsafe(index)
+                ->(Utils.magic: unknown => array<unknown>)
+                ->Utils.Bytes.toPgArrayLiteral
+                ->(Utils.magic: string => unknown),
+              )
+            )
+            columns->(Utils.magic: array<unknown> => unknown)
+          },
+        }),
         ~input=Value,
         ~output=Unknown,
         ~mode=Sync,
@@ -1106,6 +1121,8 @@ let rec writeBatch = async (
       | Internal.CrossChain => None
       | Chain(chainId) => Some(chainId)
       }
+      let shouldSaveHistory =
+        config->Config.shouldSaveHistory(~isInReorgThreshold, ~chainId=?scopeChainId)
       let changes = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
       | (Some(field), Some(chainId)) =>
         changes->Array.map(change =>
@@ -1296,7 +1313,7 @@ let rec writeBatch = async (
     //valid event identifier, where all rows created after this eventIdentifier should
     //be deleted
     let rollbackTables = switch rollback {
-    | Some({targetCheckpointId: rollbackTargetCheckpointId, rolledBackAddresses}) =>
+    | Some({floors, rolledBackAddresses, progressedChains}) =>
       Some(
         sql => {
           // Postgres owns history tables only for Postgres-backed entities;
@@ -1309,14 +1326,23 @@ let rec writeBatch = async (
                 ~pgSchema,
                 ~entityName=entityConfig.name,
                 ~entityIndex=entityConfig.index,
-                ~rollbackTargetCheckpointId,
+                ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+                ~floors,
               )
             })
           promises
-          ->Array.push(
-            sql->InternalTable.Checkpoints.rollback(~pgSchema, ~rollbackTargetCheckpointId),
-          )
+          ->Array.push(sql->InternalTable.Checkpoints.rollback(~pgSchema, ~floors))
           ->ignore
+
+          // Runs before the batch's own progress write below, so a chain the
+          // batch also progressed keeps the batch's later value.
+          if progressedChains->Utils.Array.notEmpty {
+            promises
+            ->Array.push(
+              sql->InternalTable.Chains.setProgressedChains(~pgSchema, ~progressedChains),
+            )
+            ->ignore
+          }
 
           // Addresses are insert-only, so undoing their registrations is a
           // delete rather than a history replay. It runs before the batch's own
@@ -1476,7 +1502,11 @@ let rollbackKeyColumns = (entityConfig: Internal.entityConfig) =>
   | None => [Table.idFieldName]
   }
 
-let makeGetRollbackPreTargetRowsQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
+let makeGetRollbackPreTargetRowsQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~pgSchema,
+  ~floors: RollbackFloors.t,
+) => {
   let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
     | Field(field) => field->Table.getPgDbFieldName->Some
@@ -1484,56 +1514,70 @@ let makeGetRollbackPreTargetRowsQuery = (~entityConfig: Internal.entityConfig, ~
     }
   )
 
-  let dataFieldsCommaSeparated =
-    dataFieldNames->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
-
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
   )
+  // Every column is qualified: the per-chain bounds relation joined in has a
+  // `chain_id` of its own, which a snake_case chain column shares.
+  let tableRef = `"${historyTableName}"`
+  let dataFieldsCommaSeparated =
+    dataFieldNames->Array.map(name => `${tableRef}."${name}"`)->Array.joinUnsafe(", ")
 
   // A per-chain entity's rows are only comparable within a chain, so the row's
   // identity here is (id, chain id) rather than the id alone.
   let keyColumns = rollbackKeyColumns(entityConfig)
-  let keyColumnsCommaSeparated = keyColumns->Array.map(c => `"${c}"`)->Array.joinUnsafe(", ")
+  let keyColumnsCommaSeparated =
+    keyColumns->Array.map(c => `${tableRef}."${c}"`)->Array.joinUnsafe(", ")
   let keyMatch =
-    keyColumns
-    ->Array.map(c => `h."${c}" = "${historyTableName}"."${c}"`)
-    ->Array.joinUnsafe(" AND ")
+    keyColumns->Array.map(c => `h."${c}" = ${tableRef}."${c}"`)->Array.joinUnsafe(" AND ")
+  let bounds =
+    floors.floors->CheckpointBounds.sql(
+      ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+      ~tableRef,
+    )
 
-  `SELECT DISTINCT ON (${keyColumnsCommaSeparated}) ${dataFieldsCommaSeparated}, "${EntityHistory.changeFieldName}"
-  FROM "${pgSchema}"."${historyTableName}"
-  WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
+  `SELECT DISTINCT ON (${keyColumnsCommaSeparated}) ${dataFieldsCommaSeparated}, ${tableRef}."${EntityHistory.changeFieldName}"
+  FROM "${pgSchema}"."${historyTableName}"${bounds.join}
+  WHERE ${tableRef}."${EntityHistory.checkpointIdFieldName}" <= ${bounds.checkpointId}
     AND EXISTS (
       SELECT 1
       FROM "${pgSchema}"."${historyTableName}" h
       WHERE ${keyMatch}
-        AND h."${EntityHistory.checkpointIdFieldName}" > $1
+        AND h."${EntityHistory.checkpointIdFieldName}" > ${bounds.checkpointId}
     )
-  ORDER BY ${keyColumnsCommaSeparated}, "${EntityHistory.checkpointIdFieldName}" DESC`
+  ORDER BY ${keyColumnsCommaSeparated}, ${tableRef}."${EntityHistory.checkpointIdFieldName}" DESC`
 }
 
 // Returns entity IDs that were created after the rollback target and have no history before it.
 // DELETE rows at or before the target are returned by the restore query and classified in ReScript.
-let makeGetRollbackRemovedIdsQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
+let makeGetRollbackRemovedIdsQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~pgSchema,
+  ~floors: RollbackFloors.t,
+) => {
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
   )
+  let tableRef = `"${historyTableName}"`
   let keyColumns = rollbackKeyColumns(entityConfig)
   let keyMatch =
-    keyColumns
-    ->Array.map(c => `h."${c}" = "${historyTableName}"."${c}"`)
-    ->Array.joinUnsafe(" AND ")
+    keyColumns->Array.map(c => `h."${c}" = ${tableRef}."${c}"`)->Array.joinUnsafe(" AND ")
+  let bounds =
+    floors.floors->CheckpointBounds.sql(
+      ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+      ~tableRef,
+    )
 
-  `SELECT DISTINCT ${keyColumns->Array.map(c => `"${c}"`)->Array.joinUnsafe(", ")}
-  FROM "${pgSchema}"."${historyTableName}"
-  WHERE "${EntityHistory.checkpointIdFieldName}" > $1
+  `SELECT DISTINCT ${keyColumns->Array.map(c => `${tableRef}."${c}"`)->Array.joinUnsafe(", ")}
+  FROM "${pgSchema}"."${historyTableName}"${bounds.join}
+  WHERE ${tableRef}."${EntityHistory.checkpointIdFieldName}" > ${bounds.checkpointId}
     AND NOT EXISTS (
       SELECT 1
       FROM "${pgSchema}"."${historyTableName}" h
       WHERE ${keyMatch}
-        AND h."${EntityHistory.checkpointIdFieldName}" <= $1
+        AND h."${EntityHistory.checkpointIdFieldName}" <= ${bounds.checkpointId}
     )`
 }
 
@@ -1774,11 +1818,9 @@ let make = (
     ~contractMapping,
     ~envioInfo,
   ): Persistence.initialState => {
-    // Per-entity storage routing: PG owns tables only for entities that
-    // opted into Postgres; the sink mirrors only those that opted into
-    // ClickHouse.
+    // PG owns tables only for entities that opted into Postgres; the sink
+    // picks its own out of the full list.
     let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
-    let chEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.clickhouse)
 
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
       makeSchemaTableNamesQuery(~pgSchema),
@@ -1807,7 +1849,7 @@ let make = (
 
     // Call sink.initialize before executing PG queries
     switch sink {
-    | Some(sink) => await sink.initialize(~chainConfigs, ~entities=chEntities, ~enums)
+    | Some(sink) => await sink.initialize(~entities)
     | None => ()
     }
 
@@ -2271,8 +2313,14 @@ let make = (
     }
   }
 
-  let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints, (envioInfo, contractMapping)) = await Promise.all5((
+  let resumeInitialState = async (~entities, ~throwIfIncompatible): Persistence.initialState => {
+    let (
+      cache,
+      chains,
+      checkpointIdResult,
+      reorgCheckpoints,
+      (storedEnvioInfo, storedContractMapping),
+    ) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
@@ -2320,6 +2368,8 @@ let make = (
       ),
     ))
 
+    throwIfIncompatible(~storedEnvioInfo, ~storedContractMapping)
+
     await reloadIndexCatalog()
 
     let checkpointId = (checkpointIdResult->Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
@@ -2334,7 +2384,7 @@ let make = (
 
     // Resume sink if present - needed to rollback any reorg changes
     switch sink {
-    | Some(sink) => await sink.resume(~checkpointId)
+    | Some(sink) => await sink.resume(~checkpointId, ~chains, ~entities)
     | None => ()
     }
 
@@ -2344,8 +2394,8 @@ let make = (
       cache,
       chains,
       checkpointId,
-      contractMapping,
-      envioInfo,
+      contractMapping: storedContractMapping,
+      envioInfo: storedEnvioInfo,
     }
   }
 
@@ -2359,17 +2409,17 @@ let make = (
       %raw(`undefined`)
     )
 
-  let pruneStaleCheckpoints = (~safeCheckpointId) =>
-    InternalTable.Checkpoints.pruneStaleCheckpoints(sql, ~pgSchema, ~safeCheckpointId)
+  let pruneStaleCheckpoints = (~safeCheckpoints) =>
+    InternalTable.Checkpoints.pruneStaleCheckpoints(sql, ~pgSchema, ~safeCheckpoints)
 
-  let pruneStaleEntityHistory = (~entityName, ~entityIndex, ~chainIdColumn, ~safeCheckpointId) =>
+  let pruneStaleEntityHistory = (~entityName, ~entityIndex, ~chainIdColumn, ~safeCheckpoints) =>
     EntityHistory.pruneStaleEntityHistory(
       sql,
       ~pgSchema,
       ~entityName,
       ~entityIndex,
       ~chainIdColumn,
-      ~safeCheckpointId,
+      ~safeCheckpoints,
     )
 
   let getRollbackTargetCheckpoint = (~reorgChainId, ~lastKnownValidBlockNumber) =>
@@ -2380,26 +2430,24 @@ let make = (
       ~lastKnownValidBlockNumber,
     )
 
-  let getRollbackProgressDiff = (~rollbackTargetCheckpointId) =>
-    InternalTable.Checkpoints.getRollbackProgressDiff(sql, ~pgSchema, ~rollbackTargetCheckpointId)
+  let getRollbackProgressDiff = (~floors) =>
+    InternalTable.Checkpoints.getRollbackProgressDiff(sql, ~pgSchema, ~floors)
 
-  let getRollbackData = async (
-    ~entityConfig: Internal.entityConfig,
-    ~rollbackTargetCheckpointId,
-  ) => {
+  let getRollbackData = async (~entityConfig: Internal.entityConfig, ~floors: RollbackFloors.t) => {
+    let params = floors.floors->CheckpointBounds.params
     let (removedIdRows, rollbackRows) = await Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
       sql
       ->Postgres.preparedUnsafe(
-        makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema, ~floors),
+        params,
       )
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
       // Get the latest pre-target row, including its SET or DELETE action.
       sql
       ->Postgres.preparedUnsafe(
-        makeGetRollbackPreTargetRowsQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        makeGetRollbackPreTargetRowsQuery(~entityConfig, ~pgSchema, ~floors),
+        params,
       )
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
     ))

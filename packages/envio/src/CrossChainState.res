@@ -72,31 +72,23 @@ let totalReadyCount = (crossChainState: t) => {
 let nextItemIsNone = (crossChainState: t): bool =>
   !(crossChainState.chainStates->Dict.valuesToArray->Array.some(ChainState.hasReadyItem))
 
-let getSafeCheckpointId = (crossChainState: t) => {
-  let result: ref<option<bigint>> = ref(None)
-
-  for i in 0 to crossChainState.chainIds->Array.length - 1 {
-    let cs = crossChainState->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
-    switch cs->ChainState.safeCheckpointTracking {
-    | None => () // Skip chains with maxReorgDepth = 0
-    | Some(safeCheckpointTracking) =>
-      let safeCheckpointId =
-        safeCheckpointTracking->SafeCheckpointTracking.getSafeCheckpointId(
+// Each chain's safe checkpoint: the last one a reorg on that chain can no longer
+// reach, or None while it has nothing safe yet. A chain that can't be rolled
+// back (maxReorgDepth = 0) tracks none, and everything it has committed is safe.
+let getSafeCheckpointIdByChain = (crossChainState: t, ~committedCheckpointId) =>
+  crossChainState.chainIds->Array.map(chainId => {
+    let cs = crossChainState->getChainState(chainId)
+    (
+      chainId,
+      switch cs->ChainState.safeCheckpointTracking {
+      | None => Some(committedCheckpointId)
+      | Some(tracking) =>
+        tracking->SafeCheckpointTracking.getSafeCheckpointId(
           ~sourceBlockNumber=cs->ChainState.knownHeight,
         )
-      switch result.contents {
-      | None => result := Some(safeCheckpointId)
-      | Some(current) if safeCheckpointId < current => result := Some(safeCheckpointId)
-      | _ => ()
-      }
-    }
-  }
-
-  switch result.contents {
-  | Some(id) if id > 0n => Some(id)
-  | _ => None // No safe checkpoint found
-  }
-}
+      },
+    )
+  })
 
 // --- Cross-chain transitions. ---
 

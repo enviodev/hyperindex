@@ -177,24 +177,6 @@ let publicConfigChainSchema = S.schema(s =>
 let svmEventDescriptorSchema = S.schema(s =>
   {
     "discriminator": s.matches(S.option(S.string)),
-    "discriminatorByteLen": s.matches(S.int),
-    // An array of AND-groups OR-ed together: the CLI normalizes both the flat
-    // and `any_of` YAML shapes to `Vec<Vec<SvmAccountFilterJson>>`.
-    "accountFilters": s.matches(
-      S.option(
-        S.array(
-          S.array(
-            S.schema(s =>
-              {
-                "position": s.matches(S.int),
-                "values": s.matches(S.array(S.string)),
-              }
-            ),
-          ),
-        ),
-      ),
-    ),
-    "isInner": s.matches(S.option(S.bool)),
     "accounts": s.matches(S.option(S.array(S.string))),
     "args": s.matches(S.option(S.json(~validate=false))),
   }
@@ -341,6 +323,7 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
 
   let (fieldType, baseSchema) = switch typ {
   | "string" => (Table.String, S.string->S.toUnknown)
+  | "bytes" => (Table.Bytea, Utils.Schema.bytes->S.toUnknown)
   | "boolean" => (Table.Boolean, S.bool->S.toUnknown)
   | "int" => (Table.Int32, S.int->S.toUnknown)
   | "bigint" => (Table.BigInt({precision: ?prop["precision"]}), Utils.BigInt.schema->S.toUnknown)
@@ -374,10 +357,10 @@ let getFieldTypeAndSchema = (prop, ~enumConfigsByName: dict<Table.enumConfig<Tab
   | other => JsError.throwWithMessage("Unknown field type in entity config: " ++ other)
   }
 
-  let fieldSchema = if isArray {
-    S.array(baseSchema)->S.toUnknown
-  } else {
-    baseSchema
+  let fieldSchema = switch (fieldType, isArray) {
+  | (Table.Bytea, true) => Utils.Schema.bytesArray->S.toUnknown
+  | (_, true) => S.array(baseSchema)->S.toUnknown
+  | (_, false) => baseSchema
   }
   let fieldSchema = if isNullable {
     Utils.Schema.nullTolerant(fieldSchema)->S.toUnknown
@@ -753,11 +736,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               Utils.magic: _ => {
                 "svm": option<{
                   "discriminator": option<string>,
-                  "discriminatorByteLen": int,
-                  "accountFilters": option<
-                    array<array<{"position": int, "values": array<string>}>>,
-                  >,
-                  "isInner": option<bool>,
                   "accounts": option<array<string>>,
                   "args": option<JSON.t>,
                 }>,
@@ -770,25 +748,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               `SVM instruction ${contractName}.${eventName} is missing the "svm" descriptor in internal config`,
             )
           }
-          let accountFilters =
-            svm["accountFilters"]
-            ->Option.getOr([])
-            ->Array.map(group =>
-              group->Array.map(
-                af => {
-                  Internal.position: af["position"],
-                  values: af["values"]->SvmTypes.Pubkey.fromStringsUnsafe,
-                },
-              )
-            )
           (EventConfigBuilder.buildSvmInstructionEventConfig(
             ~contractName,
             ~instructionName=eventName,
             ~programId,
             ~discriminator=svm["discriminator"],
-            ~discriminatorByteLen=svm["discriminatorByteLen"],
-            ~accountFilters,
-            ~isInner=svm["isInner"],
             ~accounts=svm["accounts"]->Option.getOr([]),
             ~args=svm["args"]->Option.getOr(JSON.Null),
             ~definedTypes=svmDefinedTypes,
@@ -1070,6 +1034,14 @@ let fromPublic = (publicConfigJson: JSON.t) => {
   }
 }
 
+// With no cross-chain entity, a reorg on one chain can never have changed a row
+// another chain owns, so its rollback stays isolated to that chain instead of
+// dragging every sibling back with it. A single chain has no sibling to spare,
+// and narrowing its rollback would only buy it a predicate that always holds.
+let isIsolatedMultichain = (config: t) =>
+  config.chainMap->ChainMap.keys->Array.length > 1 &&
+    config.userEntities->Array.every(entityConfig => !entityConfig.crossChain)
+
 // Canonicalize a user-provided address to the configured casing so it matches
 // addresses parsed from config.yaml during routing. HyperSync/RPC data arrives
 // already canonical; only user-land input (simulate srcAddress, contractRegister
@@ -1141,8 +1113,17 @@ let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<Cha
   })
 }
 
-let shouldSaveHistory = (config, ~isInReorgThreshold) =>
-  config.shouldSaveFullHistory || (config.shouldRollbackOnReorg && isInReorgThreshold)
+// A chain that can't be rolled back (maxReorgDepth = 0) has no history to keep,
+// unless a cross-chain entity lets another chain's rollback reach its rows.
+let shouldSaveHistory = (config, ~isInReorgThreshold, ~chainId: option<ChainId.t>=?) =>
+  config.shouldSaveFullHistory ||
+  (config.shouldRollbackOnReorg &&
+  isInReorgThreshold &&
+  switch chainId {
+  | Some(chainId) if config->isIsolatedMultichain =>
+    (config.chainMap->ChainMap.get(chainId)).maxReorgDepth > 0
+  | _ => true
+  })
 
 let shouldPruneHistory = (config, ~isInReorgThreshold) =>
   !config.shouldSaveFullHistory && (config.shouldRollbackOnReorg && isInReorgThreshold)
@@ -1360,6 +1341,33 @@ let throwIfIncompatible = (
         )}# delete all indexed data and start over${option3}`,
     )
   }
+}
+
+let throwIfResumeIncompatible = (
+  ~storedEnvioInfo: option<JSON.t>,
+  ~storedContractMapping: ContractMapping.t,
+  ~envioInfo: JSON.t,
+  ~contractMapping: ContractMapping.t,
+  ~resetCommand: string,
+  ~runCommand: option<string>,
+) => {
+  let changedPaths = switch storedEnvioInfo {
+  | None => ["storage was initialized by an older envio version"]
+  | Some(stored) => diffPaths(~stored, ~current=envioInfo)
+  }
+  let changedPaths =
+    storedContractMapping->ContractMapping.isEqual(contractMapping)
+      ? changedPaths
+      : changedPaths->Array.concat(["contracts"])
+  let hasClickhouse = switch envioInfo {
+  | Object(d) =>
+    switch d->Dict.get("storage") {
+    | Some(Object(s)) => s->Dict.get("clickhouse") == Some(Boolean(true))
+    | _ => false
+    }
+  | _ => false
+  }
+  throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
 }
 
 // The returned value is a pure function of the JSON: it holds only event

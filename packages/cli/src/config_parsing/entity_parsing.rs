@@ -25,10 +25,13 @@ use std::{
 };
 use subenum::subenum;
 
+use super::human_config::BytesType;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Schema {
     pub entities: HashMap<String, Entity>,
     pub enums: HashMap<String, GraphQLEnum>,
+    pub bytes_type: BytesType,
 }
 
 enum TypeDef<'a> {
@@ -41,6 +44,7 @@ impl Schema {
         Schema {
             entities: HashMap::new(),
             enums: HashMap::new(),
+            bytes_type: BytesType::Hex,
         }
     }
 
@@ -52,7 +56,11 @@ impl Schema {
         entities
     }
 
-    pub fn new(entities: Vec<Entity>, enums: Vec<GraphQLEnum>) -> anyhow::Result<Self> {
+    pub fn new(
+        entities: Vec<Entity>,
+        enums: Vec<GraphQLEnum>,
+        bytes_type: BytesType,
+    ) -> anyhow::Result<Self> {
         let entities = unique_hashmap::from_vec_no_duplicates(
             entities.into_iter().map(|e| (e.name.clone(), e)).collect(),
         )
@@ -62,12 +70,18 @@ impl Schema {
         )
         .context("Found enums with duplicate names")?;
 
-        Self { entities, enums }.validate()
+        Self {
+            entities,
+            enums,
+            bytes_type,
+        }
+        .validate()
     }
 
     fn from_document(
         document: Document<String>,
         default_scope: DefaultChainScope,
+        bytes_type: BytesType,
         source: &str,
     ) -> anyhow::Result<Self> {
         let entities = document
@@ -99,13 +113,14 @@ impl Schema {
             .collect::<anyhow::Result<Vec<GraphQLEnum>>>()
             .context("Failed constructing enums in schema from document")?;
 
-        Self::new(entities, enums)
+        Self::new(entities, enums, bytes_type)
     }
 
     pub fn parse_from_file(
         project_paths: &ParsedProjectPaths,
         maybe_custom_path: &Option<String>,
         default_scope: DefaultChainScope,
+        bytes_type: BytesType,
     ) -> anyhow::Result<Self> {
         let configured_path = schema_source_label(maybe_custom_path);
 
@@ -130,19 +145,26 @@ impl Schema {
             .map(|relative| relative.display().to_string())
             .unwrap_or(configured_path);
 
-        Self::from_string_at(&schema_string, default_scope, &source)
+        Self::from_string_at(&schema_string, default_scope, bytes_type, &source)
     }
 
     pub fn from_string(
         schema_string: &str,
         default_scope: DefaultChainScope,
+        bytes_type: BytesType,
     ) -> anyhow::Result<Self> {
-        Self::from_string_at(schema_string, default_scope, DEFAULT_SCHEMA_PATH)
+        Self::from_string_at(
+            schema_string,
+            default_scope,
+            bytes_type,
+            DEFAULT_SCHEMA_PATH,
+        )
     }
 
     pub fn from_string_at(
         schema_string: &str,
         default_scope: DefaultChainScope,
+        bytes_type: BytesType,
         source: &str,
     ) -> anyhow::Result<Self> {
         // graphql_parser counts a comment line's `\r` and its `\n` as two line
@@ -156,7 +178,7 @@ impl Schema {
         let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
             .context("Failed to parse schema as document")?;
 
-        Self::from_document(schema_doc, default_scope, source)
+        Self::from_document(schema_doc, default_scope, bytes_type, source)
     }
 
     fn validate(self) -> anyhow::Result<Self> {
@@ -2381,7 +2403,10 @@ impl GqlScalar {
             GqlScalar::Int => PGPrimitive::Int32,
             GqlScalar::Float => PGPrimitive::Number, // Should we allow this type? Rounding issues will abound.
             GqlScalar::Boolean => PGPrimitive::Boolean,
-            GqlScalar::Bytes => PGPrimitive::String,
+            GqlScalar::Bytes => match schema.bytes_type {
+                BytesType::Hex => PGPrimitive::String,
+                BytesType::Uint8Array => PGPrimitive::Bytes,
+            },
             GqlScalar::Json => PGPrimitive::Json,
             GqlScalar::BigInt(precision) => PGPrimitive::BigInt {
                 precision: *precision,
@@ -2411,7 +2436,10 @@ impl GqlScalar {
             GqlScalar::BigInt(_) => TypeIdent::BigInt,
             GqlScalar::BigDecimal(_) => TypeIdent::BigDecimal,
             GqlScalar::Float => TypeIdent::Float,
-            GqlScalar::Bytes => TypeIdent::String,
+            GqlScalar::Bytes => match schema.bytes_type {
+                BytesType::Hex => TypeIdent::String,
+                BytesType::Uint8Array => TypeIdent::Bytes,
+            },
             GqlScalar::Json => TypeIdent::Json,
             GqlScalar::Boolean => TypeIdent::Bool,
             GqlScalar::Timestamp => TypeIdent::Timestamp,
@@ -2453,6 +2481,7 @@ mod tests {
         UserDefinedFieldType, DEFAULT_SCHEMA_PATH,
     };
     use crate::config_parsing::field_types::Primitive as PGPrimitive;
+    use crate::config_parsing::human_config::BytesType;
     use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
 
     fn setup_document(schema: &str) -> anyhow::Result<Document<'_, String>> {
@@ -2559,7 +2588,8 @@ type NumericEntity {
   id: Int!
 }
         "#;
-        let schema = Schema::from_string(schema_str, DefaultChainScope::CrossChain).unwrap();
+        let schema =
+            Schema::from_string(schema_str, DefaultChainScope::CrossChain, BytesType::Hex).unwrap();
         let referencer = schema.entities.get("Referencer").unwrap();
 
         // Foreign keys render as the concrete id scalar, never the `id` alias:
@@ -2591,7 +2621,7 @@ type NumericEntity {
     fn gql_type_to_rescript_type_enum() {
         let name = String::from("TestEnum");
         let test_enum = GraphQLEnum::new(name.clone(), vec![], None).unwrap();
-        let schema = Schema::new(vec![], vec![test_enum]).unwrap();
+        let schema = Schema::new(vec![], vec![test_enum], BytesType::Hex).unwrap();
         let rescript_type = UserDefinedFieldType::Single(GqlScalar::Custom(name))
             .to_rescript_type(&schema)
             .expect("expected rescript type string");
@@ -2650,6 +2680,7 @@ type NumericEntity {
         let schema = Schema::from_document(
             schema_doc,
             DefaultChainScope::CrossChain,
+            BytesType::Hex,
             DEFAULT_SCHEMA_PATH,
         )
         .expect("bad schema");
@@ -2669,6 +2700,59 @@ type NumericEntity {
         get_field_type_helper_with_additional(gql_field_str, vec![])
     }
 
+    fn bytes_field_mappings(bytes_type: BytesType) -> Vec<(PGPrimitive, String)> {
+        let schema = Schema::from_string(
+            r#"
+type Blob {
+  id: ID!
+  data: Bytes!
+  optData: Bytes
+  chunks: [Bytes!]!
+}
+"#,
+            DefaultChainScope::CrossChain,
+            bytes_type,
+        )
+        .unwrap();
+        let entity = schema.entities.get("Blob").unwrap();
+        ["data", "optData", "chunks"]
+            .map(|name| {
+                let field_type = &entity.get_field(name).unwrap().field_type;
+                (
+                    field_type
+                        .to_user_defined_field_type()
+                        .to_underlying_postgres_primitive(&schema)
+                        .unwrap(),
+                    field_type.to_rescript_type(&schema).unwrap().to_string(),
+                )
+            })
+            .to_vec()
+    }
+
+    #[test]
+    fn bytes_scalar_is_hex_text_by_default() {
+        assert_eq!(
+            bytes_field_mappings(BytesType::Hex),
+            vec![
+                (PGPrimitive::String, "string".to_string()),
+                (PGPrimitive::String, "option<string>".to_string()),
+                (PGPrimitive::String, "array<string>".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn bytes_scalar_is_raw_bytes_under_uint8array() {
+        assert_eq!(
+            bytes_field_mappings(BytesType::Uint8Array),
+            vec![
+                (PGPrimitive::Bytes, "Uint8Array.t".to_string()),
+                (PGPrimitive::Bytes, "option<Uint8Array.t>".to_string()),
+                (PGPrimitive::Bytes, "array<Uint8Array.t>".to_string()),
+            ]
+        );
+    }
+
     #[test]
     fn gql_enum_type_to_pgprimitive() {
         let name = String::from("TestEnum");
@@ -2676,7 +2760,7 @@ type NumericEntity {
             GraphQLEnum::new(name.clone(), vec!["TEST_VALUE".to_string()], None).unwrap();
         let field_type =
             get_field_type_helper_with_additional("TestEnum!", vec![test_enum.clone()]);
-        let schema = Schema::new(vec![], vec![test_enum]).unwrap();
+        let schema = Schema::new(vec![], vec![test_enum], BytesType::Hex).unwrap();
         let pg_primitive = field_type
             .to_user_defined_field_type()
             .to_underlying_postgres_primitive(&schema)
@@ -2775,9 +2859,13 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema =
-            Schema::from_document(gql_doc, DefaultChainScope::CrossChain, DEFAULT_SCHEMA_PATH)
-                .unwrap();
+        let schema = Schema::from_document(
+            gql_doc,
+            DefaultChainScope::CrossChain,
+            BytesType::Hex,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
         let field = entity.get_field("name").unwrap();
         let pg_field = field
@@ -2811,9 +2899,13 @@ type NumericEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema =
-            Schema::from_document(gql_doc, DefaultChainScope::CrossChain, DEFAULT_SCHEMA_PATH)
-                .unwrap();
+        let schema = Schema::from_document(
+            gql_doc,
+            DefaultChainScope::CrossChain,
+            BytesType::Hex,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
 
         // A foreign key adopts the referenced entity's id type. A String-id
@@ -2854,9 +2946,13 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema =
-            Schema::from_document(gql_doc, DefaultChainScope::CrossChain, DEFAULT_SCHEMA_PATH)
-                .unwrap();
+        let schema = Schema::from_document(
+            gql_doc,
+            DefaultChainScope::CrossChain,
+            BytesType::Hex,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
         let field = entity.get_field("tags").unwrap();
         let pg_field = field
@@ -2886,9 +2982,13 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema =
-            Schema::from_document(gql_doc, DefaultChainScope::CrossChain, DEFAULT_SCHEMA_PATH)
-                .unwrap();
+        let schema = Schema::from_document(
+            gql_doc,
+            DefaultChainScope::CrossChain,
+            BytesType::Hex,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
         let field = entity.get_field("status").unwrap();
         let pg_field = field
@@ -2910,7 +3010,7 @@ type TestEntity {
 type user { id: ID! }
 type User { id: ID! }
         "#;
-        let err = Schema::from_string(schema_str, DefaultChainScope::CrossChain)
+        let err = Schema::from_string(schema_str, DefaultChainScope::CrossChain, BytesType::Hex)
             .expect_err("expected a capitalized entity-name collision error");
         let message = format!("{err:#}");
         assert!(
@@ -2934,7 +3034,7 @@ type Child {
   parentId: Int!
 }
         "#;
-        let err = Schema::from_string(schema_str, DefaultChainScope::CrossChain)
+        let err = Schema::from_string(schema_str, DefaultChainScope::CrossChain, BytesType::Hex)
             .expect_err("expected a derivedFrom id-type mismatch error");
         let message = format!("{err:#}");
         assert!(
@@ -2977,7 +3077,8 @@ type StringChild {
   parentId: ID!
 }
         "#;
-        let schema = Schema::from_string(schema_str, DefaultChainScope::CrossChain).unwrap();
+        let schema =
+            Schema::from_string(schema_str, DefaultChainScope::CrossChain, BytesType::Hex).unwrap();
         assert_eq!(schema.entities.len(), 6);
     }
 
@@ -2995,7 +3096,8 @@ type NumericChild {
   parent: NumericParent!
 }
         "#;
-        let schema = Schema::from_string(schema_str, DefaultChainScope::CrossChain).unwrap();
+        let schema =
+            Schema::from_string(schema_str, DefaultChainScope::CrossChain, BytesType::Hex).unwrap();
         assert_eq!(schema.entities.len(), 2);
     }
 
@@ -3005,7 +3107,8 @@ type NumericChild {
 type user { id: ID! }
 type post { id: ID! }
         "#;
-        let schema = Schema::from_string(schema_str, DefaultChainScope::CrossChain).unwrap();
+        let schema =
+            Schema::from_string(schema_str, DefaultChainScope::CrossChain, BytesType::Hex).unwrap();
         assert_eq!(schema.entities.len(), 2);
     }
 
@@ -3027,9 +3130,13 @@ type post { id: ID! }
     "#;
 
         let gql_doc = setup_document(schema_str).expect("Failed to parse schema");
-        let schema =
-            Schema::from_document(gql_doc, DefaultChainScope::CrossChain, DEFAULT_SCHEMA_PATH)
-                .expect("Failed to create schema");
+        let schema = Schema::from_document(
+            gql_doc,
+            DefaultChainScope::CrossChain,
+            BytesType::Hex,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .expect("Failed to create schema");
 
         // Verify that the schema contains the entity and fields as expected
         let entity = schema.entities.get("Entity").expect("Entity not found");
@@ -3244,9 +3351,13 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema =
-            Schema::from_document(gql_doc, DefaultChainScope::CrossChain, DEFAULT_SCHEMA_PATH)
-                .unwrap();
+        let schema = Schema::from_document(
+            gql_doc,
+            DefaultChainScope::CrossChain,
+            BytesType::Hex,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
 
         let field_names: Vec<&str> = entity
@@ -3275,9 +3386,13 @@ type OtherEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema =
-            Schema::from_document(gql_doc, DefaultChainScope::CrossChain, DEFAULT_SCHEMA_PATH)
-                .unwrap();
+        let schema = Schema::from_document(
+            gql_doc,
+            DefaultChainScope::CrossChain,
+            BytesType::Hex,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
 
         let test_entity = schema.entities.get("TestEntity").unwrap();
         let test_field_names: Vec<&str> = test_entity
@@ -3309,9 +3424,13 @@ type TestEntity {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema =
-            Schema::from_document(gql_doc, DefaultChainScope::CrossChain, DEFAULT_SCHEMA_PATH)
-                .unwrap();
+        let schema = Schema::from_document(
+            gql_doc,
+            DefaultChainScope::CrossChain,
+            BytesType::Hex,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
         let entity = schema.entities.get("TestEntity").unwrap();
 
         // Test existing fields
@@ -3353,9 +3472,13 @@ enum Status {
 }
         "#;
         let gql_doc = setup_document(schema_str).unwrap();
-        let schema =
-            Schema::from_document(gql_doc, DefaultChainScope::CrossChain, DEFAULT_SCHEMA_PATH)
-                .unwrap();
+        let schema = Schema::from_document(
+            gql_doc,
+            DefaultChainScope::CrossChain,
+            BytesType::Hex,
+            DEFAULT_SCHEMA_PATH,
+        )
+        .unwrap();
 
         let user = schema.entities.get("User").unwrap();
         assert_eq!(user.description.as_deref(), Some("A user of the protocol"));
@@ -3632,7 +3755,7 @@ type TestEntity { id: ID! }
             DEFAULT_SCHEMA_PATH,
         )
         .unwrap();
-        assert_eq!(entity.internal, false);
+        assert!(!entity.internal);
     }
 
     #[test]
@@ -3646,7 +3769,7 @@ type TestEntity @internal { id: ID! }
             DEFAULT_SCHEMA_PATH,
         )
         .unwrap();
-        assert_eq!(entity.internal, true);
+        assert!(entity.internal);
     }
 
     #[test]

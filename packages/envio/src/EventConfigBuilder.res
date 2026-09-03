@@ -317,9 +317,6 @@ let svmSelectionKinds = ["instruction", "transaction", "accountActivity", "block
 // typo, and an unrecognised key would read as an empty selection — silently
 // dropping every field `config.yaml` selected. Rejected here so the option is
 // held to the same shape whether or not the project type-checks it.
-let quotedJoin = (names: array<string>) =>
-  names->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
-
 let validateFieldsShapeOrThrow = (
   fields: unknown,
   ~registration: string,
@@ -337,7 +334,7 @@ let validateFieldsShapeOrThrow = (
   ->Array.forEach(key =>
     if !(validKeys->Array.includes(key)) {
       JsError.throwWithMessage(
-        `Invalid "${key}" key in the fields option of ${registration}. Valid keys: ${quotedJoin(
+        `Invalid "${key}" key in the fields option of ${registration}. Valid keys: ${Utils.Array.quotedJoin(
             validKeys,
           )}.`,
       )
@@ -373,7 +370,7 @@ let parseFieldsOrThrow = (
   fields->Array.forEach(name => {
     if !(valid->Utils.Set.has(name)) {
       JsError.throwWithMessage(
-        `Invalid "${name}" field in the fields.${kind} option of ${registration}. Valid ${kind} fields: ${quotedJoin(
+        `Invalid "${name}" field in the fields.${kind} option of ${registration}. Valid ${kind} fields: ${Utils.Array.quotedJoin(
           valid->Utils.Set.toArray,
         )}.`,
       )
@@ -577,7 +574,7 @@ let resolveSvmInlineFieldSelection = (
   ~contractName: string,
   ~eventName: string,
 ): Internal.fieldSelection => {
-  let registration = `the "${eventName}" event registration on contract "${contractName}"`
+  let registration = `the "${eventName}" instruction on program "${contractName}"`
   validateFieldsShapeOrThrow(
     fields,
     ~registration,
@@ -638,9 +635,6 @@ let buildSvmInstructionEventConfig = (
   ~instructionName: string,
   ~programId: SvmTypes.Pubkey.t,
   ~discriminator: option<string>,
-  ~discriminatorByteLen: int,
-  ~accountFilters: array<Internal.svmAccountFilterGroup>,
-  ~isInner: option<bool>,
   ~accounts: array<string>=[],
   ~args: JSON.t=JSON.Null,
   ~definedTypes: JSON.t=JSON.Null,
@@ -667,38 +661,187 @@ let buildSvmInstructionEventConfig = (
     simulateParamsSchema: paramsSchema,
     programId,
     discriminator,
-    discriminatorByteLen,
     fieldSelection,
-    accountFilters,
-    isInner,
     accounts,
     args,
     definedTypes,
   }
 }
 
-// Enrich an SVM definition into a registration. SVM has no `where`; only the
-// handler binding + wildcard-derived address gate are registration state.
+// ============== SVM `where` ==============
+
+type parsedSvmWhere = {
+  // Disjunctive normal form: outer array is OR of AND-groups. Empty means the
+  // registration accepts any accounts.
+  accountFilters: array<Internal.svmAccountFilterGroup>,
+  isInner: option<bool>,
+  startBlock: option<int>,
+}
+
+let validSvmWhereKeys = ["accounts", "isInner", "block"]
+
+// `{slot: {_gte?}}`. Both levels are strict: the inner `eventBlockRangeSchema`
+// rejects the `_lte` / `_every` that only `onSlot` supports, the outer rejects
+// a wrapper key other than `slot`.
+type svmBlockFilter = {slot?: LogSelection.eventBlockRange}
+let svmBlockFilterSchema: S.t<svmBlockFilter> = S.object(s => {
+  slot: ?s.field("slot", S.option(LogSelection.eventBlockRangeSchema)),
+})->S.strict
+
+// The source query narrows accounts through `a0..a9`, so only an instruction's
+// leading account slots can be filtered.
+let filterableAccountCount = 10
+
+// Resolve the `where` option of an `onInstruction` registration. Account names
+// are resolved against the instruction's declared accounts here, so the
+// registration carries positions and nothing downstream needs the names.
+let resolveSvmWhereOrThrow = (
+  where: JSON.t,
+  ~contractName: string,
+  ~eventName: string,
+  ~accountNames: array<string>,
+): parsedSvmWhere => {
+  let invalid = message =>
+    JsError.throwWithMessage(
+      `Invalid where configuration for the "${eventName}" instruction on program "${contractName}". ${message}`,
+    )
+
+  let obj = switch where {
+  | Object(obj) => obj
+  | _ => invalid("Expected an object.")
+  }
+  obj->Utils.Dict.forEachWithKey((_, key) =>
+    if !(validSvmWhereKeys->Array.includes(key)) {
+      invalid(`Unknown field "${key}". Valid fields: ${Utils.Array.quotedJoin(validSvmWhereKeys)}.`)
+    }
+  )
+
+  let isInner = switch obj->Dict.get("isInner") {
+  | None => None
+  | Some(Boolean(isInner)) => Some(isInner)
+  | Some(_) => invalid(`The "isInner" filter must be a boolean.`)
+  }
+
+  let parseGroup = (group: dict<JSON.t>): Internal.svmAccountFilterGroup =>
+    group
+    ->Dict.toArray
+    ->Array.map(((name, value)) => {
+      let position = switch accountNames->Array.indexOf(name) {
+      | -1 if accountNames->Utils.Array.isEmpty =>
+        invalid(
+          "The instruction has no named accounts to filter on. Add `accounts` and `args` to it in config.yaml, or attach an IDL.",
+        )
+      | -1 =>
+        invalid(
+          `The instruction has no account named "${name}" to filter on. Named accounts: ${Utils.Array.quotedJoin(
+              accountNames,
+            )}.`,
+        )
+      | position if position >= filterableAccountCount =>
+        invalid(
+          `Account "${name}" is at position ${position->Int.toString}, and only the first ${filterableAccountCount->Int.toString} accounts of an instruction can be filtered.`,
+        )
+      | position => position
+      }
+      let values = value->normalizeOrThrow
+      if values->Utils.Array.isEmpty {
+        invalid(`The "${name}" filter must list at least one pubkey.`)
+      }
+      {
+        Internal.position,
+        values: values->Array.map(value =>
+          switch value {
+          | JSON.String(pubkey) if Core.getAddon().isSvmPubkey(~value=pubkey) =>
+            pubkey->SvmTypes.Pubkey.fromStringUnsafe
+          | JSON.String(pubkey) =>
+            invalid(`The "${name}" filter value "${pubkey}" is not a base58 SVM pubkey.`)
+          | _ => invalid(`The "${name}" filter must list base58 pubkeys as strings.`)
+          }
+        ),
+      }
+    })
+
+  // An empty AND-group matches every instruction, so it makes the whole OR
+  // vacuous. Normalized away here so the source builds one unfiltered
+  // selection instead of a match-all selection beside the narrower ones.
+  let groups = switch obj->Dict.get("accounts") {
+  | None => []
+  | Some(Object(group)) => [parseGroup(group)]
+  | Some(Array(entries)) =>
+    entries->Array.map(entry =>
+      switch entry {
+      | Object(group) => parseGroup(group)
+      | _ => invalid(`Each entry in "accounts" must be an object.`)
+      }
+    )
+  | Some(_) => invalid(`Expected "accounts" to be an object or an array of objects.`)
+  }
+  let accountFilters = groups->Array.some(Utils.Array.isEmpty) ? [] : groups
+
+  let startBlock = switch obj->Dict.get("block") {
+  | None => None
+  | Some(block) =>
+    let filter = try block->S.parseOrThrow(svmBlockFilterSchema) catch {
+    | S.Raised(exn) =>
+      invalid(
+        `The "block" filter is invalid: ${exn
+          ->Utils.prettifyExn
+          ->(
+            Utils.magic: exn => string
+          )}. Only \`_gte\` is supported on instruction filters — use \`indexer.onSlot\` for \`_lte\` or \`_every\`.`,
+      )
+    }
+    switch filter.slot {
+    | Some({_gte}) => _gte
+    | None => None
+    }
+  }
+
+  {accountFilters, isInner, startBlock}
+}
+
+// Enrich an SVM definition into a registration: the handler binding plus the
+// `where`-derived account/isInner filters and startBlock override.
 let buildSvmOnEventRegistration = (
   ~eventConfig: Internal.svmInstructionEventConfig,
   ~isWildcard: bool,
   ~handler: option<Internal.handler>,
   ~contractRegister: option<Internal.contractRegister>,
+  ~where: option<JSON.t>,
   ~fieldSelection: option<Internal.fieldSelection>=?,
   ~startBlock: option<int>=?,
 ): Internal.svmOnEventRegistration => {
-  index: -1,
-  eventConfig: (eventConfig :> Internal.eventConfig),
-  handler,
-  contractRegister,
-  isWildcard,
-  filterByAddresses: false,
-  dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
-  startBlock,
-  fieldSelection: switch fieldSelection {
-  | Some(fieldSelection) => fieldSelection
-  | None => eventConfig.fieldSelection
-  },
+  let resolvedWhere = switch where {
+  | None => {accountFilters: [], isInner: None, startBlock: None}
+  | Some(where) =>
+    where->resolveSvmWhereOrThrow(
+      ~contractName=eventConfig.contractName,
+      ~eventName=eventConfig.name,
+      ~accountNames=eventConfig.accounts,
+    )
+  }
+
+  {
+    index: -1,
+    eventConfig: (eventConfig :> Internal.eventConfig),
+    handler,
+    contractRegister,
+    isWildcard,
+    filterByAddresses: false,
+    dependsOnAddresses: Internal.dependsOnAddresses(~isWildcard, ~filterByAddresses=false),
+    // `where.block.slot._gte` overrides the program-level startBlock when
+    // present, mirroring EVM's `where.block.number._gte`.
+    startBlock: switch resolvedWhere.startBlock {
+    | Some(_) as sb => sb
+    | None => startBlock
+    },
+    fieldSelection: switch fieldSelection {
+    | Some(fieldSelection) => fieldSelection
+    | None => eventConfig.fieldSelection
+    },
+    accountFilters: resolvedWhere.accountFilters,
+    isInner: resolvedWhere.isInner,
+  }
 }
 
 // ============== Build Fuel event config ==============

@@ -11,7 +11,8 @@ type GlobalCounter @crossChain {
 }
 `
 
-let configYaml = (~disableDefaultCrossChain) => `
+let configYaml = (~disableDefaultCrossChain) =>
+  `
 name: cross-chain
 ${disableDefaultCrossChain ? "disable_default_cross_chain: true" : ""}
 contracts:
@@ -31,8 +32,10 @@ chains:
         address: "0x1111111111111111111111111111111111111111"
 `
 
-let perChainConfig =
-  InternalTestIndexer.fromUserApi(~configYaml=configYaml(~disableDefaultCrossChain=true), ~schema).config
+let perChainConfig = InternalTestIndexer.fromUserApi(
+  ~configYaml=configYaml(~disableDefaultCrossChain=true),
+  ~schema,
+).config
 
 let entityConfig = (config: Config.t, name) =>
   config.userEntities->Array.find(e => e.name === name)->Option.getOrThrow
@@ -50,16 +53,15 @@ describe("disable_default_cross_chain", () => {
   })
 
   it("Leaves entities cross-chain without the flag", t => {
-    let config =
-      InternalTestIndexer.fromUserApi(
-        ~configYaml=configYaml(~disableDefaultCrossChain=false),
-        ~schema=`
+    let config = InternalTestIndexer.fromUserApi(
+      ~configYaml=configYaml(~disableDefaultCrossChain=false),
+      ~schema=`
 type Counter {
   id: ID!
   count: BigInt!
 }
 `,
-      ).config
+    ).config
     t.expect((config.defaultCrossChain, (config->entityConfig("Counter")).crossChain)).toEqual((
       true,
       true,
@@ -83,7 +85,8 @@ let parseError = (~schema, ~disableDefaultCrossChain=true) =>
     )
     None
   } catch {
-  | exn => Some(exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string})->(e => e["message"]))
+  | exn =>
+    Some(exn->Utils.prettifyExn->(Utils.magic: exn => {"message": string})->(e => e["message"]))
   }
 
 describe("Cross-chain schema validation", () => {
@@ -192,16 +195,14 @@ type GlobalCounter @crossChain {
 `,
       ),
     ).toEqual(
-      Some(
-        `Schema validation failed:
+      Some(`Schema validation failed:
 
 Cross-chain entities referencing per-chain entities:
   - \`GlobalCounter\`.\`counter\` references \`Counter\`, which is per-chain.
 
 A reference stores only the referenced entity's id, and a per-chain id needs a chain to resolve. Fixes:
   - Make the referenced entities cross-chain with \`@crossChain\`, or
-  - Remove \`@crossChain\` from the entities listed above so they resolve the reference within their own chain.`,
-      ),
+  - Remove \`@crossChain\` from the entities listed above so they resolve the reference within their own chain.`),
     )
   })
 
@@ -265,9 +266,7 @@ describe("Per-chain entity DDL", () => {
         ~pgSchema="public",
         ~isNumericArrayAsText=false,
       ),
-    ).toBe(
-      `CREATE TABLE IF NOT EXISTS "public"."Counter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, "chainId" INTEGER NOT NULL, PRIMARY KEY("id", "chainId"));`,
-    )
+    ).toBe(`CREATE TABLE IF NOT EXISTS "public"."Counter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, "chainId" INTEGER NOT NULL, PRIMARY KEY("id", "chainId"));`)
   })
 
   it("Keeps a cross-chain entity's primary key on the id alone", t => {
@@ -277,9 +276,7 @@ describe("Per-chain entity DDL", () => {
         ~pgSchema="public",
         ~isNumericArrayAsText=false,
       ),
-    ).toBe(
-      `CREATE TABLE IF NOT EXISTS "public"."GlobalCounter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, PRIMARY KEY("id"));`,
-    )
+    ).toBe(`CREATE TABLE IF NOT EXISTS "public"."GlobalCounter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, PRIMARY KEY("id"));`)
   })
 
   it("Carries the chain id into the history table's primary key, not nullable", t => {
@@ -292,28 +289,40 @@ describe("Per-chain entity DDL", () => {
   })
 })
 
+let globalFloors = RollbackFloors.global(
+  ~floorCheckpointId=1n,
+  ~reorgChainId=1->ChainId.fromInt,
+  ~forkBlockNumber=0,
+)
+
 describe("Per-chain rollback and delete SQL", () => {
   it("Keys the removed-ids query on (id, chain id)", t => {
     t.expect(
-      PgStorage.makeGetRollbackRemovedIdsQuery(~entityConfig=counter, ~pgSchema="public"),
-    ).toBe(
-      `SELECT DISTINCT "id", "chainId"
+      PgStorage.makeGetRollbackRemovedIdsQuery(
+        ~entityConfig=counter,
+        ~pgSchema="public",
+        ~floors=globalFloors,
+      ),
+    ).toBe(`SELECT DISTINCT "envio_history_Counter"."id", "envio_history_Counter"."chainId"
   FROM "public"."envio_history_Counter"
-  WHERE "envio_checkpoint_id" > $1
+  WHERE "envio_history_Counter"."envio_checkpoint_id" > $1
     AND NOT EXISTS (
       SELECT 1
       FROM "public"."envio_history_Counter" h
       WHERE h."id" = "envio_history_Counter"."id" AND h."chainId" = "envio_history_Counter"."chainId"
         AND h."envio_checkpoint_id" <= $1
-    )`,
-    )
+    )`)
   })
 
   it("Dedups the pre-target restore per (id, chain id)", t => {
-    let query = PgStorage.makeGetRollbackPreTargetRowsQuery(~entityConfig=counter, ~pgSchema="public")
+    let query = PgStorage.makeGetRollbackPreTargetRowsQuery(
+      ~entityConfig=counter,
+      ~pgSchema="public",
+      ~floors=globalFloors,
+    )
     t.expect((
-      query->String.includes(`SELECT DISTINCT ON ("id", "chainId")`),
-      query->String.includes(`ORDER BY "id", "chainId", "envio_checkpoint_id" DESC`),
+      query->String.includes(`SELECT DISTINCT ON ("envio_history_Counter"."id", "envio_history_Counter"."chainId")`),
+      query->String.includes(`ORDER BY "envio_history_Counter"."id", "envio_history_Counter"."chainId", "envio_history_Counter"."envio_checkpoint_id" DESC`),
     )).toEqual((true, true))
   })
 
@@ -332,21 +341,33 @@ describe("Per-chain rollback and delete SQL", () => {
 
   it("Leaves a cross-chain entity's delete unfiltered", t => {
     t.expect(
-      PgStorage.makeChainIdCondition(~table=globalCounter.table, ~chainId=Some(137->ChainId.fromInt)),
+      PgStorage.makeChainIdCondition(
+        ~table=globalCounter.table,
+        ~chainId=Some(137->ChainId.fromInt),
+      ),
     ).toBe("")
   })
 
   it("Prunes history per (id, chain id)", t => {
-    let query = EntityHistory.makePruneStaleEntityHistoryQuery(
-      ~entityName="Counter",
-      ~entityIndex=0,
-      ~pgSchema="public",
-      ~chainIdColumn=Some("chainId"),
+    let makeQuery = safeCheckpoints =>
+      EntityHistory.makePruneStaleEntityHistoryQuery(
+        ~entityName="Counter",
+        ~entityIndex=0,
+        ~pgSchema="public",
+        ~chainIdColumn=Some("chainId"),
+        ~safeCheckpoints,
+      )
+    let query = makeQuery(CheckpointBounds.EveryChain(10n))
+    let perChain = makeQuery(
+      CheckpointBounds.PerChain([(1->ChainId.fromInt, 10n), (137->ChainId.fromInt, 20n)]),
     )
     t.expect((
       query->String.includes(`GROUP BY t.id, t."chainId"`),
       query->String.includes(`WHERE d.id = a.id AND d."chainId" = a."chainId"`),
-    )).toEqual((true, true))
+      query->String.includes(`envio_bounds`),
+      perChain->String.includes(`JOIN unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, checkpoint_id) ON envio_bounds.chain_id = t."chainId"`),
+      perChain->String.includes(`AND d.envio_checkpoint_id <= a.safe_checkpoint_id`),
+    )).toEqual((true, true, false, true, true))
   })
 
   it("Pins the backfill to the flush group's chain", t => {
@@ -367,15 +388,13 @@ describe("Per-chain rollback and delete SQL", () => {
 // the entity object and the getWhere filter keep using `chainId`. The two names
 // are used in different places, so pin both.
 describe("Per-chain entities under snake_case columns", () => {
-  let snakeConfig =
-    InternalTestIndexer.fromUserApi(
-      ~configYaml=configYaml(~disableDefaultCrossChain=true) ++
-      `storage:
+  let snakeConfig = InternalTestIndexer.fromUserApi(
+    ~configYaml=configYaml(~disableDefaultCrossChain=true) ++ `storage:
   postgres:
     column_name_format: snake_case
 `,
-      ~schema,
-    ).config
+    ~schema,
+  ).config
   let snakeCounter = snakeConfig->entityConfig("Counter")
 
   it("Keeps the API field name but writes the snake_case column", t => {
@@ -397,7 +416,8 @@ describe("Per-chain entities under snake_case columns", () => {
       PgStorage.makeGetRollbackRemovedIdsQuery(
         ~entityConfig=snakeCounter,
         ~pgSchema="public",
-      )->String.includes(`SELECT DISTINCT "id", "chain_id"`),
+        ~floors=globalFloors,
+      )->String.includes(`SELECT DISTINCT "envio_history_Counter"."id", "envio_history_Counter"."chain_id"`),
     )).toEqual((
       `CREATE TABLE IF NOT EXISTS "public"."Counter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, "chain_id" INTEGER NOT NULL, PRIMARY KEY("id", "chain_id"));`,
       ` AND "chain_id" = 137`,
@@ -423,14 +443,12 @@ describe("Per-chain entities under snake_case columns", () => {
 
 describe("Per-chain ClickHouse view", () => {
   it("Dedups the current state per (id, chain id)", t => {
+    // The chain id column is what makes the view dedup on (id, chain id)
+    // instead of id alone; a global entity carries none.
     t.expect((
-      ClickHouse.makeCreateViewQuery(~entityConfig=counter, ~database="db")->String.includes(
-        "LIMIT 1 BY `id`, `chainId`",
-      ),
-      ClickHouse.makeCreateViewQuery(~entityConfig=globalCounter, ~database="db")->String.includes(
-        "LIMIT 1 BY `id`\n",
-      ),
-    )).toEqual((true, true))
+      ClickHouse.entitySpec(~entityConfig=counter).chainIdColumn,
+      ClickHouse.entitySpec(~entityConfig=globalCounter).chainIdColumn,
+    )).toEqual((Some("chainId"), None))
   })
 })
 
@@ -438,79 +456,88 @@ describe("Per-chain ClickHouse view", () => {
 // a DELETE row carries no entity to stamp — the chain id is baked into the
 // schema instead. A cache keyed only by entity would serve chain 1's schema to
 // chain 137.
-type capturedInsert = {table: string, values: array<JSON.t>}
-
 describe("Per-chain ClickHouse writes", () => {
-  let insertAndCapture = async (~changes, ~entityConfig, ~scope, ~cache) => {
+  // Registers the table for real — that needs no server, and it is what
+  // resolves each column's wire kind — then mocks the sink at the `stage`
+  // boundary to read back the chain-id column, a Float64Array in the default
+  // Int32 chain-id mode.
+  let columnSpecs = entityConfig => ClickHouse.entitySpec(~entityConfig).columns
+
+  let stagedChainIds = (~changes, ~entityConfig: Internal.entityConfig, ~scope, ~registry) => {
     let captured = []
-    let client =
-      {
-        "insert": params => {
-          captured
-          ->Array.push({
-            table: params["table"],
-            values: params["values"]->(Utils.magic: unknown => array<JSON.t>),
-          }: capturedInsert)
-          ->ignore
-          Promise.resolve()
-        },
-      }->(Utils.magic: {..} => ClickHouse.client)
-    await ClickHouse.setUpdatesOrThrow(client, ~cache, ~changes, ~entityConfig, ~scope, ~database="db")
+    let chainIdIndex = columnSpecs(entityConfig)->Array.findIndex(({name}) => name === "chainId")
+    let sink = {
+      "stage": (_table, rows, columns: array<ClickHouseSink.columnValuesInput>) => {
+        switch columns->Array.get(chainIdIndex) {
+        | Some({numbers: ?Some(numbers)}) =>
+          for row in 0 to rows - 1 {
+            captured->Array.push(numbers->TypedArray.get(row))->ignore
+          }
+        | _ =>
+          for _ in 0 to rows - 1 {
+            captured->Array.push(None)->ignore
+          }
+        }
+        1
+      },
+    }->(Utils.magic: {..} => ClickHouseSink.t)
+    let _ = ClickHouse.stageUpdatesOrThrow(sink, ~registry, ~changes, ~entityConfig, ~scope)
     captured
   }
 
-  let set = (~id, ~count): Change.t<Internal.entity> =>
-    Set({
-      entityId: id->EntityId.unsafeOfString,
-      checkpointId: 1n,
-      entity: {"id": id, "count": count}->(Utils.magic: {..} => Internal.entity),
-    })
+  // Registration only parses the column types, so it never reaches this host.
+  let registryFor = (entityConfig: Internal.entityConfig) => {
+    let registry = ClickHouse.makeRegistry()
+    let sink = ClickHouse.makeSink(
+      ~host="http://127.0.0.1:1",
+      ~username="default",
+      ~password="",
+      ~database="unused",
+      ~chainIdMode=Int32,
+    )
+    let _ = sink->ClickHouse.entityTable(~registry, ~entityConfig)
+    registry
+  }
 
-  let delete = (~id): Change.t<Internal.entity> =>
-    Delete({entityId: id->EntityId.unsafeOfString, checkpointId: 2n})
+  let set = (~id, ~count): Change.t<Internal.entity> => Set({
+    entityId: id->EntityId.unsafeOfString,
+    checkpointId: 1n,
+    entity: {"id": id, "count": count}->(Utils.magic: {..} => Internal.entity),
+  })
 
-  Async.it("Stamps set rows and tags delete rows with the flush group's chain", async t => {
-    let cache = Dict.make()
-    let chain1 = await insertAndCapture(
+  let delete = (~id): Change.t<Internal.entity> => Delete({
+    entityId: id->EntityId.unsafeOfString,
+    checkpointId: 2n,
+  })
+
+  it("Stamps set rows and tags delete rows with the flush group's chain", t => {
+    let registry = registryFor(counter)
+    let chain1 = stagedChainIds(
       ~changes=[set(~id="a", ~count=1n), delete(~id="b")],
       ~entityConfig=counter,
       ~scope=Chain(1->ChainId.fromInt),
-      ~cache,
+      ~registry,
     )
     // Same cache, different scope: a per-entity cache would reuse chain 1's
     // schema and tag the delete row with chain 1.
-    let chain137 = await insertAndCapture(
+    let chain137 = stagedChainIds(
       ~changes=[set(~id="a", ~count=2n), delete(~id="b")],
       ~entityConfig=counter,
       ~scope=Chain(137->ChainId.fromInt),
-      ~cache,
+      ~registry,
     )
 
-    let chainIds = captured =>
-      captured
-      ->Array.flatMap(c => c.values)
-      ->Array.map(v =>
-        v->(Utils.magic: JSON.t => {"chainId": option<int>})->(o => o["chainId"])
-      )
-
-    t.expect((chain1->chainIds, chain137->chainIds)).toEqual((
-      [Some(1), Some(1)],
-      [Some(137), Some(137)],
-    ))
+    t.expect((chain1, chain137)).toEqual(([Some(1.), Some(1.)], [Some(137.), Some(137.)]))
   })
 
-  Async.it("Leaves a cross-chain entity's rows without a chain id", async t => {
-    let captured = await insertAndCapture(
+  it("Leaves a cross-chain entity's rows without a chain id", t => {
+    let captured = stagedChainIds(
       ~changes=[set(~id="a", ~count=1n), delete(~id="b")],
       ~entityConfig=globalCounter,
       ~scope=CrossChain,
-      ~cache=Dict.make(),
+      ~registry=registryFor(globalCounter),
     )
-    t.expect(
-      captured
-      ->Array.flatMap(c => c.values)
-      ->Array.map(v => v->(Utils.magic: JSON.t => {"chainId": option<int>})->(o => o["chainId"])),
-    ).toEqual([None, None])
+    t.expect(captured).toEqual([None, None])
   })
 })
 
@@ -542,7 +569,11 @@ describe("Per-chain Hasura relationships", () => {
         ~isDerivedFrom=false,
         ~chainIdColumn=None,
       ),
-      Hasura.makeColumnMapping(~relationalKey="counter_id", ~isDerivedFrom=true, ~chainIdColumn=None),
+      Hasura.makeColumnMapping(
+        ~relationalKey="counter_id",
+        ~isDerivedFrom=true,
+        ~chainIdColumn=None,
+      ),
     )).toEqual((`{"counter_id": "id"}`, `{"id": "counter_id"}`))
   })
 })
@@ -587,9 +618,9 @@ describe("Effect scope defaults", () => {
 
   it("Leaves an unset scope for the config to resolve", t => {
     t.expect((
-      (makeEffect()).crossChain,
-      (makeEffect(~crossChain=true)).crossChain,
-      (makeEffect(~crossChain=false)).crossChain,
+      makeEffect().crossChain,
+      makeEffect(~crossChain=true).crossChain,
+      makeEffect(~crossChain=false).crossChain,
     )).toEqual((None, Some(true), Some(false)))
   })
 
@@ -609,10 +640,7 @@ describe("Effect scope defaults", () => {
 // every project predating it to reset and reindex.
 describe("Public config compatibility", () => {
   let publicJson = (~schema, ~disableDefaultCrossChain) =>
-    Core.fromUserApi(
-      ~schema,
-      configYaml(~disableDefaultCrossChain),
-    ).config->JSON.parseOrThrow
+    Core.fromUserApi(~schema, configYaml(~disableDefaultCrossChain)).config->JSON.parseOrThrow
 
   let key = (json: JSON.t, k) =>
     switch json {
@@ -641,10 +669,10 @@ type Counter {
 `,
       ~disableDefaultCrossChain=false,
     )
-    t.expect((
-      json->key("defaultCrossChain"),
-      json->entityKey("Counter", "crossChain"),
-    )).toEqual((None, None))
+    t.expect((json->key("defaultCrossChain"), json->entityKey("Counter", "crossChain"))).toEqual((
+      None,
+      None,
+    ))
   })
 
   it("Emits only the scopes that differ from the resolved default", t => {
@@ -653,10 +681,6 @@ type Counter {
       json->key("defaultCrossChain"),
       json->entityKey("Counter", "crossChain"),
       json->entityKey("GlobalCounter", "crossChain"),
-    )).toEqual((
-      Some(JSON.Encode.bool(false)),
-      None,
-      Some(JSON.Encode.bool(true)),
-    ))
+    )).toEqual((Some(JSON.Encode.bool(false)), None, Some(JSON.Encode.bool(true))))
   })
 })

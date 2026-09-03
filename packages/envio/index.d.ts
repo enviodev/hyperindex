@@ -1423,7 +1423,7 @@ type SvmSelectedInstruction<Fields extends SvmFieldsSelection, ProgInstr> = {
   readonly instructionName: string;
   readonly discriminator: string;
   readonly programId: SvmInstrField<Fields, "programId", string>;
-  readonly data: SvmInstrField<Fields, "data", string>;
+  readonly data: SvmInstrField<Fields, "data", Uint8Array>;
   readonly path: SvmInstrField<Fields, "path", readonly number[]>;
   readonly isInner: SvmInstrField<Fields, "isInner", boolean>;
   readonly args: SvmInstrField<
@@ -1484,6 +1484,37 @@ export type SvmOnInstructionHandlerArgs<
   Instruction extends keyof SvmProgramsT[Program] & string = never,
 > = SvmOnInstructionArgsFor<SvmInstruction<Fields, Program, Instruction>, GlobalConfig>;
 
+/** The named accounts of a configured instruction. Falls back to an open
+ * record when the instruction carries no resolved schema, so its filter keys
+ * are unconstrained rather than unusable. */
+type SvmAccountsOf<Program extends string, Instruction extends string> =
+  SvmConfiguredInstruction<Program, Instruction>["accounts"];
+
+/** One AND-group of account narrowings: every named account must match one of
+ * its listed pubkeys. Names are the instruction's own account names. */
+export type SvmAccountsFilter<Accounts> = {
+  readonly [K in keyof Accounts]?: string | readonly string[];
+};
+
+/** The `where` option value of `indexer.onInstruction`.
+ *
+ * `accounts` accepts either a single AND-group of account narrowings, or an
+ * array of them (OR semantics). `block.slot._gte` promotes to the
+ * registration's startBlock and overrides the chain-level `start_block` — use
+ * it to restrict per-instruction processing without touching `config.yaml`.
+ * Only `_gte` is supported here; use `indexer.onSlot` for `_lte` / `_every`. */
+export type SvmOnInstructionWhere<Accounts> = {
+  /** Match only inner (CPI-invoked) or only outer instructions. Absent
+   * matches both. */
+  readonly isInner?: boolean;
+  readonly accounts?: SvmAccountsFilter<Accounts> | readonly SvmAccountsFilter<Accounts>[];
+  readonly block?: {
+    readonly slot?: {
+      readonly _gte?: number;
+    };
+  };
+};
+
 /** Options for an SVM `indexer.onInstruction` registration. */
 export type SvmOnInstructionOptions<
   P extends string = string,
@@ -1497,6 +1528,7 @@ export type SvmOnInstructionOptions<
    * `chains[].programs[].instructions[].name` in `config.yaml`. */
   readonly instruction: I;
   readonly fields?: Fields & SvmFieldsLiteralCheck<Fields>;
+  readonly where?: SvmOnInstructionWhere<SvmAccountsOf<P, I>>;
 };
 
 /** Handler function for an SVM `indexer.onInstruction` registration. Takes
@@ -1905,8 +1937,8 @@ type SvmSimulateItem<Config extends IndexerConfigTypes = GlobalConfig> =
             path?: readonly number[];
             /** Override the program id. Defaults to the configured `program_id`. */
             programId?: string;
-            /** Raw instruction data, `0x`-prefixed hex. */
-            data?: string;
+            /** Raw instruction data. Defaults to the configured discriminator bytes. */
+            data?: Uint8Array;
             /** Whether this is a CPI-invoked inner instruction. */
             isInner?: boolean;
             /** Decoded args. Keys match the instruction's arg names. */

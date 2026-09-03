@@ -21,6 +21,15 @@ chains:
               accounts:
                 - source
                 - destination
+            - name: shape
+              discriminator: "0x0a"
+              args:
+                - { name: hash, type: { array: [u8, 32] } }
+                - { name: pair, type: { array: [u16, 2] } }
+                - { name: ids, type: { vec: u64 } }
+                - { name: payload, type: bytes }
+              accounts:
+                - source
 `
 
 let check = handlers =>
@@ -91,7 +100,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`The fields.accountActivity option of the "swap" event registration on contract "Swapper" must list at least one field.\`,
+      \`The fields.accountActivity option of the "swap" instruction on program "Swapper" must list at least one field.\`,
     );
   });
 
@@ -102,7 +111,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`The fields.log option of the "swap" event registration on contract "Swapper" must list at least one field.\`,
+      \`The fields.log option of the "swap" instruction on program "Swapper" must list at least one field.\`,
     );
   });
 
@@ -113,7 +122,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "logs" key in the fields option of the "swap" event registration on contract "Swapper". Valid keys: "instruction", "transaction", "accountActivity", "block", "log".\`,
+      \`Invalid "logs" key in the fields option of the "swap" instruction on program "Swapper". Valid keys: "instruction", "transaction", "accountActivity", "block", "log".\`,
     );
   });
 
@@ -128,7 +137,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "accountActivities" field in the fields.transaction option of the "swap" event registration on contract "Swapper". Valid transaction fields: "transactionIndex", "signature", "feePayer", "success", "err", "fee", "computeUnitsConsumed", "accountKeys", "recentBlockhash", "version", "allSignatures".\`,
+      \`Invalid "accountActivities" field in the fields.transaction option of the "swap" instruction on program "Swapper". Valid transaction fields: "transactionIndex", "signature", "feePayer", "success", "err", "fee", "computeUnitsConsumed", "accountKeys", "recentBlockhash", "version", "allSignatures".\`,
     );
   });
 
@@ -143,7 +152,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "token" field in the fields.accountActivity option of the "swap" event registration on contract "Swapper". Valid accountActivity fields: "address", "transactionAccountIndex", "isSigner", "isWritable", "lamports.pre", "lamports.post", "token.mint", "token.owner", "token.decimals", "token.preAmount", "token.postAmount".\`,
+      \`Invalid "token" field in the fields.accountActivity option of the "swap" instruction on program "Swapper". Valid accountActivity fields: "address", "transactionAccountIndex", "isSigner", "isWritable", "lamports.pre", "lamports.post", "token.mint", "token.owner", "token.decimals", "token.preAmount", "token.postAmount".\`,
     );
   });
 
@@ -158,7 +167,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "params" field in the fields.instruction option of the "swap" event registration on contract "Swapper". Valid instruction fields: "args", "accounts", "accountArguments", "programId", "data", "path", "isInner".\`,
+      \`Invalid "params" field in the fields.instruction option of the "swap" instruction on program "Swapper". Valid instruction fields: "args", "accounts", "accountArguments", "programId", "data", "path", "isInner".\`,
     );
   });
 
@@ -173,7 +182,7 @@ describe("SVM handler fields", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "discriminator" field in the fields.instruction option of the "swap" event registration on contract "Swapper". Valid instruction fields: "args", "accounts", "accountArguments", "programId", "data", "path", "isInner".\`,
+      \`Invalid "discriminator" field in the fields.instruction option of the "swap" instruction on program "Swapper". Valid instruction fields: "args", "accounts", "accountArguments", "programId", "data", "path", "isInner".\`,
     );
   });
 });
@@ -377,7 +386,7 @@ type Programs = Global extends { config: { svm: { programs: infer P } } } ? P : 
 type Swap = Programs["Swapper"]["swap"];
 
 expectType<TypeEqual<keyof Swap, "args" | "accounts">>(true);
-expectType<TypeEqual<Swap["args"], { readonly amountIn: string; readonly minAmountOut: string }>>(true);
+expectType<TypeEqual<Swap["args"], { readonly amountIn: bigint; readonly minAmountOut: bigint }>>(true);
 expectType<TypeEqual<Swap["accounts"], { readonly source: string; readonly destination: string }>>(true);
 // @ts-expect-error - transaction is not config-bound; handler fields.transaction selects it
 type _Tx = Swap["transaction"];
@@ -386,6 +395,28 @@ type _Block = Swap["block"];
 
 expectType<TypeEqual<SvmAllTransactionFields["signature"], string>>(true);
 expectType<TypeEqual<keyof SvmAllTransactionFields, "transactionIndex" | "signature" | "feePayer" | "success" | "err" | "fee" | "computeUnitsConsumed" | "accountKeys" | "recentBlockhash" | "version" | "allSignatures">>(true);
+`)
+  )
+
+  it("types u8 sequences as Uint8Array, vecs as readonly arrays and fixed arrays as tuples", _ =>
+    check(`
+import type { Global } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+type Programs = Global extends { config: { svm: { programs: infer P } } } ? P : never;
+type Shape = Programs["Swapper"]["shape"]["args"];
+
+expectType<
+  TypeEqual<
+    Shape,
+    {
+      readonly hash: Uint8Array;
+      readonly pair: readonly [number, number];
+      readonly ids: readonly bigint[];
+      readonly payload: Uint8Array;
+    }
+  >
+>(true);
 `)
   )
 
@@ -453,14 +484,14 @@ if (0) {
       },
     },
     async ({ instruction }) => {
-      expectType<TypeEqual<typeof instruction.args, { readonly amountIn: string; readonly minAmountOut: string }>>(true);
+      expectType<TypeEqual<typeof instruction.args, { readonly amountIn: bigint; readonly minAmountOut: bigint }>>(true);
       expectType<TypeEqual<typeof instruction.accounts.source.address, string>>(true);
       expectType<TypeEqual<typeof instruction.accounts.source.accountName, "source">>(true);
       expectType<TypeEqual<typeof instruction.accounts.source.instructionAccountIndex, number>>(true);
       expectType<TypeEqual<typeof instruction.accountArguments, readonly string[]>>(true);
       expectType<TypeEqual<typeof instruction.discriminator, string>>(true);
       expectType<TypeEqual<typeof instruction.programId, string>>(true);
-      expectType<TypeEqual<typeof instruction.data, string>>(true);
+      expectType<TypeEqual<typeof instruction.data, Uint8Array>>(true);
       expectType<TypeEqual<typeof instruction.path, readonly number[]>>(true);
       expectType<TypeEqual<typeof instruction.isInner, boolean>>(true);
       expectType<TypeEqual<typeof instruction.transaction.signature, string>>(true);
@@ -528,7 +559,7 @@ const fields = {
 const handle = async (
   instruction: SvmInstruction<typeof fields, "Swapper", "swap">,
 ) => {
-  expectType<TypeEqual<typeof instruction.args, { readonly amountIn: string; readonly minAmountOut: string }>>(true);
+  expectType<TypeEqual<typeof instruction.args, { readonly amountIn: bigint; readonly minAmountOut: bigint }>>(true);
   expectType<TypeEqual<typeof instruction.programId, string>>(true);
   expectType<TypeEqual<typeof instruction.transaction.signature, string>>(true);
   expectType<TypeEqual<typeof instruction.logs[number]["message"], string>>(true);
@@ -539,7 +570,7 @@ const handle = async (
 
 const handleSwap: SvmOnInstructionHandler<typeof fields, "Swapper", "swap"> =
   async ({ instruction, context }) => {
-    expectType<TypeEqual<typeof instruction.args, { readonly amountIn: string; readonly minAmountOut: string }>>(true);
+    expectType<TypeEqual<typeof instruction.args, { readonly amountIn: bigint; readonly minAmountOut: bigint }>>(true);
     expectType<TypeEqual<typeof context.isPreload, boolean>>(true);
     await handle(instruction);
   };
@@ -567,7 +598,7 @@ type Unbound = SvmInstruction<typeof fields>;
 expectType<TypeEqual<Unbound["args"], unknown>>(true);
 
 type AllInstr = SvmInstruction<SvmAllFieldsSelection, "Swapper", "swap">;
-expectType<TypeEqual<AllInstr["data"], string>>(true);
+expectType<TypeEqual<AllInstr["data"], Uint8Array>>(true);
 expectType<TypeEqual<AllInstr["isInner"], boolean>>(true);
 expectType<TypeEqual<AllInstr["transaction"]["fee"], bigint>>(true);
 expectType<TypeEqual<AllInstr["block"]["height"], number>>(true);

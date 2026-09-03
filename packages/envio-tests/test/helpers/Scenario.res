@@ -288,6 +288,17 @@ let it = (
   }
 }
 
+let resolveInitialHeight = async (~t: Vitest.testContext, ~source: MockSource.t, ~head) => {
+  await Utils.delay(0)
+  t.expect(
+    source.getHeightOrThrowCalls->Array.length,
+    ~message="should have called getHeightOrThrow to get initial height",
+  ).toEqual(1)
+  source.resolveGetHeightOrThrow(head)
+  await Utils.delay(0)
+  await Utils.delay(0)
+}
+
 // Drives a chain through the reorg-threshold transition: the first query stops
 // `maxReorgDepth` short of the head, and the response commits before the
 // post-threshold range opens up. Several scenarios need to be past this point
@@ -300,14 +311,7 @@ let enterReorgThreshold = async (
   ~preThresholdTo=100,
   ~fromBlock=1,
 ) => {
-  await Utils.delay(0)
-  t.expect(
-    source.getHeightOrThrowCalls->Array.length,
-    ~message="should have called getHeightOrThrow to get initial height",
-  ).toEqual(1)
-  source.resolveGetHeightOrThrow(head)
-  await Utils.delay(0)
-  await Utils.delay(0)
+  await resolveInitialHeight(~t, ~source, ~head)
 
   t.expect(
     source.getItemsOrThrowCalls->Array.map(call => call.payload),
@@ -326,5 +330,39 @@ let waitUntil = async (predicate, ~message, ~timeoutMs=5000.) => {
       JsError.throwWithMessage(`Timed out waiting for ${message}`)
     }
     await Utils.delay(1)
+  }
+}
+
+// A refused write reaches the indexer's error boundary rather than a promise the
+// test could await, so `onError` captures it there. `awaitStorageError` answers
+// with what an operator would have been shown: the storage error's own message
+// and the reason underneath it.
+type refusal = {
+  onError: ErrorHandling.t => unit,
+  awaitStorageError: unit => promise<option<(string, string)>>,
+}
+
+let captureRefusal = () => {
+  let captured = ref(None)
+  {
+    onError: errHandler => captured := Some(errHandler),
+    awaitStorageError: async () => {
+      // Generous: the refusal crosses a real ClickHouse round trip and the
+      // indexer's error boundary, and a slow runner missing it fails as a
+      // timeout rather than as the assertion the test is about.
+      await waitUntil(
+        () => captured.contents->Option.isSome,
+        ~message="the write to be refused",
+        ~timeoutMs=15000.,
+      )
+      switch captured.contents {
+      | Some({exn: Persistence.StorageError({message, reason})}) =>
+        Some((
+          message,
+          (reason->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"],
+        ))
+      | _ => None
+      }
+    },
   }
 }
