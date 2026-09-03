@@ -701,9 +701,9 @@ mod tests {
         .collect()
     }
 
-    fn dn_views(
-        built: &BuiltSelection,
-    ) -> Vec<(Vec<String>, Vec<String>, Vec<String>, Vec<String>)> {
+    type DnView = (Vec<String>, Vec<String>, Vec<String>, Vec<String>);
+
+    fn dn_views(built: &BuiltSelection) -> Vec<DnView> {
         built
             .instruction_selections
             .iter()
