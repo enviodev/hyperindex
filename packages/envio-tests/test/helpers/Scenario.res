@@ -34,7 +34,7 @@ let defaultMethods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrTh
 // patching the parsed config — that way the entities pick up their ClickHouse
 // storage flags through the same parse a user's would.
 let withClickHouseStorage = configYaml =>
-  if configYaml->String.match(%re("/^storage:/m"))->Option.isSome {
+  if configYaml->String.match(/^storage:/m)->Option.isSome {
     // The scenario configures storage itself; leave its choice alone.
     configYaml
   } else {
@@ -104,7 +104,9 @@ let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) =
     ->Array.map(ChainId.toString)
   if missing->Utils.Array.notEmpty {
     JsError.throwWithMessage(
-      `Chains ${missing->Array.join(", ")} are configured but have no mock source. Add them to \`~sources\`, or drop them from the scenario's YAML.`,
+      `Chains ${missing->Array.join(
+          ", ",
+        )} are configured but have no mock source. Add them to \`~sources\`, or drop them from the scenario's YAML.`,
     )
   }
 
@@ -114,7 +116,9 @@ let withMockSources = (config: Config.t, ~sources: array<(int, MockSource.t)>) =
     ->Array.map(ChainId.toString)
   if unknown->Utils.Array.notEmpty {
     JsError.throwWithMessage(
-      `Mock sources given for chains ${unknown->Array.join(", ")}, which the scenario's YAML doesn't configure.`,
+      `Mock sources given for chains ${unknown->Array.join(
+          ", ",
+        )}, which the scenario's YAML doesn't configure.`,
     )
   }
 
@@ -282,7 +286,7 @@ let it = (
         (~indexer, ~source) => body(~t, ~indexer, ~source),
       )
     switch retry {
-    | Some(retry) => Vitest.Async.itWithOptions(name, {retry, timeout: ?timeout}, runBody)
+    | Some(retry) => Vitest.Async.itWithOptions(name, {retry, ?timeout}, runBody)
     | None => Vitest.Async.it(name, runBody, ~timeout?)
     }
   }
@@ -336,29 +340,36 @@ let waitUntil = async (predicate, ~message, ~timeoutMs=5000.) => {
 type refusal = {
   onError: ErrorHandling.t => unit,
   awaitStorageError: unit => promise<option<(string, string)>>,
+  // Just the reason, for a refusal whose wording is the whole point. Which
+  // internal step refused the write is not something an operator acts on, so a
+  // test about the wording shouldn't fail when the refusal merely moves.
+  awaitRefusalReason: unit => promise<option<string>>,
 }
 
 let captureRefusal = () => {
-  let captured = ref(None)
+  let captured: ref<option<ErrorHandling.t>> = ref(None)
+  let awaitStorageError = async () => {
+    // Generous: the refusal crosses a real ClickHouse round trip and the
+    // indexer's error boundary, and a slow runner missing it fails as a
+    // timeout rather than as the assertion the test is about.
+    await waitUntil(
+      () => captured.contents->Option.isSome,
+      ~message="the write to be refused",
+      ~timeoutMs=15000.,
+    )
+    switch captured.contents {
+    | Some({exn: Persistence.StorageError({message, reason})}) =>
+      Some((
+        message,
+        (reason->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"],
+      ))
+    | _ => None
+    }
+  }
   {
     onError: errHandler => captured := Some(errHandler),
-    awaitStorageError: async () => {
-      // Generous: the refusal crosses a real ClickHouse round trip and the
-      // indexer's error boundary, and a slow runner missing it fails as a
-      // timeout rather than as the assertion the test is about.
-      await waitUntil(
-        () => captured.contents->Option.isSome,
-        ~message="the write to be refused",
-        ~timeoutMs=15000.,
-      )
-      switch captured.contents {
-      | Some({exn: Persistence.StorageError({message, reason})}) =>
-        Some((
-          message,
-          (reason->Utils.prettifyExn->(Utils.magic: exn => {"message": string}))["message"],
-        ))
-      | _ => None
-      }
-    },
+    awaitStorageError,
+    awaitRefusalReason: async () =>
+      (await awaitStorageError())->Option.map(((_, reason)) => reason),
   }
 }
