@@ -389,7 +389,7 @@ pub struct EventItem {
     pub program_id: String,
     pub accounts: Vec<String>,
     /// Raw instruction data; decoded params ride on `args` when the
-    /// registration carries a Borsh schema.
+    /// registration selected them.
     pub data: Uint8Array,
     pub is_inner: bool,
     /// Borsh-decoded args as a JS value tree (wide integers as bigint);
@@ -427,8 +427,9 @@ fn project_logs(logs: &[LogItem], columns: &[&str]) -> Vec<LogItem> {
 /// to. Logs group per (slot, transactionIndex, path) and attach only to items
 /// whose registration selected `fields.log`; logs without an instruction
 /// address attach to no instruction (rare; usually only system messages).
-/// Borsh decoding runs once per matched instruction, and only when one of its
-/// routed registrations selected `args`.
+/// Borsh decoding runs once per matched instruction from that instruction's
+/// declared layout. A layout that rejects the data drops every registration
+/// of that instruction for the call.
 fn build_event_items(
     instruction_calls: &[simple::InstructionCall],
     logs: Vec<simple::Log>,
@@ -502,11 +503,8 @@ fn build_event_items(
             None
         };
         let fanned_out_from = items.len();
-        for (_, registrations) in routed {
-            // Every registration of an instruction shares its layout, so one
-            // decode serves them all, and `None` here means none of them
-            // reads args.
-            let decoded = match registrations.iter().find_map(|reg| reg.args.as_ref()) {
+        for (instruction, registrations) in routed {
+            let decoded = match instruction.args.as_ref() {
                 None => None,
                 Some(schema) => match schema.decode(&instr.data) {
                     Some(args) => Some(args),
@@ -530,7 +528,7 @@ fn build_event_items(
                     accounts: instr.account_arguments.clone(),
                     data: instr.data.clone().into(),
                     is_inner: instr.is_inner,
-                    args: decoded.clone().filter(|_| reg.args.is_some()),
+                    args: decoded.clone().filter(|_| reg.selects_args),
                     logs: if !reg.log_columns.is_empty() {
                         logs.as_deref()
                             .map(|logs| project_logs(logs, &reg.log_columns))
@@ -1018,6 +1016,40 @@ mod tests {
     }
 
     #[test]
+    fn a_declared_layout_filters_calls_even_when_args_are_unselected() {
+        let (store, set) = fixture(&["TokenMetadata"]);
+        let built = build(
+            &store,
+            &[program(
+                "TokenMetadata",
+                vec![instruction(
+                    "Create",
+                    Some("0x21"),
+                    Some(AMOUNT),
+                    vec![registration(0, false)],
+                )],
+            )],
+            &[0],
+        );
+        let mut trailing = vec![0x21];
+        trailing.extend_from_slice(&1u64.to_le_bytes());
+        trailing.push(0);
+        let items = route(
+            &store,
+            &set,
+            &[
+                committed_instruction(&[0x21]),
+                committed_instruction(&trailing),
+                committed_instruction(&[0x21, 1, 0, 0, 0, 0, 0, 0, 0]),
+            ],
+            vec![],
+            &built,
+        )
+        .unwrap();
+        assert_eq!(decoded_args(&items), vec![(0, None)]);
+    }
+
+    #[test]
     fn selecting_args_on_an_instruction_without_a_layout_is_rejected() {
         let (store, _set) = fixture(&["TokenMetadata"]);
         let err = SelectionBuilder::from_programs(
@@ -1118,7 +1150,7 @@ mod tests {
                         Some(r#"[{"name":"amount","type":"u64"},{"name":"minOut","type":"u64"}]"#),
                         vec![reads_args(registration(1, false))],
                     ),
-                    // Reads no args, so no layout can reject it.
+                    // Declares no layout, so nothing can reject it.
                     instruction("Every", None, None, vec![registration(2, false)]),
                 ],
             )],

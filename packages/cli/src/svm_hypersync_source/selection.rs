@@ -138,18 +138,15 @@ pub(crate) struct Registration {
     pub block_columns: Vec<&'static str>,
     pub log_columns: Vec<&'static str>,
     pub instruction_columns: Vec<&'static str>,
-    /// The layout this registration reads its `args` with; `None` when
-    /// `fields.instruction` leaves `args` unselected. Always the owning
-    /// instruction's schema, so every registration of an instruction decodes
-    /// the same way.
-    pub args: Option<Arc<ArgsSchema>>,
+    /// Stored at parse because `args` is not a query column, so it cannot be
+    /// recovered from `instruction_columns`.
+    pub selects_args: bool,
 }
 
 impl Registration {
     fn parse(
         input: &SvmOnEventRegistrationInput,
         instruction: &SvmInstructionInput,
-        args: Option<&Arc<ArgsSchema>>,
     ) -> Result<Self> {
         let account_filters = input
             .account_filters
@@ -178,16 +175,15 @@ impl Registration {
             &input.instruction_fields,
             !account_filters.is_empty(),
         )?;
-        let args = if fields::selects(&input.instruction_fields, "args") {
-            Some(Arc::clone(args.with_context(|| {
+        let selects_args = fields::selects(&input.instruction_fields, "args");
+        if selects_args {
+            instruction.args_json.as_ref().with_context(|| {
                 format!(
                     "registration {} selects `args` but instruction {} declares none",
                     input.index, instruction.name
                 )
-            })?))
-        } else {
-            None
-        };
+            })?;
+        }
         Ok(Self {
             index: input.index,
             is_wildcard: input.is_wildcard,
@@ -199,7 +195,7 @@ impl Registration {
             block_columns,
             log_columns,
             instruction_columns,
-            args,
+            selects_args,
         })
     }
 
@@ -253,6 +249,9 @@ pub(crate) struct Instruction {
     /// The data prefix this instruction claims; empty claims every
     /// instruction of the program.
     pub prefix: Vec<u8>,
+    /// Declared Borsh layout, independent of whether any registration selected
+    /// `args`.
+    pub args: Option<Arc<ArgsSchema>>,
 }
 
 impl Instruction {
@@ -405,7 +404,7 @@ impl SelectionBuilder {
                     .registrations
                     .iter()
                     .map(|reg| {
-                        let parsed = Registration::parse(reg, input, args.as_ref())
+                        let parsed = Registration::parse(reg, input)
                             .with_context(|| format!("parse registration for {}", input.name))?;
                         Ok(Arc::new(parsed))
                     })
@@ -425,6 +424,7 @@ impl SelectionBuilder {
                     contract_idx,
                     program_id: program.program_id.clone(),
                     prefix,
+                    args,
                 }));
             }
         }
