@@ -741,7 +741,7 @@ mod tests {
 
         assert_eq!(
             (
-                decoded.blocks[0].number.map(u64::from),
+                decoded.blocks[0].number,
                 decoded.blocks[0].timestamp.as_ref().map(Hex::encode_hex),
                 decoded.logs[0].log_index.map(u64::from),
                 decoded.logs[0].address.as_ref().map(Hex::encode_hex),
@@ -768,7 +768,7 @@ mod tests {
         );
         assert_eq!(
             (
-                decoded.blocks[0].number.map(u64::from),
+                decoded.blocks[0].number,
                 decoded.blocks[0].hash.as_ref().map(Hex::encode_hex)
             ),
             (Some(10), None)

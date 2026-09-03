@@ -1090,18 +1090,22 @@ fn record_conflict(target: &mut Option<HashMismatch>, conflict: HashMismatch) {
 /// Ordered EVM block-field names — the single source of truth the ReScript
 /// `Evm.res blockFields` array is tested against. The order is the bit position
 /// in the selection mask, so the two must not drift.
+// Reached only through the addon's C ABI, which the test target does not build.
+#[allow(dead_code)]
 #[napi]
 pub fn evm_block_field_names() -> Vec<String> {
     field_names(EvmBlockField::VARIANTS, EvmBlockField::name)
 }
 
 /// Ordered SVM block-field names; `Svm.res blockFields` is tested against this.
+#[allow(dead_code)]
 #[napi]
 pub fn svm_block_field_names() -> Vec<String> {
     field_names(SvmBlockField::VARIANTS, SvmBlockField::name)
 }
 
 /// Ordered Fuel block-field names; `Fuel.res blockFields` is tested against this.
+#[allow(dead_code)]
 #[napi]
 pub fn fuel_block_field_names() -> Vec<String> {
     field_names(FuelBlockField::VARIANTS, FuelBlockField::name)
