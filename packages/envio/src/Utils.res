@@ -18,6 +18,33 @@ external importPathWithJson: (
   "default": JSON.t,
 }> = "import"
 
+// Half the delay fixed, half spread across it. Every indexer pointed at one
+// provider loses its stream, or gives up on a quiet chain, in the same instant
+// that provider blinks, and putting them all back on the same schedule is how a
+// blip becomes a stampede.
+let jitter = delay => delay / 2 + (Math.random() *. (delay / 2)->Int.toFloat)->Float.toInt
+
+// Clearing a pending timer and forgetting it are one action. A ref left holding
+// a spent id reads as a timer still pending, and the next clear looks like it
+// did something.
+let clearTimeoutRef = timeoutId => {
+  switch timeoutId.contents {
+  | Some(id) => clearTimeout(id)
+  | None => ()
+  }
+  timeoutId := None
+}
+
+// Keeps the doubling from overflowing on something that has been failing for
+// days. Every caller's delay reaches its cap long before this.
+let maxBackoffExponent = 20
+
+let expBackoff = (~base, ~exp, ~maxMillis) =>
+  Pervasives.min(
+    base * Math.pow(2.0, ~exp=Pervasives.min(exp, maxBackoffExponent)->Int.toFloat)->Float.toInt,
+    maxMillis,
+  )
+
 let delay = milliseconds =>
   Promise.make((resolve, _) => {
     let _interval = setTimeout(_ => {
@@ -96,6 +123,15 @@ module Dict = {
    */
   @get_index
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
+
+  let incrementBy = (dict, key, count) =>
+    dict->Dict.set(
+      key,
+      switch dict->dangerouslyGetNonOption(key) {
+      | Some(current) => current + count
+      | None => count
+      },
+    )
 
   let getOrInsertEmptyDict = (dict, key) => {
     switch dict->dangerouslyGetNonOption(key) {
@@ -888,6 +924,12 @@ let prettifyExn = exn => {
   | exn => exn
   }
 }
+
+let exnMessage = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(jsExn) => jsExn->JsExn.message
+  | _ => None
+  }
 
 module EnvioPackage = {
   type t = {version: string}

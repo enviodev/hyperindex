@@ -6,6 +6,10 @@ type logsQueryPage = {
   blockStore: BlockStore.t,
 }
 
+// How often a HyperSync source is asked for the height while nothing is pushing
+// one. Every ecosystem's client talks to the same service, so they wait alike.
+let pollingInterval: int
+
 // Map a native client's `PREFIX:<int>` failure marker onto the exception
 // SourceManager retries on (`RateLimited` / `SourceBehindHead`), falling back to
 // the original cause.
