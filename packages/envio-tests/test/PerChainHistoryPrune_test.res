@@ -275,9 +275,14 @@ describe("Per-chain history pruning", () => {
           counterSet(~checkpointId=2n, ~chain=100, ~count=2n),
           counterSet(~checkpointId=4n, ~chain=200, ~count=12n),
           counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
-          counterSet(~checkpointId=7n, ~chain=200, ~count=13n),
+          counterSet(~checkpointId=6n, ~chain=200, ~count=13n),
         ],
-        [(2n, 100), (4n, 200), (5n, 100), (6n, 100), (7n, 200), (8n, 200)],
+        // Checkpoint ids come from one sequence shared by every chain, so which
+        // chain claims which id is whichever of them commits first — the two
+        // alternate here rather than each taking a pair. What this pins is per
+        // chain: three checkpoints each, and history kept only above each
+        // chain's own safe block.
+        [(2n, 100), (4n, 200), (5n, 100), (6n, 200), (7n, 100), (8n, 200)],
       ))
     },
   )
