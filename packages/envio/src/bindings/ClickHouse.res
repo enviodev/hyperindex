@@ -390,11 +390,22 @@ let writeStagedOrThrow = async (sink, ~entities, ~checkpoints) =>
 
 // Tables are not registered here: an indexer that finds an existing storage
 // never runs this, so the write path registers them on first use either way.
-let initialize = async (sink, ~entities: array<Internal.entityConfig>) => {
+let isPerChain = (sequence: CheckpointSequence.t) =>
+  switch sequence {
+  | PerChain => true
+  | Global => false
+  }
+
+let initialize = async (
+  sink,
+  ~sequence: CheckpointSequence.t,
+  ~entities: array<Internal.entityConfig>,
+) => {
   try {
     await sink->ClickHouseSink.initialize({
       entities: entities->Array.map(entityConfig => entitySpec(~entityConfig)),
       checkpointColumns: checkpointColumnSpecs,
+      perChain: sequence->isPerChain,
       replicated: Env.ClickHouse.replicated(),
       databaseEngine: ?Env.ClickHouse.databaseEngine(),
     })
@@ -415,18 +426,24 @@ let initialize = async (sink, ~entities: array<Internal.entityConfig>) => {
 
 let resume = async (
   sink,
-  ~checkpointId: Internal.checkpointId,
+  ~sequence: CheckpointSequence.t,
+  ~frontier: Frontier.t,
   ~chains: array<Persistence.initialChainState>,
   ~entities: array<Internal.entityConfig>,
 ) => {
   let chainProgress = chains->Array.map(chain => {
     ClickHouseSink.chainId: chain.id->ChainId.toString,
     progressBlockNumber: chain.progressBlockNumber,
+    committedCheckpointId: frontier->Frontier.get(chain.id)->BigInt.toString,
   })
   try await sink->ClickHouseSink.resume({
-    checkpointId: checkpointId->BigInt.toString,
+    checkpointId: frontier->Frontier.max->BigInt.toString,
+    perChain: sequence->isPerChain,
     chainProgress,
-    historyTables: entities->Array.map(entityConfig => entitySpec(~entityConfig).historyTable),
+    historyTables: entities->Array.map(entityConfig => {
+      let spec = entitySpec(~entityConfig)
+      {ClickHouseSink.name: spec.historyTable, chainIdColumn: ?spec.chainIdColumn}
+    }),
     replicated: Env.ClickHouse.replicated(),
     databaseEngine: ?Env.ClickHouse.databaseEngine(),
   }) catch {

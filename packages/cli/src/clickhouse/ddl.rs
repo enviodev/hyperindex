@@ -53,6 +53,46 @@ pub struct HistorySchema {
     pub checkpoint_block_number_column: String,
 }
 
+/// The rows a resume has to remove: everything written past the checkpoint it
+/// resumes from. One id every chain is held to under a shared sequence, one id
+/// per chain when each chain counts its own — a chain's ids then say nothing
+/// about another's, so one bound cannot stand for all of them.
+#[derive(Debug, Clone)]
+pub enum ResumeBounds {
+    Shared(String),
+    PerChain(Vec<(String, String)>),
+}
+
+impl ResumeBounds {
+    /// The predicate matching the rows above the bound in a table whose chain
+    /// column is `chain_column`. Per-chain bounds need that column: without it
+    /// a row can't be attributed to the sequence its id came from.
+    pub fn above(&self, chain_column: Option<&str>, checkpoint_column: &str) -> Result<String> {
+        let checkpoint = quoted(checkpoint_column);
+        match self {
+            ResumeBounds::Shared(checkpoint_id) => Ok(format!("{checkpoint} > {checkpoint_id}")),
+            // No chain has anything above its bound, which no row can satisfy.
+            ResumeBounds::PerChain(bounds) if bounds.is_empty() => Ok("0".to_string()),
+            ResumeBounds::PerChain(bounds) => {
+                let Some(chain_column) = chain_column else {
+                    bail!(
+                        "Internal error: per-chain checkpoint bounds can't bound a table with no \
+                         chain-id column. Only a schema whose entities are all per-chain has them."
+                    )
+                };
+                let chain = quoted(chain_column);
+                Ok(bounds
+                    .iter()
+                    .map(|(chain_id, checkpoint_id)| {
+                        format!("({chain} = {chain_id} AND {checkpoint} > {checkpoint_id})")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" OR "))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Topology {
     pub replicated: bool,
@@ -292,7 +332,11 @@ pub fn create_checkpoints_table(
         topology.on_cluster(),
         definitions.join(",\n"),
         topology.engine(),
-        quoted(&history.id_column),
+        format!(
+            "{}, {}",
+            quoted(&history.checkpoint_chain_id_column),
+            quoted(&history.id_column)
+        ),
         topology.settings(),
     )
 }
@@ -302,6 +346,7 @@ pub fn create_view(
     database: &str,
     history: &HistorySchema,
     topology: Topology,
+    per_chain: bool,
 ) -> String {
     let mut dedup_key = vec![quoted(&history.id_column)];
     if let Some(chain_id_column) = &entity.chain_id_column {
@@ -315,20 +360,47 @@ pub fn create_view(
         .collect();
     let entity_fields = entity_fields.join(", ");
 
+    let db = quoted(database);
+    let checkpoint_id = quoted(&history.checkpoint_id_column);
+    let id = quoted(&history.id_column);
+    let checkpoints = quoted(&history.checkpoints_table);
+
+    // Rows are written ahead of the checkpoints that cover them, so the view
+    // has to stop at the frontier or a half-written batch becomes readable.
+    // With one shared sequence that frontier is a single id. With a sequence per
+    // chain the ids of one chain say nothing about another's, so each chain is
+    // held to its own — joined in rather than looked up per row, since the
+    // chains aren't known when the view is created. The alias carries a prefix
+    // no entity column can, the same way `holds_rows_above_checkpoint`'s do.
+    let source = match (per_chain, &entity.chain_id_column) {
+        (true, Some(chain_id_column)) => {
+            let chain = quoted(chain_id_column);
+            let checkpoint_chain = quoted(&history.checkpoint_chain_id_column);
+            format!(
+                "FROM {db}.{}\n  ANY LEFT JOIN (SELECT {checkpoint_chain} AS `_envio_chain`, \
+                 max({id}) AS `_envio_frontier` FROM {db}.{checkpoints} GROUP BY \
+                 {checkpoint_chain}) AS `_envio_frontiers` ON {chain} = \
+                 `_envio_frontiers`.`_envio_chain`\n  WHERE {checkpoint_id} <= \
+                 `_envio_frontiers`.`_envio_frontier`",
+                quoted(&entity.history_table),
+            )
+        }
+        _ => format!(
+            "FROM {db}.{}\n  WHERE {checkpoint_id} <= (SELECT max({id}) FROM {db}.{checkpoints})",
+            quoted(&entity.history_table),
+        ),
+    };
+
     format!(
-        "CREATE VIEW IF NOT EXISTS {db}.{}{} AS\nSELECT {entity_fields}\nFROM (\n  SELECT {entity_fields}, {}\n  FROM {db}.{}\n  WHERE {} <= (SELECT max({}) FROM {db}.{})\n  ORDER BY {} DESC\n  LIMIT 1 BY {}\n)\nWHERE {} = {}",
+        "CREATE VIEW IF NOT EXISTS {db}.{}{} AS\nSELECT {entity_fields}\nFROM (\n  SELECT \
+         {entity_fields}, {}\n  {source}\n  ORDER BY {checkpoint_id} DESC\n  LIMIT 1 BY {}\n)\nWHERE \
+         {} = {}",
         quoted(&entity.name),
         topology.on_cluster(),
         quoted(&history.change_column),
-        quoted(&entity.history_table),
-        quoted(&history.checkpoint_id_column),
-        quoted(&history.id_column),
-        quoted(&history.checkpoints_table),
-        quoted(&history.checkpoint_id_column),
         dedup_key.join(", "),
         quoted(&history.change_column),
         literal(&history.set_variant),
-        db = quoted(database),
     )
 }
 
@@ -357,29 +429,18 @@ pub fn insert_query(
 /// the table's own scope and carry a prefix no entity field can, since `exists`
 /// loses its alias under the old analyzer and a user may have named a column
 /// `name`.
-pub fn holds_rows_above_checkpoint(
-    database: &str,
-    history_tables: &[String],
-    history: &HistorySchema,
-    checkpoint_id: &str,
-) -> String {
-    let branch = |table: &str, column: &str| {
-        format!(
-            "SELECT {} AS `_envio_table`, count() AS `_envio_holds` FROM (SELECT 1 FROM {}.{} \
-             WHERE {} > {checkpoint_id} LIMIT 1)",
-            literal(table),
-            quoted(database),
-            quoted(table),
-            quoted(column)
-        )
-    };
-    let branches: Vec<String> = history_tables
+pub fn holds_rows_above_checkpoint(database: &str, above_by_table: &[(String, String)]) -> String {
+    let branches: Vec<String> = above_by_table
         .iter()
-        .map(|table| branch(table, &history.checkpoint_id_column))
-        .chain(std::iter::once(branch(
-            &history.checkpoints_table,
-            &history.id_column,
-        )))
+        .map(|(table, above)| {
+            format!(
+                "SELECT {} AS `_envio_table`, count() AS `_envio_holds` FROM (SELECT 1 FROM {}.{} \
+                 WHERE {above} LIMIT 1)",
+                literal(table),
+                quoted(database),
+                quoted(table),
+            )
+        })
         .collect();
     format!(
         "SELECT `_envio_table`, `_envio_holds` FROM ({}) FORMAT TabSeparated",
@@ -394,17 +455,11 @@ pub fn holds_rows_above_checkpoint(
 /// resume would report a rewind it has only asked for. Waiting for every
 /// replica (`2`) is what makes the storage actually be at the checkpoint by the
 /// time the indexer starts writing again.
-pub fn trim_history_table(
-    database: &str,
-    table: &str,
-    history: &HistorySchema,
-    checkpoint_id: &str,
-) -> String {
+pub fn trim_history_table(database: &str, table: &str, above: &str) -> String {
     format!(
-        "ALTER TABLE {}.{} DELETE WHERE {} > {checkpoint_id} SETTINGS mutations_sync = 2",
+        "ALTER TABLE {}.{} DELETE WHERE {above} SETTINGS mutations_sync = 2",
         quoted(database),
         quoted(table),
-        quoted(&history.checkpoint_id_column)
     )
 }
 
@@ -416,12 +471,11 @@ pub fn trim_history_table(
 /// the server default, which a profile is free to set to 0: resume would then
 /// return with checkpoints still above the frontier, and replayed rows would
 /// become readable through a checkpoint that no longer covers them.
-pub fn trim_checkpoints(database: &str, history: &HistorySchema, checkpoint_id: &str) -> String {
+pub fn trim_checkpoints(database: &str, history: &HistorySchema, above: &str) -> String {
     format!(
-        "DELETE FROM {}.{} WHERE {} > {checkpoint_id} SETTINGS lightweight_deletes_sync = 2",
+        "DELETE FROM {}.{} WHERE {above} SETTINGS lightweight_deletes_sync = 2",
         quoted(database),
         quoted(&history.checkpoints_table),
-        quoted(&history.id_column)
     )
 }
 
@@ -667,8 +721,8 @@ mod tests {
     #[test]
     fn creates_the_checkpoints_table() {
         let columns = [
-            column("id", "UInt64"),
             column("chain_id", "ChainId"),
+            column("id", "UInt64"),
             column("block_number", "Int32"),
             ColumnSpec {
                 field: FieldSpec {
@@ -681,13 +735,13 @@ mod tests {
         assert_eq!(
             create_checkpoints_table(&typed(&columns), "test_db", &history_schema(), plain()),
             "CREATE TABLE IF NOT EXISTS `test_db`.`envio_checkpoints` (\n  \
-             `id` UInt64,\n  \
              `chain_id` Int32,\n  \
+             `id` UInt64,\n  \
              `block_number` Int32,\n  \
              `block_hash` Nullable(String)\n\
              )\n\
              ENGINE = MergeTree()\n\
-             ORDER BY (`id`)"
+             ORDER BY (`chain_id`, `id`)"
         );
     }
 
@@ -700,7 +754,7 @@ mod tests {
              `id` UInt64\n\
              )\n\
              ENGINE = ReplicatedMergeTree\n\
-             ORDER BY (`id`)\n\
+             ORDER BY (`chain_id`, `id`)\n\
              SETTINGS replicated_deduplication_window = 0"
         );
     }
@@ -712,7 +766,7 @@ mod tests {
             vec![column("id", "String"), column("balance", "Int32")],
         );
         assert_eq!(
-            create_view(&entity, "test_db", &history_schema(), plain()),
+            create_view(&entity, "test_db", &history_schema(), plain(), false),
             "CREATE VIEW IF NOT EXISTS `test_db`.`Account` AS\n\
              SELECT `id`, `balance`\n\
              FROM (\n  \
@@ -730,7 +784,7 @@ mod tests {
     fn a_replicated_view_is_created_on_the_cluster() {
         let entity = entity("Account", vec![column("id", "String")]);
         assert_eq!(
-            create_view(&entity, "test_db", &history_schema(), replicated())
+            create_view(&entity, "test_db", &history_schema(), replicated(), false)
                 .lines()
                 .next(),
             Some("CREATE VIEW IF NOT EXISTS `test_db`.`Account` ON CLUSTER '{cluster}' AS")
@@ -744,8 +798,35 @@ mod tests {
             vec![column("id", "String"), column("chain_id", "ChainId")],
         );
         entity.chain_id_column = Some("chain_id".to_string());
-        assert!(create_view(&entity, "test_db", &history_schema(), plain())
+        assert!(create_view(&entity, "test_db", &history_schema(), plain(), false)
             .contains("LIMIT 1 BY `id`, `chain_id`"));
+    }
+
+    // With a sequence per chain, one chain's committed frontier says nothing
+    // about another's, so the view holds every chain to its own.
+    #[test]
+    fn a_per_chain_view_stops_at_each_chains_own_frontier() {
+        let mut entity = entity(
+            "Account",
+            vec![column("id", "String"), column("chain_id", "ChainId")],
+        );
+        entity.chain_id_column = Some("chain_id".to_string());
+        assert_eq!(
+            create_view(&entity, "test_db", &history_schema(), plain(), true),
+            "CREATE VIEW IF NOT EXISTS `test_db`.`Account` AS\n\
+             SELECT `id`, `chain_id`\n\
+             FROM (\n  \
+             SELECT `id`, `chain_id`, `envio_change`\n  \
+             FROM `test_db`.`envio_history_Account`\n  \
+             ANY LEFT JOIN (SELECT `chain_id` AS `_envio_chain`, max(`id`) AS `_envio_frontier` \
+             FROM `test_db`.`envio_checkpoints` GROUP BY `chain_id`) AS `_envio_frontiers` ON \
+             `chain_id` = `_envio_frontiers`.`_envio_chain`\n  \
+             WHERE `envio_checkpoint_id` <= `_envio_frontiers`.`_envio_frontier`\n  \
+             ORDER BY `envio_checkpoint_id` DESC\n  \
+             LIMIT 1 BY `id`, `chain_id`\n\
+             )\n\
+             WHERE `envio_change` = 'SET'"
+        );
     }
 
     #[test]
@@ -777,10 +858,16 @@ mod tests {
     #[test]
     fn trims_history_and_checkpoints_past_a_checkpoint() {
         let history = history_schema();
+        let bounds = ResumeBounds::Shared("42".to_string());
+        let above = |column: &str| bounds.above(None, column).unwrap();
         assert_eq!(
             (
-                trim_history_table("db", "envio_history_Account", &history, "42"),
-                trim_checkpoints("db", &history, "42")
+                trim_history_table(
+                    "db",
+                    "envio_history_Account",
+                    &above(&history.checkpoint_id_column)
+                ),
+                trim_checkpoints("db", &history, &above(&history.id_column))
             ),
             (
                 "ALTER TABLE `db`.`envio_history_Account` DELETE WHERE \

@@ -2999,7 +2999,6 @@ describe("E2E rollback tests", () => {
       writeBatch: (
         ~batch,
         ~rollback,
-        ~isInReorgThreshold,
         ~config,
         ~allEntities,
         ~updatedEffectsCache,
@@ -3017,8 +3016,7 @@ describe("E2E rollback tests", () => {
           await storage.writeBatch(
             ~batch,
             ~rollback,
-            ~isInReorgThreshold,
-            ~config,
+                ~config,
             ~allEntities,
             ~updatedEffectsCache,
             ~updatedEntities,

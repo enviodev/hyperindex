@@ -128,18 +128,19 @@ let dropCommittedEffects = (
 let prepareRollbackDiff = async (
   state: IndexerState.t,
   ~floors: RollbackFloors.t,
-  ~rollbackDiffCheckpointId,
+  ~diffFrontier: Frontier.t,
   ~progressedChains,
   ~rolledBackAddresses,
 ) => {
   state->IndexerState.beginRollbackDiff(
-    ~diffCheckpointId=rollbackDiffCheckpointId,
+    ~diffFrontier,
     ~floors,
     ~progressedChains,
     ~rolledBackAddresses,
   )
   let persistence = state->IndexerState.persistence
-  let committedCheckpointId = state->IndexerState.committedCheckpointId
+  let sequence = (state->IndexerState.config).checkpointSequence
+  let diffCheckpointId = scope => sequence->CheckpointSequence.forScope(diffFrontier, ~scope)
 
   let deletedEntities = Dict.make()
   let setEntities = Dict.make()
@@ -160,10 +161,10 @@ let prepareRollbackDiff = async (
       state
       ->getInMemTable(~entityConfig, ~scope)
       ->InMemoryTable.Entity.set(
-        ~committedCheckpointId,
+        ~committedCheckpointId=state->IndexerState.committedCheckpointIdFor(~scope),
         Delete({
           entityId,
-          checkpointId: rollbackDiffCheckpointId,
+          checkpointId: diffCheckpointId(scope),
         }),
       )
     })
@@ -174,10 +175,10 @@ let prepareRollbackDiff = async (
       state
       ->getInMemTable(~entityConfig, ~scope)
       ->InMemoryTable.Entity.set(
-        ~committedCheckpointId,
+        ~committedCheckpointId=state->IndexerState.committedCheckpointIdFor(~scope),
         Set({
           entityId: entity.id->EntityId.unsafeOfString,
-          checkpointId: rollbackDiffCheckpointId,
+          checkpointId: diffCheckpointId(scope),
           entity,
         }),
       )

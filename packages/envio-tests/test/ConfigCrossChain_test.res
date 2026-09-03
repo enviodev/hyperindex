@@ -289,7 +289,9 @@ describe("Per-chain entity DDL", () => {
   })
 })
 
-let globalFloors = RollbackFloors.global(
+let globalFloors = RollbackFloors.make(
+  ~sequence=Global,
+  ~chainIds=[1->ChainId.fromInt],
   ~floorCheckpointId=1n,
   ~reorgChainId=1->ChainId.fromInt,
   ~forkBlockNumber=0,
@@ -357,9 +359,14 @@ describe("Per-chain rollback and delete SQL", () => {
         ~chainIdColumn=Some("chainId"),
         ~safeCheckpoints,
       )
-    let query = makeQuery(CheckpointBounds.EveryChain(10n))
+    let query = makeQuery(
+      CheckpointSequence.bounds(Global, Frontier.fromEntries([(1->ChainId.fromInt, 10n)])),
+    )
     let perChain = makeQuery(
-      CheckpointBounds.PerChain([(1->ChainId.fromInt, 10n), (137->ChainId.fromInt, 20n)]),
+      CheckpointSequence.bounds(
+        PerChain,
+        Frontier.fromEntries([(1->ChainId.fromInt, 10n), (137->ChainId.fromInt, 20n)]),
+      ),
     )
     t.expect((
       query->String.includes(`GROUP BY t.id, t."chainId"`),

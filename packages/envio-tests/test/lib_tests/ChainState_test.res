@@ -147,7 +147,8 @@ describe("ChainState chain density EMA (per batch)", () => {
       )
       d
     },
-    isInReorgThreshold: false,
+    history: Skip,
+    checkpointFrontier: Frontier.empty(),
     checkpointIds: [],
     checkpointChainIds: [],
     checkpointBlockNumbers: [],

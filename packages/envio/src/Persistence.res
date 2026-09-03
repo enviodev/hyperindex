@@ -43,7 +43,8 @@ type initialState = {
   envioInfo: option<JSON.t>,
   cache: dict<effectCacheRecord>,
   chains: array<initialChainState>,
-  checkpointId: Internal.checkpointId,
+  // Where each chain's checkpoint sequence stands in the database.
+  checkpointFrontier: Frontier.t,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
 }
@@ -59,7 +60,9 @@ type updatedEffectCache = {
 }
 
 type rollback = {
-  diffCheckpointId: Internal.checkpointId,
+  // The id each chain's diff rows are stamped with: the first after what that
+  // chain has committed.
+  diffFrontier: Frontier.t,
   // How far back the deletes reach on each chain, travelling with the diff so
   // the write leaves an untouched sibling's rows alone.
   floors: RollbackFloors.t,
@@ -82,6 +85,9 @@ type updatedEntity = {
   entityConfig: Internal.entityConfig,
   scope: Internal.chainScope,
   changes: array<Change.t<Internal.entity>>,
+  // Decided where the chain states are in reach; storage writes what it is
+  // handed rather than re-deriving the rule.
+  history: HistoryPolicy.t,
 }
 
 // An id the rollback must delete, together with the scope its row lives in.
@@ -146,13 +152,13 @@ type storage = {
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
-  pruneStaleCheckpoints: (~safeCheckpoints: CheckpointBounds.t) => promise<unit>,
+  pruneStaleCheckpoints: (~safeCheckpoints: CheckpointSequence.bounds) => promise<unit>,
   // Prune stale entity history
   pruneStaleEntityHistory: (
     ~entityName: string,
     ~entityIndex: int,
     ~chainIdColumn: option<string>,
-    ~safeCheckpoints: CheckpointBounds.t,
+    ~safeCheckpoints: CheckpointSequence.bounds,
   ) => promise<unit>,
   // Get rollback target checkpoint
   getRollbackTargetCheckpoint: (
@@ -180,7 +186,6 @@ type storage = {
   writeBatch: (
     ~batch: Batch.t,
     ~rollback: option<rollback>,
-    ~isInReorgThreshold: bool,
     ~config: Config.t,
     ~allEntities: array<Internal.entityConfig>,
     ~updatedEffectsCache: array<updatedEffectCache>,

@@ -260,7 +260,7 @@ let run = async (
             let isIdle =
               !(state->IndexerState.isProcessing) &&
               state->IndexerState.writeFiber->Option.isNone &&
-              state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
+              Frontier.equals(state->IndexerState.committedFrontier, state->IndexerState.processedFrontier)
 
             // Catching up hands off to the FinalizingIndexes phase, which is
             // where readiness is decided — so a batch isn't settled until that
@@ -306,7 +306,7 @@ let run = async (
               !(state->IndexerState.isProcessing) &&
               state->IndexerState.writeFiber->Option.isNone &&
               !(state->IndexerState.isFinalizingIndexes) &&
-              state->IndexerState.committedCheckpointId == state->IndexerState.processedCheckpointId
+              Frontier.equals(state->IndexerState.committedFrontier, state->IndexerState.processedFrontier)
             ) {
               settled.contents + 1
             } else {

@@ -2,7 +2,7 @@ type t = {
   name: string,
   initialize: (~entities: array<Internal.entityConfig>) => promise<unit>,
   resume: (
-    ~checkpointId: Internal.checkpointId,
+    ~frontier: Frontier.t,
     ~chains: array<Persistence.initialChainState>,
     ~entities: array<Internal.entityConfig>,
   ) => promise<unit>,
@@ -17,6 +17,7 @@ let makeClickHouse = (
   ~database,
   ~username,
   ~password,
+  ~sequence: CheckpointSequence.t,
   ~chainIdMode: ChainId.mode=Int32,
 ): t => {
   let sink = ClickHouse.makeSink(~host, ~username, ~password, ~database, ~chainIdMode)
@@ -27,10 +28,10 @@ let makeClickHouse = (
   {
     name: "clickhouse",
     initialize: (~entities) => {
-      ClickHouse.initialize(sink, ~entities=mirrored(entities))
+      ClickHouse.initialize(sink, ~sequence, ~entities=mirrored(entities))
     },
-    resume: (~checkpointId, ~chains, ~entities) => {
-      ClickHouse.resume(sink, ~checkpointId, ~chains, ~entities=mirrored(entities))
+    resume: (~frontier, ~chains, ~entities) => {
+      ClickHouse.resume(sink, ~sequence, ~frontier, ~chains, ~entities=mirrored(entities))
     },
     writeBatch: async (~batch, ~updatedEntities) => {
       // Staging reads JS values, so it holds the isolate and runs here. The

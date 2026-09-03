@@ -14,7 +14,6 @@ type t = {
   // but before the deferred schema indexes and `ready_at` are committed. The
   // gap between this and `isRealtime` is the FinalizingIndexes phase.
   mutable isCaughtUp: bool,
-  mutable isInReorgThreshold: bool,
   // Indexer-wide fetch buffer pool (item count), shared across all chains.
   targetBufferSize: int,
 }
@@ -32,12 +31,14 @@ let make = (
   ~isRealtime,
   ~targetBufferSize=calculateTargetBufferSize(),
 ): t => {
+  if isInReorgThreshold {
+    chainStates->Utils.Dict.forEach(ChainState.markInReorgThreshold)
+  }
   {
     chainStates,
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
     isRealtime,
     isCaughtUp: isRealtime,
-    isInReorgThreshold,
     targetBufferSize,
   }
 }
@@ -52,7 +53,13 @@ let getChainState = (crossChainState: t, chainId) =>
 let chainStates = (crossChainState: t) => crossChainState.chainStates
 let isRealtime = (crossChainState: t) => crossChainState.isRealtime
 let isCaughtUp = (crossChainState: t) => crossChainState.isCaughtUp
-let isInReorgThreshold = (crossChainState: t) => crossChainState.isInReorgThreshold
+// Chains enter the threshold together, so this is both "any" and "all". It is
+// the run-wide reading; what a write keeps is decided per chain.
+let isInReorgThreshold = (crossChainState: t) =>
+  crossChainState.chainStates->Dict.valuesToArray->Array.some(ChainState.isInReorgThreshold)
+
+let isChainInReorgThreshold = (crossChainState: t, chainId) =>
+  crossChainState->getChainState(chainId)->ChainState.isInReorgThreshold
 let targetBufferSize = (crossChainState: t) => crossChainState.targetBufferSize
 
 // Ready-to-process items across every chain — the live draw against
@@ -75,13 +82,13 @@ let nextItemIsNone = (crossChainState: t): bool =>
 // Each chain's safe checkpoint: the last one a reorg on that chain can no longer
 // reach, or None while it has nothing safe yet. A chain that can't be rolled
 // back (maxReorgDepth = 0) tracks none, and everything it has committed is safe.
-let getSafeCheckpointIdByChain = (crossChainState: t, ~committedCheckpointId) =>
+let getSafeCheckpointIdByChain = (crossChainState: t, ~committedFrontier) =>
   crossChainState.chainIds->Array.map(chainId => {
     let cs = crossChainState->getChainState(chainId)
     (
       chainId,
       switch cs->ChainState.safeCheckpointTracking {
-      | None => Some(committedCheckpointId)
+      | None => Some(committedFrontier->Frontier.get(chainId))
       | Some(tracking) =>
         tracking->SafeCheckpointTracking.getSafeCheckpointId(
           ~sourceBlockNumber=cs->ChainState.knownHeight,
@@ -92,20 +99,13 @@ let getSafeCheckpointIdByChain = (crossChainState: t, ~committedCheckpointId) =>
 
 // --- Cross-chain transitions. ---
 
-let createBatch = (
-  crossChainState: t,
-  ~processedCheckpointId,
-  ~batchSizeTarget: int,
-  ~isRollback: bool,
-): Batch.t => {
+let createBatch = (crossChainState: t, ~config: Config.t, ~frontier, ~batchSizeTarget: int): Batch.t => {
   Batch.make(
-    ~isInReorgThreshold=crossChainState.isInReorgThreshold,
-    ~checkpointIdBeforeBatch=processedCheckpointId->BigInt.add(
-      // Since for rollback we have a diff checkpoint id.
-      // This is needed to currectly overwrite old state
-      // in an append-only ClickHouse insert.
-      isRollback ? 1n : 0n,
+    ~sequence=config.checkpointSequence,
+    ~history=config->HistoryPolicy.forBatch(
+      ~inThreshold=chainId => crossChainState->isChainInReorgThreshold(chainId),
     ),
+    ~frontier,
     ~chainsBeforeBatch=crossChainState.chainStates->Utils.Dict.mapValues(
       ChainState.toChainBeforeBatch,
     ),
@@ -123,8 +123,6 @@ let enterReorgThreshold = (crossChainState: t) => {
     ->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
     ->ChainState.enterReorgThreshold
   }
-
-  crossChainState.isInReorgThreshold = true
 }
 
 // Commit each progressed chain's batch progress, then record whether the whole

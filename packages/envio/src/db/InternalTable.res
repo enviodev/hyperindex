@@ -565,17 +565,24 @@ module Checkpoints = {
     valuesOf: Batch.t => array<unknown>,
   }
 
+  // The chain leads the key: ids are only unique within a chain, and every
+  // query that narrows to one chain reads a contiguous run of it.
   let columns: array<column> = [
+    {
+      field: mkField(
+        (#chain_id: field :> string),
+        ChainId,
+        ~fieldSchema=ChainId.schema,
+        ~isPrimaryKey,
+      ),
+      clickHouseFieldType: ChainId,
+      valuesOf: batch =>
+        batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
+    },
     {
       field: mkField((#id: field :> string), UInt64, ~fieldSchema=S.bigint, ~isPrimaryKey),
       clickHouseFieldType: UInt64,
       valuesOf: batch => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
-    },
-    {
-      field: mkField((#chain_id: field :> string), ChainId, ~fieldSchema=ChainId.schema),
-      clickHouseFieldType: ChainId,
-      valuesOf: batch =>
-        batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
     },
     {
       field: mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
@@ -640,8 +647,10 @@ WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
 ORDER BY cp."${(#id: field :> string)}";`
   }
 
-  let makeCommitedCheckpointIdQuery = (~pgSchema) => {
-    `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->BigInt.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
+  // Where each chain's sequence stands. A chain with no checkpoint left (never
+  // written, or all pruned) answers no row and resumes from the initial id.
+  let makeCommitedCheckpointFrontierQuery = (~pgSchema) => {
+    `SELECT "${(#chain_id: field :> string)}"::TEXT AS chain_id, MAX("${(#id: field :> string)}")::TEXT AS id FROM "${pgSchema}"."${table.tableName}" GROUP BY "${(#chain_id: field :> string)}";`
   }
 
   let makeInsertCheckpointQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
@@ -687,18 +696,18 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
 
   let rollback = (sql, ~pgSchema, ~floors: RollbackFloors.t) => {
     let tableRef = `"${pgSchema}"."${table.tableName}"`
-    let bounds = floors.floors->CheckpointBounds.sql(~chainIdColumn, ~tableRef)
+    let bounds = floors.floors->CheckpointSequence.sql(~chainIdColumn, ~tableRef)
     sql
     ->Postgres.preparedUnsafe(
       `DELETE FROM ${tableRef}${bounds.using} WHERE "${(#id: field :> string)}" > ${bounds.checkpointId}${bounds.usingMatch};`,
-      floors.floors->CheckpointBounds.params,
+      floors.floors->CheckpointSequence.params,
     )
     ->Utils.Promise.ignoreValue
   }
 
-  let makePruneStaleCheckpointsQuery = (~pgSchema, ~safeCheckpoints: CheckpointBounds.t) => {
+  let makePruneStaleCheckpointsQuery = (~pgSchema, ~safeCheckpoints: CheckpointSequence.bounds) => {
     let tableRef = `"${pgSchema}"."${table.tableName}"`
-    let bounds = safeCheckpoints->CheckpointBounds.sql(~chainIdColumn, ~tableRef)
+    let bounds = safeCheckpoints->CheckpointSequence.sql(~chainIdColumn, ~tableRef)
     `DELETE FROM ${tableRef}${bounds.using} WHERE "${(#id: field :> string)}" < ${bounds.checkpointId}${bounds.usingMatch};`
   }
 
@@ -706,7 +715,7 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
     sql
     ->Postgres.preparedUnsafe(
       makePruneStaleCheckpointsQuery(~pgSchema, ~safeCheckpoints),
-      safeCheckpoints->CheckpointBounds.params,
+      safeCheckpoints->CheckpointSequence.params,
     )
     ->Utils.Promise.ignoreValue
 
@@ -738,7 +747,7 @@ LIMIT 1;`
   }
 
   let makeGetRollbackProgressDiffQuery = (~pgSchema, ~floors: RollbackFloors.t) => {
-    let bounds = floors.floors->CheckpointBounds.sql(~chainIdColumn, ~tableRef="t")
+    let bounds = floors.floors->CheckpointSequence.sql(~chainIdColumn, ~tableRef="t")
     `SELECT 
   t."${(#chain_id: field :> string)}"::float8 as "${(#chain_id: field :> string)}",
   SUM(t."${(#events_processed: field :> string)}") as events_processed_diff,
@@ -752,7 +761,7 @@ GROUP BY t."${(#chain_id: field :> string)}";`
     sql
     ->Postgres.preparedUnsafe(
       makeGetRollbackProgressDiffQuery(~pgSchema, ~floors),
-      floors.floors->CheckpointBounds.params,
+      floors.floors->CheckpointSequence.params,
     )
     ->(
       Utils.magic: promise<unknown> => promise<

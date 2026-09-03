@@ -105,12 +105,12 @@ let makePruneStaleEntityHistoryQuery = (
   ~entityIndex,
   ~pgSchema,
   ~chainIdColumn,
-  ~safeCheckpoints: CheckpointBounds.t,
+  ~safeCheckpoints: CheckpointSequence.bounds,
 ) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   let keyColumns = makeKeyColumns(~chainIdColumn)
   let anchorKeys = keyColumns->Array.map(column => `t.${column}`)->Array.joinUnsafe(", ")
-  let bounds = safeCheckpoints->CheckpointBounds.sql(~chainIdColumn, ~tableRef="t")
+  let bounds = safeCheckpoints->CheckpointSequence.sql(~chainIdColumn, ~tableRef="t")
 
   // Whether a key still has a row above the safe checkpoint is an aggregate
   // over the same groups as the anchor, so it's computed in the one pass
@@ -151,7 +151,7 @@ let pruneStaleEntityHistory = (
       ~chainIdColumn,
       ~safeCheckpoints,
     ),
-    safeCheckpoints->CheckpointBounds.params,
+    safeCheckpoints->CheckpointSequence.params,
   )
 
 // If an entity doesn't have a history before the update
@@ -224,11 +224,11 @@ let rollback = (
   ~floors: RollbackFloors.t,
 ) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
-  let bounds = floors.floors->CheckpointBounds.sql(~chainIdColumn, ~tableRef=historyTableRef)
+  let bounds = floors.floors->CheckpointSequence.sql(~chainIdColumn, ~tableRef=historyTableRef)
   sql
   ->Postgres.preparedUnsafe(
     `DELETE FROM ${historyTableRef}${bounds.using} WHERE "${checkpointIdFieldName}" > ${bounds.checkpointId}${bounds.usingMatch};`,
-    floors.floors->CheckpointBounds.params,
+    floors.floors->CheckpointSequence.params,
   )
   ->Utils.Promise.ignoreValue
 }

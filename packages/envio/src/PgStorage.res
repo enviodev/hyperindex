@@ -1047,7 +1047,6 @@ let rec writeBatch = async (
   ~batch: Batch.t,
   ~pgSchema,
   ~rollback: option<Persistence.rollback>,
-  ~isInReorgThreshold,
   ~config: Config.t,
   ~allEntities: array<Internal.entityConfig>,
   ~setEffectCacheOrThrow,
@@ -1061,7 +1060,7 @@ let rec writeBatch = async (
 ) => {
   try {
     let chainIdMode = config.chainIdMode
-    let shouldSaveHistory = config->Config.shouldSaveHistory(~isInReorgThreshold)
+    let shouldSaveCheckpoints = batch.history === Keep
 
     let specificError = ref(None)
 
@@ -1111,7 +1110,7 @@ let rec writeBatch = async (
       }
     }
 
-    let setEntities = updatedEntities->Array.map(({entityConfig, scope, changes}) => {
+    let setEntities = updatedEntities->Array.map(({entityConfig, scope, changes, history}) => {
       let entitiesToSet = []
       let idsToDelete = []
 
@@ -1121,8 +1120,7 @@ let rec writeBatch = async (
       | Internal.CrossChain => None
       | Chain(chainId) => Some(chainId)
       }
-      let shouldSaveHistory =
-        config->Config.shouldSaveHistory(~isInReorgThreshold, ~chainId=?scopeChainId)
+      let shouldSaveHistory = history === HistoryPolicy.Keep
       let changes = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
       | (Some(field), Some(chainId)) =>
         changes->Array.map(change =>
@@ -1147,7 +1145,10 @@ let rec writeBatch = async (
 
       // The rollback-diff change is written to the entity table only, never the
       // history table; when present it is an id's oldest change.
-      let diffCheckpointId = rollback->Option.map(r => r.diffCheckpointId)
+      let diffCheckpointId =
+        rollback->Option.map(r =>
+          config.checkpointSequence->CheckpointSequence.forScope(r.diffFrontier, ~scope)
+        )
 
       // History batches, populated only when saving history.
       let batchSetUpdates = []
@@ -1411,7 +1412,7 @@ let rec writeBatch = async (
             )
           }
 
-          if shouldSaveHistory {
+          if shouldSaveCheckpoints {
             setOperations->Array.push(sql =>
               sql->InternalTable.Checkpoints.insert(
                 ~pgSchema,
@@ -1479,7 +1480,6 @@ let rec writeBatch = async (
       ~pgSchema,
       ~setQueryCache,
       ~rollback,
-      ~isInReorgThreshold,
       ~config,
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
@@ -1532,7 +1532,7 @@ let makeGetRollbackPreTargetRowsQuery = (
   let keyMatch =
     keyColumns->Array.map(c => `h."${c}" = ${tableRef}."${c}"`)->Array.joinUnsafe(" AND ")
   let bounds =
-    floors.floors->CheckpointBounds.sql(
+    floors.floors->CheckpointSequence.sql(
       ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
       ~tableRef,
     )
@@ -1565,7 +1565,7 @@ let makeGetRollbackRemovedIdsQuery = (
   let keyMatch =
     keyColumns->Array.map(c => `h."${c}" = ${tableRef}."${c}"`)->Array.joinUnsafe(" AND ")
   let bounds =
-    floors.floors->CheckpointBounds.sql(
+    floors.floors->CheckpointSequence.sql(
       ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
       ~tableRef,
     )
@@ -1927,7 +1927,7 @@ let make = (
         addressRows: rowsByChain->Array.getUnsafe(idx)->AddressRows.seedRowsOf,
         sourceBlockNumber: 0,
       }),
-      checkpointId: InternalTable.Checkpoints.initialCheckpointId,
+      checkpointFrontier: Frontier.empty(),
     }
   }
 
@@ -2340,8 +2340,10 @@ let make = (
         })
       }),
       sql
-      ->Postgres.unsafe(InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string}>>),
+      ->Postgres.unsafe(InternalTable.Checkpoints.makeCommitedCheckpointFrontierQuery(~pgSchema))
+      ->(
+        Utils.magic: promise<array<unknown>> => promise<array<{"chain_id": string, "id": string}>>
+      ),
       sql
       ->Postgres.unsafe(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
       ->(
@@ -2372,7 +2374,12 @@ let make = (
 
     await reloadIndexCatalog()
 
-    let checkpointId = (checkpointIdResult->Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
+    let checkpointFrontier = Frontier.fromEntries(
+      checkpointIdResult->Array.map(row => (
+        row["chain_id"]->ChainId.normalizeOrThrow,
+        row["id"]->BigInt.fromStringOrThrow,
+      )),
+    )
 
     // Convert string checkpoint IDs from DB to bigint
     let reorgCheckpoints = Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
@@ -2384,7 +2391,7 @@ let make = (
 
     // Resume sink if present - needed to rollback any reorg changes
     switch sink {
-    | Some(sink) => await sink.resume(~checkpointId, ~chains, ~entities)
+    | Some(sink) => await sink.resume(~frontier=checkpointFrontier, ~chains, ~entities)
     | None => ()
     }
 
@@ -2393,7 +2400,7 @@ let make = (
       reorgCheckpoints,
       cache,
       chains,
-      checkpointId,
+      checkpointFrontier,
       contractMapping: storedContractMapping,
       envioInfo: storedEnvioInfo,
     }
@@ -2434,7 +2441,7 @@ let make = (
     InternalTable.Checkpoints.getRollbackProgressDiff(sql, ~pgSchema, ~floors)
 
   let getRollbackData = async (~entityConfig: Internal.entityConfig, ~floors: RollbackFloors.t) => {
-    let params = floors.floors->CheckpointBounds.params
+    let params = floors.floors->CheckpointSequence.params
     let (removedIdRows, rollbackRows) = await Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
       sql
@@ -2482,7 +2489,6 @@ let make = (
   let writeBatchMethod = async (
     ~batch,
     ~rollback,
-    ~isInReorgThreshold,
     ~config,
     ~allEntities,
     ~updatedEffectsCache,
@@ -2528,7 +2534,6 @@ let make = (
       ~pgSchema,
       ~setQueryCache,
       ~rollback,
-      ~isInReorgThreshold,
       ~config,
       ~allEntities,
       ~setEffectCacheOrThrow,
@@ -2613,6 +2618,7 @@ let makeStorageFromEnv = (
             ~database=database->Option.getUnsafe,
             ~username=username->Option.getUnsafe,
             ~password=password->Option.getUnsafe,
+            ~sequence=config.checkpointSequence,
             ~chainIdMode=config.chainIdMode,
           ),
         )

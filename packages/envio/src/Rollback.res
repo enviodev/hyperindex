@@ -132,19 +132,14 @@ and executeRollback = async (
   // flush above leaves a diff pending only when no batch has come along to
   // carry it.
   let floors = {
-    let next = if state->IndexerState.config->Config.isIsolatedMultichain {
-      RollbackFloors.isolated(
-        ~chainId=reorgChain,
-        ~floorCheckpointId=rollbackTargetCheckpointId,
-        ~forkBlockNumber=rollbackTargetBlockNumber,
-      )
-    } else {
-      RollbackFloors.global(
-        ~floorCheckpointId=rollbackTargetCheckpointId,
-        ~reorgChainId=reorgChain,
-        ~forkBlockNumber=rollbackTargetBlockNumber,
-      )
-    }
+    let config = state->IndexerState.config
+    let next = RollbackFloors.make(
+      ~sequence=config.checkpointSequence,
+      ~chainIds=config.chainMap->ChainMap.keys,
+      ~reorgChainId=reorgChain,
+      ~floorCheckpointId=rollbackTargetCheckpointId,
+      ~forkBlockNumber=rollbackTargetBlockNumber,
+    )
     switch state->IndexerState.pendingRollback {
     | None => next
     | Some({floors: pending}) => RollbackFloors.merge(pending, next)
@@ -221,7 +216,7 @@ and executeRollback = async (
 
   let diff = await state->InMemoryStore.prepareRollbackDiff(
     ~floors,
-    ~rollbackDiffCheckpointId=state->IndexerState.committedCheckpointId->BigInt.add(1n),
+    ~diffFrontier=state->IndexerState.rollbackDiffFrontier(~floors),
     ~progressedChains=rolledBackChains,
     ~rolledBackAddresses,
   )

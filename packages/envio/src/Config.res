@@ -127,6 +127,10 @@ type t = {
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
+  // Whether checkpoint ids come from one counter or one per chain. Decided by
+  // the schema alone: a cross-chain entity has rows any chain's reorg can
+  // reach, so its checkpoints have to be comparable across chains.
+  checkpointSequence: CheckpointSequence.t,
 }
 
 type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("realtime") Realtime
@@ -1031,16 +1035,9 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     userEntitiesByName,
     userEntities,
     allEnums,
+    checkpointSequence: CheckpointSequence.fromEntities(userEntities),
   }
 }
-
-// With no cross-chain entity, a reorg on one chain can never have changed a row
-// another chain owns, so its rollback stays isolated to that chain instead of
-// dragging every sibling back with it. A single chain has no sibling to spare,
-// and narrowing its rollback would only buy it a predicate that always holds.
-let isIsolatedMultichain = (config: t) =>
-  config.chainMap->ChainMap.keys->Array.length > 1 &&
-    config.userEntities->Array.every(entityConfig => !entityConfig.crossChain)
 
 // Canonicalize a user-provided address to the configured casing so it matches
 // addresses parsed from config.yaml during routing. HyperSync/RPC data arrives
@@ -1112,18 +1109,6 @@ let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<Cha
     }
   })
 }
-
-// A chain that can't be rolled back (maxReorgDepth = 0) has no history to keep,
-// unless a cross-chain entity lets another chain's rollback reach its rows.
-let shouldSaveHistory = (config, ~isInReorgThreshold, ~chainId: option<ChainId.t>=?) =>
-  config.shouldSaveFullHistory ||
-  (config.shouldRollbackOnReorg &&
-  isInReorgThreshold &&
-  switch chainId {
-  | Some(chainId) if config->isIsolatedMultichain =>
-    (config.chainMap->ChainMap.get(chainId)).maxReorgDepth > 0
-  | _ => true
-  })
 
 let shouldPruneHistory = (config, ~isInReorgThreshold) =>
   !config.shouldSaveFullHistory && (config.shouldRollbackOnReorg && isInReorgThreshold)

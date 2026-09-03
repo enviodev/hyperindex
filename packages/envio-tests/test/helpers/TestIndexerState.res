@@ -33,7 +33,7 @@ let readyPersistence = (~config=config, ~storage) => {
     cache: Dict.make(),
     chains: [],
     reorgCheckpoints: [],
-    checkpointId: 0n,
+    checkpointFrontier: Frontier.empty(),
   }),
 }
 
@@ -46,7 +46,7 @@ let setEntity = (
   let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
   let entity = entity->(Utils.magic: 'a => Internal.entity)
   inMemTable->InMemoryTable.Entity.set(
-    ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
+    ~committedCheckpointId=indexerState->IndexerState.committedCheckpointIdFor(~scope),
     Set({
       entityId: (entity: Internal.entity).id->EntityId.unsafeOfString,
       checkpointId: 0n,

@@ -17,7 +17,7 @@ let make: (
   ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~targetBufferSize: int=?,
-  ~committedCheckpointId: Internal.checkpointId=?,
+  ~committedFrontier: Frontier.t=?,
   ~isDevelopmentMode: bool=?,
   ~shouldUseTui: bool=?,
   ~exitAfterFirstEventBlock: bool=?,
@@ -60,12 +60,7 @@ let beginProcessing: t => unit
 let endProcessing: t => unit
 let markProcessingStalledOnFetch: t => unit
 let recordProcessedBatch: t => unit
-let createBatch: (
-  t,
-  ~processedCheckpointId: Internal.checkpointId,
-  ~batchSizeTarget: int,
-  ~isRollback: bool,
-) => Batch.t
+let createBatch: (t, ~batchSizeTarget: int) => Batch.t
 let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpointId>)>
 
 // Accessors.
@@ -82,8 +77,10 @@ let eachEntityTable: (
   ) => unit,
 ) => unit
 let effectState: t => EffectState.t
-let committedCheckpointId: t => Internal.checkpointId
-let processedCheckpointId: t => Internal.checkpointId
+let committedFrontier: t => Frontier.t
+let processedFrontier: t => Frontier.t
+let committedCheckpointIdFor: (t, ~scope: Internal.chainScope) => Internal.checkpointId
+let rollbackDiffFrontier: (t, ~floors: RollbackFloors.t) => Frontier.t
 let processedBatches: t => array<Batch.t>
 let processedBatchesCount: t => int
 let writeFiber: t => option<promise<unit>>
@@ -137,10 +134,10 @@ let queueProcessedBatch: (t, ~batch: Batch.t) => unit
 let drainBatchRun: t => Batch.t
 let pendingRollback: t => option<Persistence.rollback>
 let takeRollback: t => option<Persistence.rollback>
-let markCommitted: (t, ~upToCheckpointId: Internal.checkpointId) => unit
+let markCommitted: (t, ~upToFrontier: Frontier.t) => unit
 let beginRollbackDiff: (
   t,
-  ~diffCheckpointId: Internal.checkpointId,
+  ~diffFrontier: Frontier.t,
   ~floors: RollbackFloors.t,
   ~progressedChains: array<InternalTable.Chains.progressedChain>,
   ~rolledBackAddresses: array<AddressRows.key>,

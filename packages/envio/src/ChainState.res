@@ -2,6 +2,11 @@
 // the type is opaque in the interface so callers can read fields but can only
 // change them through the sanctioned mutators.
 
+// Whether the chain's progress has entered its reorg threshold.
+type threshold =
+  | BelowThreshold
+  | InThreshold
+
 type t = {
   logger: Pino.t,
   // The registrations used to build this chain's sources and route native items.
@@ -41,6 +46,10 @@ type t = {
   // detected reorg either rolls back or is only logged.
   shouldRollbackOnReorg: bool,
   maxReorgDepth: int,
+  // Whether the chain has progressed inside its reorg threshold. One-way: past
+  // it, everything the chain writes can still be rolled back, so it keeps
+  // history from here on.
+  mutable threshold: threshold,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
   // transactionIndex). Fetch responses merge their page in; entries are pruned
   // as the chain progresses and dropped above the target on rollback.
@@ -126,6 +135,7 @@ let make = (
   ~safeCheckpointTracking=None,
   ~shouldRollbackOnReorg,
   ~maxReorgDepth,
+  ~threshold=BelowThreshold,
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
@@ -155,6 +165,7 @@ let make = (
     safeCheckpointTracking,
     shouldRollbackOnReorg,
     maxReorgDepth,
+    threshold,
     transactionStore,
     blockStore,
     reorgThresholdReadyTolerance,
@@ -372,6 +383,7 @@ let makeInternal = (
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
     ~maxReorgDepth,
+    ~threshold=isInReorgThreshold ? InThreshold : BelowThreshold,
     ~safeCheckpointTracking=SafeCheckpointTracking.make(
       ~maxReorgDepth,
       ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
@@ -992,9 +1004,20 @@ let setEndBlockToFirstEvent = (cs: t, ~blockNumber) =>
   | Some(_) => ()
   }
 
+// One-way: a chain past its reorg threshold keeps history from here on.
+let markInReorgThreshold = (cs: t) => cs.threshold = InThreshold
+
 // Shrink the fetch buffer by the configured blockLag on entering the reorg threshold.
-let enterReorgThreshold = (cs: t) =>
+let enterReorgThreshold = (cs: t) => {
+  cs->markInReorgThreshold
   cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
+}
+
+let isInReorgThreshold = (cs: t) =>
+  switch cs.threshold {
+  | InThreshold => true
+  | BelowThreshold => false
+  }
 
 // Snapshot the chain's metadata fields for staging into the chains table.
 let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {

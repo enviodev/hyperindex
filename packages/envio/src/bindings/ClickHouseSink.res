@@ -11,7 +11,12 @@ type historySchema = {
   checkpointBlockNumberColumn: string,
 }
 
-type chainProgressInput = {chainId: string, progressBlockNumber: int}
+type chainProgressInput = {
+  chainId: string,
+  progressBlockNumber: int,
+  // Where the chain's own sequence stands, as Postgres has it committed.
+  committedCheckpointId: string,
+}
 
 type options = {
   url: string,
@@ -58,14 +63,22 @@ type entitySpec = {
 type initializeInput = {
   entities: array<entitySpec>,
   checkpointColumns: array<columnSpec>,
+  perChain: bool,
   replicated: bool,
   databaseEngine?: string,
 }
 
+// A history table and the column naming the chain its rows belong to. Absent
+// only for a cross-chain entity, which no per-chain sequence can produce.
+type historyTableInput = {name: string, chainIdColumn?: string}
+
 type resumeInput = {
+  // The highest committed id across every chain. What a shared sequence trims
+  // to; ignored when each chain has its own.
   checkpointId: string,
+  perChain: bool,
   chainProgress: array<chainProgressInput>,
-  historyTables: array<string>,
+  historyTables: array<historyTableInput>,
   replicated: bool,
   databaseEngine?: string,
 }

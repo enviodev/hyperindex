@@ -16,7 +16,10 @@ let toNames = (targets: PruneStaleHistory.targets) => {
 
 let intervalMillis = 1000.
 let nowMillis = 100_000.
-let safeCheckpoints = CheckpointBounds.EveryChain(100n)
+let safeCheckpoints = CheckpointSequence.bounds(
+  Global,
+  Frontier.fromEntries([(1->ChainId.fromInt, 100n)]),
+)
 
 describe("PruneStaleHistory.selectFrom", () => {
   it("Selects up to 5 overdue entities oldest-first, excluding ones written in the batch", t => {

@@ -194,9 +194,7 @@ describe("IndexerState", () => {
         while continue.contents {
           let batch =
             state->IndexerState.createBatch(
-              ~processedCheckpointId=Internal.initialCheckpointId,
               ~batchSizeTarget=10000,
-              ~isRollback=false,
             )
           let {items, totalBatchSize} = batch
 
@@ -337,9 +335,7 @@ describe("IndexerState", () => {
         let state = makeState(~eventBlocks=[5])
         let batch =
           state->IndexerState.createBatch(
-            ~processedCheckpointId=Internal.initialCheckpointId,
             ~batchSizeTarget=10000,
-            ~isRollback=false,
           )
 
         let chainId = config.chainMap->ChainMap.keys->Array.getUnsafe(0)

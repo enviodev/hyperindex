@@ -178,7 +178,9 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           params.indexerState
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
+            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointIdFor(
+              ~scope=params->entityScope,
+            ),
             Set({
               entityId: entity.id->EntityId.unsafeOfString,
               checkpointId: params.checkpointId,
@@ -290,7 +292,9 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
           params.indexerState
           ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
+            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointIdFor(
+              ~scope=params->entityScope,
+            ),
             Delete({
               entityId,
               checkpointId: params.checkpointId,

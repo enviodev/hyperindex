@@ -1,6 +1,11 @@
 // Per-chain runtime state. `t` is opaque: other modules read it through the
 // accessors and change it only through the mutators exposed here.
 
+// Whether the chain's progress has entered its reorg threshold.
+type threshold =
+  | BelowThreshold
+  | InThreshold
+
 type t
 
 let configStorageRows: (
@@ -26,6 +31,7 @@ let make: (
   ~safeCheckpointTracking: option<SafeCheckpointTracking.t>=?,
   ~shouldRollbackOnReorg: bool,
   ~maxReorgDepth: int,
+  ~threshold: threshold=?,
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
@@ -153,7 +159,9 @@ let prepareReorg: (t, ~eventsProcessedDiff: option<float>) => unit
 let resetPendingQueries: t => unit
 let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
+let markInReorgThreshold: t => unit
 let enterReorgThreshold: t => unit
+let isInReorgThreshold: t => bool
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: (t, ~readyAt: Date.t) => unit

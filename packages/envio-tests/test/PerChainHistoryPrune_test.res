@@ -192,12 +192,12 @@ describe("Per-chain history pruning", () => {
         ~message="Chain 100 dropped what its own safe block put out of reach, keeping the anchor; chain 1337 kept everything, having nothing safe yet",
       ).toEqual((
         [
+          counterSet(~checkpointId=1n, ~chain=1337, ~count=20n),
           // The anchor: chain 100's last state at or below its own safe block.
           counterSet(~checkpointId=2n, ~chain=100, ~count=2n),
-          counterSet(~checkpointId=3n, ~chain=1337, ~count=20n),
-          counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
+          counterSet(~checkpointId=3n, ~chain=100, ~count=3n),
         ],
-        [(2n, 100), (3n, 1337), (4n, 1337), (5n, 100), (6n, 100)],
+        [(2n, 100), (1n, 1337), (2n, 1337), (3n, 100), (4n, 100)],
       ))
     },
   )
@@ -273,11 +273,11 @@ describe("Per-chain history pruning", () => {
       ).toEqual((
         [
           counterSet(~checkpointId=2n, ~chain=100, ~count=2n),
-          counterSet(~checkpointId=4n, ~chain=200, ~count=12n),
-          counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
-          counterSet(~checkpointId=7n, ~chain=200, ~count=13n),
+          counterSet(~checkpointId=2n, ~chain=200, ~count=12n),
+          counterSet(~checkpointId=3n, ~chain=100, ~count=3n),
+          counterSet(~checkpointId=3n, ~chain=200, ~count=13n),
         ],
-        [(2n, 100), (4n, 200), (5n, 100), (6n, 100), (7n, 200), (8n, 200)],
+        [(2n, 100), (2n, 200), (3n, 100), (4n, 100), (3n, 200), (4n, 200)],
       ))
     },
   )
@@ -318,10 +318,10 @@ describe("Per-chain history pruning", () => {
         ~message="Chain 1337 wrote no history and kept only its latest committed checkpoint; chain 100 pruned to its own safe checkpoint",
       ).toEqual((
         [
-          counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
-          counterSet(~checkpointId=9n, ~chain=100, ~count=4n),
+          counterSet(~checkpointId=3n, ~chain=100, ~count=3n),
+          counterSet(~checkpointId=5n, ~chain=100, ~count=4n),
         ],
-        [(5n, 100), (6n, 100), (8n, 1337), (9n, 100), (10n, 100)],
+        [(3n, 100), (4n, 100), (4n, 1337), (5n, 100), (6n, 100)],
       ))
     },
   )

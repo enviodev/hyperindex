@@ -84,7 +84,7 @@ describe("Test Persistence layer init", () => {
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
-      checkpointId: 0n,
+      checkpointFrontier: Frontier.empty(),
     }
     storageMock.resolveInitialize(initialState)
     let _ = await Promise.resolve()
@@ -187,7 +187,7 @@ describe("Test Persistence layer init", () => {
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
-      checkpointId: 0n,
+      checkpointFrontier: Frontier.empty(),
     }
     storageMock.resolveLoadInitialState(initialState)
     await p
@@ -240,7 +240,7 @@ Although it should load effect caches metadata.`,
       chains: [],
       cache: Dict.make(),
       reorgCheckpoints: [],
-      checkpointId: 0n,
+      checkpointFrontier: Frontier.empty(),
     }
     storageMock.resolveLoadInitialState(initialState)
 
