@@ -60,9 +60,8 @@ type updatedEffectCache = {
 
 type rollback = {
   diffCheckpointId: Internal.checkpointId,
-  // How far back the deletes reach on each chain. A rollback must leave an
-  // untouched sibling's rows alone and take a chain it did move back no further
-  // than that chain's own floor, so the floors travel with the diff to the write.
+  // How far back the deletes reach on each chain, travelling with the diff so
+  // the write leaves an untouched sibling's rows alone.
   floors: RollbackFloors.t,
   // The address registrations the rollback dropped, as the chains' address
   // stores resolved them. Deleted by primary key in the same transaction.
@@ -138,13 +137,13 @@ type storage = {
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
-  pruneStaleCheckpoints: (~safeCheckpoints: SafeCheckpoints.t) => promise<unit>,
+  pruneStaleCheckpoints: (~safeCheckpoints: CheckpointBounds.t) => promise<unit>,
   // Prune stale entity history
   pruneStaleEntityHistory: (
     ~entityName: string,
     ~entityIndex: int,
     ~chainIdColumn: option<string>,
-    ~safeCheckpoints: SafeCheckpoints.t,
+    ~safeCheckpoints: CheckpointBounds.t,
   ) => promise<unit>,
   // Get rollback target checkpoint
   getRollbackTargetCheckpoint: (

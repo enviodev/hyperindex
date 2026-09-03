@@ -12,55 +12,42 @@ let maxEntitiesPerWrite = 5
 let forcedIntervalMultiplier = 5.
 
 type targets = {
-  safeCheckpoints: SafeCheckpoints.t,
+  safeCheckpoints: CheckpointBounds.t,
   concurrent: array<Internal.entityConfig>,
   forced: array<Internal.entityConfig>,
 }
 
-// Where each chain's history may be pruned back to.
+// Where each chain's history may be pruned back to, or None while nowhere can.
 //
 // A rollback only ever deletes a chain's rows down to that chain's own floor,
-// which is derived from its own reorg and so never reaches below its own safe
-// checkpoint. Each chain can therefore prune to its own, and a chain that has
-// nothing safe yet only holds itself back.
+// which is set by its own reorg and so never reaches below its own safe
+// checkpoint. Each chain can therefore prune to its own, and a chain with
+// nothing safe yet holds only itself back.
 //
 // Unless the schema has a cross-chain entity: a reorg on any chain then rolls
 // every chain back to one checkpoint, which can sit below another chain's safe
 // point, so the lowest is the only bound every chain agrees on.
 let selectSafeCheckpoints = (state: IndexerState.t) => {
   let byChain = state->IndexerState.getSafeCheckpointIdByChain
+  let safe =
+    byChain->Array.filterMap(((chainId, checkpointId)) =>
+      checkpointId->Option.map(checkpointId => (chainId, checkpointId))
+    )
   if state->IndexerState.config->Config.isIsolatedMultichain {
-    SafeCheckpoints.PerChain(
-      byChain->Array.filter(((_, checkpointId)) =>
-        checkpointId !== Internal.initialCheckpointId
+    safe->Utils.Array.notEmpty ? Some(CheckpointBounds.PerChain(safe)) : None
+  } else if safe->Array.length === byChain->Array.length {
+    let (_, lowest) = safe->Array.getUnsafe(0)
+    Some(
+      CheckpointBounds.EveryChain(
+        safe->Array.reduce(lowest, (lowest, (_, checkpointId)) =>
+          Pervasives.min(lowest, checkpointId)
+        ),
       ),
     )
   } else {
-    // A chain with nothing safe yet reports the initial checkpoint, which is
-    // below every other chain's and so pins the bound there — the minimum can't
-    // be seeded with it without reading as "no value yet" and losing that.
-    SafeCheckpoints.EveryChain(
-      byChain
-      ->Array.reduce(None, (lowest, (_, checkpointId)) =>
-        switch lowest {
-        | Some(lowest) => Some(Pervasives.min(lowest, checkpointId))
-        | None => Some(checkpointId)
-        }
-      )
-      ->Option.getOr(Internal.initialCheckpointId),
-    )
+    None
   }
 }
-
-// Nothing to prune yet: no chain has a safe checkpoint of its own, or the one
-// bounding them all is still the initial checkpoint. Checked before a pass runs
-// so an empty one doesn't spend the entity's prune interval.
-let hasNothingToPrune = (safeCheckpoints: SafeCheckpoints.t) =>
-  switch safeCheckpoints {
-  | PerChain([]) => true
-  | EveryChain(checkpointId) => checkpointId === Internal.initialCheckpointId
-  | PerChain(_) => false
-  }
 
 let selectFrom = (
   ~allEntities: array<Internal.entityConfig>,
@@ -117,21 +104,19 @@ let selectFrom = (
 let select = (state: IndexerState.t, ~writtenEntityNames, ~isRollback) => {
   let config = state->IndexerState.config
   if config->Config.shouldPruneHistory(~isInReorgThreshold=state->IndexerState.isInReorgThreshold) {
-    switch state->selectSafeCheckpoints {
-    | safeCheckpoints if safeCheckpoints->hasNothingToPrune => None
-    | safeCheckpoints =>
-      Some(
-        selectFrom(
-          ~allEntities=(state->IndexerState.persistence).allEntities,
-          ~lastPrunedAtMillis=state->IndexerState.lastPrunedAtMillis,
-          ~writtenEntityNames,
-          ~isRollback,
-          ~nowMillis=Date.now(),
-          ~intervalMillis=Env.ThrottleWrites.pruneStaleDataIntervalMillis->Int.toFloat,
-          ~safeCheckpoints,
-        ),
+    state
+    ->selectSafeCheckpoints
+    ->Option.map(safeCheckpoints =>
+      selectFrom(
+        ~allEntities=(state->IndexerState.persistence).allEntities,
+        ~lastPrunedAtMillis=state->IndexerState.lastPrunedAtMillis,
+        ~writtenEntityNames,
+        ~isRollback,
+        ~nowMillis=Date.now(),
+        ~intervalMillis=Env.ThrottleWrites.pruneStaleDataIntervalMillis->Int.toFloat,
+        ~safeCheckpoints,
       )
-    }
+    )
   } else {
     None
   }
@@ -161,19 +146,24 @@ let pruneEntity = async (
   | exception exn =>
     // Pruning is cleanup; a failure must not fail the write loop.
     Logging.createChild(
-      ~params={"entityName": entityConfig.name},
+      ~params={"entityName": entityConfig.name, "safeCheckpoints": safeCheckpoints},
     )->Logging.childErrorWithExn(exn->Utils.prettifyExn, `Failed to prune stale entity history`)
   }
 }
 
 let pruneEntities = (state: IndexerState.t, ~entities, ~safeCheckpoints) =>
-  entities->Utils.Array.awaitEach(entityConfig => state->pruneEntity(~entityConfig, ~safeCheckpoints))
+  entities->Utils.Array.awaitEach(entityConfig =>
+    state->pruneEntity(~entityConfig, ~safeCheckpoints)
+  )
 
 let pruneCheckpoints = async (state: IndexerState.t, ~safeCheckpoints) => {
   switch await (state->IndexerState.persistence).storage.pruneStaleCheckpoints(~safeCheckpoints) {
   | () => ()
   | exception exn =>
-    Logging.errorWithExn(exn->Utils.prettifyExn, `Failed to prune stale checkpoints`)
+    Logging.createChild(~params={"safeCheckpoints": safeCheckpoints})->Logging.childErrorWithExn(
+      exn->Utils.prettifyExn,
+      `Failed to prune stale checkpoints`,
+    )
   }
 }
 

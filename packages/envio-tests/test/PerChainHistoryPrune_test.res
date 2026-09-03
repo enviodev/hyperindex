@@ -4,8 +4,7 @@ open Vitest
 // below which a rollback can no longer reach. A schema whose chains can't have
 // written each other's rows prunes each chain's history down to that chain's own
 // safe checkpoint, instead of holding every chain at the lowest one any of them
-// has reached. A chain whose head barely moves has a safe checkpoint that barely
-// moves with it, and used to pin every sibling's history in place.
+// has reached.
 
 type counter = {
   id: string,
@@ -103,6 +102,27 @@ chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
 `,
 )
 
+// A chain with no reorg depth can't be rolled back, so with no cross-chain
+// entity to let a sibling's rollback reach its rows, it has no history to keep
+// and everything it has committed is safe to prune.
+let zeroDepthScenario = Scenario.make(
+  ~schema,
+  ~configYaml=`
+name: per-chain-prune-zero-depth
+rollback_on_reorg: true
+disable_default_cross_chain: true
+contracts:
+  - name: Token
+    events:
+      - event: Transfer()
+chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
+      1337,
+      ~startBlock=1,
+      ~maxReorgDepth=0,
+    )}
+`,
+)
+
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
 let setCounter = (~block, ~count: bigint): MockSource.itemMock => {
@@ -122,27 +142,15 @@ let counterHistory = (indexer: IndexerRunner.t): promise<array<Change.t<counter>
 let checkpointsByChain = async (indexer: IndexerRunner.t) =>
   (await indexer.queryCheckpoints())->Array.map(({id, chainId}) => (id, chainId->ChainId.toInt))
 
-let startAt = async (~t: Vitest.testContext, ~source: MockSource.t, ~head) => {
-  await Utils.delay(0)
-  t.expect(
-    source.getHeightOrThrowCalls->Array.length,
-    ~message="should have called getHeightOrThrow to get initial height",
-  ).toEqual(1)
-  source.resolveGetHeightOrThrow(head)
-  await Utils.delay(0)
-  await Utils.delay(0)
-}
-
 // Both chains index inside their reorg threshold from the first block they
 // fetch, so neither starts with a checkpoint at the threshold boundary. The
 // lagging chain's reorg depth reaches below its own head, so it never has a safe
-// checkpoint at all — the case that used to pin every sibling's history in
-// place. Chain 100's head then runs on to 130, which leaves its blocks 111 and
-// 112 below its own safe block and its block 120 above it.
+// checkpoint at all. Chain 100's head then runs on to 130, which leaves its
+// blocks 111 and 112 below its own safe block and its block 120 above it.
 let driveChain100Ahead = async (~t, ~indexer: IndexerRunner.t, ~source100, ~lagging) => {
   let _ = await Promise.all2((
-    startAt(~t, ~source=source100, ~head=120),
-    startAt(~t, ~source=lagging, ~head=110),
+    Scenario.resolveInitialHeight(~t, ~source=source100, ~head=120),
+    Scenario.resolveInitialHeight(~t, ~source=lagging, ~head=110),
   ))
 
   source100.MockSource.resolveGetItemsOrThrow(
@@ -230,8 +238,8 @@ describe("Per-chain history pruning", () => {
       let source200 = source(200)
 
       let _ = await Promise.all2((
-        startAt(~t, ~source=source100, ~head=120),
-        startAt(~t, ~source=source200, ~head=220),
+        Scenario.resolveInitialHeight(~t, ~source=source100, ~head=120),
+        Scenario.resolveInitialHeight(~t, ~source=source200, ~head=220),
       ))
 
       source100.resolveGetItemsOrThrow(
@@ -270,6 +278,53 @@ describe("Per-chain history pruning", () => {
           counterSet(~checkpointId=7n, ~chain=200, ~count=13n),
         ],
         [(2n, 100), (4n, 200), (5n, 100), (6n, 100), (7n, 200), (8n, 200)],
+      ))
+    },
+  )
+
+  // A prune runs once per interval, so the one after the restart is the one
+  // observed: it sees both chains' committed rows with a fresh interval.
+  zeroDepthScenario->Scenario.it(
+    "Writes no history for a chain with no reorg depth and prunes its checkpoints as they commit",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+      await driveChain100Ahead(~t, ~indexer, ~source100, ~lagging=source1337)
+
+      source1337.setAutoHeight(115)
+      source1337.resolveGetItemsOrThrow(
+        [setCounter(~block=113, ~count=21n)],
+        ~filter=MockSource.coveringBlock(111),
+        ~latestFetchedBlockNumber=115,
+      )
+      await indexer.getBatchWritePromise()
+      await indexer.waitUntilIdle()
+
+      source100.setAutoHeight(140)
+      let restarted = await indexer.restart()
+      await Utils.delay(0)
+      await Utils.delay(0)
+      await Utils.delay(0)
+
+      source100.resolveGetItemsOrThrow(
+        [setCounter(~block=135, ~count=4n)],
+        ~filter=MockSource.coveringBlock(131),
+        ~latestFetchedBlockNumber=140,
+      )
+      await restarted.getBatchWritePromise()
+      await restarted.waitUntilIdle()
+
+      t.expect(
+        await Promise.all2((counterHistory(restarted), checkpointsByChain(restarted))),
+        ~message="Chain 1337 wrote no history and kept only its latest committed checkpoint; chain 100 pruned to its own safe checkpoint",
+      ).toEqual((
+        [
+          counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
+          counterSet(~checkpointId=9n, ~chain=100, ~count=4n),
+        ],
+        [(5n, 100), (6n, 100), (8n, 1337), (9n, 100), (10n, 100)],
       ))
     },
   )

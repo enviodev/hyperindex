@@ -66,7 +66,7 @@ let createBatch: (
   ~batchSizeTarget: int,
   ~isRollback: bool,
 ) => Batch.t
-let getSafeCheckpointIdByChain: t => array<(ChainId.t, Internal.checkpointId)>
+let getSafeCheckpointIdByChain: t => array<(ChainId.t, option<Internal.checkpointId>)>
 
 // Accessors.
 let config: t => Config.t

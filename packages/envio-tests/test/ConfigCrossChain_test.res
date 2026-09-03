@@ -289,13 +289,19 @@ describe("Per-chain entity DDL", () => {
   })
 })
 
+let globalFloors = RollbackFloors.global(
+  ~floorCheckpointId=1n,
+  ~reorgChainId=1->ChainId.fromInt,
+  ~forkBlockNumber=0,
+)
+
 describe("Per-chain rollback and delete SQL", () => {
   it("Keys the removed-ids query on (id, chain id)", t => {
     t.expect(
       PgStorage.makeGetRollbackRemovedIdsQuery(
         ~entityConfig=counter,
         ~pgSchema="public",
-        ~chainPredicate="",
+        ~floors=globalFloors,
       ),
     ).toBe(`SELECT DISTINCT "id", "chainId"
   FROM "public"."envio_history_Counter"
@@ -312,7 +318,7 @@ describe("Per-chain rollback and delete SQL", () => {
     let query = PgStorage.makeGetRollbackPreTargetRowsQuery(
       ~entityConfig=counter,
       ~pgSchema="public",
-      ~chainPredicate="",
+      ~floors=globalFloors,
     )
     t.expect((
       query->String.includes(`SELECT DISTINCT ON ("id", "chainId")`),
@@ -351,18 +357,16 @@ describe("Per-chain rollback and delete SQL", () => {
         ~chainIdColumn=Some("chainId"),
         ~safeCheckpoints,
       )
-    let query = makeQuery(SafeCheckpoints.EveryChain(10n))
-    // Chains pruning to their own safe checkpoints join every bound in at once,
-    // so the anchors are still derived in a single pass over the table.
+    let query = makeQuery(CheckpointBounds.EveryChain(10n))
     let perChain = makeQuery(
-      SafeCheckpoints.PerChain([(1->ChainId.fromInt, 10n), (137->ChainId.fromInt, 20n)]),
+      CheckpointBounds.PerChain([(1->ChainId.fromInt, 10n), (137->ChainId.fromInt, 20n)]),
     )
     t.expect((
       query->String.includes(`GROUP BY t.id, t."chainId"`),
       query->String.includes(`WHERE d.id = a.id AND d."chainId" = a."chainId"`),
       query->String.includes(`envio_bounds`),
       perChain->String.includes(
-        `JOIN unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, safe_checkpoint_id) ON envio_bounds.chain_id = t."chainId"`,
+        `JOIN unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, checkpoint_id) ON envio_bounds.chain_id = t."chainId"`,
       ),
       perChain->String.includes(`AND d.envio_checkpoint_id <= a.safe_checkpoint_id`),
     )).toEqual((true, true, false, true, true))
@@ -414,7 +418,7 @@ describe("Per-chain entities under snake_case columns", () => {
       PgStorage.makeGetRollbackRemovedIdsQuery(
         ~entityConfig=snakeCounter,
         ~pgSchema="public",
-        ~chainPredicate="",
+        ~floors=globalFloors,
       )->String.includes(`SELECT DISTINCT "id", "chain_id"`),
     )).toEqual((
       `CREATE TABLE IF NOT EXISTS "public"."Counter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, "chain_id" INTEGER NOT NULL, PRIMARY KEY("id", "chain_id"));`,

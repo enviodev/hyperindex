@@ -1106,6 +1106,8 @@ let rec writeBatch = async (
       | Internal.CrossChain => None
       | Chain(chainId) => Some(chainId)
       }
+      let shouldSaveHistory =
+        config->Config.shouldSaveHistory(~isInReorgThreshold, ~chainId=?scopeChainId)
       let changes = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
       | (Some(field), Some(chainId)) =>
         changes->Array.map(change =>
@@ -1488,7 +1490,7 @@ let rollbackKeyColumns = (entityConfig: Internal.entityConfig) =>
 let makeGetRollbackPreTargetRowsQuery = (
   ~entityConfig: Internal.entityConfig,
   ~pgSchema,
-  ~chainPredicate,
+  ~floors: RollbackFloors.t,
 ) => {
   let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
@@ -1513,15 +1515,20 @@ let makeGetRollbackPreTargetRowsQuery = (
     keyColumns
     ->Array.map(c => `h."${c}" = "${historyTableName}"."${c}"`)
     ->Array.joinUnsafe(" AND ")
+  let bounds =
+    floors.floors->CheckpointBounds.sql(
+      ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+      ~tableRef=`"${historyTableName}"`,
+    )
 
   `SELECT DISTINCT ON (${keyColumnsCommaSeparated}) ${dataFieldsCommaSeparated}, "${EntityHistory.changeFieldName}"
-  FROM "${pgSchema}"."${historyTableName}"
-  WHERE "${EntityHistory.checkpointIdFieldName}" <= $1${chainPredicate}
+  FROM "${pgSchema}"."${historyTableName}"${bounds.join}
+  WHERE "${EntityHistory.checkpointIdFieldName}" <= ${bounds.checkpointId}
     AND EXISTS (
       SELECT 1
       FROM "${pgSchema}"."${historyTableName}" h
       WHERE ${keyMatch}
-        AND h."${EntityHistory.checkpointIdFieldName}" > $1
+        AND h."${EntityHistory.checkpointIdFieldName}" > ${bounds.checkpointId}
     )
   ORDER BY ${keyColumnsCommaSeparated}, "${EntityHistory.checkpointIdFieldName}" DESC`
 }
@@ -1531,7 +1538,7 @@ let makeGetRollbackPreTargetRowsQuery = (
 let makeGetRollbackRemovedIdsQuery = (
   ~entityConfig: Internal.entityConfig,
   ~pgSchema,
-  ~chainPredicate,
+  ~floors: RollbackFloors.t,
 ) => {
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
@@ -1542,15 +1549,20 @@ let makeGetRollbackRemovedIdsQuery = (
     keyColumns
     ->Array.map(c => `h."${c}" = "${historyTableName}"."${c}"`)
     ->Array.joinUnsafe(" AND ")
+  let bounds =
+    floors.floors->CheckpointBounds.sql(
+      ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+      ~tableRef=`"${historyTableName}"`,
+    )
 
   `SELECT DISTINCT ${keyColumns->Array.map(c => `"${c}"`)->Array.joinUnsafe(", ")}
-  FROM "${pgSchema}"."${historyTableName}"
-  WHERE "${EntityHistory.checkpointIdFieldName}" > $1${chainPredicate}
+  FROM "${pgSchema}"."${historyTableName}"${bounds.join}
+  WHERE "${EntityHistory.checkpointIdFieldName}" > ${bounds.checkpointId}
     AND NOT EXISTS (
       SELECT 1
       FROM "${pgSchema}"."${historyTableName}" h
       WHERE ${keyMatch}
-        AND h."${EntityHistory.checkpointIdFieldName}" <= $1
+        AND h."${EntityHistory.checkpointIdFieldName}" <= ${bounds.checkpointId}
     )`
 }
 
@@ -2400,30 +2412,24 @@ let make = (
   let getRollbackProgressDiff = (~floors) =>
     InternalTable.Checkpoints.getRollbackProgressDiff(sql, ~pgSchema, ~floors)
 
-  let getRollbackData = async (~entityConfig: Internal.entityConfig, ~floors) => {
-    let statementResults = await floors
-    ->RollbackFloors.statements(~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn)
-    ->Array.map(({chainPredicate, params}) =>
-      Promise.all2((
-        // Get IDs of entities that should be deleted (created after rollback target with no prior history)
-        sql
-        ->Postgres.preparedUnsafe(
-          makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema, ~chainPredicate),
-          params,
-        )
-        ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
-        // Get the latest pre-target row, including its SET or DELETE action.
-        sql
-        ->Postgres.preparedUnsafe(
-          makeGetRollbackPreTargetRowsQuery(~entityConfig, ~pgSchema, ~chainPredicate),
-          params,
-        )
-        ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
-      ))
-    )
-    ->Promise.all
-    let removedIdRows = statementResults->Array.map(((rows, _)) => rows)->Array.flat
-    let rollbackRows = statementResults->Array.map(((_, rows)) => rows)->Array.flat
+  let getRollbackData = async (~entityConfig: Internal.entityConfig, ~floors: RollbackFloors.t) => {
+    let params = floors.floors->CheckpointBounds.params
+    let (removedIdRows, rollbackRows) = await Promise.all2((
+      // Get IDs of entities that should be deleted (created after rollback target with no prior history)
+      sql
+      ->Postgres.preparedUnsafe(
+        makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema, ~floors),
+        params,
+      )
+      ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
+      // Get the latest pre-target row, including its SET or DELETE action.
+      sql
+      ->Postgres.preparedUnsafe(
+        makeGetRollbackPreTargetRowsQuery(~entityConfig, ~pgSchema, ~floors),
+        params,
+      )
+      ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
+    ))
 
     let chainIdSchema = rollbackChainIdSchema(entityConfig.table)
     let scopeOf = row =>

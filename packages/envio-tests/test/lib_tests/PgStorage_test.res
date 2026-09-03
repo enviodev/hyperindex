@@ -988,11 +988,11 @@ SELECT * FROM unnest($1::BIGINT[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::INT
       async t => {
         let query = InternalTable.Checkpoints.makePruneStaleCheckpointsQuery(
           ~pgSchema="test_schema",
-          ~safeCheckpoints=SafeCheckpoints.EveryChain(10n),
+          ~safeCheckpoints=CheckpointBounds.EveryChain(10n),
         )
         let narrowed = InternalTable.Checkpoints.makePruneStaleCheckpointsQuery(
           ~pgSchema="test_schema",
-          ~safeCheckpoints=SafeCheckpoints.PerChain([(137->ChainId.fromInt, 20n)]),
+          ~safeCheckpoints=CheckpointBounds.PerChain([(137->ChainId.fromInt, 20n)]),
         )
 
         t.expect(
@@ -1000,9 +1000,7 @@ SELECT * FROM unnest($1::BIGINT[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::INT
           ~message="Prune stale checkpoints SQL should match exactly",
         ).toEqual((
           `DELETE FROM "test_schema"."envio_checkpoints" WHERE "id" < $1;`,
-          `DELETE FROM "test_schema"."envio_checkpoints" USING unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, safe_checkpoint_id)
-WHERE "test_schema"."envio_checkpoints"."chain_id" = envio_bounds.chain_id
-  AND "test_schema"."envio_checkpoints"."id" < envio_bounds.safe_checkpoint_id;`,
+          `DELETE FROM "test_schema"."envio_checkpoints" USING unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, checkpoint_id) WHERE "id" < envio_bounds.checkpoint_id AND envio_bounds.chain_id = "test_schema"."envio_checkpoints"."chain_id";`,
         ))
       },
     )
@@ -1034,22 +1032,45 @@ LIMIT 1;`
     Async.it(
       "Should create correct SQL for rollback progress diff",
       async t => {
-        let query = InternalTable.Checkpoints.makeGetRollbackProgressDiffQuery(
-          ~pgSchema="test_schema",
-          ~chainPredicate="",
+        let makeQuery = floors =>
+          InternalTable.Checkpoints.makeGetRollbackProgressDiffQuery(
+            ~pgSchema="test_schema",
+            ~floors,
+          )
+        let query = makeQuery(
+          RollbackFloors.global(
+            ~floorCheckpointId=10n,
+            ~reorgChainId=137->ChainId.fromInt,
+            ~forkBlockNumber=100,
+          ),
+        )
+        let narrowed = makeQuery(
+          RollbackFloors.isolated(
+            ~chainId=137->ChainId.fromInt,
+            ~floorCheckpointId=10n,
+            ~forkBlockNumber=100,
+          ),
         )
 
-        let expectedQuery = `SELECT 
-  "chain_id"::float8 as "chain_id",
-  SUM("events_processed") as events_processed_diff,
-  MIN("block_number") - 1 as new_progress_block_number
-FROM "test_schema"."envio_checkpoints"
-WHERE "id" > $1
-GROUP BY "chain_id";`
-
-        t.expect(query, ~message="Rollback progress diff SQL should match exactly").toBe(
-          expectedQuery,
-        )
+        t.expect(
+          (query, narrowed),
+          ~message="Rollback progress diff SQL should match exactly",
+        ).toEqual((
+          `SELECT 
+  t."chain_id"::float8 as "chain_id",
+  SUM(t."events_processed") as events_processed_diff,
+  MIN(t."block_number") - 1 as new_progress_block_number
+FROM "test_schema"."envio_checkpoints" t
+WHERE t."id" > $1
+GROUP BY t."chain_id";`,
+          `SELECT 
+  t."chain_id"::float8 as "chain_id",
+  SUM(t."events_processed") as events_processed_diff,
+  MIN(t."block_number") - 1 as new_progress_block_number
+FROM "test_schema"."envio_checkpoints" t JOIN unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, checkpoint_id) ON envio_bounds.chain_id = t."chain_id"
+WHERE t."id" > envio_bounds.checkpoint_id
+GROUP BY t."chain_id";`,
+        ))
       },
     )
   })

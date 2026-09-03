@@ -1037,10 +1037,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
 // another chain owns, so its rollback stays isolated to that chain instead of
 // dragging every sibling back with it. A single chain has no sibling to spare,
 // and narrowing its rollback would only buy it a predicate that always holds.
-//
-// History pruning follows: a rollback that only ever reaches the chain that
-// reorged can never reach below that chain's own safe checkpoint, so each chain
-// prunes to its own rather than to the lowest any of them has reached.
 let isIsolatedMultichain = (config: t) =>
   config.chainMap->ChainMap.keys->Array.length > 1 &&
     config.userEntities->Array.every(entityConfig => !entityConfig.crossChain)
@@ -1116,8 +1112,17 @@ let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<Cha
   })
 }
 
-let shouldSaveHistory = (config, ~isInReorgThreshold) =>
-  config.shouldSaveFullHistory || (config.shouldRollbackOnReorg && isInReorgThreshold)
+// A chain that can't be rolled back (maxReorgDepth = 0) has no history to keep,
+// unless a cross-chain entity lets another chain's rollback reach its rows.
+let shouldSaveHistory = (config, ~isInReorgThreshold, ~chainId: option<ChainId.t>=?) =>
+  config.shouldSaveFullHistory ||
+  (config.shouldRollbackOnReorg &&
+  isInReorgThreshold &&
+  switch chainId {
+  | Some(chainId) if config->isIsolatedMultichain =>
+    (config.chainMap->ChainMap.get(chainId)).maxReorgDepth > 0
+  | _ => true
+  })
 
 let shouldPruneHistory = (config, ~isInReorgThreshold) =>
   !config.shouldSaveFullHistory && (config.shouldRollbackOnReorg && isInReorgThreshold)

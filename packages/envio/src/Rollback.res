@@ -129,11 +129,10 @@ and executeRollback = async (
 
   // The diff computed here replaces a pending one rather than merging with it,
   // so its deletes have to cover everything that one would have deleted. The
-  // merge is a pointwise minimum over the floors, so each chain keeps the lower
-  // of the two — including a chain only the pending rollback touched. The flush
-  // above leaves a diff pending only when no batch has come along to carry it.
+  // flush above leaves a diff pending only when no batch has come along to
+  // carry it.
   let floors = {
-    let floors = if state->IndexerState.config->Config.isIsolatedMultichain {
+    let next = if state->IndexerState.config->Config.isIsolatedMultichain {
       RollbackFloors.isolated(
         ~chainId=reorgChain,
         ~floorCheckpointId=rollbackTargetCheckpointId,
@@ -141,15 +140,14 @@ and executeRollback = async (
       )
     } else {
       RollbackFloors.global(
-        ~chainIds=(state->IndexerState.config).chainMap->ChainMap.keys,
         ~floorCheckpointId=rollbackTargetCheckpointId,
         ~reorgChainId=reorgChain,
         ~forkBlockNumber=rollbackTargetBlockNumber,
       )
     }
     switch state->IndexerState.pendingRollback {
-    | None => floors
-    | Some({floors: pending}) => RollbackFloors.merge(pending, floors)
+    | None => next
+    | Some({floors: pending}) => RollbackFloors.merge(pending, next)
     }
   }
 
@@ -187,18 +185,15 @@ and executeRollback = async (
     let progressDiff = progressDiffByChain->ChainId.Dict.dangerouslyGetNonOption(chainId)
     let killedAddresses = cs->ChainState.rollback(
       ~rolledBackTo=switch (progressDiff, floors->RollbackFloors.forkBlockNumber(chainId)) {
-      // Progress recomputed from the surviving checkpoints can sit above the
-      // fork, when the chain has no checkpoint between the two. The blocks in
-      // between carried no events on the orphaned chain, but the chain replacing
-      // them can have its own, so they all have to be re-indexed.
-      | (Some(progressDiff), Some(forkBlockNumber)) =>
+      | (Some(progressDiff), forkBlockNumber) =>
         RecomputedProgress({
           ...progressDiff,
-          blockNumber: Pervasives.min(progressDiff.blockNumber, forkBlockNumber),
+          blockNumber: forkBlockNumber->Option.mapOr(progressDiff.blockNumber, forkBlockNumber =>
+            Pervasives.min(progressDiff.blockNumber, forkBlockNumber)
+          ),
         })
-      | (Some(progressDiff), None) => RecomputedProgress(progressDiff)
       // Nothing of this chain's is above its floor, so there are no checkpoints
-      // to recompute from — its own fork block is where it belongs.
+      // to recompute from.
       | (None, Some(forkBlockNumber)) => ForkBlock(forkBlockNumber)
       | (None, None) => Untouched
       },

@@ -105,43 +105,33 @@ let makePruneStaleEntityHistoryQuery = (
   ~entityIndex,
   ~pgSchema,
   ~chainIdColumn,
-  ~safeCheckpoints: SafeCheckpoints.t,
+  ~safeCheckpoints: CheckpointBounds.t,
 ) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   let keyColumns = makeKeyColumns(~chainIdColumn)
   let anchorKeys = keyColumns->Array.map(column => `t.${column}`)->Array.joinUnsafe(", ")
-
-  // Every chain's bound is joined in from one relation rather than run as a
-  // statement each: the anchors below aggregate the whole table however narrow
-  // the bound is, and history carries no index to narrow the scan with, so a
-  // statement per chain would be a pass over the table per chain.
-  let (bound, boundsJoin, boundOut, boundIn) = switch (chainIdColumn, safeCheckpoints) {
-  | (Some(column), PerChain(_)) => (
-      SafeCheckpoints.boundsCheckpointId,
-      ` JOIN ${SafeCheckpoints.boundsRelation} ON ${SafeCheckpoints.boundsChainId} = t."${column}"`,
-      `,
-    MIN(${SafeCheckpoints.boundsCheckpointId}) AS safe_checkpoint_id`,
-      "a.safe_checkpoint_id",
-    )
-  | _ => ("$1", "", "", "$1")
-  }
+  let bounds = safeCheckpoints->CheckpointBounds.sql(~chainIdColumn, ~tableRef="t")
 
   // Whether a key still has a row above the safe checkpoint is an aggregate
   // over the same groups as the anchor, so it's computed in the one pass
-  // rather than as a per-row correlated lookup.
-  // `d.envio_checkpoint_id <= $1` is implied by the rest of the predicate — it
+  // rather than as a per-row correlated lookup. The DELETE's `<=` on the row
   // is there to keep the rows above the safe checkpoint out of the join.
+  //
+  // Per-chain bounds are joined in rather than run as a statement each: the
+  // anchors aggregate the whole table however narrow the bound is, and history
+  // carries no index to narrow the scan with.
   `WITH anchors AS (
   SELECT ${anchorKeys},
-    MAX(t.${checkpointIdFieldName}) FILTER (WHERE t.${checkpointIdFieldName} <= ${bound}) AS keep_checkpoint_id,
-    bool_or(t.${checkpointIdFieldName} > ${bound}) AS has_above${boundOut}
-  FROM ${historyTableRef} t${boundsJoin}
+    MAX(t.${checkpointIdFieldName}) FILTER (WHERE t.${checkpointIdFieldName} <= ${bounds.checkpointId}) AS keep_checkpoint_id,
+    bool_or(t.${checkpointIdFieldName} > ${bounds.checkpointId}) AS has_above,
+    MIN(${bounds.checkpointId}) AS safe_checkpoint_id
+  FROM ${historyTableRef} t${bounds.join}
   GROUP BY ${anchorKeys}
 )
 DELETE FROM ${historyTableRef} d
 USING anchors a
 WHERE ${makeKeyMatch(~chainIdColumn, ~left="d", ~right="a")}
-  AND d.${checkpointIdFieldName} <= ${boundIn}
+  AND d.${checkpointIdFieldName} <= a.safe_checkpoint_id
   AND (d.${checkpointIdFieldName} < a.keep_checkpoint_id OR NOT a.has_above);`
 }
 
@@ -153,20 +143,16 @@ let pruneStaleEntityHistory = (
   ~chainIdColumn,
   ~safeCheckpoints,
 ): promise<unit> =>
-  switch safeCheckpoints->SafeCheckpoints.forTable(~chainIdColumn) {
-  | None => Promise.resolve()
-  | Some(safeCheckpoints) =>
-    sql->Postgres.preparedUnsafe(
-      makePruneStaleEntityHistoryQuery(
-        ~entityName,
-        ~entityIndex,
-        ~pgSchema,
-        ~chainIdColumn,
-        ~safeCheckpoints,
-      ),
-      safeCheckpoints->SafeCheckpoints.params,
-    )
-  }
+  sql->Postgres.preparedUnsafe(
+    makePruneStaleEntityHistoryQuery(
+      ~entityName,
+      ~entityIndex,
+      ~pgSchema,
+      ~chainIdColumn,
+      ~safeCheckpoints,
+    ),
+    safeCheckpoints->CheckpointBounds.params,
+  )
 
 // If an entity doesn't have a history before the update
 // we create it automatically with envio_checkpoint_id 0
@@ -237,17 +223,12 @@ let rollback = (
   ~chainIdColumn,
   ~floors: RollbackFloors.t,
 ) => {
-  floors
-  ->RollbackFloors.statements(~chainIdColumn)
-  ->Array.map(({chainPredicate, params}) =>
-    sql->Postgres.preparedUnsafe(
-      `DELETE FROM "${pgSchema}"."${historyTableName(
-          ~entityName,
-          ~entityIndex,
-        )}" WHERE "${checkpointIdFieldName}" > $1${chainPredicate};`,
-      params,
-    )
+  let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
+  let bounds = floors.floors->CheckpointBounds.sql(~chainIdColumn, ~tableRef=historyTableRef)
+  sql
+  ->Postgres.preparedUnsafe(
+    `DELETE FROM ${historyTableRef}${bounds.using} WHERE "${checkpointIdFieldName}" > ${bounds.checkpointId}${bounds.usingMatch};`,
+    floors.floors->CheckpointBounds.params,
   )
-  ->Promise.all
   ->Utils.Promise.ignoreValue
 }
