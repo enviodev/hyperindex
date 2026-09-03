@@ -161,7 +161,7 @@ module EventItems = {
     path: array<int>,
     programId: string,
     accounts: array<string>,
-    data: string,
+    data: Uint8Array.t,
     isInner: bool,
     // Borsh-decoded args as a JS value tree (wide integers as bigint).
     // Non-null exactly when the routed registration selected `args`: an

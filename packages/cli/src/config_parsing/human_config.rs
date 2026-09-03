@@ -149,6 +149,17 @@ pub enum ColumnNameFormat {
     SnakeCase,
 }
 
+/// How the schema.graphql `Bytes` scalar reaches handlers and storage.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Default, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum BytesType {
+    /// `0x`-prefixed hex strings, stored as text.
+    #[default]
+    Hex,
+    /// `Uint8Array` values, stored as raw bytes (`BYTEA` in Postgres, `String` in ClickHouse).
+    Uint8Array,
+}
+
 // Hand-rolled instead of #[serde(untagged)]: the untagged derive swallows
 // errors from inside the variants, so a typo like `{defautl: true}` would
 // surface as "data did not match any variant" instead of the precise
@@ -406,6 +417,17 @@ impl HumanConfig {
             HumanConfig::Svm(human_config) => &human_config.base,
         }
     }
+
+    /// Only EVM and Fuel can pick: their existing projects predate raw bytes and
+    /// keep hex strings unless they opt in. SVM shipped with `Uint8Array` and has
+    /// nothing to keep compatible with.
+    pub fn bytes_type(&self) -> BytesType {
+        match &self {
+            HumanConfig::Evm(human_config) => human_config.bytes_type.unwrap_or_default(),
+            HumanConfig::Fuel(human_config) => human_config.bytes_type.unwrap_or_default(),
+            HumanConfig::Svm(_) => BytesType::Uint8Array,
+        }
+    }
 }
 
 impl Display for HumanConfig {
@@ -424,7 +446,7 @@ impl Display for HumanConfig {
 
 pub mod evm {
     use super::{ChainContract, ChainId, GlobalContract};
-    use crate::config_parsing::human_config::BaseConfig;
+    use crate::config_parsing::human_config::{BaseConfig, BytesType};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -487,6 +509,14 @@ pub mod evm {
         #[schemars(description = "Address format for Ethereum addresses: 'checksum' or \
                                   'lowercase' (default: checksum)")]
         pub address_format: Option<AddressFormat>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How the `Bytes` scalar in schema.graphql is represented. `hex` keeps \
+                           0x-prefixed hex strings stored as text, `uint8array` exposes \
+                           `Uint8Array` values in handlers and stores raw bytes (BYTEA in \
+                           Postgres, String in ClickHouse). (default: hex)"
+        )]
+        pub bytes_type: Option<BytesType>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -854,7 +884,7 @@ pub mod evm {
 pub mod fuel {
     use std::fmt::Display;
 
-    use crate::config_parsing::human_config::BaseConfig;
+    use crate::config_parsing::human_config::{BaseConfig, BytesType};
 
     use super::{ChainContract, ChainId, GlobalContract};
     use schemars::JsonSchema;
@@ -891,6 +921,14 @@ pub mod fuel {
                            false)"
         )]
         pub raw_events: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How the `Bytes` scalar in schema.graphql is represented. `hex` keeps \
+                           0x-prefixed hex strings stored as text, `uint8array` exposes \
+                           `Uint8Array` values in handlers and stores raw bytes (BYTEA in \
+                           Postgres, String in ClickHouse). (default: hex)"
+        )]
+        pub bytes_type: Option<BytesType>,
     }
 
     impl Display for HumanConfig {
@@ -1370,6 +1408,60 @@ mod tests {
     }
 
     #[test]
+    fn bytes_type_is_hex_unless_evm_or_fuel_opt_in_and_always_raw_on_svm() {
+        let evm = |extra: &str| {
+            super::HumanConfig::Evm(
+                serde_yaml::from_str::<HumanConfig>(&format!("name: t\nchains: []\n{extra}"))
+                    .unwrap(),
+            )
+        };
+        let fuel = |extra: &str| {
+            super::HumanConfig::Fuel(
+                serde_yaml::from_str::<fuel::HumanConfig>(&format!(
+                    "name: t\necosystem: fuel\nchains: []\n{extra}"
+                ))
+                .unwrap(),
+            )
+        };
+        let svm = |extra: &str| {
+            serde_yaml::from_str::<super::svm::HumanConfig>(&format!(
+                "name: t\necosystem: svm\nchains: []\n{extra}"
+            ))
+            .map(super::HumanConfig::Svm)
+            .map(|config: super::HumanConfig| config.bytes_type())
+            .map_err(|error: serde_yaml::Error| error.to_string())
+        };
+        assert_eq!(
+            (
+                evm("").bytes_type(),
+                evm("bytes_type: hex").bytes_type(),
+                evm("bytes_type: uint8array").bytes_type(),
+                fuel("").bytes_type(),
+                fuel("bytes_type: uint8array").bytes_type(),
+                svm(""),
+                svm("bytes_type: hex"),
+                serde_yaml::from_str::<HumanConfig>("name: t\nchains: []\nbytes_type: raw")
+                    .map(|_| ())
+                    .map_err(|error: serde_yaml::Error| error.to_string()),
+            ),
+            (
+                super::BytesType::Hex,
+                super::BytesType::Hex,
+                super::BytesType::Uint8Array,
+                super::BytesType::Hex,
+                super::BytesType::Uint8Array,
+                Ok(super::BytesType::Uint8Array),
+                Err("unknown field `bytes_type`".to_string()),
+                Err(
+                    "bytes_type: unknown variant `raw`, expected `hex` or `uint8array` at line 3 \
+                     column 13"
+                        .to_string()
+                ),
+            )
+        );
+    }
+
+    #[test]
     fn test_flatten_deserialize_local_contract() {
         let yaml = r#"
 name: Contract1
@@ -1560,6 +1652,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
+            bytes_type: None,
             chains: vec![fuel::Chain {
                 id: 0,
                 skip: None,
@@ -1613,6 +1706,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
+            bytes_type: None,
             chains: vec![],
         };
 

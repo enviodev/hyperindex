@@ -75,7 +75,7 @@ let mockResponse: SvmHyperSyncClient.EventItems.response = {
       path: [1],
       programId: metaplexProgramId,
       accounts: [],
-      data: "0x21",
+      data: Uint8Array.fromArray([0x21]),
       isInner: false,
       args: Null.null,
       logs: Null.null,

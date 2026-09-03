@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use napi::bindgen_prelude::Uint8Array;
 use napi_derive::napi;
 
 mod borsh_decoder;
@@ -31,7 +32,6 @@ use crate::transaction_store::TransactionStore;
 use config::SvmClientConfig;
 use query::SvmQuery;
 use selection::{route_instruction, SelectionBuilder, SvmProgramInput};
-use types::to_hex;
 
 /// Move the response's transactions and account activity into a
 /// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept in Rust so
@@ -388,9 +388,9 @@ pub struct EventItem {
     pub path: Vec<i64>,
     pub program_id: String,
     pub accounts: Vec<String>,
-    /// Raw instruction data, `0x`-prefixed hex; decoded params ride on
-    /// `args` when the registration carries a Borsh schema.
-    pub data: String,
+    /// Raw instruction data; decoded params ride on `args` when the
+    /// registration carries a Borsh schema.
+    pub data: Uint8Array,
     pub is_inner: bool,
     /// Borsh-decoded args as a JS value tree (wide integers as bigint);
     /// `Some` exactly when the routed registration selected `args`. An
@@ -528,7 +528,7 @@ fn build_event_items(
                         .collect(),
                     program_id: instr.executing_account.clone(),
                     accounts: instr.account_arguments.clone(),
-                    data: to_hex(&instr.data),
+                    data: instr.data.clone().into(),
                     is_inner: instr.is_inner,
                     args: decoded.clone().filter(|_| reg.args.is_some()),
                     logs: if !reg.log_columns.is_empty() {
@@ -860,10 +860,10 @@ mod tests {
                 .map(|i| (
                     i.on_event_registration_index,
                     i.transaction_index,
-                    i.data.as_str()
+                    i.data.to_vec()
                 ))
                 .collect::<Vec<_>>(),
-            vec![(0, 7, "0x21")]
+            vec![(0, 7, vec![0x21])]
         );
     }
 

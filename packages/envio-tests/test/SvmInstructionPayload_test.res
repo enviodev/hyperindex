@@ -110,6 +110,37 @@ describe("SVM handler fields registration", () => {
 })
 
 describe("SVM instruction payload assembly", () => {
+  it("hex-encodes the whole data as the discriminator of a program-wide registration", t => {
+    let reg = registrations()->Array.getUnsafe(0)
+    let eventConfig = {
+      ...reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig),
+      discriminator: None,
+    }
+    let item: SvmHyperSyncClient.EventItems.item = {
+      onEventRegistrationIndex: 0,
+      slot: 10,
+      transactionIndex: 1,
+      path: [0],
+      programId: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+      accounts: [],
+      data: Uint8Array.fromArray([0x09, 0xab, 0x00]),
+      isInner: false,
+      args: %raw(`{}`),
+      logs: Null.null,
+    }
+    let instruction = SvmHyperSyncSource.toSvmInstruction(
+      item,
+      ~programName="Swapper",
+      ~instructionName="swap",
+      ~eventConfig,
+      ~fieldSelection=reg.fieldSelection,
+    )
+    t.expect({"discriminator": instruction.discriminator, "data": instruction.data}).toEqual({
+      "discriminator": "0x09ab00",
+      "data": Some(Uint8Array.fromArray([0x09, 0xab, 0x00])),
+    })
+  })
+
   it("zips IDL names onto account arguments without an activity row", t => {
     let reg = registrations()->Array.getUnsafe(0)
     let eventConfig =
@@ -124,7 +155,7 @@ describe("SVM instruction payload assembly", () => {
         "Src111111111111111111111111111111111111111",
         "Dst111111111111111111111111111111111111111",
       ],
-      data: "0x09",
+      data: Uint8Array.fromArray([0x09]),
       isInner: false,
       args: %raw(`{}`),
       logs: Null.null,
@@ -181,7 +212,7 @@ describe("SVM instruction payload assembly", () => {
         path: [0],
         programId: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
         accounts: [],
-        data: "0x09",
+        data: Uint8Array.fromArray([0x09]),
         isInner: false,
         args: %raw(`{}`),
         logs: Null.null,
@@ -221,7 +252,7 @@ describe("SVM instruction payload assembly", () => {
         path: [0],
         programId: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
         accounts: [],
-        data: "0x09",
+        data: Uint8Array.fromArray([0x09]),
         isInner: false,
         args: %raw(`{}`),
         logs: Null.null,
@@ -246,7 +277,7 @@ describe("SVM instruction payload assembly", () => {
         path: [0],
         programId: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
         accounts: [],
-        data: "0x09",
+        data: Uint8Array.fromArray([0x09]),
         isInner: false,
         args: %raw(`{}`),
         logs: Null.make([

@@ -372,7 +372,15 @@ let parse = (
         | None => []
         }
       }
-      let data = item.data->Option.getOr(svmEventConfig.discriminator->Option.getOr("0x"))
+      let data = switch (item.data, svmEventConfig.discriminator) {
+      | (Some(data), _) => data
+      | (None, Some(discriminator)) =>
+        discriminator
+        ->String.replace("0x", "")
+        ->NodeJs.Buffer.fromHex
+        ->Uint8Array.fromArrayLikeOrIterable
+      | (None, None) => Uint8Array.fromLength(0)
+      }
       let args = item.args->Option.getOr(Dict.make()->(Utils.magic: dict<unknown> => unknown))
       let logs = item.logs->Option.map(logs =>
         logs->Array.map(
