@@ -244,7 +244,7 @@ let make = (
     name,
     sourceFor: Sync,
     chainId,
-    pollingInterval: 1000,
+    pollingInterval: HyperSync.pollingInterval,
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {

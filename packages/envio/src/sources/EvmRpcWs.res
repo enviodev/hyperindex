@@ -31,11 +31,15 @@ let responseIdSchema = S.nullable(
 )
 
 // The subscribe is the only request this socket ever sends, so an error naming
-// its id — or naming none at all, which is how JSON-RPC answers a request it
-// could not parse — is that subscription being refused.
-let refusesSubscribe = id =>
+// its id is that subscription being refused. So is one naming no id at all —
+// which is how JSON-RPC answers a request it could not parse — but only until
+// the node has confirmed the subscription: after that the request has had its
+// answer, and a null id belongs to whatever else the provider wants to say,
+// throttling most of all. Tearing a delivering subscription down over that
+// would reconnect against an endpoint already asking for less.
+let refusesSubscribe = (id, ~subscribed) =>
   switch id {
-  | None => true
+  | None => !subscribed
   | Some(id) => id === subscribeRequestIdText
   }
 
@@ -77,6 +81,7 @@ let wsMessageSchema = S.union([
 let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
   HeightStream.subscribe(~staleTimeout, ~onHeight, ~onStatus, ~connect=driver => {
     let ws = WebSocket.create(wsUrl)
+    let subscribed = ref(false)
 
     ws->WebSocket.onopen(() => ws->WebSocket.send(subscribeRequestJson))
 
@@ -93,8 +98,9 @@ let subscribe = (~wsUrl, ~onHeight, ~onStatus) =>
         // answering anything else would otherwise report a stream as live
         // without one ever having been subscribed.
         | Some(Response({id: Some(id), isError: false})) if id === subscribeRequestIdText =>
+          subscribed := true
           driver.onConnected()
-        | Some(Response({id, isError: true})) if id->refusesSubscribe =>
+        | Some(Response({id, isError: true})) if id->refusesSubscribe(~subscribed=subscribed.contents) =>
           driver.onFailure(~reason=SubscribeRejected, ~detail=text)
         // A provider talking about something other than the subscription this
         // socket asked for — a rate limit, a request nobody here made. Read

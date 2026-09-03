@@ -418,20 +418,28 @@ let handlePushedHeight = (feed: t, height) => {
 // nothing is pushing, nothing is proven, and what the waiters concluded about
 // the connection that is gone says nothing about the one that replaces it.
 let markStreamDown = (feed: t, ~reason) => {
-  switch feed.stream {
-  // Only a connection that existed can be lost. A stream that is down stays down
-  // through every failed retry, and each of those reports Down again; counting
-  // them would make the total measure how long an outage lasted rather than how
-  // many there were, and would leave a stream that has never connected
-  // disconnecting without ever having connected.
-  | Connected(_) => feed.disconnects->Utils.Dict.incrementBy(reason->Source.downReasonLabel, 1)
-  | NeverEnabled | Disconnected => ()
+  let hadConnection = switch feed.stream {
+  | Connected(_) => true
+  | NeverEnabled | Disconnected => false
   }
   feed.stream = Disconnected
-  // The connection they gave up on is gone; the one that replaces it starts with
-  // a head of its own to account for.
-  feed->trustStreamAgain
-  feed->syncPolling
+
+  // Only a connection that existed can be lost. A stream that is down stays down
+  // through every failed retry, and each of those reports Down again: counting
+  // them would make the total measure how long an outage lasted rather than how
+  // many there were, and would leave a stream that has never connected
+  // disconnecting without ever having connected. Nothing else here has anything
+  // to do either — no waiter can be distrusting a stream that was already down,
+  // and what this feed owes has not changed — and cutting the poll cadence short
+  // for each of them would ask the endpoint again on the schedule of its own
+  // stream's retries.
+  if hadConnection {
+    feed.disconnects->Utils.Dict.incrementBy(reason->Source.downReasonLabel, 1)
+    // The connection they gave up on is gone; the one that replaces it starts
+    // with a head of its own to account for.
+    feed->trustStreamAgain
+    feed->syncPolling
+  }
 }
 
 let handleStatus = (feed: t, status: Source.heightSubscriptionStatus) =>

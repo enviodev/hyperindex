@@ -205,7 +205,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     name,
     sourceFor: Sync,
     chainId,
-    pollingInterval: 100,
+    pollingInterval: HyperSync.pollingInterval,
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {

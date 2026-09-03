@@ -507,6 +507,33 @@ describe("HeightFeed stream state", () => {
     t.expect((pollsWhileSleeping, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((2, 3))
   })
 
+  Async.it("Does not re-poll for a retry that fails against an already down stream", async t => {
+    let mock = MockSource.make(
+      [#getHeightOrThrow, #createHeightSubscription],
+      ~pollingInterval=10_000,
+    )
+    let (feed, _stats) = makeFeed(mock)
+    feed->HeightFeed.enableStream
+
+    // Nothing has connected, so the loop is already covering this source. Its
+    // poll answers below the floor and it settles in for an interval.
+    let (_heights, _subscription) = feed->watch(~knownHeight=100, ~interval=() => 10_000)
+    mock.resolveGetHeightOrThrow(100)
+    await Utils.delay(0)
+    let pollsWhileSleeping = mock.getHeightOrThrowCalls->Array.length
+
+    // A stream that is down stays down through every failed retry, and each of
+    // those reports Down again. None of them changes what this feed owes, so
+    // none of them is a reason to ask the endpoint again — least of all the
+    // endpoint whose own stream is the thing failing.
+    mock.setHeightSubscriptionStatus(Down({reason: ConnectFailed}))
+    mock.setHeightSubscriptionStatus(Down({reason: ConnectFailed}))
+    mock.setHeightSubscriptionStatus(Down({reason: ConnectFailed}))
+    await Utils.delay(0)
+
+    t.expect((pollsWhileSleeping, mock.getHeightOrThrowCalls->Array.length)).toStrictEqual((1, 1))
+  })
+
   Async.it("Sits out the backoff when the stream drops while polls are failing", async t => {
     let mock = MockSource.make(
       [#getHeightOrThrow, #createHeightSubscription],

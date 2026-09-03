@@ -737,6 +737,40 @@ describe("EvmRpcWs", () => {
     t.expect(statuses).toStrictEqual(["down:subscribe-rejected", "down:subscribe-rejected"])
   })
 
+  Async.it("Keeps a delivering connection through a null-id error after subscribing", async t => {
+    // A null id is how JSON-RPC answers a request it could not parse, and
+    // before the subscribe is confirmed that can only be this stream's own
+    // request. Once the node has confirmed it, the answer has already been
+    // given: a later null-id error is the provider talking about something
+    // else — a throttle notice, a frame from another client — and tearing a
+    // delivering subscription down over it costs a reconnect against an
+    // endpoint that is already unhappy.
+    let (server, url) = await listenWs(
+      socket =>
+        socket->WsServer.onMessage(
+          data =>
+            if data->WsServer.toString->String.includes("eth_subscribe") {
+              socket->WsServer.send(`{"jsonrpc":"2.0","id":1,"result":"0xsub"}`)
+              socket->WsServer.send(`{"jsonrpc":"2.0","id":null,"error":{"code":-32029,"message":"rate limited"}}`)
+              socket->WsServer.send(`{"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"0xsub","result":{"number":"0x2a"}}}`)
+            },
+        ),
+    )
+    let statuses = []
+    let heights = []
+    let unsubscribe = EvmRpcWs.subscribe(
+      ~wsUrl=url,
+      ~onHeight=height => heights->Array.push(height)->ignore,
+      ~onStatus=status => statuses->Array.push(status->reasonLabel)->ignore,
+    )
+
+    await Scenario.waitUntil(() => heights->Array.length > 0, ~message="the height stream")
+    unsubscribe()
+    await Promise.make((resolve, _reject) => server->WsServer.close(() => resolve()))
+
+    t.expect((statuses, heights)).toStrictEqual((["live"], [42]))
+  })
+
   Async.it("Reads a subscription whose id the provider echoed as a string", async t => {
     // JSON-RPC ids are any scalar, and gateways do echo an int id back as a
     // string. Failing to match one costs the whole stale window before the
