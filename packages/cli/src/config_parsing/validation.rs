@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn contract_named_like_a_prototype_key_is_rejected() {
         let result = super::validate_names_valid_rescript(
-            &vec!["MyContract".to_string(), "__proto__".to_string()],
+            &["MyContract".to_string(), "__proto__".to_string()],
             "contract".to_string(),
         );
         assert_eq!(
@@ -444,7 +444,7 @@ mod tests {
     #[test]
     fn test_contract_names_validation() {
         let valid_result = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -454,7 +454,7 @@ mod tests {
         assert!(valid_result.is_ok());
 
         let reserved_names = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -473,7 +473,7 @@ mod tests {
         );
 
         let invalid_names = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),

@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use napi::bindgen_prelude::Uint8Array;
 use napi_derive::napi;
 
 mod borsh_decoder;
@@ -34,7 +35,6 @@ use borsh_decoder::InstructionSchemaInput;
 use config::SvmClientConfig;
 use query::SvmQuery;
 use selection::{route_instruction, SelectionBuilder, SvmOnEventRegistrationInput};
-use types::to_hex;
 
 /// Move the response's transactions and account activity into a
 /// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept in Rust so
@@ -477,9 +477,9 @@ pub struct EventItem {
     pub path: Vec<i64>,
     pub program_id: String,
     pub accounts: Vec<String>,
-    /// Raw instruction data, `0x`-prefixed hex; decoded params ride on
-    /// `args` when the registration carries a Borsh schema.
-    pub data: String,
+    /// Raw instruction data; decoded params ride on `args` when the
+    /// registration carries a Borsh schema.
+    pub data: Uint8Array,
     pub is_inner: bool,
     /// Borsh-decoded args as a JS value tree (wide integers as bigint), an
     /// empty object when the routed registration reads no args or the program
@@ -616,7 +616,7 @@ fn build_event_items(
                     .collect(),
                 program_id: instr.executing_account.clone(),
                 accounts: instr.account_arguments.clone(),
-                data: to_hex(&instr.data),
+                data: instr.data.clone().into(),
                 is_inner: instr.is_inner,
                 args: if reg.selects_args {
                     // A registration that declared no args reads an empty
@@ -901,12 +901,15 @@ mod tests {
                 .map(|i| (
                     i.on_event_registration_index,
                     i.transaction_index,
-                    i.data.as_str()
+                    i.data.to_vec()
                 ))
                 .collect::<Vec<_>>(),
-            vec![(0, 7, "0x21")]
+            vec![(0, 7, vec![0x21])]
         );
     }
+
+    /// `(on_event_registration_index, logs as (kind, message))`
+    type RegistrationLogs = (i64, Option<Vec<(Option<String>, Option<String>)>>);
 
     #[test]
     fn logs_attach_only_to_opted_in_registrations() {
@@ -940,7 +943,7 @@ mod tests {
             ..Default::default()
         };
         let items = route(&store, &set, &[instr], vec![log, unscoped_log], &built).unwrap();
-        let views: Vec<(i64, Option<Vec<(Option<String>, Option<String>)>>)> = items
+        let views: Vec<RegistrationLogs> = items
             .iter()
             .map(|i| {
                 (

@@ -1423,7 +1423,7 @@ type SvmSelectedInstruction<Fields extends SvmFieldsSelection, ProgInstr> = {
   readonly instructionName: string;
   readonly discriminator: string;
   readonly programId: SvmInstrField<Fields, "programId", string>;
-  readonly data: SvmInstrField<Fields, "data", string>;
+  readonly data: SvmInstrField<Fields, "data", Uint8Array>;
   readonly path: SvmInstrField<Fields, "path", readonly number[]>;
   readonly isInner: SvmInstrField<Fields, "isInner", boolean>;
   readonly args: SvmInstrField<
@@ -1937,8 +1937,8 @@ type SvmSimulateItem<Config extends IndexerConfigTypes = GlobalConfig> =
             path?: readonly number[];
             /** Override the program id. Defaults to the configured `program_id`. */
             programId?: string;
-            /** Raw instruction data, `0x`-prefixed hex. */
-            data?: string;
+            /** Raw instruction data. Defaults to the configured discriminator bytes. */
+            data?: Uint8Array;
             /** Whether this is a CPI-invoked inner instruction. */
             isInner?: boolean;
             /** Decoded args. Keys match the instruction's arg names. */

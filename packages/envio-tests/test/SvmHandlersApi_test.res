@@ -21,6 +21,15 @@ chains:
               accounts:
                 - source
                 - destination
+            - name: shape
+              discriminator: "0x0a"
+              args:
+                - { name: hash, type: { array: [u8, 32] } }
+                - { name: pair, type: { array: [u16, 2] } }
+                - { name: ids, type: { vec: u64 } }
+                - { name: payload, type: bytes }
+              accounts:
+                - source
 `
 
 let check = handlers =>
@@ -389,6 +398,28 @@ expectType<TypeEqual<keyof SvmAllTransactionFields, "transactionIndex" | "signat
 `)
   )
 
+  it("types u8 sequences as Uint8Array, vecs as readonly arrays and fixed arrays as tuples", _ =>
+    check(`
+import type { Global } from "envio";
+import { expectType, type TypeEqual } from "ts-expect";
+
+type Programs = Global extends { config: { svm: { programs: infer P } } } ? P : never;
+type Shape = Programs["Swapper"]["shape"]["args"];
+
+expectType<
+  TypeEqual<
+    Shape,
+    {
+      readonly hash: Uint8Array;
+      readonly pair: readonly [number, number];
+      readonly ids: readonly bigint[];
+      readonly payload: Uint8Array;
+    }
+  >
+>(true);
+`)
+  )
+
   it("unselected fields are FieldNotSelected when fields is omitted", _ =>
     check(`
 import { indexer } from "envio";
@@ -460,7 +491,7 @@ if (0) {
       expectType<TypeEqual<typeof instruction.accountArguments, readonly string[]>>(true);
       expectType<TypeEqual<typeof instruction.discriminator, string>>(true);
       expectType<TypeEqual<typeof instruction.programId, string>>(true);
-      expectType<TypeEqual<typeof instruction.data, string>>(true);
+      expectType<TypeEqual<typeof instruction.data, Uint8Array>>(true);
       expectType<TypeEqual<typeof instruction.path, readonly number[]>>(true);
       expectType<TypeEqual<typeof instruction.isInner, boolean>>(true);
       expectType<TypeEqual<typeof instruction.transaction.signature, string>>(true);
@@ -567,7 +598,7 @@ type Unbound = SvmInstruction<typeof fields>;
 expectType<TypeEqual<Unbound["args"], unknown>>(true);
 
 type AllInstr = SvmInstruction<SvmAllFieldsSelection, "Swapper", "swap">;
-expectType<TypeEqual<AllInstr["data"], string>>(true);
+expectType<TypeEqual<AllInstr["data"], Uint8Array>>(true);
 expectType<TypeEqual<AllInstr["isInner"], boolean>>(true);
 expectType<TypeEqual<AllInstr["transaction"]["fee"], bigint>>(true);
 expectType<TypeEqual<AllInstr["block"]["height"], number>>(true);

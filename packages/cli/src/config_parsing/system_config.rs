@@ -12,7 +12,7 @@ use super::{
             RpcSelection,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
-        svm, HumanConfig,
+        svm, BytesType, HumanConfig,
     },
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
@@ -83,6 +83,7 @@ trait ConfigSource {
         &self,
         configured_path: &Option<String>,
         default_scope: DefaultChainScope,
+        bytes_type: BytesType,
     ) -> Result<Schema>;
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
     fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
@@ -122,9 +123,15 @@ impl ConfigSource for FilesystemConfigSource<'_> {
         &self,
         configured_path: &Option<String>,
         default_scope: DefaultChainScope,
+        bytes_type: BytesType,
     ) -> Result<Schema> {
-        Schema::parse_from_file(self.project_paths, configured_path, default_scope)
-            .context("Parsing schema file for config")
+        Schema::parse_from_file(
+            self.project_paths,
+            configured_path,
+            default_scope,
+            bytes_type,
+        )
+        .context("Parsing schema file for config")
     }
 
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
@@ -211,14 +218,18 @@ impl ConfigSource for MemoryConfigSource<'_> {
         &self,
         configured_path: &Option<String>,
         default_scope: DefaultChainScope,
+        bytes_type: BytesType,
     ) -> Result<Schema> {
         // Parsed as given: schema errors carry the line and column they were
         // raised at, and trimming first would report them against text the
         // caller never wrote.
         match self.schema {
-            Some(schema) if !schema.trim().is_empty() => {
-                Schema::from_string_at(schema, default_scope, &schema_source_label(configured_path))
-            }
+            Some(schema) if !schema.trim().is_empty() => Schema::from_string_at(
+                schema,
+                default_scope,
+                bytes_type,
+                &schema_source_label(configured_path),
+            ),
             _ => Ok(Schema::empty()),
         }
     }
@@ -1579,7 +1590,11 @@ impl SystemConfig {
 
         let base_config = human_config.get_base_config();
         let default_scope = base_config.default_chain_scope();
-        let schema = source.load_schema(&base_config.schema, default_scope)?;
+        let schema = source.load_schema(
+            &base_config.schema,
+            default_scope,
+            human_config.bytes_type(),
+        )?;
         Self::from_human_config_with_source(human_config, schema, source)
     }
 }
@@ -3723,6 +3738,7 @@ chains:
     mod internal_relationship_validation {
         use super::super::validate_internal_relationships;
         use crate::config_parsing::entity_parsing::{DefaultChainScope, Schema};
+        use crate::config_parsing::human_config::BytesType;
 
         #[test]
         fn public_reference_to_internal_entity_rejected() {
@@ -3736,6 +3752,7 @@ type Secret @internal {
   id: ID!
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             let err = validate_internal_relationships(&schema)
@@ -3760,6 +3777,7 @@ type Order @internal {
   trader: Trader!
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             let err = validate_internal_relationships(&schema)
@@ -3788,6 +3806,7 @@ type SecretB @internal {
   entries: [SecretA!]! @derivedFrom(field: "other")
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             assert!(validate_internal_relationships(&schema).is_ok());
@@ -3800,12 +3819,12 @@ type SecretB @internal {
         use super::super::{validate_db_column_names, Storage};
         use crate::config_parsing::{
             entity_parsing::{DefaultChainScope, Schema},
-            human_config::ColumnNameFormat,
+            human_config::{BytesType, ColumnNameFormat},
         };
 
         // Cross-chain: these fixtures declare no chain column.
         fn parse_schema(schema: &str) -> Schema {
-            Schema::from_string(schema, DefaultChainScope::CrossChain).unwrap()
+            Schema::from_string(schema, DefaultChainScope::CrossChain, BytesType::Hex).unwrap()
         }
 
         fn storage(column_name_format: ColumnNameFormat) -> Storage {
@@ -3893,7 +3912,7 @@ type Transfer {
         use super::super::{validate_clickhouse_nullable_arrays, Storage, StorageBackend};
         use crate::config_parsing::{
             entity_parsing::{DefaultChainScope, Schema},
-            human_config::ColumnNameFormat,
+            human_config::{BytesType, ColumnNameFormat},
         };
 
         fn backend(entity_default: bool) -> Option<StorageBackend> {
@@ -3919,6 +3938,7 @@ type Foo @storage(postgres: true, clickhouse: true) {
   tags: [String!]!
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, false), &schema).is_ok());
@@ -3935,6 +3955,7 @@ type Foo @storage(postgres: true) {
   tags: [String!]
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_ok());
@@ -3952,6 +3973,7 @@ type Foo {
   tags: [String!]
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_err());
@@ -3967,6 +3989,7 @@ type Foo {
   tags: [String!]
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             let storage = Storage {

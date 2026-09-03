@@ -135,18 +135,38 @@ fn value_to_param(
         SvmFieldType::I64 | SvmFieldType::I128 => {
             ParamValue::from_i128(value.as_str()?.parse().ok()?)
         }
-        SvmFieldType::String | SvmFieldType::Bytes | SvmFieldType::Pubkey => {
-            ParamValue::Str(value.as_str()?.to_string())
-        }
+        SvmFieldType::String | SvmFieldType::Pubkey => ParamValue::Str(value.as_str()?.to_string()),
         SvmFieldType::Option(inner) => match value {
             Value::Null => ParamValue::Null,
             value => value_to_param(value, inner, defined_types)?,
         },
-        SvmFieldType::Array { ty: inner, len }
-            if matches!(**inner, SvmFieldType::U8) && *len == 32 =>
+        // Every u8 sequence reaches handlers as raw bytes. The upstream decoder
+        // renders them three ways: `bytes` as `0x` hex, `[u8; 32]` as base58
+        // on the assumption it is a pubkey (a schema declares a real pubkey as
+        // `pubkey`, so a 32-byte array is a hash, root or seed), and any other
+        // `vec<u8>` / `[u8; N]` as a number array.
+        SvmFieldType::Bytes => {
+            ParamValue::Bytes(crate::hex::decode_prefixed(value.as_str()?, "bytes").ok()?)
+        }
+        SvmFieldType::Array { ty, len } if matches!(**ty, SvmFieldType::U8) && *len == 32 => {
+            let bytes = bs58::decode(value.as_str()?).into_vec().ok()?;
+            if bytes.len() != 32 {
+                return None;
+            }
+            ParamValue::Bytes(bytes)
+        }
+        SvmFieldType::Vec(ty) | SvmFieldType::Array { ty, .. }
+            if matches!(**ty, SvmFieldType::U8) =>
         {
-            // `[u8; 32]` decodes as a base58 string (treated as a pubkey).
-            ParamValue::Str(value.as_str()?.to_string())
+            let Value::Array(items) = value else {
+                return None;
+            };
+            ParamValue::Bytes(
+                items
+                    .into_iter()
+                    .map(|item| u8::try_from(item.as_u64()?).ok())
+                    .collect::<Option<_>>()?,
+            )
         }
         SvmFieldType::Vec(inner) | SvmFieldType::Array { ty: inner, .. } => {
             let Value::Array(items) = value else {
@@ -161,17 +181,22 @@ fn value_to_param(
         }
         SvmFieldType::Struct(fields) => args_to_param(value, fields, defined_types)?,
         SvmFieldType::Enum(variants) => {
-            // Externally tagged: `{ VariantName: <body> }`.
+            // Upstream renders every variant externally tagged, `{ Name: <body> }`.
+            // A variant without fields (unit, or a struct variant with an empty
+            // field list - the wire format is identical) collapses to its bare
+            // name so handlers compare it as a string.
             let Value::Object(obj) = value else {
                 return None;
             };
             let (name, body) = obj.into_iter().next()?;
             let variant = variants.iter().find(|v| v.name == name)?;
-            let body = match &variant.fields {
-                None => ParamValue::Obj(vec![]),
-                Some(fields) => args_to_param(body, fields, defined_types)?,
-            };
-            ParamValue::Obj(vec![(name, body)])
+            match variant.fields.as_deref() {
+                None | Some([]) => ParamValue::Str(name),
+                Some(fields) => {
+                    let body = args_to_param(body, fields, defined_types)?;
+                    ParamValue::Obj(vec![(name, body)])
+                }
+            }
         }
         SvmFieldType::Defined(name) => {
             value_to_param(value, defined_types.get(name)?, defined_types)?
@@ -310,6 +335,72 @@ mod tests {
         );
     }
 
+    // Borsh `bytes` reaches handlers as a Uint8Array, not a hex string:
+    // Solana tooling takes raw bytes and nothing on that side speaks hex.
+    #[test]
+    fn bytes_decode_as_raw_bytes() {
+        let schema = schema_of(
+            r#"[
+                {"name":"payload","type":"bytes"},
+                {"name":"empty","type":"bytes"}
+            ]"#,
+            "{}",
+        );
+        let mut data = vec![0x01];
+        data.extend_from_slice(&3u32.to_le_bytes());
+        data.extend_from_slice(&[0xde, 0xad, 0x00]);
+        data.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(
+            decode_with_schema(&schema, &instruction_with_data(data)),
+            Decoded::Args(obj(vec![
+                ("payload", ParamValue::Bytes(vec![0xde, 0xad, 0x00])),
+                ("empty", ParamValue::Bytes(vec![])),
+            ]))
+        );
+    }
+
+    // `vec<u8>` is byte-for-byte the same wire format as `bytes`, and a
+    // fixed `[u8; N]` is a blob too, so neither may come back as `number[]`,
+    // nor as base58 when N happens to be 32.
+    #[test]
+    fn u8_sequences_decode_as_raw_bytes() {
+        let schema = schema_of(
+            r#"[
+                {"name":"vec","type":{"vec":"u8"}},
+                {"name":"fixed","type":{"array":["u8",4]}},
+                {"name":"nested","type":{"vec":{"array":["u8",2]}}},
+                {"name":"hash","type":{"array":["u8",32]}},
+                {"name":"notBytes","type":{"array":["u16",2]}}
+            ]"#,
+            "{}",
+        );
+        let mut data = vec![0x01];
+        data.extend_from_slice(&2u32.to_le_bytes());
+        data.extend_from_slice(&[0xff, 0x00]);
+        data.extend_from_slice(&[1, 2, 3, 4]);
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&[9, 8]);
+        data.extend_from_slice(&[0xab; 32]);
+        data.extend_from_slice(&7u16.to_le_bytes());
+        data.extend_from_slice(&8u16.to_le_bytes());
+        assert_eq!(
+            decode_with_schema(&schema, &instruction_with_data(data)),
+            Decoded::Args(obj(vec![
+                ("vec", ParamValue::Bytes(vec![0xff, 0x00])),
+                ("fixed", ParamValue::Bytes(vec![1, 2, 3, 4])),
+                (
+                    "nested",
+                    ParamValue::Arr(vec![ParamValue::Bytes(vec![9, 8])])
+                ),
+                ("hash", ParamValue::Bytes(vec![0xab; 32])),
+                (
+                    "notBytes",
+                    ParamValue::Arr(vec![ParamValue::Num(7.0), ParamValue::Num(8.0)])
+                ),
+            ]))
+        );
+    }
+
     #[test]
     fn composites_walk_by_schema() {
         let schema = schema_of(
@@ -322,11 +413,13 @@ mod tests {
                     {"name":"amount","type":"u64"}
                 ]}},
                 {"name":"mode","type":{"defined":"SwapMode"}},
-                {"name":"tag","type":{"defined":"SwapMode"}}
+                {"name":"tag","type":{"defined":"SwapMode"}},
+                {"name":"empty","type":{"defined":"SwapMode"}}
             ]"#,
             r#"{"SwapMode":{"enum":[
                 {"name":"In"},
-                {"name":"Out","fields":[{"name":"limit","type":"u64"}]}
+                {"name":"Out","fields":[{"name":"limit","type":"u64"}]},
+                {"name":"Empty","fields":[]}
             ]}}"#,
         );
         let mut data = vec![0x01];
@@ -342,6 +435,7 @@ mod tests {
         data.push(1); // mode: Out
         data.extend_from_slice(&(1u64 << 63).to_le_bytes()); // mode.limit
         data.push(0); // tag: In (unit variant)
+        data.push(2); // empty: struct variant with no fields
         assert_eq!(
             decode_with_schema(&schema, &instruction_with_data(data)),
             Decoded::Args(obj(vec![
@@ -368,7 +462,8 @@ mod tests {
                         obj(vec![("limit", ParamValue::from_u128(1u128 << 63))])
                     )])
                 ),
-                ("tag", obj(vec![("In", ParamValue::Obj(vec![]))])),
+                ("tag", ParamValue::Str("In".to_string())),
+                ("empty", ParamValue::Str("Empty".to_string())),
             ]))
         );
     }
