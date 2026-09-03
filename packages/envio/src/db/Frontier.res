@@ -30,8 +30,7 @@ let get = (frontier: t, chainId): Internal.checkpointId =>
   | None => Internal.initialCheckpointId
   }
 
-let set = (frontier: t, chainId, checkpointId) =>
-  frontier->ChainId.Dict.set(chainId, checkpointId)
+let set = (frontier: t, chainId, checkpointId) => frontier->ChainId.Dict.set(chainId, checkpointId)
 
 let chainIds = (frontier: t): array<ChainId.t> =>
   frontier->Dict.keysToArray->(Utils.magic: array<string> => array<ChainId.t>)
@@ -39,43 +38,43 @@ let chainIds = (frontier: t): array<ChainId.t> =>
 let entries = (frontier: t): array<(ChainId.t, Internal.checkpointId)> =>
   frontier->Dict.toArray->(Utils.magic: array<(string, bigint)> => array<(ChainId.t, bigint)>)
 
-let isEmpty = (frontier: t) => frontier->Dict.keysToArray->Utils.Array.isEmpty
+%%private(
+  let fold = (frontier: t, pick) =>
+    frontier
+    ->Dict.valuesToArray
+    ->Array.reduce(None, (acc, checkpointId) =>
+      switch acc {
+      | None => Some(checkpointId)
+      | Some(picked) => Some(pick(picked, checkpointId))
+      }
+    )
+)
 
-let fold = (frontier: t, pick) =>
-  frontier
-  ->Dict.valuesToArray
-  ->Array.reduce(None, (acc, checkpointId) =>
-    switch acc {
-    | None => Some(checkpointId)
-    | Some(picked) => Some(pick(picked, checkpointId))
-    }
-  )
-
-let maxOpt = (frontier: t) => frontier->fold(Pervasives.max)
-let minOpt = (frontier: t) => frontier->fold(Pervasives.min)
-
-let max = (frontier: t) => frontier->maxOpt->Option.getOr(Internal.initialCheckpointId)
-let min = (frontier: t) => frontier->minOpt->Option.getOr(Internal.initialCheckpointId)
+// A frontier naming no chain has committed nothing anywhere.
+let max = (frontier: t) =>
+  frontier->fold(Pervasives.max)->Option.getOr(Internal.initialCheckpointId)
+let min = (frontier: t) =>
+  frontier->fold(Pervasives.min)->Option.getOr(Internal.initialCheckpointId)
 
 // Combines two frontiers chain by chain, keeping every chain either names.
-let merge = (a: t, b: t, pick) => {
-  let merged = a->copy
-  b->Utils.Dict.forEachWithKey((checkpointId, key) =>
-    merged->Dict.set(
-      key,
-      switch merged->Utils.Dict.dangerouslyGetNonOption(key) {
-      | Some(existing) => pick(existing, checkpointId)
-      | None => checkpointId
-      },
+%%private(
+  let merge = (a: t, b: t, pick) => {
+    let merged = a->copy
+    b->Utils.Dict.forEachWithKey((checkpointId, key) =>
+      merged->Dict.set(
+        key,
+        switch merged->Utils.Dict.dangerouslyGetNonOption(key) {
+        | Some(existing) => pick(existing, checkpointId)
+        | None => checkpointId
+        },
+      )
     )
-  )
-  merged
-}
+    merged
+  }
+)
 
 let mergeMin = (a: t, b: t) => merge(a, b, Pervasives.min)
 let mergeMax = (a: t, b: t) => merge(a, b, Pervasives.max)
-
-let map = (frontier: t, f): t => frontier->Utils.Dict.mapValues(f)
 
 let equals = (a: t, b: t) => {
   let same = (a: t, b: t) =>

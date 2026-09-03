@@ -63,7 +63,6 @@ type entitySpec = {
 type initializeInput = {
   entities: array<entitySpec>,
   checkpointColumns: array<columnSpec>,
-  perChain: bool,
   replicated: bool,
   databaseEngine?: string,
 }

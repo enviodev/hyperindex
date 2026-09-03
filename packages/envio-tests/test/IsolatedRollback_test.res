@@ -317,6 +317,80 @@ describe("Isolated multichain rollback", () => {
     },
   )
 
+  // Nothing is pruned here, so the whole of both sequences is visible: chain
+  // 1337 writes its block 102 before chain 100 writes its own, and neither
+  // chain's ids notice.
+  fullHistoryScenario->Scenario.it(
+    "Counts each chain's checkpoints off from one, in its own block order, while the writes interleave",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+
+      let checkpoints = await indexer.queryCheckpoints()
+      let byChain = chain =>
+        checkpoints->Array.filterMap(
+          ({id, chainId, blockNumber}) =>
+            chainId->ChainId.toInt === chain ? Some((id, blockNumber)) : None,
+        )
+
+      t.expect(
+        (byChain(100), byChain(1337)),
+        ~message="Each chain's ids are 1, 2, 3 against its own ascending blocks",
+      ).toEqual(([(1n, 100), (2n, 101), (3n, 102)], [(1n, 100), (2n, 101), (3n, 102)]))
+    },
+  )
+
+  // A resume reads a frontier per chain, so each chain picks its own sequence
+  // back up. One shared counter seeded from the highest id anywhere would have
+  // both chains carry on from the same number.
+  fullHistoryScenario->Scenario.it(
+    "Resumes each chain's sequence from that chain's own highest checkpoint",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+
+      source100.setAutoHeight(300)
+      source1337.setAutoHeight(300)
+      let restarted = await indexer.restart()
+
+      source1337.resolveGetItemsOrThrow(
+        [setCounter(~block=103, ~count=13373n)],
+        ~filter=MockSource.coveringBlock(103),
+        ~latestFetchedBlockNumber=103,
+      )
+      await restarted.getBatchWritePromise()
+      source100.resolveGetItemsOrThrow(
+        [setCounter(~block=103, ~count=1003n)],
+        ~filter=MockSource.coveringBlock(103),
+        ~latestFetchedBlockNumber=103,
+      )
+      await restarted.getBatchWritePromise()
+
+      let checkpoints = await restarted.queryCheckpoints()
+      let byChain = chain =>
+        checkpoints->Array.filterMap(
+          ({id, chainId, blockNumber}) =>
+            chainId->ChainId.toInt === chain ? Some((id, blockNumber)) : None,
+        )
+
+      t.expect(
+        (byChain(100), byChain(1337)),
+        ~message="Both chains carry on at 4, each from its own highest id rather than the run's",
+      ).toEqual((
+        [(1n, 100), (2n, 101), (3n, 102), (4n, 103)],
+        [(1n, 100), (2n, 101), (3n, 102), (4n, 103)],
+      ))
+    },
+  )
+
   scenario->Scenario.it(
     "Rolls back the reorg chain alone and leaves its sibling untouched",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
@@ -886,6 +960,62 @@ describe("Isolated multichain rollback", () => {
       ))
     },
   )
+  // The sink is append-only, so an isolated rollback leaves the reorg chain's
+  // orphaned rows in it, above the checkpoint Postgres took that chain back to
+  // — and above nothing at all on its sibling, which never moved. A resume
+  // therefore has to trim with a bound per chain: the highest of them would
+  // leave the orphans readable, and the lowest would take the sibling's rows.
+  clickHouseScenario->Scenario.it(
+    "Trims the sink to each chain's own frontier on a resume after an isolated rollback",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
+
+      // Only chain 100 progresses, so its batch is what commits the rollback —
+      // and it leaves chain 100's frontier above the one chain 1337 went back to.
+      source100.resolveGetItemsOrThrow(
+        [],
+        ~filter=MockSource.coveringBlock(103),
+        ~latestFetchedBlockNumber=104,
+      )
+      await indexer.getBatchWritePromise()
+      await indexer.waitUntilIdle()
+
+      source100.setAutoHeight(300)
+      source1337.setAutoHeight(300)
+      let restarted = await indexer.restart()
+      await restarted.waitUntilIdle()
+
+      let database = TestClickHouse.currentDatabase()
+      t.expect(
+        (
+          (await restarted.queryCheckpoints())
+          ->Array.map(({id, chainId}) => (id, chainId->ChainId.toInt))
+          ->Array.toSorted(((_, a), (_, b)) => Int.compare(a, b)),
+          // The history table rather than the view: what the resume removed is
+          // the point, and the view only shows what survived the dedup.
+
+          (
+            await TestClickHouse.query(
+              `SELECT chainId, count, envio_checkpoint_id FROM \`${database}\`.\`envio_history_Counter\` ORDER BY chainId, envio_checkpoint_id FORMAT JSONEachRow`,
+            )
+          )->String.trim,
+        ),
+        ~message="Chain 1337 lost everything above the checkpoint it went back to, chain 100 nothing",
+      ).toEqual((
+        [(2n, 100), (3n, 100), (4n, 100), (2n, 1337)],
+        `{"chainId":100,"count":"100","envio_checkpoint_id":2}
+{"chainId":100,"count":"1002","envio_checkpoint_id":3}
+{"chainId":1337,"count":"1337","envio_checkpoint_id":2}`,
+      ))
+    },
+  )
+
   clickHouseScenario->Scenario.it(
     "Mirrors the isolated rollback into the ClickHouse sink",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],

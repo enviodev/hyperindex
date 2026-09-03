@@ -113,17 +113,19 @@ let runOneWrite = async (state: IndexerState.t) => {
     | None => batch.checkpointFrontier
     }
 
-    let inThreshold = chainId =>
+    let isInReorgThreshold = state->IndexerState.isInReorgThreshold
+    let isChainInReorgThreshold = chainId =>
       state->IndexerState.crossChainState->CrossChainState.isChainInReorgThreshold(chainId)
     let updatedEntities = []
     state->IndexerState.eachEntityTable((~entityConfig, ~scope, ~table) => {
-      let changes = table->InMemoryTable.Entity.snapshotChanges(
-        ~committedCheckpointId=state->IndexerState.committedCheckpointIdFor(~scope),
-        ~upToCheckpointId=config.checkpointSequence->CheckpointSequence.forScope(
-          upToFrontier,
-          ~scope,
-        ),
-      )
+      let changes =
+        table->InMemoryTable.Entity.snapshotChanges(
+          ~committedCheckpointId=state->IndexerState.committedCheckpointIdFor(~scope),
+          ~upToCheckpointId=config.checkpointSequence->CheckpointSequence.forScope(
+            upToFrontier,
+            ~scope,
+          ),
+        )
       if changes->Utils.Array.notEmpty {
         updatedEntities->Array.push(
           (
@@ -131,7 +133,11 @@ let runOneWrite = async (state: IndexerState.t) => {
               entityConfig,
               scope,
               changes,
-              history: config->HistoryPolicy.forScope(~scope, ~inThreshold),
+              history: config->HistoryPolicy.forScope(
+                ~scope,
+                ~isInReorgThreshold,
+                ~isChainInReorgThreshold,
+              ),
             }: Persistence.updatedEntity
           ),
         )

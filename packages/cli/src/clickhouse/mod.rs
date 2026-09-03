@@ -162,8 +162,6 @@ impl From<EntitySpecInput> for ddl::EntitySpec {
 pub struct InitializeInput {
     pub entities: Vec<EntitySpecInput>,
     pub checkpoint_columns: Vec<ColumnSpecInput>,
-    /// Whether each chain counts its own checkpoint ids.
-    pub per_chain: bool,
     pub replicated: bool,
     pub database_engine: Option<String>,
 }
@@ -554,7 +552,6 @@ impl ClickHouseSink {
         let InitializeInput {
             entities,
             checkpoint_columns,
-            per_chain,
             replicated: env_replicated,
             database_engine,
         } = input;
@@ -666,7 +663,6 @@ impl ClickHouseSink {
                 &self.database,
                 &self.history,
                 topology,
-                per_chain,
             ))
         }))
         .await?;
@@ -759,7 +755,11 @@ impl ClickHouseSink {
             ))
             .await?;
         let mut answered: HashMap<&str, (u64, u64)> = HashMap::new();
-        for line in answer.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        for line in answer
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
             let mut columns = line.split('\t');
             let chain_id = columns
                 .next()
@@ -1416,7 +1416,11 @@ mod tests {
         })
     }
 
-    fn committed(chain_id: &str, progress_block_number: i32, committed: &str) -> ChainProgressInput {
+    fn committed(
+        chain_id: &str,
+        progress_block_number: i32,
+        committed: &str,
+    ) -> ChainProgressInput {
         ChainProgressInput {
             chain_id: chain_id.to_string(),
             progress_block_number,
@@ -1439,7 +1443,11 @@ mod tests {
         sink.resume(ResumeInput {
             per_chain: true,
             chain_progress: vec![committed("1", 100, "5"), committed("137", 200, "9")],
-            ..resume_input("9".to_string(), Vec::new(), vec!["envio_history_a".to_string()])
+            ..resume_input(
+                "9".to_string(),
+                Vec::new(),
+                vec!["envio_history_a".to_string()],
+            )
         })
         .await
         .unwrap();
@@ -1464,8 +1472,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_per_chain_resume_keeps_a_chain_the_checkpoints_say_nothing_about_at_its_committed_id()
-    {
+    async fn a_per_chain_resume_keeps_a_chain_the_checkpoints_say_nothing_about_at_its_committed_id(
+    ) {
         let server = mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(
             &[("1", "0", "8")],
             &[("envio_history_a", 1), ("envio_checkpoints", 1)],
@@ -1476,14 +1484,21 @@ mod tests {
         sink.resume(ResumeInput {
             per_chain: true,
             chain_progress: vec![committed("1", 100, "5"), committed("137", 200, "3")],
-            ..resume_input("8".to_string(), Vec::new(), vec!["envio_history_a".to_string()])
+            ..resume_input(
+                "8".to_string(),
+                Vec::new(),
+                vec!["envio_history_a".to_string()],
+            )
         })
         .await
         .unwrap();
 
         assert!(
-            server.statements_seen().into_iter().any(|statement| statement
-                .contains("(`chain_id` = 137 AND `envio_checkpoint_id` > 3)")),
+            server
+                .statements_seen()
+                .into_iter()
+                .any(|statement| statement
+                    .contains("(`chain_id` = 137 AND `envio_checkpoint_id` > 3)")),
             "chain 137 should be trimmed to the id Postgres committed"
         );
     }

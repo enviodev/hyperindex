@@ -390,22 +390,11 @@ let writeStagedOrThrow = async (sink, ~entities, ~checkpoints) =>
 
 // Tables are not registered here: an indexer that finds an existing storage
 // never runs this, so the write path registers them on first use either way.
-let isPerChain = (sequence: CheckpointSequence.t) =>
-  switch sequence {
-  | PerChain => true
-  | Global => false
-  }
-
-let initialize = async (
-  sink,
-  ~sequence: CheckpointSequence.t,
-  ~entities: array<Internal.entityConfig>,
-) => {
+let initialize = async (sink, ~entities: array<Internal.entityConfig>) => {
   try {
     await sink->ClickHouseSink.initialize({
       entities: entities->Array.map(entityConfig => entitySpec(~entityConfig)),
       checkpointColumns: checkpointColumnSpecs,
-      perChain: sequence->isPerChain,
       replicated: Env.ClickHouse.replicated(),
       databaseEngine: ?Env.ClickHouse.databaseEngine(),
     })
@@ -438,7 +427,10 @@ let resume = async (
   })
   try await sink->ClickHouseSink.resume({
     checkpointId: frontier->Frontier.max->BigInt.toString,
-    perChain: sequence->isPerChain,
+    perChain: switch sequence {
+    | PerChain => true
+    | Global => false
+    },
     chainProgress,
     historyTables: entities->Array.map(entityConfig => {
       let spec = entitySpec(~entityConfig)

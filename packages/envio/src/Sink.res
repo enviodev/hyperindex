@@ -28,7 +28,7 @@ let makeClickHouse = (
   {
     name: "clickhouse",
     initialize: (~entities) => {
-      ClickHouse.initialize(sink, ~sequence, ~entities=mirrored(entities))
+      ClickHouse.initialize(sink, ~entities=mirrored(entities))
     },
     resume: (~frontier, ~chains, ~entities) => {
       ClickHouse.resume(sink, ~sequence, ~frontier, ~chains, ~entities=mirrored(entities))

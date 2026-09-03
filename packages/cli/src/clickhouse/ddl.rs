@@ -326,17 +326,14 @@ pub fn create_checkpoints_table(
         .map(|(name, ch_type)| format!("  {} {ch_type}", quoted(name)))
         .collect();
     format!(
-        "CREATE TABLE IF NOT EXISTS {}.{}{} (\n{}\n)\nENGINE = {}\nORDER BY ({}){}",
+        "CREATE TABLE IF NOT EXISTS {}.{}{} (\n{}\n)\nENGINE = {}\nORDER BY ({}, {}){}",
         quoted(database),
         quoted(&history.checkpoints_table),
         topology.on_cluster(),
         definitions.join(",\n"),
         topology.engine(),
-        format!(
-            "{}, {}",
-            quoted(&history.checkpoint_chain_id_column),
-            quoted(&history.id_column)
-        ),
+        quoted(&history.checkpoint_chain_id_column),
+        quoted(&history.id_column),
         topology.settings(),
     )
 }
@@ -346,7 +343,6 @@ pub fn create_view(
     database: &str,
     history: &HistorySchema,
     topology: Topology,
-    per_chain: bool,
 ) -> String {
     let mut dedup_key = vec![quoted(&history.id_column)];
     if let Some(chain_id_column) = &entity.chain_id_column {
@@ -360,47 +356,20 @@ pub fn create_view(
         .collect();
     let entity_fields = entity_fields.join(", ");
 
-    let db = quoted(database);
-    let checkpoint_id = quoted(&history.checkpoint_id_column);
-    let id = quoted(&history.id_column);
-    let checkpoints = quoted(&history.checkpoints_table);
-
-    // Rows are written ahead of the checkpoints that cover them, so the view
-    // has to stop at the frontier or a half-written batch becomes readable.
-    // With one shared sequence that frontier is a single id. With a sequence per
-    // chain the ids of one chain say nothing about another's, so each chain is
-    // held to its own — joined in rather than looked up per row, since the
-    // chains aren't known when the view is created. The alias carries a prefix
-    // no entity column can, the same way `holds_rows_above_checkpoint`'s do.
-    let source = match (per_chain, &entity.chain_id_column) {
-        (true, Some(chain_id_column)) => {
-            let chain = quoted(chain_id_column);
-            let checkpoint_chain = quoted(&history.checkpoint_chain_id_column);
-            format!(
-                "FROM {db}.{}\n  ANY LEFT JOIN (SELECT {checkpoint_chain} AS `_envio_chain`, \
-                 max({id}) AS `_envio_frontier` FROM {db}.{checkpoints} GROUP BY \
-                 {checkpoint_chain}) AS `_envio_frontiers` ON {chain} = \
-                 `_envio_frontiers`.`_envio_chain`\n  WHERE {checkpoint_id} <= \
-                 `_envio_frontiers`.`_envio_frontier`",
-                quoted(&entity.history_table),
-            )
-        }
-        _ => format!(
-            "FROM {db}.{}\n  WHERE {checkpoint_id} <= (SELECT max({id}) FROM {db}.{checkpoints})",
-            quoted(&entity.history_table),
-        ),
-    };
-
     format!(
-        "CREATE VIEW IF NOT EXISTS {db}.{}{} AS\nSELECT {entity_fields}\nFROM (\n  SELECT \
-         {entity_fields}, {}\n  {source}\n  ORDER BY {checkpoint_id} DESC\n  LIMIT 1 BY {}\n)\nWHERE \
-         {} = {}",
+        "CREATE VIEW IF NOT EXISTS {db}.{}{} AS\nSELECT {entity_fields}\nFROM (\n  SELECT {entity_fields}, {}\n  FROM {db}.{}\n  WHERE {} <= (SELECT max({}) FROM {db}.{})\n  ORDER BY {} DESC\n  LIMIT 1 BY {}\n)\nWHERE {} = {}",
         quoted(&entity.name),
         topology.on_cluster(),
         quoted(&history.change_column),
+        quoted(&entity.history_table),
+        quoted(&history.checkpoint_id_column),
+        quoted(&history.id_column),
+        quoted(&history.checkpoints_table),
+        quoted(&history.checkpoint_id_column),
         dedup_key.join(", "),
         quoted(&history.change_column),
         literal(&history.set_variant),
+        db = quoted(database),
     )
 }
 
@@ -766,7 +735,7 @@ mod tests {
             vec![column("id", "String"), column("balance", "Int32")],
         );
         assert_eq!(
-            create_view(&entity, "test_db", &history_schema(), plain(), false),
+            create_view(&entity, "test_db", &history_schema(), plain()),
             "CREATE VIEW IF NOT EXISTS `test_db`.`Account` AS\n\
              SELECT `id`, `balance`\n\
              FROM (\n  \
@@ -784,7 +753,7 @@ mod tests {
     fn a_replicated_view_is_created_on_the_cluster() {
         let entity = entity("Account", vec![column("id", "String")]);
         assert_eq!(
-            create_view(&entity, "test_db", &history_schema(), replicated(), false)
+            create_view(&entity, "test_db", &history_schema(), replicated())
                 .lines()
                 .next(),
             Some("CREATE VIEW IF NOT EXISTS `test_db`.`Account` ON CLUSTER '{cluster}' AS")
@@ -798,35 +767,8 @@ mod tests {
             vec![column("id", "String"), column("chain_id", "ChainId")],
         );
         entity.chain_id_column = Some("chain_id".to_string());
-        assert!(create_view(&entity, "test_db", &history_schema(), plain(), false)
+        assert!(create_view(&entity, "test_db", &history_schema(), plain())
             .contains("LIMIT 1 BY `id`, `chain_id`"));
-    }
-
-    // With a sequence per chain, one chain's committed frontier says nothing
-    // about another's, so the view holds every chain to its own.
-    #[test]
-    fn a_per_chain_view_stops_at_each_chains_own_frontier() {
-        let mut entity = entity(
-            "Account",
-            vec![column("id", "String"), column("chain_id", "ChainId")],
-        );
-        entity.chain_id_column = Some("chain_id".to_string());
-        assert_eq!(
-            create_view(&entity, "test_db", &history_schema(), plain(), true),
-            "CREATE VIEW IF NOT EXISTS `test_db`.`Account` AS\n\
-             SELECT `id`, `chain_id`\n\
-             FROM (\n  \
-             SELECT `id`, `chain_id`, `envio_change`\n  \
-             FROM `test_db`.`envio_history_Account`\n  \
-             ANY LEFT JOIN (SELECT `chain_id` AS `_envio_chain`, max(`id`) AS `_envio_frontier` \
-             FROM `test_db`.`envio_checkpoints` GROUP BY `chain_id`) AS `_envio_frontiers` ON \
-             `chain_id` = `_envio_frontiers`.`_envio_chain`\n  \
-             WHERE `envio_checkpoint_id` <= `_envio_frontiers`.`_envio_frontier`\n  \
-             ORDER BY `envio_checkpoint_id` DESC\n  \
-             LIMIT 1 BY `id`, `chain_id`\n\
-             )\n\
-             WHERE `envio_change` = 'SET'"
-        );
     }
 
     #[test]

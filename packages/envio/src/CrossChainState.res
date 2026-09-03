@@ -99,11 +99,16 @@ let getSafeCheckpointIdByChain = (crossChainState: t, ~committedFrontier) =>
 
 // --- Cross-chain transitions. ---
 
-let createBatch = (crossChainState: t, ~config: Config.t, ~frontier, ~batchSizeTarget: int): Batch.t => {
+let createBatch = (
+  crossChainState: t,
+  ~config: Config.t,
+  ~frontier,
+  ~batchSizeTarget: int,
+): Batch.t => {
   Batch.make(
     ~sequence=config.checkpointSequence,
     ~history=config->HistoryPolicy.forBatch(
-      ~inThreshold=chainId => crossChainState->isChainInReorgThreshold(chainId),
+      ~isInReorgThreshold=crossChainState->isInReorgThreshold,
     ),
     ~frontier,
     ~chainsBeforeBatch=crossChainState.chainStates->Utils.Dict.mapValues(
