@@ -349,8 +349,8 @@ mod tests {
         data.extend_from_slice(&[0xde, 0xad, 0x00]);
         data.extend_from_slice(&0u32.to_le_bytes());
         assert_eq!(
-            decode_with_schema(&schema, &instruction_with_data(data)),
-            Decoded::Args(obj(vec![
+            schema.decode(&data),
+            Some(obj(vec![
                 ("payload", ParamValue::Bytes(vec![0xde, 0xad, 0x00])),
                 ("empty", ParamValue::Bytes(vec![])),
             ]))
@@ -382,8 +382,8 @@ mod tests {
         data.extend_from_slice(&7u16.to_le_bytes());
         data.extend_from_slice(&8u16.to_le_bytes());
         assert_eq!(
-            decode_with_schema(&schema, &instruction_with_data(data)),
-            Decoded::Args(obj(vec![
+            schema.decode(&data),
+            Some(obj(vec![
                 ("vec", ParamValue::Bytes(vec![0xff, 0x00])),
                 ("fixed", ParamValue::Bytes(vec![1, 2, 3, 4])),
                 (

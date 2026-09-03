@@ -1084,13 +1084,11 @@ mod tests {
             decoded_args(&items),
             vec![
                 (0, Some(amount(1))),
-                // The same call, as `Any` reads it: a 9-byte vec is what the
-                // data isn't, so the layout rejects it and `Any` is skipped.
                 (
                     1,
                     Some(ParamValue::Obj(vec![(
                         "raw".to_string(),
-                        ParamValue::Arr(vec![ParamValue::Num(0x21.into()), ParamValue::Num(1.0)])
+                        ParamValue::Bytes(vec![0x21, 0x01])
                     )]))
                 ),
             ]

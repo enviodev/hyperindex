@@ -10,9 +10,10 @@ use napi_derive::napi;
 use super::borsh_decoder::{parse_defined_types, ArgsSchema};
 use super::fields;
 use super::mod_helpers::hex_to_bytes;
-use super::types::{required, to_hex};
+use super::types::required;
 use crate::address_store::{Emitter, StoreInner};
 use crate::config_parsing::human_config::svm::ArgDef;
+use crate::hex::to_hex;
 
 /// One instruction call with the fields routing and item building read, lifted
 /// out of the client's all-`Option` row once per instruction: base58 is
