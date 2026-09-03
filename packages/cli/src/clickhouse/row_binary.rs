@@ -138,6 +138,13 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
         false if magnitude <= i128::MAX as u128 => magnitude as i128,
         _ => bail!("decimal `{text}` overflows Int128"),
     };
+    // Rounded half away from zero on the first dropped digit, as Postgres
+    // rounds a numeric(P, S) — the entity lands in both stores, and ClickHouse's
+    // own cast, which truncates, would leave this one an ulp under the other.
+    let mut round_away = frac_part
+        .as_bytes()
+        .get(kept_frac)
+        .is_some_and(|d| *d >= b'5');
     match shift.cmp(&0) {
         std::cmp::Ordering::Greater => {
             for _ in 0..shift {
@@ -150,15 +157,21 @@ fn decimal_to_i128(text: &str, scale: u32) -> Result<i128> {
             }
         }
         std::cmp::Ordering::Less => {
-            // Truncates toward zero, matching ClickHouse's own cast.
             for _ in 0..-shift {
                 if value == 0 {
+                    round_away = false;
                     break;
                 }
+                round_away = (value % 10).abs() >= 5;
                 value /= 10;
             }
         }
         std::cmp::Ordering::Equal => {}
+    }
+    if round_away {
+        value = value
+            .checked_add(if negative { -1 } else { 1 })
+            .context("decimal overflows the column's precision")?;
     }
     Ok(value)
 }
@@ -670,10 +683,46 @@ mod tests {
         );
     }
 
+    // Postgres rounds a numeric(P, S) half away from zero, and an entity lands
+    // in both stores: the value ClickHouse holds has to be the one Postgres
+    // holds, not one ulp under it.
     #[test]
-    fn truncates_a_decimal_below_the_column_scale() {
-        let encoded = encode(&[text_column("a", "Decimal(9, 1)", &["1.29"])], 1).unwrap();
-        assert_eq!(encoded.body, 12i32.to_le_bytes().to_vec());
+    fn rounds_a_decimal_below_the_column_scale_as_postgres_does() {
+        let scaled: Vec<i128> = [
+            "1.29", "1.25", "-1.25", "1.24999", "0.05", "-0.05", "9.95", "2.5e-1", "1.25e-1",
+            "5e-3",
+        ]
+        .into_iter()
+        .map(|text| decimal_to_i128(text, 1).unwrap())
+        .collect();
+        assert_eq!(scaled, vec![13, 13, -13, 12, 1, -1, 100, 3, 1, 0]);
+    }
+
+    #[test]
+    fn a_rounded_decimal_that_outgrows_the_column_is_refused() {
+        let err = encode(&[text_column("a", "Decimal(3, 2)", &["9.995"])], 1).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("out of range"),
+            "expected a range error, got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn rounds_a_decimal_array_element_as_postgres_does() {
+        let encoded = encode(
+            &[text_column(
+                "xs",
+                "Array(Decimal(18, 2))",
+                &["[1.005,\"-1.005\"]"],
+            )],
+            1,
+        )
+        .unwrap();
+        let mut expected = vec![2];
+        for scaled in [101i64, -101] {
+            expected.extend_from_slice(&scaled.to_le_bytes());
+        }
+        assert_eq!(encoded.body, expected);
     }
 
     #[test]
@@ -1112,7 +1161,7 @@ mod tests {
     fn a_decimal_with_more_fractional_digits_than_the_scale_keeps_its_value() {
         let value = format!("1.{}", "9".repeat(60));
         let encoded = encode(&[text_column("d", "Decimal(38, 2)", &[&value])], 1).unwrap();
-        assert_eq!(encoded.body, 199i128.to_le_bytes().to_vec());
+        assert_eq!(encoded.body, 200i128.to_le_bytes().to_vec());
     }
 
     #[test]

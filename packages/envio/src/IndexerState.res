@@ -355,7 +355,10 @@ let getChainState = (state: t, ~chainId: ChainId.t): ChainState.t =>
     )
   }
 
-let getSafeCheckpointId = (state: t) => state.crossChainState->CrossChainState.getSafeCheckpointId
+let getSafeCheckpointIdByChain = (state: t) =>
+  state.crossChainState->CrossChainState.getSafeCheckpointIdByChain(
+    ~committedCheckpointId=state.committedCheckpointId,
+  )
 
 let createBatch = (
   state: t,
@@ -452,7 +455,14 @@ let entities = (state: t) => state.entities
 // Every in-memory entity table across all scopes, cross-chain first. The size,
 // drop and flush passes walk the whole store this way instead of assuming a
 // single partition.
-let eachEntityTable = (state: t, fn: (~entityConfig: Internal.entityConfig, ~scope: Internal.chainScope, ~table: InMemoryTable.Entity.t) => unit) => {
+let eachEntityTable = (
+  state: t,
+  fn: (
+    ~entityConfig: Internal.entityConfig,
+    ~scope: Internal.chainScope,
+    ~table: InMemoryTable.Entity.t,
+  ) => unit,
+) => {
   let chainStates = state.crossChainState->CrossChainState.chainStates
   state.allEntities->Array.forEach(entityConfig =>
     if entityConfig.crossChain {
@@ -814,9 +824,8 @@ let markCommitted = (state: t, ~upToCheckpointId) => {
 // Reset the in-memory tables and arm the rollback diff that the next write commits.
 let beginRollbackDiff = (
   state: t,
-  ~targetCheckpointId,
   ~diffCheckpointId,
-  ~scope,
+  ~floors,
   ~progressedChains: array<InternalTable.Chains.progressedChain>,
   ~rolledBackAddresses,
 ) => {
@@ -846,9 +855,8 @@ let beginRollbackDiff = (
   | None => progressedChains
   }
   state.rollback = Some({
-    targetCheckpointId,
     diffCheckpointId,
-    scope,
+    floors,
     progressedChains,
     rolledBackAddresses,
   })

@@ -68,6 +68,17 @@ tar = "0.4"
 napi = { version = "=3.8.5", features = ["napi10", "async", "serde-json"] }
 napi-derive = "=3.5.4"
 
+# Severity lives here rather than in the CI command line, so `cargo clippy`
+# locally and in CI agree on what is fatal.
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+# These take a long, flat argument list by nature; splitting them into structs
+# would not make the call sites clearer.
+too_many_arguments = "allow"
+dbg_macro = "deny"
+
 [features]
 hypersync_health = []
 # Transitional alias: the base-branch CI still invokes `--features

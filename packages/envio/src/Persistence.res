@@ -59,11 +59,10 @@ type updatedEffectCache = {
 }
 
 type rollback = {
-  targetCheckpointId: Internal.checkpointId,
   diffCheckpointId: Internal.checkpointId,
-  // How far the deletes reach. An isolated rollback must leave a sibling
-  // chain's rows alone, so the scope travels with the diff to the write.
-  scope: RollbackScope.t,
+  // How far back the deletes reach on each chain, travelling with the diff so
+  // the write leaves an untouched sibling's rows alone.
+  floors: RollbackFloors.t,
   // The address registrations the rollback dropped, as the chains' address
   // stores resolved them. Deleted by primary key in the same transaction.
   rolledBackAddresses: array<AddressRows.key>,
@@ -147,13 +146,13 @@ type storage = {
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
-  pruneStaleCheckpoints: (~safeCheckpointId: Internal.checkpointId) => promise<unit>,
+  pruneStaleCheckpoints: (~safeCheckpoints: CheckpointBounds.t) => promise<unit>,
   // Prune stale entity history
   pruneStaleEntityHistory: (
     ~entityName: string,
     ~entityIndex: int,
     ~chainIdColumn: option<string>,
-    ~safeCheckpointId: Internal.checkpointId,
+    ~safeCheckpoints: CheckpointBounds.t,
   ) => promise<unit>,
   // Get rollback target checkpoint
   getRollbackTargetCheckpoint: (
@@ -162,8 +161,7 @@ type storage = {
   ) => promise<option<Internal.checkpointId>>,
   // Get rollback progress diff
   getRollbackProgressDiff: (
-    ~scope: RollbackScope.t,
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
+    ~floors: RollbackFloors.t,
   ) => promise<
     array<{
       "chain_id": ChainId.t,
@@ -176,8 +174,7 @@ type storage = {
   // before handing them back.
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
-    ~scope: RollbackScope.t,
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
+    ~floors: RollbackFloors.t,
   ) => promise<(array<rollbackRemoval>, array<Internal.entity>)>,
   // Write batch to storage
   writeBatch: (
