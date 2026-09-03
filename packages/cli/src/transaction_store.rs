@@ -888,6 +888,8 @@ impl TransactionStore {
 /// Ordered EVM transaction-field names — the single source of truth the ReScript
 /// `Evm.res transactionFields` array is tested against. The order is the bit
 /// position in the selection mask, so the two must not drift.
+// Reached only through the addon's C ABI, which the test target does not build.
+#[allow(dead_code)]
 #[napi]
 pub fn evm_transaction_field_names() -> Vec<String> {
     field_names(EvmTxField::VARIANTS, EvmTxField::name)
@@ -895,6 +897,7 @@ pub fn evm_transaction_field_names() -> Vec<String> {
 
 /// Ordered SVM transaction-field names; `Svm.res transactionFields` is tested
 /// against this.
+#[allow(dead_code)]
 #[napi]
 pub fn svm_transaction_field_names() -> Vec<String> {
     field_names(SvmTxField::VARIANTS, SvmTxField::name)
