@@ -1113,8 +1113,17 @@ let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<Cha
   })
 }
 
-let shouldSaveHistory = (config, ~isInReorgThreshold) =>
-  config.shouldSaveFullHistory || (config.shouldRollbackOnReorg && isInReorgThreshold)
+// A chain that can't be rolled back (maxReorgDepth = 0) has no history to keep,
+// unless a cross-chain entity lets another chain's rollback reach its rows.
+let shouldSaveHistory = (config, ~isInReorgThreshold, ~chainId: option<ChainId.t>=?) =>
+  config.shouldSaveFullHistory ||
+  (config.shouldRollbackOnReorg &&
+  isInReorgThreshold &&
+  switch chainId {
+  | Some(chainId) if config->isIsolatedMultichain =>
+    (config.chainMap->ChainMap.get(chainId)).maxReorgDepth > 0
+  | _ => true
+  })
 
 let shouldPruneHistory = (config, ~isInReorgThreshold) =>
   !config.shouldSaveFullHistory && (config.shouldRollbackOnReorg && isInReorgThreshold)
