@@ -303,9 +303,9 @@ describe("Per-chain rollback and delete SQL", () => {
         ~pgSchema="public",
         ~floors=globalFloors,
       ),
-    ).toBe(`SELECT DISTINCT "id", "chainId"
+    ).toBe(`SELECT DISTINCT "envio_history_Counter"."id", "envio_history_Counter"."chainId"
   FROM "public"."envio_history_Counter"
-  WHERE "envio_checkpoint_id" > $1
+  WHERE "envio_history_Counter"."envio_checkpoint_id" > $1
     AND NOT EXISTS (
       SELECT 1
       FROM "public"."envio_history_Counter" h
@@ -321,8 +321,8 @@ describe("Per-chain rollback and delete SQL", () => {
       ~floors=globalFloors,
     )
     t.expect((
-      query->String.includes(`SELECT DISTINCT ON ("id", "chainId")`),
-      query->String.includes(`ORDER BY "id", "chainId", "envio_checkpoint_id" DESC`),
+      query->String.includes(`SELECT DISTINCT ON ("envio_history_Counter"."id", "envio_history_Counter"."chainId")`),
+      query->String.includes(`ORDER BY "envio_history_Counter"."id", "envio_history_Counter"."chainId", "envio_history_Counter"."envio_checkpoint_id" DESC`),
     )).toEqual((true, true))
   })
 
@@ -365,9 +365,7 @@ describe("Per-chain rollback and delete SQL", () => {
       query->String.includes(`GROUP BY t.id, t."chainId"`),
       query->String.includes(`WHERE d.id = a.id AND d."chainId" = a."chainId"`),
       query->String.includes(`envio_bounds`),
-      perChain->String.includes(
-        `JOIN unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, checkpoint_id) ON envio_bounds.chain_id = t."chainId"`,
-      ),
+      perChain->String.includes(`JOIN unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, checkpoint_id) ON envio_bounds.chain_id = t."chainId"`),
       perChain->String.includes(`AND d.envio_checkpoint_id <= a.safe_checkpoint_id`),
     )).toEqual((true, true, false, true, true))
   })
@@ -419,7 +417,7 @@ describe("Per-chain entities under snake_case columns", () => {
         ~entityConfig=snakeCounter,
         ~pgSchema="public",
         ~floors=globalFloors,
-      )->String.includes(`SELECT DISTINCT "id", "chain_id"`),
+      )->String.includes(`SELECT DISTINCT "envio_history_Counter"."id", "envio_history_Counter"."chain_id"`),
     )).toEqual((
       `CREATE TABLE IF NOT EXISTS "public"."Counter"("id" TEXT NOT NULL, "count" NUMERIC NOT NULL, "chain_id" INTEGER NOT NULL, PRIMARY KEY("id", "chain_id"));`,
       ` AND "chain_id" = 137`,
@@ -467,24 +465,22 @@ describe("Per-chain ClickHouse writes", () => {
 
   let stagedChainIds = (~changes, ~entityConfig: Internal.entityConfig, ~scope, ~registry) => {
     let captured = []
-    let chainIdIndex =
-      columnSpecs(entityConfig)->Array.findIndex(({name}) => name === "chainId")
-    let sink =
-      {
-        "stage": (_table, rows, columns: array<ClickHouseSink.columnValuesInput>) => {
-          switch columns->Array.get(chainIdIndex) {
-          | Some({numbers: ?Some(numbers)}) =>
-            for row in 0 to rows - 1 {
-              captured->Array.push(numbers->TypedArray.get(row))->ignore
-            }
-          | _ =>
-            for _ in 0 to rows - 1 {
-              captured->Array.push(None)->ignore
-            }
+    let chainIdIndex = columnSpecs(entityConfig)->Array.findIndex(({name}) => name === "chainId")
+    let sink = {
+      "stage": (_table, rows, columns: array<ClickHouseSink.columnValuesInput>) => {
+        switch columns->Array.get(chainIdIndex) {
+        | Some({numbers: ?Some(numbers)}) =>
+          for row in 0 to rows - 1 {
+            captured->Array.push(numbers->TypedArray.get(row))->ignore
           }
-          1
-        },
-      }->(Utils.magic: {..} => ClickHouseSink.t)
+        | _ =>
+          for _ in 0 to rows - 1 {
+            captured->Array.push(None)->ignore
+          }
+        }
+        1
+      },
+    }->(Utils.magic: {..} => ClickHouseSink.t)
     let _ = ClickHouse.stageUpdatesOrThrow(sink, ~registry, ~changes, ~entityConfig, ~scope)
     captured
   }
@@ -497,18 +493,17 @@ describe("Per-chain ClickHouse writes", () => {
       ~username="default",
       ~password="",
       ~database="unused",
-    ~chainIdMode=Int32,
+      ~chainIdMode=Int32,
     )
     let _ = sink->ClickHouse.entityTable(~registry, ~entityConfig)
     registry
   }
 
-  let set = (~id, ~count): Change.t<Internal.entity> =>
-    Set({
-      entityId: id->EntityId.unsafeOfString,
-      checkpointId: 1n,
-      entity: {"id": id, "count": count}->(Utils.magic: {..} => Internal.entity),
-    })
+  let set = (~id, ~count): Change.t<Internal.entity> => Set({
+    entityId: id->EntityId.unsafeOfString,
+    checkpointId: 1n,
+    entity: {"id": id, "count": count}->(Utils.magic: {..} => Internal.entity),
+  })
 
   let delete = (~id): Change.t<Internal.entity> => Delete({
     entityId: id->EntityId.unsafeOfString,

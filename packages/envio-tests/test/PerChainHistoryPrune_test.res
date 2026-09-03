@@ -304,9 +304,6 @@ describe("Per-chain history pruning", () => {
 
       source100.setAutoHeight(140)
       let restarted = await indexer.restart()
-      await Utils.delay(0)
-      await Utils.delay(0)
-      await Utils.delay(0)
 
       source100.resolveGetItemsOrThrow(
         [setCounter(~block=135, ~count=4n)],

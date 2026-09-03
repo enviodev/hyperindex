@@ -87,6 +87,17 @@ let fullHistoryScenario = Scenario.make(
   ),
 )
 
+// A per-chain entity's chain column is named `chain_id` under snake_case, the
+// same name the per-chain bounds relation gives its own, so the rollback
+// queries have to keep the two apart.
+let snakeCaseScenario = Scenario.make(
+  ~schema=perChainSchema,
+  ~configYaml=makeConfigYaml(
+    ~name="isolated-rollback-snake-case",
+    ~extra="\nstorage:\n  postgres:\n    column_name_format: snake_case",
+  ),
+)
+
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
 let setCounter = (~block, ~count: bigint): MockSource.itemMock => {
@@ -283,6 +294,29 @@ let progress = (~chain100, ~chain1337): array<IndexerRunner.metric> => [
 ]
 
 describe("Isolated multichain rollback", () => {
+  snakeCaseScenario->Scenario.it(
+    "Rolls back a per-chain entity whose chain column is named chain_id",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+      await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
+      await reindexBlock102(~indexer, ~source=source1337, ~count=999n)
+
+      t.expect(
+        (await progressByChain(indexer), await eventsByChain(indexer)),
+        ~message="Chain 1337 rolled back and re-indexed block 102",
+      ).toEqual((
+        progress(~chain100="102", ~chain1337="102"),
+        progress(~chain100="2", ~chain1337="2"),
+      ))
+    },
+  )
+
   scenario->Scenario.it(
     "Rolls back the reorg chain alone and leaves its sibling untouched",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
