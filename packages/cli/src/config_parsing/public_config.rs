@@ -438,8 +438,8 @@ struct SvmAbiJson {
     /// runtime resolves these once per program at startup.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     defined_types: std::collections::BTreeMap<String, human_config::svm::ArgType>,
-    /// `"anchorIdl"`, `"bundled"`, or `"inline"`. Carried for diagnostics; the
-    /// runtime treats all three identically.
+    /// `"anchorIdl"` or `"inline"`. Carried for diagnostics; the runtime treats
+    /// both identically.
     source: &'static str,
 }
 
@@ -657,7 +657,6 @@ impl SystemConfig {
                                 .collect(),
                             source: match source {
                                 SvmSchemaSource::AnchorIdl { .. } => "anchorIdl",
-                                SvmSchemaSource::Bundled { .. } => "bundled",
                                 SvmSchemaSource::Inline => "inline",
                             },
                         }),

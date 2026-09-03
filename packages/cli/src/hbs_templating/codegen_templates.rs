@@ -2272,7 +2272,7 @@ type testIndexer = {{
             // SVM programs table: per-program record of per-instruction
             // `{ args, accounts }` shapes. Empty when no SVM programs
             // configured, or when no instruction in any program carries a
-            // resolved schema (bundled / IDL / inline).
+            // resolved schema (IDL / inline).
             //
             // Each instruction emits both `args` (typed from the Borsh
             // schema) and `accounts` (named string slots from the schema).

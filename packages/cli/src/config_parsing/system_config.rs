@@ -41,8 +41,7 @@ use std::{
 };
 
 use hypersync_client_solana::decode::{
-    metaplex_token_metadata, EnumVariant as SvmEnumVariant, FieldType as SvmFieldType,
-    NamedField as SvmNamedField, ProgramSchema as SvmProgramSchema,
+    EnumVariant as SvmEnumVariant, FieldType as SvmFieldType, NamedField as SvmNamedField,
 };
 
 use super::svm_idl::{self, ProgramIdl};
@@ -1869,31 +1868,6 @@ impl EvmAbi {
     }
 }
 
-/// Base58 program id for the bundled Metaplex Token Metadata schema. Kept
-/// here (rather than imported from the upstream crate) so a future bundled
-/// schema can be added by appending a row to the `bundled_program_schemas`
-/// table without leaking strings across the module boundary.
-const METAPLEX_TOKEN_METADATA_PROGRAM_ID: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
-
-/// One row in the bundled-programs table: `(program_id, source_name,
-/// accessor returning the upstream `ProgramSchema`)`.
-type BundledProgramRow = (
-    &'static str,
-    &'static str,
-    fn() -> &'static SvmProgramSchema,
-);
-
-/// Table of bundled programs. Lookup by base58 `program_id`. To add a
-/// program: ship a `ProgramSchema` constant in `hypersync_client_solana`,
-/// expose a public accessor, then add a row here.
-fn bundled_program_schemas() -> Vec<BundledProgramRow> {
-    vec![(
-        METAPLEX_TOKEN_METADATA_PROGRAM_ID,
-        "metaplex_token_metadata",
-        metaplex_token_metadata,
-    )]
-}
-
 fn resolve_program_schema(
     program: &human_config::svm::Program,
     source: &dyn ConfigSource,
@@ -1927,19 +1901,6 @@ fn resolve_program_schema(
         });
     }
 
-    if !any_instruction_carries_schema {
-        if let Some((_, name, getter)) = bundled_program_schemas()
-            .into_iter()
-            .find(|(pid, _, _)| *pid == program.program_id.as_str())
-        {
-            return Ok(SvmAbi {
-                program_id: program.program_id.clone(),
-                idl: program_idl_from_upstream(name, getter())?,
-                source: SvmSchemaSource::Bundled { name },
-            });
-        }
-    }
-
     Ok(SvmAbi {
         program_id: program.program_id.clone(),
         idl: ProgramIdl::default(),
@@ -1959,47 +1920,6 @@ fn warn_about_unindexable(program: &human_config::svm::Program, abi: &SvmAbi) {
             program.name
         );
     }
-}
-
-/// A bundled `ProgramSchema` read into the shape the rest of config parsing
-/// uses. Upstream keys instructions by discriminator; everything here keys them
-/// by name, which is what a config names. Two upstream instructions sharing a
-/// name would collapse into one, so the count is checked rather than assumed.
-fn program_idl_from_upstream(name: &str, schema: &SvmProgramSchema) -> Result<ProgramIdl> {
-    let instructions: BTreeMap<String, svm_idl::IxIdl> = schema
-        .instructions
-        .values()
-        .map(|ix| {
-            (
-                ix.name.clone(),
-                svm_idl::IxIdl {
-                    discriminator: ix.discriminator.clone(),
-                    derived: false,
-                    accounts: ix
-                        .accounts
-                        .iter()
-                        .map(|a| svm_idl::IdlAccount {
-                            name: a.name.clone(),
-                            optional: a.optional,
-                        })
-                        .collect(),
-                    args: ix.args.clone(),
-                },
-            )
-        })
-        .collect();
-    if instructions.len() != schema.instructions.len() {
-        return Err(anyhow!(
-            "the bundled schema for {} declares two instructions of the same name",
-            schema.program_id
-        ));
-    }
-    Ok(ProgramIdl::compiled_in(
-        name,
-        schema.program_id.clone(),
-        instructions,
-        schema.defined_types.clone(),
-    ))
 }
 
 /// What one configured instruction dispatches on and decodes into.
@@ -2041,8 +1961,8 @@ fn resolve_instruction(
     }
     if instr.accounts.is_some() != instr.args.is_some() {
         return Err(anyhow!(
-            "`accounts` and `args` must be provided together (or both omitted to fall back to a \
-             bundled/IDL schema)."
+            "`accounts` and `args` must be provided together (or both omitted to fall back to an \
+             IDL schema)."
         ));
     }
 
@@ -2327,8 +2247,8 @@ pub struct SvmAbi {
     pub program_id: String,
     /// Every instruction the program declares, by name, with the reason for
     /// each one this runtime cannot dispatch or decode. Read from the user's
-    /// `idl:` file or the bundled-schema registry, and empty for a program
-    /// whose instructions carry their layout in YAML.
+    /// `idl:` file, and empty for a program whose instructions carry their
+    /// layout in YAML.
     pub idl: ProgramIdl,
     pub source: SvmSchemaSource,
 }
@@ -2337,8 +2257,6 @@ pub struct SvmAbi {
 pub enum SvmSchemaSource {
     /// User-supplied `idl: <path>` parsed at codegen time.
     AnchorIdl { path: String },
-    /// `program_id` matched a bundled `ProgramSchema` (e.g. Metaplex).
-    Bundled { name: &'static str },
     /// Hand-written per-instruction `accounts`/`args` in YAML.
     Inline,
 }
@@ -2477,7 +2395,7 @@ pub struct SvmEventKind {
     /// instruction in the program.
     pub discriminator: Option<String>,
     /// Positional account names. Empty when the user supplied no schema and
-    /// no bundled/IDL schema applies; in that case `decoded.accounts` is `{}`.
+    /// no IDL applies; in that case `decoded.accounts` is `{}`.
     pub accounts: Vec<String>,
     /// Borsh argument layout in declared order. Empty for unknown
     /// instructions; the raw `instruction.data` is still available.
@@ -4052,7 +3970,7 @@ type Foo {
         use std::collections::HashMap;
 
         use super::SystemConfig;
-        use crate::config_parsing::system_config::{Abi, DataSource, EventKind};
+        use crate::config_parsing::system_config::{Abi, DataSource, EventKind, SvmSchemaSource};
         use crate::project_paths::ParsedProjectPaths;
         use pretty_assertions::assert_eq;
 
@@ -4504,6 +4422,31 @@ type Foo {
             );
         }
 
+        #[test]
+        fn does_not_attach_a_schema_to_metaplex_by_program_id() {
+            let yaml = "name: metaplex\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+                 0\n    experimental:\n      hypersync_config:\n        url: \
+                 https://solana.hypersync.xyz\n      programs:\n        - name: TokenMetadata\n          \
+                 program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n";
+            let config = SystemConfig::parse_yaml(
+                yaml,
+                Some("type Foo @entity { id: ID! }"),
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+            )
+            .expect("parse");
+
+            let contract = config.contracts.values().next().expect("program");
+            assert_eq!(
+                match &contract.abi {
+                    Abi::Svm(abi) => (&abi.source, svm_events(&config)),
+                    other => panic!("expected Svm abi, got {other:?}"),
+                },
+                (&SvmSchemaSource::Inline, vec![])
+            );
+        }
+
         /// End-to-end: the Metaplex YAML fixture deserializes, validates, and
         /// translates into a single Contract whose two Events carry the
         /// expected discriminator + flags. Guards Stage 3 + Stage 4 plumbing
@@ -4531,11 +4474,17 @@ type Foo {
                     contracts.len(),
                     token_metadata.name.as_str(),
                     matches!(token_metadata.abi, Abi::Svm(_)),
-                    kinds.contains(&("CreateMetadataAccountV3".into(), Some("0x21".into()))),
-                    kinds.contains(&("UpdateMetadataAccountV2".into(), Some("0x0f".into()))),
-                    kinds.len() > 2,
+                    kinds,
                 ),
-                (1, "TokenMetadata", true, true, true, true)
+                (
+                    1,
+                    "TokenMetadata",
+                    true,
+                    vec![
+                        ("CreateMetadataAccountV3".into(), Some("0x21".into())),
+                        ("UpdateMetadataAccountV2".into(), Some("0x0f".into())),
+                    ],
+                )
             );
 
             // Chain data carries the program_id on the contract-side address,

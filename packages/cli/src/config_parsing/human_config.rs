@@ -1187,11 +1187,10 @@ pub mod svm {
         pub idl: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         #[schemars(
-            description = "Instructions to index. With `idl:` or a bundled schema, omit this \
-                           list: every usable instruction the schema declares is available to \
-                           `onInstruction`. A listed name that the schema does not declare is an \
-                           error. Without a schema, each entry must carry `discriminator` and/or \
-                           `accounts`/`args`."
+            description = "Instructions to index. With `idl:`, omit this list: every usable \
+                           instruction the IDL declares is available to `onInstruction`. A listed \
+                           name that the IDL does not declare is an error. Without `idl:`, each \
+                           entry must carry `discriminator` and/or `accounts`/`args`."
         )]
         pub instructions: Vec<Instruction>,
     }
@@ -1298,7 +1297,7 @@ pub mod svm {
         Array(Box<ArgType>, usize),
         /// Reference to a nominal type defined in the program-level
         /// `defined_types` registry (populated from an Anchor IDL `types:`
-        /// block or the bundled-Metaplex registry).
+        /// block).
         #[serde(rename = "defined")]
         Defined(String),
         /// Inline-or-registry struct. Used as a nominal type definition in

@@ -2044,7 +2044,7 @@ chains:
             - name: Transfer
               accounts: []
 `,
-      "Layout for instruction 'Transfer': Instruction 'Transfer': \`accounts\` and \`args\` must be provided together (or both omitted to fall back to a bundled/IDL schema).",
+      "Layout for instruction 'Transfer': Instruction 'Transfer': \`accounts\` and \`args\` must be provided together (or both omitted to fall back to an IDL schema).",
     )
   })
 })

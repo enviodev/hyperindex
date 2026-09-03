@@ -59,7 +59,7 @@ pub struct ProgramIdl {
     /// is about the bytes on chain, not about whether we can decode the ix.
     declared_discriminators: BTreeMap<String, Vec<u8>>,
     /// What every reason is reported against: the path the config wrote, or a
-    /// bundled schema's name.
+    /// source name for a compiled-in fixture.
     source: String,
     instruction_positions: BTreeMap<String, (usize, usize)>,
     type_positions: BTreeMap<String, (usize, usize)>,
@@ -150,7 +150,7 @@ pub fn parse_idl(source: &str, json: &str) -> Result<ProgramIdl> {
 
 impl ProgramIdl {
     /// A program whose schema is compiled in rather than read from a file. It
-    /// goes through the same checks, so a bundled schema cannot carry two
+    /// goes through the same checks, so a fixture cannot carry two
     /// instructions on the same discriminator bytes.
     pub fn compiled_in(
         source: &str,

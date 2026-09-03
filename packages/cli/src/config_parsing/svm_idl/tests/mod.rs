@@ -177,12 +177,12 @@ fn points_each_reason_at_the_entry_in_the_file() {
     );
 }
 
-/// A bundled schema has no file to point into, so its reasons carry the name
-/// it is bundled under.
+/// A compiled-in fixture has no file to point into, so its reasons carry the
+/// source name it was given.
 #[test]
-fn names_a_bundled_schema_in_its_reasons() {
+fn names_a_fixture_schema_in_its_reasons() {
     let idl = ProgramIdl::compiled_in(
-        "metaplex_token_metadata",
+        "fixture",
         "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
         BTreeMap::from([
             (
@@ -210,10 +210,8 @@ fn names_a_bundled_schema_in_its_reasons() {
     assert_eq!(
         render(&idl),
         "address: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n\
-         unusable instruction burn: metaplex_token_metadata: it shares discriminator 0x010203 with \
-         'burnV2'\n\
-         unusable instruction burnV2: metaplex_token_metadata: it shares discriminator 0x010203 \
-         with 'burn'\n"
+         unusable instruction burn: fixture: it shares discriminator 0x010203 with 'burnV2'\n\
+         unusable instruction burnV2: fixture: it shares discriminator 0x010203 with 'burn'\n"
     );
 }
 

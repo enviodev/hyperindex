@@ -359,7 +359,7 @@
           ]
         },
         "instructions": {
-          "description": "Instructions to index. With `idl:` or a bundled schema, omit this list: every usable instruction the schema declares is available to `onInstruction`. A listed name that the schema does not declare is an error. Without a schema, each entry must carry `discriminator` and/or `accounts`/`args`.",
+          "description": "Instructions to index. With `idl:`, omit this list: every usable instruction the IDL declares is available to `onInstruction`. A listed name that the IDL does not declare is an error. Without `idl:`, each entry must carry `discriminator` and/or `accounts`/`args`.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Instruction"
@@ -516,7 +516,7 @@
           "additionalProperties": false
         },
         {
-          "description": "Reference to a nominal type defined in the program-level\n`defined_types` registry (populated from an Anchor IDL `types:`\nblock or the bundled-Metaplex registry).",
+          "description": "Reference to a nominal type defined in the program-level\n`defined_types` registry (populated from an Anchor IDL `types:`\nblock).",
           "type": "object",
           "properties": {
             "defined": {
