@@ -9,7 +9,6 @@ type historySchema = {
   checkpointsTable: string,
   checkpointChainIdColumn: string,
   checkpointBlockNumberColumn: string,
-  historyTablePrefix: string,
 }
 
 type chainProgressInput = {chainId: string, progressBlockNumber: int}
@@ -63,6 +62,14 @@ type initializeInput = {
   databaseEngine?: string,
 }
 
+type resumeInput = {
+  checkpointId: string,
+  chainProgress: array<chainProgressInput>,
+  historyTables: array<string>,
+  replicated: bool,
+  databaseEngine?: string,
+}
+
 type registeredTable = {
   handle: int,
   names: array<string>,
@@ -88,7 +95,7 @@ external registerCheckpointsTable: (t, array<columnSpec>) => registeredTable =
 @send external initialize: (t, initializeInput) => promise<unit> = "initialize"
 
 @send
-external resume: (t, string, array<chainProgressInput>) => promise<unit> = "resume"
+external resume: (t, resumeInput) => promise<unit> = "resume"
 
 @send
 external stage: (t, ~table: int, ~rows: int, ~columns: array<columnValuesInput>) => int = "stage"
@@ -108,7 +115,6 @@ let historySchema = (): historySchema => {
   checkpointsTable: InternalTable.Checkpoints.table.tableName,
   checkpointChainIdColumn: (#chain_id: InternalTable.Checkpoints.field :> string),
   checkpointBlockNumberColumn: (#block_number: InternalTable.Checkpoints.field :> string),
-  historyTablePrefix: EntityHistory.historyTablePrefix,
 }
 
 let make = (~url, ~username, ~password, ~database, ~chainIdMode: ChainId.mode, ~onWarning) =>

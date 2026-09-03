@@ -1803,11 +1803,9 @@ let make = (
     ~contractMapping,
     ~envioInfo,
   ): Persistence.initialState => {
-    // Per-entity storage routing: PG owns tables only for entities that
-    // opted into Postgres; the sink mirrors only those that opted into
-    // ClickHouse.
+    // PG owns tables only for entities that opted into Postgres; the sink
+    // picks its own out of the full list.
     let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
-    let chEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.clickhouse)
 
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
       makeSchemaTableNamesQuery(~pgSchema),
@@ -1836,7 +1834,7 @@ let make = (
 
     // Call sink.initialize before executing PG queries
     switch sink {
-    | Some(sink) => await sink.initialize(~entities=chEntities)
+    | Some(sink) => await sink.initialize(~entities)
     | None => ()
     }
 
@@ -2300,8 +2298,14 @@ let make = (
     }
   }
 
-  let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints, (envioInfo, contractMapping)) = await Promise.all5((
+  let resumeInitialState = async (~entities, ~throwIfIncompatible): Persistence.initialState => {
+    let (
+      cache,
+      chains,
+      checkpointIdResult,
+      reorgCheckpoints,
+      (storedEnvioInfo, storedContractMapping),
+    ) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
@@ -2349,6 +2353,8 @@ let make = (
       ),
     ))
 
+    throwIfIncompatible(~storedEnvioInfo, ~storedContractMapping)
+
     await reloadIndexCatalog()
 
     let checkpointId = (checkpointIdResult->Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
@@ -2363,7 +2369,7 @@ let make = (
 
     // Resume sink if present - needed to rollback any reorg changes
     switch sink {
-    | Some(sink) => await sink.resume(~checkpointId, ~chains)
+    | Some(sink) => await sink.resume(~checkpointId, ~chains, ~entities)
     | None => ()
     }
 
@@ -2373,8 +2379,8 @@ let make = (
       cache,
       chains,
       checkpointId,
-      contractMapping,
-      envioInfo,
+      contractMapping: storedContractMapping,
+      envioInfo: storedEnvioInfo,
     }
   }
 
