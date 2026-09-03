@@ -30,6 +30,15 @@ pub(crate) fn decode_optionally_prefixed(s: &str, name: &str) -> Result<Vec<u8>>
     decode_digits(strip_prefix(s).unwrap_or(s), s, name)
 }
 
+/// Encode bytes as a `0x`-prefixed lowercase hex string. The SVM wire's `dN`
+/// filters take this form.
+pub(crate) fn to_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(2 + bytes.len() * 2);
+    s.push_str("0x");
+    s.push_str(&faster_hex::hex_string(bytes));
+    s
+}
+
 /// Decode exactly `len` bytes of `0x`-prefixed hex, or `None` when the string
 /// isn't that. Callers treat it as "not a well-formed value" rather than an
 /// error to surface.

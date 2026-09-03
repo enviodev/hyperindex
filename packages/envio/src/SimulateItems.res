@@ -338,11 +338,12 @@ let parse = (
       | None =>
         switch blockJson {
         | Some(bj) =>
-          switch (bj->(Utils.magic: JSON.t => dict<JSON.t>))->Dict.get("slot") {
+          switch bj->(Utils.magic: JSON.t => dict<JSON.t>)->Dict.get("slot") {
           | Some(v) =>
-            v->(Utils.magic: JSON.t => Nullable.t<int>)->Nullable.toOption->Option.getOr(
-              currentBlock.contents,
-            )
+            v
+            ->(Utils.magic: JSON.t => Nullable.t<int>)
+            ->Nullable.toOption
+            ->Option.getOr(currentBlock.contents)
           | None => currentBlock.contents
           }
         | None => currentBlock.contents
@@ -382,10 +383,12 @@ let parse = (
       }
       let args = item.args->Option.getOr(Dict.make()->(Utils.magic: dict<unknown> => unknown))
       let logs = item.logs->Option.map(logs =>
-        logs->Array.map((log): SvmHyperSyncClient.EventItems.log => {
-          kind: log.kind->Null.fromOption,
-          message: log.message->Null.fromOption,
-        })
+        logs->Array.map(
+          (log): SvmHyperSyncClient.EventItems.log => {
+            kind: log.kind->Null.fromOption,
+            message: log.message->Null.fromOption,
+          },
+        )
       )
 
       let liveRegistrations = liveRegistrationsFor(~config, ~chainId, ~eventConfig)
@@ -422,13 +425,13 @@ let parse = (
             accountIndex: ?activity.transactionAccountIndex,
             isSigner: ?activity.isSigner,
             isWritable: ?activity.isWritable,
-            preBalance: ?activity.lamports->Option.flatMap(l => l.pre),
-            postBalance: ?activity.lamports->Option.flatMap(l => l.post),
-            mint: ?activity.token->Option.flatMap(t => t.mint),
-            owner: ?activity.token->Option.flatMap(t => t.owner),
-            decimals: ?activity.token->Option.flatMap(t => t.decimals),
-            preAmount: ?activity.token->Option.flatMap(t => t.preAmount),
-            postAmount: ?activity.token->Option.flatMap(t => t.postAmount),
+            preBalance: ?(activity.lamports->Option.flatMap(l => l.pre)),
+            postBalance: ?(activity.lamports->Option.flatMap(l => l.post)),
+            mint: ?(activity.token->Option.flatMap(t => t.mint)),
+            owner: ?(activity.token->Option.flatMap(t => t.owner)),
+            decimals: ?(activity.token->Option.flatMap(t => t.decimals)),
+            preAmount: ?(activity.token->Option.flatMap(t => t.preAmount)),
+            postAmount: ?(activity.token->Option.flatMap(t => t.postAmount)),
           })
           ->ignore
         )
@@ -464,7 +467,11 @@ let parse = (
             accounts: accountArguments,
             data,
             isInner: item.isInner->Option.getOr(false),
-            args,
+            // As the Rust client does: present exactly when this registration
+            // selected `args`.
+            args: onEventRegistration.fieldSelection.instructionFields->Utils.Set.has("args")
+              ? Null.make(args)
+              : Null.null,
             logs: logs->Null.fromOption,
           },
           ~programName,

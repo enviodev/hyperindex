@@ -117,27 +117,6 @@ fn at(source: &str, position: Option<&(usize, usize)>) -> String {
     }
 }
 
-/// Discriminator widths the router can probe for. Dispatch reads a fixed-width
-/// prefix off `instruction.data`, so a width outside this set parses fine here
-/// and then fails at indexer start, far from the IDL that caused it. The
-/// config validator and the router read the same list, since a width one of
-/// the three admits and another does not is a registration nothing can match.
-pub(crate) const DISPATCHABLE_DISCRIMINATOR_LENS: [usize; 4] = [1, 2, 4, 8];
-
-/// "1, 2, 4, or 8", for a message that would otherwise spell out by hand the
-/// list it is reporting against.
-pub(crate) fn describe_dispatchable_lens() -> String {
-    let (last, rest) = DISPATCHABLE_DISCRIMINATOR_LENS
-        .split_last()
-        .expect("non-empty");
-    let rest = rest
-        .iter()
-        .map(usize::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{rest}, or {last}")
-}
-
 /// `source` names the file the IDL came from, and is what every reason is
 /// reported against.
 pub fn parse_idl(source: &str, json: &str) -> Result<ProgramIdl> {
@@ -171,8 +150,8 @@ pub fn parse_idl(source: &str, json: &str) -> Result<ProgramIdl> {
 
 impl ProgramIdl {
     /// A program whose schema is compiled in rather than read from a file. It
-    /// goes through the same checks, so a bundled schema cannot carry a
-    /// collision or a discriminator width the router never probes for.
+    /// goes through the same checks, so a bundled schema cannot carry two
+    /// instructions on the same discriminator bytes.
     pub fn compiled_in(
         source: &str,
         address: String,
@@ -217,23 +196,11 @@ fn is_codama_root(root: &Map<String, Value>) -> bool {
 
 fn validate(idl: &mut ProgramIdl) {
     let mut demoted = Unusable::new();
-    for (name, ix) in &idl.instructions {
-        let len = ix.discriminator.len();
-        if !DISPATCHABLE_DISCRIMINATOR_LENS.contains(&len) {
-            demoted.insert(
-                name.clone(),
-                format!(
-                    "{}its discriminator is {len} bytes, and dispatch matches only {}",
-                    idl.instruction_at(name),
-                    describe_dispatchable_lens()
-                ),
-            );
-        }
-    }
 
-    // Empty / unreadable prefixes are not evidence of a collision. An
-    // instruction the file never declared is the same unknown. An empty
-    // prefix is still unroutable (the width check above).
+    // Two live instructions on the same bytes would both match every call that
+    // carries that prefix and decode it twice. A prefix of a longer sibling is
+    // not a collision: routing delivers the call to every selected instruction
+    // whose prefix it carries.
     let declared: Vec<(&[u8], &str)> = idl
         .instructions
         .iter()
@@ -243,9 +210,8 @@ fn validate(idl: &mut ProgramIdl) {
                 .iter()
                 .map(|(name, bytes)| (bytes.as_slice(), name.as_str())),
         )
-        .filter(|(bytes, _)| !bytes.is_empty())
         .collect();
-    for (name, reason) in prefix_collisions(declared) {
+    for (name, reason) in duplicate_discriminators(declared) {
         if idl.instructions.contains_key(&name) {
             let reason = format!("{}{reason}", idl.instruction_at(&name));
             demoted.entry(name).or_insert(reason);
@@ -296,45 +262,35 @@ fn demote(idl: &mut ProgramIdl, demoted: Unusable) {
     }
 }
 
-/// Dispatch probes widths longest-first, so `0x0c` and `0x0c02` are one key:
-/// the longer wins every probe that reaches it, and the shorter never fires.
-fn prefix_collisions(mut by_bytes: Vec<(&[u8], &str)>) -> Unusable {
+fn duplicate_discriminators(mut by_bytes: Vec<(&[u8], &str)>) -> Unusable {
     by_bytes.sort_unstable();
     let mut out = Unusable::new();
-    for (i, (shorter, first)) in by_bytes.iter().enumerate() {
-        for (longer, second) in by_bytes[i + 1..].iter() {
-            if !longer.starts_with(shorter) {
-                break;
-            }
-            if shorter == longer {
-                let hex = crate::hex::encode(shorter);
-                out.insert(
-                    first.to_string(),
-                    format!("it shares discriminator 0x{hex} with '{second}'"),
-                );
-                out.insert(
-                    second.to_string(),
-                    format!("it shares discriminator 0x{hex} with '{first}'"),
-                );
-                continue;
-            }
-            out.entry(first.to_string()).or_insert_with(|| {
-                format!(
-                    "its discriminator 0x{} is a prefix of '{second}'\'s 0x{}, so '{second}' \
-                     takes every call that would have matched it",
-                    crate::hex::encode(shorter),
-                    crate::hex::encode(longer),
-                )
-            });
-            out.entry(second.to_string()).or_insert_with(|| {
-                format!(
-                    "its discriminator 0x{} extends '{first}'\'s 0x{}, so a '{first}' call whose \
-                     data continues those bytes arrives here instead",
-                    crate::hex::encode(longer),
-                    crate::hex::encode(shorter),
-                )
-            });
+    let mut i = 0;
+    while i < by_bytes.len() {
+        let (bytes, _) = by_bytes[i];
+        let mut j = i + 1;
+        while j < by_bytes.len() && by_bytes[j].0 == bytes {
+            j += 1;
         }
+        if j - i > 1 {
+            let hex = crate::hex::encode(bytes);
+            let names: Vec<&str> = by_bytes[i..j].iter().map(|(_, n)| *n).collect();
+            for name in &names {
+                let others = names
+                    .iter()
+                    .filter(|n| *n != name)
+                    .map(|n| format!("'{n}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let disc = if bytes.is_empty() {
+                    "an empty discriminator".to_string()
+                } else {
+                    format!("discriminator 0x{hex}")
+                };
+                out.insert(name.to_string(), format!("it shares {disc} with {others}"));
+            }
+        }
+        i = j;
     }
     out
 }

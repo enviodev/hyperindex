@@ -2352,13 +2352,15 @@ impl Contract {
         }
 
         // Two events on one contract that share a dispatch key are
-        // indistinguishable at routing time — one log/instruction would decode
-        // to both — so reject them here. The key mirrors the runtime `eventId`:
-        // sighash plus indexed-topic count for EVM, the discriminator for SVM
-        // (already program-scoped, since these are one program's instructions),
-        // the sighash for Fuel (a `LogData` logId or a fixed `mint`/`burn`/…).
-        // Names are unique by the check above, so a collision here is always
-        // between two differently-named events.
+        // indistinguishable at routing time — one log would decode to both —
+        // so reject them here. The key mirrors the runtime `eventId`: sighash
+        // plus indexed-topic count for EVM, the sighash for Fuel (a `LogData`
+        // logId or a fixed `mint`/`burn`/…). SVM instructions are exempt: a
+        // call routes to every instruction whose prefix it carries, each
+        // decoding with its own layout and dropped on its own when the layout
+        // rejects the data, so two instructions sharing a prefix are two
+        // instructions, not an ambiguity. Names are unique by the check above,
+        // so a collision here is always between two differently-named events.
         let mut seen_by_dispatch_key: HashMap<String, String> = HashMap::new();
         for event in &events {
             let dispatch_key = match &event.kind {
@@ -2366,14 +2368,7 @@ impl Contract {
                     let indexed_count = params.iter().filter(|p| p.indexed).count();
                     Some(format!("{}_{}", event.sighash, indexed_count))
                 }
-                // The router decodes the discriminator to bytes before matching,
-                // so `0x0f` and `0x0F` collide — lowercase before keying.
-                EventKind::Svm(svm) => Some(
-                    svm.discriminator
-                        .as_ref()
-                        .map(|d| d.to_lowercase())
-                        .unwrap_or_else(|| "none".to_string()),
-                ),
+                EventKind::Svm(_) => None,
                 EventKind::Fuel(_) => Some(event.sighash.clone()),
             };
             if let Some(dispatch_key) = dispatch_key {
@@ -4229,8 +4224,8 @@ type Foo {
         fn reports_why_a_configured_instruction_cannot_be_indexed() {
             let err = program_reading_idl(
                 r#"{ "instructions": [
-                     { "name": "swap", "discriminator": [1, 2, 3],
-                       "accounts": [], "args": [] },
+                     { "name": "swap", "discriminator": [1],
+                       "accounts": [], "args": [{ "name": "amount", "type": { "coption": "u64" } }] },
                      { "name": "deposit", "discriminator": [4],
                        "accounts": [], "args": [] }] }"#,
                 "            - name: swap\n",
@@ -4240,7 +4235,8 @@ type Foo {
             assert_eq!(
                 format!("{err:#}"),
                 "Layout for instruction 'swap': the schema declares it, but it cannot be \
-                 indexed: idls/pool.json:2:22: its discriminator is 3 bytes, and dispatch matches only 1, 2, 4, or 8"
+                 indexed: idls/pool.json:2:22: args.amount: `coption` is not Borsh-compatible and \
+                 cannot be decoded"
             );
         }
 

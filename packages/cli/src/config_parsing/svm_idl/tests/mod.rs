@@ -142,7 +142,7 @@ fn points_each_reason_at_the_entry_in_the_file() {
     let json = [
         "{",
         "  \"instructions\": [",
-        "    { \"name\": \"swap\", \"discriminator\": [1, 2, 3] },",
+        "    { \"name\": \"swap\", \"discriminator\": [1, 2, 3], \"args\": [{ \"name\": \"x\", \"type\": \"u46\" }] },",
         "    { \"name\": \"burn\", \"discriminator\": [4] }",
         "  ],",
         "  \"types\": [",
@@ -167,8 +167,7 @@ fn points_each_reason_at_the_entry_in_the_file() {
         (
             "address: -\n\
              instruction burn 0x04 () ()\n\
-             unusable instruction swap: idls/pool.json:3:5: its discriminator is 3 bytes, and \
-             dispatch matches only 1, 2, 4, or 8\n\
+             unusable instruction swap: idls/pool.json:3:5: args.x: unknown type 'u46'\n\
              unusable type Loop: idls/pool.json:7:5: it recursively contains itself without an \
              option or vec to terminate decoding\n"
                 .to_string(),
@@ -185,23 +184,36 @@ fn names_a_bundled_schema_in_its_reasons() {
     let idl = ProgramIdl::compiled_in(
         "metaplex_token_metadata",
         "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
-        BTreeMap::from([(
-            "burn".to_string(),
-            IxIdl {
-                discriminator: vec![1, 2, 3],
-                derived: false,
-                accounts: Vec::new(),
-                args: Vec::new(),
-            },
-        )]),
+        BTreeMap::from([
+            (
+                "burn".to_string(),
+                IxIdl {
+                    discriminator: vec![1, 2, 3],
+                    derived: false,
+                    accounts: Vec::new(),
+                    args: Vec::new(),
+                },
+            ),
+            (
+                "burnV2".to_string(),
+                IxIdl {
+                    discriminator: vec![1, 2, 3],
+                    derived: false,
+                    accounts: Vec::new(),
+                    args: Vec::new(),
+                },
+            ),
+        ]),
         BTreeMap::new(),
     );
 
     assert_eq!(
         render(&idl),
         "address: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n\
-         unusable instruction burn: metaplex_token_metadata: its discriminator is 3 bytes, and \
-         dispatch matches only 1, 2, 4, or 8\n"
+         unusable instruction burn: metaplex_token_metadata: it shares discriminator 0x010203 with \
+         'burnV2'\n\
+         unusable instruction burnV2: metaplex_token_metadata: it shares discriminator 0x010203 \
+         with 'burn'\n"
     );
 }
 
