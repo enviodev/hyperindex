@@ -1,9 +1,10 @@
 open Vitest
 
-// NaN and Infinity have no JSON form: `JSON.stringify` renders both as `null`,
-// so a float array carrying one reaches the encoder as a null element the column
-// cannot hold. What an operator reads has to name the value the handler actually
-// wrote, not the null it turned into on the way.
+// NaN and Infinity are refused whichever column shape carries them, and the
+// refusal reads the same either way. A float list would otherwise be refused
+// for the `null` `JSON.stringify` renders it as, and a scalar Float64 column
+// would take the raw bytes and store a value no reader can render — so what an
+// operator is shown has to name the value the handler actually wrote.
 
 let scenario = Scenario.make(
   ~configYaml=`
@@ -77,16 +78,11 @@ describe("ClickHouse refuses a float that has no JSON form", () => {
         ~latestFetchedBlockNumber=10,
       )
 
-      let failure = await refusal.awaitStorageError()
+      let failure = await refusal.awaitRefusalReason()
 
-      t.expect((
-        failure->Option.map(((message, _)) => message),
-        failure->Option.map(((_, reason)) => reason),
-        await storedReadings(),
-      )).toEqual((
-        Some("Failed to convert items for ClickHouse table \"envio_history_Readings\""),
+      t.expect((failure, await storedReadings())).toEqual((
         Some(
-          "NaN has no JSON form, so it cannot be stored in the `samples` column. Store a finite number, or keep it out of the entity.",
+          "NaN is not a finite number, so it cannot be stored in the `samples` column. Store a finite number, or keep it out of the entity.",
         ),
         "0",
       ))
@@ -94,13 +90,10 @@ describe("ClickHouse refuses a float that has no JSON form", () => {
   )
 })
 
-// A Float64 column takes the raw bytes, so nothing on the way rejects the two
-// values the array path above refuses — ClickHouse stores them, and from then on
-// an aggregate over the column is NaN and a JSON read has no form for it.
 describe("ClickHouse refuses a non-finite float in a scalar column", () => {
   let refusal = Scenario.captureRefusal()
   scenario->Scenario.it(
-    "fails the write instead of storing a value no reader can render",
+    "names Infinity the same way it names a value in a list",
     ~sources=[{chain: 1}],
     ~onError=refusal.onError,
     async (~t, ~indexer as _, ~source) => {
@@ -121,17 +114,14 @@ describe("ClickHouse refuses a non-finite float in a scalar column", () => {
         ~latestFetchedBlockNumber=10,
       )
 
-      let failure = await refusal.awaitStorageError()
+      let failure = await refusal.awaitRefusalReason()
 
-      t.expect((
-        failure->Option.map(((message, _)) => message),
-        failure->Option.mapOr(false, ((_, reason)) => reason->String.includes("`latest`")),
-        failure->Option.mapOr(
-          false,
-          ((_, reason)) => reason->String.includes("not a value a Float64 column can hold"),
+      t.expect((failure, await storedReadings())).toEqual((
+        Some(
+          "Infinity is not a finite number, so it cannot be stored in the `latest` column. Store a finite number, or keep it out of the entity.",
         ),
-        await storedReadings(),
-      )).toEqual((Some("Failed to write a batch to ClickHouse"), true, true, "0"))
+        "0",
+      ))
     },
   )
 })
