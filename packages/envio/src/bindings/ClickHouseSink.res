@@ -9,7 +9,6 @@ type historySchema = {
   checkpointsTable: string,
   checkpointChainIdColumn: string,
   checkpointBlockNumberColumn: string,
-  historyTablePrefix: string,
 }
 
 type chainProgressInput = {chainId: string, progressBlockNumber: int}
@@ -63,6 +62,14 @@ type initializeInput = {
   databaseEngine?: string,
 }
 
+type resumeInput = {
+  checkpointId: string,
+  chainProgress: array<chainProgressInput>,
+  historyTables: array<string>,
+  replicated: bool,
+  databaseEngine?: string,
+}
+
 type registeredTable = {
   handle: int,
   names: array<string>,
@@ -75,6 +82,7 @@ type columnValuesInput = {
   unsigned64?: BigUint64Array.t,
   signed64?: BigInt64Array.t,
   texts?: array<string>,
+  bytes?: array<Uint8Array.t>,
   nulls?: Uint8Array.t,
 }
 
@@ -88,7 +96,7 @@ external registerCheckpointsTable: (t, array<columnSpec>) => registeredTable =
 @send external initialize: (t, initializeInput) => promise<unit> = "initialize"
 
 @send
-external resume: (t, string, array<chainProgressInput>) => promise<unit> = "resume"
+external resume: (t, resumeInput) => promise<unit> = "resume"
 
 @send
 external stage: (t, ~table: int, ~rows: int, ~columns: array<columnValuesInput>) => int = "stage"
@@ -108,7 +116,6 @@ let historySchema = (): historySchema => {
   checkpointsTable: InternalTable.Checkpoints.table.tableName,
   checkpointChainIdColumn: (#chain_id: InternalTable.Checkpoints.field :> string),
   checkpointBlockNumberColumn: (#block_number: InternalTable.Checkpoints.field :> string),
-  historyTablePrefix: EntityHistory.historyTablePrefix,
 }
 
 let make = (~url, ~username, ~password, ~database, ~chainIdMode: ChainId.mode, ~onWarning) =>
@@ -129,6 +136,7 @@ type kind =
   | @as(1) U64
   | @as(2) I64
   | @as(3) Text
+  | @as(4) Bytes
 
 let kindOfOrdinal = ordinal =>
   switch ordinal {
@@ -136,6 +144,7 @@ let kindOfOrdinal = ordinal =>
   | 1 => U64
   | 2 => I64
   | 3 => Text
+  | 4 => Bytes
   | unknown => JsError.throwWithMessage(`Unknown ClickHouse column kind ${unknown->Int.toString}`)
   }
 
@@ -169,6 +178,17 @@ external asString: unknown => string = "%identity"
       switch value->typeof {
       | #bigint =>
         value->(Utils.magic: JSON.t => unknown)->stringOf->(Utils.magic: string => JSON.t)
+      // A Uint8Array inside a list column travels as its byte values, which the
+      // sink reads back into raw bytes.
+      | #object =>
+        switch value->(Utils.magic: JSON.t => unknown)->Utils.Bytes.asUint8Array {
+        | Some(bytes) =>
+          bytes
+          ->(Utils.magic: Uint8Array.t => Array.arrayLike<int>)
+          ->Array.fromArrayLike
+          ->(Utils.magic: array<int> => JSON.t)
+        | None => value
+        }
       | #number =>
         let _ = value->(Utils.magic: JSON.t => float)->finiteOrThrow(~column)
         value
@@ -207,6 +227,7 @@ type builder = {
   unsigned: BigUint64Array.t,
   signed: BigInt64Array.t,
   texts: array<string>,
+  bytes: array<Uint8Array.t>,
   replacer: JSON.replacer,
   mutable nulls: option<Uint8Array.t>,
   rows: int,
@@ -215,6 +236,7 @@ type builder = {
 %%private(let noFloats = Float64Array.fromLength(0))
 %%private(let noUnsigned = BigUint64Array.fromLength(0))
 %%private(let noSigned = BigInt64Array.fromLength(0))
+%%private(let noBytes = Uint8Array.fromLength(0))
 
 let makeBuilder = ({name, kind, isNullable, replacer}: column, ~rows) => {
   name,
@@ -224,6 +246,7 @@ let makeBuilder = ({name, kind, isNullable, replacer}: column, ~rows) => {
   unsigned: kind === U64 ? BigUint64Array.fromLength(rows) : noUnsigned,
   signed: kind === I64 ? BigInt64Array.fromLength(rows) : noSigned,
   texts: kind === Text ? Array.make(~length=rows, "") : [],
+  bytes: kind === Bytes ? Array.make(~length=rows, noBytes) : [],
   replacer,
   nulls: None,
   rows,
@@ -271,6 +294,7 @@ let markNull = (builder, ~row) => {
         value->checkedBigInt(~builder, ~min=-9223372036854775808n, ~max=9223372036854775807n),
       )
     | Text => builder.texts->Array.setUnsafe(row, value->toText(~replacer=builder.replacer))
+    | Bytes => builder.bytes->Array.setUnsafe(row, value->(Utils.magic: unknown => Uint8Array.t))
     }
 )
 
@@ -308,5 +332,6 @@ let builderPayload = (builder): columnValuesInput => {
   | U64 => {...base, unsigned64: builder.unsigned}
   | I64 => {...base, signed64: builder.signed}
   | Text => {...base, texts: builder.texts}
+  | Bytes => {...base, bytes: builder.bytes}
   }
 }

@@ -23,34 +23,53 @@ module FieldValue = {
   //and serialize the types without parsing/wrapping them
   type t = option<tNonOptional>
 
+  // A Uint8Array is an object like a BigDecimal, so the unboxed variant can't
+  // tell them apart on its own.
+  let asBytes = (value: t) => value->(Utils.magic: t => unknown)->Utils.Bytes.asUint8Array
+
   let toString = (value: t) =>
-    switch value {
-    | Some(v) => v->toString
-    | None => "undefined"
+    switch (value, value->asBytes) {
+    | (_, Some(bytes)) => bytes->Utils.Bytes.toHex
+    | (Some(v), None) => v->toString
+    | (None, None) => "undefined"
     }
 
   external castFrom: 'a => t = "%identity"
 
-  let eq = (a, b) =>
-    switch (a, b) {
+  let compareWith = (a, b, ~bigDecimal, ~bytes, ~fallback) =>
+    switch (a, b, a->asBytes, b->asBytes) {
+    | (_, _, Some(bytesA), Some(bytesB)) => bytes(Utils.Bytes.compare(bytesA, bytesB))
     //For big decimal use custom equals operator otherwise let Caml_obj.equal do its magic
-    | (Some(BigDecimal(bdA)), Some(BigDecimal(bdB))) => BigDecimal.equals(bdA, bdB)
-    | (a, b) => a == b
+    | (Some(BigDecimal(bdA)), Some(BigDecimal(bdB)), _, _) => bigDecimal(bdA, bdB)
+    | (a, b, _, _) => fallback(a, b)
     }
+
+  let eq = (a, b) =>
+    compareWith(
+      a,
+      b,
+      ~bigDecimal=BigDecimal.equals,
+      ~bytes=order => order === 0.,
+      ~fallback=(a, b) => a == b,
+    )
 
   let gt = (a, b) =>
-    switch (a, b) {
-    //For big decimal use custom equals operator otherwise let Caml_obj.equal do its magic
-    | (Some(BigDecimal(bdA)), Some(BigDecimal(bdB))) => BigDecimal.gt(bdA, bdB)
-    | (a, b) => a > b
-    }
+    compareWith(
+      a,
+      b,
+      ~bigDecimal=BigDecimal.gt,
+      ~bytes=order => order > 0.,
+      ~fallback=(a, b) => a > b,
+    )
 
   let lt = (a, b) =>
-    switch (a, b) {
-    //For big decimal use custom equals operator otherwise let Caml_obj.equal do its magic
-    | (Some(BigDecimal(bdA)), Some(BigDecimal(bdB))) => BigDecimal.lt(bdA, bdB)
-    | (a, b) => a < b
-    }
+    compareWith(
+      a,
+      b,
+      ~bigDecimal=BigDecimal.lt,
+      ~bytes=order => order < 0.,
+      ~fallback=(a, b) => a < b,
+    )
 }
 
 // The And case requires at least one nested filter (storage throws otherwise),

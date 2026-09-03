@@ -51,7 +51,6 @@ pub struct HistorySchema {
     /// checkpoints each chain's recorded progress already covers.
     pub checkpoint_chain_id_column: String,
     pub checkpoint_block_number_column: String,
-    pub history_table_prefix: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -337,6 +336,47 @@ pub fn insert_query(
     )
 }
 
+/// One read that answers, for every table a resume could trim, whether any
+/// row sits above the checkpoint it trims to. A table answering no needs no
+/// mutation, and on a clean restart every one of them does — which is what
+/// keeps a resume from scheduling a part rewrite per entity for nothing.
+///
+/// `count()` over a `LIMIT 1` subquery stops at the first matching row where a
+/// bare `count()` would scan the whole column: `envio_checkpoint_id` trails the
+/// sorting key, so the primary index prunes nothing. The aliases live outside
+/// the table's own scope and carry a prefix no entity field can, since `exists`
+/// loses its alias under the old analyzer and a user may have named a column
+/// `name`.
+pub fn holds_rows_above_checkpoint(
+    database: &str,
+    history_tables: &[String],
+    history: &HistorySchema,
+    checkpoint_id: &str,
+) -> String {
+    let branch = |table: &str, column: &str| {
+        format!(
+            "SELECT {} AS `_envio_table`, count() AS `_envio_holds` FROM (SELECT 1 FROM {}.{} \
+             WHERE {} > {checkpoint_id} LIMIT 1)",
+            literal(table),
+            quoted(database),
+            quoted(table),
+            quoted(column)
+        )
+    };
+    let branches: Vec<String> = history_tables
+        .iter()
+        .map(|table| branch(table, &history.checkpoint_id_column))
+        .chain(std::iter::once(branch(
+            &history.checkpoints_table,
+            &history.id_column,
+        )))
+        .collect();
+    format!(
+        "SELECT `_envio_table`, `_envio_holds` FROM ({}) FORMAT TabSeparated",
+        branches.join(" UNION ALL ")
+    )
+}
+
 /// Trims one history table's rows past the checkpoint being resumed from.
 ///
 /// `ALTER ... DELETE` schedules a mutation rather than running one, so without
@@ -390,7 +430,6 @@ pub(crate) mod test_support {
             checkpoints_table: "envio_checkpoints".to_string(),
             checkpoint_chain_id_column: "chain_id".to_string(),
             checkpoint_block_number_column: "block_number".to_string(),
-            history_table_prefix: "envio_history_".to_string(),
         }
     }
 

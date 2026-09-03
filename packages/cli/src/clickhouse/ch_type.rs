@@ -18,6 +18,10 @@ pub enum ChType {
     Float64,
     Bool,
     String,
+    /// Raw bytes in a `String` column, which ClickHouse keeps binary-safe. Its
+    /// own variant so the column kind can carry the bytes as they are, where
+    /// `String` carries text.
+    Bytes,
     /// Milliseconds since the epoch. The precision is fixed at 3 rather than
     /// carried: `Date` is the only field type that lands here and JS measures
     /// time in milliseconds, so a column of any other precision would silently
@@ -109,6 +113,7 @@ impl FieldSpec {
     pub fn ch_type(&self, chain_id_mode: ChainIdMode) -> Result<ChType> {
         let base = match self.field_type.as_str() {
             "String" | "Json" => ChType::String,
+            "Bytea" => ChType::Bytes,
             "Boolean" => ChType::Bool,
             "Uint32" => ChType::UInt32,
             "UInt52" | "UInt64" => ChType::UInt64,
@@ -171,7 +176,7 @@ impl fmt::Display for ChType {
             ChType::UInt64 => f.write_str("UInt64"),
             ChType::Float64 => f.write_str("Float64"),
             ChType::Bool => f.write_str("Bool"),
-            ChType::String => f.write_str("String"),
+            ChType::String | ChType::Bytes => f.write_str("String"),
             ChType::DateTime64 => f.write_str("DateTime64(3, 'UTC')"),
             ChType::Decimal { precision, scale } => write!(f, "Decimal({precision},{scale})"),
             ChType::Enum { variants } => {
@@ -204,6 +209,7 @@ pub enum ColumnKind {
     U64 = 1,
     I64 = 2,
     Text = 3,
+    Bytes = 4,
 }
 
 impl ChType {
@@ -217,6 +223,7 @@ impl ChType {
             | ChType::DateTime64 => ColumnKind::F64,
             ChType::UInt64 => ColumnKind::U64,
             ChType::Int64 => ColumnKind::I64,
+            ChType::Bytes => ColumnKind::Bytes,
             ChType::String | ChType::Decimal { .. } | ChType::Enum { .. } | ChType::Array(_) => {
                 ColumnKind::Text
             }
@@ -317,6 +324,7 @@ mod tests {
         let rendered_types = [
             "String",
             "Json",
+            "Bytea",
             "Boolean",
             "Uint32",
             "UInt52",
@@ -331,6 +339,7 @@ mod tests {
         assert_eq!(
             rendered_types,
             [
+                "String",
                 "String",
                 "String",
                 "Bool",
@@ -563,6 +572,16 @@ mod tests {
             },
             field("Date"),
             field("BigSerial"),
+            field("Bytea"),
+            FieldSpec {
+                is_nullable: true,
+                ..field("Bytea")
+            },
+            // A list travels as JSON text whatever its element type.
+            FieldSpec {
+                is_array: true,
+                ..field("Bytea")
+            },
         ]
         .map(|spec| spec.ch_type(ChainIdMode::Int32).unwrap().column_kind());
         assert_eq!(
@@ -574,6 +593,9 @@ mod tests {
                 ColumnKind::Text,
                 ColumnKind::F64,
                 ColumnKind::I64,
+                ColumnKind::Bytes,
+                ColumnKind::Bytes,
+                ColumnKind::Text,
             ]
         );
     }
