@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use napi::bindgen_prelude::Uint8Array;
 use napi_derive::napi;
 
 mod borsh_decoder;
@@ -34,7 +35,6 @@ use borsh_decoder::InstructionSchemaInput;
 use config::SvmClientConfig;
 use query::SvmQuery;
 use selection::{route_instruction, SelectionBuilder, SvmOnEventRegistrationInput};
-use types::to_hex;
 
 /// Move the response's transactions and account activity into a
 /// `TransactionStore`, keyed by `(slot, transactionIndex)`. Kept in Rust so
@@ -477,14 +477,15 @@ pub struct EventItem {
     pub path: Vec<i64>,
     pub program_id: String,
     pub accounts: Vec<String>,
-    /// Raw instruction data, `0x`-prefixed hex; decoded params ride on
-    /// `args_json` when the registration carries a Borsh schema.
-    pub data: String,
+    /// Raw instruction data; decoded params ride on `args` when the
+    /// registration carries a Borsh schema.
+    pub data: Uint8Array,
     pub is_inner: bool,
-    /// Borsh-decoded args as a JSON object literal, `{}` when the routed
-    /// registration reads no args or the program carries no schema. An
-    /// instruction the schema rejects never becomes an item at all.
-    pub args_json: String,
+    /// Borsh-decoded args as a JS value tree (wide integers as bigint), an
+    /// empty object when the routed registration reads no args or the program
+    /// carries no schema. An instruction the schema rejects never becomes an
+    /// item at all.
+    pub args: crate::param_value::ParamValue,
     /// Logs scoped to this instruction; `Some` only when the routed
     /// registration selected `fields.log`.
     pub logs: Option<Vec<LogItem>>,
@@ -576,13 +577,16 @@ fn build_event_items(
         let decoded = if routed.iter().any(|reg| reg.selects_args) {
             match schemas.get(&instr.executing_account) {
                 Some(schema) => match borsh_decoder::decode_with_schema(schema, raw) {
-                    Some(decoded) => Some(decoded),
+                    borsh_decoder::Decoded::Args(args) => Some(args),
                     // Args were asked for and the schema rejected the data, so
                     // there is nothing truthful to hand a handler. Drop the
                     // instruction rather than run it with empty args - for
                     // every registration it routed to, not just the ones
                     // reading args.
-                    None => continue,
+                    borsh_decoder::Decoded::Failed => continue,
+                    // The registration declared no args to decode, so there is
+                    // nothing to fail at and nothing to drop.
+                    borsh_decoder::Decoded::Uncovered => None,
                 },
                 None => None,
             }
@@ -612,11 +616,19 @@ fn build_event_items(
                     .collect(),
                 program_id: instr.executing_account.clone(),
                 accounts: instr.account_arguments.clone(),
-                data: to_hex(&instr.data),
+                data: instr.data.clone().into(),
                 is_inner: instr.is_inner,
-                args_json: match &decoded {
-                    Some(args_json) if reg.selects_args => args_json.clone(),
-                    _ => "{}".to_string(),
+                args: if reg.selects_args {
+                    // A registration that declared no args reads an empty
+                    // object, which is what its generated type promises; one
+                    // whose schema rejected the data never got here.
+                    decoded
+                        .clone()
+                        .unwrap_or(crate::param_value::ParamValue::Obj(vec![]))
+                } else {
+                    // Unselected, so the payload omits the key and this is
+                    // never read.
+                    crate::param_value::ParamValue::Null
                 },
                 logs: if !reg.log_columns.is_empty() {
                     logs.as_deref()
@@ -688,6 +700,7 @@ pub(crate) fn map_err(e: anyhow::Error) -> napi::Error {
 mod tests {
     use super::*;
     use crate::address_store::test_support::{set_of, svm_store};
+    use crate::param_value::ParamValue;
     use query::{InstructionSelection, SvmQuery};
 
     const TOKEN_METADATA_PROGRAM: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
@@ -888,10 +901,10 @@ mod tests {
                 .map(|i| (
                     i.on_event_registration_index,
                     i.transaction_index,
-                    i.data.as_str()
+                    i.data.to_vec()
                 ))
                 .collect::<Vec<_>>(),
-            vec![(0, 7, "0x21")]
+            vec![(0, 7, vec![0x21])]
         );
     }
 
@@ -1061,9 +1074,67 @@ mod tests {
         .unwrap();
         let decoded = items
             .iter()
-            .map(|item| (item.on_event_registration_index, item.args_json.as_str()))
+            .map(|item| (item.on_event_registration_index, item.args.clone()))
             .collect::<Vec<_>>();
-        assert_eq!(decoded, vec![(0, r#"{"amount":"1"}"#), (1, "{}")]);
+        assert_eq!(
+            decoded,
+            vec![
+                (
+                    0,
+                    ParamValue::Obj(vec![("amount".to_string(), ParamValue::from_u128(1))])
+                ),
+                // A registration that reads no args never has the value read
+                // (the payload omits the key), so it carries the null
+                // placeholder rather than a decoded-looking empty object.
+                (1, ParamValue::Null),
+            ]
+        );
+    }
+
+    // A registration declaring neither args nor accounts carries no schema
+    // piece, so its program's schema has no entry for the discriminator. That
+    // is "nothing declared to decode", not a decode failure: the instruction
+    // must still reach its handler.
+    #[test]
+    fn an_instruction_the_program_schema_does_not_cover_keeps_empty_args() {
+        let (store, set) = fixture(&["TokenMetadata", "Other"]);
+        let mut with_args = reg_input(0, "0x21", false);
+        with_args.instruction_fields = vec!["args".to_string()];
+        with_args.args_json = Some(r#"[{"name":"amount","type":"u64"}]"#.to_string());
+        // Same program, a discriminator the schema never learns about.
+        let mut schemaless = with_args.clone();
+        schemaless.index = 1;
+        schemaless.instruction_name = "I1".to_string();
+        schemaless.discriminator = Some("0x0f".to_string());
+        schemaless.accounts = vec![];
+        schemaless.args_json = None;
+        let schemas = build_schemas(&[with_args.clone(), schemaless.clone()]).unwrap();
+        let built = SelectionBuilder::from_registrations(
+            &[with_args, schemaless],
+            &store.handle().read().unwrap(),
+        )
+        .unwrap()
+        .build(&[0, 1])
+        .unwrap();
+        let mut instr = committed_instruction(&[0x0f]);
+        instr.account_arguments = Some(vec![]);
+        let address_store = store.handle();
+        let address_store = address_store.read().unwrap();
+        let items = build_event_items(
+            std::slice::from_ref(&instr),
+            vec![],
+            &built,
+            &schemas,
+            set.cache(),
+            &Default::default(),
+            &address_store,
+        )
+        .unwrap();
+        let decoded = items
+            .iter()
+            .map(|item| (item.on_event_registration_index, item.args.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(decoded, vec![(1, ParamValue::Obj(vec![]))]);
     }
 
     #[test]

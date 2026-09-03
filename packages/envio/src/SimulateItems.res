@@ -371,8 +371,16 @@ let parse = (
         | None => []
         }
       }
-      let data = item.data->Option.getOr(svmEventConfig.discriminator->Option.getOr("0x"))
-      let argsJson = item.args->Option.mapOr("{}", args => args->JSON.stringify)
+      let data = switch (item.data, svmEventConfig.discriminator) {
+      | (Some(data), _) => data
+      | (None, Some(discriminator)) =>
+        discriminator
+        ->String.replace("0x", "")
+        ->NodeJs.Buffer.fromHex
+        ->Uint8Array.fromArrayLikeOrIterable
+      | (None, None) => Uint8Array.fromLength(0)
+      }
+      let args = item.args->Option.getOr(Dict.make()->(Utils.magic: dict<unknown> => unknown))
       let logs = item.logs->Option.map(logs =>
         logs->Array.map((log): SvmHyperSyncClient.EventItems.log => {
           kind: log.kind->Null.fromOption,
@@ -456,7 +464,7 @@ let parse = (
             accounts: accountArguments,
             data,
             isInner: item.isInner->Option.getOr(false),
-            argsJson,
+            args,
             logs: logs->Null.fromOption,
           },
           ~programName,

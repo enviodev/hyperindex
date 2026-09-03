@@ -63,9 +63,11 @@ let toSvmInstruction = (
   ~fieldSelection: Internal.fieldSelection,
 ): Envio.svmInstruction => {
   let hasSelection = name => fieldSelection.instructionFields->Utils.Set.has(name)
+  // A program-wide registration has no configured discriminator, so the whole
+  // data stands in, hex-encoded like a configured one would be.
   let discriminator = switch eventConfig.discriminator {
   | Some(d) => d
-  | None => item.data
+  | None => "0x" ++ item.data->NodeJs.Buffer.fromUint8Array->NodeJs.Buffer.toHex
   }
   let out = Dict.make()
   out->setField("programName", programName)
@@ -84,7 +86,7 @@ let toSvmInstruction = (
     out->setField("isInner", item.isInner)
   }
   if hasSelection("args") {
-    out->setField("args", item.argsJson->JSON.parseOrThrow)
+    out->setField("args", item.args)
   }
   if hasSelection("accounts") {
     out->setField(
