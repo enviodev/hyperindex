@@ -2272,7 +2272,7 @@ type testIndexer = {{
             // SVM programs table: per-program record of per-instruction
             // `{ args, accounts }` shapes. Empty when no SVM programs
             // configured, or when no instruction in any program carries a
-            // resolved schema (bundled / IDL / inline).
+            // resolved schema (IDL / inline).
             //
             // Each instruction emits both `args` (typed from the Borsh
             // schema) and `accounts` (named string slots from the schema).
@@ -2301,7 +2301,9 @@ type testIndexer = {{
                             let fields = svm_kind
                                 .args
                                 .iter()
-                                .map(|f| ts_svm_field(f, &svm_abi.defined_types, &mut Vec::new()))
+                                .map(|f| {
+                                    ts_svm_field(f, &svm_abi.idl.defined_types, &mut Vec::new())
+                                })
                                 .collect::<Vec<_>>()
                                 .join("; ");
                             format!("{{ {fields} }}")

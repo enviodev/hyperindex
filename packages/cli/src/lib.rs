@@ -34,6 +34,7 @@ pub mod subgraph;
 mod svm;
 mod svm_hypersync_source;
 mod template_dirs;
+mod text_position;
 mod transaction_store;
 mod type_schema;
 mod utils;
