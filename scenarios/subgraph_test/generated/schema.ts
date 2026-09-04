@@ -91,6 +91,90 @@ export class Pair extends Entity {
   set name(value: string) {
     this.set("name", Value.fromString(value));
   }
+
+  get swaps(): SwapLoader {
+    return new SwapLoader(
+      "Pair",
+      this.get("id")!.toBytes().toHexString(),
+      "swaps",
+    );
+  }
+
+  get metadata(): PairMetadataLoader {
+    return new PairMetadataLoader(
+      "Pair",
+      this.get("id")!.toBytes().toHexString(),
+      "metadata",
+    );
+  }
+}
+
+export class PairMetadata extends Entity {
+  constructor(id: string) {
+    super();
+    this.set("id", Value.fromString(id));
+  }
+
+  save(): void {
+    let id = this.get("id");
+    assert(id != null, "Cannot save PairMetadata entity without an ID");
+    if (id) {
+      assert(
+        id.kind == ValueKind.STRING,
+        `Entities of type PairMetadata must have an ID of type String but the id '${id.displayData()}' is of type ${id.displayKind()}`,
+      );
+      store.set("PairMetadata", id.toString(), this);
+    }
+  }
+
+  static loadInBlock(id: string): PairMetadata | null {
+    return changetype<PairMetadata | null>(
+      store.get_in_block("PairMetadata", id),
+    );
+  }
+
+  static load(id: string): PairMetadata | null {
+    return changetype<PairMetadata | null>(store.get("PairMetadata", id));
+  }
+
+  get id(): string {
+    let value = this.get("id");
+    if (!value || value.kind == ValueKind.NULL) {
+      throw new Error("Cannot return null for a required field.");
+    } else {
+      return value.toString();
+    }
+  }
+
+  set id(value: string) {
+    this.set("id", Value.fromString(value));
+  }
+
+  get pair(): Bytes {
+    let value = this.get("pair");
+    if (!value || value.kind == ValueKind.NULL) {
+      throw new Error("Cannot return null for a required field.");
+    } else {
+      return value.toBytes();
+    }
+  }
+
+  set pair(value: Bytes) {
+    this.set("pair", Value.fromBytes(value));
+  }
+
+  get label(): string {
+    let value = this.get("label");
+    if (!value || value.kind == ValueKind.NULL) {
+      throw new Error("Cannot return null for a required field.");
+    } else {
+      return value.toString();
+    }
+  }
+
+  set label(value: string) {
+    this.set("label", Value.fromString(value));
+  }
 }
 
 export class Swap extends Entity {
@@ -222,5 +306,41 @@ export class Tick extends Entity {
 
   set height(value: BigInt) {
     this.set("height", Value.fromBigInt(value));
+  }
+}
+
+export class SwapLoader extends Entity {
+  _entity: string;
+  _field: string;
+  _id: string;
+
+  constructor(entity: string, id: string, field: string) {
+    super();
+    this._entity = entity;
+    this._id = id;
+    this._field = field;
+  }
+
+  load(): Swap[] {
+    let value = store.loadRelated(this._entity, this._id, this._field);
+    return changetype<Swap[]>(value);
+  }
+}
+
+export class PairMetadataLoader extends Entity {
+  _entity: string;
+  _field: string;
+  _id: string;
+
+  constructor(entity: string, id: string, field: string) {
+    super();
+    this._entity = entity;
+    this._id = id;
+    this._field = field;
+  }
+
+  load(): PairMetadata[] {
+    let value = store.loadRelated(this._entity, this._id, this._field);
+    return changetype<PairMetadata[]>(value);
   }
 }

@@ -85,15 +85,17 @@ describe("an unmodified subgraph project", () => {
       id: pair.toLowerCase(),
       token0: bytes(Addresses.mockAddresses[1]),
       token1: bytes(Addresses.mockAddresses[2]),
-      // The second event read the first back through the generated `load()`.
-      name: "Uniswap+Uniswap",
+      // The second event read the first back through the generated `load()`,
+      // then the swap handler appended what the two derived fields answered:
+      // the one-to-one `metadata` and the one-element `swaps` list.
+      name: "Uniswap+Uniswap/seen1",
     });
 
-    const swaps = await indexer.Swap.getWhere({ pair: { _eq: bytes(pair) } });
+    const swaps = await indexer.Swap.getWhere({ pair_id: { _eq: pair.toLowerCase() } });
     expect(swaps).toEqual([
       {
         id: pair.toLowerCase() + "-2",
-        pair: bytes(pair),
+        pair_id: pair.toLowerCase(),
         sender: bytes(Addresses.mockAddresses[4]),
         amount: 500n,
       },

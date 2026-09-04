@@ -3,11 +3,19 @@ type Pair @entity(immutable: true) {
   token0: Bytes!
   token1: Bytes!
   name: String!
+  swaps: [Swap!]! @derivedFrom(field: "pair")
+  metadata: PairMetadata @derivedFrom(field: "pair")
+}
+
+type PairMetadata @entity(immutable: false) {
+  id: ID!
+  pair: Pair!
+  label: String!
 }
 
 type Swap @entity(immutable: false) {
   id: ID!
-  pair: Bytes!
+  pair: Pair!
   sender: Bytes!
   amount: BigInt!
 }

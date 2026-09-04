@@ -797,6 +797,11 @@ export class Entity extends TypedMap<string, Value> {
  */
 const ENTITY_TYPE = Symbol("envio.entityType");
 
+/** An id as the store keys rows by: text, hex when the schema declares Bytes. */
+function entityId(id: Value): string {
+  return id.kind === ValueKind.BYTES ? id.toBytes().toHexString() : id.toString();
+}
+
 const entityTail = new Proxy(Object.create(null), {
   get(_target, prop, receiver) {
     if (typeof prop === "symbol" || PROTOTYPE_PASSTHROUGH.has(prop as string)) {
@@ -810,17 +815,33 @@ const entityTail = new Proxy(Object.create(null), {
           if (id === null) {
             throw new Error(`Cannot save ${entityType} entity without an ID`);
           }
-          storeImpl.set(
-            entityType,
-            id.kind === ValueKind.BYTES ? id.toBytes().toHexString() : id.toString(),
-            receiver,
-          );
+          storeImpl.set(entityType, entityId(id), receiver);
         };
       }
     }
     const stored = receiver instanceof Entity ? receiver.get(prop as string) : null;
     if (stored !== null) {
       return valueToNative(stored);
+    }
+    // A derived field is a query the generated getter would have run, so it is
+    // answered here for the same reason `save()` is: `changetype` erased the
+    // prototype that carried it.
+    if (receiver instanceof Entity) {
+      const entityType = (receiver as any)[ENTITY_TYPE];
+      const declared =
+        typeof entityType === "string"
+          ? currentScope().schema.entityFieldTypes[entityType]?.[prop as string]
+          : undefined;
+      if (declared?.derivedFrom) {
+        const id = receiver.get("id");
+        if (id === null) {
+          throw new Error(
+            `Cannot load ${entityType}.${String(prop)} on an entity without an ID`,
+          );
+        }
+        const owner = entityId(id);
+        return { load: () => storeImpl.loadRelated(entityType, owner, prop as string) };
+      }
     }
     // graph-node's store returns every column; envio's returns what the mapping
     // wrote, so a field nothing has set is simply absent. It is still a field,
@@ -1015,11 +1036,24 @@ const storeImpl = {
     if (mode === "register") return;
     entityContext(entityType).deleteUnsafe(id);
   },
+  /**
+   * `graph codegen` names the entity the derived field is declared on and the
+   * field's own name, so the lookup it stands for — the other entity's table,
+   * filtered on the field that points back — is resolved from the schema.
+   */
   loadRelated(entityType: string, id: string, field: string): Entity[] {
-    const { mode } = currentScope();
+    const { mode, schema } = currentScope();
     if (mode === "register") return [];
-    const rows = entityContext(entityType).getWhereSync({ [field]: { _eq: id } });
-    return rows.map((row: any) => toEntity(entityType, row) as Entity);
+    const declared = schema.entityFieldTypes[entityType]?.[field];
+    if (!declared?.target || !declared.derivedFrom) {
+      throw unknown(`the derived field ${entityType}.${field}`, "a mapping handler");
+    }
+    const target = declared.target;
+    const back = schema.entityRefFields[target]?.includes(declared.derivedFrom)
+      ? `${declared.derivedFrom}_id`
+      : declared.derivedFrom;
+    const rows = entityContext(target).getWhereSync({ [back]: { _eq: id } });
+    return rows.map((row: any) => toEntity(target, row) as Entity);
   },
 };
 

@@ -70,8 +70,7 @@ directive can't change what is indexed; the manifest and the field types can,
 and those stay strict.
 
 Passes through unchanged: `String`/`Int`/`Boolean`/`Bytes`/`BigInt`/
-`BigDecimal`, enums, `@derivedFrom` (identical semantics), stored entity
-references.
+`BigDecimal`, enums, stored entity references.
 
 Rewritten by the translator: `@entity` stripped (validated first, see
 above); `id: Bytes!` → `String` (lowercase 0x-hex at the boundary; envio
@@ -82,7 +81,21 @@ only safe to 2^53, so `BigInt` is the lossless fit), `Timestamp` → envio's
 `Timestamp` (graph-ts sees an i64 of microseconds, envio stores a Postgres
 timestamp — the shim converts micros ↔ date at the store boundary, keyed
 off the entity schema, §4), stored entity lists → `[String!]!` id arrays,
-`_Schema_ @fulltext` stripped.
+`_Schema_ @fulltext` stripped, and every `@derivedFrom` field → `[T!]!`
+whatever nullability it was written with, including the one-to-one
+`Registration @derivedFrom(...)` the ENS subgraph uses. The lookup is the
+same either way, and `graph codegen` reads it back through a loader whose
+`load()` returns an array however the field is declared — so a mapping sees
+what graph-node gives it. envio spells a derived field only as a list.
+
+**Derived fields at runtime.** `graph codegen` emits
+`store.loadRelated(<owner entity>, <owner id>, <field>)`, which names the
+field but not the query. The translator records the field it is derived from
+alongside the target entity, and the shim turns the three into a
+`getWhereSync` over the target's table filtered on the column pointing back.
+A loaded entity reaches the mapping through `changetype`, which erased the
+generated getter, so the prototype tail answers a derived field with the same
+loader — the way it already answers `save()` (§4).
 
 **Accepted divergence:** `@entity(immutable: true)` is validated, then
 dropped — graph-node's write-once check is not enforced. It's a safety net

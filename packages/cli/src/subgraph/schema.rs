@@ -76,6 +76,11 @@ pub struct FieldType {
     /// The entity a relation points at, so its id type can be looked up.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    /// The field on `target` that points back, for a `@derivedFrom` field.
+    /// `store.loadRelated` names the owner and the derived field, so the query
+    /// it stands for is only recoverable from here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derived_from: Option<String>,
     pub list: bool,
 }
 
@@ -197,16 +202,19 @@ fn render_fields(
                     },
                     target: (map_scalar(&base).is_none() && !enum_names.contains(&base))
                         .then(|| base.clone()),
+                    derived_from: derived_from.clone(),
                     list: is_list(&wrappers),
                 },
             );
 
         if let Some(derived_field) = derived_from {
+            // Rendered as a list whatever the subgraph wrote. The Graph accepts
+            // the one-to-one `Registration @derivedFrom(...)` and answers it
+            // with the same lookup; envio only spells a derived field as a
+            // list, and `graph codegen` reads one back as an array either way.
             fields.push(format!(
-                "  {}: {} @derivedFrom(field: \"{}\")",
-                field.name,
-                render_type(&base, &wrappers),
-                derived_field
+                "  {}: [{}!]! @derivedFrom(field: \"{}\")",
+                field.name, base, derived_field
             ));
             continue;
         }
@@ -551,6 +559,67 @@ enum Status {
                 vec!["Gravatar".to_string()],
                 Some(vec!["createdAt".to_string()]),
                 Some(vec!["favourites".to_string()]),
+            )
+        );
+    }
+
+    // The Graph answers a derived field with the same lookup however it is
+    // written, and `graph codegen` reads it back as an array either way, so the
+    // one-to-one `Registration @derivedFrom(...)` the ENS subgraph uses is
+    // emitted as the list envio spells a derived field with.
+    #[test]
+    fn renders_a_one_to_one_derived_field_as_a_list() {
+        let (translation, report) = translate_ok(
+            r#"
+type Domain @entity {
+  id: ID!
+  registration: Registration @derivedFrom(field: "domain")
+  transfers: [Transfer!]! @derivedFrom(field: "domain")
+}
+
+type Registration @entity {
+  id: ID!
+  domain: Domain!
+}
+
+type Transfer @entity {
+  id: ID!
+  domain: Domain!
+}
+"#,
+        );
+        assert!(report.is_empty(), "{report}");
+        assert_eq!(
+            (
+                translation.text.as_str(),
+                translation
+                    .entity_field_types
+                    .get("Domain")
+                    .and_then(|fields| fields.get("registration"))
+                    .cloned(),
+            ),
+            (
+                "type Domain {\n  \
+                   id: ID!\n  \
+                   registration: [Registration!]! @derivedFrom(field: \"domain\")\n  \
+                   transfers: [Transfer!]! @derivedFrom(field: \"domain\")\n\
+                 }\n\n\
+                 type Registration {\n  \
+                   id: ID!\n  \
+                   domain: Domain!\n\
+                 }\n\n\
+                 type Transfer {\n  \
+                   id: ID!\n  \
+                   domain: Domain!\n\
+                 }",
+                // The reverse field is what `store.loadRelated` needs and the
+                // manifest never states; only the schema carries it.
+                Some(FieldType {
+                    kind: "Entity".to_string(),
+                    target: Some("Registration".to_string()),
+                    derived_from: Some("domain".to_string()),
+                    list: false,
+                }),
             )
         );
     }
