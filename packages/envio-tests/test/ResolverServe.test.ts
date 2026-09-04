@@ -231,7 +231,7 @@ describe("resolver /resolve", () => {
       body: {
         errors: [
           {
-            message: "Resolver 'adminOnly' is admin-only",
+            message: "Resolver 'adminOnly' is private. Present its key in the x-envio-private-key header.",
             extensions: { code: "FORBIDDEN" },
           },
         ],
@@ -257,12 +257,55 @@ describe("resolver /resolve", () => {
       body: {
         errors: [
           {
-            message: "Resolver 'adminOnly' is admin-only",
+            message: "Resolver 'adminOnly' is private. Present its key in the x-envio-private-key header.",
             extensions: { code: "FORBIDDEN" },
           },
         ],
       },
     });
+  });
+
+  // The point of `private`: the field is published so Hasura will route to it,
+  // and the key is what decides whether it answers. Without one configured it
+  // answers nobody -- fail closed, not open.
+  it("answers a private resolver only for a caller holding one of its keys", async () => {
+    const keyed = await startResolverServer({
+      resolvers: getRegisteredResolvers(),
+      pool,
+      port: 0,
+      // Two keys, because a rotation has to be able to run both at once.
+      privateKeys: ["key-one", "key-two"],
+    });
+    const ask = async (headers: Record<string, string>) => {
+      const response = await fetch(`http://127.0.0.1:${keyed.port}/resolve`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify({
+          field: "adminOnly",
+          args: {},
+          selection: {},
+          role: "public",
+          requestId: "k",
+        }),
+      });
+      const body = (await response.json()) as { data?: unknown; errors?: { message: string }[] };
+      return body.data !== undefined ? "answered" : body.errors![0]!.message;
+    };
+    try {
+      expect({
+        first: await ask({ "x-envio-private-key": "key-one" }),
+        second: await ask({ "x-envio-private-key": "key-two" }),
+        wrong: await ask({ "x-envio-private-key": "not-a-key" }),
+        absent: await ask({}),
+      }).toEqual({
+        first: "answered",
+        second: "answered",
+        wrong: "Resolver 'adminOnly' is private. Present its key in the x-envio-private-key header.",
+        absent: "Resolver 'adminOnly' is private. Present its key in the x-envio-private-key header.",
+      });
+    } finally {
+      await keyed.close();
+    }
   });
 
   it("answers an admin resolver asked for as admin once a secret is configured", async () => {

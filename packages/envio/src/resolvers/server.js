@@ -8,7 +8,7 @@
 
 import { createServer } from "node:http";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { RESOLVER_SECRET_HEADER } from "./hasuraMetadata.js";
+import { PRIVATE_KEY_HEADER, RESOLVER_SECRET_HEADER } from "./hasuraMetadata.js";
 import { createDispatcher } from "./dispatch.js";
 import {
   actionErrorBody,
@@ -61,6 +61,21 @@ function presentedSecret(request, expected) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * Whether the caller presented one of the configured private keys. Compared
+ * against every key so a rotation can run two at once, and timing-safe against
+ * each: a length or byte difference must not be readable from the clock.
+ */
+function presentedPrivateKey(request, keys) {
+  const presented = request.headers[PRIVATE_KEY_HEADER];
+  if (typeof presented !== "string" || keys.length === 0) return false;
+  const a = Buffer.from(presented);
+  return keys.some((key) => {
+    const b = Buffer.from(key);
+    return a.length === b.length && timingSafeEqual(a, b);
+  });
+}
+
 const wireError = (message, code) => ({
   errors: [{ message, extensions: { code } }],
 });
@@ -88,14 +103,28 @@ export const READYZ_PROBE_MS = 500;
  * `port: 0` to let the OS choose one.
  */
 export async function startResolverServer(options) {
-  const { resolvers, pool, exposeErrors = false, checkCompatible, actionSecret } = options;
+  const {
+    resolvers,
+    pool,
+    exposeErrors = false,
+    checkCompatible,
+    actionSecret,
+    privateKeys = [],
+  } = options;
   const port = options.port ?? ResolversEnv.port();
   const host = options.host ?? "0.0.0.0";
 
   // Otherwise the resolver is simply absent and nothing says why: the
   // declaration asked for admin-only, and admin-only is unreachable until
   // something can tell an admin caller from any other.
-  const unreachable = (resolvers ?? []).filter((resolver) => resolver?.admin === true);
+  const unreachable = (resolvers ?? []).filter((resolver) => resolver?.private === true);
+  if (privateKeys.length === 0 && unreachable.length > 0) {
+    logWarn(
+      `ENVIO_RESOLVERS_PRIVATE_KEYS is not set, so ${unreachable
+        .map((resolver) => `'${resolver.name}'`)
+        .join(", ")} cannot be reached: a private resolver with no key configured refuses every caller rather than serving anyone.`
+    );
+  }
   if (actionSecret === undefined && unreachable.length > 0) {
     logWarn(
       `ENVIO_RESOLVERS_ACTION_SECRET is not set, so an 'admin' role in a request is only the caller's own claim and is not believed. ${unreachable
@@ -229,13 +258,17 @@ export async function startResolverServer(options) {
             );
             return;
           }
-          const answer = await dispatch(asCaller(toResolveRequest(parsed, randomUUID())));
+          const answer = await dispatch(asCaller(toResolveRequest(parsed, randomUUID())), {
+            privateKeyOk: presentedPrivateKey(request, privateKeys),
+          });
           const { status, body } = toActionResponse(answer);
           send(response, status, body);
           return;
         }
 
-        const answer = await dispatch(asCaller(parsed));
+        const answer = await dispatch(asCaller(parsed), {
+          privateKeyOk: presentedPrivateKey(request, privateKeys),
+        });
         // A malformed request is the caller's error and says so in the status;
         // everything a resolver itself produces is a 200 with a GraphQL-shaped
         // body, because the operation as a whole still succeeded.
