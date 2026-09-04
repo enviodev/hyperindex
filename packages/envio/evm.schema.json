@@ -126,6 +126,17 @@
           "type": "null"
         }
       ]
+    },
+    "bytes_type": {
+      "description": "How the `Bytes` scalar in schema.graphql is represented. `hex` keeps 0x-prefixed hex strings stored as text, `uint8array` exposes `Uint8Array` values in handlers and stores raw bytes (BYTEA in Postgres, String in ClickHouse). (default: hex)",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BytesType"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -774,6 +785,21 @@
       "enum": [
         "checksum",
         "lowercase"
+      ]
+    },
+    "BytesType": {
+      "description": "How the schema.graphql `Bytes` scalar reaches handlers and storage.",
+      "oneOf": [
+        {
+          "description": "`0x`-prefixed hex strings, stored as text.",
+          "type": "string",
+          "const": "hex"
+        },
+        {
+          "description": "`Uint8Array` values, stored as raw bytes (`BYTEA` in Postgres, `String` in ClickHouse).",
+          "type": "string",
+          "const": "uint8array"
+        }
       ]
     }
   }

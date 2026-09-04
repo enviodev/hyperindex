@@ -1290,91 +1290,14 @@ chains:
       "Program \"Program\" declares the instruction \"Transfer\" more than once",
     ),
     (
-      "rejects two instructions whose discriminators differ only in hex casing",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - {name: Transfer, discriminator: "0x0f"}
-            - {name: Withdraw, discriminator: "0x0F"}
-`,
-      `Contract Program has two events the indexer can't tell apart: "Transfer" and "Withdraw". They match the same on-chain data, so the indexer can't decide which one a log belongs to. Please remove one of them.`,
-    ),
-    (
-      "rejects invalid discriminators",
+      "rejects a discriminator with a partial byte",
       prefix ++ `
         - name: Program
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           instructions:
             - {name: Transfer, discriminator: "0x012"}
 `,
-      "instruction \"Transfer\" in program \"Program\": discriminator \"0x012\" must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after stripping a \`0x\` prefix), got 3 digits",
-    ),
-    (
-      "rejects account-filter positions outside the supported range",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: Transfer
-              account_filters:
-                - position: 6
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-`,
-      "Account filter position 6 in instruction \"Transfer\" (program \"Program\") must be in 0..=5 (positions 6..=9 are reserved for a future extension)",
-    ),
-    (
-      "rejects duplicate positions inside one account-filter group",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: Transfer
-              account_filters:
-                - position: 1
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-                - position: 1
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-`,
-      "Duplicate position 1 in account filter group 0 of instruction \"Transfer\" (program \"Program\"); combine the pubkeys into a single \`values\` list, or use \`any_of\` to express OR across positions",
-    ),
-    (
-      "rejects an empty any_of account filter",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: Transfer
-              account_filters:
-                any_of: []
-`,
-      "\`any_of\` account filter on instruction \"Transfer\" (program \"Program\") is empty; remove the \`account_filters\` field instead, or add at least one AND-group",
-    ),
-    (
-      "rejects an empty any_of group",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: Transfer
-              account_filters:
-                any_of:
-                  - []
-`,
-      "Account filter group 0 in instruction \"Transfer\" (program \"Program\") is empty; each \`any_of\` branch must contain at least one entry",
-    ),
-    (
-      "rejects invalid account-filter pubkeys",
-      prefix ++ `
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: Transfer
-              account_filters:
-                - position: 1
-                  values: ["not_a_pubkey"]
-`,
-      "Account filter on instruction \"Transfer\" (program \"Program\") has an invalid base58 pubkey \"not_a_pubkey\"",
+      "instruction \"Transfer\" in program \"Program\": discriminator \"0x012\" must be a whole number of bytes (an even, non-zero count of hex digits after stripping a \`0x\` prefix), got 3 digits",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
@@ -2039,7 +1962,7 @@ chains:
       t,
       ~files=Dict.fromArray([("abis/Token.json", "not json")]),
       evmYaml,
-      "Failed parsing abi types for events in contract Token on network 1: Failed to decode ABI file at \"abis/Token.json\": expected ident at line 1 column 2",
+      "Failed parsing abi types for events in contract Token on network 1: abis/Token.json is not valid JSON: expected ident at line 1 column 2.",
     )
   })
 

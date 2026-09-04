@@ -70,8 +70,9 @@ indexer.onInstruction(
     account("opened-post", opened?.token?.postAmount ?? 0n, opened?.token?.preAmount === undefined ? "USER" : "ADMIN");
     account("closed-pre", closed?.token?.preAmount ?? 0n, closed?.token?.postAmount === undefined ? "USER" : "ADMIN");
     account("shape", BigInt(instruction.transaction.accountActivities.length), opened?.lamports === undefined ? "USER" : "ADMIN");
-    account("payload", BigInt(instruction.path[0] ?? -1), instruction.discriminator === "0x09" ? "USER" : "ADMIN");
+    account("payload", BigInt(instruction.path[0] ?? -1), instruction.discriminator === "0x09" && instruction.data instanceof Uint8Array && instruction.data.length === 1 && instruction.data[0] === 9 ? "USER" : "ADMIN");
     account("time", BigInt(instruction.block.time), instruction.logs.length === 0 ? "USER" : "ADMIN");
+    account("args", instruction.args.amountIn, typeof instruction.args.minAmountOut === "bigint" ? "USER" : "ADMIN");
   },
 );
 `,
@@ -96,6 +97,7 @@ describe("SVM instruction process e2e", () => {
               program: "Swapper",
               instruction: "swap",
               path: [0],
+              args: { amountIn: 18446744073709551615n, minAmountOut: 1n },
               accountArguments: [sourceAddr, destAddr],
               block: { slot: 5, time: 1_700_000_000 },
               transaction: {
@@ -144,6 +146,8 @@ describe("SVM instruction process e2e", () => {
       discriminator: (await indexer.Account.getOrThrow("payload")).accountType,
       time: (await indexer.Account.getOrThrow("time")).balance,
       emptyLogs: (await indexer.Account.getOrThrow("time")).accountType,
+      argsAmountIn: (await indexer.Account.getOrThrow("args")).balance,
+      argsBigint: (await indexer.Account.getOrThrow("args")).accountType,
     }).toEqual({
       sameObject: 1n,
       destUnset: "USER",
@@ -157,6 +161,8 @@ describe("SVM instruction process e2e", () => {
       discriminator: "USER",
       time: 1_700_000_000n,
       emptyLogs: "USER",
+      argsAmountIn: 18446744073709551615n,
+      argsBigint: "USER",
     });
   });
 });

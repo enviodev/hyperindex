@@ -231,10 +231,10 @@ pub fn is_valid_solana_pubkey(s: &str) -> bool {
 
 pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
     let hex = s.strip_prefix("0x").unwrap_or(s);
-    if !matches!(hex.len(), 2 | 4 | 8 | 16) {
+    if hex.is_empty() || !hex.len().is_multiple_of(2) {
         return Err(anyhow!(
-            "discriminator {:?} must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after \
-             stripping a `0x` prefix), got {} digits",
+            "discriminator {:?} must be a whole number of bytes (an even, non-zero count of hex \
+             digits after stripping a `0x` prefix), got {} digits",
             s,
             hex.len()
         ));
@@ -287,69 +287,6 @@ pub fn validate_deserialized_svm_config_yaml(
                     validate_svm_discriminator(discriminator).with_context(|| {
                         format!("instruction {:?} in program {:?}", instr.name, program.name)
                     })?;
-                }
-                if let Some(filters) = instr.account_filters.as_ref() {
-                    if let crate::config_parsing::human_config::svm::AccountFilters::AnyOf(any_of) =
-                        filters
-                    {
-                        if any_of.any_of.is_empty() {
-                            return Err(anyhow!(
-                                "`any_of` account filter on instruction {:?} (program {:?}) is \
-                                 empty; remove the `account_filters` field instead, or add at \
-                                 least one AND-group",
-                                instr.name,
-                                program.name
-                            ));
-                        }
-                    }
-                    let groups = filters.groups();
-                    for (group_idx, group) in groups.iter().enumerate() {
-                        if group.is_empty() {
-                            return Err(anyhow!(
-                                "Account filter group {} in instruction {:?} (program {:?}) is \
-                                 empty; each `any_of` branch must contain at least one entry",
-                                group_idx,
-                                instr.name,
-                                program.name
-                            ));
-                        }
-                        let mut seen_positions = std::collections::HashSet::new();
-                        for filter in group.iter() {
-                            if filter.position > 5 {
-                                return Err(anyhow!(
-                                    "Account filter position {} in instruction {:?} (program \
-                                     {:?}) must be in 0..=5 (positions 6..=9 are reserved for a \
-                                     future extension)",
-                                    filter.position,
-                                    instr.name,
-                                    program.name
-                                ));
-                            }
-                            if !seen_positions.insert(filter.position) {
-                                return Err(anyhow!(
-                                    "Duplicate position {} in account filter group {} of \
-                                     instruction {:?} (program {:?}); combine the pubkeys into a \
-                                     single `values` list, or use `any_of` to express OR across \
-                                     positions",
-                                    filter.position,
-                                    group_idx,
-                                    instr.name,
-                                    program.name
-                                ));
-                            }
-                            for value in &filter.values {
-                                if !is_valid_solana_pubkey(value) {
-                                    return Err(anyhow!(
-                                        "Account filter on instruction {:?} (program {:?}) has an \
-                                         invalid base58 pubkey {:?}",
-                                        instr.name,
-                                        program.name,
-                                        value
-                                    ));
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -601,7 +538,7 @@ mod tests {
     #[test]
     fn contract_named_like_a_prototype_key_is_rejected() {
         let result = super::validate_names_valid_rescript(
-            &vec!["MyContract".to_string(), "__proto__".to_string()],
+            &["MyContract".to_string(), "__proto__".to_string()],
             "contract".to_string(),
         );
         assert_eq!(
@@ -615,7 +552,7 @@ mod tests {
     #[test]
     fn test_contract_names_validation() {
         let valid_result = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -625,7 +562,7 @@ mod tests {
         assert!(valid_result.is_ok());
 
         let reserved_names = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -644,7 +581,7 @@ mod tests {
         );
 
         let invalid_names = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -698,8 +635,15 @@ mod tests {
         }
 
         #[test]
-        fn discriminator_accepts_valid_lengths() {
-            for s in ["0x0f", "0x0fff", "0x0fffffff", "0x0fffffffffffffff"] {
+        fn discriminator_accepts_any_whole_byte_length() {
+            // Serum v3 dispatches on a version byte plus a 4-byte tag: 5 bytes.
+            for s in [
+                "0x0f",
+                "0x0fff",
+                "0x0fffff",
+                "0x000a000000",
+                "0x0fffffffffffffff",
+            ] {
                 assert!(
                     validate_svm_discriminator(s).is_ok(),
                     "expected {s:?} to be valid"
@@ -710,8 +654,8 @@ mod tests {
         }
 
         #[test]
-        fn discriminator_rejects_invalid_lengths_and_chars() {
-            for s in ["0x", "0x0", "0x012", "0xggggggg"] {
+        fn discriminator_rejects_partial_bytes_and_non_hex() {
+            for s in ["0x", "0x0", "0x012", "0xgggggggg"] {
                 assert!(
                     validate_svm_discriminator(s).is_err(),
                     "expected {s:?} to be rejected"
@@ -744,34 +688,6 @@ chains:
 "#,
             );
             validate_deserialized_svm_config_yaml(&cfg).unwrap();
-        }
-
-        #[test]
-        fn validation_accepts_any_of_with_cross_group_duplicate_positions() {
-            let cfg = parse(
-                r#"
-name: x
-ecosystem: svm
-chains:
-  - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: P
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: I
-              account_filters:
-                any_of:
-                  - - position: 2
-                      values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-                  - - position: 2
-                      values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-"#,
-            );
-            assert!(validate_deserialized_svm_config_yaml(&cfg).is_ok());
         }
 
         #[test]

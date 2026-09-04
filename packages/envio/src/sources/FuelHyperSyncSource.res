@@ -208,7 +208,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     sourceFor: Sync,
     chainId,
     getBlockHashes,
-    pollingInterval: 100,
+    pollingInterval: HyperSync.pollingInterval,
     poweredByHyperSync: true,
     getHeightOrThrow: async () => {
       let timerRef = Performance.now()

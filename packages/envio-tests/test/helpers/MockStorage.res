@@ -101,10 +101,16 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
           initializeResolveFns->Array.push(resolve)->ignore
         })
       }),
-      resumeInitialState: implement(#resumeInitialState, () => {
+      resumeInitialState: implement(#resumeInitialState, (~entities as _, ~throwIfIncompatible) => {
         resumeInitialStateCalls->Array.push(true)->ignore
         Promise.make((resolve, _reject) => {
           resumeInitialStateResolveFns->Array.push(resolve)->ignore
+        })->Promise.thenResolve((initialState: Persistence.initialState) => {
+          throwIfIncompatible(
+            ~storedEnvioInfo=initialState.envioInfo,
+            ~storedContractMapping=initialState.contractMapping,
+          )
+          initialState
         })
       }),
       dumpEffectCache: implement(#dumpEffectCache, () => {
@@ -155,18 +161,18 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
       },
       reset: () => JsError.throwWithMessage("Not implemented"),
       setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
-      pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
+      pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
       pruneStaleEntityHistory: async (
         ~entityName as _,
         ~entityIndex as _,
         ~chainIdColumn as _,
-        ~safeCheckpointId as _,
+        ~safeCheckpoints as _,
       ) => (),
       getRollbackTargetCheckpoint: (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
         JsError.throwWithMessage("Not implemented"),
-      getRollbackProgressDiff: (~rollbackTargetCheckpointId as _) =>
+      getRollbackProgressDiff: (~floors as _) =>
         JsError.throwWithMessage("Not implemented"),
-      getRollbackData: (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
+      getRollbackData: (~entityConfig as _, ~floors as _) =>
         JsError.throwWithMessage("Not implemented"),
       writeBatch: (
         ~batch as _,

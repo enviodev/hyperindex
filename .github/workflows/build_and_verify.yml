@@ -117,7 +117,8 @@ jobs:
   # Cargo lint and unit tests - no artifacts needed, independent compilation
   cargo-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 9
+    # Clippy now type-checks the test targets on top of the test build itself.
+    timeout-minutes: 15
     needs: authorize
 
     steps:
@@ -125,18 +126,21 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      # Components come from rust-toolchain.toml, which also pins the version.
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
 
       - uses: ./.github/actions/cargo-cache
 
+      - name: Rustfmt
+        run: cargo fmt --check
+
+      # Severity is set by [lints] in packages/cli/Cargo.toml, not here.
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets --all-features
 
       - name: Cargo Test
-        run: cargo test --no-default-features
+        run: cargo test
 
   # Hypersync endpoint health check - non-blocking, external dependency
   hypersync-health-check:
@@ -196,7 +200,7 @@ jobs:
           POSTGRES_DB: envio-dev
           POSTGRES_USER: postgres
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres -d envio-dev"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -220,6 +224,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
+
+      - name: Lint test inputs
+        working-directory: packages/envio-tests
+        run: pnpm lint
 
       - name: envio-tests (${{ matrix.storage }})
         working-directory: packages/envio-tests
@@ -257,7 +265,7 @@ jobs:
           POSTGRES_DB: envio-dev
           POSTGRES_USER: postgres
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres -d envio-dev"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -327,7 +335,7 @@ jobs:
           POSTGRES_DB: envio-dev
           POSTGRES_USER: postgres
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres -d envio-dev"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5

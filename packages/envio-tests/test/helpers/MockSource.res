@@ -210,6 +210,12 @@ type t = {
   // to arrive. A chain has one head, so unlike an item query there is nothing to
   // choose between here.
   resolveGetHeightOrThrow: int => unit,
+  // Answers a single height request instead of every one at once, for tests
+  // where which of two in-flight calls answers is the point. The index counts
+  // every call the source has taken, in the order it took them — including calls
+  // a standing height answered on the spot — and answering one that has already
+  // settled does nothing. An index for a call the source never took throws.
+  resolveGetHeightOrThrowAt: (~index: int, int) => unit,
   rejectGetHeightOrThrow: 'exn. 'exn => unit,
   // Answer every height call with `height` from now on, one answer covering any
   // number of polls. A restarted indexer learns the head on its own this way,
@@ -250,7 +256,11 @@ type t = {
   dropPendingCalls: unit => unit,
   // Height subscription mocking
   heightSubscriptionCalls: array<bool>,
+  // Closes performed by the consumer, as opposed to the ones this mock's own
+  // `unsubscribeHeightSubscription` simulates.
+  heightSubscriptionCloseCalls: array<bool>,
   triggerHeightSubscription: int => unit,
+  setHeightSubscriptionStatus: Source.heightSubscriptionStatus => unit,
   unsubscribeHeightSubscription: unit => unit,
 }
 
@@ -302,16 +312,50 @@ let make = (
 
   let chainId = chainId->ChainId.fromInt
   let getHeightOrThrowCalls = []
-  let getHeightOrThrowResolveFns = []
-  let getHeightOrThrowRejectFns = []
+  // One entry per call the source has taken, in the order it took them, so an
+  // index here is the call number a test counted. `None` is a call that has
+  // already been answered — including one a standing height answered on the
+  // spot, which never parks anything — which is what makes answering the same
+  // call twice do nothing.
+  let getHeightOrThrowPending: array<
+    option<{
+      "resolve": Source.getHeightResponse => unit,
+      "reject": exn => unit,
+    }>,
+  > = []
+  let settleHeightCall = (index, answer) =>
+    switch getHeightOrThrowPending->Array.get(index) {
+    | Some(Some(pending)) =>
+      getHeightOrThrowPending->Array.set(index, None)
+      answer(pending)
+    | Some(None) | None => ()
+    }
+  let pendingHeightCallIndices = () =>
+    getHeightOrThrowPending->Array.reduceWithIndex([], (indices, pending, index) => {
+      switch pending {
+      | Some(_) => indices->Array.push(index)->ignore
+      | None => ()
+      }
+      indices
+    })
   let getItemsOrThrowCalls = []
   let reorgCalls = ref(0)
   let getBlockHashesCalls = []
   let getBlockHashesResolveFns = []
   // Height subscription state
   let heightSubscriptionCalls = []
+  let heightSubscriptionCloseCalls = []
   let heightSubscriptionCallbacks: array<int => unit> = []
+  let heightSubscriptionStatusCallbacks: array<Source.heightSubscriptionStatus => unit> = []
   let heightSubscriptionUnsubscribed = ref(false)
+  // Shared by the close function the subscription hands back and the test-facing
+  // unsubscribe, so a callback array added here cannot end up cleared by only
+  // one of them.
+  let teardownHeightSubscription = () => {
+    heightSubscriptionUnsubscribed := true
+    heightSubscriptionCallbacks->Utils.Array.clearInPlace
+    heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
+  }
   let autoHeight = ref(autoHeight)
   let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
 
@@ -353,28 +397,35 @@ let make = (
   {
     getHeightOrThrowCalls,
     resolveGetHeightOrThrow: height => {
-      if getHeightOrThrowResolveFns->Utils.Array.isEmpty {
+      switch pendingHeightCallIndices() {
+      | [] =>
         deferredHeightAnswers->Array.push({"site": UserModule.callSite(), "height": height})->ignore
-      } else {
-        getHeightOrThrowResolveFns->Array.forEach(resolve =>
-          resolve({Source.height, requestStats: []})
+      | indices =>
+        indices->Array.forEach(index =>
+          index->settleHeightCall(pending => pending["resolve"]({Source.height, requestStats: []}))
         )
-        getHeightOrThrowResolveFns->Utils.Array.clearInPlace
-        getHeightOrThrowRejectFns->Utils.Array.clearInPlace
       }
     },
+    resolveGetHeightOrThrowAt: (~index, height) =>
+      if index >= getHeightOrThrowCalls->Array.length || index < 0 {
+        JsError.throwWithMessage(
+          `The source has taken no getHeightOrThrow call at index ${index->Int.toString}`,
+        )
+      } else {
+        index->settleHeightCall(pending => pending["resolve"]({Source.height, requestStats: []}))
+      },
     setAutoHeight: height => {
       autoHeight := Some(height)
       // A standing answer supersedes one parked for a single call.
       deferredHeightAnswers->Utils.Array.clearInPlace
-      getHeightOrThrowResolveFns->Array.forEach(resolve =>
-        resolve({Source.height, requestStats: []})
+      pendingHeightCallIndices()->Array.forEach(index =>
+        index->settleHeightCall(pending => pending["resolve"]({Source.height, requestStats: []}))
       )
-      getHeightOrThrowResolveFns->Utils.Array.clearInPlace
     },
-    rejectGetHeightOrThrow: exn => {
-      getHeightOrThrowRejectFns->Array.forEach(reject => reject(exn->Obj.magic))
-    },
+    rejectGetHeightOrThrow: exn =>
+      pendingHeightCallIndices()->Array.forEach(index =>
+        index->settleHeightCall(pending => pending["reject"](exn->Obj.magic))
+      ),
     getItemsOrThrowCalls,
     reorgCallCount: () => reorgCalls.contents,
     resolveGetItemsOrThrow: (
@@ -450,20 +501,24 @@ let make = (
       },
     dropPendingCalls: () => {
       getItemsOrThrowCalls->Utils.Array.clearInPlace
-      getHeightOrThrowResolveFns->Utils.Array.clearInPlace
-      getHeightOrThrowRejectFns->Utils.Array.clearInPlace
+      pendingHeightCallIndices()->Array.forEach(index =>
+        getHeightOrThrowPending->Array.set(index, None)
+      )
       getBlockHashesResolveFns->Utils.Array.clearInPlace
     },
     heightSubscriptionCalls,
+    heightSubscriptionCloseCalls,
     triggerHeightSubscription: height => {
       if !heightSubscriptionUnsubscribed.contents {
         heightSubscriptionCallbacks->Array.forEach(callback => callback(height))
       }
     },
-    unsubscribeHeightSubscription: () => {
-      heightSubscriptionUnsubscribed := true
-      heightSubscriptionCallbacks->Utils.Array.clearInPlace
+    setHeightSubscriptionStatus: status => {
+      if !heightSubscriptionUnsubscribed.contents {
+        heightSubscriptionStatusCallbacks->Array.forEach(callback => callback(status))
+      }
     },
+    unsubscribeHeightSubscription: teardownHeightSubscription,
     source: {
       let source: Source.t = {
         name: "MockSource",
@@ -479,15 +534,22 @@ let make = (
         }),
         getHeightOrThrow: implement(#getHeightOrThrow, () => {
           getHeightOrThrowCalls->Array.push(true)->ignore
+          // Pushed for every call, answered or not, so the two arrays stay the
+          // same length and an index means the same thing in both.
+          let answered = height => {
+            getHeightOrThrowPending->Array.push(None)->ignore
+            Promise.resolve({Source.height, requestStats: []})
+          }
           switch autoHeight.contents {
-          | Some(height) => Promise.resolve({Source.height, requestStats: []})
+          | Some(height) => answered(height)
           | None =>
             switch deferredHeightAnswers->Array.shift {
-            | Some(answer) => Promise.resolve({Source.height: answer["height"], requestStats: []})
+            | Some(answer) => answered(answer["height"])
             | None =>
               Promise.make((resolve, reject) => {
-                getHeightOrThrowResolveFns->Array.push(resolve)->ignore
-                getHeightOrThrowRejectFns->Array.push(reject)->ignore
+                getHeightOrThrowPending
+                ->Array.push(Some({"resolve": resolve, "reject": reject}))
+                ->ignore
               })
             }
           }
@@ -656,13 +718,14 @@ let make = (
         createHeightSubscription: ?switch methods->Array.includes(#createHeightSubscription) {
         | true =>
           Some(
-            (~onHeight) => {
+            (~onHeight, ~onStatus) => {
               heightSubscriptionCalls->Array.push(true)->ignore
               heightSubscriptionCallbacks->Array.push(onHeight)->ignore
+              heightSubscriptionStatusCallbacks->Array.push(onStatus)->ignore
               heightSubscriptionUnsubscribed := false
               () => {
-                heightSubscriptionUnsubscribed := true
-                heightSubscriptionCallbacks->Utils.Array.clearInPlace
+                heightSubscriptionCloseCalls->Array.push(true)->ignore
+                teardownHeightSubscription()
               }
             },
           )
@@ -675,16 +738,34 @@ let make = (
   }
 }
 
+// Bounded, so a call that never arrives fails saying what it was waiting for
+// rather than as a suite-level timeout.
+let waitForCall = async (~arrived, ~message) => {
+  let attempts = ref(0)
+  while !arrived() && attempts.contents < 3000 {
+    attempts := attempts.contents + 1
+    await Utils.delay(1)
+  }
+  if !arrived() {
+    JsError.throwWithMessage(`Timed out waiting for ${message}`)
+  }
+}
+
+// Wait until the source takes a height call beyond the `since`th. A feed polls
+// and then sleeps out its interval, so a test that wants to answer the *next*
+// poll has to wait for it to be made: resolving while none is outstanding
+// settles nothing, silently, and leaves the height where it was.
+let waitHeightQuery = (sourceMock: t, ~since) =>
+  waitForCall(
+    ~arrived=() => sourceMock.getHeightOrThrowCalls->Array.length > since,
+    ~message=`a getHeightOrThrow call beyond ${since->Int.toString}`,
+  )
+
 // Wait until the source has a pending getItemsOrThrow call. Queries are
 // serialized by the cross-chain budget waterfall, so a chain's query only
 // appears after the more-behind chains' responses release the budget.
-let waitItemsQuery = async (sourceMock: t) => {
-  let attempts = ref(0)
-  while sourceMock.getItemsOrThrowCalls->Array.length === 0 && attempts.contents < 1000 {
-    attempts := attempts.contents + 1
-    await Utils.delay(0)
-  }
-  if sourceMock.getItemsOrThrowCalls->Array.length === 0 {
-    JsError.throwWithMessage("Timed out waiting for a getItemsOrThrow call")
-  }
-}
+let waitItemsQuery = (sourceMock: t) =>
+  waitForCall(
+    ~arrived=() => sourceMock.getItemsOrThrowCalls->Array.length > 0,
+    ~message="a getItemsOrThrow call",
+  )

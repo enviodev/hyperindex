@@ -34,6 +34,18 @@ describe("Indexer smoke test", () => {
                   },
                 ],
               },
+              "Holder": {
+                "deleted": [
+                  "holder-deleted-sentinel",
+                ],
+                "sets": [
+                  {
+                    "id": "0x0000000000000000000000000000000000000000",
+                    "lastBlock": 10861674,
+                    "lastValue": 1000000000000000000000000000n,
+                  },
+                ],
+              },
               "NumericArrays": {
                 "sets": [
                   {

@@ -350,7 +350,10 @@ describe("HyperSync source contract", () => {
         source.createHeightSubscription->Option.getOrThrow(
           ~message="HyperSync source must push heights",
         )
-      let unsubscribe = subscribe(~onHeight=height => heights->Array.push(height)->ignore)
+      let unsubscribe = subscribe(
+        ~onHeight=height => heights->Array.push(height)->ignore,
+        ~onStatus=_ => (),
+      )
       while heights->Array.length < 1 {
         await Utils.delay(10)
       }

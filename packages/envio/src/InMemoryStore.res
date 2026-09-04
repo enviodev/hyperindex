@@ -127,15 +127,15 @@ let dropCommittedEffects = (
 
 let prepareRollbackDiff = async (
   state: IndexerState.t,
-  ~rollbackTargetCheckpointId,
+  ~floors: RollbackFloors.t,
   ~rollbackDiffCheckpointId,
-  ~progressBlockNumberByChainId,
+  ~progressedChains,
   ~rolledBackAddresses,
 ) => {
   state->IndexerState.beginRollbackDiff(
-    ~targetCheckpointId=rollbackTargetCheckpointId,
     ~diffCheckpointId=rollbackDiffCheckpointId,
-    ~progressBlockNumberByChainId,
+    ~floors,
+    ~progressedChains,
     ~rolledBackAddresses,
   )
   let persistence = state->IndexerState.persistence
@@ -152,7 +152,7 @@ let prepareRollbackDiff = async (
   ->Array.map(async entityConfig => {
     let (removals, restoredEntities) = await persistence.storage.getRollbackData(
       ~entityConfig,
-      ~rollbackTargetCheckpointId,
+      ~floors,
     )
 
     removals->Array.forEach(({entityId, scope}: Persistence.rollbackRemoval) => {
@@ -215,7 +215,8 @@ let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
         }
       }
 
-      batch.registeredAddresses->Array.pushMany(
+      batch.registeredAddresses
+      ->Array.pushMany(
         chainState
         ->ChainState.drainAddressesForWrite(
           ~toBlockInclusive=progressedChain.progressBlockNumber,
@@ -230,7 +231,8 @@ let setBatchDcs = (state: IndexerState.t, ~batch: Batch.t) => {
           },
           checkpointId: checkpointIds->Array.getUnsafe(dc.checkpointIdx),
         }),
-      )->ignore
+      )
+      ->ignore
     }
   })
 }
