@@ -516,6 +516,15 @@ let enableStream = (feed: t) =>
   | _ => ()
   }
 
+// Everything this feed owes, given up at once: the waiters go, so `shouldPoll`
+// stops holding and the loop ends at its next check. Only for a feed whose owner
+// is finished with it - a wait that is still meant to be answered has to keep
+// being covered, which is why `stop` on its own leaves the waiters alone.
+let abandonWaiters = (feed: t) => {
+  feed.waiters = []
+  feed->wakeCadence
+}
+
 let stop = (feed: t) => {
   feed.stopped = true
   switch feed.closeStream {

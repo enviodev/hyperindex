@@ -127,6 +127,30 @@ chains:
     )).toEqual(([777], 2))
   })
 
+  Async.it("stops polling the source once the deadline gave up", async t => {
+    let mockSource = MockSource.make([#getHeightOrThrow], ~chainId=1)
+    let chain = makeChain(~isLatestStartBlock=true, ~source=mockSource.source)
+
+    let error = await [chain]
+    ->StartBlockResolver.resolveAllOrThrow(
+      ~lowercaseAddresses=false,
+      ~getHeightRetryInterval=(~retry as _) => 1,
+      ~deadlineMs=50,
+    )
+    ->errorMessageOf
+    let callsAtGiveUp = mockSource.getHeightOrThrowCalls->Array.length
+
+    // The request the resolver was waiting on when it gave up. Failing it is
+    // what would send a still-running poll loop straight into its next retry.
+    mockSource.rejectGetHeightOrThrow("temporary network blip")
+    await Utils.delay(50)
+
+    t.expect((
+      error->Option.isSome,
+      mockSource.getHeightOrThrowCalls->Array.length - callsAtGiveUp,
+    )).toEqual((true, 0))
+  })
+
   Async.it("gives up with a clear error once the deadline passes", async t => {
     // Never answers.
     let mockSource = MockSource.make([#getHeightOrThrow], ~chainId=1)

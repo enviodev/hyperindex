@@ -441,6 +441,18 @@ let dispatch = async (
   }
 }
 
+// For a SourceManager built for one job that is now over. Without it a wait cut
+// short from the outside - `StartBlockResolver` racing one against a deadline is
+// the only such caller - leaves its waiters registered, and the feeds behind them
+// polling the endpoint for the life of the process.
+let dispose = (sourceManager: t) => {
+  sourceManager->stopRateLimitTimeout
+  sourceManager.sourcesState->Array.forEach(sourceState => {
+    sourceState.feed->HeightFeed.stop
+    sourceState.feed->HeightFeed.abandonWaiters
+  })
+}
+
 let disableSource = (sourceManager: t, sourceState: sourceState) => {
   if !sourceState.disabled {
     sourceState.disabled = true

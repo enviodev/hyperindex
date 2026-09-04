@@ -42,6 +42,10 @@ let resolveHeadOrThrow = async (
     ~getHeightRetryInterval?,
     ~newBlockStallTimeout?,
   )
+  // The probe polls and never subscribes (`~isRealtime=false`), so nothing here
+  // opens a height stream: a one-shot head fetch has nothing to gain from one,
+  // and `HeightFeed.enableStream` has no per-wait counterpart that would take it
+  // back off afterwards.
   let timeoutId = ref(None)
   let deadline = Promise.make((_, reject) => {
     timeoutId := Some(setTimeout(() => {
@@ -58,6 +62,10 @@ let resolveHeadOrThrow = async (
     | Some(id) => clearTimeout(id)
     | None => ()
     }
+  // `waitForNewBlock` never settles when the deadline wins the race, so its own
+  // cleanup never runs. Disposing is what ends the poll loops it left behind -
+  // otherwise a startup that already gave up keeps asking the endpoint for a
+  // height for the life of the process.
   switch await Promise.race([
     sourceManager->SourceManager.waitForNewBlock(
       ~knownHeight=0,
@@ -68,9 +76,11 @@ let resolveHeadOrThrow = async (
   ]) {
   | height =>
     clearDeadline()
+    sourceManager->SourceManager.dispose
     height
   | exception exn =>
     clearDeadline()
+    sourceManager->SourceManager.dispose
     throw(exn)
   }
 }
