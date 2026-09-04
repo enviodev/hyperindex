@@ -30,6 +30,7 @@ mod registration_start_block;
 mod request_stats;
 pub mod scripts;
 mod service_health;
+pub mod subgraph;
 mod svm;
 mod svm_hypersync_source;
 mod template_dirs;

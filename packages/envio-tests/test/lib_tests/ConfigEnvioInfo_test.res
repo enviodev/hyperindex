@@ -81,6 +81,29 @@ describe("Config.stripSensitiveData", () => {
       ~message="dev and start strip to identical envio_info",
     ).toEqual(Config.stripSensitiveData(start))
   })
+
+  it("drops the subgraph blob so a specVersion bump is not a reset", t => {
+    let stored = json(`{
+      "name": "demo",
+      "entities": [],
+      "subgraph": {"specVersion": "0.0.2", "rpcUrls": ["https://secret"], "root": "."}
+    }`)
+    let current = json(`{
+      "name": "demo",
+      "entities": [],
+      "subgraph": {"specVersion": "0.0.4", "rpcUrls": ["https://other"], "root": "."}
+    }`)
+    t.expect(
+      (
+        Config.stripSensitiveData(stored),
+        Config.diffPaths(
+          ~stored=Config.stripSensitiveData(stored),
+          ~current=Config.stripSensitiveData(current),
+        ),
+      ),
+      ~message="subgraph fields are not part of envio_info",
+    ).toEqual((json(`{"name": "demo", "entities": []}`), []))
+  })
 })
 
 describe("Config.diffPaths", () => {

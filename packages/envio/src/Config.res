@@ -127,6 +127,9 @@ type t = {
   userEntitiesByName: dict<Internal.entityConfig>,
   userEntities: array<Internal.entityConfig>,
   allEnums: array<Table.enumConfig<Table.enum>>,
+  // Set only in subgraph mode: the translated manifest, which is what makes
+  // the subgraph runtime take over handler registration.
+  subgraph: option<JSON.t>,
 }
 
 type rpcSourceFor = | @as("sync") Sync | @as("fallback") Fallback | @as("realtime") Realtime
@@ -546,6 +549,7 @@ let publicConfigSchema = S.schema(s =>
     "svm": s.matches(S.option(publicConfigEcosystemSchema)),
     "enums": s.matches(S.option(S.dict(S.array(S.string)))),
     "entities": s.matches(S.option(S.array(entityJsonSchema))),
+    "subgraph": s.matches(S.option(S.json(~validate=false))),
   }
 )
 
@@ -1031,6 +1035,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     userEntitiesByName,
     userEntities,
     allEnums,
+    subgraph: publicConfig["subgraph"],
   }
 }
 
@@ -1184,6 +1189,10 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
       stripChains(obj->Dict.get("evm"))
       stripChains(obj->Dict.get("fuel"))
       stripChains(obj->Dict.get("svm"))
+      // The subgraph blob is how the runtime finds mappings. None of it
+      // describes stored data — that's already in `evm` / `entities` — so a
+      // specVersion bump or a mapping-path edit must not force a reset.
+      obj->Utils.Dict.deleteInPlace("subgraph")
     }
   | _ => ()
   }

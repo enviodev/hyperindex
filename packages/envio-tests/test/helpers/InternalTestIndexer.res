@@ -94,6 +94,66 @@ let completionsAt = (~schema=?, ~env=?, ~files=?, ~handlers, ~configYaml): array
 //
 // Note: `test`/`handlers` are ReScript template strings, so a literal `${` in
 // the source must be escaped.
+
+// Parses a subgraph project the way `envio dev` does inside one, with the
+// mappings written to disk so the manifest's `file:` paths resolve. `test` is
+// evaluated exactly as in `fromUserApi`.
+let fromSubgraph = (~env=?, ~files=?, ~mappings=Dict.make(), ~test=?, ~manifest, ~schema): parsed => {
+  let site = callSite()
+  let root = pathJoin([tmpDir, `subgraph-${site->String.replaceRegExp(%re("/[^a-zA-Z0-9]+/g"), "-")}-${randomUUID()->String.slice(~start=0, ~end=8)}`])
+  mappings->Dict.forEachWithKey((source, relativePath) => {
+    let dest = pathJoin([root, relativePath])
+    mkdirSync(pathDirname(dest), {"recursive": true})
+    writeFileSync(dest, source)
+  })
+
+  let {config: configJson} = Core.fromSubgraph(~manifest, ~schema, ~env?, ~files?, ~root)
+  let publicConfigJson = configJson->JSON.parseOrThrow
+  let config = Config.fromPublic(publicConfigJson)
+
+  let registrations = () =>
+    JsError.throwWithMessage(
+      "fromSubgraph does not expose registrations this way. Mappings are registered by createTestIndexer via registerAllHandlers.",
+    )
+
+  switch test {
+  | None => ()
+  | Some(test) =>
+    let suiteName = `subgraphTest(${site})`
+    let setup = try {
+      claimProcess(~site)
+      Config.prime(publicConfigJson)
+      HandlerRegister.startRegistration(~config)
+      mkdirSync(tmpDir, {"recursive": true})
+      Ok(writeModule(~kind="test", ~site, ~source=test))
+    } catch {
+    | exn => Error(exn)
+    }
+
+    switch setup {
+    | Ok(testFile) =>
+      let collected = ref(false)
+      // The mappings are registered by `createTestIndexer` itself, through the
+      // same `registerAllHandlers` path production uses.
+      describeAsync(suiteName, async () => {
+        await importModule(testFile)
+        collected := true
+      })
+      Vitest.it(
+        `${suiteName} collected`,
+        t =>
+          t.expect(
+            collected.contents,
+            ~message="test module was not imported during collection",
+          ).toBe(true),
+      )
+    | Error(exn) => Vitest.it(`${suiteName} setup`, _ => throw(exn))
+    }
+  }
+
+  {config, registrations}
+}
+
 let fromUserApi = (
   ~schema=?,
   ~env=?,
