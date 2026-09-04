@@ -24,7 +24,7 @@ use crate::utils::text::Capitalize;
 
 use super::{
     account_slot, collect_instructions, declared_array, declared_optional, le_bytes,
-    parse_defined_types, required_str, Dispatch, IdlAccount, Positions, ProgramIdl,
+    parse_defined_types, required_str, IdlAccount, Positions, ProgramIdl,
 };
 
 pub(super) fn parse(
@@ -70,22 +70,13 @@ fn parse_instructions(
         positions,
         arr,
         |name, ix| match (ix.get("discriminator"), ix.get("discriminant")) {
-            (Some(node), _) => Ok(Dispatch {
-                bytes: parse_byte_array(node).context("discriminator")?,
-                derived: false,
-            }),
-            (None, Some(node)) => Ok(Dispatch {
-                bytes: discriminant_bytes(node).context("discriminant")?,
-                derived: false,
-            }),
+            (Some(node), _) => parse_byte_array(node).context("discriminator"),
+            (None, Some(node)) => discriminant_bytes(node).context("discriminant"),
             (None, None) if shank => bail!(
                 "discriminant: this Shank IDL declares none, and a hashed Anchor \
                  discriminator is not what a Shank program dispatches on"
             ),
-            (None, None) => Ok(Dispatch {
-                bytes: hashed_discriminator(&to_snake_case(name)),
-                derived: true,
-            }),
+            (None, None) => Ok(hashed_discriminator(&to_snake_case(name))),
         },
         |ix, _| {
             Ok((

@@ -33,12 +33,6 @@ fn optional_before_a_required_slot(accounts: &[IdlAccount]) -> Option<&IdlAccoun
 #[derive(Debug, Clone, PartialEq)]
 pub struct IxIdl {
     pub discriminator: Vec<u8>,
-    /// The bytes were derived from the instruction's name rather than read off
-    /// the file. Only legacy Anchor does this, and only because such a file
-    /// leaves them implicit — but an IDL is Anchor-shaped whether or not the
-    /// program dispatches on an Anchor hash, so a config that disagrees with a
-    /// derived value may well be the one that is right.
-    pub derived: bool,
     pub accounts: Vec<IdlAccount>,
     pub args: Vec<NamedField>,
 }
@@ -550,12 +544,6 @@ fn unbounded_recursion<'a>(
     }
 }
 
-/// What an instruction dispatches on, before its body has been read.
-struct Dispatch {
-    bytes: Vec<u8>,
-    derived: bool,
-}
-
 /// The instructions of one program: the ones that can be indexed, the reasons
 /// for the ones that cannot, and the bytes of those whose layout failed after
 /// their discriminator was read — kept so a collision can still name them.
@@ -563,8 +551,8 @@ fn collect_instructions(
     idl: &mut ProgramIdl,
     positions: &[(usize, usize)],
     entries: &[Value],
-    mut dispatch_of: impl FnMut(&str, &Value) -> Result<Dispatch>,
-    mut layout_of: impl FnMut(&Value, &Dispatch) -> Result<(Vec<IdlAccount>, Vec<NamedField>)>,
+    mut dispatch_of: impl FnMut(&str, &Value) -> Result<Vec<u8>>,
+    mut layout_of: impl FnMut(&Value, &[u8]) -> Result<(Vec<IdlAccount>, Vec<NamedField>)>,
 ) -> Result<()> {
     for (index, entry) in entries.iter().enumerate() {
         let name = required_str(entry, "name")
@@ -594,8 +582,7 @@ fn collect_instructions(
                 idl.instructions.insert(
                     name,
                     IxIdl {
-                        discriminator: dispatch.bytes,
-                        derived: dispatch.derived,
+                        discriminator: dispatch,
                         accounts,
                         args,
                     },
@@ -604,8 +591,8 @@ fn collect_instructions(
             Err(e) => {
                 let reason = format!("{}{e:#}", idl.instruction_at(&name));
                 idl.unusable.insert(name.clone(), reason);
-                if !dispatch.bytes.is_empty() {
-                    idl.declared_discriminators.insert(name, dispatch.bytes);
+                if !dispatch.is_empty() {
+                    idl.declared_discriminators.insert(name, dispatch);
                 }
             }
         }

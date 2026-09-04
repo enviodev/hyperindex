@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 
 use super::{
     account_slot, collect_instructions, declared_array, le_bytes, parse_defined_types,
-    required_str, Dispatch, IdlAccount, Positions, ProgramIdl,
+    required_str, IdlAccount, Positions, ProgramIdl,
 };
 
 pub(super) fn parse(
@@ -64,19 +64,16 @@ fn parse_instructions(
         arr,
         |_name, ix| {
             let (bytes, _) = parse_discriminators(ix).context("discriminators")?;
-            Ok(Dispatch {
-                bytes,
-                derived: false,
-            })
+            Ok(bytes)
         },
-        |ix, dispatch| {
+        |ix, discriminator| {
             let accounts = parse_accounts(ix.get("accounts")).context("accounts")?;
             reject_ambiguous_optional_accounts(ix, &accounts)?;
             // Re-read rather than carried through: two nodes at most, and the
             // alternative is a value threaded across both closures for the one
             // dialect that has anything to thread.
             let (_, named) = parse_discriminators(ix).context("discriminators")?;
-            let args = parse_arguments(ix.get("arguments"), dispatch.bytes.len(), &named)?;
+            let args = parse_arguments(ix.get("arguments"), discriminator.len(), &named)?;
             Ok((accounts, args))
         },
     )

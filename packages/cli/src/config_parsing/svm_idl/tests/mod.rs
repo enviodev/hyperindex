@@ -189,7 +189,6 @@ fn names_a_fixture_schema_in_its_reasons() {
                 "burn".to_string(),
                 IxIdl {
                     discriminator: vec![1, 2, 3],
-                    derived: false,
                     accounts: Vec::new(),
                     args: Vec::new(),
                 },
@@ -198,7 +197,6 @@ fn names_a_fixture_schema_in_its_reasons() {
                 "burnV2".to_string(),
                 IxIdl {
                     discriminator: vec![1, 2, 3],
-                    derived: false,
                     accounts: Vec::new(),
                     args: Vec::new(),
                 },

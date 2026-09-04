@@ -44,6 +44,7 @@ use hypersync_client_solana::decode::{
     EnumVariant as SvmEnumVariant, FieldType as SvmFieldType, NamedField as SvmNamedField,
 };
 
+use super::svm_catalog::{instruction_catalog, warn_about_unindexable, ResolvedInstruction};
 use super::svm_idl::{self, ProgramIdl};
 
 type ContractNameKey = String;
@@ -1407,7 +1408,7 @@ impl SystemConfig {
                     for program in programs {
                         let svm_abi = resolve_program_schema(program, source)
                             .with_context(|| format!("Program '{}'", program.name))?;
-                        let events = instruction_catalog(program, &svm_abi)?
+                        let events = instruction_catalog(program, &svm_abi.idl)?
                             .into_iter()
                             .map(|(name, resolved)| {
                                 let ResolvedInstruction {
@@ -1430,7 +1431,7 @@ impl SystemConfig {
                                 }
                             })
                             .collect();
-                        warn_about_unindexable(program, &svm_abi);
+                        warn_about_unindexable(program, &svm_abi.idl.unusable);
 
                         let contract = Contract::new(
                             program.name.clone(),
@@ -1886,108 +1887,7 @@ fn resolve_program_schema(
     })
 }
 
-fn warn_about_unindexable(program: &human_config::svm::Program, abi: &SvmAbi) {
-    let yaml_names: HashSet<&str> = program
-        .instructions
-        .iter()
-        .map(|i| i.name.as_str())
-        .collect();
-    for (name, reason) in &abi.idl.unusable {
-        if yaml_names.contains(name.as_str()) {
-            continue;
-        }
-        eprintln!(
-            "Warning: program '{}' will not index '{name}' from the IDL: {reason}",
-            program.name
-        );
-    }
-}
-
-/// What one configured instruction dispatches on and decodes into.
-struct ResolvedInstruction {
-    /// `None` matches every instruction of the program.
-    discriminator: Option<Vec<u8>>,
-    accounts: Vec<String>,
-    args: Vec<SvmNamedField>,
-}
-
-impl ResolvedInstruction {
-    fn from_idl(ix: &svm_idl::IxIdl) -> Self {
-        Self {
-            discriminator: Some(ix.discriminator.clone()),
-            accounts: ix.accounts.iter().map(|a| a.name.clone()).collect(),
-            args: ix.args.clone(),
-        }
-    }
-}
-
-fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<ResolvedInstruction> {
-    let discriminator = instr
-        .discriminator
-        .as_deref()
-        .map(|d| crate::hex::decode_optionally_prefixed(d, "discriminator"))
-        .transpose()?;
-    let accounts = instr.accounts.clone().unwrap_or_default();
-    let args = match &instr.args {
-        Some(args) => args
-            .iter()
-            .map(yaml_arg_to_named_field)
-            .collect::<Result<Vec<_>>>()?,
-        None => Vec::new(),
-    };
-    Ok(ResolvedInstruction {
-        discriminator,
-        accounts,
-        args,
-    })
-}
-
-fn instruction_catalog(
-    program: &human_config::svm::Program,
-    abi: &SvmAbi,
-) -> Result<Vec<(String, ResolvedInstruction)>> {
-    let mut catalog: Vec<(String, ResolvedInstruction)> = Vec::new();
-    let mut index: HashMap<String, usize> = HashMap::new();
-    let has_idl = program.idl.is_some();
-
-    if has_idl {
-        for (name, ix) in &abi.idl.instructions {
-            index.insert(name.clone(), catalog.len());
-            catalog.push((name.clone(), ResolvedInstruction::from_idl(ix)));
-        }
-    }
-    for instr in &program.instructions {
-        let at_instruction = || format!("Program '{}', instruction '{}'", program.name, instr.name);
-        if has_idl && instr.discriminator.is_none() {
-            return Err(anyhow!(
-                "a YAML row next to 'idl' must set 'discriminator' to overwrite the IDL \
-                 definition, or omit this row."
-            ))
-            .with_context(at_instruction);
-        }
-        if has_idl && (instr.accounts.is_none() || instr.args.is_none()) {
-            return Err(anyhow!(
-                "set both 'accounts' and 'args' to overwrite the IDL layout."
-            ))
-            .with_context(at_instruction);
-        }
-        if !has_idl && instr.accounts.is_some() != instr.args.is_some() {
-            return Err(anyhow!("set both 'accounts' and 'args', or omit both."))
-                .with_context(at_instruction);
-        }
-        let resolved = resolve_yaml_instruction(instr).with_context(at_instruction)?;
-        if let Some(&i) = index.get(&instr.name) {
-            catalog[i] = (instr.name.clone(), resolved);
-        } else {
-            index.insert(instr.name.clone(), catalog.len());
-            catalog.push((instr.name.clone(), resolved));
-        }
-    }
-
-    Ok(catalog)
-}
-
-fn yaml_arg_to_named_field(arg: &human_config::svm::ArgDef) -> Result<SvmNamedField> {
+pub(crate) fn yaml_arg_to_named_field(arg: &human_config::svm::ArgDef) -> Result<SvmNamedField> {
     Ok(SvmNamedField {
         name: arg.name.clone(),
         ty: arg_type_to_field_type(&arg.ty)
