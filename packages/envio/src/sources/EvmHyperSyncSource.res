@@ -63,31 +63,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     )
   }
 
-  let makeEventBatchQueueItem = (
-    item: HyperSyncClient.EventItems.item,
-    ~onEventRegistration: Internal.evmOnEventRegistration,
-  ): Internal.item => {
-    let {transactionIndex, logIndex, srcAddress} = item
-
-    Internal.Event({
-      onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
-      chainId,
-      blockNumber: item.blockNumber,
-      logIndex,
-      transactionIndex,
-      // `block` and `transaction` are omitted; they're materialised from the
-      // per-chain stores onto the payload at batch prep.
-      payload: {
-        contractName: onEventRegistration.eventConfig.contractName,
-        eventName: onEventRegistration.eventConfig.name,
-        chainId,
-        params: item.params,
-        srcAddress,
-        logIndex,
-      }->Evm.fromPayload,
-    })
-  }
-
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
@@ -103,6 +78,12 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     let startFetchingBatchTimeRef = Performance.now()
 
+    // Every way out of the fetch carries its timing: the request was made,
+    // and is billed, whether or not it answered.
+    let fetchStats = () => [
+      {Source.method: "getLogs", seconds: startFetchingBatchTimeRef->Performance.secondsSince},
+    ]
+
     //fetch batch
     let pageUnsafe = try await HyperSync.GetLogs.query(
       ~client,
@@ -114,11 +95,12 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
     | HyperSync.GetLogs.Error(WrongInstance) =>
-      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: []}))
+      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: fetchStats()}))
     | HyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
+            requestStats: fetchStats(),
             exn: %raw(`null`),
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: ImpossibleForTheQuery({
@@ -134,6 +116,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
+            requestStats: fetchStats(),
             exn,
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: WithBackoff({
@@ -149,7 +132,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
 
     let pageFetchTime = startFetchingBatchTimeRef->Performance.secondsSince
-    let requestStats = [{Source.method: "getLogs", seconds: pageFetchTime}]
+    let requestStats = fetchStats()
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -161,15 +144,8 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     let parsingTimeRef = Performance.now()
 
-    //Parse page items into queue items
-    let parsedQueueItems = []
-
-    pageUnsafe.items->Array.forEach(item => {
-      let onEventRegistration = onEventRegistrations->Array.getUnsafe(item.onEventRegistrationIndex)
-      parsedQueueItems
-      ->Array.push(makeEventBatchQueueItem(item, ~onEventRegistration))
-      ->ignore
-    })
+    let parsedQueueItems =
+      pageUnsafe.items->EvmEventItem.toInternalItems(~onEventRegistrations, ~chainId)
 
     let parsingTimeElapsed = parsingTimeRef->Performance.secondsSince
 
@@ -190,7 +166,6 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
-      fromBlockQueried: fromBlock,
       requestStats,
     }
   }

@@ -493,14 +493,46 @@ impl StoreCol {
     }
 }
 
+/// Which fields a batch's rows were *fetched* for, on top of those its columns
+/// carry a value for. A fetch that legitimately came back null still proves the
+/// field was looked up, and value presence alone cannot say that — so a reader
+/// deciding whether it must fetch a row needs this, not `present`.
+#[derive(Clone, Copy)]
+pub(crate) enum Coverage<'a> {
+    /// One fetched set covering every row in the batch.
+    All(u64),
+    /// Per-row fetched sets, aligned with the batch's keys.
+    PerRow(&'a [u64]),
+}
+
+impl Coverage<'_> {
+    /// Nothing beyond the values the batch carries. A field holding a value is
+    /// covered either way, so this claims exactly what is stored — what a
+    /// caller with no separate notion of "fetched" passes.
+    pub(crate) const STORED: Coverage<'static> = Coverage::All(0);
+
+    fn for_row(&self, row: usize) -> u64 {
+        match self {
+            Coverage::All(mask) => *mask,
+            Coverage::PerRow(masks) => masks[row],
+        }
+    }
+}
+
 /// Merge-on-insert columnar table: one slot per distinct key. `by_key` backs
 /// point lookup and insert dedup; `order` backs the range scans prune,
 /// rollback, and account-activity read need. `free` holds freed slots for reuse,
 /// so capacity never shrinks but also never leaks.
+///
+/// Each slot carries two bitsets. `present` marks the fields holding a value —
+/// what reads decode. `coverage` marks the fields that were fetched, whether or
+/// not they held one, and is always a superset of `present`; it is what
+/// `covers` answers from, so a null-valued field counts as fetched.
 pub(crate) struct Table<K> {
     by_key: HashMap<K, u32>,
     order: BTreeMap<K, u32>,
-    masks: Vec<u64>,
+    present: Vec<u64>,
+    coverage: Vec<u64>,
     cols: Vec<Option<StoreCol>>,
     free: Vec<u32>,
     len: usize,
@@ -515,7 +547,8 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         Self {
             by_key: HashMap::new(),
             order: BTreeMap::new(),
-            masks: Vec::new(),
+            present: Vec::new(),
+            coverage: Vec::new(),
             cols: (0..n_fields).map(|_| None).collect(),
             free: Vec::new(),
             len: 0,
@@ -532,7 +565,8 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
                 for col in self.cols.iter_mut().flatten() {
                     col.push_empty();
                 }
-                self.masks.push(0);
+                self.present.push(0);
+                self.coverage.push(0);
                 slot
             }
         }
@@ -562,7 +596,8 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         for col in self.cols.iter_mut().flatten() {
             col.clear(slot as usize);
         }
-        self.masks[slot as usize] = 0;
+        self.present[slot as usize] = 0;
+        self.coverage[slot as usize] = 0;
         self.free.push(slot);
     }
 
@@ -571,6 +606,17 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
     /// adds coverage to a key's existing row. Keys need not be sorted or
     /// unique within the batch.
     pub(crate) fn merge_batch(&mut self, keys: Vec<K>, cols: Vec<Option<AnyCol>>) {
+        self.merge_batch_covering(keys, cols, Coverage::STORED);
+    }
+
+    /// As `merge_batch`, where `covering` records the fields the batch looked
+    /// up beyond those it carries values for.
+    pub(crate) fn merge_batch_covering(
+        &mut self,
+        keys: Vec<K>,
+        cols: Vec<Option<AnyCol>>,
+        covering: Coverage,
+    ) {
         debug_assert_eq!(cols.len(), self.n_fields);
         for (row, key) in keys.into_iter().enumerate() {
             let slot = self.slot_for(key) as usize;
@@ -579,11 +625,26 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
                     if col.is_valid(row) {
                         self.ensure_col(f, col);
                         self.cols[f].as_mut().unwrap().set_from(slot, col, row);
-                        self.masks[slot] |= 1u64 << f;
+                        self.present[slot] |= 1u64 << f;
                     }
                 }
             }
+            // ORing `present` in is what keeps coverage a superset of it, and
+            // so what makes `Coverage::STORED` mean "exactly what is stored".
+            self.coverage[slot] |= covering.for_row(row) | self.present[slot];
         }
+    }
+
+    /// Whether this row was fetched for every field in `required` — the check
+    /// that decides a refetch, so it reads `coverage` rather than stored values.
+    /// Requiring nothing is trivially covered, even for a key with no row.
+    pub(crate) fn covers(&self, key: &K, required: u64) -> bool {
+        if required == 0 {
+            return true;
+        }
+        self.by_key
+            .get(key)
+            .is_some_and(|&slot| self.coverage[slot as usize] & required == required)
     }
 
     /// Move every live row from `other` into this table (a fetch-response page
@@ -599,7 +660,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
                 other.cols[f].as_ref().map(|col| {
                     let mut out = col.new_scratch();
                     for &slot in &slots {
-                        if other.masks[slot as usize] & (1u64 << f) != 0 {
+                        if other.present[slot as usize] & (1u64 << f) != 0 {
                             col.copy_to(&mut out, slot as usize);
                         } else {
                             out.push_missing();
@@ -609,7 +670,8 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
                 })
             })
             .collect();
-        self.merge_batch(live_keys, cols);
+        let covering: Vec<u64> = slots.iter().map(|&s| other.coverage[s as usize]).collect();
+        self.merge_batch_covering(live_keys, cols, Coverage::PerRow(&covering));
         other.clear();
     }
 
@@ -617,7 +679,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
     /// field.
     pub(crate) fn field_bytes(&self, key: &K, field: usize) -> Option<&[u8]> {
         let &slot = self.by_key.get(key)?;
-        if self.masks[slot as usize] & (1u64 << field) == 0 {
+        if self.present[slot as usize] & (1u64 << field) == 0 {
             return None;
         }
         self.cols[field]
@@ -678,15 +740,18 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
     }
 
     /// Strip every field but `field` from `slot`, leaving a hash-only row still
-    /// readable for reorg detection after the rest of the row is gone.
+    /// readable for reorg detection after the rest of the row is gone. Coverage
+    /// narrows with the row: a dropped field must read as unfetched, or a
+    /// later reader would serve a value the prune already discarded.
     fn reduce_row_to_field(&mut self, slot: u32, field: usize) {
-        let mask = self.masks[slot as usize];
+        let mask = self.present[slot as usize];
         for f in 0..self.n_fields {
             if f != field && mask & (1u64 << f) != 0 {
                 self.cols[f].as_mut().unwrap().clear(slot as usize);
             }
         }
-        self.masks[slot as usize] = 1u64 << field;
+        self.present[slot as usize] = 1u64 << field;
+        self.coverage[slot as usize] = 1u64 << field;
     }
 
     fn drop_row(&mut self, key: &K, slot: u32) {
@@ -703,7 +768,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         let pruned: Vec<K> = self.order.range(..=up_to).map(|(k, _)| k.clone()).collect();
         for k in pruned {
             let slot = self.by_key[&k];
-            if k >= keep_from && self.masks[slot as usize] & bit != 0 {
+            if k >= keep_from && self.present[slot as usize] & bit != 0 {
                 self.reduce_row_to_field(slot, field);
             } else {
                 self.drop_row(&k, slot);
@@ -716,7 +781,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
         let bit = 1u64 << field;
         self.order
             .range(from..below)
-            .filter(|(_, &slot)| self.masks[slot as usize] & bit != 0)
+            .filter(|(_, &slot)| self.present[slot as usize] & bit != 0)
             .map(|(k, _)| k.clone())
             .collect()
     }
@@ -755,7 +820,8 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
     pub(crate) fn clear(&mut self) {
         self.by_key.clear();
         self.order.clear();
-        self.masks.clear();
+        self.present.clear();
+        self.coverage.clear();
         self.cols = (0..self.n_fields).map(|_| None).collect();
         self.free.clear();
         self.len = 0;
@@ -781,7 +847,7 @@ impl<K: Ord + Clone + std::hash::Hash> Table<K> {
                     let mut out = col.new_scratch();
                     for (i, slot) in slots.iter().enumerate() {
                         let present = masks[i] & bit != 0
-                            && slot.is_some_and(|s| self.masks[s as usize] & bit != 0);
+                            && slot.is_some_and(|s| self.present[s as usize] & bit != 0);
                         match (present, slot) {
                             (true, Some(s)) => col.copy_to(&mut out, *s as usize),
                             _ => out.push_missing(),
@@ -815,7 +881,7 @@ impl Table<(u64, u32, Box<str>)> {
     /// Raw string bytes for one account-activity field at `slot`, or `None` if
     /// the field was never populated for that row.
     pub(crate) fn var_cell(&self, field: usize, slot: u32) -> Option<&[u8]> {
-        if self.masks[slot as usize] & (1u64 << field) == 0 {
+        if self.present[slot as usize] & (1u64 << field) == 0 {
             return None;
         }
         self.cols[field]
@@ -826,7 +892,7 @@ impl Table<(u64, u32, Box<str>)> {
     /// One numeric field at `slot`, or `None` if it was never populated for
     /// that row.
     pub(crate) fn u64_cell(&self, field: usize, slot: u32) -> Option<u64> {
-        if self.masks[slot as usize] & (1u64 << field) == 0 {
+        if self.present[slot as usize] & (1u64 << field) == 0 {
             return None;
         }
         self.cols[field].as_ref().map(|c| c.u64_cell(slot as usize))
@@ -835,7 +901,7 @@ impl Table<(u64, u32, Box<str>)> {
     /// One boolean field at `slot`, or `None` if it was never populated for
     /// that row.
     pub(crate) fn bool_cell(&self, field: usize, slot: u32) -> Option<bool> {
-        if self.masks[slot as usize] & (1u64 << field) == 0 {
+        if self.present[slot as usize] & (1u64 << field) == 0 {
             return None;
         }
         self.cols[field]
@@ -1310,6 +1376,95 @@ mod tests {
                 ("acctA".to_string(), b"mintA".to_vec()),
                 ("acctB".to_string(), b"mintB".to_vec()),
             ]
+        );
+    }
+
+    #[test]
+    fn coverage_includes_a_field_whose_fetch_returned_null() {
+        // The point of the coverage mask: field 0 was fetched and legitimately
+        // held no value. Value presence alone cannot tell that apart from
+        // "never fetched", so a check driven by it refetches the row forever.
+        let mut table = Table::new(2);
+        let (keys, cols) = u64_batch(&[(1, None, Some(b"v"))]);
+        table.merge_batch_covering(keys, cols, Coverage::All(0b11));
+        assert_eq!(
+            (
+                table.covers(&1, 0b11),
+                table.field_bytes(&1, 1),
+                table.covers(&2, 0b11)
+            ),
+            (true, Some(b"v".as_slice()), false)
+        );
+    }
+
+    #[test]
+    fn coverage_defaults_to_the_fields_carrying_values() {
+        // `Coverage::STORED` keeps the invariant that a field holding a value
+        // is always covered, so coverage degrades to value presence rather than
+        // reporting a stored field as unfetched.
+        let mut table = Table::new(2);
+        let (keys, cols) = u64_batch(&[(1, Some(10), None)]);
+        table.merge_batch(keys, cols);
+        assert_eq!(
+            (table.covers(&1, 0b01), table.covers(&1, 0b10)),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn append_from_carries_per_row_coverage() {
+        // A page's coverage must survive the merge into the persistent table,
+        // including for a row whose fetched field came back null — otherwise
+        // every partition after the first refetches it.
+        let mut persistent = Table::new(2);
+        let mut page = Table::new(2);
+        let (keys, cols) = u64_batch(&[(1, Some(10), None), (2, None, None)]);
+        page.merge_batch_covering(keys, cols, Coverage::All(0b11));
+        persistent.append_from(&mut page);
+        assert_eq!(
+            (
+                persistent.covers(&1, 0b11),
+                persistent.covers(&2, 0b11),
+                gathered_u64(&persistent, &[1, 2])
+            ),
+            (true, true, vec![Some(10), None])
+        );
+    }
+
+    #[test]
+    fn prune_keeping_field_narrows_coverage_to_the_kept_field() {
+        // The row is reduced to a hash-only row, so its coverage must shrink
+        // with it: claiming the dropped field is still covered would serve a
+        // pruned value as if it were stored.
+        let mut table = Table::new(2);
+        let (keys, cols) = u64_batch(&[(1, Some(10), Some(b"hash"))]);
+        table.merge_batch_covering(keys, cols, Coverage::All(0b11));
+        table.prune_keeping_field(1, 0, 1);
+        assert_eq!(
+            (table.covers(&1, 0b10), table.covers(&1, 0b01)),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn a_reused_slot_starts_with_no_coverage() {
+        // Slots are recycled through `free`, so a stale coverage mask would make
+        // a brand-new key claim coverage it never fetched. The drained free
+        // list is asserted alongside: on a fresh slot the test would pass
+        // without exercising reuse at all.
+        let mut table = Table::new(2);
+        let (keys, cols) = u64_batch(&[(1, Some(10), None)]);
+        table.merge_batch_covering(keys, cols, Coverage::All(0b11));
+        table.prune(1);
+        let (keys, cols) = u64_batch(&[(2, Some(20), None)]);
+        table.merge_batch(keys, cols);
+        assert_eq!(
+            (
+                table.free.len(),
+                table.covers(&2, 0b10),
+                table.covers(&2, 0b01)
+            ),
+            (0, false, true)
         );
     }
 

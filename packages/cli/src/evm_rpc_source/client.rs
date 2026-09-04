@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::json;
 use serde_json::value::RawValue;
 use std::collections::HashMap;
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 /// JSON-RPC level errors are kept separate from transport/parse failures:
 /// provider error messages carry block-range hints the caller inspects.
@@ -12,6 +13,15 @@ use std::collections::HashMap;
 pub enum RpcError {
     JsonRpc { code: i64, message: String },
     Other(anyhow::Error),
+}
+
+impl std::fmt::Display for RpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RpcError::JsonRpc { code, message } => write!(f, "JSON-RPC error {code}: {message}"),
+            RpcError::Other(err) => write!(f, "{err:#}"),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -40,20 +50,40 @@ struct JsonRpcResponse {
 pub struct JsonRpcClient {
     http: reqwest::Client,
     url: String,
+    /// Reported back on a timeout, where naming the limit that was hit is the
+    /// whole of what the caller can act on.
+    request_timeout_millis: u64,
+    /// Bounds the requests this source has in flight at once. The block,
+    /// transaction and receipt reads a page fans out to scale with how many logs
+    /// its range holds, which no block interval can express: a single dense
+    /// block plans thousands of reads.
+    permits: Semaphore,
 }
 
 impl JsonRpcClient {
-    pub const fn default_http_req_timeout_millis() -> u64 {
-        120_000
+    /// High enough to keep a healthy provider's pipe full, low enough that the
+    /// burst above stays a queue rather than a stampede.
+    pub const fn default_max_concurrent_requests() -> usize {
+        50
+    }
+
+    /// Waits for this source's turn to call the provider. Queueing is not part
+    /// of how long a request took, so callers acquire before they start timing.
+    pub async fn acquire(&self) -> SemaphorePermit<'_> {
+        self.permits
+            .acquire()
+            .await
+            .expect("the request semaphore is never closed")
     }
 
     pub fn new(
         url: String,
-        http_req_timeout_millis: u64,
+        request_timeout_millis: u64,
+        max_concurrent_requests: usize,
         headers: Option<HashMap<String, String>>,
     ) -> Result<Self> {
         let mut builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(http_req_timeout_millis));
+            .timeout(std::time::Duration::from_millis(request_timeout_millis));
         if let Some(headers) = headers {
             let mut header_map = HeaderMap::with_capacity(headers.len());
             for (name, value) in headers {
@@ -66,11 +96,19 @@ impl JsonRpcClient {
             builder = builder.default_headers(header_map);
         }
         let http = builder.build().context("build http client")?;
-        Ok(Self { http, url })
+        Ok(Self {
+            http,
+            url,
+            request_timeout_millis,
+            permits: Semaphore::new(max_concurrent_requests),
+        })
     }
 
+    /// The caller's turn lasts exactly as long as the provider is working on
+    /// the request.
     pub async fn request<T: DeserializeOwned>(
         &self,
+        permit: SemaphorePermit<'_>,
         method: &str,
         params: serde_json::Value,
     ) -> Result<T, RpcError> {
@@ -86,8 +124,16 @@ impl JsonRpcClient {
             .json(&body)
             .send()
             .await
-            .with_context(|| format!("send {method} request"))
-            .map_err(RpcError::Other)?;
+            .map_err(|err| {
+                RpcError::Other(if err.is_timeout() {
+                    anyhow::anyhow!(
+                        "{method} took longer than {}ms",
+                        self.request_timeout_millis
+                    )
+                } else {
+                    anyhow::Error::new(err).context(format!("send {method} request"))
+                })
+            })?;
 
         let status = response.status();
         let bytes = response
@@ -95,6 +141,9 @@ impl JsonRpcClient {
             .await
             .with_context(|| format!("read {method} response body"))
             .map_err(RpcError::Other)?;
+        // Decoding what came back is this process's work, not the provider's,
+        // so the next queued request gets the turn before it starts.
+        drop(permit);
 
         // Providers report JSON-RPC errors under non-200 statuses too (e.g.
         // 429/400), so parse the body first and fall back to the HTTP status
@@ -125,8 +174,8 @@ impl JsonRpcClient {
         }
     }
 
-    pub async fn get_height(&self) -> Result<u64, RpcError> {
-        let result: String = self.request("eth_blockNumber", json!([])).await?;
+    pub async fn get_height(&self, permit: SemaphorePermit<'_>) -> Result<u64, RpcError> {
+        let result: String = self.request(permit, "eth_blockNumber", json!([])).await?;
         parse_hex_u64(&result).map_err(RpcError::Other)
     }
 }
@@ -141,7 +190,7 @@ pub fn parse_hex_u64(s: &str) -> Result<u64> {
 
 // HTTP and JSON-RPC envelope behavior (success, error bodies, non-200
 // statuses) is covered end-to-end through the napi layer in
-// scenarios/test_codegen/test/lib_tests/EvmRpcClient_test.res.
+// packages/envio-tests/test/lib_tests/EvmRpcClient_test.res.
 #[cfg(test)]
 mod tests {
     use super::*;

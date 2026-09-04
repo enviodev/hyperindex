@@ -335,7 +335,13 @@ let pollOnce = async (feed: t) => {
     (feed->currentInterval, Cadence)
   | TimedOut =>
     feed->backOff(~what=`did not answer within ${(pollTimeoutMillis / 1000)->Int.toString}s`)
-  | Failed(exn) => feed->backOff(~what="failed", ~exn)
+  | Failed(exn) =>
+    // The request reached the endpoint and is billed whether or not it
+    // answered, so it counts; unwrapping also keeps the log the provider's own
+    // message rather than the envelope carrying it.
+    let failure = exn->Source.unpackNativeRequestFailure
+    feed.recordRequestStats(failure.requestStats)
+    feed->backOff(~what="failed", ~exn=failure.cause)
   }
 }
 

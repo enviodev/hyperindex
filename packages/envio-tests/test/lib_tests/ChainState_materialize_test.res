@@ -70,7 +70,7 @@ describe("ChainState.materializePageItems: single-pass transaction/block groupin
 
       await ChainState.materializePageItems(
         ~items=[a, b, c, d],
-        ~transactionStore=Some(transactionStore),
+        ~transactionStore,
         ~blockStore,
       )
 
@@ -92,20 +92,29 @@ describe("ChainState.materializePageItems: single-pass transaction/block groupin
     },
   )
 
-  Async.it("materializePageItems skips the transaction side for inline sources", async t => {
-    let a = makeItem(~blockNumber=1, ~transactionIndex=1, ~transactionMask=2., ~blockMask=2.)
+  Async.it("materializePageItems leaves an inline source's transaction alone", async t => {
+    // A Fuel or Simulate item carries its own transaction, so grouping skips it
+    // and an empty store never overwrites what the payload already has.
+    let inlineTransaction = %raw(`{"id": "0xfuel"}`)
+    let a = makeItem(
+      ~blockNumber=1,
+      ~transactionIndex=1,
+      ~transactionMask=2.,
+      ~blockMask=2.,
+      ~inlineTransaction,
+    )
     await ChainState.materializePageItems(
       ~items=[a],
-      ~transactionStore=None,
+      ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Fuel, ~shouldChecksum=false),
       ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Fuel, ~shouldChecksum=false),
     )
     t.expect({
-      "tx": rawTx(a)->Nullable.toOption,
+      "txUntouched": rawTx(a) === inlineTransaction->Nullable.make,
       // The block side always materialises from the chain store; an empty
       // store yields an empty block object.
       "blockIsSet": rawBlock(a)->Nullable.toOption->Option.isSome,
     }).toEqual({
-      "tx": None,
+      "txUntouched": true,
       "blockIsSet": true,
     })
   })
@@ -130,7 +139,7 @@ describe("ChainState.materializePageItems: block materialization", () => {
       // requested key rather than a stored block — comes back.
       await ChainState.materializePageItems(
         ~items=[inline, a, b, c],
-        ~transactionStore=None,
+        ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
         ~blockStore,
       )
 
@@ -165,7 +174,7 @@ describe("ChainState.materializePageItems: block materialization", () => {
       // requested key rather than a stored block — comes back.
       await ChainState.materializePageItems(
         ~items=[inline, a, b, c],
-        ~transactionStore=None,
+        ~transactionStore=TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
         ~blockStore,
       )
 
@@ -195,7 +204,7 @@ describe("ChainState.materializePageItems: transaction materialization", () => {
     let item = makeItem(~blockNumber=1, ~transactionIndex=0, ~transactionMask=0.)
     await ChainState.materializePageItems(
       ~items=[item],
-      ~transactionStore=Some(transactionStore),
+      ~transactionStore,
       ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
     )
     // Store-backed items always get a transaction object (matching the inline
@@ -217,7 +226,7 @@ describe("ChainState.materializePageItems: transaction materialization", () => {
 
       await ChainState.materializePageItems(
         ~items=[inline, a, b, c],
-        ~transactionStore=Some(transactionStore),
+        ~transactionStore,
         ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
       )
 
@@ -247,7 +256,7 @@ describe("ChainState.materializePageItems: transaction materialization", () => {
 
     await ChainState.materializePageItems(
       ~items=[a, b, c],
-      ~transactionStore=Some(transactionStore),
+      ~transactionStore,
       ~blockStore=BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
     )
 

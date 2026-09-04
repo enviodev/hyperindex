@@ -264,20 +264,7 @@ module EventItems = {
     clientFilteredContracts: option<array<string>>,
   }
 
-  type item = {
-    logIndex: int,
-    srcAddress: Address.t,
-    // Number of the block this log belongs to; the block itself is resolved from
-    // `response.blocks`, deduplicated across items sharing a block.
-    blockNumber: int,
-    // Key (with the block number) into the transaction store; the transaction
-    // is resolved from the store on demand.
-    transactionIndex: int,
-    // The registration this log routed to, by chain-scoped index. Logs that
-    // route to no registration never cross the boundary.
-    onEventRegistrationIndex: int,
-    params: Internal.eventParams,
-  }
+  type item = EvmEventItem.t
 
   type response = {
     archiveHeight: option<int>,

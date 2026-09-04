@@ -451,7 +451,6 @@ pub mod evm {
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
     use strum::Display;
-    use subenum::subenum;
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[schemars(
@@ -551,12 +550,6 @@ pub mod evm {
         pub block_fields: Option<Vec<BlockField>>,
     }
 
-    // `RpcTransactionField` is the subset an RPC-synced chain can deliver:
-    // every field `eth_getTransactionByHash` or `eth_getTransactionReceipt`
-    // returns, which is all of them except the two array-shaped ones that have
-    // no parser in the runtime's field registry (`RpcSource.res`). Kept in step
-    // with that registry by `RpcFieldSelection_test.res`.
-    #[subenum(RpcTransactionField)]
     #[derive(
         Debug,
         Serialize,
@@ -572,66 +565,36 @@ pub mod evm {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     #[strum(serialize_all = "camelCase")]
     pub enum TransactionField {
-        #[subenum(RpcTransactionField)]
         TransactionIndex,
-        #[subenum(RpcTransactionField)]
         Hash,
-        #[subenum(RpcTransactionField)]
         From,
-        #[subenum(RpcTransactionField)]
         To,
-        #[subenum(RpcTransactionField)]
         Gas,
-        #[subenum(RpcTransactionField)]
         GasPrice,
-        #[subenum(RpcTransactionField)]
         MaxPriorityFeePerGas,
-        #[subenum(RpcTransactionField)]
         MaxFeePerGas,
-        #[subenum(RpcTransactionField)]
         CumulativeGasUsed,
-        #[subenum(RpcTransactionField)]
         EffectiveGasPrice,
-        #[subenum(RpcTransactionField)]
         GasUsed,
-        #[subenum(RpcTransactionField)]
         Input,
-        #[subenum(RpcTransactionField)]
         Nonce,
-        #[subenum(RpcTransactionField)]
         Value,
-        #[subenum(RpcTransactionField)]
         V,
-        #[subenum(RpcTransactionField)]
         R,
-        #[subenum(RpcTransactionField)]
         S,
-        #[subenum(RpcTransactionField)]
         ContractAddress,
-        #[subenum(RpcTransactionField)]
         LogsBloom,
-        #[subenum(RpcTransactionField)]
         Root,
-        #[subenum(RpcTransactionField)]
         Status,
-        #[subenum(RpcTransactionField)]
         YParity,
         AccessList,
-        #[subenum(RpcTransactionField)]
         MaxFeePerBlobGas,
-        #[subenum(RpcTransactionField)]
         BlobVersionedHashes,
-        #[subenum(RpcTransactionField)]
         Type,
-        #[subenum(RpcTransactionField)]
         L1Fee,
-        #[subenum(RpcTransactionField)]
         L1GasPrice,
-        #[subenum(RpcTransactionField)]
         L1GasUsed,
-        #[subenum(RpcTransactionField)]
         L1FeeScalar,
-        #[subenum(RpcTransactionField)]
         GasUsedForL1,
         AuthorizationList,
         // We want to encourage the use of context.chain.id instead

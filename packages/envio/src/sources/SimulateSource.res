@@ -114,7 +114,6 @@ let make = (
         blockStore: blockStore->Option.getOr(
           BlockStore.fromJs([], ~ecosystem, ~shouldChecksum=false),
         ),
-        fromBlockQueried: fromBlock,
         latestFetchedBlockNumber: toBlockQueried,
         stats: {
           totalTimeElapsed: 0.,

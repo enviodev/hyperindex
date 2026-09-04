@@ -496,41 +496,6 @@ let getSimulateOnEventRegistrations = (
   }
 }
 
-// An RPC source can only deliver the fields it knows how to parse; the rest are
-// silently skipped at materialisation. Every RPC on the chain counts, whatever
-// it's for — a fallback or realtime source runs the same parsers as a sync one,
-// so a field it can't deliver would go missing for whichever blocks it served.
-// The selection can come from either `config.yaml` or the inline `fields`
-// option, so the message names neither. Runs on the registrations a chain
-// actually keeps, so a handler whose `where` opts out of this chain isn't held
-// to its limits.
-//
-// The `config.yaml` half of this is also rejected at codegen, by the
-// `RpcTransactionField` subenum in `system_config.rs`. That one reports every
-// offending field at once and before the project builds; this one is the only
-// check an inline selection reaches. `RpcFieldSelection_test.res` pins the two
-// to the same field set.
-let validateRpcFieldSelection = (
-  chainConfig: Config.chain,
-  registrations: array<Internal.onEventRegistration>,
-) => {
-  let hasRpc = switch chainConfig.sourceConfig {
-  | EvmSourceConfig({rpcs}) => !(rpcs->Utils.Array.isEmpty)
-  | _ => false
-  }
-  if hasRpc {
-    registrations->Array.forEach(reg =>
-      reg.fieldSelection.transactionFields->Utils.Set.forEach(name =>
-        if !RpcSource.isRpcTransactionField(name) {
-          JsError.throwWithMessage(
-            `The "${name}" transaction field selected for the "${reg.eventConfig.name}" event on contract "${reg.eventConfig.contractName}" is unavailable for indexing via RPC. Remove it from the field selection, or remove chain ${chainConfig.id->ChainId.toString}'s RPC source — even an RPC the chain only falls back to has to deliver the selection.`,
-          )
-        }
-      )
-    )
-  }
-}
-
 let finishRegistration = (~config: Config.t): registrationsByChainId => {
   switch getActiveRegistration() {
   | Some(r) => {
@@ -616,8 +581,6 @@ let finishRegistration = (~config: Config.t): registrationsByChainId => {
             ->ignore
           }
         })
-
-        validateRpcFieldSelection(chainConfig, onEventRegistrations)
 
         registrationsByChainId->Dict.set(
           key,

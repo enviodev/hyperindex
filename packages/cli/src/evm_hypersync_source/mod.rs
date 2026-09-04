@@ -13,7 +13,7 @@ use crate::transaction_store::TransactionStore;
 
 mod config;
 pub(crate) mod decode;
-mod query;
+pub(crate) mod query;
 pub(crate) mod selection;
 pub(crate) mod types;
 
@@ -696,7 +696,7 @@ fn convert_error_to_napi(err: ConvertError) -> napi::Error {
 
 /// Returns `Some(camelCaseFieldName)` if the user requested this field but the
 /// server's response omits it AND the field isn't inherently nullable per-row.
-fn block_field_missing(
+pub(crate) fn block_field_missing(
     block: &hypersync_client::simple_types::Block,
     field: BlockField,
 ) -> Option<&'static str> {
@@ -739,15 +739,22 @@ fn block_field_missing(
     }
 }
 
-fn transaction_field_missing(
+pub(crate) fn transaction_field_missing(
     tx: &hypersync_client::simple_types::Transaction,
     field: TransactionField,
 ) -> Option<&'static str> {
     use TransactionField::*;
     match field {
+        // Absent by the shape of the transaction rather than by a gap in the
+        // response: a legacy transaction has no access list, and only an
+        // EIP-7702 one has an authorization list. Both source paths share this
+        // rule, so HyperSync stops flagging the two lists as well — telling
+        // "the transaction has none" from "the response dropped it" would need
+        // the transaction `type`, which a selection need not include.
         GasPrice | V | R | S | YParity | MaxPriorityFeePerGas | MaxFeePerGas | MaxFeePerBlobGas
         | BlobVersionedHashes | ContractAddress | Root | Status | L1Fee | L1GasPrice
-        | L1GasUsed | L1FeeScalar | GasUsedForL1 | From | To | Type => None,
+        | L1GasUsed | L1FeeScalar | GasUsedForL1 | From | To | Type | AccessList
+        | AuthorizationList => None,
         BlockHash => tx.block_hash.is_none().then_some("blockHash"),
         BlockNumber => tx.block_number.is_none().then_some("blockNumber"),
         Gas => tx.gas.is_none().then_some("gas"),
@@ -757,11 +764,6 @@ fn transaction_field_missing(
         TransactionIndex => tx.transaction_index.is_none().then_some("transactionIndex"),
         Value => tx.value.is_none().then_some("value"),
         ChainId => tx.chain_id.is_none().then_some("chainId"),
-        AccessList => tx.access_list.is_none().then_some("accessList"),
-        AuthorizationList => tx
-            .authorization_list
-            .is_none()
-            .then_some("authorizationList"),
         CumulativeGasUsed => tx
             .cumulative_gas_used
             .is_none()

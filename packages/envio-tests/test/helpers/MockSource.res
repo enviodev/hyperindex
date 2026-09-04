@@ -685,7 +685,6 @@ let make = (
                   ),
                   transactionStore: None,
                   blockStore: responseBlockStore,
-                  fromBlockQueried: fromBlock,
                   latestFetchedBlockNumber,
                   stats: {
                     totalTimeElapsed: 0.,

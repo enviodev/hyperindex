@@ -1,7 +1,5 @@
 open Vitest
 
-type sourceFactory = RpcSource.options => Source.t
-
 let chainId = 1->ChainId.fromInt
 let sighash = "0xcf16a92280c1bbb43f72d31126b724d508df2877835849e8744017ab36a9b47f"
 let transactionHash = "0x27e26f21f744064a4af53810d8002bbd7208a2ca4865503a99b9c529e5cff5ea"
@@ -21,9 +19,8 @@ let topicSelection: Internal.resolvedTopicSelection = {
 }
 
 let withPinIdentity = (registration: Internal.evmOnEventRegistration, ~index) => {
-  let eventConfig = registration.eventConfig->(
-    Utils.magic: Internal.eventConfig => Internal.evmEventConfig
-  )
+  let eventConfig =
+    registration.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
   {
     ...registration,
     index,
@@ -80,7 +77,10 @@ let makeAddressStore = (~registration: Internal.evmOnEventRegistration) =>
     ~shouldChecksum=false,
   )
 
-let makeSource = (~factory, ~url, ~registration: Internal.evmOnEventRegistration) => {
+// One store per source, as in production: the client routes against it and the
+// query's address set is cut from that same store.
+let makeSource = (~url, ~registration: Internal.evmOnEventRegistration, ~syncConfig=syncConfig) => {
+  let addressStore = makeAddressStore(~registration)
   let options: RpcSource.options = {
     url,
     chainId,
@@ -88,16 +88,23 @@ let makeSource = (~factory, ~url, ~registration: Internal.evmOnEventRegistration
     sourceFor: Sync,
     syncConfig,
     lowercaseAddresses: true,
-    addressStore: makeAddressStore(~registration),
+    addressStore,
+    blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+    transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
   }
-  factory(options)
+  (RpcSource.make(options), addressStore)
 }
 
-let invoke = (source: Source.t, ~registration: Internal.evmOnEventRegistration, ~retry=0) => {
+let invoke = (
+  source: Source.t,
+  ~registration: Internal.evmOnEventRegistration,
+  ~addressStore,
+  ~retry=0,
+) => {
   source.getItemsOrThrow(
     ~fromBlock=100,
     ~toBlock=Some(100),
-    ~addressSet=makeAddressStore(~registration)->AddressStore.makeSet(
+    ~addressSet=addressStore->AddressStore.makeSet(
       ~contractName=registration.eventConfig.contractName,
     ),
     ~knownHeight=100,
@@ -128,9 +135,7 @@ let log = (~logIndex) =>
     `{"address":"${contractAddress}","topics":["${sighash}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000b64","logIndex":"${logIndex}","removed":false}`,
   )
 
-let transaction = JSON.parseOrThrow(
-  `{"from":"${fromAddress}","gas":"0x7530"}`,
-)
+let transaction = JSON.parseOrThrow(`{"from":"${fromAddress}","gas":"0x7530"}`)
 
 let receipt = JSON.parseOrThrow(`{"gasUsed":"0x5208","status":"0x1"}`)
 
@@ -185,9 +190,10 @@ type transactionView = {
 
 let eventSummary = (event: RpcSourcePins.pinnedEvent) => {
   let block = event.block->Option.getOrThrow->(Utils.magic: Internal.eventBlock => blockView)
-  let transaction = event.transaction
-  ->Option.getOrThrow
-  ->(Utils.magic: Internal.eventTransaction => transactionView)
+  let transaction =
+    event.transaction
+    ->Option.getOrThrow
+    ->(Utils.magic: Internal.eventTransaction => transactionView)
   {
     "registrationId": event.registrationId,
     "blockNumber": event.blockNumber,
@@ -216,214 +222,282 @@ let eventSummary = (event: RpcSourcePins.pinnedEvent) => {
   }
 }
 
-let registerContractTests = (~name, ~factory: sourceFactory) => {
-  describe(`RPC source public contract - ${name}`, () => {
-    Async.it("pins enrichment, event order, request deduplication, and reorg hashes", async t => {
-      let page = await MockRpcServer.withScenario(
-        ~name=`${name}: successful enriched page`,
-        ~calls=successfulCalls(),
-        async mock => {
-          let registration = makeRegistration()
-          let source = makeSource(~factory, ~url=mock.url, ~registration)
-          switch await RpcSourcePins.capture(() => source->invoke(~registration)) {
-          | Ok(page) => page
-          | Error(_) => JsError.throwWithMessage("Expected the pinned RPC page to succeed")
-          }
-        },
-      )
+describe("RPC source public contract", () => {
+  Async.it("pins enrichment, event order, request deduplication, and reorg hashes", async t => {
+    let page = await MockRpcServer.withScenario(
+      ~name="successful enriched page",
+      ~calls=successfulCalls(),
+      async mock => {
+        let registration = makeRegistration()
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
+        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
+        | Ok(page) => page
+        | Error(_) => JsError.throwWithMessage("Expected the pinned RPC page to succeed")
+        }
+      },
+    )
 
-      t.expect({
-        "knownHeight": page.knownHeight,
-        "fromBlockQueried": page.fromBlockQueried,
-        "latestFetchedBlockNumber": page.latestFetchedBlockNumber,
-        "events": page.events->Array.map(eventSummary),
-        "blockHashes": page.blockHashes,
-        "requestCounts": page.requestCounts,
-      }).toEqual({
-        "knownHeight": 100,
-        "fromBlockQueried": 100,
-        "latestFetchedBlockNumber": 100,
-        "events": [
-          {
-            "registrationId": `${sighash}_1`,
-            "blockNumber": 100,
-            "logIndex": 2,
-            "transactionIndex": 1,
-            "contractName": "ERC20",
-            "eventName": "EventWithoutFields",
-            "srcAddress": normalizedContractAddress,
-            "params": %raw(`{}`),
-            "block": {
-              "number": 100,
-              "timestamp": 100,
-              "hash": "0x0000000000000000000000000000000000000000000000000000000000000b64",
-              "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000b63",
-              "gasUsed": "21000",
-              "miner": normalizedMinerAddress,
-            },
-            "transaction": {
-              "hash": transactionHash,
-              "transactionIndex": 1,
-              "from": normalizedFromAddress,
-              "gas": "30000",
-              "gasUsed": "21000",
-              "status": 1,
-            },
+    t.expect({
+      "knownHeight": page.knownHeight,
+      "latestFetchedBlockNumber": page.latestFetchedBlockNumber,
+      "events": page.events->Array.map(eventSummary),
+      "blockHashes": page.blockHashes,
+      "requestCounts": page.requestCounts,
+    }).toEqual({
+      "knownHeight": 100,
+      "latestFetchedBlockNumber": 100,
+      "events": [
+        {
+          "registrationId": `${sighash}_1`,
+          "blockNumber": 100,
+          "logIndex": 2,
+          "transactionIndex": 1,
+          "contractName": "ERC20",
+          "eventName": "EventWithoutFields",
+          "srcAddress": normalizedContractAddress,
+          "params": %raw(`{}`),
+          "block": {
+            "number": 100,
+            "timestamp": 100,
+            "hash": "0x0000000000000000000000000000000000000000000000000000000000000b64",
+            "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000b63",
+            "gasUsed": "21000",
+            "miner": normalizedMinerAddress,
           },
-          {
-            "registrationId": `${sighash}_1`,
-            "blockNumber": 100,
-            "logIndex": 3,
+          "transaction": {
+            "hash": transactionHash,
             "transactionIndex": 1,
-            "contractName": "ERC20",
-            "eventName": "EventWithoutFields",
-            "srcAddress": normalizedContractAddress,
-            "params": %raw(`{}`),
-            "block": {
-              "number": 100,
-              "timestamp": 100,
-              "hash": "0x0000000000000000000000000000000000000000000000000000000000000b64",
-              "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000b63",
-              "gasUsed": "21000",
-              "miner": normalizedMinerAddress,
-            },
-            "transaction": {
-              "hash": transactionHash,
-              "transactionIndex": 1,
-              "from": normalizedFromAddress,
-              "gas": "30000",
-              "gasUsed": "21000",
-              "status": 1,
-            },
+            "from": normalizedFromAddress,
+            "gas": "30000",
+            "gasUsed": "21000",
+            "status": 1,
           },
-        ],
-        // The observed (blockNumber, hash) pairs land in the block store, which
-        // keys by block number — so the projection is deduplicated and ascending.
-        // The store reads hashes back left-padded to the fixed 32-byte width.
-        // Block 99 comes from block 100's parentHash, which is what reorg
-        // detection compares the seam against.
-        "blockHashes": [
-          {ReorgDetection.blockNumber: 99, blockHash: MockSource.evmBlockHash("0x0000000000000000000000000000000000000000000000000000000000000b63")},
-          {ReorgDetection.blockNumber: 100, blockHash: MockSource.evmBlockHash("0x0000000000000000000000000000000000000000000000000000000000000b64")},
-        ],
-        "requestCounts": Dict.fromArray([
-          ("eth_getLogs", 1),
-          ("eth_getBlockByNumber", 1),
-          ("eth_getTransactionByHash", 1),
-          ("eth_getTransactionReceipt", 1),
-        ]),
-      })
-    })
-
-    Async.it("pins onReorg cache invalidation without resetting paging state", async t => {
-      let requestCounts = await MockRpcServer.withScenario(
-        ~name=`${name}: onReorg cache invalidation`,
-        ~calls=successfulCalls(~times=2, ~logs=[log(~logIndex="0x2")]),
-        async mock => {
-          let registration = makeRegistration()
-          let source = makeSource(~factory, ~url=mock.url, ~registration)
-          let _ = await source->invoke(~registration)
-          let onReorg = source.onReorg->Option.getOrThrow(
-            ~message="RPC source must expose onReorg for cache invalidation",
-          )
-          onReorg()
-          let _ = await source->invoke(~registration)
-          mock.transcript()
-          ->Array.reduce(Dict.make(), (counts, entry) => {
-            let method = entry.request.method
-            counts->Dict.set(method, counts->Dict.get(method)->Option.getOr(0) + 1)
-            counts
-          })
         },
-      )
-
-      t.expect(requestCounts).toEqual(Dict.fromArray([
-        ("eth_getLogs", 2),
-        ("eth_getBlockByNumber", 2),
-        ("eth_getTransactionByHash", 2),
-        ("eth_getTransactionReceipt", 2),
-      ]))
+        {
+          "registrationId": `${sighash}_1`,
+          "blockNumber": 100,
+          "logIndex": 3,
+          "transactionIndex": 1,
+          "contractName": "ERC20",
+          "eventName": "EventWithoutFields",
+          "srcAddress": normalizedContractAddress,
+          "params": %raw(`{}`),
+          "block": {
+            "number": 100,
+            "timestamp": 100,
+            "hash": "0x0000000000000000000000000000000000000000000000000000000000000b64",
+            "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000b63",
+            "gasUsed": "21000",
+            "miner": normalizedMinerAddress,
+          },
+          "transaction": {
+            "hash": transactionHash,
+            "transactionIndex": 1,
+            "from": normalizedFromAddress,
+            "gas": "30000",
+            "gasUsed": "21000",
+            "status": 1,
+          },
+        },
+      ],
+      // The observed (blockNumber, hash) pairs land in the block store, which
+      // keys by block number — so the projection is deduplicated and ascending.
+      // The store reads hashes back left-padded to the fixed 32-byte width.
+      // Block 99 comes from block 100's parentHash, which is what reorg
+      // detection compares the seam against.
+      "blockHashes": [
+        {
+          ReorgDetection.blockNumber: 99,
+          blockHash: MockSource.evmBlockHash(
+            "0x0000000000000000000000000000000000000000000000000000000000000b63",
+          ),
+        },
+        {
+          ReorgDetection.blockNumber: 100,
+          blockHash: MockSource.evmBlockHash(
+            "0x0000000000000000000000000000000000000000000000000000000000000b64",
+          ),
+        },
+      ],
+      "requestCounts": Dict.fromArray([
+        ("eth_getLogs", 1),
+        ("eth_getBlockByNumber", 1),
+        ("eth_getTransactionByHash", 1),
+        ("eth_getTransactionReceipt", 1),
+      ]),
     })
+  })
 
-    Async.it("pins missing receipt data as a retryable source error", async t => {
-      let error = await MockRpcServer.withScenario(
-        ~name=`${name}: missing receipt`,
-        ~calls=[
-          MockRpcServer.expectCall(
-            ~method="eth_getLogs",
-            ~params=getLogsParams(),
-            ~reply=RpcResult(JSON.Array([log(~logIndex="0x2")])),
-          ),
-          MockRpcServer.expectCall(
-            ~method="eth_getBlockByNumber",
-            ~params=blockParams("0x64"),
-            ~reply=RpcResult(block100),
-          ),
-          MockRpcServer.expectCall(
-            ~method="eth_getTransactionReceipt",
-            ~params=JSON.Array([JSON.String(transactionHash)]),
-            ~reply=RpcResult(JSON.Null),
-          ),
-        ],
-        async mock => {
-          let registration = makeRegistration(~receiptOnly=true)
-          let source = makeSource(~factory, ~url=mock.url, ~registration)
-          switch await RpcSourcePins.capture(() => source->invoke(~registration, ~retry=2)) {
+  Async.it("pins that onReorg leaves the partition's paging range alone", async t => {
+    // onReorg drops in-flight reads so nothing issued afterwards joins a
+    // response describing the orphaned fork — an effect only visible under
+    // concurrency, pinned in the client's own tests. What is visible here is
+    // what it must NOT do: the adaptive block range is paging state, not a
+    // view of the chain, and re-deriving it would cost the ramp-up that
+    // reaching this range took.
+    let ranges = await MockRpcServer.withScenario(
+      ~name="onReorg keeps paging state",
+      ~calls=successfulCalls(~times=2, ~logs=[log(~logIndex="0x2")]),
+      async mock => {
+        let registration = makeRegistration()
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
+        let _ = await source->invoke(~registration, ~addressStore)
+        let onReorg = source.onReorg->Option.getOrThrow(~message="RPC source must expose onReorg")
+        onReorg()
+        let _ = await source->invoke(~registration, ~addressStore)
+        mock.transcript()->Array.filterMap(
+          entry => entry.request.method === "eth_getLogs" ? Some(entry.request.params) : None,
+        )
+      },
+    )
+
+    // Both pages asked for the same range, so the shape of the second is the
+    // assertion — a collapsed boolean would only say that it differed.
+    t.expect(ranges).toEqual([ranges->Array.getUnsafe(0), ranges->Array.getUnsafe(0)])
+  })
+
+  Async.it("pins missing receipt data as a retryable source error", async t => {
+    let error = await MockRpcServer.withScenario(
+      ~name="missing receipt",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~params=getLogsParams(),
+          ~reply=RpcResult(JSON.Array([log(~logIndex="0x2")])),
+          ~times=2,
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~params=blockParams("0x64"),
+          ~reply=RpcResult(block100),
+          ~times=2,
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getTransactionReceipt",
+          ~params=JSON.Array([JSON.String(transactionHash)]),
+          ~reply=RpcResult(JSON.Null),
+          ~times=2,
+        ),
+      ],
+      async mock => {
+        let registration = makeRegistration(~receiptOnly=true)
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
+        let call = async (~retry) =>
+          switch await RpcSourcePins.capture(
+            () => source->invoke(~registration, ~addressStore, ~retry),
+          ) {
           | Error(error) => error
           | Ok(_) => JsError.throwWithMessage("Expected missing receipt data to be retryable")
           }
-        },
-      )
+        // The wait ramps with the attempt, so the two are read together.
+        (await call(~retry=0), await call(~retry=2))
+      },
+    )
 
-      t.expect(error).toEqual(
-        RpcSourcePins.FailedGettingItems({
-          attemptedToBlock: 100,
-          providerMessage: None,
-          retry: Backoff({
-            message: `Transaction receipt not found for hash: ${transactionHash}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in 1000ms.`,
-            backoffMillis: 1_000,
-          }),
-        }),
-      )
+    // A null receipt is the load-balancing symptom, so the source asks for a
+    // retry and says which receipt was missing, on both the retry decision
+    // the source manager reads and the error the logs carry.
+    let notFoundMessage = `The RPC returned null for the receipt of transaction ${transactionHash}. The provider may be load-balanced between nodes that drift from the head independently; indexing continues correctly once the query is retried.`
+    let expected = backoffMillis => RpcSourcePins.FailedGettingItems({
+      attemptedToBlock: 100,
+      providerMessage: Some(notFoundMessage),
+      retry: Backoff({message: notFoundMessage, backoffMillis}),
     })
+    t.expect(error).toEqual((expected(100), expected(1_000)))
+  })
 
-    Async.it("pins consecutive response-too-large interval shrinking", async t => {
-      let defaultSyncConfig = EvmChain.getSyncConfig({})
-      let errors = await MockRpcServer.withScenario(
-        ~name=`${name}: density interval shrink`,
-        ~calls=[
-          MockRpcServer.expectCall(
-            ~label="initial interval",
-            ~method="eth_getLogs",
-            ~params=JSON.parseOrThrow(
-              `[{"fromBlock":"0x0","toBlock":"0x270f","topics":[["${sighash}"]],"address":["${normalizedContractAddress}"]}]`,
+  // A page reads its blocks and its transactions at once, and they can fail
+  // differently. Reporting whichever failed first would make the outcome a
+  // race: the same unservable selection would disable the source on the
+  // attempts where the receipt happened to answer and be swallowed as a backoff
+  // on the ones where it did not. The delayed block reply forces the transient
+  // miss to settle first, which is the order that gets it wrong.
+  Async.it("pins the unservable selection winning over a concurrent transient miss", async t => {
+    let error = await MockRpcServer.withScenario(
+      ~name="unservable selection racing a null receipt",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~params=getLogsParams(),
+          ~reply=RpcResult(JSON.Array([log(~logIndex="0x2")])),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~params=blockParams("0x64"),
+          // No gasUsed, which the selection needs and no retry will conjure.
+          ~reply=Delayed({
+            millis: 50,
+            reply: RpcResult(
+              JSON.parseOrThrow(`{"number":"0x64","timestamp":"0x64","hash":"0x0000000000000000000000000000000000000000000000000000000000000b64","parentHash":"0x0000000000000000000000000000000000000000000000000000000000000b63"}`),
             ),
-            ~reply=RpcError({code: -32005, message: "More than 50000 logs returned"}),
+          }),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getTransactionReceipt",
+          ~params=JSON.Array([JSON.String(transactionHash)]),
+          ~reply=RpcResult(JSON.Null),
+        ),
+      ],
+      async mock => {
+        let registration = makeRegistration(~receiptOnly=true)
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
+        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
+        | Error(error) => error
+        | Ok(_) => JsError.throwWithMessage("Expected the page to fail")
+        }
+      },
+    )
+
+    t.expect(
+      switch error {
+      | RpcSourcePins.FailedGettingFieldSelection({message}) =>
+        message->String.includes("gasUsed") ? "unservable" : message
+      | FailedGettingItems(_) => "reported the transient miss instead"
+      | UnsupportedSelection(message) => message
+      },
+    ).toEqual("unservable")
+  })
+
+  Async.it("pins consecutive response-too-large interval shrinking", async t => {
+    let defaultSyncConfig = EvmChain.getSyncConfig({})
+    let errors = await MockRpcServer.withScenario(
+      ~name="density interval shrink",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~label="initial interval",
+          ~method="eth_getLogs",
+          ~params=JSON.parseOrThrow(
+            `[{"fromBlock":"0x0","toBlock":"0x270f","topics":[["${sighash}"]],"address":["${normalizedContractAddress}"]}]`,
           ),
-          MockRpcServer.expectCall(
-            ~label="shrunk interval",
-            ~method="eth_getLogs",
-            ~params=JSON.parseOrThrow(
-              `[{"fromBlock":"0x0","toBlock":"0x1f3f","topics":[["${sighash}"]],"address":["${normalizedContractAddress}"]}]`,
-            ),
-            ~reply=RpcError({code: -32005, message: "More than 50000 logs returned"}),
+          ~reply=RpcError({code: -32005, message: "More than 50000 logs returned"}),
+        ),
+        MockRpcServer.expectCall(
+          ~label="shrunk interval",
+          ~method="eth_getLogs",
+          ~params=JSON.parseOrThrow(
+            `[{"fromBlock":"0x0","toBlock":"0x1f3f","topics":[["${sighash}"]],"address":["${normalizedContractAddress}"]}]`,
           ),
-        ],
-        async mock => {
-          let registration = makeRegistration()
-          let addressStore = makeAddressStore(~registration)
-          let options: RpcSource.options = {
-            url: mock.url,
-            chainId,
-            onEventRegistrations: [registration],
-            sourceFor: Sync,
-            syncConfig: defaultSyncConfig,
-            lowercaseAddresses: true,
-            addressStore,
-          }
-          let source = factory(options)
-          let call = () =>
-            RpcSourcePins.capture(() =>
+          ~reply=RpcError({code: -32005, message: "More than 50000 logs returned"}),
+        ),
+      ],
+      async mock => {
+        let registration = makeRegistration()
+        let addressStore = makeAddressStore(~registration)
+        let options: RpcSource.options = {
+          url: mock.url,
+          chainId,
+          onEventRegistrations: [registration],
+          sourceFor: Sync,
+          syncConfig: defaultSyncConfig,
+          lowercaseAddresses: true,
+          addressStore,
+          blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+          transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+        }
+        let source = RpcSource.make(options)
+        let call = () =>
+          RpcSourcePins.capture(
+            () =>
               source.getItemsOrThrow(
                 ~fromBlock=0,
                 ~toBlock=Some(1_000_000),
@@ -439,127 +513,129 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
                 ~itemsTarget=Some(5_000),
                 ~retry=0,
                 ~logger=Logging.createChild(~params={"test": "RPC interval pin"}),
-              )
-            )
-          (await call(), await call())
+              ),
+          )
+        (await call(), await call())
+      },
+    )
+
+    t.expect(errors).toEqual((
+      Error(
+        RpcSourcePins.FailedGettingItems({
+          attemptedToBlock: 9_999,
+          providerMessage: Some("More than 50000 logs returned"),
+          retry: SuggestedToBlock(7_999),
+        }),
+      ),
+      Error(
+        RpcSourcePins.FailedGettingItems({
+          attemptedToBlock: 7_999,
+          providerMessage: Some("More than 50000 logs returned"),
+          retry: SuggestedToBlock(6_399),
+        }),
+      ),
+    ))
+  })
+
+  Async.it("pins OR-filter fan-out and duplicate-log suppression", async t => {
+    let filter1 = "0x0000000000000000000000000000000000000000000000000000000000000001"
+    let filter2 = "0x0000000000000000000000000000000000000000000000000000000000000002"
+    // Two indexed params so the log can carry topic1/topic2 the branches
+    // filter on and decode cleanly (derived topicCount 3).
+    let registration = makeRoutingRegistration(
+      ~paramsMetadata=[
+        {name: "a", abiType: "uint256", indexed: true},
+        {name: "b", abiType: "uint256", indexed: true},
+      ],
+      ~eventFilters=[
+        {
+          Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+          topic1: Values([filter1->EvmTypes.Hex.fromStringUnsafe]),
+          topic2: Values([]),
+          topic3: Values([]),
         },
-      )
-
-      t.expect(errors).toEqual((
-        Error(
-          RpcSourcePins.FailedGettingItems({
-            attemptedToBlock: 9_999,
-            providerMessage: Some("More than 50000 logs returned"),
-            retry: SuggestedToBlock(7_999),
-          }),
-        ),
-        Error(
-          RpcSourcePins.FailedGettingItems({
-            attemptedToBlock: 7_999,
-            providerMessage: Some("More than 50000 logs returned"),
-            retry: SuggestedToBlock(6_399),
-          }),
-        ),
-      ))
-    })
-
-    Async.it("pins OR-filter fan-out and duplicate-log suppression", async t => {
-      let filter1 =
-        "0x0000000000000000000000000000000000000000000000000000000000000001"
-      let filter2 =
-        "0x0000000000000000000000000000000000000000000000000000000000000002"
-      // Two indexed params so the log can carry topic1/topic2 the branches
-      // filter on and decode cleanly (derived topicCount 3).
-      let registration = makeRoutingRegistration(
-        ~paramsMetadata=[
-          {name: "a", abiType: "uint256", indexed: true},
-          {name: "b", abiType: "uint256", indexed: true},
-        ],
-        ~eventFilters=[
-          {
-            Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-            topic1: Values([filter1->EvmTypes.Hex.fromStringUnsafe]),
-            topic2: Values([]),
-            topic3: Values([]),
-          },
-          {
-            Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-            topic1: Values([]),
-            topic2: Values([filter2->EvmTypes.Hex.fromStringUnsafe]),
-            topic3: Values([]),
-          },
-        ],
-      )
-      // Carries both filtered topics, so a real provider returns it for either
-      // branch's server-side filter; routing re-checks the registration's
-      // topic filters against these values and dedups to one item.
-      let orFanOutLog = JSON.parseOrThrow(
-        `{"address":"${contractAddress}","topics":["${sighash}","${filter1}","${filter2}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000b64","logIndex":"0x2","removed":false}`,
-      )
-      let page = await MockRpcServer.withScenario(
-        ~name=`${name}: OR fan-out and dedup`,
-        ~calls=[
-          MockRpcServer.expectCall(
-            ~label="topic1 branch",
-            ~method="eth_getLogs",
-            ~params=JSON.parseOrThrow(
-              `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filter1}"]],"address":["${normalizedContractAddress}"]}]`,
-            ),
-            ~reply=RpcResult(JSON.Array([orFanOutLog])),
-          ),
-          MockRpcServer.expectCall(
-            ~label="topic2 branch",
-            ~method="eth_getLogs",
-            ~params=JSON.parseOrThrow(
-              `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],null,["${filter2}"]],"address":["${normalizedContractAddress}"]}]`,
-            ),
-            ~reply=RpcResult(JSON.Array([orFanOutLog])),
-          ),
-          MockRpcServer.expectCall(
-            ~method="eth_getBlockByNumber",
-            ~params=blockParams("0x64"),
-            ~reply=RpcResult(block100),
-          ),
-        ],
-        async mock => {
-          let source = makeSource(~factory, ~url=mock.url, ~registration)
-          switch await RpcSourcePins.capture(() => source->invoke(~registration)) {
-          | Ok(page) => page
-          | Error(_) => JsError.throwWithMessage("Expected the OR-filter page to succeed")
-          }
+        {
+          Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+          topic1: Values([]),
+          topic2: Values([filter2->EvmTypes.Hex.fromStringUnsafe]),
+          topic3: Values([]),
         },
-      )
-
-      t.expect({
-        "eventLogIndexes": page.events->Array.map(event => event.logIndex),
-        "requestCounts": page.requestCounts,
-      }).toEqual({
-        "eventLogIndexes": [2],
-        "requestCounts": Dict.fromArray([
-          ("eth_getLogs", 2),
-          ("eth_getBlockByNumber", 1),
-        ]),
-      })
-    })
-
-    Async.it("pins skip-all filters advancing without an eth_getLogs request", async t => {
-      let registration = makeRoutingRegistration(~isWildcard=true, ~eventFilters=[])
-      let page = await MockRpcServer.withScenario(
-        ~name=`${name}: skip-all filter`,
-        ~calls=[
-          MockRpcServer.expectCall(
-            ~method="eth_getBlockByNumber",
-            ~params=blockParams("0x64"),
-            ~reply=RpcResult(block100),
+      ],
+    )
+    // Carries both filtered topics, so a real provider returns it for either
+    // branch's server-side filter; routing re-checks the registration's
+    // topic filters against these values and dedups to one item.
+    let orFanOutLog = JSON.parseOrThrow(
+      `{"address":"${contractAddress}","topics":["${sighash}","${filter1}","${filter2}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000b64","logIndex":"0x2","removed":false}`,
+    )
+    let page = await MockRpcServer.withScenario(
+      ~name="OR fan-out and dedup",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~label="topic1 branch",
+          ~method="eth_getLogs",
+          ~params=JSON.parseOrThrow(
+            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filter1}"]],"address":["${normalizedContractAddress}"]}]`,
           ),
-        ],
-        async mock => {
-          let source = makeSource(~factory, ~url=mock.url, ~registration)
-          switch await RpcSourcePins.capture(() =>
+          ~reply=RpcResult(JSON.Array([orFanOutLog])),
+        ),
+        MockRpcServer.expectCall(
+          ~label="topic2 branch",
+          ~method="eth_getLogs",
+          ~params=JSON.parseOrThrow(
+            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],null,["${filter2}"]],"address":["${normalizedContractAddress}"]}]`,
+          ),
+          ~reply=RpcResult(JSON.Array([orFanOutLog])),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~params=blockParams("0x64"),
+          ~reply=RpcResult(block100),
+        ),
+      ],
+      async mock => {
+        let (source, addressStore) = makeSource(~url=mock.url, ~registration)
+        switch await RpcSourcePins.capture(() => source->invoke(~registration, ~addressStore)) {
+        | Ok(page) => page
+        | Error(_) => JsError.throwWithMessage("Expected the OR-filter page to succeed")
+        }
+      },
+    )
+
+    t.expect({
+      "eventLogIndexes": page.events->Array.map(event => event.logIndex),
+      "requestCounts": page.requestCounts,
+    }).toEqual({
+      "eventLogIndexes": [2],
+      "requestCounts": Dict.fromArray([("eth_getLogs", 2), ("eth_getBlockByNumber", 1)]),
+    })
+  })
+
+  Async.it("pins skip-all filters advancing without an eth_getLogs request", async t => {
+    let registration = makeRoutingRegistration(~isWildcard=true, ~eventFilters=[])
+    let page = await MockRpcServer.withScenario(
+      ~name="skip-all filter",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~params=blockParams("0x64"),
+          ~reply=RpcResult(block100),
+        ),
+      ],
+      async mock => {
+        // A real paging interval, so the range the cursor advances over is the
+        // whole query rather than the one block a ceiling of 1 would allow.
+        let (source, addressStore) = makeSource(
+          ~url=mock.url,
+          ~registration,
+          ~syncConfig=EvmChain.getSyncConfig({}),
+        )
+        switch await RpcSourcePins.capture(
+          () =>
             source.getItemsOrThrow(
-              ~fromBlock=100,
+              ~fromBlock=0,
               ~toBlock=Some(100),
-              ~addressSet=makeAddressStore(~registration)->AddressStore.emptySet,
+              ~addressSet=addressStore->AddressStore.emptySet,
               ~knownHeight=100,
               ~partitionId="skip-all",
               ~selection={
@@ -569,112 +645,118 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
               ~itemsTarget=Some(5_000),
               ~retry=0,
               ~logger=Logging.createChild(~params={"test": "RPC skip-all pin"}),
-            )
-          ) {
-          | Ok(page) => page
-          | Error(_) => JsError.throwWithMessage("Expected the skip-all page to advance")
-          }
-        },
-      )
+            ),
+        ) {
+        | Ok(page) => page
+        | Error(_) => JsError.throwWithMessage("Expected the skip-all page to advance")
+        }
+      },
+    )
 
-      t.expect({
-        "events": page.events->Array.length,
-        "latestFetchedBlockNumber": page.latestFetchedBlockNumber,
-        "requestCounts": page.requestCounts,
-      }).toEqual({
-        "events": 0,
-        "latestFetchedBlockNumber": 100,
-        "requestCounts": Dict.fromArray([("eth_getBlockByNumber", 1)]),
-      })
+    t.expect({
+      "events": page.events->Array.length,
+      "latestFetchedBlockNumber": page.latestFetchedBlockNumber,
+      "requestCounts": page.requestCounts,
+    }).toEqual({
+      "events": 0,
+      "latestFetchedBlockNumber": 100,
+      "requestCounts": Dict.fromArray([("eth_getBlockByNumber", 1)]),
     })
+  })
 
-    Async.it("pins each contract filter to only that contract's addresses", async t => {
-      let addressAString = "0x00000000000000000000000000000000000000a1"
-      let addressBString = "0x00000000000000000000000000000000000000b1"
-      let addressA = addressAString->Address.unsafeFromString
-      let addressB = addressBString->Address.unsafeFromString
-      let filterA =
-        "0x000000000000000000000000000000000000000000000000000000000000000a"
-      let filterB =
-        "0x000000000000000000000000000000000000000000000000000000000000000b"
-      let selectionFor = filter => [
-        {
-          Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
-          topic1: Values([filter->EvmTypes.Hex.fromStringUnsafe]),
-          topic2: Values([]),
-          topic3: Values([]),
-        },
-      ]
-      // One indexed param so each contract's topic1-filtered log decodes.
-      let addressParam: array<Internal.paramMeta> = [
-        {name: "who", abiType: "address", indexed: true},
-      ]
-      let eventA = makeRoutingRegistration(
-        ~contractName="ContractA",
-        ~paramsMetadata=addressParam,
-        ~eventFilters=selectionFor(filterA),
+  Async.it("pins each contract filter to only that contract's addresses", async t => {
+    let addressAString = "0x00000000000000000000000000000000000000a1"
+    let addressBString = "0x00000000000000000000000000000000000000b1"
+    let addressA = addressAString->Address.unsafeFromString
+    let addressB = addressBString->Address.unsafeFromString
+    let filterA = "0x000000000000000000000000000000000000000000000000000000000000000a"
+    let selectionFor = filter => [
+      {
+        Internal.topic0: [sighash->EvmTypes.Hex.fromStringUnsafe],
+        topic1: Values([filter->EvmTypes.Hex.fromStringUnsafe]),
+        topic2: Values([]),
+        topic3: Values([]),
+      },
+    ]
+    // One indexed param so each contract's topic1-filtered log decodes.
+    let addressParam: array<Internal.paramMeta> = [{name: "who", abiType: "address", indexed: true}]
+    let eventA = makeRoutingRegistration(
+      ~contractName="ContractA",
+      ~paramsMetadata=addressParam,
+      ~eventFilters=selectionFor(filterA),
+    )
+    // ContractB filters on nothing but the signature, so its query is a
+    // superset of ContractA's and its response carries a log holding A's
+    // filtered topic1 value. Only the address scoping keeps that log off
+    // ContractA — routing re-checks both, per registration.
+    let eventB = makeRoutingRegistration(
+      ~index=1,
+      ~contractName="ContractB",
+      ~paramsMetadata=addressParam,
+      ~eventFilters=[topicSelection],
+    )
+    // A real provider's log for a topic1-filtered request carries that
+    // contract's filtered topic1 value; routing re-checks it per registration.
+    let logFor = (~address, ~topic1, ~logIndex) =>
+      JSON.parseOrThrow(
+        `{"address":"${address}","topics":["${sighash}","${topic1}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000b64","logIndex":"${logIndex}","removed":false}`,
       )
-      let eventB = makeRoutingRegistration(
-        ~index=1,
-        ~contractName="ContractB",
-        ~paramsMetadata=addressParam,
-        ~eventFilters=selectionFor(filterB),
-      )
-      // A real provider's log for a topic1-filtered request carries that
-      // contract's filtered topic1 value; routing re-checks it per registration.
-      let logFor = (~address, ~topic1, ~logIndex) =>
-        JSON.parseOrThrow(
-          `{"address":"${address}","topics":["${sighash}","${topic1}"],"data":"0x","blockNumber":"0x64","transactionHash":"${transactionHash}","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000b64","logIndex":"${logIndex}","removed":false}`,
+
+    let page = await MockRpcServer.withScenario(
+      ~name="contract address scoping",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~label="ContractA logs",
+          ~method="eth_getLogs",
+          ~params=JSON.parseOrThrow(
+            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filterA}"]],"address":["${addressAString}"]}]`,
+          ),
+          ~reply=RpcResult(
+            JSON.Array([logFor(~address=addressAString, ~topic1=filterA, ~logIndex="0x2")]),
+          ),
+        ),
+        MockRpcServer.expectCall(
+          ~label="ContractB logs",
+          ~method="eth_getLogs",
+          ~params=JSON.parseOrThrow(
+            `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"]],"address":["${addressBString}"]}]`,
+          ),
+          ~reply=RpcResult(
+            JSON.Array([logFor(~address=addressBString, ~topic1=filterA, ~logIndex="0x3")]),
+          ),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~params=blockParams("0x64"),
+          ~reply=RpcResult(block100),
+        ),
+      ],
+      async mock => {
+        let addressStore = TestAddresses.makeStore(
+          ~onEventRegistrations=[
+            (eventA :> Internal.onEventRegistration),
+            (eventB :> Internal.onEventRegistration),
+          ],
+          ~addresses=[
+            {address: addressA, contractName: "ContractA", registrationBlock: -1},
+            {address: addressB, contractName: "ContractB", registrationBlock: -1},
+          ],
+          ~shouldChecksum=false,
         )
-
-      let page = await MockRpcServer.withScenario(
-        ~name=`${name}: contract address scoping`,
-        ~calls=[
-          MockRpcServer.expectCall(
-            ~label="ContractA logs",
-            ~method="eth_getLogs",
-            ~params=JSON.parseOrThrow(
-              `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filterA}"]],"address":["${addressAString}"]}]`,
-            ),
-            ~reply=RpcResult(JSON.Array([logFor(~address=addressAString, ~topic1=filterA, ~logIndex="0x2")])),
-          ),
-          MockRpcServer.expectCall(
-            ~label="ContractB logs",
-            ~method="eth_getLogs",
-            ~params=JSON.parseOrThrow(
-              `[{"fromBlock":"0x64","toBlock":"0x64","topics":[["${sighash}"],["${filterB}"]],"address":["${addressBString}"]}]`,
-            ),
-            ~reply=RpcResult(JSON.Array([logFor(~address=addressBString, ~topic1=filterB, ~logIndex="0x3")])),
-          ),
-          MockRpcServer.expectCall(
-            ~method="eth_getBlockByNumber",
-            ~params=blockParams("0x64"),
-            ~reply=RpcResult(block100),
-          ),
-        ],
-        async mock => {
-          let addressStore = TestAddresses.makeStore(
-            ~onEventRegistrations=[
-              (eventA :> Internal.onEventRegistration),
-              (eventB :> Internal.onEventRegistration),
-            ],
-            ~addresses=[
-              {address: addressA, contractName: "ContractA", registrationBlock: -1},
-              {address: addressB, contractName: "ContractB", registrationBlock: -1},
-            ],
-            ~shouldChecksum=false,
-          )
-          let options: RpcSource.options = {
-            url: mock.url,
-            chainId,
-            onEventRegistrations: [eventA, eventB],
-            sourceFor: Sync,
-            syncConfig,
-            lowercaseAddresses: true,
-            addressStore,
-          }
-          let source = factory(options)
-          switch await RpcSourcePins.capture(() =>
+        let options: RpcSource.options = {
+          url: mock.url,
+          chainId,
+          onEventRegistrations: [eventA, eventB],
+          sourceFor: Sync,
+          syncConfig,
+          lowercaseAddresses: true,
+          addressStore,
+          blockStore: BlockStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+          transactionStore: TransactionStore.make(~ecosystem=Ecosystem.Evm, ~shouldChecksum=false),
+        }
+        let source = RpcSource.make(options)
+        switch await RpcSourcePins.capture(
+          () =>
             source.getItemsOrThrow(
               ~fromBlock=100,
               ~toBlock=Some(100),
@@ -693,24 +775,16 @@ let registerContractTests = (~name, ~factory: sourceFactory) => {
               ~itemsTarget=Some(5_000),
               ~retry=0,
               ~logger=Logging.createChild(~params={"test": "RPC contract scoping pin"}),
-            )
-          ) {
-          | Ok(page) => page
-          | Error(_) => JsError.throwWithMessage("Expected contract-scoped queries to succeed")
-          }
-        },
-      )
+            ),
+        ) {
+        | Ok(page) => page
+        | Error(_) => JsError.throwWithMessage("Expected contract-scoped queries to succeed")
+        }
+      },
+    )
 
-      t.expect(page.events->Array.map(event => (
-        event.contractName,
-        event.srcAddress,
-        event.logIndex,
-      ))).toEqual([
-        ("ContractA", addressAString, 2),
-        ("ContractB", addressBString, 3),
-      ])
-    })
+    t.expect(
+      page.events->Array.map(event => (event.contractName, event.srcAddress, event.logIndex)),
+    ).toEqual([("ContractA", addressAString, 2), ("ContractB", addressBString, 3)])
   })
-}
-
-registerContractTests(~name="current hybrid implementation", ~factory=RpcSource.make)
+})

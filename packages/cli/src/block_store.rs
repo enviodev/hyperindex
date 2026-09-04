@@ -20,7 +20,7 @@ use crate::evm_hypersync_source::types::{encode_address, map_bigint, map_i64};
 use crate::field_columns::{build_columns, bytes, field_names, Column, Columns, Ecosystem};
 use crate::field_table::{
     bytes_cells, fixed_from, hash_list_cells, hash_list_from, hex_full, hex_quantity, i64_cells,
-    i64_from, str_cells, str_from, u64_cells, u64_from, var_from, AnyCol, Table,
+    i64_from, str_cells, str_from, u64_cells, u64_from, var_from, AnyCol, Coverage, Table,
 };
 
 /// EVM block field codes shared with ReScript by ordinal value. The order is the
@@ -933,7 +933,26 @@ impl BlockStore {
     /// source while building a page). One block per number, so overlapping
     /// partition re-fetches overwrite in place instead of duplicating. Not
     /// exposed to JS.
-    pub(crate) fn insert_evm_blocks(&self, mut blocks: Vec<simple_types::Block>) {
+    pub(crate) fn insert_evm_blocks(&self, blocks: Vec<simple_types::Block>) {
+        self.insert_evm_blocks_covering(blocks, 0);
+    }
+
+    /// Whether this block was already fetched for every field in `mask`.
+    pub(crate) fn covers(&self, block_number: u64, mask: u64) -> bool {
+        self.inner.lock().unwrap().table.covers(&block_number, mask)
+    }
+
+    /// Merge blocks fetched for a known field selection. `covering` marks every
+    /// field the fetch asked for, so one the block genuinely has no value for
+    /// still reads as fetched and is not requested again. Rows carrying only
+    /// what they hold (observations, sparse JS input) go through
+    /// `insert_evm_blocks` instead — passing a selection they were not fetched
+    /// for would claim coverage the row cannot serve.
+    pub(crate) fn insert_evm_blocks_covering(
+        &self,
+        mut blocks: Vec<simple_types::Block>,
+        covering: u64,
+    ) {
         blocks.retain(|b| b.number.is_some());
         if blocks.is_empty() {
             return;
@@ -943,18 +962,18 @@ impl BlockStore {
             .iter()
             .map(|&f| evm_block_col(f, &blocks))
             .collect();
-        self.insert_watching_hash(keys, cols);
+        self.insert_watching_hash(keys, cols, Coverage::All(covering));
     }
 
     /// Merge a batch, first recording any hash conflict it introduces (against
     /// the table or within the batch itself), keeping the lowest block number.
-    fn insert_watching_hash(&self, keys: Vec<u64>, cols: Vec<Option<AnyCol>>) {
+    fn insert_watching_hash(&self, keys: Vec<u64>, cols: Vec<Option<AnyCol>>, covering: Coverage) {
         let field = self.hash_field();
         let mut inner = self.inner.lock().unwrap();
         let conflict = inner
             .table
             .detect_field_conflict(&keys, cols[field].as_ref(), field);
-        inner.table.merge_batch(keys, cols);
+        inner.table.merge_batch_covering(keys, cols, covering);
         if let Some((key, stored, received)) = conflict {
             record_conflict(
                 &mut inner.page.conflict,
@@ -984,7 +1003,7 @@ impl BlockStore {
             .iter()
             .map(|&f| svm_block_col(f, &blocks))
             .collect();
-        self.insert_watching_hash(keys, cols);
+        self.insert_watching_hash(keys, cols, Coverage::STORED);
     }
 
     /// Merge a response's rollback-guard blocks into the page as hash-only
@@ -1029,7 +1048,7 @@ impl BlockStore {
             .iter()
             .map(|&f| fuel_block_col(f, &blocks))
             .collect();
-        self.insert_watching_hash(keys, cols);
+        self.insert_watching_hash(keys, cols, Coverage::STORED);
     }
 
     /// Merge sparse JS SVM blocks into the table, keyed by slot.
@@ -1055,7 +1074,7 @@ impl BlockStore {
                 }
             })
             .collect();
-        self.insert_watching_hash(keys, cols);
+        self.insert_watching_hash(keys, cols, Coverage::STORED);
         Ok(())
     }
 }
