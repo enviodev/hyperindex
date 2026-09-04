@@ -17,6 +17,7 @@
 import * as S from "rescript-schema";
 import { unwrapNullableOutput } from "./manifest.js";
 import { ResolverError } from "./errors.js";
+import { PRIVATE_KEY_HEADER } from "./hasuraMetadata.js";
 
 // Built once per resolver, from a copy: `S.schema` replaces the schema values
 // in the object it is handed, which would gut the declaration the manifest is
@@ -84,13 +85,46 @@ export function badRequest(request) {
  * default: a driver error can carry a connection string, and the caller is the
  * public internet. `envio dev` turns it on.
  */
+// How long a chain-height read is reused for. Staleness is measured in blocks
+// and moves at block time, so re-reading it per request would cost a query to
+// learn the same answer.
+const STALENESS_CACHE_MS = 2_000;
+
 export function createDispatcher({ resolvers, pool, exposeErrors = false, onError }) {
   const byName = new Map();
   for (const resolver of resolvers) {
     byName.set(resolver.name, resolver);
   }
 
-  return async function dispatch(request) {
+  let cachedBehind = { at: 0, blocks: null };
+
+  /**
+   * How far the furthest-behind chain is from head, or null when that cannot
+   * be read. Null means "do not know", and a gate that cannot read the answer
+   * lets the request through: refusing everything because the freshness probe
+   * itself failed would turn one broken query into a total outage.
+   */
+  const blocksBehindHead = async () => {
+    const now = Date.now();
+    if (cachedBehind.blocks !== null && now - cachedBehind.at < STALENESS_CACHE_MS) {
+      return cachedBehind.blocks;
+    }
+    try {
+      const heights = await pool
+        .forResolver({ name: "staleness", timeoutMs: 2_000 })
+        .chainHeights();
+      const behind = Object.values(heights).map((chain) =>
+        Math.max(0, chain.sourceBlock - chain.progressBlock)
+      );
+      const worst = behind.length === 0 ? 0 : Math.max(...behind);
+      cachedBehind = { at: now, blocks: worst };
+      return worst;
+    } catch {
+      return null;
+    }
+  };
+
+  return async function dispatch(request, { privateKeyOk = false } = {}) {
     const invalid = badRequest(request);
     if (invalid !== null) {
       return errorBody(`Malformed resolve request: ${invalid}`, "BAD_REQUEST");
@@ -104,10 +138,15 @@ export function createDispatcher({ resolvers, pool, exposeErrors = false, onErro
         "RESOLVER_NOT_FOUND"
       );
     }
-    // Serve registers admin fields on the admin schema only, so reaching here
-    // as `public` means the two disagree. Fail closed rather than answer.
-    if (resolver.admin && role !== "admin") {
-      return errorBody(`Resolver '${field}' is admin-only`, "FORBIDDEN");
+    // A private resolver is on the public schema so Hasura will route to it,
+    // which makes this check the only thing standing in front of it. An admin
+    // caller still passes: reaching here as `admin` means the shared secret was
+    // presented, which an unauthenticated caller cannot do.
+    if (resolver.private && !privateKeyOk && role !== "admin") {
+      return errorBody(
+        `Resolver '${field}' is private. Present its key in the ${PRIVATE_KEY_HEADER} header.`,
+        "FORBIDDEN"
+      );
     }
 
     let args;
@@ -118,6 +157,19 @@ export function createDispatcher({ resolvers, pool, exposeErrors = false, onErro
         `Invalid arguments for '${field}': ${error.message}`,
         "BAD_USER_INPUT"
       );
+    }
+
+    // After the arguments parse and before any handler runs: answering from an
+    // index that is behind head is worse than not answering, because the
+    // numbers look real.
+    if (resolver.maxBlocksBehind !== undefined) {
+      const behind = await blocksBehindHead();
+      if (behind !== null && behind > resolver.maxBlocksBehind) {
+        return errorBody(
+          `Indexer is ${behind} blocks behind head, past this resolver's limit of ${resolver.maxBlocksBehind}; refusing to answer from a stale index`,
+          "SERVICE_UNAVAILABLE"
+        );
+      }
     }
 
     let result;

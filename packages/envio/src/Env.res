@@ -265,6 +265,19 @@ module Resolvers = {
   // routes take the role from the request body -- so anyone can claim `admin`.
   let actionSecret = () => read("ENVIO_RESOLVERS_ACTION_SECRET")
 
+  // Unlocks resolvers declared `private`. Comma-separated so a rotation can
+  // present the old and new key at once; a private resolver with none of these
+  // configured is unreachable rather than open.
+  let privateKeys = () =>
+    switch read("ENVIO_RESOLVERS_PRIVATE_KEYS") {
+    | None => []
+    | Some(raw) =>
+      raw
+      ->String.split(",")
+      ->Array.map(String.trim)
+      ->Array.filter(key => key !== "")
+    }
+
   // Read raw rather than through `Env.Hasura`, whose dev fallbacks would have
   // this process apply metadata to a localhost Hasura nobody asked for. Only
   // an endpoint someone set means "there is a Hasura to register with".

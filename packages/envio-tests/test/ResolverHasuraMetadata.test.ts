@@ -102,12 +102,19 @@ describe("manifest -> Hasura metadata", () => {
             arguments: [],
             output_type: "String",
             timeout: 6,
+            // Private, so the caller's own headers have to reach the service:
+            // the key is checked there, not at Hasura.
+            forward_client_headers: true,
           },
         },
       ],
-      // Admin always has access in Hasura, so an admin-only resolver is simply
-      // one with no public permission — nothing to grant, nothing to revoke.
-      permissions: [{ action: "accountPnl", role: "public" }],
+      // Every action is granted to `public`, private ones included: without the
+      // permission Hasura will not route the call, and then the key check at
+      // the service has nothing to run against.
+      permissions: [
+        { action: "accountPnl", role: "public" },
+        { action: "referralCodeUpdates", role: "public" },
+      ],
     });
   });
 

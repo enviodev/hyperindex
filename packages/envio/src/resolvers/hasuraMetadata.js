@@ -17,6 +17,9 @@ const BUILTIN_SCALARS = new Set(["String", "Int", "Float", "Boolean", "ID"]);
  *  else who can reach the socket. */
 export const RESOLVER_SECRET_HEADER = "x-envio-resolver-secret";
 
+/** Where a caller presents the key that unlocks a `private` resolver. */
+export const PRIVATE_KEY_HEADER = "x-envio-private-key";
+
 /**
  * @param manifest the parsed `.envio/resolvers.json`
  * @param handlerUrl the URL *Hasura* posts to -- reachable from Hasura, which
@@ -97,6 +100,11 @@ export function buildHasuraMetadata(manifest, { handlerUrl, publicRole = "public
       ...(actionSecret
         ? { headers: [{ name: RESOLVER_SECRET_HEADER, value: actionSecret }] }
         : {}),
+      // A private resolver authenticates its caller here, not at Hasura, so
+      // the caller's own headers have to survive the hop. Hasura's static
+      // `headers` above still win on a name clash, so this cannot be used to
+      // spoof the shared secret.
+      ...(resolver.private ? { forward_client_headers: true } : {}),
     };
     const action = { name: resolver.name, definition };
     if (resolver.description) {
@@ -104,11 +112,12 @@ export function buildHasuraMetadata(manifest, { handlerUrl, publicRole = "public
     }
     actions.push(action);
 
-    // Admin has access to everything in Hasura by definition, so an admin-only
-    // resolver is one with no public permission -- there is nothing to grant.
-    if (!resolver.admin) {
-      permissions.push({ action: resolver.name, role: publicRole });
-    }
+    // Every resolver is granted to the public role, private ones included:
+    // without the permission Hasura refuses to route the call at all, and then
+    // there is nothing for the key check to run against. Being routable is not
+    // being reachable -- a private resolver still refuses anyone who cannot
+    // present a key.
+    permissions.push({ action: resolver.name, role: publicRole });
   }
 
   return {
