@@ -131,9 +131,6 @@ let make = (
             | Some(blockNumber) => blockNumber
             | None => missing("blockNumber")
             },
-            // The failure is about a field of the block or its transactions,
-            // not about one log within it.
-            logIndex: 0,
           }),
         ),
       )

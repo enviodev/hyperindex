@@ -3,8 +3,9 @@ use std::sync::Mutex;
 
 /// The sync-tuning knobs a `RpcSource` resolves in `EvmChain.getSyncConfig`
 /// (ReScript's `Config.sourceSync`) and passes in at construction, minus the
-/// fields (`fallbackStallTimeout`, `pollingInterval`) that stay JS-side
-/// scheduling concerns unrelated to paging.
+/// fields that are not paging concerns: `fallbackStallTimeout` and
+/// `pollingInterval` stay JS-side scheduling, and `queryTimeoutMillis` bounds
+/// each request in the client rather than the range a page asks for.
 #[derive(Clone, Copy)]
 pub struct SyncConfig {
     pub initial_block_interval: u64,
@@ -12,7 +13,6 @@ pub struct SyncConfig {
     pub acceleration_additive: u64,
     pub interval_ceiling: u64,
     pub backoff_millis: u64,
-    pub query_timeout_millis: u64,
 }
 
 /// Per-partition adaptive block interval (AIMD), keyed by partition id. The
@@ -104,7 +104,6 @@ mod tests {
             acceleration_additive: 500,
             interval_ceiling: 10_000,
             backoff_millis: 2_000,
-            query_timeout_millis: 20_000,
         }
     }
 

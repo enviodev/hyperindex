@@ -1,6 +1,5 @@
 type cfg = {
   url: string,
-  httpReqTimeoutMillis?: int,
   maxConcurrentRequests?: int,
   headers?: dict<string>,
   initialBlockInterval: int,
@@ -69,7 +68,6 @@ let make = (
   ~url,
   ~checksumAddresses,
   ~syncConfig: Config.sourceSync,
-  ~httpReqTimeoutMillis=?,
   ~maxConcurrentRequests=?,
   ~headers=?,
   ~eventRegistrations=[],
@@ -78,7 +76,6 @@ let make = (
   Core.getAddon().evmRpcClient->classNew(
     {
       url,
-      ?httpReqTimeoutMillis,
       ?maxConcurrentRequests,
       ?headers,
       initialBlockInterval: syncConfig.initialBlockInterval,

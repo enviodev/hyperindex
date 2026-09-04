@@ -1040,12 +1040,11 @@ let executeQuery = async (
           if notAlreadyDisabled {
             switch error {
             | UnsupportedSelection({message}) => logger->Logging.childError(message)
-            | FailedGettingFieldSelection({exn, message, blockNumber, logIndex}) =>
+            | FailedGettingFieldSelection({exn, message, blockNumber}) =>
               logger->Logging.childError({
                 "msg": message,
                 "err": exn->Utils.prettifyExn,
                 "blockNumber": blockNumber,
-                "logIndex": logIndex,
               })
             | _ => ()
             }

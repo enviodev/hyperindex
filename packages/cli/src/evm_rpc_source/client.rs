@@ -50,6 +50,9 @@ struct JsonRpcResponse {
 pub struct JsonRpcClient {
     http: reqwest::Client,
     url: String,
+    /// Reported back on a timeout, where naming the limit that was hit is the
+    /// whole of what the caller can act on.
+    request_timeout_millis: u64,
     /// Bounds the requests this source has in flight at once. The block,
     /// transaction and receipt reads a page fans out to scale with how many logs
     /// its range holds, which no block interval can express: a single dense
@@ -58,10 +61,6 @@ pub struct JsonRpcClient {
 }
 
 impl JsonRpcClient {
-    pub const fn default_http_req_timeout_millis() -> u64 {
-        120_000
-    }
-
     /// High enough to keep a healthy provider's pipe full, low enough that the
     /// burst above stays a queue rather than a stampede.
     pub const fn default_max_concurrent_requests() -> usize {
@@ -79,12 +78,12 @@ impl JsonRpcClient {
 
     pub fn new(
         url: String,
-        http_req_timeout_millis: u64,
+        request_timeout_millis: u64,
         max_concurrent_requests: usize,
         headers: Option<HashMap<String, String>>,
     ) -> Result<Self> {
         let mut builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(http_req_timeout_millis));
+            .timeout(std::time::Duration::from_millis(request_timeout_millis));
         if let Some(headers) = headers {
             let mut header_map = HeaderMap::with_capacity(headers.len());
             for (name, value) in headers {
@@ -100,6 +99,7 @@ impl JsonRpcClient {
         Ok(Self {
             http,
             url,
+            request_timeout_millis,
             permits: Semaphore::new(max_concurrent_requests),
         })
     }
@@ -124,8 +124,16 @@ impl JsonRpcClient {
             .json(&body)
             .send()
             .await
-            .with_context(|| format!("send {method} request"))
-            .map_err(RpcError::Other)?;
+            .map_err(|err| {
+                RpcError::Other(if err.is_timeout() {
+                    anyhow::anyhow!(
+                        "{method} took longer than {}ms",
+                        self.request_timeout_millis
+                    )
+                } else {
+                    anyhow::Error::new(err).context(format!("send {method} request"))
+                })
+            })?;
 
         let status = response.status();
         let bytes = response

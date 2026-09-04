@@ -34,7 +34,6 @@ type pinnedError =
   | FailedGettingItems({attemptedToBlock: int, providerMessage: option<string>, retry: pinnedRetry})
   | FailedGettingFieldSelection({
       blockNumber: int,
-      logIndex: int,
       message: string,
       causeMessage: option<string>,
     })
@@ -165,10 +164,9 @@ let normalizeError = error =>
       providerMessage: exn->providerMessage,
       retry: retry->normalizeRetry,
     })
-  | FailedGettingFieldSelection({exn, blockNumber, logIndex, message}) =>
+  | FailedGettingFieldSelection({exn, blockNumber, message}) =>
     FailedGettingFieldSelection({
       blockNumber,
-      logIndex,
       message,
       // A field-selection failure carries no provider error of its own, so the
       // cause is null rather than a JS error.

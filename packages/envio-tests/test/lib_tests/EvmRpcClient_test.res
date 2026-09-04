@@ -8,11 +8,15 @@ let makeClient = (
   ~eventRegistrations=?,
   ~addressStore=?,
   ~maxConcurrentRequests=?,
+  ~queryTimeoutMillis=?,
 ) =>
   EvmRpcClient.make(
     ~url,
     ~checksumAddresses=false,
-    ~syncConfig,
+    ~syncConfig=switch queryTimeoutMillis {
+    | Some(queryTimeoutMillis) => EvmChain.getSyncConfig({queryTimeoutMillis: queryTimeoutMillis})
+    | None => syncConfig
+    },
     ~headers?,
     ~maxConcurrentRequests?,
     ~eventRegistrations?,
@@ -229,6 +233,21 @@ describe("EvmRpcClient - getNextPage via napi", () => {
         )}","parentHash":"0x${"b0"->String.repeat(32)}"}`,
     )
 
+  let requestedBlock = (request: MockRpcServer.rpcRequest) =>
+    request.params
+    ->JSON.Decode.array
+    ->Option.flatMap(params => params->Array.get(0))
+    ->Option.flatMap(JSON.Decode.string)
+    ->Option.getOr("0x0")
+
+  // One log per block, so a page over the range plans one block read per log.
+  let logsAcrossBlocks = (~firstBlock, ~count) =>
+    Array.fromInitializer(~length=count, offset => {
+      let block = (firstBlock + offset)->Int.toString(~radix=16)
+      let hash = "0x" ++ offset->Int.toString->String.padStart(64, "a")
+      `{"address":"${contractAddress}","topics":["${transferSighash}","0x0000000000000000000000000000000000000000000000000000000000000001","0x0000000000000000000000000000000000000000000000000000000000000002"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8","blockNumber":"0x${block}","transactionHash":"${hash}","transactionIndex":"0x1","blockHash":"0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0","logIndex":"0x2","removed":false}`
+    })->Array.join(",")
+
   // The client reads the range's last block for its reorg observation, whatever
   // the field selection is.
   let blockReply = (~number) =>
@@ -431,6 +450,103 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     ))
   })
 
+  Async.it("Reads a page whose reads together outlast one request's timeout", async t => {
+    // queryTimeoutMillis is documented as how long to wait before cancelling an
+    // RPC request, so it bounds each read rather than the page. How long the
+    // page takes follows from how many reads its logs imply, which is the one
+    // thing narrowing the block range cannot fix.
+    let blockCount = 5
+    let queryTimeoutMillis = 400
+    let firstBlock = 100
+
+    let outcome = await MockRpcServer.withScenario(
+      ~name="page outlasting a single request's timeout",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~reply=RpcResult(
+            JSON.parseOrThrow("[" ++ logsAcrossBlocks(~firstBlock, ~count=blockCount) ++ "]"),
+          ),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~times=blockCount,
+          // Comfortably inside the timeout on its own; only one at a time, so
+          // together they run well past it.
+          ~reply=Dynamic(
+            request => Delayed({
+              millis: 150,
+              reply: RpcResult(blockResult(~number=requestedBlock(request))),
+            }),
+          ),
+        ),
+      ],
+      async mock => {
+        let addressStore = makeAddressStore()
+        let client = makeClient(
+          ~url=mock.url,
+          ~eventRegistrations=[makeRegistration(~blockFields=["GasUsed"])],
+          ~addressStore,
+          ~maxConcurrentRequests=1,
+          ~queryTimeoutMillis,
+        )
+
+        let (result, _, _) = await client->callNextPage(
+          ~fromBlock=firstBlock,
+          ~toBlockCeiling=firstBlock + blockCount - 1,
+          ~indexes=[3],
+          ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+        )
+        (result.kind, result.items->Array.length)
+      },
+    )
+
+    t.expect(outcome).toEqual(("ok", blockCount))
+  })
+
+  Async.it("Backs off when one read outlasts the timeout on its own", async t => {
+    let queryTimeoutMillis = 300
+    let firstBlock = 100
+
+    let outcome = await MockRpcServer.withScenario(
+      ~name="single read past the request timeout",
+      ~calls=[
+        MockRpcServer.expectCall(
+          ~method="eth_getLogs",
+          ~reply=RpcResult(
+            JSON.parseOrThrow("[" ++ logsAcrossBlocks(~firstBlock, ~count=1) ++ "]"),
+          ),
+        ),
+        MockRpcServer.expectCall(
+          ~method="eth_getBlockByNumber",
+          ~reply=Delayed({millis: 900, reply: RpcResult(blockResult(~number="0x64"))}),
+        ),
+      ],
+      async mock => {
+        let addressStore = makeAddressStore()
+        let client = makeClient(
+          ~url=mock.url,
+          ~eventRegistrations=[makeRegistration(~blockFields=["GasUsed"])],
+          ~addressStore,
+          ~queryTimeoutMillis,
+        )
+
+        let (result, _, _) = await client->callNextPage(
+          ~fromBlock=firstBlock,
+          ~toBlockCeiling=firstBlock,
+          ~indexes=[3],
+          ~addressSet=addressStore->AddressStore.makeSet(~contractName="ERC20"),
+        )
+        (result.kind, result.providerMessage)
+      },
+    )
+
+    t.expect(outcome).toEqual((
+      "backoff",
+      Some(`eth_getBlockByNumber took longer than ${queryTimeoutMillis->Int.toString}ms`),
+    ))
+  })
+
   // Retried because what it observes is real concurrency: the mock releases
   // each read on its own timer, so a runner that stalls between two arrivals
   // can see a lower peak than the client actually held open.
@@ -449,29 +565,15 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     let inFlight = ref(0)
     let peakInFlight = ref(0)
 
-    let requestedBlock = (request: MockRpcServer.rpcRequest) =>
-      request.params
-      ->JSON.Decode.array
-      ->Option.flatMap(params => params->Array.get(0))
-      ->Option.flatMap(JSON.Decode.string)
-      ->Option.getOr("0x0")
-
-    // One log per block, so the page plans one block read per log.
-    let logsReply = Array.fromInitializer(
-      ~length=blockCount,
-      offset => {
-        let block = (firstBlock + offset)->Int.toString(~radix=16)
-        let hash = "0x" ++ offset->Int.toString->String.padStart(64, "a")
-        `{"address":"${contractAddress}","topics":["${transferSighash}","0x0000000000000000000000000000000000000000000000000000000000000001","0x0000000000000000000000000000000000000000000000000000000000000002"],"data":"0x00000000000000000000000000000000000000000000000000000000000003e8","blockNumber":"0x${block}","transactionHash":"${hash}","transactionIndex":"0x1","blockHash":"0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0","logIndex":"0x2","removed":false}`
-      },
-    )
 
     let peak = await MockRpcServer.withScenario(
       ~name="page block reads held at the request limit",
       ~calls=[
         MockRpcServer.expectCall(
           ~method="eth_getLogs",
-          ~reply=RpcResult(JSON.parseOrThrow("[" ++ logsReply->Array.join(",") ++ "]")),
+          ~reply=RpcResult(
+            JSON.parseOrThrow("[" ++ logsAcrossBlocks(~firstBlock, ~count=blockCount) ++ "]"),
+          ),
         ),
         MockRpcServer.expectCall(
           ~method="eth_getBlockByNumber",

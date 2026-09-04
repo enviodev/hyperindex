@@ -128,7 +128,6 @@ type getItemsError =
   | FailedGettingFieldSelection({
       exn: exn,
       blockNumber: int,
-      logIndex: int,
       message: string,
       requestStats: array<requestStat>,
     })

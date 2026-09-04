@@ -4,7 +4,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::{Semaphore, SemaphorePermit};
 
 mod classify;
@@ -34,7 +34,6 @@ use interval::{IntervalState, SyncConfig};
 #[napi(object)]
 pub struct EvmRpcClientConfig {
     pub url: String,
-    pub http_req_timeout_millis: Option<i64>,
     pub max_concurrent_requests: Option<i64>,
     pub headers: Option<HashMap<String, String>>,
     // Sync-tuning knobs for the paging AIMD state (see `interval::SyncConfig`).
@@ -282,21 +281,28 @@ impl EvmRpcClient {
         checksum_addresses: bool,
         address_store: &AddressStore,
     ) -> napi::Result<EvmRpcClient> {
-        let http_req_timeout_millis = cfg
-            .http_req_timeout_millis
-            .filter(|v| *v > 0)
-            .map_or(JsonRpcClient::default_http_req_timeout_millis(), |v| {
-                v as u64
-            });
         let max_concurrent_requests = cfg
             .max_concurrent_requests
             .filter(|v| *v > 0)
             .map_or(JsonRpcClient::default_max_concurrent_requests(), |v| {
                 (v as usize).min(Semaphore::MAX_PERMITS)
             });
+        // A zero value would make `fromBlock + interval - 1` underflow, and a
+        // zero timeout would cancel every request before it left.
+        let positive_u64 = |value: i64, name: &str| {
+            u64::try_from(value)
+                .ok()
+                .filter(|v| *v > 0)
+                .ok_or_else(|| map_err(anyhow::anyhow!("{name} must be positive, got {value}")))
+        };
+        // `queryTimeoutMillis` is documented as how long to wait before
+        // cancelling an RPC request, so it bounds each one. Bounding the page
+        // instead would cancel reads the provider was answering fine, over a
+        // total the caller's only lever — the block range — does not decide.
+        let request_timeout_millis = positive_u64(cfg.query_timeout_millis, "queryTimeoutMillis")?;
         let inner = JsonRpcClient::new(
             cfg.url,
-            http_req_timeout_millis,
+            request_timeout_millis,
             max_concurrent_requests,
             cfg.headers,
         )
@@ -316,13 +322,6 @@ impl EvmRpcClient {
                 cfg.backoff_multiplicative,
             )));
         }
-        // A zero interval would make `fromBlock + interval - 1` underflow.
-        let positive_u64 = |value: i64, name: &str| {
-            u64::try_from(value)
-                .ok()
-                .filter(|v| *v > 0)
-                .ok_or_else(|| map_err(anyhow::anyhow!("{name} must be positive, got {value}")))
-        };
         let sync_config = SyncConfig {
             initial_block_interval: positive_u64(
                 cfg.initial_block_interval,
@@ -335,9 +334,6 @@ impl EvmRpcClient {
             interval_ceiling: positive_u64(cfg.interval_ceiling, "intervalCeiling")?,
             backoff_millis: u64::try_from(cfg.backoff_millis)
                 .context("backoffMillis must be non-negative")
-                .map_err(map_err)?,
-            query_timeout_millis: u64::try_from(cfg.query_timeout_millis)
-                .context("queryTimeoutMillis must be non-negative")
                 .map_err(map_err)?,
         };
         let registration_fields = event_registrations
@@ -423,13 +419,12 @@ impl EvmRpcClient {
     /// measured here, like every other method's, rather than around the call.
     #[napi]
     pub async fn get_height(&self) -> napi::Result<(i64, Vec<RequestStat>)> {
+        let stats = Stats::default();
         let permit = self.inner.acquire().await;
         let started = Instant::now();
         let result = self.inner.get_height(permit).await;
-        let request_stats = vec![RequestStat {
-            method: "eth_blockNumber".to_string(),
-            seconds: started.elapsed().as_secs_f64(),
-        }];
+        stats.record("eth_blockNumber", started.elapsed().as_secs_f64());
+        let request_stats = stats.take();
         // A poll that failed still cost a request; carry its timing out with
         // the error so the source's metrics count it.
         let height = result.map_err(|err| {
@@ -511,13 +506,12 @@ impl EvmRpcClient {
             known_transactions,
         };
         let stats = Stats::default();
-        let timeout = Duration::from_millis(self.sync_config.query_timeout_millis);
-        let outcome = tokio::time::timeout(timeout, self.read_page(&query, &stats)).await;
+        let outcome = self.read_page(&query, &stats).await;
 
         // Only a page that was read has stores; every other outcome returns
         // empty ones, so the match decides the result and the stores follow.
         let (result, page) = match outcome {
-            Ok(Ok((items, page))) => {
+            Ok((items, page)) => {
                 let executed_interval = to_block - from_block + 1;
                 // Grow this partition's interval only when the full suggested range
                 // was actually applied (not clamped by a hard toBlock ceiling). The
@@ -539,10 +533,10 @@ impl EvmRpcClient {
                     Some(page),
                 )
             }
-            Ok(Err(EnrichError::FieldSelection {
+            Err(EnrichError::FieldSelection {
                 block_number,
                 error,
-            })) => (
+            }) => (
                 NextPageResult {
                     message: Some(format!("{error:#}")),
                     block_number: Some(block_number as i64),
@@ -553,7 +547,7 @@ impl EvmRpcClient {
             // The answer was unusable but the next one may not be. The range is
             // fine, so the interval is left alone and only the wait grows with
             // the attempt.
-            Ok(Err(EnrichError::Transient(message))) => (
+            Err(EnrichError::Transient(message)) => (
                 NextPageResult {
                     // The symptom is its own explanation here, so it is both
                     // what the retry logs and the cause logged beside it.
@@ -570,7 +564,7 @@ impl EvmRpcClient {
                 },
                 None,
             ),
-            Ok(Err(EnrichError::Rpc(err))) => {
+            Err(EnrichError::Rpc(err)) => {
                 let provider_message = match &*err {
                     RpcError::JsonRpc { message, .. } => Some(message.clone()),
                     RpcError::Other(_) => None,
@@ -580,14 +574,6 @@ impl EvmRpcClient {
                     self.retry_result(&query, provider_message.as_deref(), message, stats.take()),
                     None,
                 )
-            }
-            // Dropping the timed-out future cancels the in-flight requests.
-            Err(_elapsed) => {
-                let message = format!(
-                    "Query took longer than {}ms",
-                    self.sync_config.query_timeout_millis
-                );
-                (self.retry_result(&query, None, message, stats.take()), None)
             }
         };
 
