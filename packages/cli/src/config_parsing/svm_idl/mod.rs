@@ -149,9 +149,9 @@ pub fn parse_idl(source: &str, json: &str) -> Result<ProgramIdl> {
 }
 
 impl ProgramIdl {
-    /// A program whose schema is compiled in rather than read from a file. It
-    /// goes through the same checks, so a fixture cannot carry two
-    /// instructions on the same discriminator bytes.
+    /// Test fixture constructor. It goes through the same checks, so a fixture
+    /// cannot carry two instructions on the same discriminator bytes.
+    #[cfg(test)]
     pub fn compiled_in(
         source: &str,
         address: String,
@@ -175,14 +175,6 @@ impl ProgramIdl {
 
     fn type_at(&self, name: &str) -> String {
         at(&self.source, self.type_positions.get(name))
-    }
-
-    /// The instruction dispatched by these bytes, for a config that names an
-    /// instruction differently from the IDL.
-    pub fn dispatched_by(&self, discriminator: &[u8]) -> Option<&IxIdl> {
-        self.instructions
-            .values()
-            .find(|ix| ix.discriminator == discriminator)
     }
 }
 

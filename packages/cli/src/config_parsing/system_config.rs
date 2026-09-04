@@ -1407,36 +1407,29 @@ impl SystemConfig {
                     for program in programs {
                         let svm_abi = resolve_program_schema(program, source)
                             .with_context(|| format!("Program '{}'", program.name))?;
-                        let listed = listed_instructions(program, &svm_abi);
-                        let events = listed
-                            .iter()
-                            .map(|instr| -> Result<Event> {
+                        let events = instruction_catalog(program, &svm_abi)?
+                            .into_iter()
+                            .map(|(name, resolved)| {
                                 let ResolvedInstruction {
                                     discriminator,
                                     accounts,
                                     args,
-                                } = resolve_instruction(instr, &svm_abi).with_context(|| {
-                                    format!(
-                                        "Program '{}', instruction '{}'",
-                                        program.name, instr.name
-                                    )
-                                })?;
+                                } = resolved;
                                 let normalized_discriminator =
                                     discriminator.map(|d| format!("0x{}", crate::hex::encode(&d)));
-                                let svm_kind = SvmEventKind {
-                                    discriminator: normalized_discriminator.clone(),
-                                    accounts,
-                                    args,
-                                };
-                                Ok(Event {
-                                    name: instr.name.clone(),
-                                    kind: EventKind::Svm(svm_kind),
-                                    sighash: normalized_discriminator.clone().unwrap_or_default(),
+                                Event {
+                                    name,
+                                    kind: EventKind::Svm(SvmEventKind {
+                                        discriminator: normalized_discriminator.clone(),
+                                        accounts,
+                                        args,
+                                    }),
+                                    sighash: normalized_discriminator.unwrap_or_default(),
                                     event_signature: String::new(),
                                     field_selection: None,
-                                })
+                                }
                             })
-                            .collect::<Result<Vec<_>>>()?;
+                            .collect();
                         warn_about_unindexable(program, &svm_abi);
 
                         let contract = Contract::new(
@@ -1869,19 +1862,7 @@ fn resolve_program_schema(
     program: &human_config::svm::Program,
     source: &dyn ConfigSource,
 ) -> Result<SvmAbi> {
-    let any_instruction_carries_schema = program
-        .instructions
-        .iter()
-        .any(|i| i.accounts.is_some() || i.args.is_some());
-
     if let Some(idl_path) = program.idl.as_deref() {
-        if any_instruction_carries_schema {
-            return Err(anyhow!(
-                "program '{}' has both 'idl' and per-instruction 'accounts'/'args'. Use the IDL, \
-                 or write the layout in config.yaml, not both.",
-                program.name
-            ));
-        }
         let resolved = source
             .read_project_relative_file(idl_path)
             .with_context(|| format!("reading IDL at '{idl_path}'"))?;
@@ -1905,12 +1886,16 @@ fn resolve_program_schema(
     })
 }
 
-/// Instructions the schema set aside. Asking for one is an error carrying the
-/// same reason, so anything reaching here is one the config left alone — worth
-/// a word each, since the file plainly declares them and the indexer will not
-/// see them.
 fn warn_about_unindexable(program: &human_config::svm::Program, abi: &SvmAbi) {
+    let yaml_names: HashSet<&str> = program
+        .instructions
+        .iter()
+        .map(|i| i.name.as_str())
+        .collect();
     for (name, reason) in &abi.idl.unusable {
+        if yaml_names.contains(name.as_str()) {
+            continue;
+        }
         eprintln!(
             "Warning: program '{}' will not index '{name}' from the IDL: {reason}",
             program.name
@@ -1926,168 +1911,80 @@ struct ResolvedInstruction {
     args: Vec<SvmNamedField>,
 }
 
-/// Resolved from, in order:
-/// 1. YAML per-instruction `accounts`/`args` overrides.
-/// 2. The IDL instruction the YAML discriminator dispatches — the calls that
-///    arrive are that instruction's, whatever the config called it.
-/// 3. The IDL instruction of the same name, its discriminator included, so a
-///    config that names an instruction does not also have to carry the bytes.
-/// 4. Nothing, leaving an untyped handler dispatched by whatever the config
-///    declared.
-fn resolve_instruction(
-    instr: &human_config::svm::Instruction,
-    abi: &SvmAbi,
-) -> Result<ResolvedInstruction> {
-    let declared = instr
+impl ResolvedInstruction {
+    fn from_idl(ix: &svm_idl::IxIdl) -> Self {
+        Self {
+            discriminator: Some(ix.discriminator.clone()),
+            accounts: ix.accounts.iter().map(|a| a.name.clone()).collect(),
+            args: ix.args.clone(),
+        }
+    }
+}
+
+fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<ResolvedInstruction> {
+    let discriminator = instr
         .discriminator
         .as_deref()
         .map(|d| crate::hex::decode_optionally_prefixed(d, "discriminator"))
         .transpose()?;
-
-    if let (Some(accounts), Some(args)) = (&instr.accounts, &instr.args) {
-        return Ok(ResolvedInstruction {
-            discriminator: declared,
-            accounts: accounts.clone(),
-            args: args
-                .iter()
-                .map(yaml_arg_to_named_field)
-                .collect::<Result<Vec<_>>>()?,
-        });
-    }
-    if instr.accounts.is_some() != instr.args.is_some() {
-        return Err(anyhow!(
-            "set both 'accounts' and 'args', or omit both to take them from the IDL."
-        ));
-    }
-
-    // The reasons the parser recorded are worth nothing unless the user who
-    // asked for the instruction reads them.
-    if let Some(reason) = abi.idl.unusable.get(&instr.name) {
-        return Err(anyhow!("the IDL cannot index this instruction: {reason}"));
-    }
-
-    let layout = |ix: &svm_idl::IxIdl, discriminator| ResolvedInstruction {
-        discriminator,
-        accounts: ix.accounts.iter().map(|a| a.name.clone()).collect(),
-        args: ix.args.clone(),
+    let accounts = instr.accounts.clone().unwrap_or_default();
+    let args = match &instr.args {
+        Some(args) => args
+            .iter()
+            .map(yaml_arg_to_named_field)
+            .collect::<Result<Vec<_>>>()?,
+        None => Vec::new(),
     };
-
-    // Bytes identify an instruction more exactly than a name does: whatever the
-    // config called it, these are the calls that will arrive, so this is the
-    // layout that decodes them. Naming an instruction is how a config renames
-    // one; naming one the IDL also declares, while dispatching on another, is
-    // more likely a discriminator pasted from the wrong row.
-    if let Some(ix) = declared.as_deref().and_then(|d| abi.idl.dispatched_by(d)) {
-        if let Some(named) = abi.idl.instructions.get(&instr.name) {
-            if named.discriminator != ix.discriminator {
-                eprintln!(
-                    "Warning: instruction '{}' is dispatched on 0x{}, which the IDL declares for a \
-                     different instruction, so its accounts and arguments are the ones decoded.",
-                    instr.name,
-                    crate::hex::encode(&ix.discriminator),
-                );
-            }
-        }
-        return Ok(layout(ix, declared));
-    }
-
-    if let Some(ix) = abi.idl.instructions.get(&instr.name) {
-        match declared {
-            None => return Ok(layout(ix, Some(ix.discriminator.clone()))),
-            // A derived value is this parser's reading of a file that left the
-            // bytes implicit, and a file is Anchor-shaped whether or not the
-            // program dispatches on an Anchor hash. Where the config disagrees
-            // with one, the config is what the program was matched on.
-            Some(declared) if ix.derived => {
-                eprintln!(
-                    "Warning: instruction '{}' is dispatched on 0x{}, as the config gives, not on \
-                     the 0x{} derived from its name in the IDL.",
-                    instr.name,
-                    crate::hex::encode(&declared),
-                    crate::hex::encode(&ix.discriminator),
-                );
-                return Ok(layout(ix, Some(declared)));
-            }
-            Some(declared) => {
-                return Err(anyhow!(
-                    "config.yaml has discriminator 0x{}, but the IDL has 0x{}",
-                    crate::hex::encode(&declared),
-                    crate::hex::encode(&ix.discriminator),
-                ))
-            }
-        }
-    }
-
-    if abi.source != SvmSchemaSource::Inline {
-        return Err(anyhow!(
-            "not in the IDL{}",
-            suggest_instruction_name(&instr.name, &abi.idl)
-        ));
-    }
     Ok(ResolvedInstruction {
-        discriminator: declared,
-        accounts: Vec::new(),
-        args: Vec::new(),
+        discriminator,
+        accounts,
+        args,
     })
 }
 
-/// YAML `instructions` when the user listed them. Otherwise every usable
-/// instruction the schema declares, so `onInstruction` can name them without
-/// repeating the catalog in config.yaml.
-fn listed_instructions(
+fn instruction_catalog(
     program: &human_config::svm::Program,
     abi: &SvmAbi,
-) -> Vec<human_config::svm::Instruction> {
-    if !program.instructions.is_empty() {
-        return program.instructions.clone();
-    }
-    if abi.source == SvmSchemaSource::Inline {
-        return Vec::new();
-    }
-    abi.idl
-        .instructions
-        .keys()
-        .map(|name| human_config::svm::Instruction {
-            name: name.clone(),
-            discriminator: None,
-            accounts: None,
-            args: None,
-        })
-        .collect()
-}
+) -> Result<Vec<(String, ResolvedInstruction)>> {
+    let mut catalog: Vec<(String, ResolvedInstruction)> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    let has_idl = program.idl.is_some();
 
-fn suggest_instruction_name(name: &str, idl: &ProgramIdl) -> String {
-    let mut best: Option<(&str, usize)> = None;
-    for candidate in idl.instructions.keys().chain(idl.unusable.keys()) {
-        let d = edit_distance(name, candidate);
-        if d == 0 {
-            continue;
-        }
-        match best {
-            Some((_, best_d)) if d >= best_d => {}
-            _ => best = Some((candidate.as_str(), d)),
+    if has_idl {
+        for (name, ix) in &abi.idl.instructions {
+            index.insert(name.clone(), catalog.len());
+            catalog.push((name.clone(), ResolvedInstruction::from_idl(ix)));
         }
     }
-    match best {
-        Some((candidate, d)) if d <= 2 => format!(". Did you mean '{candidate}'?"),
-        _ => String::new(),
+    for instr in &program.instructions {
+        let at_instruction = || format!("Program '{}', instruction '{}'", program.name, instr.name);
+        if has_idl && instr.discriminator.is_none() {
+            return Err(anyhow!(
+                "a YAML row next to 'idl' must set 'discriminator' to overwrite the IDL \
+                 definition, or omit this row."
+            ))
+            .with_context(at_instruction);
+        }
+        if has_idl && (instr.accounts.is_none() || instr.args.is_none()) {
+            return Err(anyhow!(
+                "set both 'accounts' and 'args' to overwrite the IDL layout."
+            ))
+            .with_context(at_instruction);
+        }
+        if !has_idl && instr.accounts.is_some() != instr.args.is_some() {
+            return Err(anyhow!("set both 'accounts' and 'args', or omit both."))
+                .with_context(at_instruction);
+        }
+        let resolved = resolve_yaml_instruction(instr).with_context(at_instruction)?;
+        if let Some(&i) = index.get(&instr.name) {
+            catalog[i] = (instr.name.clone(), resolved);
+        } else {
+            index.insert(instr.name.clone(), catalog.len());
+            catalog.push((instr.name.clone(), resolved));
+        }
     }
-}
 
-fn edit_distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut cur = vec![0; b.len() + 1];
-    for (i, ca) in a.iter().enumerate() {
-        cur[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let cost = usize::from(ca != cb);
-            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
-        }
-        std::mem::swap(&mut prev, &mut cur);
-    }
-    prev[b.len()]
+    Ok(catalog)
 }
 
 fn yaml_arg_to_named_field(arg: &human_config::svm::ArgDef) -> Result<SvmNamedField> {
@@ -3968,12 +3865,17 @@ type Foo {
         /// needs. The IDL arrives in memory, so a case is one string here
         /// rather than a fixture file.
         fn program_reading_idl(idl: &str, instructions: &str) -> anyhow::Result<SystemConfig> {
+            let instructions_yaml = if instructions.is_empty() {
+                String::new()
+            } else {
+                format!("          instructions:\n{instructions}")
+            };
             let yaml = format!(
                 "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
                  0\n    experimental:\n      hypersync_config:\n        url: \
                  https://solana.hypersync.xyz\n      programs:\n        - name: Pool\n          \
                  program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n          idl: \
-                 idls/pool.json\n          instructions:\n{instructions}"
+                 idls/pool.json\n{instructions_yaml}"
             );
             SystemConfig::parse_yaml(
                 &yaml,
@@ -4028,7 +3930,7 @@ type Foo {
                   "types": [{ "name": "Side", "type": { "kind": "enum",
                     "variants": [{ "name": "Buy" }, { "name": "Sell" }] } }]
                 }"#,
-                "            - name: swap\n",
+                "",
             )
             .expect("config");
 
@@ -4048,67 +3950,6 @@ type Foo {
                     serde_json::json!({ "Side": { "enum": [{ "name": "Buy" }, { "name": "Sell" }] } }),
                     serde_json::json!([{ "name": "side", "type": { "defined": "Side" } }]),
                 )
-            );
-        }
-
-        /// Bytes name an instruction more exactly than a name does, and a
-        /// config carrying another declared instruction's discriminator is
-        /// dispatching on that instruction — so its layout is the one that
-        /// decodes the calls that arrive.
-        #[test]
-        fn follows_the_discriminator_to_the_instruction_it_dispatches() {
-            let config = program_reading_idl(
-                r#"{ "version": "0.1.0", "name": "pool", "instructions": [
-                     { "name": "swap", "accounts": [{ "name": "payer" }],
-                       "args": [{ "name": "amount", "type": "u64" }] },
-                     { "name": "swapV2",
-                       "accounts": [{ "name": "payer" }, { "name": "pool" }],
-                       "args": [{ "name": "amountIn", "type": "u64" },
-                                { "name": "minOut", "type": "u64" }] }] }"#,
-                "            - name: swap\n              discriminator: \"0x2b04ed0b1ac91e62\"\n",
-            )
-            .expect("config");
-
-            assert_eq!(
-                svm_events(&config),
-                vec![(
-                    "swap".to_string(),
-                    Some("0x2b04ed0b1ac91e62".to_string()),
-                    vec!["payer".to_string(), "pool".to_string()],
-                    vec!["amountIn".to_string(), "minOut".to_string()],
-                )]
-            );
-        }
-
-        /// A legacy Anchor IDL leaves its discriminators implicit, and a config
-        /// that carries them carries a hand-computed
-        /// `sha256("global:<snake_case>")[..8]` — the one value in an SVM config
-        /// that cannot be checked by reading it. Naming the instruction the IDL
-        /// declares is enough.
-        #[test]
-        fn takes_the_discriminator_from_the_idl_the_config_names() {
-            let config = program_reading_idl(
-                LEGACY_ANCHOR_IDL,
-                "            - name: swap\n            - name: deposit\n",
-            )
-            .expect("config");
-
-            assert_eq!(
-                svm_events(&config),
-                vec![
-                    (
-                        "swap".to_string(),
-                        Some("0xf8c69e91e17587c8".to_string()),
-                        vec!["payer".to_string(), "pool".to_string()],
-                        vec!["amount".to_string()],
-                    ),
-                    (
-                        "deposit".to_string(),
-                        Some("0xf223c68952e1f2b6".to_string()),
-                        vec!["vault".to_string()],
-                        Vec::new(),
-                    ),
-                ]
             );
         }
 
@@ -4150,106 +3991,215 @@ type Foo {
             );
         }
 
-        /// A typo of an IDL instruction used to wildcard the program. Naming
-        /// is how handlers select a catalog entry, so a misspelling is an
-        /// error, with a nearby name when there is one.
+        /// A YAML row next to `idl:` without `discriminator` is not an
+        /// allowlist and is not a program-wide overwrite.
         #[test]
-        fn refuses_an_instruction_name_the_idl_does_not_declare() {
-            let err = program_reading_idl(LEGACY_ANCHOR_IDL, "            - name: swp\n")
-                .expect_err("unknown name");
+        fn rejects_a_yaml_row_next_to_idl_without_a_discriminator() {
+            let err = program_reading_idl(LEGACY_ANCHOR_IDL, "            - name: swap\n")
+                .expect_err("missing discriminator");
 
             assert_eq!(
                 format!("{err:#}"),
-                "Program 'Pool', instruction 'swp': not in the IDL. Did you mean 'swap'?"
+                "Program 'Pool', instruction 'swap': a YAML row next to 'idl' must set \
+                 'discriminator' to overwrite the IDL definition, or omit this row."
             );
         }
 
-        /// Hex is hex in either case, and the config schema accepts both. A
-        /// spelling difference is not a disagreement with the IDL.
+        #[test]
+        fn rejects_an_idl_overwrite_that_sets_layout_without_a_discriminator() {
+            let err = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: swap\n              accounts:\n                - source\n              \
+                 args: []\n",
+            )
+            .expect_err("layout without discriminator");
+
+            assert_eq!(
+                format!("{err:#}"),
+                "Program 'Pool', instruction 'swap': a YAML row next to 'idl' must set \
+                 'discriminator' to overwrite the IDL definition, or omit this row."
+            );
+        }
+
+        /// YAML is not an allowlist. Overwriting `swap` and adding `extra`
+        /// leaves `deposit` in the catalog, with YAML's layout on `swap`.
+        #[test]
+        fn yaml_overwrite_keeps_the_idl_catalog_and_adds_new_names() {
+            let config = program_reading_idl(
+                r#"{ "instructions": [
+                     { "name": "swap", "discriminator": [1],
+                       "accounts": [{ "name": "payer" }, { "name": "pool" }],
+                       "args": [{ "name": "amount", "type": "u64" }] },
+                     { "name": "deposit", "discriminator": [2],
+                       "accounts": [{ "name": "vault" }], "args": [] }] }"#,
+                "            - name: swap\n              discriminator: \"0x09\"\n              \
+                 accounts:\n                - source\n                - dest\n              args:\n                \
+                 - { name: amountIn, type: u64 }\n            - name: extra\n              \
+                 discriminator: \"0xab\"\n              accounts:\n                - payer\n              args: []\n",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0x02".to_string()),
+                        vec!["vault".to_string()],
+                        Vec::new(),
+                    ),
+                    (
+                        "swap".to_string(),
+                        Some("0x09".to_string()),
+                        vec!["source".to_string(), "dest".to_string()],
+                        vec!["amountIn".to_string()],
+                    ),
+                    (
+                        "extra".to_string(),
+                        Some("0xab".to_string()),
+                        vec!["payer".to_string()],
+                        Vec::new(),
+                    ),
+                ]
+            );
+        }
+
+        /// A YAML instruction replaces the IDL row of the same name. Accounts
+        /// and args are not merged with the IDL definition.
+        #[test]
+        fn yaml_instruction_replaces_the_idl_layout() {
+            let config = program_reading_idl(
+                r#"{ "instructions": [
+                     { "name": "swap", "discriminator": [1],
+                       "accounts": [{ "name": "payer" }, { "name": "pool" }],
+                       "args": [{ "name": "amount", "type": "u64" }] },
+                     { "name": "deposit", "discriminator": [2],
+                       "accounts": [{ "name": "vault" }], "args": [] }] }"#,
+                "            - name: swap\n              discriminator: \"0x09\"\n              \
+                 accounts:\n                - source\n              args: []\n",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0x02".to_string()),
+                        vec!["vault".to_string()],
+                        Vec::new(),
+                    ),
+                    (
+                        "swap".to_string(),
+                        Some("0x09".to_string()),
+                        vec!["source".to_string()],
+                        Vec::new(),
+                    ),
+                ]
+            );
+        }
+
+        /// Hex is hex in either case. The YAML row is a complete overwrite.
         #[test]
         fn accepts_a_configured_discriminator_in_either_case() {
             let config = program_reading_idl(
                 LEGACY_ANCHOR_IDL,
-                "            - name: swap\n              discriminator: \
-                 \"0xF8C69E91E17587C8\"\n",
+                "            - name: swap\n              discriminator: \"0xF8C69E91E17587C8\"\n              \
+                 accounts:\n                - payer\n                - pool\n              args:\n                \
+                 - { name: amount, type: u64 }\n",
             )
             .expect("config");
 
             assert_eq!(
                 svm_events(&config),
-                vec![(
-                    "swap".to_string(),
-                    Some("0xf8c69e91e17587c8".to_string()),
-                    vec!["payer".to_string(), "pool".to_string()],
-                    vec!["amount".to_string()],
-                )]
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0xf223c68952e1f2b6".to_string()),
+                        vec!["vault".to_string()],
+                        Vec::new(),
+                    ),
+                    (
+                        "swap".to_string(),
+                        Some("0xf8c69e91e17587c8".to_string()),
+                        vec!["payer".to_string(), "pool".to_string()],
+                        vec!["amount".to_string()],
+                    ),
+                ]
             );
         }
 
-        /// Where the file spells the bytes out, a config that disagrees is
-        /// describing an instruction the program does not have: the indexer
-        /// would start and match nothing, with no error pointing at the config.
+        /// A YAML discriminator overwrites the IDL row. Other usable IDL
+        /// instructions stay in the catalog.
         #[test]
-        fn refuses_a_configured_discriminator_the_idl_contradicts() {
-            let err = program_reading_idl(
-                r#"{ "instructions": [{ "name": "swap",
-                     "discriminator": [1, 2, 3, 4, 5, 6, 7, 8],
-                     "accounts": [], "args": [] }] }"#,
-                "            - name: swap\n              discriminator: \"0xdeadbeefdeadbeef\"\n",
+        fn overwrites_a_declared_idl_discriminator() {
+            let config = program_reading_idl(
+                r#"{ "instructions": [
+                     { "name": "swap",
+                       "discriminator": [1, 2, 3, 4, 5, 6, 7, 8],
+                       "accounts": [], "args": [] },
+                     { "name": "deposit", "discriminator": [9],
+                       "accounts": [{ "name": "vault" }], "args": [] }] }"#,
+                "            - name: swap\n              discriminator: \"0xdeadbeefdeadbeef\"\n              \
+                 accounts: []\n              args: []\n",
             )
-            .expect_err("contradiction");
+            .expect("config");
 
             assert_eq!(
-                format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': config.yaml has discriminator \
-                 0xdeadbeefdeadbeef, but the IDL has 0x0102030405060708"
+                svm_events(&config),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0x09".to_string()),
+                        vec!["vault".to_string()],
+                        Vec::new(),
+                    ),
+                    (
+                        "swap".to_string(),
+                        Some("0xdeadbeefdeadbeef".to_string()),
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                ]
             );
         }
 
-        /// A legacy Anchor file leaves its bytes implicit, so what this parser
-        /// reports for one is a derivation — and an IDL is Anchor-shaped
-        /// whether or not the program dispatches on an Anchor hash. A config
-        /// that spells out different bytes is describing what it matched on,
-        /// and is the side to believe.
         #[test]
-        fn keeps_a_configured_discriminator_over_one_derived_from_a_name() {
-            let config = program_reading_idl(
+        fn rejects_a_discriminator_only_overwrite_of_an_idl_instruction() {
+            let err = program_reading_idl(
                 LEGACY_ANCHOR_IDL,
                 "            - name: swap\n              discriminator: \"0x09\"\n",
             )
-            .expect("config");
+            .expect_err("discriminator-only");
 
             assert_eq!(
-                svm_events(&config),
-                vec![(
-                    "swap".to_string(),
-                    Some("0x09".to_string()),
-                    vec!["payer".to_string(), "pool".to_string()],
-                    vec!["amount".to_string()],
-                )]
+                format!("{err:#}"),
+                "Program 'Pool', instruction 'swap': set both 'accounts' and 'args' to \
+                 overwrite the IDL layout."
             );
         }
 
-        /// Naming an instruction the IDL sets aside gets the reason it is out.
-        /// The alternative is a config that looks accepted and an indexer that
-        /// never reports a call.
+        /// Unusable IDL instructions stay out of the catalog. The rest remain.
         #[test]
-        fn reports_why_a_configured_instruction_cannot_be_indexed() {
-            let err = program_reading_idl(
+        fn keeps_usable_idl_instructions_when_others_are_unusable() {
+            let config = program_reading_idl(
                 r#"{ "instructions": [
                      { "name": "swap", "discriminator": [1],
                        "accounts": [], "args": [{ "name": "amount", "type": { "coption": "u64" } }] },
                      { "name": "deposit", "discriminator": [4],
                        "accounts": [], "args": [] }] }"#,
-                "            - name: swap\n",
+                "",
             )
-            .expect_err("set aside");
+            .expect("config");
 
             assert_eq!(
-                format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': the IDL cannot index this instruction: \
-                 idls/pool.json:2:22: args.amount: `coption` is not Borsh-compatible and cannot \
-                 be decoded"
+                svm_events(&config),
+                vec![(
+                    "deposit".to_string(),
+                    Some("0x04".to_string()),
+                    Vec::new(),
+                    Vec::new(),
+                )]
             );
         }
 
@@ -4278,7 +4228,7 @@ type Foo {
                       { "kind": "fieldDiscriminatorNode", "name": "tag", "offset": 0 }]
                   }]
                 }"#,
-                "            - name: transfer\n",
+                "",
             )
             .expect("config");
 
@@ -4386,28 +4336,33 @@ type Foo {
             );
         }
 
-        /// A program keeps working over the instructions its config actually
-        /// asks for, even when the schema sets others aside. Failing the whole
-        /// program on an instruction nobody named would cost a config that has
-        /// no stake in it.
+        /// Omitting YAML `instructions` keeps every usable IDL instruction.
         #[test]
         fn keeps_a_program_whose_schema_sets_other_instructions_aside() {
             let config = program_reading_idl(
                 r#"{ "instructions": [
                      { "name": "swap", "discriminator": [1], "accounts": [], "args": [] },
                      { "name": "wide", "discriminator": [9, 9, 9], "accounts": [], "args": [] }] }"#,
-                "            - name: swap\n",
+                "",
             )
             .expect("config");
 
             assert_eq!(
                 svm_events(&config),
-                vec![(
-                    "swap".to_string(),
-                    Some("0x01".to_string()),
-                    Vec::new(),
-                    Vec::new(),
-                )]
+                vec![
+                    (
+                        "swap".to_string(),
+                        Some("0x01".to_string()),
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                    (
+                        "wide".to_string(),
+                        Some("0x090909".to_string()),
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                ]
             );
         }
 
