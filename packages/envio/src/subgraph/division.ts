@@ -54,6 +54,16 @@ export function integerDivision(a: unknown, b: unknown): unknown {
 }
 
 export const DIVIDE_HELPER = "__envio_idiv";
+export const RETAG_HELPER = "__envio_retag";
+
+/** `changetype<Foo>(x)` → `__envio_retag(Foo, x)` when Foo is a class name. */
+export function rewriteChangetype(source: string): string {
+  if (!source.includes("changetype<")) return source;
+  return source.replace(
+    /changetype\s*<\s*([A-Za-z_][A-Za-z0-9_]*)\s*>\s*\(/g,
+    `${RETAG_HELPER}($1, `,
+  );
+}
 
 /** Returns the source unchanged when it divides nothing, or can't be parsed. */
 export function rewriteDivision(source: string): string {

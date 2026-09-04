@@ -94,30 +94,27 @@ let completionsAt = (~schema=?, ~env=?, ~files=?, ~handlers, ~configYaml): array
 //
 // Note: `test`/`handlers` are ReScript template strings, so a literal `${` in
 // the source must be escaped.
+
 // Parses a subgraph project the way `envio dev` does inside one, with the
 // mappings written to disk so the manifest's `file:` paths resolve. `test` is
 // evaluated exactly as in `fromUserApi`.
 let fromSubgraph = (~env=?, ~files=?, ~mappings=Dict.make(), ~test=?, ~manifest, ~schema): parsed => {
   let site = callSite()
   let root = pathJoin([tmpDir, `subgraph-${site->String.replaceRegExp(%re("/[^a-zA-Z0-9]+/g"), "-")}-${randomUUID()->String.slice(~start=0, ~end=8)}`])
-  mkdirSync(pathJoin([root, "src"]), {"recursive": true})
   mappings->Dict.forEachWithKey((source, relativePath) => {
-    writeFileSync(pathJoin([root, relativePath]), source)
+    let dest = pathJoin([root, relativePath])
+    mkdirSync(pathDirname(dest), {"recursive": true})
+    writeFileSync(dest, source)
   })
 
   let {config: configJson} = Core.fromSubgraph(~manifest, ~schema, ~env?, ~files?, ~root)
   let publicConfigJson = configJson->JSON.parseOrThrow
   let config = Config.fromPublic(publicConfigJson)
 
-  let registrationsRef = ref(None)
   let registrations = () =>
-    switch registrationsRef.contents {
-    | Some(registrations) => registrations
-    | None =>
-      JsError.throwWithMessage(
-        "The mappings haven't been registered yet. `registrations` is only readable from a test body.",
-      )
-    }
+    JsError.throwWithMessage(
+      "fromSubgraph does not expose registrations this way. Mappings are registered by createTestIndexer via registerAllHandlers.",
+    )
 
   switch test {
   | None => ()

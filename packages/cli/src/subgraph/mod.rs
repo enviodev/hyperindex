@@ -17,8 +17,8 @@ use serde::Serialize;
 
 use crate::config_parsing::human_config::{
     evm::{
-        AddressFormat, BlockField, Chain, ContractConfig, EventConfig, FieldSelection, HumanConfig,
-        Rpc, RpcSelection, TransactionField,
+        AddressFormat, BlockField, Chain, ContractConfig, EventConfig, FieldSelection, For,
+        HumanConfig, Rpc, RpcSelection, RpcTransactionField, TransactionField,
     },
     BaseConfig, BytesType, ChainContract, GlobalContract,
 };
@@ -153,7 +153,7 @@ pub fn graph_codegen_failed_message() -> String {
         .to_string()
 }
 
-fn field_selection_for(receipt: bool, usage: &usage::FieldUsage) -> FieldSelection {
+fn field_selection_for(receipt: bool, rpc_only: bool, usage: &usage::FieldUsage) -> FieldSelection {
     let mut transaction_fields = match &usage.transaction {
         Some(fields) => fields.clone(),
         None => DEFAULT_TRANSACTION_FIELDS.to_vec(),
@@ -165,10 +165,17 @@ fn field_selection_for(receipt: bool, usage: &usage::FieldUsage) -> FieldSelecti
             }
         }
     }
+    // Transaction `accessList` / `authorizationList` have no RPC parser; a
+    // mapping indexing over RPC gets whatever RPC can serve rather than failing
+    // to start. Every selectable block field comes back from
+    // `eth_getBlockByNumber`.
     let block_fields = match &usage.block {
         Some(fields) => fields.clone(),
         None => DEFAULT_BLOCK_FIELDS.to_vec(),
     };
+    if rpc_only {
+        transaction_fields.retain(|field| RpcTransactionField::try_from(field.clone()).is_ok());
+    }
     FieldSelection {
         transaction_fields: Some(transaction_fields),
         block_fields: Some(block_fields),
@@ -178,6 +185,7 @@ fn field_selection_for(receipt: bool, usage: &usage::FieldUsage) -> FieldSelecti
 fn contract_config(
     source: &mut DataSource,
     files: &HashMap<String, String>,
+    rpc_only: bool,
     usage: &usage::FieldUsage,
     report: &mut Report,
 ) -> ContractConfig {
@@ -251,7 +259,7 @@ fn contract_config(
             EventConfig {
                 event,
                 name,
-                field_selection: Some(field_selection_for(handler.receipt, usage)),
+                field_selection: Some(field_selection_for(handler.receipt, rpc_only, usage)),
             }
         })
         .collect();
@@ -288,6 +296,15 @@ pub fn translate(
         Some(raw) => Some(parse_rpc_env(raw)?),
         None => None,
     };
+    // Only when RPC is the sync source; a fallback entry leaves HyperSync in
+    // charge of the fields.
+    let rpc_only = match &rpc {
+        Some(RpcSelection::Single(entry)) => entry.source_for == Some(For::Sync),
+        Some(RpcSelection::List(entries)) => entries
+            .iter()
+            .any(|entry| entry.source_for == Some(For::Sync)),
+        _ => false,
+    };
     let rpc_urls = match &rpc {
         Some(RpcSelection::Url(url)) => vec![url.clone()],
         Some(RpcSelection::Single(rpc)) => vec![rpc.url.clone()],
@@ -302,7 +319,7 @@ pub fn translate(
     for source in manifest.data_sources.iter_mut() {
         contracts.push(GlobalContract {
             name: source.name.clone(),
-            config: contract_config(source, files, &usage, &mut report),
+            config: contract_config(source, files, rpc_only, &usage, &mut report),
         });
 
         let Some(chain_id) = source.chain_id else {
@@ -350,7 +367,7 @@ pub fn translate(
         chains.keys().cloned().collect()
     };
     for source in manifest.templates.iter_mut() {
-        let config = contract_config(source, files, &usage, &mut report);
+        let config = contract_config(source, files, rpc_only, &usage, &mut report);
 
         // graph-node keeps `dataSources` and `templates` in separate namespaces,
         // so a name can appear in both — Balancer's FXPoolDeployer is a fixed
@@ -451,7 +468,6 @@ pub type SubgraphRpc = Rpc;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config_parsing::human_config::evm::RpcTransactionField;
 
     /// Mapping source the usage scan can't account for, so these cases see the
     /// full selection rather than a narrowed one.
@@ -514,6 +530,65 @@ type Gravatar @entity {
   displayName: String!
 }
 "#;
+
+    #[test]
+    fn maps_the_ethereum_network_alias_to_chain_1() {
+        let yaml = MANIFEST.replace("network: mainnet", "network: ethereum");
+        let translation = translate(
+            &yaml,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
+        assert_eq!(translation.human_config.chains[0].id, 1);
+    }
+
+    #[test]
+    fn refuses_to_run_when_a_data_source_has_call_handlers() {
+        let manifest = MANIFEST.replace(
+            "      eventHandlers:",
+            "      callHandlers:\n        - function: setGravatar(string)\n          handler: \
+             handleSetGravatar\n      eventHandlers:",
+        );
+        let error = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            (
+                error.contains("doesn't support call handlers"),
+                error.contains("callHandlers → \"handleSetGravatar\""),
+            ),
+            (true, true)
+        );
+    }
+
+    #[test]
+    fn maps_hyperevm_to_hyperliquid() {
+        let yaml = MANIFEST.replace("network: mainnet", "network: hyperevm");
+        let translation = translate(
+            &yaml,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
+        assert_eq!(translation.human_config.chains[0].id, 999);
+    }
 
     #[test]
     fn builds_an_evm_config_from_a_manifest() {
@@ -718,12 +793,12 @@ type Gravatar @entity {
         );
     }
 
-    // Every field a mapping can reach is one an RPC serves, so the selection is
-    // the same whichever source syncs the chain. If graph-ts ever exposes one
-    // that isn't — `accessList` — this fails rather than the indexer starting
-    // and finding the field absent.
+    // Nothing a mapping can reach is unservable over RPC — graph-ts exposes no
+    // `accessList` — so the narrowing above drops nothing and the selection is
+    // the same whichever source syncs the chain. This fails if that stops
+    // holding, rather than the indexer starting and finding a field absent.
     #[test]
-    fn selects_only_fields_an_rpc_can_serve() {
+    fn rpc_sync_keeps_the_default_field_selection() {
         let over_rpc = translate(
             MANIFEST,
             SCHEMA,
@@ -734,41 +809,24 @@ type Gravatar @entity {
             &ambiguous(),
         )
         .unwrap();
+        let over_hypersync = translate(
+            MANIFEST,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
 
         let selection = |t: &Translation| {
             t.human_config.contracts.as_ref().unwrap()[0].config.events[0]
                 .field_selection
                 .clone()
-                .unwrap()
         };
-        let selected = selection(&over_rpc);
-        let unservable: Vec<String> = selected
-            .transaction_fields
-            .clone()
-            .unwrap()
-            .into_iter()
-            .filter(|field| RpcTransactionField::try_from(field.clone()).is_err())
-            .map(|field| field.to_string())
-            .collect();
 
-        assert_eq!(
-            (
-                unservable,
-                selection(
-                    &translate(
-                        MANIFEST,
-                        SCHEMA,
-                        "gravatar",
-                        None,
-                        ".",
-                        &HashMap::new(),
-                        &ambiguous()
-                    )
-                    .unwrap()
-                ),
-            ),
-            (Vec::<String>::new(), selected)
-        );
+        assert_eq!(selection(&over_rpc), selection(&over_hypersync));
     }
 
     #[test]
@@ -914,6 +972,24 @@ dataSources:
                 json.contains("\"mappingFile\": \"./src/gravity.ts\""),
             ),
             (true, true, true, true, true, true)
+        );
+    }
+
+    #[test]
+    fn tells_the_user_to_generate_subgraph_yaml_from_a_template() {
+        let dir = tempdir::TempDir::new("envio-subgraph-template").unwrap();
+        let root = dir.path();
+        fs::write(root.join("subgraph.template.yaml"), "specVersion: 0.0.2\n").unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let err = SystemConfig::parse_from_project_files(&project_paths)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            (
+                err.contains("Found subgraph.template.yaml but no subgraph.yaml"),
+                err.contains("graph build --network"),
+            ),
+            (true, true)
         );
     }
 }

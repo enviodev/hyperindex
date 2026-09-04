@@ -177,7 +177,11 @@ export function makeCallEffect(rpcUrls: string[]) {
           functionName: name,
           data: (result.data ?? "0x") as `0x${string}`,
         });
-        const values = Array.isArray(decoded) ? decoded : [decoded];
+        // graph-ts returns one `ethereum.Value` per ABI output. A single
+        // tuple/struct is therefore `[tuple]`, not the flattened fields —
+        // generated bindings call `result[0].toTuple()`.
+        const outputs = (abi[0] as { outputs?: unknown[] }).outputs ?? [];
+        const values = outputs.length === 1 ? [decoded] : Array.isArray(decoded) ? decoded : [decoded];
         return JSON.stringify({ reverted: false, values: values.map(encodeArg) });
       } catch {
         // Output the declared signature can't decode counts as a failed call,

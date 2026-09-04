@@ -27,6 +27,7 @@ import {
   BigInt as GraphBigInt,
   Bytes,
   changetype,
+  retagChangetype,
   installCallHook,
   installHosts,
   installRegisterHook,
@@ -36,7 +37,14 @@ import {
   valueToJs,
 } from "./graph-ts.ts";
 import { encodeArg, decodeArg, makeCallEffect, resetClients } from "./calls.ts";
-import { DIVIDE_HELPER, integerDivision, loadTypeScript, rewriteDivision } from "./division.ts";
+import {
+  DIVIDE_HELPER,
+  RETAG_HELPER,
+  integerDivision,
+  loadTypeScript,
+  rewriteChangetype,
+  rewriteDivision,
+} from "./division.ts";
 import { makeHostEffects } from "./hosts.ts";
 import { unsupported } from "./errors.ts";
 
@@ -118,7 +126,7 @@ function installResolveHook(root: string) {
       const source = loaded?.source;
       if (typeof source !== "string" && !(source instanceof Uint8Array)) return loaded;
       const text = typeof source === "string" ? source : Buffer.from(source).toString("utf8");
-      return { ...loaded, source: rewriteDivision(text) };
+      return { ...loaded, source: rewriteChangetype(rewriteDivision(text)) };
     },
   });
 
@@ -126,6 +134,7 @@ function installResolveHook(root: string) {
   const globals = globalThis as any;
   globals.changetype ??= changetype;
   globals[DIVIDE_HELPER] ??= integerDivision;
+  globals[RETAG_HELPER] ??= retagChangetype;
   globals.assert ??= (value: unknown, message?: string) => {
     if (!value) throw new Error(message ?? "assertion failed");
     return value;

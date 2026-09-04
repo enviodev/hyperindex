@@ -12,7 +12,7 @@ use serde::Serialize;
 use serde_yaml::Value;
 
 use super::errors::Report;
-use crate::config_parsing::chain_helpers::Network;
+use crate::config_parsing::chain_helpers::{GraphNetwork, Network};
 
 /// Highest manifest version this translator understands (§1).
 pub const MAX_SPEC_VERSION: (u32, u32, u32) = (1, 3, 0);
@@ -59,15 +59,25 @@ const NON_EVM_NETWORKS: &[(&str, &str)] = &[
     ("solana-mainnet-beta", "Solana"),
 ];
 
-/// The Graph's network names mostly match envio's kebab-cased `Network`, but a
-/// few of the oldest ones don't.
+/// Spellings that appear in subgraph.yaml but are not Graph's identifier.
+/// Mapped to the GraphNetwork serde name, not to Envio's kebab-case.
+const GRAPH_NETWORK_ALIASES: &[(&str, &str)] =
+    &[("ethereum", "mainnet"), ("hyperevm", "hyper-evm")];
+
+/// Graph's identifier first, then Envio's kebab-case so `hyperliquid` still
+/// works when someone writes our name.
 fn network_to_chain_id(network: &str) -> Option<u64> {
-    match network {
-        "mainnet" => Some(1),
-        "matic" => Some(137),
-        "poa-core" => Some(99),
-        _ => Network::from_str(network).ok().map(|n| n.get_network_id()),
+    let canonical = GRAPH_NETWORK_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == network)
+        .map(|(_, name)| *name)
+        .unwrap_or(network);
+    if let Ok(graph) =
+        serde_json::from_value::<GraphNetwork>(serde_json::Value::String(canonical.to_string()))
+    {
+        return Some(Network::from(graph).get_network_id());
     }
+    Network::from_str(network).ok().map(|n| n.get_network_id())
 }
 
 /// A YAML mapping being read, tracking which keys were consumed so the rest can
@@ -807,6 +817,60 @@ templates:
 "#;
 
     #[test]
+    fn maps_graph_network_names_to_chain_ids() {
+        assert_eq!(
+            [
+                network_to_chain_id("ethereum"),
+                network_to_chain_id("mainnet"),
+                network_to_chain_id("matic"),
+                network_to_chain_id("arbitrum-one"),
+                network_to_chain_id("hyperevm"),
+                network_to_chain_id("hyper-evm"),
+                network_to_chain_id("hyperliquid"),
+                network_to_chain_id("ethereum-mainnet"),
+                network_to_chain_id("polygon"),
+                network_to_chain_id("not-a-chain"),
+            ],
+            [
+                Some(1),
+                Some(1),
+                Some(137),
+                Some(42161),
+                Some(999),
+                Some(999),
+                Some(999),
+                Some(1),
+                Some(137),
+                None,
+            ]
+        );
+    }
+
+    #[test]
+    fn every_graph_network_variant_resolves() {
+        use strum::IntoEnumIterator;
+        let unresolved: Vec<_> = GraphNetwork::iter()
+            .filter_map(|network| {
+                let name = serde_json::to_value(network)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_string))?;
+                network_to_chain_id(&name).is_none().then_some(name)
+            })
+            .collect();
+        assert_eq!(unresolved, Vec::<String>::new());
+    }
+
+    #[test]
+    fn accepts_a_pre_feature_spec_version() {
+        let yaml = GRAVITY.replace("specVersion: 0.0.5", "specVersion: 0.0.2");
+        let (manifest, report) = parse_ok(&yaml);
+        assert_eq!(
+            (manifest.unwrap().spec_version.as_str(), report.is_empty()),
+            ("0.0.2", true)
+        );
+    }
+
+    #[test]
     fn parses_a_manifest_with_a_template() {
         let (manifest, report) = parse_ok(GRAVITY);
         let manifest = manifest.unwrap();
@@ -925,6 +989,19 @@ dataSources:
                 rendered.contains("doesn't know"),
             ),
             (true, false)
+        );
+    }
+
+    #[test]
+    fn accepts_envio_network_names_as_a_fallback() {
+        let yaml = GRAVITY.replace("network: mainnet", "network: hyperliquid");
+        let (manifest, report) = parse_ok(&yaml);
+        assert_eq!(
+            (
+                manifest.unwrap().data_sources[0].chain_id,
+                report.is_empty()
+            ),
+            (Some(999), true)
         );
     }
 
