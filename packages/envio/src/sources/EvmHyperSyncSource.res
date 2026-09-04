@@ -78,6 +78,12 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
 
     let startFetchingBatchTimeRef = Performance.now()
 
+    // Every way out of the fetch carries its timing: the request was made,
+    // and is billed, whether or not it answered.
+    let fetchStats = () => [
+      {Source.method: "getLogs", seconds: startFetchingBatchTimeRef->Performance.secondsSince},
+    ]
+
     //fetch batch
     let pageUnsafe = try await HyperSync.GetLogs.query(
       ~client,
@@ -89,12 +95,12 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
     | HyperSync.GetLogs.Error(WrongInstance) =>
-      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: []}))
+      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: fetchStats()}))
     | HyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
-            requestStats: [],
+            requestStats: fetchStats(),
             exn: %raw(`null`),
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: ImpossibleForTheQuery({
@@ -110,7 +116,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
-            requestStats: [],
+            requestStats: fetchStats(),
             exn,
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: WithBackoff({
@@ -126,7 +132,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     }
 
     let pageFetchTime = startFetchingBatchTimeRef->Performance.secondsSince
-    let requestStats = [{Source.method: "getLogs", seconds: pageFetchTime}]
+    let requestStats = fetchStats()
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight

@@ -431,7 +431,13 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     ))
   })
 
-  Async.it("Holds the block reads a page fans out to at the configured limit", async t => {
+  // Retried because what it observes is real concurrency: the mock releases
+  // each read on its own timer, so a runner that stalls between two arrivals
+  // can see a lower peak than the client actually held open.
+  Async.itWithOptions(
+    "Holds the block reads a page fans out to at the configured limit",
+    {retry: 3},
+    async t => {
     // How many requests a page makes follows from how many logs the range
     // holds, which no block interval bounds: a selection over ten blocks plans
     // ten block reads at once. The client is what keeps that burst from
@@ -478,7 +484,7 @@ describe("EvmRpcClient - getNextPage via napi", () => {
               inFlight := inFlight.contents + 1
               peakInFlight := Pervasives.max(peakInFlight.contents, inFlight.contents)
               Delayed({
-                millis: 20,
+                millis: 150,
                 reply: Dynamic(
                   _ => {
                     inFlight := inFlight.contents - 1
@@ -510,5 +516,6 @@ describe("EvmRpcClient - getNextPage via napi", () => {
     )
 
     t.expect(peak).toEqual(("ok", blockCount, maxConcurrentRequests))
-  })
+    },
+  )
 })

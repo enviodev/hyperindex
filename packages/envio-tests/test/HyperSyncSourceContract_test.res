@@ -625,3 +625,23 @@ describe("HyperSync source responses", () => {
     )
   })
 })
+
+describe("EvmHyperSyncSource - request accounting", () => {
+  // A page that ends in a failure still made its request, and the source's
+  // metrics count it — otherwise a source that is erroring reports no traffic
+  // at all while it hammers the endpoint.
+  Async.it("Counts the request a failed page made", async t => {
+    let methods = await MockHyperSyncServer.withServer(~height=100, async server => {
+      let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+      server->MockHyperSyncServer.pushRawReply({status: 500, body: "upstream exploded"})
+      try {
+        let _ = await source->fetch(~addressSet)
+        []
+      } catch {
+      | Source.GetItemsError(error) =>
+        error->Source.getItemsErrorRequestStats->Array.map(({Source.method: method}) => method)
+      }
+    })
+    t.expect(methods).toEqual(["getLogs"])
+  })
+})
