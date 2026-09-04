@@ -2012,10 +2012,10 @@ type ConfigEntities<Config extends IndexerConfigTypes = GlobalConfig> =
 type PerChainEntityNames<Config extends IndexerConfigTypes = GlobalConfig> =
   Config extends { perChainEntities: infer Names extends string } ? Names : never;
 
-/** The row shape the chain-agnostic test-indexer operations exchange. A
- * per-chain entity's row is only identified together with its chain, so the
- * chain id travels alongside the entity fields. */
-type TestIndexerEntityRow<
+/** The row shape chain-agnostic APIs exchange. A per-chain entity's row is
+ * only identified together with its chain, so the chain id travels alongside
+ * the entity fields. */
+type ChainScopedEntityRow<
   Config extends IndexerConfigTypes,
   Name,
   Entity
@@ -2209,7 +2209,7 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes = GlobalConf
 } & SingleEcosystemTestChains<Config> & {
   /** Entity operations for direct manipulation outside of handlers. */
   readonly [K in keyof ConfigEntities<Config>]: TestIndexerEntityOperations<
-    TestIndexerEntityRow<Config, K, ConfigEntities<Config>[K]>
+    ChainScopedEntityRow<Config, K, ConfigEntities<Config>[K]>
   >;
 };
 
@@ -2282,6 +2282,255 @@ export type Entity<TName extends EntityName> = EntitiesT[TName];
 export type EnumName = keyof EnumsT & string;
 /** Lookup an enum value type by name (e.g. `Enum<"AccountType">`). */
 export type Enum<TName extends EnumName> = EnumsT[TName];
+
+// ============== Custom Resolver Types ==============
+
+/** Handle for a custom GraphQL resolver created via {@link createResolver}. */
+export declare abstract class Resolver<Args, Output> {
+  protected opaque: Args | Output;
+}
+
+/** The selection the caller asked for: field names and their nesting, with
+ *  aliases and fragments already resolved away. A resolver may use it to skip
+ *  work it wasn't asked for — the response is projected against the declared
+ *  schema either way, so correctness never depends on honouring it. */
+export type ResolverSelection = { readonly [field: string]: ResolverSelection };
+
+/** Request metadata, forwarded by envio-serve. */
+export type ResolverContext = {
+  /** The role the operation was executed under. `admin: true` resolvers are
+   *  only reachable as `"admin"`. */
+  readonly role: "public" | "admin";
+  /** Correlates this field's work with the operation it belongs to. */
+  readonly requestId: string;
+  /** W3C trace context of the incoming request, when the caller sent one. */
+  readonly traceparent?: string;
+};
+
+/** How far a chain has been indexed. Read it to refuse to answer from a stale
+ *  index — `sourceBlock - progressBlock` is how far behind the head the
+ *  indexer is. */
+export type ChainHeight = {
+  readonly chainId: number;
+  /** `"evm"`, `"fuel"` or `"svm"`. Chain ids are only unique within one. */
+  readonly ecosystem: string;
+  readonly startBlock: number;
+  readonly endBlock: number | null;
+  /** The latest block seen on the chain. */
+  readonly sourceBlock: number;
+  /** The latest block fetched from the source. */
+  readonly bufferBlock: number;
+  /** The latest block whose events have been processed and committed. */
+  readonly progressBlock: number;
+  /** When the chain first caught up to the head, or null while it hasn't. */
+  readonly readyAt: Date | null;
+  readonly isReady: boolean;
+};
+
+/** Raw SQL, run under the resolver's `statement_timeout` and against its
+ *  bounded pool. */
+export type ResolverSql = {
+  /** ``db.sql`select 1` `` */
+  <Row = Record<string, unknown>>(
+    strings: TemplateStringsArray,
+    ...values: readonly unknown[]
+  ): Promise<Row[]>;
+  /** `db.sql.unsafe(text, params)` — the direct lift for a query built as a
+   *  string with positional parameters. */
+  unsafe<Row = Record<string, unknown>>(
+    text: string,
+    params?: readonly unknown[],
+    options?: { readonly prepare?: boolean }
+  ): Promise<Row[]>;
+};
+
+/** Options accepted by `db.find`. */
+export type ResolverFindOptions<Entity> = {
+  /** Filter by field, with the same operators as `context.<Entity>.getWhere`.
+   *  Unlike `getWhere`, any field can be filtered on here — it is a query
+   *  against the table, so an unindexed field is a slow one, not an error. */
+  readonly where?: GetWhereFilter<Entity>;
+  readonly orderBy?: readonly {
+    readonly field: keyof Entity & string;
+    readonly direction: "asc" | "desc";
+  }[];
+  readonly limit?: number;
+  readonly offset?: number;
+};
+
+/** The database a resolver reads through. Every query it runs carries the
+ *  resolver's `timeoutMs` as a `statement_timeout` and takes one of the
+ *  process's bounded connections. */
+export type ResolverDb<Config extends IndexerConfigTypes = GlobalConfig> = {
+  /** Entities matching `where`, decoded exactly as a handler sees them. */
+  readonly find: <Name extends keyof ConfigEntities<Config> & string>(
+    entityName: Name,
+    options?: ResolverFindOptions<
+      ChainScopedEntityRow<Config, Name, ConfigEntities<Config>[Name]>
+    >
+  ) => Promise<
+    ChainScopedEntityRow<Config, Name, ConfigEntities<Config>[Name]>[]
+  >;
+  /** One entity by id, or null. Not available for per-chain entities, whose
+   *  key is the id together with a chain — use {@link ResolverDb.find}. */
+  readonly get: <
+    Name extends Exclude<
+      keyof ConfigEntities<Config> & string,
+      PerChainEntityNames<Config>
+    >
+  >(
+    entityName: Name,
+    id: EntityId<ConfigEntities<Config>[Name]>
+  ) => Promise<ConfigEntities<Config>[Name] | null>;
+  /** Raw SQL, for what the loaders don't express. */
+  readonly sql: ResolverSql;
+  /** The Postgres schema the indexer's tables live in. Raw SQL has to qualify
+   *  table names with it — it is not `"public"` on a hosted deployment. */
+  readonly pgSchema: string;
+  /** Several queries on one connection, under one timeout. */
+  readonly transaction: <T>(work: (sql: ResolverSql) => Promise<T>) => Promise<T>;
+  /** How far each chain has been indexed, keyed by chain id. */
+  readonly chainHeights: () => Promise<Record<string, ChainHeight>>;
+};
+
+/** Arguments passed to a {@link Resolver}'s handler. */
+export type ResolverHandlerArgs<
+  Args,
+  Config extends IndexerConfigTypes = GlobalConfig
+> = {
+  /** Coerced and validated against the declared arg schemas before the
+   *  resolver is reached. */
+  readonly args: Args;
+  readonly db: ResolverDb<Config>;
+  readonly selection: ResolverSelection;
+  readonly ctx: ResolverContext;
+};
+
+/**
+ * Declares a custom GraphQL resolver: a root query field served alongside the
+ * generated entity fields, backed by TypeScript in this project.
+ *
+ * Arguments and result are declared with the same `S` schemas effects use, and
+ * the GraphQL types are derived from them. A field is non-null unless its
+ * schema is optional. Object types must be named with {@link defineType} —
+ * GraphQL has no anonymous types.
+ *
+ * ```ts
+ * export const marketsAprByPeriod = createResolver({
+ *   name: "marketsAprByPeriod",
+ *   args: { periodStart: S.int32, periodEnd: S.int32 },
+ *   output: S.array(defineType("MarketApr", { marketAddress: S.string })),
+ *   timeoutMs: 30_000,
+ *   handler: async ({ args, db }) => db.find("MarketInfo"),
+ * });
+ * ```
+ */
+export function createResolver<
+  // Both are schemas at runtime: `createResolver` reads `output.t` and walks
+  // every argument with `toGraphQLType` while the module is being imported, so
+  // anything else fails at indexer startup rather than in the editor.
+  AS extends Record<string, Sury.Schema<unknown>>,
+  OS extends Sury.Schema<unknown>,
+  A = UnknownToOutput<AS>,
+  O = UnknownToOutput<OS>,
+  // A hack to enforce that the inferred return type matches the output schema.
+  R extends O = O
+>(options: {
+  /** The GraphQL field name. Must not collide with a generated one. */
+  readonly name: string;
+  /** Shown in the schema, for the people querying it. */
+  readonly description?: string;
+  /** Argument schemas, keyed by argument name. */
+  readonly args?: AS;
+  /** The result schema. Determines the field's GraphQL type. */
+  readonly output: OS;
+  /** Keep the field off the public schema: it is published so Hasura will
+   *  route to it, but the service refuses any caller that does not present a
+   *  key from `ENVIO_RESOLVERS_PRIVATE_KEYS` in the `x-envio-private-key`
+   *  header. With no keys configured it refuses everyone. */
+  readonly private?: boolean;
+  /** @deprecated The former spelling of `private`, and identical to it. */
+  readonly admin?: boolean;
+  /** Refuse to answer with a 503 when the index is further behind head than
+   *  this. A number applies to every chain; an object of chainId to blocks
+   *  applies per chain and ignores the chains it does not name — which is
+   *  usually what you want, since a few hundred blocks is seconds on one chain
+   *  and hours on another. Omitted, the resolver answers whatever the index
+   *  currently holds. */
+  readonly maxBlocksBehind?: number | Readonly<Record<number, number>>;
+  /** The `statement_timeout` every query this resolver runs is bounded by.
+   *  Required: it is the only thing bounding a runaway query. */
+  readonly timeoutMs: number;
+  readonly handler: (args: ResolverHandlerArgs<A>) => Promise<R>;
+}): Resolver<A, O>;
+
+/**
+ * Thrown by a resolver to put a specific error on the client's response.
+ *
+ * Anything else a handler throws is reported as an internal failure with its
+ * message withheld — a driver error can carry a connection string, and the
+ * caller is the public internet — so this is how a resolver says more than
+ * that. envio-serve carries the extensions through unchanged.
+ *
+ * ```ts
+ * throw new ResolverError("Service is syncing", {
+ *   code: "SERVICE_UNAVAILABLE",
+ *   httpStatus: 503,
+ * });
+ * ```
+ */
+export declare class ResolverError extends Error {
+  constructor(
+    message: string,
+    options?: {
+      /** Becomes `extensions.code`. Defaults to `"INTERNAL_SERVER_ERROR"`. */
+      readonly code?: string;
+      /** Becomes `extensions.http.status`. */
+      readonly httpStatus?: number;
+      /** Merged into `extensions` alongside `code`. */
+      readonly extensions?: Record<string, unknown>;
+    }
+  );
+  readonly code: string;
+  readonly httpStatus?: number;
+  readonly extensions?: Record<string, unknown>;
+}
+
+/** Names a schema so it can appear in the GraphQL schema as an object type. */
+export function defineType<F extends Record<string, unknown>>(
+  name: string,
+  fields: F
+): Sury.Schema<UnknownToOutput<F>>;
+
+/**
+ * Names a schema that appears in an argument.
+ *
+ * GraphQL keeps input and output types in a separate namespace from object
+ * types, so a `where` argument is declared with this rather than with
+ * {@link defineType}.
+ */
+export function defineInput<F extends Record<string, unknown>>(
+  name: string,
+  fields: F
+): Sury.Schema<UnknownToOutput<F>>;
+
+/** Every resolver declared so far, in declaration order. */
+export function getRegisteredResolvers(): readonly Resolver<unknown, unknown>[];
+
+/** The manifest and SDL for everything declared so far. */
+export function buildRegisteredManifest(): { manifest: unknown; sdl: string };
+
+/** Names a schema representing a GraphQL enum. */
+export function defineEnum<const V extends readonly string[]>(
+  name: string,
+  values: V
+): Sury.Schema<V[number]>;
+
+/** Names a schema representing a custom GraphQL scalar, such as `BigInt`. */
+export function defineScalar<T>(
+  name: string,
+  schema: Sury.Schema<T>
+): Sury.Schema<T>;
 
 // ============== Runtime values ==============
 

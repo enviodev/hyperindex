@@ -201,3 +201,28 @@ describe("Config.diffPaths", () => {
     ).toEqual([])
   })
 })
+
+describe("adding resolvers to a running indexer", () => {
+  // `resolvers:` names where the custom GraphQL resolvers live. It has no
+  // bearing on what is indexed or how it is stored, but it is part of the
+  // public config, so without stripping it the resume check reports it as an
+  // incompatible change and the indexer refuses to start — the same reason
+  // `isDev` is stripped.
+  it("is not a config change the resume check can see", t => {
+    let stored = json(`{"name": "demo", "entities": []}`)
+    let current =
+      json(`{"name": "demo", "entities": [], "resolvers": "src/Resolvers.ts"}`)
+      ->Config.stripSensitiveData
+
+    t.expect(Config.diffPaths(~stored, ~current)).toEqual([])
+  })
+
+  it("is stripped whether it is added, changed, or removed", t => {
+    let strip = s => s->json->Config.stripSensitiveData
+    t.expect((
+      strip(`{"name": "demo", "resolvers": "src/Resolvers.ts"}`),
+      strip(`{"name": "demo", "resolvers": "src/resolvers"}`),
+      strip(`{"name": "demo"}`),
+    )).toEqual((json(`{"name": "demo"}`), json(`{"name": "demo"}`), json(`{"name": "demo"}`)))
+  })
+})

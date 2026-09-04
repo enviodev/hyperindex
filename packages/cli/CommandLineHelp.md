@@ -37,6 +37,11 @@ This document contains the help content for the `envio` command-line program.
 * [`envio tools fetch-docs`↴](#envio-tools-fetch-docs)
 * [`envio config`↴](#envio-config)
 * [`envio config view`↴](#envio-config-view)
+* [`envio resolvers`↴](#envio-resolvers)
+* [`envio resolvers manifest`↴](#envio-resolvers-manifest)
+* [`envio resolvers metadata`↴](#envio-resolvers-metadata)
+* [`envio resolvers migrate`↴](#envio-resolvers-migrate)
+* [`envio resolvers serve`↴](#envio-resolvers-serve)
 
 ## `envio`
 
@@ -54,6 +59,7 @@ This document contains the help content for the `envio` command-line program.
 * `skills` — Manage Envio-provided Claude Code skills under `.claude/skills/`
 * `tools` — Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
 * `config` — Inspect the indexer config
+* `resolvers` — Run the custom GraphQL resolvers declared by `resolvers:` in config.yaml. With no subcommand, serves them for Hasura to dispatch to
 
 ###### **Options:**
 
@@ -475,6 +481,53 @@ Inspect the indexer config
 Print the resolved indexer config as JSON
 
 **Usage:** `envio config view`
+
+
+
+## `envio resolvers`
+
+Run the custom GraphQL resolvers declared by `resolvers:` in config.yaml. With no subcommand, serves them for Hasura to dispatch to
+
+**Usage:** `envio resolvers [COMMAND]`
+
+###### **Subcommands:**
+
+* `manifest` — Write `.envio/resolvers.json` and `.envio/resolvers.graphql`, then exit
+* `metadata` — Print the Hasura metadata these resolvers become, then exit. Needs ENVIO_RESOLVERS_PUBLIC_URL, which is baked into every action
+* `migrate` — Update a running indexer's Hasura metadata to match these resolvers, then exit. Does not start a server and does not touch the database
+* `serve` — Answer Hasura's actions over HTTP until stopped (the default)
+
+
+
+## `envio resolvers manifest`
+
+Write `.envio/resolvers.json` and `.envio/resolvers.graphql`, then exit
+
+**Usage:** `envio resolvers manifest`
+
+
+
+## `envio resolvers metadata`
+
+Print the Hasura metadata these resolvers become, then exit. Needs ENVIO_RESOLVERS_PUBLIC_URL, which is baked into every action
+
+**Usage:** `envio resolvers metadata`
+
+
+
+## `envio resolvers migrate`
+
+Update a running indexer's Hasura metadata to match these resolvers, then exit. Does not start a server and does not touch the database
+
+**Usage:** `envio resolvers migrate`
+
+
+
+## `envio resolvers serve`
+
+Answer Hasura's actions over HTTP until stopped (the default)
+
+**Usage:** `envio resolvers serve`
 
 
 

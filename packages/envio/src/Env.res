@@ -163,6 +163,141 @@ module ClickHouse = {
   let databaseEngine = () => read("ENVIO_CLICKHOUSE_DATABASE_ENGINE")
 }
 
+// The resolver process runs on its own, so its database connection comes from
+// the same ENVIO_PG_* vars the indexer's does -- point them wherever reads
+// should go. Only what genuinely differs from the indexer's shape gets a var
+// of its own.
+//
+// Read at call time rather than module load, for the same reason ClickHouse's
+// are: `envio dev` injects them after this module has been evaluated.
+module Resolvers = {
+  %%private(
+    let read: string => option<string> = %raw(`(k) => {
+      const v = process.env[k];
+      return v === undefined || v === "" ? undefined : v;
+    }`)
+
+    // `Int.fromString` is `parseInt`: it takes the leading digits and drops the
+    // rest, so "60s" reads as 60 and "1e3" as 1. For a duration that is a
+    // thousandfold error in the quiet direction -- "60s" meaning a minute
+    // becomes a 60ms loop -- so the parse only accepts what it can write back
+    // unchanged.
+    let parseWhole = raw => {
+      let trimmed = raw->String.trim
+      switch trimmed->Int.fromString {
+      | Some(value) if trimmed === value->Int.toString => Some(value)
+      | _ => None
+      }
+    }
+
+    let readInt = (key, ~fallback) =>
+      switch read(key) {
+      | None => fallback
+      | Some(raw) =>
+        switch raw->parseWhole {
+        | Some(value) if value > 0 => value
+        | _ =>
+          JsError.throwWithMessage(
+            `Invalid ${key} value: "${raw}". Expected a positive whole number.`,
+          )
+        }
+      }
+  )
+
+  let port = () =>
+    switch readInt("ENVIO_RESOLVERS_PORT", ~fallback=9900) {
+    | value if value <= 65535 => value
+    | value =>
+      // `readInt` only rejects zero and below, so an out-of-range port reached
+      // `listen` and failed there instead, naming neither the variable nor why.
+      JsError.throwWithMessage(
+        `Invalid ENVIO_RESOLVERS_PORT value: "${value->Int.toString}". A TCP port is 1 to 65535.`,
+      )
+    }
+
+  // Sized as concurrent heavy requests x per-request fan-out, not as the
+  // indexer's two long-lived connections: one resolver request can hold four
+  // at once.
+  let poolSize = () => readInt("ENVIO_RESOLVERS_POOL_SIZE", ~fallback=25)
+
+  let poolWaitTimeoutMs = () => readInt("ENVIO_RESOLVERS_POOL_WAIT_TIMEOUT_MS", ~fallback=10_000)
+
+  // `envio dev` sets this on the resolver process it spawns: locally the
+  // caller is the person who wrote the resolver, so an unexpected error's own
+  // message is what they need. Deployed, the caller may be the public internet
+  // and the message can carry a connection string.
+  let exposeErrors = () =>
+    switch read("ENVIO_RESOLVERS_EXPOSE_ERRORS") {
+    | None
+    | Some("false") => false
+    | Some("true") => true
+    | Some(other) =>
+      // Refused rather than read as false: a typo here silently keeps a
+      // resolver's own error messages off the wire, which is the opposite of
+      // what the person who set it wanted, and nothing would say so.
+      JsError.throwWithMessage(
+        `Invalid ENVIO_RESOLVERS_EXPOSE_ERRORS value: "${other}". Expected "true" or "false".`,
+      )
+    }
+
+  // The URL *Hasura* posts to, which is not the address this process binds:
+  // it is baked into every action, so Hasura has no other way to reach the
+  // resolvers.
+  let publicUrl = () => read("ENVIO_RESOLVERS_PUBLIC_URL")
+
+  // How often the metadata is re-asserted. 0 disables it, for a deployment
+  // where something else owns Hasura's metadata.
+  let metadataIntervalMs = () =>
+    switch read("ENVIO_RESOLVERS_METADATA_INTERVAL_MS") {
+    | None => 60_000
+    | Some(raw) =>
+      switch raw->parseWhole {
+      | Some(value) if value >= 0 => value
+      | _ =>
+        JsError.throwWithMessage(
+          `Invalid ENVIO_RESOLVERS_METADATA_INTERVAL_MS value: "${raw}". Expected a whole number of milliseconds, or 0 to disable.`,
+        )
+      }
+    }
+
+  // Required on every request to either route. Unset, the service cannot tell
+  // its callers apart from anything else that reaches the socket, and both
+  // routes take the role from the request body -- so anyone can claim `admin`.
+  let actionSecret = () => read("ENVIO_RESOLVERS_ACTION_SECRET")
+
+  // Unlocks resolvers declared `private`. Comma-separated so a rotation can
+  // present the old and new key at once; a private resolver with none of these
+  // configured is unreachable rather than open.
+  let privateKeys = () =>
+    switch read("ENVIO_RESOLVERS_PRIVATE_KEYS") {
+    | None => []
+    | Some(raw) =>
+      raw
+      ->String.split(",")
+      ->Array.map(String.trim)
+      ->Array.filter(key => key !== "")
+    }
+
+  // Read raw rather than through `Env.Hasura`, whose dev fallbacks would have
+  // this process apply metadata to a localhost Hasura nobody asked for. Only
+  // an endpoint someone set means "there is a Hasura to register with".
+  let hasuraEndpoint = () => read("HASURA_GRAPHQL_ENDPOINT")
+  let hasuraAdminSecret = () => read("HASURA_GRAPHQL_ADMIN_SECRET")
+
+  // Set where a transaction-mode pooler is the only way in. Those reject
+  // named prepared statements, so this gives up plan reuse.
+  let poolerBacked = () =>
+    switch read("ENVIO_RESOLVERS_POOLER_BACKED") {
+    | None
+    | Some("false") => false
+    | Some("true") => true
+    | Some(other) =>
+      JsError.throwWithMessage(
+        `Invalid ENVIO_RESOLVERS_POOLER_BACKED value: "${other}". Expected "true" or "false".`,
+      )
+    }
+}
+
 module Hasura = {
   // Disable it on HS indexer run, since we don't have Hasura credentials anyways
   // Also, it might be useful for some users who don't care about Hasura
@@ -180,7 +315,12 @@ module Hasura = {
       ~devFallback="http://localhost:8080/v1/metadata",
     )
 
-  let url = graphqlEndpoint->String.slice(~start=0, ~end=-("/v1/metadata"->String.length))
+  // Lazy on purpose. `graphqlEndpoint` is required in production, and a missing
+  // one arrives here as undefined -- slicing it threw a bare TypeError at import
+  // and killed the process before `EnvSafe.close` could say which variable was
+  // missing. Only the dev TUI reads this, so there is nothing to compute up
+  // front.
+  let url = () => graphqlEndpoint->String.slice(~start=0, ~end=-("/v1/metadata"->String.length))
 
   let role = envSafe->EnvSafe.get("HASURA_GRAPHQL_ROLE", S.string, ~devFallback="admin")
 

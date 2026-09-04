@@ -304,7 +304,7 @@ module App = {
       <Newline />
       <Box flexDirection={Row}>
         <Text> {"GraphQL: "->React.string} </Text>
-        <Text color={Info} underline=true> {Env.Hasura.url->React.string} </Text>
+        <Text color={Info} underline=true> {Env.Hasura.url()->React.string} </Text>
         {
           let defaultPassword = "testing"
           if Env.Hasura.secret == defaultPassword {

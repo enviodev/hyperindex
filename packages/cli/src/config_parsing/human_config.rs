@@ -78,6 +78,15 @@ pub struct BaseConfig {
     pub handlers: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
+        description = "Optional relative path to the custom GraphQL resolvers, either a single \
+                       module (e.g. 'src/Resolvers.ts') or a directory (e.g. 'src/resolvers'), in \
+                       which case every .js/.mjs/.ts file beneath it is loaded, tests excluded. \
+                       The resolvers they export are served as additional root fields on the \
+                       indexer's GraphQL endpoint."
+    )]
+    pub resolvers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
         description = "Target number of events to be processed per batch. Set it to smaller \
                        number if you have many Effect API calls which are slow to resolve and \
                        can't be batched. (Default: 5000)"
@@ -1648,6 +1657,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 full_batch_size: None,
                 storage: None,
                 disable_default_cross_chain: None,
+                resolvers: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
@@ -1702,6 +1712,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 full_batch_size: None,
                 storage: None,
                 disable_default_cross_chain: None,
+                resolvers: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,

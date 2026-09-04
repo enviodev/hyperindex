@@ -94,6 +94,9 @@ type t = {
   name: string,
   description: option<string>,
   handlers: string,
+  // Relative path to the module declaring custom GraphQL resolvers, when the
+  // project ships them. None means entity fields only.
+  resolvers: option<string>,
   contractHandlers: array<contractHandler>,
   shouldRollbackOnReorg: bool,
   shouldSaveFullHistory: bool,
@@ -533,6 +536,7 @@ let publicConfigSchema = S.schema(s =>
     "name": s.matches(S.string),
     "description": s.matches(S.option(S.string)),
     "handlers": s.matches(S.option(S.string)),
+    "resolvers": s.matches(S.option(S.string)),
     "isDev": s.matches(S.option(S.bool)),
     "fullBatchSize": s.matches(S.option(S.int)),
     "rollbackOnReorg": s.matches(S.option(S.bool)),
@@ -1011,6 +1015,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     name: publicConfig["name"],
     description: publicConfig["description"],
     handlers: publicConfig["handlers"]->Option.getOr("src/handlers"),
+    resolvers: publicConfig["resolvers"],
     contractHandlers,
     shouldRollbackOnReorg: publicConfig["rollbackOnReorg"]->Option.getOr(true),
     shouldSaveFullHistory: publicConfig["saveFullHistory"]->Option.getOr(false),
@@ -1153,8 +1158,11 @@ let getPublicConfigJson = () =>
 
 // Drops source URLs from each chain so RPC/hypersync edits don't trigger
 // the resume-time compat check (and don't end up in `envio_info`). Also
-// drops `isDev`, which toggles between `envio dev` and `envio start` and
-// has no bearing on schema/indexing compatibility.
+// drops two fields that have no bearing on schema/indexing compatibility:
+// `isDev`, which toggles between `envio dev` and `envio start`, and
+// `resolvers`, which names where the custom GraphQL resolvers live. Without
+// the latter, adding `resolvers:` to a running indexer reads as an
+// incompatible config change and it refuses to resume.
 let stripSensitiveData = (json: JSON.t): JSON.t => {
   let cloned = json->JSON.stringify->JSON.parseOrThrow
   let stripChains = (ecosystem: option<JSON.t>) =>
@@ -1181,6 +1189,7 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
   switch cloned {
   | Object(obj) => {
       obj->Utils.Dict.deleteInPlace("isDev")
+      obj->Utils.Dict.deleteInPlace("resolvers")
       stripChains(obj->Dict.get("evm"))
       stripChains(obj->Dict.get("fuel"))
       stripChains(obj->Dict.get("svm"))
