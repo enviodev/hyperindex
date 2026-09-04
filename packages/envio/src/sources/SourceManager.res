@@ -32,15 +32,6 @@ let recordStatsInto = (
 let recordRequestStats = (sourceState: sourceState, requestStats: array<Source.requestStat>) =>
   sourceState.requestStats->recordStatsInto(requestStats)
 
-// A failed call still made its requests; count them, like every other failure
-// path does. Returns the unpacked failure so a caller can log the provider's
-// own message rather than the envelope carrying it.
-let recordFailedRequest = (sourceState: sourceState, exn) => {
-  let failure = exn->Source.unpackNativeRequestFailure
-  sourceState->recordRequestStats(failure.requestStats)
-  failure
-}
-
 // Flattened (source, method) aggregates for Metrics.renderSourceRequests to
 // inline into the /metrics response.
 type requestStatSample = {
