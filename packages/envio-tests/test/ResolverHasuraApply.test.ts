@@ -104,7 +104,9 @@ const APPLIED_EXPORT = {
         ignored_client_headers: IGNORED_CLIENT_HEADERS,
         type: "query",
         timeout: 6,
+        forward_client_headers: true,
       },
+      permissions: [{ role: "public" }],
     },
   ],
   custom_types: {
@@ -224,6 +226,12 @@ describe("applying resolver metadata", () => {
               type: "create_action_permission",
               args: { action: "marketsAprByPeriod", role: "public" },
             },
+            // The private one is granted to `public` too: Hasura has to route
+            // the call before the service can check the caller's key.
+            {
+              type: "create_action_permission",
+              args: { action: "secretStats", role: "public" },
+            },
           ],
         },
       ],
@@ -288,20 +296,26 @@ describe("applying resolver metadata", () => {
   });
 
   it("revokes a role a resolver no longer grants", async () => {
+    // Every action this service declares is readable by `public`, private ones
+    // included, so a revoke is now about a role that is not ours at all --
+    // something granted by hand, or left behind by an older manifest.
     exported = {
       ...APPLIED_EXPORT,
       actions: [
         APPLIED_EXPORT.actions[0],
-        { ...APPLIED_EXPORT.actions[1], permissions: [{ role: "public" }] },
+        {
+          ...APPLIED_EXPORT.actions[1],
+          permissions: [{ role: "public" }, { role: "leftover" }],
+        },
       ],
     };
     const result = await apply();
     // `drop_action_permission` names the action `name`, where
     // `create_action_permission` names it `action`.
     expect({ reasons: result.reasons, args: bulkSent()[0]!.args }).toEqual({
-      reasons: ["action 'secretStats' should not be readable by 'public'"],
+      reasons: ["action 'secretStats' should not be readable by 'leftover'"],
       args: [
-        { type: "drop_action_permission", args: { name: "secretStats", role: "public" } },
+        { type: "drop_action_permission", args: { name: "secretStats", role: "leftover" } },
       ],
     });
   });

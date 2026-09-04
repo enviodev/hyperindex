@@ -31,6 +31,10 @@ function normaliseAction(action) {
     handler: definition.handler ?? null,
     output_type: definition.output_type ?? null,
     timeout: definition.timeout ?? DEFAULT_TIMEOUT_SECONDS,
+    // Compared, so turning forwarding on for an action that already exists is
+    // seen as drift and actually applied. Without it the flag would only ever
+    // be right on a freshly created action.
+    forward_client_headers: definition.forward_client_headers === true,
     arguments: (definition.arguments ?? []).map((argument) => ({
       name: argument.name,
       type: argument.type,

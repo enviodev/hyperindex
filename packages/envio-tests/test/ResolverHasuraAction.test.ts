@@ -203,7 +203,7 @@ describe("resolver /hasura-action", () => {
     const forbidden = {
       status: 403,
       body: {
-        message: "Resolver 'adminOnly' is admin-only",
+        message: "Resolver 'adminOnly' is private. Present its key in the x-envio-private-key header.",
         extensions: { code: "FORBIDDEN" },
       },
     };
