@@ -32,11 +32,16 @@ let get = (frontier: t, chainId): Internal.checkpointId =>
 
 let set = (frontier: t, chainId, checkpointId) => frontier->ChainId.Dict.set(chainId, checkpointId)
 
+// A dict key is the chain id's decimal string, which is the same key a chain id
+// indexes by — but it is not the id itself, and these hand ids back to callers
+// that compare and encode them rather than only look them up.
 let chainIds = (frontier: t): array<ChainId.t> =>
-  frontier->Dict.keysToArray->(Utils.magic: array<string> => array<ChainId.t>)
+  frontier->Dict.keysToArray->Array.map(ChainId.normalizeOrThrow)
 
 let entries = (frontier: t): array<(ChainId.t, Internal.checkpointId)> =>
-  frontier->Dict.toArray->(Utils.magic: array<(string, bigint)> => array<(ChainId.t, bigint)>)
+  frontier
+  ->Dict.toArray
+  ->Array.map(((key, checkpointId)) => (key->ChainId.normalizeOrThrow, checkpointId))
 
 %%private(
   let fold = (frontier: t, pick) =>

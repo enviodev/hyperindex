@@ -297,6 +297,56 @@ let globalFloors = RollbackFloors.make(
   ~forkBlockNumber=0,
 )
 
+// The checkpoints key follows the sequence: ids are only unique within a chain
+// where each chain counts its own, and under one shared sequence every bound a
+// rollback or a prune applies is an id range the chain would only get in the way
+// of.
+describe("Checkpoints primary key", () => {
+  let checkpointsDdl = (~schema) =>
+    PgStorage.makeInitializeTransaction(
+      ~pgSchema="public",
+      ~pgUser="postgres",
+      ~isHasuraEnabled=false,
+      ~entities=InternalTestIndexer.fromUserApi(
+        ~configYaml=configYaml(~disableDefaultCrossChain=true),
+        ~schema,
+      ).config.userEntities,
+    )
+    ->Array.flatMap(query => query->String.split("\n"))
+    ->Array.find(query => query->String.includes(`"envio_checkpoints"`))
+    ->Option.getOrThrow
+
+  it("Keys on the chain and the id when each chain counts its own", t => {
+    t.expect(
+      checkpointsDdl(
+        ~schema=`
+type Counter {
+  id: ID!
+  count: BigInt!
+}
+`,
+      ),
+    ).toBe(`CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("chain_id" INTEGER NOT NULL, "id" BIGINT NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("chain_id", "id"));`)
+  })
+
+  it("Keys on the id alone once a cross-chain entity makes the sequence shared", t => {
+    t.expect(
+      checkpointsDdl(
+        ~schema=`
+type Counter {
+  id: ID!
+  count: BigInt!
+}
+type Total @crossChain {
+  id: ID!
+  count: BigInt!
+}
+`,
+      ),
+    ).toBe(`CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("chain_id" INTEGER NOT NULL, "id" BIGINT NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));`)
+  })
+})
+
 describe("Per-chain rollback and delete SQL", () => {
   it("Keys the removed-ids query on (id, chain id)", t => {
     t.expect(

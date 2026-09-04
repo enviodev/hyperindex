@@ -63,6 +63,9 @@ type rollback = {
   // The id each chain's diff rows are stamped with: the first after what that
   // chain has committed.
   diffFrontier: Frontier.t,
+  // The same ids as checkpoint rows, for a sink that resolves current state
+  // through them. Postgres writes the diff to the entity table and ignores these.
+  diffCheckpoints: array<InternalTable.Checkpoints.diffCheckpoint>,
   // How far back the deletes reach on each chain, travelling with the diff so
   // the write leaves an untouched sibling's rows alone.
   floors: RollbackFloors.t,

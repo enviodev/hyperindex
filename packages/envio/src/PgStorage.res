@@ -292,7 +292,7 @@ let makeInitializeTransaction = (
     InternalTable.EnvioInfo.table,
     InternalTable.EnvioContracts.table,
     InternalTable.EnvioAddresses.table,
-    InternalTable.Checkpoints.table,
+    InternalTable.Checkpoints.tableFor(CheckpointSequence.fromEntities(entities)),
     InternalTable.RawEvents.table,
   ]
 
@@ -2515,7 +2515,14 @@ let make = (
     | Some(sink) => {
         let timerRef = Performance.now()
         Some(
-          sink.writeBatch(~batch, ~updatedEntities=chUpdates)
+          sink.writeBatch(
+            ~batch,
+            ~diffCheckpoints=switch (rollback: option<Persistence.rollback>) {
+            | Some({diffCheckpoints}) => diffCheckpoints
+            | None => []
+            },
+            ~updatedEntities=chUpdates,
+          )
           ->Promise.thenResolve(_ => {
             onWrite(~storage=sink.name, ~timeSeconds=timerRef->Performance.secondsSince)
             None

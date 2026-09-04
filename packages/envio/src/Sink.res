@@ -8,6 +8,7 @@ type t = {
   ) => promise<unit>,
   writeBatch: (
     ~batch: Batch.t,
+    ~diffCheckpoints: array<InternalTable.Checkpoints.diffCheckpoint>,
     ~updatedEntities: array<Persistence.updatedEntity>,
   ) => promise<unit>,
 }
@@ -33,7 +34,7 @@ let makeClickHouse = (
     resume: (~frontier, ~chains, ~entities) => {
       ClickHouse.resume(sink, ~sequence, ~frontier, ~chains, ~entities=mirrored(entities))
     },
-    writeBatch: async (~batch, ~updatedEntities) => {
+    writeBatch: async (~batch, ~diffCheckpoints, ~updatedEntities) => {
       // Staging reads JS values, so it holds the isolate and runs here. The
       // encode and the round trips happen in Rust, which also keeps the
       // checkpoints behind the rows they cover.
@@ -45,7 +46,7 @@ let makeClickHouse = (
           | None => ()
           }
         )
-        ClickHouse.stageCheckpointsOrThrow(sink, ~registry, ~batch)
+        ClickHouse.stageCheckpointsOrThrow(sink, ~registry, ~batch, ~diffCheckpoints)
       } catch {
       | exn =>
         sink->ClickHouseSink.discard(entities)

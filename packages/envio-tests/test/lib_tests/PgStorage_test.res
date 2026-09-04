@@ -232,7 +232,7 @@ CREATE TABLE IF NOT EXISTS "test_schema"."envio_chains"("id" INTEGER NOT NULL, "
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
-CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("chain_id" INTEGER NOT NULL, "id" BIGINT NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("chain_id", "id"));
+CREATE TABLE IF NOT EXISTS "test_schema"."envio_checkpoints"("chain_id" INTEGER NOT NULL, "id" BIGINT NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE TABLE IF NOT EXISTS "test_schema"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "test_schema"."envio_history_A"("id" TEXT NOT NULL, "b_id" TEXT, "optionalStringToTestLinkedEntities" TEXT, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "test_schema".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
@@ -376,7 +376,7 @@ CREATE TABLE IF NOT EXISTS "public"."envio_chains"("id" INTEGER NOT NULL, "ecosy
 CREATE TABLE IF NOT EXISTS "public"."envio_info"("id" INTEGER DEFAULT 1, "config" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_contracts"("id" SMALLINT NOT NULL, "name" TEXT NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_addresses"("chain_id" INTEGER NOT NULL, "address" BYTEA NOT NULL, "contract_id" SMALLINT NOT NULL, "registration_block" INTEGER NOT NULL, PRIMARY KEY("chain_id", "address", "contract_id"));
-CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("chain_id" INTEGER NOT NULL, "id" BIGINT NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("chain_id", "id"));
+CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("chain_id" INTEGER NOT NULL, "id" BIGINT NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."raw_events"("chain_id" INTEGER NOT NULL, "event_id" BIGINT NOT NULL, "event_name" TEXT NOT NULL, "contract_name" TEXT NOT NULL, "block_number" INTEGER NOT NULL, "log_index" INTEGER NOT NULL, "src_address" TEXT NOT NULL, "block_hash" TEXT NOT NULL, "block_timestamp" INTEGER NOT NULL, "block_fields" JSONB NOT NULL, "transaction_fields" JSONB NOT NULL, "params" JSONB NOT NULL, "serial" BIGSERIAL, PRIMARY KEY("serial"));
 CREATE TABLE IF NOT EXISTS "public"."A"("id" TEXT NOT NULL, "b_id" TEXT NOT NULL, "optionalStringToTestLinkedEntities" TEXT, PRIMARY KEY("id"));
 CREATE TABLE IF NOT EXISTS "public"."envio_history_A"("id" TEXT NOT NULL, "b_id" TEXT, "optionalStringToTestLinkedEntities" TEXT, "envio_checkpoint_id" BIGINT NOT NULL, "envio_change" "public".ENVIO_HISTORY_CHANGE NOT NULL, PRIMARY KEY("id", "envio_checkpoint_id"));
@@ -577,49 +577,52 @@ FROM "public"."envio_chains";`
       ],
     )
 
-    Async.it("Binds bytea values as bytes and bytea arrays as array literals", async t => {
-      let params = []
-      let condition = PgStorage.makeFilterCondition(
-        ~filter=And({
-          filters: [
-            Eq({
-              fieldName: "tag",
-              fieldValue: Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
-            }),
-            In({
-              fieldName: "tag",
-              fieldValue: [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
-                Utils.magic: array<Uint8Array.t> => array<unknown>
-              ),
-            }),
-            Eq({
-              fieldName: "chunks",
-              fieldValue: [Uint8Array.fromArray([3])]->(
-                Utils.magic: array<Uint8Array.t> => unknown
-              ),
-            }),
-            In({
-              fieldName: "chunks",
-              fieldValue: [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
-                Utils.magic: array<array<Uint8Array.t>> => array<unknown>
-              ),
-            }),
-          ],
-        }),
-        ~table=bytesTable,
-        ~params,
-      )
+    Async.it(
+      "Binds bytea values as bytes and bytea arrays as array literals",
+      async t => {
+        let params = []
+        let condition = PgStorage.makeFilterCondition(
+          ~filter=And({
+            filters: [
+              Eq({
+                fieldName: "tag",
+                fieldValue: Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
+              }),
+              In({
+                fieldName: "tag",
+                fieldValue: [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
+                  Utils.magic: array<Uint8Array.t> => array<unknown>
+                ),
+              }),
+              Eq({
+                fieldName: "chunks",
+                fieldValue: [Uint8Array.fromArray([3])]->(
+                  Utils.magic: array<Uint8Array.t> => unknown
+                ),
+              }),
+              In({
+                fieldName: "chunks",
+                fieldValue: [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
+                  Utils.magic: array<array<Uint8Array.t>> => array<unknown>
+                ),
+              }),
+            ],
+          }),
+          ~table=bytesTable,
+          ~params,
+        )
 
-      t.expect((condition, params)).toEqual((
-        `("tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND "chunks" = ANY($4))`,
-        [
-          Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
-          `{"\\\\x0102","\\\\x"}`->(Utils.magic: string => unknown),
-          `{"\\\\x03"}`->(Utils.magic: string => unknown),
-          `{{"\\\\x04"},{"\\\\x05"}}`->(Utils.magic: string => unknown),
-        ],
-      ))
-    })
+        t.expect((condition, params)).toEqual((
+          `("tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND "chunks" = ANY($4))`,
+          [
+            Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
+            `{"\\\\x0102","\\\\x"}`->(Utils.magic: string => unknown),
+            `{"\\\\x03"}`->(Utils.magic: string => unknown),
+            `{{"\\\\x04"},{"\\\\x05"}}`->(Utils.magic: string => unknown),
+          ],
+        ))
+      },
+    )
 
     Async.it(
       "Should create condition and params for loading multiple records by IDs",

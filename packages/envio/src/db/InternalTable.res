@@ -556,13 +556,27 @@ module Checkpoints = {
 
   let initialCheckpointId = 0n
 
+  // The checkpoint a rollback's diff rows are stamped with. It never reaches
+  // Postgres — there the diff is written straight to the entity table — but an
+  // append-only sink resolves current state through the checkpoints, so without
+  // one of these the diff sits above the frontier while the rows it supersedes
+  // sit below it, and the orphaned values are what a reader sees.
+  type diffCheckpoint = {
+    chainId: ChainId.t,
+    checkpointId: Internal.checkpointId,
+    // Where the rollback left the chain. At or below its stored progress, so a
+    // resume counts the row as covered rather than as something to trim back to.
+    blockNumber: int,
+  }
+
   // One definition per column, carrying what each storage needs: the field
   // itself, the type ClickHouse gives it where that differs from Postgres, and
-  // where a batch keeps the column's values.
+  // where a batch — or a rollback diff — keeps the column's values.
   type column = {
     field: fieldOrDerived,
     clickHouseFieldType: fieldType,
     valuesOf: Batch.t => array<unknown>,
+    diffValuesOf: array<diffCheckpoint> => array<unknown>,
   }
 
   // The chain leads the key: ids are only unique within a chain, and every
@@ -578,16 +592,22 @@ module Checkpoints = {
       clickHouseFieldType: ChainId,
       valuesOf: batch =>
         batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
+      diffValuesOf: diffs =>
+        diffs->Array.map(diff => diff.chainId->(Utils.magic: ChainId.t => unknown)),
     },
     {
       field: mkField((#id: field :> string), UInt64, ~fieldSchema=S.bigint, ~isPrimaryKey),
       clickHouseFieldType: UInt64,
       valuesOf: batch => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
+      diffValuesOf: diffs =>
+        diffs->Array.map(diff => diff.checkpointId->(Utils.magic: bigint => unknown)),
     },
     {
       field: mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
       clickHouseFieldType: Int32,
       valuesOf: batch => batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
+      diffValuesOf: diffs =>
+        diffs->Array.map(diff => diff.blockNumber->(Utils.magic: int => unknown)),
     },
     {
       field: mkField(
@@ -599,6 +619,8 @@ module Checkpoints = {
       clickHouseFieldType: String,
       valuesOf: batch =>
         batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
+      diffValuesOf: diffs =>
+        diffs->Array.map(_ => Null.Null->(Utils.magic: Null.t<string> => unknown)),
     },
     {
       field: mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
@@ -607,10 +629,34 @@ module Checkpoints = {
       clickHouseFieldType: UInt64,
       valuesOf: batch =>
         batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
+      diffValuesOf: diffs => diffs->Array.map(_ => 0->(Utils.magic: int => unknown)),
     },
   ]
 
-  let table = mkTable("envio_checkpoints", ~fields=columns->Array.map(({field}) => field))
+  let tableName = "envio_checkpoints"
+
+  let table = mkTable(tableName, ~fields=columns->Array.map(({field}) => field))
+
+  // Where each chain counts its own ids the chain has to be part of the key,
+  // and every bound a rollback or a prune applies names it. Under one shared
+  // sequence the id is unique by itself and those bounds are id ranges with no
+  // chain in them — which a key led by the chain can't serve.
+  let globalTable = mkTable(
+    tableName,
+    ~fields=columns->Array.map(({field: column}) =>
+      switch column {
+      | Table.Field(f) if f.fieldName === (#chain_id: field :> string) =>
+        Table.Field({...f, isPrimaryKey: false})
+      | column => column
+      }
+    ),
+  )
+
+  let tableFor = (sequence: CheckpointSequence.t) =>
+    switch sequence {
+    | Global => globalTable
+    | PerChain => table
+    }
 
   let makeGetReorgCheckpointsQuery = (~pgSchema): string => {
     // The safe_block checkpoint itself is included, so it can be used for safe

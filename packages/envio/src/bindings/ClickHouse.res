@@ -90,6 +90,7 @@ let makeColumnSpec = (
 type checkpointColumn = {
   spec: ClickHouseSink.columnSpec,
   valuesOf: Batch.t => array<unknown>,
+  diffValuesOf: array<InternalTable.Checkpoints.diffCheckpoint> => array<unknown>,
 }
 
 // Registration and staging both read this one list, so the column a batch's
@@ -98,12 +99,14 @@ let checkpointColumns = InternalTable.Checkpoints.columns->Array.filterMap(({
   field,
   clickHouseFieldType,
   valuesOf,
+  diffValuesOf,
 }) =>
   switch field {
   | Table.Field({fieldName, isNullable}) =>
     Some({
       spec: makeColumnSpec(~name=fieldName, ~fieldType=clickHouseFieldType, ~isNullable),
       valuesOf,
+      diffValuesOf,
     })
   | DerivedFrom(_) => None
   }
@@ -313,8 +316,13 @@ let stageBuilders = (sink, ~table: ClickHouseSink.table, ~builders, ~rows) =>
     ~columns=builders->Array.map(ClickHouseSink.builderPayload),
   )
 
-let stageCheckpointsOrThrow = (sink, ~registry, ~batch: Batch.t) => {
-  let rows = batch.checkpointIds->Array.length
+let stageCheckpointsOrThrow = (
+  sink,
+  ~registry,
+  ~batch: Batch.t,
+  ~diffCheckpoints: array<InternalTable.Checkpoints.diffCheckpoint>,
+) => {
+  let rows = batch.checkpointIds->Array.length + diffCheckpoints->Array.length
   if rows === 0 {
     Null.null
   } else {
@@ -323,7 +331,9 @@ let stageCheckpointsOrThrow = (sink, ~registry, ~batch: Batch.t) => {
       // The table was registered from `checkpointColumns`, in this order.
       let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
       builders->Array.forEachWithIndex((builder, index) => {
-        let columnValues = (checkpointColumns->Array.getUnsafe(index)).valuesOf(batch)
+        let column = checkpointColumns->Array.getUnsafe(index)
+        let columnValues =
+          column.valuesOf(batch)->Array.concat(column.diffValuesOf(diffCheckpoints))
         for row in 0 to rows - 1 {
           builder->ClickHouseSink.writeValue(~row, columnValues->Array.getUnsafe(row))
         }

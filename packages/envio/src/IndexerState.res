@@ -499,10 +499,7 @@ let committedCheckpointIdFor = (state: t, ~scope) =>
 let rollbackDiffFrontier = (state: t, ~floors: RollbackFloors.t) =>
   floors.floors.byChain
   ->Frontier.chainIds
-  ->Array.map(chainId => (
-    chainId,
-    state.committedFrontier->Frontier.get(chainId)->BigInt.add(1n),
-  ))
+  ->Array.map(chainId => (chainId, state.committedFrontier->Frontier.get(chainId)->BigInt.add(1n)))
   ->Frontier.fromEntries
 let processedBatches = (state: t) => state.processedBatches
 let processedBatchesCount = (state: t) => state.processedBatchesCount
@@ -875,6 +872,13 @@ let beginRollbackDiff = (
   }
   state.rollback = Some({
     diffFrontier,
+    diffCheckpoints: diffFrontier
+    ->Frontier.entries
+    ->Array.map(((chainId, checkpointId)): InternalTable.Checkpoints.diffCheckpoint => {
+      chainId,
+      checkpointId,
+      blockNumber: state->getChainState(~chainId)->ChainState.committedProgressBlockNumber,
+    }),
     floors,
     progressedChains,
     rolledBackAddresses,

@@ -1016,6 +1016,76 @@ describe("Isolated multichain rollback", () => {
     },
   )
 
+  // The sink is append-only, so a rollback reaches it as a diff row stamped with
+  // the first checkpoint id after what the chain had committed — above the rows
+  // it replaces, so it outranks them. Only the chain's own next batch lifts the
+  // frontier past that id, though, and the view reads nothing above it: while a
+  // sibling carries the diff, the frontier sits between the orphaned rows and
+  // the diff meant to supersede them.
+  clickHouseScenario->Scenario.it(
+    "Reads back the rolled-back value while a sibling's batch carries the diff",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+      let source1337 = source(1337)
+
+      await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
+
+      // One block further on chain 1337, so the reorg chain is the one holding
+      // the highest checkpoint when its own rows are orphaned.
+      source1337.resolveGetItemsOrThrow(
+        [setCounter(~block=103, ~count=13373n)],
+        ~filter=MockSource.coveringBlock(103),
+        ~latestFetchedBlockNumber=103,
+      )
+      await indexer.getBatchWritePromise()
+
+      await reorgAt(
+        ~indexer,
+        ~source=source1337,
+        ~sibling=source100,
+        ~atBlock=103,
+        ~scanned=[(100, #valid), (101, #valid), (102, #valid)],
+      )
+
+      // Only chain 100 progresses, so its batch is what commits the diff — and
+      // its own ids never reach the one the diff carries.
+      source100.resolveGetItemsOrThrow(
+        [],
+        ~filter=MockSource.coveringBlock(103),
+        ~latestFetchedBlockNumber=104,
+      )
+      await indexer.getBatchWritePromise()
+      await indexer.waitUntilIdle()
+
+      let database = TestClickHouse.currentDatabase()
+      t.expect(
+        (
+          (
+            await TestClickHouse.query(
+              `SELECT id, count, chainId FROM \`${database}\`.\`Counter\` ORDER BY chainId FORMAT JSONEachRow`,
+            )
+          )->String.trim,
+          // The diff's own checkpoint, carrying the chain it belongs to and the
+          // block the rollback left it on — nothing else would put it under the
+          // frontier the view reads.
+
+          (
+            await TestClickHouse.query(
+              `SELECT chain_id, id, block_number FROM \`${database}\`.\`envio_checkpoints\` WHERE block_hash IS NULL FORMAT JSONEachRow`,
+            )
+          )->String.trim,
+        ),
+        ~message="Chain 1337 reads back at block 102, not at the block its reorg orphaned",
+      ).toEqual((
+        `{"id":"total","count":"1002","chainId":100}
+{"id":"total","count":"13372","chainId":1337}`,
+        `{"chain_id":1337,"id":5,"block_number":102}`,
+      ))
+    },
+  )
+
   clickHouseScenario->Scenario.it(
     "Mirrors the isolated rollback into the ClickHouse sink",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
