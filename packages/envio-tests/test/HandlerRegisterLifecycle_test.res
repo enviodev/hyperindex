@@ -138,16 +138,6 @@ describe("HandlerRegister — onBlock validation at registration", () => {
     )
   })
 
-  it("throws when startBlock is below the chain start block", t => {
-    t->toThrowErrorEqual(
-      () =>
-        HandlerRegister.registerOnBlock(
-          ~name="tooEarly",
-          ~where=%raw(`({chain}) => chain.id === 137 ? {block: {number: {_gte: 0}}} : false`),
-          ~handler=noopBlockHandler,
-          ~getChainsObject,
-        ),
-      `The start block for onBlock handler "tooEarly" is less than the chain start block (1). This is not supported yet.`,
-    )
-  })
+  // The matching start-block check moved to `ChainState`, where the chain's
+  // resolved start block exists - see ChainState_test.
 })

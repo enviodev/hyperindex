@@ -125,8 +125,13 @@ let buildChainsObject = (~config: Config.t) => {
         enumerable: true,
         get: () => {
           switch getInitialChainState(~chainId=chainConfig.id) {
-          | Some(chainState) => chainState.startBlock
-          | None => chainConfig.startBlock
+          | Some({startBlock: Some(startBlock)}) => startBlock
+          | _ =>
+            // A `start_block: latest` chain has no start block until it reads
+            // its head, and that happens after handler modules load. The public
+            // type is `number`, so that one window - a top-level read on a first
+            // deploy - reports 0 rather than undefined.
+            chainConfig.startBlock->Option.getOr(0)
           }
         },
       },
@@ -694,7 +699,7 @@ let start = async (
     )
   }
 
-  let state = IndexerState.makeFromDbState(
+  let state = await IndexerState.makeFromDbState(
     ~config,
     ~persistence,
     ~initialState=persistence->Persistence.getInitializedState,

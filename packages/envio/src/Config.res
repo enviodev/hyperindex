@@ -46,7 +46,11 @@ type chain = {
   name: string,
   id: ChainId.t,
   ecosystem: Ecosystem.name,
-  startBlock: int,
+  // `None` is `start_block: latest`, which has no value until the chain's head
+  // is read on first deploy. What config.yaml says, never rewritten: once
+  // resolved, the block lives in the database (`envio_chains.start_block`) and
+  // that is what every consumer past startup reads.
+  startBlock: option<int>,
   endBlock?: int,
   maxReorgDepth: int,
   blockLag: int,
@@ -157,10 +161,17 @@ let chainContractSchema = S.schema(s =>
   }
 )
 
+// `None` is `start_block: latest`, resolved against the chain's head on first
+// deploy.
+let startBlockSchema = S.union([
+  S.int->S.shape(n => Some(n)),
+  S.literal("latest")->S.shape(_ => None),
+])
+
 let publicConfigChainSchema = S.schema(s =>
   {
     "id": s.matches(ChainId.schema),
-    "startBlock": s.matches(S.int),
+    "startBlock": s.matches(startBlockSchema),
     "endBlock": s.matches(S.option(S.int)),
     "maxReorgDepth": s.matches(S.option(S.int)),
     "blockLag": s.matches(S.option(S.int)),

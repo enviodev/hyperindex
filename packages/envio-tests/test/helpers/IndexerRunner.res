@@ -139,7 +139,7 @@ let run = async (
       ~reset,
     )
 
-    let state = IndexerState.makeFromDbState(
+    let state = await IndexerState.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~persistence,

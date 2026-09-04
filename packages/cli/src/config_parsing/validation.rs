@@ -1,5 +1,5 @@
 // use super::chain_helpers;
-use super::human_config::{self, evm::HumanConfig};
+use super::human_config::{self, evm::HumanConfig, StartBlock};
 use crate::constants::reserved_keywords::RESERVED_NAMES;
 use anyhow::{anyhow, Context};
 use regex::Regex;
@@ -114,11 +114,40 @@ impl human_config::evm::Chain {
     }
 
     pub fn validate_endblock_lte_startblock(&self) -> anyhow::Result<()> {
-        if let Some(network_endblock) = self.end_block {
-            if network_endblock < self.start_block {
+        // A `latest` start block isn't known until runtime, so it can't be
+        // checked here - the indexer re-validates once it resolves "latest"
+        // to a concrete block (see StartBlockResolver.res).
+        if let (Some(network_endblock), StartBlock::Number(start_block)) =
+            (self.end_block, self.start_block)
+        {
+            if network_endblock < start_block {
                 return Err(anyhow!(
                     "The config has an end_block smaller than start_block for chain {}. end_block \
                      must be greater than or equal to start_block.",
+                    self.id
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    // A contract can't start before its chain, and a `latest` chain start block
+    // is only known once the indexer first runs - so any contract-level
+    // start_block is guaranteed to be in the past relative to it.
+    pub fn validate_no_contract_start_block_with_latest(&self) -> anyhow::Result<()> {
+        if let StartBlock::Tag(_) = self.start_block {
+            if let Some(contract) = self
+                .contracts
+                .iter()
+                .flatten()
+                .find(|contract| contract.start_block.is_some())
+            {
+                return Err(anyhow!(
+                    "Contract {:?} on chain {} sets start_block, but the chain's start_block is \
+                     \"latest\". A contract can't start before its chain does, and \"latest\" \
+                     isn't known until the indexer first runs. Remove the contract's \
+                     start_block, or pin the chain's start_block to a fixed value.",
+                    contract.name,
                     self.id
                 ));
             }
@@ -139,6 +168,7 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     for chain in &evm_config.chains {
         // validate endblock is a greater than the startblock
         chain.validate_endblock_lte_startblock()?;
+        chain.validate_no_contract_start_block_with_latest()?;
         chain.validate_finite_endblock_networks()?;
 
         // Addresses are compared case-insensitively: checksum and lowercase
@@ -290,6 +320,87 @@ pub fn check_schema_enums_are_valid_postgres(enum_names: &Vec<String>) -> Vec<St
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
+
+    fn make_chain(
+        start_block: super::StartBlock,
+        end_block: Option<u64>,
+    ) -> super::human_config::evm::Chain {
+        super::human_config::evm::Chain {
+            id: 1,
+            skip: None,
+            rpc: None,
+            hypersync_config: None,
+            max_reorg_depth: None,
+            block_lag: None,
+            start_block,
+            end_block,
+            contracts: None,
+        }
+    }
+
+    #[test]
+    fn endblock_lte_startblock_rejects_number_start_block_above_end_block() {
+        let chain = make_chain(super::StartBlock::Number(100), Some(50));
+        assert!(chain.validate_endblock_lte_startblock().is_err());
+    }
+
+    #[test]
+    fn endblock_lte_startblock_accepts_number_start_block_at_or_below_end_block() {
+        let chain = make_chain(super::StartBlock::Number(50), Some(100));
+        assert!(chain.validate_endblock_lte_startblock().is_ok());
+    }
+
+    #[test]
+    fn endblock_lte_startblock_cannot_check_latest_statically_so_it_always_passes() {
+        // "latest" isn't known until runtime - the indexer re-validates once
+        // it resolves to a concrete block (see StartBlockResolver.res).
+        let chain = make_chain(
+            super::StartBlock::Tag(super::human_config::StartBlockTag::Latest),
+            Some(1),
+        );
+        assert!(chain.validate_endblock_lte_startblock().is_ok());
+
+        let chain_no_end_block = make_chain(
+            super::StartBlock::Tag(super::human_config::StartBlockTag::Latest),
+            None,
+        );
+        assert!(chain_no_end_block
+            .validate_endblock_lte_startblock()
+            .is_ok());
+    }
+
+    #[test]
+    fn latest_start_block_rejects_a_contract_level_start_block() {
+        let contracts = Some(vec![super::human_config::ChainContract {
+            name: "C".to_string(),
+            address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+                .to_string()
+                .into(),
+            start_block: Some(100),
+            config: None,
+        }]);
+
+        let mut latest = make_chain(
+            super::StartBlock::Tag(super::human_config::StartBlockTag::Latest),
+            None,
+        );
+        latest.contracts = contracts.clone();
+
+        let mut numeric = make_chain(super::StartBlock::Number(0), None);
+        numeric.contracts = contracts;
+
+        assert_eq!(
+            (
+                latest
+                    .validate_no_contract_start_block_with_latest()
+                    .is_err(),
+                numeric
+                    .validate_no_contract_start_block_with_latest()
+                    .is_ok(),
+            ),
+            (true, true)
+        );
+    }
 
     #[test]
     fn valid_postgres_db_name() {

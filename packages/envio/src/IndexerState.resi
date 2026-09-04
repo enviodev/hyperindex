@@ -37,7 +37,7 @@ let makeFromDbState: (
   ~targetBufferSize: int=?,
   ~onError: ErrorHandling.t => unit,
   ~onExit: unit => unit=?,
-) => t
+) => promise<t>
 
 let unexpectedErrorMsg: string
 

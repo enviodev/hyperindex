@@ -20,7 +20,10 @@ type effectCacheRecord = {
 
 type initialChainState = {
   id: ChainId.t,
-  startBlock: int,
+  // `None` only for a `start_block: latest` chain that has not read its head
+  // yet, which is the window between storage initialization and the chain
+  // resolving it. `ChainState` fills it in and persists it before indexing.
+  mutable startBlock: option<int>,
   endBlock: option<int>,
   maxReorgDepth: int,
   progressBlockNumber: int,
@@ -145,6 +148,9 @@ type storage = {
   reset: unit => promise<unit>,
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
+  // Records a `start_block: latest` chain's resolved head. Writes only where the
+  // column is still null, so the first resolution is the one that sticks.
+  setChainStartBlock: (~chainId: ChainId.t, ~startBlock: int) => promise<unit>,
   // Prune old checkpoints
   pruneStaleCheckpoints: (~safeCheckpoints: CheckpointBounds.t) => promise<unit>,
   // Prune stale entity history

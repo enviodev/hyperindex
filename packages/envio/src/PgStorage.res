@@ -2328,7 +2328,7 @@ let make = (
       )->Promise.thenResolve(rawInitialStates => {
         rawInitialStates->Array.map((rawInitialState): Persistence.initialChainState => {
           id: rawInitialState.id,
-          startBlock: rawInitialState.startBlock,
+          startBlock: rawInitialState.startBlock->Null.toOption,
           endBlock: rawInitialState.endBlock->Null.toOption,
           maxReorgDepth: rawInitialState.maxReorgDepth,
           firstEventBlockNumber: rawInitialState.firstEventBlockNumber->Null.toOption,
@@ -2402,6 +2402,16 @@ let make = (
   let reset = async () => {
     let query = `DROP SCHEMA IF EXISTS "${pgSchema}" CASCADE;`
     await sql->Postgres.unsafe(query)->Utils.Promise.ignoreValue
+  }
+
+  let setChainStartBlock = async (~chainId, ~startBlock) => {
+    let _ = await sql->Postgres.preparedUnsafe(
+      InternalTable.Chains.makeSetStartBlockQuery(~pgSchema),
+      [
+        startBlock->(Utils.magic: int => unknown),
+        chainId->(Utils.magic: ChainId.t => unknown),
+      ]->(Utils.magic: array<unknown> => unknown),
+    )
   }
 
   let setChainMeta = chainsData =>
@@ -2555,6 +2565,7 @@ let make = (
     dumpEffectCache,
     reset,
     setChainMeta,
+    setChainStartBlock,
     pruneStaleCheckpoints,
     pruneStaleEntityHistory,
     getRollbackTargetCheckpoint,

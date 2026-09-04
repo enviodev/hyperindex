@@ -261,7 +261,7 @@ let makeInitialState = (
       ->Option.getOr(AddressRows.emptySeedRows())
     {
       Persistence.id: chain,
-      startBlock: processChainConfig.startBlock,
+      startBlock: Some(processChainConfig.startBlock),
       endBlock: processChainConfig.endBlock,
       sourceBlockNumber: processChainConfig.endBlock->Option.getOr(0),
       maxReorgDepth: 0, // No reorg support in test indexer
@@ -355,13 +355,16 @@ let parseBlockRange = (
     JsError.throwWithMessage(`Chain ${chainIdStr} is not configured in config.yaml`)
   }
   let configChain = config.chainMap->ChainMap.get(chain)
+  // The test indexer has no chain to read a head from, so an unresolved
+  // `start_block: latest` behaves as 0: every block a test simulates is in range.
+  let configStartBlock = configChain.startBlock->Option.getOr(0)
 
   let startBlock = switch rawChainConfig.startBlock {
   | Some(sb) => sb
   | None =>
     switch progressBlock {
     | Some(prevEndBlock) => prevEndBlock + 1
-    | None => configChain.startBlock
+    | None => configStartBlock
     }
   }
 
@@ -378,10 +381,10 @@ let parseBlockRange = (
   | None => None // auto-exit mode: will fetch first block with events and exit
   }
 
-  if startBlock < configChain.startBlock {
+  if startBlock < configStartBlock {
     JsError.throwWithMessage(
-      `Invalid block range for chain ${chainIdStr}: startBlock (${startBlock->Int.toString}) is less than config.startBlock (${configChain.startBlock->Int.toString}). ` ++
-      `Either use startBlock >= ${configChain.startBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
+      `Invalid block range for chain ${chainIdStr}: startBlock (${startBlock->Int.toString}) is less than config.startBlock (${configStartBlock->Int.toString}). ` ++
+      `Either use startBlock >= ${configStartBlock->Int.toString} or create a new test indexer with createTestIndexer().`,
     )
   }
 
@@ -625,6 +628,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   dumpEffectCache: async () => (),
   reset: async () => (),
   setChainMeta: async _ => Obj.magic(),
+  setChainStartBlock: async (~chainId as _, ~startBlock as _) => (),
   pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
   pruneStaleEntityHistory: async (
     ~entityName as _,
@@ -754,7 +758,7 @@ let createTestIndexer = (): t<'processConfig> => {
     ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
     ->Utils.Object.definePropertyWithValue(
       "startBlock",
-      {enumerable: true, value: chainConfig.startBlock},
+      {enumerable: true, value: chainConfig.startBlock->Option.getOr(0)},
     )
     ->Utils.Object.definePropertyWithValue(
       "endBlock",
@@ -954,23 +958,31 @@ let createTestIndexer = (): t<'processConfig> => {
             }
           }
           try {
-            await Promise.make((resolve, reject) => {
-              let indexerState = IndexerState.makeFromDbState(
-                ~config=runConfig,
-                ~persistence,
-                ~initialState,
-                ~registrationsByChainId,
-                ~exitAfterFirstEventBlock,
-                ~onError=errHandler => {
-                  errHandler->ErrorHandling.log
-                  reject(errHandler.exn->Utils.prettifyExn)
-                },
-                // Caught up: resolve the run instead of exiting the process.
-                ~onExit=() => resolve(),
-              )
-              indexerStateRef := Some(indexerState)
-              indexerState->IndexerLoop.start
-            })
+            // Building the state is async now, so the run promise is created
+            // first and its settlers held: `onError`/`onExit` have to be in hand
+            // before the state that will call them exists.
+            let settlers = ref(None)
+            let runUntilExit = Promise.make(
+              (resolve, reject) => settlers := Some((resolve, reject)),
+            )
+            // `Promise.make` runs its executor synchronously, so this is filled.
+            let (resolve, reject) = settlers.contents->Option.getUnsafe
+            let indexerState = await IndexerState.makeFromDbState(
+              ~config=runConfig,
+              ~persistence,
+              ~initialState,
+              ~registrationsByChainId,
+              ~exitAfterFirstEventBlock,
+              ~onError=errHandler => {
+                errHandler->ErrorHandling.log
+                reject(errHandler.exn->Utils.prettifyExn)
+              },
+              // Caught up: resolve the run instead of exiting the process.
+              ~onExit=() => resolve(),
+            )
+            indexerStateRef := Some(indexerState)
+            indexerState->IndexerLoop.start
+            await runUntilExit
             await cleanup()
           } catch {
           | exn =>

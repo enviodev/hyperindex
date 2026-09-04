@@ -1743,7 +1743,7 @@ pub struct Chain {
     pub id: u64,
     pub skip: bool,
     pub sync_source: DataSource,
-    pub start_block: u64,
+    pub start_block: human_config::StartBlock,
     pub end_block: Option<u64>,
     pub max_reorg_depth: Option<u32>,
     pub block_lag: Option<u32>,

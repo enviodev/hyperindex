@@ -231,10 +231,8 @@
           ]
         },
         "start_block": {
-          "description": "The slot number at which the indexer should start ingesting data",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
+          "description": "The slot number at which the indexer should start ingesting data, or \"latest\" to start from the chain's current slot when the indexer is first deployed. Once resolved, the concrete slot is persisted and reused every time the indexer resumes normally (for example recovering from a crash), so downtime is backfilled instead of skipped. Running `envio start`/`dev` with -r (--restart) resets this like any other config change: \"latest\" resolves again, against the head at that time.",
+          "$ref": "#/$defs/StartBlock"
         },
         "end_block": {
           "description": "The slot number at which the indexer should terminate.",
@@ -291,6 +289,25 @@
       "enum": [
         "solana",
         "solana-devnet"
+      ]
+    },
+    "StartBlock": {
+      "description": "A chain's configured start block: either a concrete block number or the\nliteral \"latest\". Config parsing never touches the network, so `Latest`\nstays unresolved here — it's resolved once at runtime, right before the\nindexer's first-ever persisted state is written, and never re-resolved\non a normal resume (see packages/envio/src/sources/StartBlockResolver.res).\nNote: this repo's `-r`/`--restart` CLI flag wipes the DB and re-deploys\nfrom scratch, so it re-resolves \"latest\" too — \"resume\" here means the\nopposite: recovering from a crash or process restart without `-r`.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        {
+          "$ref": "#/$defs/StartBlockTag"
+        }
+      ]
+    },
+    "StartBlockTag": {
+      "type": "string",
+      "enum": [
+        "latest"
       ]
     },
     "Experimental": {

@@ -170,18 +170,44 @@ let make = (
   }
 }
 
+// The checks a fixed start block gets from codegen, applied to one that only
+// exists now. Ahead of the write, so a chain that can't index anything says so
+// instead of persisting a head it will never use.
+let validateResolvedStartBlock = (~chainConfig: Config.chain, ~head) => {
+  let chainId = chainConfig.id->ChainId.toString
+  switch chainConfig.endBlock {
+  | Some(endBlock) if head > endBlock =>
+    JsError.throwWithMessage(
+      `Chain ${chainId}: the "latest" start block resolved to ${head->Int.toString}, which is past the configured end_block (${endBlock->Int.toString}). There is nothing to index - remove end_block, raise it above the chain's current head, or pin start_block to a fixed value instead of "latest".`,
+    )
+  | _ => ()
+  }
+  chainConfig.contracts->Array.forEach(contract =>
+    switch contract.startBlock {
+    | Some(contractStartBlock) if contractStartBlock < head =>
+      JsError.throwWithMessage(
+        `Chain ${chainId}: contract "${contract.name}" has start_block ${contractStartBlock->Int.toString}, but the chain's "latest" start block resolved to ${head->Int.toString}. A contract can't start before its chain does - remove the contract's start_block, or pin the chain's start_block to a fixed value instead of "latest".`,
+      )
+    | _ => ()
+    }
+  )
+}
+
 let makeInternal = (
   ~chainConfig: Config.chain,
   ~addressRows: AddressRows.seedRows,
-  // Passed rather than read off `config`, because a resume must use the mapping
-  // storage holds: the ids stored rows carry, not the ids this config derives.
-  ~contractMapping: ContractMapping.t,
+  // Built by the caller, because resolving a `latest` start block has to ask
+  // these same sources for the chain's head before there is a start block to
+  // build a fetch state around.
+  ~onEventRegistrations: array<Internal.onEventRegistration>,
+  ~onBlockRegistrations: array<Internal.onBlockRegistration>,
+  ~addressStore: AddressStore.t,
+  ~sources: array<Source.t>,
   ~startBlock,
   ~endBlock,
   ~firstEventBlock=None,
   ~progressBlockNumber,
   ~config: Config.t,
-  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
@@ -193,17 +219,9 @@ let makeInternal = (
   ~isResumed=false,
   ~reducedPollingInterval=?,
 ): t => {
-  // Handler binding + `where`-derived fetch state, and onBlock registrations,
-  // are already collected by `HandlerRegister.finishRegistration`, keyed by
-  // chain - this just looks up this chain's slice.
-  let {onEventRegistrations, onBlockRegistrations} =
-    registrationsByChainId
-    ->Utils.Dict.dangerouslyGetNonOption(chainConfig.id->ChainId.toString)
-    ->Option.getOr({onEventRegistrations: [], onBlockRegistrations: []})
-
   chainConfig.contracts->Array.forEach(contract => {
     switch contract.startBlock {
-    | Some(startBlock) if startBlock < chainConfig.startBlock =>
+    | Some(contractStartBlock) if contractStartBlock < startBlock =>
       JsError.throwWithMessage(
         `The start block for contract "${contract.name}" is less than the chain start block. This is not supported yet.`,
       )
@@ -211,14 +229,17 @@ let makeInternal = (
     }
   })
 
-  let lowercaseAddresses = config.lowercaseAddresses
-  // Created before the fetch state and the sources: `make` registers this
-  // chain's addresses into it, and every source client holds the same handle.
-  let addressStore = AddressStore.make(
-    ~ecosystem=config.ecosystem.name,
-    ~shouldChecksum=!lowercaseAddresses,
-    ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
+  onBlockRegistrations->Array.forEach(registration =>
+    switch registration.startBlock {
+    | Some(handlerStartBlock) if handlerStartBlock < startBlock =>
+      JsError.throwWithMessage(
+        `The start block for onBlock handler "${registration.name}" is less than the chain start block (${startBlock->Int.toString}). This is not supported yet.`,
+      )
+    | _ => ()
+    }
   )
+
+  let lowercaseAddresses = config.lowercaseAddresses
 
   let fetchState = FetchState.make(
     ~maxAddrInPartition=config.maxAddrInPartition,
@@ -260,80 +281,6 @@ let makeInternal = (
       None
     }
   })
-
-  // Create sources lazily here - this is where API token validation happens
-  let chainId = chainConfig.id
-  let sources = switch chainConfig.sourceConfig {
-  | Config.EvmSourceConfig({hypersync, rpcs}) =>
-    let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
-      let syncConfig = rpc.syncConfig
-      let ws = rpc.ws
-      let headers = rpc.headers
-      {
-        url: rpc.url,
-        sourceFor: rpc.sourceFor,
-        ?syncConfig,
-        ?ws,
-        ?headers,
-      }
-    })
-    EvmChain.makeSources(
-      ~chainId,
-      ~onEventRegistrations=onEventRegistrations->(
-        Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
-      ),
-      ~hyperSync=hypersync,
-      ~rpcs=evmRpcs,
-      ~lowercaseAddresses,
-      ~addressStore,
-    )
-  | Config.FuelSourceConfig({hypersync}) => [
-      FuelHyperSyncSource.make({
-        chainId,
-        endpointUrl: hypersync,
-        apiToken: Env.envioApiToken,
-        onEventRegistrations,
-        addressStore,
-      }),
-    ]
-  | Config.SvmSourceConfig({hypersync, rpc}) =>
-    switch (hypersync, rpc) {
-    | (None, None) =>
-      JsError.throwWithMessage(`Chain ${chainId->ChainId.toString} has no SVM data source`)
-    | (None, Some(rpc)) => [Svm.makeRPCSource(~chainId, ~rpc)]
-    | (Some(hypersyncUrl), _) =>
-      // HyperSync drives instruction sync. A configured RPC is ignored for now
-      // (RPC fallback isn't wired up yet).
-      let apiToken = Env.envioApiToken
-      [
-        SvmHyperSyncSource.make({
-          chainId,
-          endpointUrl: hypersyncUrl,
-          apiToken,
-          onEventRegistrations: onEventRegistrations->(
-            Utils.magic: array<Internal.onEventRegistration> => array<
-              Internal.svmOnEventRegistration,
-            >
-          ),
-          clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
-          addressStore,
-        }),
-      ]
-    }
-  | Config.SimulateSourceConfig({items, endBlock, ?transactionStore, ?blockStore}) => [
-      SimulateSource.make(
-        ~items,
-        ~endBlock,
-        ~chainId,
-        ~addressStore,
-        ~ecosystem=config.ecosystem.name,
-        ~transactionStore,
-        ~blockStore,
-      ),
-    ]
-  // For tests: use ready-to-use sources directly
-  | Config.CustomSources(sources) => sources
-  }
 
   let blockStore = BlockStore.make(
     ~ecosystem=config.ecosystem.name,
@@ -395,34 +342,88 @@ let makeInternal = (
 /**
  * This function allows a chain state to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
-let makeFromDbState = (
+let makeFromDbState = async (
   chainConfig: Config.chain,
   ~resumedChainState: Persistence.initialChainState,
   ~reorgCheckpoints,
   ~isInReorgThreshold,
   ~isRealtime,
-  ~config,
+  ~config: Config.t,
+  // Passed rather than read off `config`, because a resume must use the mapping
+  // storage holds: the ids stored rows carry, not the ids this config derives.
   ~contractMapping,
-  ~registrationsByChainId,
+  ~registrationsByChainId: HandlerRegister.registrationsByChainId,
+  ~persistence: Persistence.t,
   ~reducedPollingInterval=?,
 ) => {
   let chainId = chainConfig.id
   let logger = Logging.createChild(~params={"chainId": chainId})
 
+  // Handler binding + `where`-derived fetch state, and onBlock registrations,
+  // are already collected by `HandlerRegister.finishRegistration`, keyed by
+  // chain - this just looks up this chain's slice.
+  let {onEventRegistrations, onBlockRegistrations} =
+    registrationsByChainId
+    ->Utils.Dict.dangerouslyGetNonOption(chainId->ChainId.toString)
+    ->Option.getOr({onEventRegistrations: [], onBlockRegistrations: []})
+
+  let lowercaseAddresses = config.lowercaseAddresses
+  // Created before the sources and the fetch state: `FetchState.make` registers
+  // this chain's addresses into it, and every source client holds the same
+  // handle rather than a copy of what was in it at construction.
+  let addressStore = AddressStore.make(
+    ~ecosystem=config.ecosystem.name,
+    ~shouldChecksum=!lowercaseAddresses,
+    ~contracts=AddressStore.contractsOf(~onEventRegistrations, ~contractMapping),
+  )
+  // Built here, not in `makeInternal`, so a `latest` start block can be read
+  // from the very sources this chain goes on to index with. This is also where
+  // API token validation happens.
+  let sources = ChainSources.make(
+    ~chainConfig,
+    ~onEventRegistrations,
+    ~addressStore,
+    ~lowercaseAddresses,
+  )
+
+  let startBlock = switch resumedChainState.startBlock {
+  | Some(startBlock) => startBlock
+  | None =>
+    let head = await StartBlockResolver.resolveOrThrow(
+      ~chainId,
+      ~sources,
+      ~logger,
+    )
+    validateResolvedStartBlock(~chainConfig, ~head)
+    // Persisted before anything is indexed, so the next start reads this block
+    // back instead of resolving against a newer head. A crash in between
+    // re-resolves, which is harmless precisely because nothing was indexed yet.
+    await persistence.storage.setChainStartBlock(~chainId, ~startBlock=head)
+    resumedChainState.startBlock = Some(head)
+    Logging.info({
+      "msg": `Resolved the "latest" start block for chain ${chainId->ChainId.toString} to block ${head->Int.toString}.`,
+      "chainId": chainId,
+      "startBlock": head,
+    })
+    head
+  }
+
   let progressBlockNumber =
     // Can be -1 when not set
     resumedChainState.progressBlockNumber >= 0
       ? resumedChainState.progressBlockNumber
-      : resumedChainState.startBlock - 1
+      : startBlock - 1
 
   makeInternal(
     ~addressRows=resumedChainState.addressRows,
-    ~contractMapping,
     ~chainConfig,
-    ~startBlock=resumedChainState.startBlock,
+    ~onEventRegistrations,
+    ~onBlockRegistrations,
+    ~addressStore,
+    ~sources,
+    ~startBlock,
     ~endBlock=resumedChainState.endBlock,
     ~config,
-    ~registrationsByChainId,
     ~reorgCheckpoints,
     ~maxReorgDepth=resumedChainState.maxReorgDepth,
     ~firstEventBlock=resumedChainState.firstEventBlockNumber,
