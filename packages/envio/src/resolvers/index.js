@@ -46,15 +46,22 @@ export function createResolver(options) {
   if (typeof handler !== "function") {
     throw new Error(`Resolver '${name}' requires a \`handler\` function`);
   }
-  if (
-    options.maxBlocksBehind !== undefined &&
-    (typeof options.maxBlocksBehind !== "number" ||
-      !Number.isSafeInteger(options.maxBlocksBehind) ||
-      options.maxBlocksBehind < 0)
-  ) {
-    throw new Error(
-      `Resolver '${name}' has an invalid \`maxBlocksBehind\`. It is how far behind head this resolver will still answer, in blocks, so it must be a whole number of blocks and not negative.`
-    );
+  if (options.maxBlocksBehind !== undefined) {
+    const whole = (value) =>
+      typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+    const limit = options.maxBlocksBehind;
+    const ok =
+      whole(limit) ||
+      (typeof limit === "object" &&
+        limit !== null &&
+        !Array.isArray(limit) &&
+        Object.keys(limit).length > 0 &&
+        Object.entries(limit).every(([chainId, value]) => whole(Number(chainId)) && whole(value)));
+    if (!ok) {
+      throw new Error(
+        `Resolver '${name}' has an invalid \`maxBlocksBehind\`. It is how far behind head this resolver will still answer, so it is either a whole number of blocks applying to every chain, or an object of chainId to blocks naming the chains it cares about.`
+      );
+    }
   }
   if (typeof timeoutMs !== "number" || timeoutMs <= 0) {
     throw new Error(
