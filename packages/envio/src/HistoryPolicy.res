@@ -13,6 +13,9 @@ type t =
   | Shared(keep)
   | ByChain(dict<keep>)
 
+%%private(let anyChainKeeps = (keepsHistory: dict<bool>) =>
+  keepsHistory->Dict.valuesToArray->Array.some(keeps => keeps))
+
 // `save_full_history` keeps everything regardless. Everything else follows
 // `keepsHistory` per chain — whether a rollback can still reach what that chain
 // writes.
@@ -21,7 +24,7 @@ let decide = (config: Config.t, ~keepsHistory: dict<bool>): t =>
     Shared(Keep)
   } else {
     switch config.checkpointSequence {
-    | Global => Shared(keepsHistory->Dict.valuesToArray->Array.some(keeps => keeps) ? Keep : Skip)
+    | Global => Shared(keepsHistory->anyChainKeeps ? Keep : Skip)
     | PerChain => ByChain(keepsHistory->Utils.Dict.mapValues(keeps => keeps ? Keep : Skip))
     }
   }
@@ -46,4 +49,4 @@ let forScope = (t: t, ~scope: Internal.chainScope): keep =>
 // Whether a run has stale history to prune at all: history it keeps but doesn't
 // keep forever.
 let mayPrune = (config: Config.t, ~keepsHistory: dict<bool>) =>
-  !config.shouldSaveFullHistory && keepsHistory->Dict.valuesToArray->Array.some(keeps => keeps)
+  !config.shouldSaveFullHistory && keepsHistory->anyChainKeeps

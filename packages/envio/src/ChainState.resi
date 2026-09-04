@@ -154,7 +154,6 @@ let prepareReorg: (t, ~eventsProcessedDiff: option<float>) => unit
 let resetPendingQueries: t => unit
 let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
-let markInReorgThreshold: t => unit
 let enterReorgThreshold: t => unit
 let isInReorgThreshold: t => bool
 let keepsHistory: t => bool

@@ -26,6 +26,20 @@ let forScope = (sequence: t, frontier: Frontier.t, ~scope: Internal.chainScope) 
     }
   }
 
+// The diff id a scope's rows carry after a rollback, taken from the frontier the
+// rollback stamped them with. A per-chain rollback names only the chains it
+// moved: a sibling it left alone has no diff row, and so no id to compare
+// against.
+let findForScope = (
+  sequence: t,
+  frontier: Frontier.t,
+  ~scope: Internal.chainScope,
+): option<Internal.checkpointId> =>
+  switch scope {
+  | Chain(chainId) => frontier->Frontier.find(chainId)
+  | CrossChain => Some(sequence->forScope(frontier, ~scope))
+  }
+
 // Hands out the ids of one batch, starting from where the frontier left each
 // chain. Under `Global` the ids come from a single run of the counter, so they
 // interleave across chains in allocation order; under `PerChain` each chain

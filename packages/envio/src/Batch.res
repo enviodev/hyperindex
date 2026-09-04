@@ -195,7 +195,7 @@ let addReorgCheckpoints = (
 // suffix if ids and blocks agree on order within each chain. Under one shared
 // sequence ids interleave freely *across* chains, which is exactly why an
 // isolated rollback can't take the id bound alone.
-let prepareBatch = (
+let make = (
   ~sequence: CheckpointSequence.t,
   ~frontier: Frontier.t,
   ~chainsBeforeBatch: dict<chainBeforeBatch>,
@@ -334,10 +334,6 @@ let prepareBatch = (
     checkpointEventsProcessed,
     registeredAddresses: [],
   }
-}
-
-let make = (~sequence, ~frontier, ~chainsBeforeBatch: dict<chainBeforeBatch>, ~batchSizeTarget, ~history) => {
-  prepareBatch(~sequence, ~frontier, ~chainsBeforeBatch, ~batchSizeTarget, ~history)
 }
 
 let findFirstEventBlockNumber = (batch: t, ~chainId) => {

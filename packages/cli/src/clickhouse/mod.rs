@@ -823,6 +823,12 @@ impl ClickHouseSink {
             database_engine,
         } = input;
         let bounds = self.resume_bounds(per_chain, &chain_progress).await?;
+        // Every trim below is an `ALTER ... DELETE`, and on replicated storage
+        // it is run unconditionally and waited on across replicas. A bound
+        // nothing can be above is not worth one per table.
+        if bounds.bounds_nothing() {
+            return Ok(());
+        }
 
         let above_by_table = history_tables
             .iter()
@@ -1492,6 +1498,28 @@ mod tests {
                 .any(|statement| statement
                     .contains("(`chain_id` = 137 AND `envio_checkpoint_id` > 3)")),
             "chain 137 should be trimmed to the id Postgres committed"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_per_chain_resume_with_no_chains_trims_nothing() {
+        let server =
+            mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(&[], &[]))
+                .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(ResumeInput {
+            per_chain: true,
+            chain_progress: Vec::new(),
+            ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            server.statements_seen(),
+            Vec::<String>::new(),
+            "a bound no row can be above is not worth an ALTER ... DELETE per table"
         );
     }
 

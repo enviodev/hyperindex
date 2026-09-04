@@ -140,7 +140,14 @@ let prepareRollbackDiff = async (
   )
   let persistence = state->IndexerState.persistence
   let sequence = (state->IndexerState.config).checkpointSequence
-  let diffCheckpointId = scope => sequence->CheckpointSequence.forScope(diffFrontier, ~scope)
+  let diffCheckpointId = scope =>
+    switch sequence->CheckpointSequence.findForScope(diffFrontier, ~scope) {
+    | Some(checkpointId) => checkpointId
+    | None =>
+      JsError.throwWithMessage(
+        "Internal error: the rollback returned rows for a chain its diff never moved.",
+      )
+    }
 
   let deletedEntities = Dict.make()
   let setEntities = Dict.make()

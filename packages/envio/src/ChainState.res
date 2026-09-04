@@ -1013,15 +1013,12 @@ let setEndBlockToFirstEvent = (cs: t, ~blockNumber) =>
   | Some(_) => ()
   }
 
-let markInReorgThreshold = (cs: t) =>
+// Shrink the fetch buffer by the configured blockLag on entering the reorg threshold.
+let enterReorgThreshold = (cs: t) => {
   switch cs.threshold {
   | NoRollback => ()
   | BelowThreshold | InThreshold => cs.threshold = InThreshold
   }
-
-// Shrink the fetch buffer by the configured blockLag on entering the reorg threshold.
-let enterReorgThreshold = (cs: t) => {
-  cs->markInReorgThreshold
   cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
 }
 

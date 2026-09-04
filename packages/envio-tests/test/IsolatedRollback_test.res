@@ -57,6 +57,23 @@ let scenario = Scenario.make(
   ~configYaml=makeConfigYaml(~name="isolated-rollback"),
 )
 
+// A single chain with no cross-chain entity is a per-chain sequence too: nothing
+// about the mode needs a sibling, and the chain-id column every per-chain entity
+// carries is what its bounds join against.
+let singleChainScenario = Scenario.make(
+  ~schema=perChainSchema,
+  ~configYaml=`
+name: single-chain-per-chain
+rollback_on_reorg: true
+disable_default_cross_chain: true
+contracts:
+  - name: Token
+    events:
+      - event: Transfer()
+chains:${chainYaml(100)}
+`,
+)
+
 // One cross-chain entity is enough to couple the chains: a value chain 1337
 // wrote can be what chain 100 read and overwrote, so its reorg has to take
 // every chain back with it.
@@ -1109,6 +1126,51 @@ describe("Isolated multichain rollback", () => {
         ~message="The view resolves chain 100's untouched row and chain 1337's re-indexed one",
       ).toEqual(`{"id":"total","count":"1002","chainId":100}
 {"id":"total","count":"999","chainId":1337}`)
+    },
+  )
+
+  singleChainScenario->Scenario.it(
+    "Rolls back a lone chain that counts its own checkpoint ids",
+    ~sources=[{chain: 100, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      let source100 = source(100)
+
+      await Utils.delay(0)
+      await Scenario.enterReorgThreshold(~t, ~indexer, ~source=source100)
+      source100.resolveGetItemsOrThrow(
+        [setCounter(~block=101, ~count=100n)],
+        ~latestFetchedBlockNumber=101,
+      )
+      await indexer.getBatchWritePromise()
+      source100.resolveGetItemsOrThrow(
+        [setCounter(~block=102, ~count=1002n)],
+        ~latestFetchedBlockNumber=102,
+      )
+      await indexer.getBatchWritePromise()
+
+      await reorgAt(
+        ~indexer,
+        ~source=source100,
+        ~atBlock=102,
+        ~scanned=[(100, #valid), (101, #valid)],
+      )
+      await reindexBlock102(~indexer, ~source=source100, ~count=999n)
+
+      t.expect(
+        await Promise.all3((indexer.queryCheckpoints(), counters(indexer), counterHistory(indexer))),
+        ~message="The lone chain rolled back and re-indexed on its own sequence",
+      ).toEqual((
+        [
+          checkpoint(~id=2n, ~chain=100, ~block=101, ~events=1),
+          checkpoint(~id=5n, ~chain=100, ~block=102, ~events=1),
+        ],
+        [{id: "total", count: 999n, chainId: 100}],
+        [
+          counterSet(~checkpointId=2n, ~chain=100, ~count=100n),
+          counterSet(~checkpointId=5n, ~chain=100, ~count=999n),
+        ],
+      ))
     },
   )
 })

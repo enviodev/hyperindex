@@ -73,7 +73,7 @@ let setCounterAndTotal = (~block, ~count: bigint): MockSource.itemMock => {
 
 // Installed by `mapStorage`, which is an argument to the test rather than part
 // of its body — so the handle lives out here, where both can reach it.
-let diffCheckpointIds: array<bigint> = []
+let stagedDiffs: array<InternalTable.Checkpoints.diffCheckpoint> = []
 
 describe("Rollback diff checkpoint ids", () => {
   scenario->Scenario.it(
@@ -95,9 +95,7 @@ describe("Rollback diff checkpoint ids", () => {
       ) => {
         switch rollback {
         | Some({diffCheckpoints}) =>
-          diffCheckpoints->Array.forEach(diff =>
-            diffCheckpointIds->Array.push(diff.checkpointId)->ignore
-          )
+          diffCheckpoints->Array.forEach(diff => stagedDiffs->Array.push(diff)->ignore)
         | None => ()
         }
         storage.writeBatch(
@@ -188,15 +186,26 @@ describe("Rollback diff checkpoint ids", () => {
       )
       await indexer.getBatchWritePromise()
 
-      let sorted = diffCheckpointIds->Array.toSorted((a, b) => a < b ? -1. : a > b ? 1. : 0.)
+      let sorted = stagedDiffs->Array.toSorted((a, b) =>
+        a.checkpointId < b.checkpointId ? -1. : a.checkpointId > b.checkpointId ? 1. : 0.
+      )
       t.expect(
         (
-          diffCheckpointIds->Array.length,
-          sorted->Array.every(id => id > highestCommitted),
-          sorted->Array.everyWithIndex((id, index) => index === 0 || id !== sorted->Array.getUnsafe(index - 1)),
+          stagedDiffs->Array.length,
+          sorted->Array.every(diff => diff.checkpointId > highestCommitted),
+          sorted->Array.everyWithIndex((diff, index) =>
+            index === 0 || diff.checkpointId !== (sorted->Array.getUnsafe(index - 1)).checkpointId
+          ),
+          // The block number is read after every chain state has been rewound,
+          // so a diff row never sits above the progress its chain stores with
+          // it. A resume that found one there would call the row uncovered and
+          // trim the diff away, un-reverting what the rollback reverted.
+          sorted
+          ->Array.toSorted((a, b) => ChainId.compare(a.chainId, b.chainId)->Int.toFloat)
+          ->Array.map(diff => (diff.chainId->ChainId.toInt, diff.blockNumber)),
         ),
-        ~message="Each rolled-back chain's diff gets its own id, and every one of them outranks everything already committed",
-      ).toEqual((2, true, true))
+        ~message="Each rolled-back chain's diff gets its own id, above everything committed, stamped with the block the rollback left it on",
+      ).toEqual((2, true, true, [(100, 101), (1337, 101)]))
     },
   )
 })

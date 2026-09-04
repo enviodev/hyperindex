@@ -30,6 +30,12 @@ let get = (frontier: t, chainId): Internal.checkpointId =>
   | None => Internal.initialCheckpointId
   }
 
+// Whether the frontier names the chain at all, as opposed to `get`'s reading of
+// an absent chain as the initial id. A rollback frontier names only the chains
+// it moved, and "no id" is not the same answer as "id zero" there.
+let find = (frontier: t, chainId): option<Internal.checkpointId> =>
+  frontier->ChainId.Dict.dangerouslyGetNonOption(chainId)
+
 let set = (frontier: t, chainId, checkpointId) => frontier->ChainId.Dict.set(chainId, checkpointId)
 
 // A dict key is the chain id's decimal string, which is the same key a chain id

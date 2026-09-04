@@ -1158,8 +1158,8 @@ let rec writeBatch = async (
       // The rollback-diff change is written to the entity table only, never the
       // history table; when present it is an id's oldest change.
       let diffCheckpointId =
-        rollback->Option.map(r =>
-          config.checkpointSequence->CheckpointSequence.forScope(r.diffFrontier, ~scope)
+        rollback->Option.flatMap(r =>
+          config.checkpointSequence->CheckpointSequence.findForScope(r.diffFrontier, ~scope)
         )
 
       // History batches, populated only when saving history.
