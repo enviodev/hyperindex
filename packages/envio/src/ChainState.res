@@ -138,7 +138,7 @@ let make = (
   ~safeCheckpointTracking=None,
   ~shouldRollbackOnReorg,
   ~maxReorgDepth,
-  ~threshold=?,
+  ~isInReorgThreshold=false,
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
@@ -168,9 +168,12 @@ let make = (
     safeCheckpointTracking,
     shouldRollbackOnReorg,
     maxReorgDepth,
-    threshold: switch threshold {
-    | Some(threshold) => threshold
-    | None => !shouldRollbackOnReorg || maxReorgDepth == 0 ? NoRollback : BelowThreshold
+    threshold: if !shouldRollbackOnReorg || maxReorgDepth == 0 {
+      NoRollback
+    } else if isInReorgThreshold {
+      InThreshold
+    } else {
+      BelowThreshold
     },
     transactionStore,
     blockStore,
@@ -389,13 +392,7 @@ let makeInternal = (
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
     ~maxReorgDepth,
-    ~threshold=if !config.shouldRollbackOnReorg || maxReorgDepth == 0 {
-      NoRollback
-    } else if isInReorgThreshold {
-      InThreshold
-    } else {
-      BelowThreshold
-    },
+    ~isInReorgThreshold,
     ~safeCheckpointTracking=SafeCheckpointTracking.make(
       ~maxReorgDepth,
       ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,

@@ -25,11 +25,7 @@ let calculateTargetBufferSize = () =>
   | None => 100_000
   }
 
-let make = (
-  ~chainStates,
-  ~isRealtime,
-  ~targetBufferSize=calculateTargetBufferSize(),
-): t => {
+let make = (~chainStates, ~isRealtime, ~targetBufferSize=calculateTargetBufferSize()): t => {
   {
     chainStates,
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),

@@ -90,6 +90,7 @@ let chainMetaThrottler: t => Throttler.t
 let crossChainState: t => CrossChainState.t
 let chainStates: t => dict<ChainState.t>
 let isInReorgThreshold: t => bool
+let keepsHistory: t => dict<bool>
 let isRealtime: t => bool
 let isFinalizingIndexes: t => bool
 let markCaughtUpIfSettled: t => unit

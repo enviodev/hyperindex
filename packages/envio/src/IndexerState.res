@@ -180,11 +180,7 @@ let make = (
     chainMetaDirty: false,
     chainMetaThrottler,
     isProcessing: false,
-    crossChainState: CrossChainState.make(
-      ~chainStates,
-      ~isRealtime,
-      ~targetBufferSize,
-    ),
+    crossChainState: CrossChainState.make(~chainStates, ~isRealtime, ~targetBufferSize),
     indexerStartTime: Date.make(),
     indexerStartTimeRef: Performance.now(),
     rollbackState: NoRollback,
@@ -495,11 +491,12 @@ let committedCheckpointIdFor = (state: t, ~scope) =>
 // chains the rollback moves: a sibling it leaves alone gets no diff row, and
 // burning an id on it would leave a hole in its sequence.
 let rollbackDiffFrontier = (state: t, ~floors: RollbackFloors.t) => {
-  let chainIds = floors.floors.byChain->Frontier.chainIds
   let cursor =
     state.config.checkpointSequence->CheckpointSequence.cursor(~frontier=state.committedFrontier)
-  chainIds->Array.forEach(chainId => cursor->CheckpointSequence.next(~chainId)->ignore)
-  cursor->CheckpointSequence.cursorFrontier->Frontier.pick(~chainIds)
+  floors.floors.byChain
+  ->Frontier.chainIds
+  ->Array.map(chainId => (chainId, cursor->CheckpointSequence.next(~chainId)))
+  ->Frontier.fromEntries
 }
 let processedBatches = (state: t) => state.processedBatches
 let processedBatchesCount = (state: t) => state.processedBatchesCount
@@ -511,6 +508,7 @@ let chainMetaThrottler = (state: t) => state.chainMetaThrottler
 let crossChainState = (state: t) => state.crossChainState
 let chainStates = (state: t) => state.crossChainState->CrossChainState.chainStates
 let isInReorgThreshold = (state: t) => state.crossChainState->CrossChainState.isInReorgThreshold
+let keepsHistory = (state: t) => state.crossChainState->CrossChainState.keepsHistory
 let isRealtime = (state: t) => state.crossChainState->CrossChainState.isRealtime
 
 // The indexer runs Backfilling → FinalizingIndexes → Ready. This is true only

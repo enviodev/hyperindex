@@ -78,10 +78,6 @@ let min = (frontier: t) =>
   }
 )
 
-// The frontier restricted to the named chains, dropping every other entry.
-let pick = (frontier: t, ~chainIds: array<ChainId.t>): t =>
-  chainIds->Array.map(chainId => (chainId, frontier->get(chainId)))->fromEntries
-
 let mergeMin = (a: t, b: t) => merge(a, b, Pervasives.min)
 let mergeMax = (a: t, b: t) => merge(a, b, Pervasives.max)
 

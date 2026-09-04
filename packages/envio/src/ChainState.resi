@@ -1,13 +1,6 @@
 // Per-chain runtime state. `t` is opaque: other modules read it through the
 // accessors and change it only through the mutators exposed here.
 
-// Whether the chain's progress has entered its reorg threshold, or is a chain
-// no rollback can ever reach.
-type threshold =
-  | NoRollback
-  | BelowThreshold
-  | InThreshold
-
 type t
 
 let configStorageRows: (
@@ -33,7 +26,7 @@ let make: (
   ~safeCheckpointTracking: option<SafeCheckpointTracking.t>=?,
   ~shouldRollbackOnReorg: bool,
   ~maxReorgDepth: int,
-  ~threshold: threshold=?,
+  ~isInReorgThreshold: bool=?,
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,

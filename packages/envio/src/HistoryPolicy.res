@@ -26,23 +26,21 @@ let decide = (config: Config.t, ~keepsHistory: dict<bool>): t =>
     }
   }
 
-// The decision for one flush group.
-let forScope = (t: t, ~scope: Internal.chainScope): keep =>
-  switch (t, scope) {
-  | (Shared(keep), _) => keep
-  | (ByChain(byChain), Chain(chainId)) =>
-    byChain->ChainId.Dict.dangerouslyGetNonOption(chainId)->Option.getOr(Skip)
-  | (ByChain(_), CrossChain) =>
-    JsError.throwWithMessage(
-      "Internal error: a cross-chain flush group can't exist under per-chain checkpoint sequences. A cross-chain entity is what makes the sequence shared.",
-    )
-  }
-
-// The decision for one chain's checkpoints.
+// The decision for one chain: its checkpoints, and its flush group.
 let forChain = (t: t, chainId: ChainId.t): keep =>
   switch t {
   | Shared(keep) => keep
   | ByChain(byChain) => byChain->ChainId.Dict.dangerouslyGetNonOption(chainId)->Option.getOr(Skip)
+  }
+
+let forScope = (t: t, ~scope: Internal.chainScope): keep =>
+  switch (scope, t) {
+  | (Chain(chainId), _) => t->forChain(chainId)
+  | (CrossChain, Shared(keep)) => keep
+  | (CrossChain, ByChain(_)) =>
+    JsError.throwWithMessage(
+      "Internal error: a cross-chain flush group can't exist under per-chain checkpoint sequences. A cross-chain entity is what makes the sequence shared.",
+    )
   }
 
 // Whether a run has stale history to prune at all: history it keeps but doesn't

@@ -695,7 +695,6 @@ impl ClickHouseSink {
     /// passed is one whose rows a replay will not write again.
     async fn resume_bounds(
         &self,
-        committed: u64,
         per_chain: bool,
         chain_progress: &[ChainProgressInput],
     ) -> Result<ResumeBounds> {
@@ -708,6 +707,13 @@ impl ClickHouseSink {
                 chain.committed_checkpoint_id.parse()?,
             ));
         }
+        // Under a shared sequence every chain counts from the same run of the
+        // counter, so the highest committed id is where the whole resume trims.
+        let committed = committed_by_chain
+            .iter()
+            .map(|(_, committed)| *committed)
+            .max()
+            .unwrap_or_default();
         if chain_progress.is_empty() {
             return Ok(if per_chain {
                 ResumeBounds::PerChain(Vec::new())
@@ -816,21 +822,7 @@ impl ClickHouseSink {
             replicated,
             database_engine,
         } = input;
-        // Under a shared sequence every chain counts from the same run of the
-        // counter, so the highest committed id is where the whole resume trims.
-        let committed = chain_progress
-            .iter()
-            .map(|chain| {
-                chain
-                    .committed_checkpoint_id
-                    .parse::<u64>()
-                    .unwrap_or_default()
-            })
-            .max()
-            .unwrap_or_default();
-        let bounds = self
-            .resume_bounds(committed, per_chain, &chain_progress)
-            .await?;
+        let bounds = self.resume_bounds(per_chain, &chain_progress).await?;
 
         let above_by_table = history_tables
             .iter()

@@ -1071,7 +1071,8 @@ let rec writeBatch = async (
       batch.checkpointChainIds->Array.filterMapWithIndex((chainId, index) =>
         batch.history->HistoryPolicy.forChain(chainId) === Keep ? Some(index) : None
       )
-    let pickCheckpoints = column => checkpointIndexes->Array.map(index => column->Array.getUnsafe(index))
+    let pickCheckpoints = column =>
+      checkpointIndexes->Array.map(index => column->Array.getUnsafe(index))
 
     let specificError = ref(None)
 
