@@ -64,7 +64,8 @@ fn parse_instructions(
         .get("metadata")
         .and_then(|m| m.get("origin"))
         .and_then(Value::as_str)
-        == Some("shank");
+        == Some("shank")
+        || arr.iter().any(|ix| ix.get("discriminant").is_some());
     collect_instructions(
         idl,
         positions,

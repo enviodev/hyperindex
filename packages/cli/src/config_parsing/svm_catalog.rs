@@ -18,7 +18,11 @@ pub struct ResolvedInstruction {
 impl ResolvedInstruction {
     fn from_idl(ix: &IxIdl) -> Self {
         Self {
-            discriminator: Some(ix.discriminator.clone()),
+            discriminator: if ix.discriminator.is_empty() {
+                None
+            } else {
+                Some(ix.discriminator.clone())
+            },
             accounts: ix.accounts.iter().map(|a| a.name.clone()).collect(),
             args: ix.args.clone(),
         }

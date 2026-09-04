@@ -86,7 +86,6 @@ trait ConfigSource {
         bytes_type: BytesType,
     ) -> Result<Schema>;
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
-    fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
 }
 
 struct FilesystemConfigSource<'a> {
@@ -138,16 +137,6 @@ impl ConfigSource for FilesystemConfigSource<'_> {
         let resolved_path =
             path_utils::get_config_path_relative_to_root(self.project_paths, PathBuf::from(path))
                 .context("Failed to resolve file relative to config")?;
-        let raw = fs::read_to_string(&resolved_path)
-            .with_context(|| format!("Failed to read file at \"{path}\""))?;
-        Ok(ResolvedConfigFile {
-            path: resolved_path,
-            raw,
-        })
-    }
-
-    fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
-        let resolved_path = self.project_paths.project_root.join(path);
         let raw = fs::read_to_string(&resolved_path)
             .with_context(|| format!("Failed to read file at \"{path}\""))?;
         Ok(ResolvedConfigFile {
@@ -235,10 +224,6 @@ impl ConfigSource for MemoryConfigSource<'_> {
     }
 
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
-        self.read_virtual_file(path)
-    }
-
-    fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
         self.read_virtual_file(path)
     }
 }
@@ -1865,7 +1850,7 @@ fn resolve_program_schema(
 ) -> Result<SvmAbi> {
     if let Some(idl_path) = program.idl.as_deref() {
         let resolved = source
-            .read_project_relative_file(idl_path)
+            .read_config_relative_file(idl_path)
             .with_context(|| format!("reading IDL at '{idl_path}'"))?;
         // Reported against the path as the config wrote it, the way an ABI is,
         // rather than wherever the project happens to be checked out.
@@ -3888,6 +3873,20 @@ type Foo {
                         vec!["amount".to_string()],
                     ),
                 ]
+            );
+        }
+
+        #[test]
+        fn an_idl_instruction_with_no_prefix_is_program_wide() {
+            let config = program_reading_idl(
+                r#"{ "kind": "rootNode", "program": { "instructions": [{ "name": "swap" }] } }"#,
+                "",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![("swap".to_string(), None, Vec::new(), Vec::new(),)]
             );
         }
 

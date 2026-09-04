@@ -766,5 +766,32 @@ fn reads_shank_discriminants_instead_of_hashing_the_name() {
     );
 }
 
+#[test]
+fn a_discriminant_field_marks_the_file_as_shank_without_origin() {
+    let idl = parse_idl(
+        "idl.json",
+        r#"{
+          "version": "1.13.2",
+          "name": "mpl_token_metadata",
+          "instructions": [
+            { "name": "createMetadataAccount",
+              "accounts": [{ "name": "metadata", "isMut": true }],
+              "args": [{ "name": "isMutable", "type": "bool" }],
+              "discriminant": { "type": "u8", "value": 0 } },
+            { "name": "undispatchable", "accounts": [], "args": [] }
+          ]
+        }"#,
+    )
+    .expect("parse");
+
+    assert_eq!(
+        render(&idl),
+        "address: -\n\
+         instruction createMetadataAccount 0x00 (metadata) (isMutable: bool)\n\
+         unusable instruction undispatchable: idl.json:9:13: discriminant: this Shank IDL \
+         declares none, and a hashed Anchor discriminator is not what a Shank program dispatches on\n"
+    );
+}
+
 mod layout;
 mod validate;
