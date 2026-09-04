@@ -3,6 +3,9 @@ let make = (
   ~endBlock: int,
   ~chainId: ChainId.t,
   ~addressStore: AddressStore.t,
+  ~ecosystem: Ecosystem.name=Evm,
+  ~transactionStore: option<TransactionStore.t>=None,
+  ~blockStore: option<BlockStore.t>=None,
 ): Source.t => {
   let reportedHeight = max(endBlock, 1)
 
@@ -13,7 +16,10 @@ let make = (
     poweredByHyperSync: false,
     pollingInterval: 0,
     getBlockHashes: (~blockNumbers as _, ~logger as _) => {
-      Promise.resolve({Source.result: Ok([]), requestStats: []})
+      Promise.resolve({
+        Source.result: Ok(BlockStore.fromJs([], ~ecosystem, ~shouldChecksum=false)),
+        requestStats: [],
+      })
     },
     getHeightOrThrow: () => {
       // Report at least height 1 so the engine doesn't treat 0 as "no blocks available"
@@ -101,14 +107,15 @@ let make = (
 
       Promise.resolve({
         Source.knownHeight: reportedHeight,
-        blockHashes: [],
         parsedQueueItems,
-        // Simulate keeps the transaction and block inline on the payload; no store pages.
-        transactionStore: None,
-        blockStore: None,
+        // EVM/Fuel keep transaction and block inline. SVM simulate returns a
+        // store page so materialize + activity attach run the same path as HyperSync.
+        transactionStore,
+        blockStore: blockStore->Option.getOr(
+          BlockStore.fromJs([], ~ecosystem, ~shouldChecksum=false),
+        ),
         fromBlockQueried: fromBlock,
         latestFetchedBlockNumber: toBlockQueried,
-        latestFetchedBlockTimestamp: 0,
         stats: {
           totalTimeElapsed: 0.,
         },

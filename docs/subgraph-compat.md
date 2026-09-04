@@ -75,7 +75,8 @@ references.
 
 Rewritten by the translator: `@entity` stripped (validated first, see
 above); `id: Bytes!` → `String` (lowercase 0x-hex at the boundary; envio
-only allows `ID`/`String`/`Int`/`BigInt` ids), `Int8` → `BigInt` (Int8 is a
+only allows `ID`/`String`/`Int`/`BigInt` ids — a non-id `Bytes` field keeps
+its type and stores raw bytes, see §6b), `Int8` → `BigInt` (Int8 is a
 64-bit integer — `i64` in AS; envio's `Int` is 32-bit and JS numbers are
 only safe to 2^53, so `BigInt` is the lossless fit), `Timestamp` → envio's
 `Timestamp` (graph-ts sees an i64 of microseconds, envio stores a Postgres
@@ -310,6 +311,11 @@ effect rate limits, IPFS gateway) stays at envio defaults in subgraph mode.
 - Translation pins `address_format: lowercase` (not envio's checksum
   default): graph-ts renders addresses lowercase, and id/derived-key parity
   depends on it. Not overridable.
+- Translation pins `bytes_type: uint8array` (not envio's `hex` default):
+  graph-ts `Bytes` *is* a `Uint8Array`, so a `Bytes` column stores the bytes
+  themselves — `BYTEA` in Postgres — rather than a hex rendering of them. An
+  id column is the exception: envio ids are text, so an `id: Bytes!` still
+  stores lowercase 0x-hex. Not overridable.
 
 A subgraph.yaml says *what* to index; these two vars are the only
 envio-side *how*.

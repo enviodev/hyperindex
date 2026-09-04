@@ -23,6 +23,24 @@
 - Scenario projects: `scenarios/` — `test_codegen`, `e2e_test`, `fuel_test`, `svm_test`.
 - To edit runtime code, edit templates under `packages/cli/templates/` or `packages/envio/`, not the codegen output under `<project>/.envio/`.
 - Prefer reading `.res` modules directly; ignore compiled `.js` artifacts.
+- The napi boundary between the Rust addon (`#[napi]` exports) and ReScript (`Core.addon`) is internal, not a published API. Change both sides freely to get the better shape — don't keep an awkward export for compatibility. The addon must be rebuilt for ReScript tests to see the change (see below).
+
+### Building the native addon
+
+ReScript tests call into the Rust addon, so a Rust change needs a rebuild before they see it:
+
+```
+SVM_TARGET_PLATFORM=linux-amd64 cargo build --lib
+mkdir -p node_modules/envio-linux-x64
+cp target/debug/libenvio.so node_modules/envio-linux-x64/envio.node
+printf '{"name":"envio-linux-x64","version":"0.0.1-dev","main":"envio.node"}\n' > node_modules/envio-linux-x64/package.json
+```
+
+`Core.loadAddon` resolves the platform package by name, which is why the debug build is staged into `node_modules` rather than loaded from `target/`.
+
+## Storage
+
+- No in-place migrations and no dynamic chain addition: on schema or config changes the user is expected to resync from scratch. Don't design or propose migration paths for existing deployments.
 
 ## Testing and Development
 
@@ -42,6 +60,11 @@ Pick the highest rung that reproduces:
 Link the issue above the case when there is one: `// https://github.com/enviodev/hyperindex/issues/N`
 
 Run only the tests relevant to your change — never the full suite locally. CI runs it on push.
+
+`pnpm vitest run` skips the checks that guard test inputs, so a green local run can
+still fail CI. Run `pnpm lint` in `packages/envio-tests` before you push: it takes
+under a second, and CI runs it ahead of every test. A CI failure whose closing line
+is `Test failed` while naming no test is this lint, not a test.
 
 ## ReScript
 

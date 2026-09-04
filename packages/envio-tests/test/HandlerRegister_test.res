@@ -326,7 +326,7 @@ describe("HandlerRegister multiple registrations", () => {
     HandlerRegister.startRegistration(~config)
     t->toThrowErrorEqual(
       () => setHandler(~eventName="Nonexistent", makeHandler()),
-      `Event "Nonexistent" is not configured on contract "ERC20", so its handler would never run. Add it to your config, or remove the registration. Configured events on "ERC20": Approval, Transfer.`,
+      `Event "Nonexistent" is not configured on contract "ERC20", so its handler would never run. Add it to your config, or remove the registration. Configured events on "ERC20": "Approval", "Transfer".`,
     )
   })
 
@@ -335,7 +335,7 @@ describe("HandlerRegister multiple registrations", () => {
     HandlerRegister.startRegistration(~config)
     t->toThrowErrorEqual(
       () => setContractRegister(~contractName="Missing", makeContractRegister()),
-      `Contract "Missing" is not configured on any chain, so its handler for "Transfer" would never run. Add it to your config, or remove the registration. Configured contracts: ERC20, ERC721.`,
+      `Contract "Missing" is not configured on any chain, so its handler for "Transfer" would never run. Add it to your config, or remove the registration. Configured contracts: "ERC20", "ERC721".`,
     )
   })
 })

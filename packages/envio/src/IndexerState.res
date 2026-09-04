@@ -267,6 +267,7 @@ let makeFromDbState = (
         ~isInReorgThreshold,
         ~isRealtime,
         ~config,
+        ~contractMapping=initialState.contractMapping,
         ~registrationsByChainId,
         ~reducedPollingInterval?,
       ),
@@ -354,7 +355,10 @@ let getChainState = (state: t, ~chainId: ChainId.t): ChainState.t =>
     )
   }
 
-let getSafeCheckpointId = (state: t) => state.crossChainState->CrossChainState.getSafeCheckpointId
+let getSafeCheckpointIdByChain = (state: t) =>
+  state.crossChainState->CrossChainState.getSafeCheckpointIdByChain(
+    ~committedCheckpointId=state.committedCheckpointId,
+  )
 
 let createBatch = (
   state: t,
@@ -451,7 +455,14 @@ let entities = (state: t) => state.entities
 // Every in-memory entity table across all scopes, cross-chain first. The size,
 // drop and flush passes walk the whole store this way instead of assuming a
 // single partition.
-let eachEntityTable = (state: t, fn: (~entityConfig: Internal.entityConfig, ~scope: Internal.chainScope, ~table: InMemoryTable.Entity.t) => unit) => {
+let eachEntityTable = (
+  state: t,
+  fn: (
+    ~entityConfig: Internal.entityConfig,
+    ~scope: Internal.chainScope,
+    ~table: InMemoryTable.Entity.t,
+  ) => unit,
+) => {
   let chainStates = state.crossChainState->CrossChainState.chainStates
   state.allEntities->Array.forEach(entityConfig =>
     if entityConfig.crossChain {
@@ -515,6 +526,7 @@ let toMetrics = (state: t): Metrics.t => {
   let chainStates = state.crossChainState->CrossChainState.chainStates
   let sourceRequests = []
   let sourceHeights = []
+  let sourceHeightStreams = []
   chainStates->Utils.Dict.forEach(cs => {
     let sourceManager = cs->ChainState.sourceManager
     sourceManager
@@ -535,6 +547,16 @@ let toMetrics = (state: t): Metrics.t => {
         Metrics.source: s.sourceName,
         chainId: s.chainId,
         height: s.height,
+      })
+    )
+    sourceManager
+    ->SourceManager.getHeightStreamSamples
+    ->Array.forEach(s =>
+      sourceHeightStreams->Array.push({
+        Metrics.source: s.sourceName,
+        chainId: s.chainId,
+        connectCount: s.stream.connectCount,
+        disconnectsByReason: s.stream.disconnectsByReason,
       })
     )
   })
@@ -599,6 +621,7 @@ let toMetrics = (state: t): Metrics.t => {
     historyPrunes,
     sourceRequests,
     sourceHeights,
+    sourceHeightStreams,
   }
 }
 
@@ -757,6 +780,7 @@ let drainBatchRun = (state: t): Batch.t => {
   let checkpointBlockNumbers = []
   let checkpointBlockHashes = []
   let checkpointEventsProcessed = []
+  let registeredAddresses = []
   all->Array.forEach(batch => {
     // Once one batch lands in rest, all later ones follow it, preserving order.
     if rest->Utils.Array.isEmpty && batch.isInReorgThreshold == isInReorgThreshold {
@@ -770,6 +794,7 @@ let drainBatchRun = (state: t): Batch.t => {
       checkpointBlockNumbers->Array.pushMany(batch.checkpointBlockNumbers)
       checkpointBlockHashes->Array.pushMany(batch.checkpointBlockHashes)
       checkpointEventsProcessed->Array.pushMany(batch.checkpointEventsProcessed)
+      registeredAddresses->Array.pushMany(batch.registeredAddresses)
     } else {
       rest->Array.push(batch)
     }
@@ -786,8 +811,11 @@ let drainBatchRun = (state: t): Batch.t => {
     checkpointBlockNumbers,
     checkpointBlockHashes,
     checkpointEventsProcessed,
+    registeredAddresses,
   }
 }
+
+let pendingRollback = (state: t): option<Persistence.rollback> => state.rollback
 
 // Take the pending rollback diff to write, clearing it from the store.
 let takeRollback = (state: t): option<Persistence.rollback> => {
@@ -797,23 +825,52 @@ let takeRollback = (state: t): option<Persistence.rollback> => {
 }
 
 // Advance the committed (durably persisted) frontier after a successful write.
-let markCommitted = (state: t, ~upToCheckpointId) => state.committedCheckpointId = upToCheckpointId
+// Written rows leave the buffer only once the transaction that holds them has
+// committed. A failed write keeps them, and re-inserting a row the database
+// already has is a no-op. Rows staged while the write was in flight belong to
+// later checkpoints — ids only ever grow — so this can't drop one unwritten.
+let markCommitted = (state: t, ~upToCheckpointId) => {
+  state.committedCheckpointId = upToCheckpointId
+}
 
 // Reset the in-memory tables and arm the rollback diff that the next write commits.
 let beginRollbackDiff = (
   state: t,
-  ~targetCheckpointId,
   ~diffCheckpointId,
-  ~progressBlockNumberByChainId,
+  ~floors,
+  ~progressedChains: array<InternalTable.Chains.progressedChain>,
+  ~rolledBackAddresses,
 ) => {
   let perChainEntities = state.allEntities->EntityTables.perChain
   state.entities = EntityTables.make(state.allEntities->EntityTables.crossChain)
   state->chainStates->Utils.Dict.forEach(cs => cs->ChainState.resetEntities(~perChainEntities))
   state.effectState->EffectState.resetForRollback
+  // The address store reports only what each rollback killed, and never
+  // re-reports a registration it already tombstoned. A rollback that lands
+  // before the previous one has been written must therefore carry the earlier
+  // keys too, or their rows outlive every rollback that could delete them.
+  let rolledBackAddresses = switch state.rollback {
+  | Some({rolledBackAddresses: pending}) => pending->Array.concat(rolledBackAddresses)
+  | None => rolledBackAddresses
+  }
+  // Same for the chains: this rollback recomputes progress from the checkpoints,
+  // so a chain the pending diff already moved can land on exactly the block it
+  // is now at and go unreported here. Its stored progress still needs
+  // correcting, so the pending rows carry over — this rollback's row for a
+  // chain wins, being the later reading of the same chain state.
+  let progressedChains = switch state.rollback {
+  | Some({progressedChains: pending}) =>
+    let byChainId = Dict.make()
+    pending->Array.forEach(chain => byChainId->ChainId.Dict.set(chain.chainId, chain))
+    progressedChains->Array.forEach(chain => byChainId->ChainId.Dict.set(chain.chainId, chain))
+    byChainId->Dict.valuesToArray
+  | None => progressedChains
+  }
   state.rollback = Some({
-    targetCheckpointId,
     diffCheckpointId,
-    progressBlockNumberByChainId,
+    floors,
+    progressedChains,
+    rolledBackAddresses,
   })
 }
 

@@ -18,6 +18,33 @@ external importPathWithJson: (
   "default": JSON.t,
 }> = "import"
 
+// Half the delay fixed, half spread across it. Every indexer pointed at one
+// provider loses its stream, or gives up on a quiet chain, in the same instant
+// that provider blinks, and putting them all back on the same schedule is how a
+// blip becomes a stampede.
+let jitter = delay => delay / 2 + (Math.random() *. (delay / 2)->Int.toFloat)->Float.toInt
+
+// Clearing a pending timer and forgetting it are one action. A ref left holding
+// a spent id reads as a timer still pending, and the next clear looks like it
+// did something.
+let clearTimeoutRef = timeoutId => {
+  switch timeoutId.contents {
+  | Some(id) => clearTimeout(id)
+  | None => ()
+  }
+  timeoutId := None
+}
+
+// Keeps the doubling from overflowing on something that has been failing for
+// days. Every caller's delay reaches its cap long before this.
+let maxBackoffExponent = 20
+
+let expBackoff = (~base, ~exp, ~maxMillis) =>
+  Pervasives.min(
+    base * Math.pow(2.0, ~exp=Pervasives.min(exp, maxBackoffExponent)->Int.toFloat)->Float.toInt,
+    maxMillis,
+  )
+
 let delay = milliseconds =>
   Promise.make((resolve, _) => {
     let _interval = setTimeout(_ => {
@@ -96,6 +123,15 @@ module Dict = {
    */
   @get_index
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
+
+  let incrementBy = (dict, key, count) =>
+    dict->Dict.set(
+      key,
+      switch dict->dangerouslyGetNonOption(key) {
+      | Some(current) => current + count
+      | None => count
+      },
+    )
 
   let getOrInsertEmptyDict = (dict, key) => {
     switch dict->dangerouslyGetNonOption(key) {
@@ -199,6 +235,13 @@ module Dict = {
     }
   `)
 
+  let clearInPlace: dict<'a> => unit = %raw(`(dict) => {
+      for (const key in dict) {
+        delete dict[key];
+      }
+    }
+  `)
+
   let unsafeDeleteUndefinedFieldsInPlace: 'a => unit = %raw(`(dict) => {
       for (var key in dict) {
         if (dict[key] === undefined) {
@@ -245,6 +288,10 @@ module Array = {
   include Array
 
   let immutableEmpty: array<unknown> = []
+
+  /** Render names for an error message: `"a", "b"`. */
+  let quotedJoin = (names: array<string>) =>
+    names->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
 
   @send
   external forEachAsync: (array<'a>, 'a => promise<unit>) => unit = "forEach"
@@ -484,8 +531,119 @@ let unwrapResultExn = res =>
 
 external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
 
+module Bytes = {
+  let asUint8Array: unknown => option<Uint8Array.t> = %raw(`(value) =>
+    value instanceof Uint8Array
+      ? value.constructor === Uint8Array
+        ? value
+        : new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+      : undefined`)
+
+  let toHex = (bytes: Uint8Array.t) =>
+    NodeJs.Buffer.fromArrayBuffer(
+      bytes->TypedArray.buffer,
+      ~byteOffset=bytes->TypedArray.byteOffset,
+      ~length=bytes->TypedArray.byteLength,
+    )->NodeJs.Buffer.toHex
+
+  @get_index external byteAt: (Uint8Array.t, int) => int = ""
+
+  // A bytea[] parameter as the array literal Postgres parses itself. postgres.js
+  // serializes an array parameter with the element serializer of the type the
+  // server describes, and the bytea one expects a Uint8Array — yet it types the
+  // array after its first element, so an array of Uint8Arrays binds as a single
+  // bytea. Text binds untyped and reaches the server's array parser as it is.
+  //
+  // Nests, since an `in` filter over a list column carries one array per
+  // candidate value. A sub-array is written unquoted, which is how Postgres
+  // spells a dimension rather than an element.
+  let rec toPgArrayLiteral = (values: array<unknown>) =>
+    "{" ++
+    values
+    ->Array.map(value =>
+      switch value->(magic: unknown => Nullable.t<unknown>)->Nullable.toOption {
+      | None => "NULL"
+      | Some(value) =>
+        switch value->asUint8Array {
+        | Some(bytes) => `"\\\\x${bytes->toHex}"`
+        | None =>
+          if value->Array.isArray {
+            value->(magic: unknown => array<unknown>)->toPgArrayLiteral
+          } else {
+            JsError.throwWithMessage("Expected Uint8Array")
+          }
+        }
+      }
+    )
+    ->Array.join(",") ++ "}"
+
+  // Bytewise, the order Postgres sorts a bytea in.
+  let compare = (a: Uint8Array.t, b: Uint8Array.t) => {
+    let aLength = a->TypedArray.length
+    let bLength = b->TypedArray.length
+    let rec loop = index =>
+      if index === aLength || index === bLength {
+        Int.compare(aLength, bLength)
+      } else {
+        switch Int.compare(a->byteAt(index), b->byteAt(index)) {
+        | 0. => loop(index + 1)
+        | order => order
+        }
+      }
+    loop(0)
+  }
+}
+
 module Schema = {
   let variantTag = S.union([S.string, S.object(s => s.field("TAG", S.string))])
+
+  // A ReScript `option` is `undefined` at runtime, so `S.null`'s serializer
+  // treats only `undefined` as the empty case — a genuine `null`, which a JS
+  // handler writes for a field it doesn't set, reaches the value serializer
+  // and crashes it (`null.toString()` for a BigInt column). Collapse both to
+  // `None` before the value serializer sees them.
+  //
+  // Revisit on the Sury v11 migration: if its nullable handles a `null` value
+  // on the serialize side, this wrapper goes away.
+  let nullTolerant = schema =>
+    S.null(schema)->S.transform(_ => {
+      parser: value => value,
+      serializer: value => value->(magic: option<'a> => Nullable.t<'a>)->Nullable.toOption,
+    })
+
+  // Postgres hands a bytea back as a Buffer, while handlers are promised the
+  // plain Uint8Array of the entity type — Buffer's `slice` and `toString` behave
+  // differently.
+  let bytes = S.custom("Bytes", s => {
+    parser: unknown =>
+      switch unknown->Bytes.asUint8Array {
+      | Some(bytes) => bytes
+      | None => s.fail("Expected Uint8Array")
+      },
+    serializer: (bytes: Uint8Array.t) => bytes,
+  })
+
+  // A bytea[] value: a list column, or the values an `in` filter compares
+  // against — one array per candidate when the column is itself a list, which
+  // the literal writer nests. Only a column is ever read back, so the parser
+  // takes the one level a bytea[] column returns.
+  let bytesArray = S.custom("BytesArray", s => {
+    parser: unknown =>
+      if unknown->Array.isArray {
+        unknown
+        ->(magic: unknown => array<unknown>)
+        ->Array.map(item =>
+          switch item->Bytes.asUint8Array {
+          | Some(bytes) => bytes
+          | None => s.fail("Expected Uint8Array")
+          }
+        )
+      } else {
+        s.fail("Expected array of Uint8Array")
+      },
+    serializer: (values: array<Uint8Array.t>) =>
+      values->(magic: array<Uint8Array.t> => array<unknown>)->Bytes.toPgArrayLiteral,
+  })
 
   // Don't use S.unknown, since it's not serializable to json
   // In a nutshell, this is completely unsafe.
@@ -493,6 +651,19 @@ module Schema = {
     S.json(~validate=false)
     ->(magic: S.t<JSON.t> => S.t<Date.t>)
     ->S.preprocess(_ => {serializer: date => date->magic->Date.toISOString})
+
+  // JSON `null` is a document, and Postgres stores it as one. Reaching the
+  // ClickHouse sink as a JS `null` it would instead read as a field the handler
+  // never set, which a String column has no way to hold — so it travels as the
+  // text it would have been serialized to. Every other document is left for the
+  // sink to serialize.
+  let clickHouseJson = S.json(~validate=false)->S.preprocess(_ => {
+    serializer: value =>
+      switch value->(magic: unknown => Nullable.t<unknown>)->Nullable.toOption {
+      | None => "null"->magic
+      | Some(json) => json
+      },
+  })
 
   // ClickHouse expects timestamps as numbers (milliseconds), not ISO strings
   let clickHouseDate =
@@ -575,6 +746,9 @@ module Set = {
 
   @send
   external intersection: (t<'value>, t<'value>) => t<'value> = "intersection"
+
+  @send
+  external union: (t<'value>, t<'value>) => t<'value> = "union"
 
   let immutableAdd: (t<'a>, 'a) => t<'a> = %raw(`(set, value) => {
     return new Set([...set, value])
@@ -750,6 +924,12 @@ let prettifyExn = exn => {
   | exn => exn
   }
 }
+
+let exnMessage = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(jsExn) => jsExn->JsExn.message
+  | _ => None
+  }
 
 module EnvioPackage = {
   type t = {version: string}

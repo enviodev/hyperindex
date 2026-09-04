@@ -8,14 +8,13 @@ mod config;
 mod selection;
 mod types;
 
-use crate::address_store::{AddressSet, AddressStore, SetCache, StoreInner};
+use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache, StoreInner};
+use crate::block_store::{BlockStore, FuelBlockRow};
+use crate::hex::decode_prefixed;
 use config::ClientConfig;
 use hyperfuel_client::format::{Hash, Hex};
 use hyperfuel_client::net_types;
-use selection::{
-    BuiltSelection, FuelOnEventRegistrationInput, ReceiptAddress, RegistrationKind,
-    SelectionBuilder,
-};
+use selection::{BuiltSelection, FuelOnEventRegistrationInput, RegistrationKind, SelectionBuilder};
 use types::{convert_response, Block, ConvertError, RawReceipt};
 
 #[napi]
@@ -70,7 +69,7 @@ impl FuelHyperSyncClient {
         &self,
         params: EventItemsQuery,
         address_set: &AddressSet,
-    ) -> napi::Result<EventItemsResponse> {
+    ) -> napi::Result<(EventItemsResponse, BlockStore)> {
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.clone().unwrap_or_default(),
         );
@@ -89,6 +88,23 @@ impl FuelHyperSyncClient {
             .map_err(|e| request_err("Failed to get data from HyperFuel", e))?;
         let raw = convert_response(res).map_err(convert_error_to_napi)?;
 
+        // The page's raw blocks, keyed by height — merged into the per-chain
+        // store where their ids drive reorg detection and materialisation.
+        let block_store = BlockStore::new_fuel();
+        let rows = raw
+            .blocks
+            .iter()
+            .map(|b| {
+                Ok(FuelBlockRow {
+                    height: u64::try_from(b.height).context("block.height negative")?,
+                    id: Some(decode_prefixed(&b.id, "block.id")?),
+                    time: Some(b.time),
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map_err(map_err)?;
+        block_store.insert_fuel_block_rows(rows);
+
         // Materialise the set's cache before taking the store guard: `cache()`
         // lazily initialises by reading the same lock, and a writer queued
         // between the two reads would deadlock the pair.
@@ -106,12 +122,12 @@ impl FuelHyperSyncClient {
             .map_err(convert_error_to_napi)?
         };
 
-        Ok(EventItemsResponse {
+        let response = EventItemsResponse {
             archive_height: raw.archive_height,
             next_block: raw.next_block,
-            blocks: raw.blocks,
             items,
-        })
+        };
+        Ok((response, block_store))
     }
 }
 
@@ -144,8 +160,8 @@ pub struct EventItem {
     pub on_event_registration_index: i64,
     pub receipt_index: i64,
     pub tx_id: String,
-    /// Height of the block this receipt belongs to. The block itself is
-    /// carried once, deduplicated, in `EventItemsResponse.blocks`.
+    /// Height of the block this receipt belongs to. The block itself stays in
+    /// the `BlockStore` returned alongside this response.
     pub block_height: i64,
     pub src_address: String,
     pub data: Option<String>,
@@ -160,9 +176,6 @@ pub struct EventItem {
 pub struct EventItemsResponse {
     pub archive_height: Option<i64>,
     pub next_block: i64,
-    /// The page's blocks, one per height. Items reference them by
-    /// `block_height`; presence for every routed item is validated here.
-    pub blocks: Vec<Block>,
     pub items: Vec<EventItem>,
 }
 
@@ -247,10 +260,10 @@ fn route_receipts(
         // receipt only reaches wildcard registrations.
         let contract_id = Hash::decode_hex(&src_address).ok();
         let key: &[u8] = contract_id.as_deref().map_or(&[], |bytes| &bytes[..]);
-        let address = ReceiptAddress {
+        let address = Emitter {
             key,
-            contract_name: set_cache.owner_of(key),
-            block_height: receipt.block_height,
+            owners: set_cache.owners_of(key),
+            block: receipt.block_height,
         };
 
         for reg in &built.registrations {

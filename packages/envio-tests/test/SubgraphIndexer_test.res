@@ -100,7 +100,9 @@ describe("gravatar subgraph", () => {
 
     t.expect(await indexer.Gravatar.getOrThrow("0x01000000")).toEqual({
       id: "0x01000000",
-      owner: owner.toLowerCase(),
+      // A Bytes column holds the bytes: subgraph mode runs with
+      // bytes_type uint8array.
+      owner: Uint8Array.from(Buffer.from(owner.slice(2), "hex")),
       displayName: "one",
       updates: 2n,
     });

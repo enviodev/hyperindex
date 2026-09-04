@@ -21,6 +21,11 @@ type fieldType =
   | Boolean
   | Uint32
   | UInt52
+  | SmallInt
+  // Raw bytes: the `Bytes` scalar under `bytes_type: uint8array`, and the
+  // internal column that stores an address in the binary form the Rust address
+  // store keys on.
+  | Bytea
   | UInt64
   | Int32
   // Resolved to Int32 or UInt64 storage from the config's `ChainId.mode`, so
@@ -141,6 +146,20 @@ let getPgFieldName = fieldOrDerived =>
 
 let idFieldName = "id"
 
+let maxPgTableNameLength = 63
+
+// Postgres truncates identifiers past its limit on its own, which would collapse
+// two long names onto one. Cutting the readable half and keeping `uniqueSuffix`
+// whole makes every generated name distinct by construction, so the suffix has
+// to be something already unique to the table it names.
+let fitPgTableName = (fullName, ~uniqueSuffix) =>
+  if fullName->String.length > maxPgTableNameLength {
+    fullName->String.slice(~start=0, ~end=maxPgTableNameLength - uniqueSuffix->String.length) ++
+      uniqueSuffix
+  } else {
+    fullName
+  }
+
 let getPgFieldType = (
   ~fieldType: fieldType,
   ~pgSchema,
@@ -160,6 +179,8 @@ let getPgFieldType = (
     }
   | Uint32 => (Postgres.BigInt :> string)
   | UInt52 => (Postgres.BigInt :> string)
+  | SmallInt => (Postgres.SmallInt :> string)
+  | Bytea => (Postgres.Bytea :> string)
   | UInt64 => (Postgres.BigInt :> string)
   | Number => (Postgres.DoublePrecision :> string)
   | BigInt({?precision}) =>
@@ -268,6 +289,9 @@ let getChainIdField = (table): option<field> =>
     }
   )
 
+// None for a cross-chain entity, whose rows no single chain owns.
+let getPgChainIdColumn = table => table->getChainIdField->Option.map(getPgDbFieldName)
+
 let getFieldByName = (table, fieldName) =>
   table.fields->Array.find(field => field->getUserDefinedFieldName === fieldName)
 
@@ -327,6 +351,9 @@ type queryField = {
   // Loads are served by Postgres only (ClickHouse is a write-only sink), so
   // no ClickHouse counterpart is needed here.
   pgDbFieldName: string,
+  // The chain-id column a per-chain entity's table is partitioned by, which a
+  // filter has to write into the SQL rather than bind. See `makeFilterCondition`.
+  isChainId: bool,
 }
 let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
   let dict = Dict.make()
@@ -337,8 +364,12 @@ let queryFields: table => dict<queryField> = Utils.WeakMap.memoize(table => {
         field->getApiFieldName,
         {
           fieldSchema: field.fieldSchema,
-          arrayFieldSchema: S.array(field.fieldSchema)->S.toUnknown,
+          arrayFieldSchema: switch field.fieldType {
+          | Bytea => Utils.Schema.bytesArray->S.toUnknown
+          | _ => S.array(field.fieldSchema)->S.toUnknown
+          },
           pgDbFieldName: field->getPgDbFieldName,
+          isChainId: field.isChainId,
         },
       )
     | DerivedFrom(_) => ()
@@ -407,6 +438,7 @@ type sqlParams<'entity> = {
   quotedFieldNames: array<string>,
   quotedNonPrimaryFieldNames: array<string>,
   arrayFieldTypes: array<string>,
+  byteaColumnIndexes: array<int>,
   hasArrayField: bool,
 }
 
@@ -414,6 +446,9 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
   let quotedFieldNames = []
   let quotedNonPrimaryFieldNames = []
   let arrayFieldTypes = []
+  // Positions of the bytea columns among the unnest parameters, which the
+  // caller binds as array literals (see `Utils.Bytes.toPgArrayLiteral`).
+  let byteaColumnIndexes = []
   let hasArrayField = ref(false)
 
   let dbSchema: S.t<dict<unknown>> = S.schema(s =>
@@ -426,7 +461,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
           | BigInt => Utils.BigInt.schema->S.toUnknown
           | Option(child)
           | Null(child) =>
-            S.null(child->coerceSchema)->S.toUnknown
+            Utils.Schema.nullTolerant(child->coerceSchema)->S.toUnknown
           | Array(child) => {
               hasArrayField := true
               S.array(child->coerceSchema)->S.toUnknown
@@ -447,6 +482,12 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
         let field = switch table->getFieldByApiName(location) {
         | Some(field) => field
         | None => throw(NonExistingTableField(location))
+        }
+        switch field {
+        | Field({isArray: true}) => hasArrayField := true
+        | Field({fieldType: Bytea}) =>
+          byteaColumnIndexes->Array.push(arrayFieldTypes->Array.length)->ignore
+        | _ => ()
         }
 
         // Schema locations use API field names, while the SQL references
@@ -497,6 +538,7 @@ let toSqlParams = (table: table, ~schema, ~pgSchema, ~chainIdMode: ChainId.mode=
     quotedFieldNames,
     quotedNonPrimaryFieldNames,
     arrayFieldTypes,
+    byteaColumnIndexes,
     hasArrayField: hasArrayField.contents,
   }
 }

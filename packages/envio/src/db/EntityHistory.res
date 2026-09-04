@@ -30,11 +30,20 @@ let unsafeCheckpointIdSchema =
     serializer: bigint => bigint->BigInt.toString,
   })
 
-let makeSetUpdateSchema = (~idSchema: S.t<EntityId.t>, entitySchema: S.t<'entity>): S.t<
-  Change.t<'entity>,
-> => {
+// `chainIdTag` carries the (column, chain id) of a per-chain entity whose rows
+// all belong to one chain: the column is then a constant of the schema rather
+// than a field read off every entity.
+let makeSetUpdateSchema = (
+  ~idSchema: S.t<EntityId.t>,
+  ~chainIdTag: option<(string, ChainId.t)>=?,
+  entitySchema: S.t<'entity>,
+): S.t<Change.t<'entity>> => {
   S.object(s => {
     s.tag(changeFieldName, RowAction.SET)
+    switch chainIdTag {
+    | Some((column, chainId)) => s.tag(column, chainId)
+    | None => ()
+    }
     Change.Set({
       checkpointId: s.field(checkpointIdFieldName, unsafeCheckpointIdSchema),
       entityId: s.field(Table.idFieldName, idSchema),
@@ -50,18 +59,14 @@ type pgEntityHistory<'entity> = {
   setChangeSchemaRows: S.t<array<Change.t<'entity>>>,
 }
 
-let maxPgTableNameLength = 63
 let historyTablePrefix = "envio_history_"
-let historyTableName = (~entityName, ~entityIndex) => {
-  let fullName = historyTablePrefix ++ entityName
-  if fullName->String.length > maxPgTableNameLength {
-    let entityIndexStr = entityIndex->Int.toString
-    fullName->Js.String.slice(~from=0, ~to_=maxPgTableNameLength - entityIndexStr->String.length) ++
-      entityIndexStr
-  } else {
-    fullName
-  }
-}
+// `$` can't occur in a GraphQL entity name, so it marks where a truncated name
+// stops and the index that keeps it unique begins. Without that boundary two
+// long names whose indexes differ in digit count can truncate onto the same
+// identifier, and `CREATE TABLE IF NOT EXISTS` would hand both entities one
+// history table.
+let historyTableName = (~entityName, ~entityIndex) =>
+  fitPgTableName(historyTablePrefix ++ entityName, ~uniqueSuffix=`$${entityIndex->Int.toString}`)
 
 type safeReorgBlocks = {
   chainIds: array<ChainId.t>,
@@ -95,27 +100,38 @@ let makeKeyMatch = (~chainIdColumn, ~left, ~right) =>
   ->Array.map(column => `${left}.${column} = ${right}.${column}`)
   ->Array.joinUnsafe(" AND ")
 
-let makePruneStaleEntityHistoryQuery = (~entityName, ~entityIndex, ~pgSchema, ~chainIdColumn) => {
+let makePruneStaleEntityHistoryQuery = (
+  ~entityName,
+  ~entityIndex,
+  ~pgSchema,
+  ~chainIdColumn,
+  ~safeCheckpoints: CheckpointBounds.t,
+) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
   let keyColumns = makeKeyColumns(~chainIdColumn)
   let anchorKeys = keyColumns->Array.map(column => `t.${column}`)->Array.joinUnsafe(", ")
+  let bounds = safeCheckpoints->CheckpointBounds.sql(~chainIdColumn, ~tableRef="t")
 
   // Whether a key still has a row above the safe checkpoint is an aggregate
   // over the same groups as the anchor, so it's computed in the one pass
-  // rather than as a per-row correlated lookup.
-  // `d.envio_checkpoint_id <= $1` is implied by the rest of the predicate — it
+  // rather than as a per-row correlated lookup. The DELETE's `<=` on the row
   // is there to keep the rows above the safe checkpoint out of the join.
+  //
+  // Per-chain bounds are joined in rather than run as a statement each: the
+  // anchors aggregate the whole table however narrow the bound is, and history
+  // carries no index to narrow the scan with.
   `WITH anchors AS (
   SELECT ${anchorKeys},
-    MAX(t.${checkpointIdFieldName}) FILTER (WHERE t.${checkpointIdFieldName} <= $1) AS keep_checkpoint_id,
-    bool_or(t.${checkpointIdFieldName} > $1) AS has_above
-  FROM ${historyTableRef} t
+    MAX(t.${checkpointIdFieldName}) FILTER (WHERE t.${checkpointIdFieldName} <= ${bounds.checkpointId}) AS keep_checkpoint_id,
+    bool_or(t.${checkpointIdFieldName} > ${bounds.checkpointId}) AS has_above,
+    MIN(${bounds.checkpointId}) AS safe_checkpoint_id
+  FROM ${historyTableRef} t${bounds.join}
   GROUP BY ${anchorKeys}
 )
 DELETE FROM ${historyTableRef} d
 USING anchors a
 WHERE ${makeKeyMatch(~chainIdColumn, ~left="d", ~right="a")}
-  AND d.${checkpointIdFieldName} <= $1
+  AND d.${checkpointIdFieldName} <= a.safe_checkpoint_id
   AND (d.${checkpointIdFieldName} < a.keep_checkpoint_id OR NOT a.has_above);`
 }
 
@@ -125,18 +141,23 @@ let pruneStaleEntityHistory = (
   ~entityIndex,
   ~pgSchema,
   ~chainIdColumn,
-  ~safeCheckpointId,
-): promise<unit> => {
+  ~safeCheckpoints,
+): promise<unit> =>
   sql->Postgres.preparedUnsafe(
-    makePruneStaleEntityHistoryQuery(~entityName, ~entityIndex, ~pgSchema, ~chainIdColumn),
-    [safeCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+    makePruneStaleEntityHistoryQuery(
+      ~entityName,
+      ~entityIndex,
+      ~pgSchema,
+      ~chainIdColumn,
+      ~safeCheckpoints,
+    ),
+    safeCheckpoints->CheckpointBounds.params,
   )
-}
 
 // If an entity doesn't have a history before the update
 // we create it automatically with envio_checkpoint_id 0
 // The ids belong to a single chain (the flush group's scope), so the chain is
-// bound once as $2 rather than unnested alongside them.
+// named once in the query rather than unnested alongside them.
 let makeBackfillHistoryQuery = (
   ~pgSchema,
   ~entityName,
@@ -146,8 +167,11 @@ let makeBackfillHistoryQuery = (
   ~chainId: option<ChainId.t>,
 ) => {
   let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
+  // Written into the SQL rather than bound: this scans the entity table, which
+  // is partitioned by the chain-id column, and Postgres can only prune a plan
+  // it caches when that column is a constant.
   let chainFilter = switch (chainIdColumn, chainId) {
-  | (Some(column), Some(_)) => ` AND e."${column}" = $2`
+  | (Some(column), Some(chainId)) => ` AND e."${column}" = ${chainId->ChainId.toString}`
   | _ => ""
   }
   `WITH target_ids AS (
@@ -174,13 +198,8 @@ let backfillHistory = (
   ~ids: array<EntityId.t>,
 ) => {
   let idPgType = table->Table.getIdPgFieldType(~pgSchema)
-  let chainIdColumn = table->Table.getChainIdField->Option.map(Table.getPgDbFieldName)
+  let chainIdColumn = table->Table.getPgChainIdColumn
   let params = [table->Table.encodeIdsToJson(ids)->(Utils.magic: JSON.t => unknown)]
-  switch (chainIdColumn, chainId) {
-  | (Some(_), Some(chainId)) =>
-    params->Array.push(chainId->(Utils.magic: ChainId.t => unknown))->ignore
-  | _ => ()
-  }
   sql
   ->Postgres.preparedUnsafe(
     makeBackfillHistoryQuery(
@@ -201,15 +220,15 @@ let rollback = (
   ~pgSchema,
   ~entityName,
   ~entityIndex,
-  ~rollbackTargetCheckpointId: Internal.checkpointId,
+  ~chainIdColumn,
+  ~floors: RollbackFloors.t,
 ) => {
+  let historyTableRef = `"${pgSchema}"."${historyTableName(~entityName, ~entityIndex)}"`
+  let bounds = floors.floors->CheckpointBounds.sql(~chainIdColumn, ~tableRef=historyTableRef)
   sql
   ->Postgres.preparedUnsafe(
-    `DELETE FROM "${pgSchema}"."${historyTableName(
-        ~entityName,
-        ~entityIndex,
-      )}" WHERE "${checkpointIdFieldName}" > $1;`,
-    [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+    `DELETE FROM ${historyTableRef}${bounds.using} WHERE "${checkpointIdFieldName}" > ${bounds.checkpointId}${bounds.usingMatch};`,
+    floors.floors->CheckpointBounds.params,
   )
   ->Utils.Promise.ignoreValue
 }

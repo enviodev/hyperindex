@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=../../../envio/evm.schema.json
+name: cli-project
+description: Fixture project for the CLI subprocess tests
+chains:
+  - id: 1
+    start_block: 1
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        events:
+          - event: "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)"

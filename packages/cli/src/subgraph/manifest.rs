@@ -669,7 +669,10 @@ fn parse_event_handler(
                     .iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                     .collect(),
-                other => other.as_str().map(|s| vec![s.to_string()]).unwrap_or_default(),
+                other => other
+                    .as_str()
+                    .map(|s| vec![s.to_string()])
+                    .unwrap_or_default(),
             };
             if !values.is_empty() {
                 topics.insert(position, values);
@@ -917,7 +920,8 @@ dataSources:
         let rendered = report.to_string();
         assert_eq!(
             (
-                rendered.contains("doesn't support near subgraphs — Envio Subgraph indexes EVM chains"),
+                rendered
+                    .contains("doesn't support near subgraphs — Envio Subgraph indexes EVM chains"),
                 rendered.contains("doesn't know"),
             ),
             (true, false)

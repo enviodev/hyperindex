@@ -88,16 +88,21 @@ let getGlobalPersistence = () =>
 let setGlobalPersistence = (persistence: Persistence.t) =>
   EnvioGlobal.value.persistence = Some(persistence->(Utils.magic: Persistence.t => unknown))
 
-let getInitialChainState = (~chainId: ChainId.t): option<Persistence.initialChainState> => {
+let getInitialState = (): option<Persistence.initialState> => {
   switch getGlobalPersistence() {
   | Some(persistence) =>
     switch persistence.storageStatus {
-    | Ready(initialState) => initialState.chains->Array.find(c => c.id === chainId)
+    | Ready(initialState) => Some(initialState)
     | _ => None
     }
   | None => None
   }
 }
+
+let getInitialChainState = (~chainId: ChainId.t): option<Persistence.initialChainState> =>
+  getInitialState()->Option.flatMap(initialState =>
+    initialState.chains->Array.find(c => c.id === chainId)
+  )
 
 // Importing `generated` must not trigger `Config.load()`,
 // so the exported indexer calls this lazily on first `indexer.chains` access.
@@ -184,20 +189,23 @@ let buildChainsObject = (~config: Config.t) => {
                 chainState->ChainState.contractAddresses(~contractName=contract.name)
               }
             // Before the global state is available (eg during handler
-            // module load after resume), combine static addresses from config
-            // with dynamic contracts persisted in the database.
+            // module load after resume), read them off what persistence
+            // restored — which already holds the config's own addresses
+            // alongside the dynamically registered ones.
             | None =>
-              switch getInitialChainState(~chainId=chainConfig.id) {
-              | Some(chainState) =>
-                let addresses = contract.addresses->Array.copy
-                chainState.indexingAddresses->Array.forEach(
-                  dc => {
-                    if dc.contractName === contract.name {
-                      addresses->Array.push(dc.address)->ignore
-                    }
-                  },
-                )
-                addresses
+              switch getInitialState() {
+              | Some(initialState) =>
+                switch initialState.chains->Array.find(c => c.id === chainConfig.id) {
+                | Some(chainState) =>
+                  chainState.addressRows->AddressRows.renderOfContract(
+                    ~ecosystem=(config.ecosystem.name :> string),
+                    ~shouldChecksum=!config.lowercaseAddresses,
+                    ~contractId=initialState.contractMapping->ContractMapping.idOfOrThrow(
+                      contract.name,
+                    ),
+                  )
+                | None => contract.addresses
+                }
               | None => contract.addresses
               }
             }
@@ -229,8 +237,8 @@ let buildChainsObject = (~config: Config.t) => {
 let getGlobalIndexer = (): 'indexer => {
   // Parse eventIdentity config to extract contractName, eventName, and options.
   // Supports two runtime formats:
-  // - From TypeScript: { contract: "X", event: "Y", wildcard?, where? }
-  // - From ReScript GADT: { event: { contract: "X", _0: "Y" }, wildcard?, where? }
+  // - From TypeScript: { contract: "X", event: "Y", wildcard?, where?, fields? }
+  // - From ReScript GADT: { event: { contract: "X", _0: "Y" }, wildcard?, where?, fields? }
   let parseIdentityConfig = (identityConfig: 'a) => {
     let raw =
       identityConfig->(
@@ -239,6 +247,7 @@ let getGlobalIndexer = (): 'indexer => {
           "event": unknown,
           "wildcard": option<bool>,
           "where": option<JSON.t>,
+          "fields": option<unknown>,
         }
       )
     // Detect format: if "contract" is a string, it's the TS format
@@ -255,12 +264,14 @@ let getGlobalIndexer = (): 'indexer => {
     }
     let wildcard = raw["wildcard"]
     let where = raw["where"]
-    let eventOptions: option<Internal.eventOptions<_>> = switch (wildcard, where) {
-    | (None, None) => None
-    | (wildcard, where) =>
+    let fields = raw["fields"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch (wildcard, where, fields) {
+    | (None, None, None) => None
+    | (wildcard, where, fields) =>
       Some({
         ?wildcard,
         where: ?(where->(Utils.magic: option<JSON.t> => option<_>)),
+        ?fields,
       })
     }
     (contractName, eventName, eventOptions)
@@ -288,7 +299,12 @@ let getGlobalIndexer = (): 'indexer => {
   let parseSvmIdentityConfig = (identityConfig: 'a) => {
     let raw =
       identityConfig->(
-        Utils.magic: 'a => {"program": unknown, "instruction": unknown, "where": option<JSON.t>}
+        Utils.magic: 'a => {
+          "program": unknown,
+          "instruction": unknown,
+          "where": option<JSON.t>,
+          "fields": option<unknown>,
+        }
       )
     let (programName, instructionName) = if typeof(raw["program"]) === #string {
       (
@@ -300,11 +316,13 @@ let getGlobalIndexer = (): 'indexer => {
       (inst["contract"], inst["_0"])
     }
     let where = raw["where"]
-    let eventOptions: option<Internal.eventOptions<_>> = switch where {
-    | None => None
-    | Some(_) =>
+    let fields = raw["fields"]
+    let eventOptions: option<Internal.eventOptions<_>> = switch (where, fields) {
+    | (None, None) => None
+    | (where, fields) =>
       Some({
         where: ?(where->(Utils.magic: option<JSON.t> => option<_>)),
+        ?fields,
       })
     }
     (programName, instructionName, eventOptions)
@@ -567,6 +585,7 @@ let migrate = async (~reset) => {
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
+    ~contractMapping=config.contractMapping,
     ~envioInfo=getEnvioInfo(),
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
@@ -618,6 +637,7 @@ let start = async (
   await persistence->Persistence.init(
     ~reset,
     ~chainConfigs=config.chainMap->ChainMap.values,
+    ~contractMapping=config.contractMapping,
     ~envioInfo=getEnvioInfo(),
     ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
     ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),

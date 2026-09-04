@@ -140,7 +140,7 @@ let evmTransactionFieldSchema = S.enum(allEvmTransactionFields)
 // position in the selection mask) and `Svm.res` `transactionFields`.
 type svmTransactionField =
   | @as("transactionIndex") TransactionIndex
-  | @as("signatures") Signatures
+  | @as("signature") Signature
   | @as("feePayer") FeePayer
   | @as("success") Success
   | @as("err") Err
@@ -149,11 +149,12 @@ type svmTransactionField =
   | @as("accountKeys") AccountKeys
   | @as("recentBlockhash") RecentBlockhash
   | @as("version") Version
-  | @as("tokenBalances") TokenBalances
+  | @as("allSignatures") AllSignatures
+  | @as("accountActivities") AccountActivities
 
 let allSvmTransactionFields: array<svmTransactionField> = [
   TransactionIndex,
-  Signatures,
+  Signature,
   FeePayer,
   Success,
   Err,
@@ -162,12 +163,12 @@ let allSvmTransactionFields: array<svmTransactionField> = [
   AccountKeys,
   RecentBlockhash,
   Version,
-  TokenBalances,
+  AllSignatures,
+  AccountActivities,
 ]
-let svmTransactionFieldSchema = S.enum(allSvmTransactionFields)
 
-// All SVM block fields. `slot`/`time`/`hash` are always included; the rest are
-// selectable via `field_selection.block_fields` (see `allSvmBlockFields`).
+// All SVM block fields. `slot` is always included (the item's key); the rest
+// are selectable via handler `fields.block`.
 type svmBlockField =
   | @as("slot") Slot
   | @as("time") Time
@@ -175,9 +176,6 @@ type svmBlockField =
   | @as("height") Height
   | @as("parentSlot") ParentSlot
   | @as("parentHash") ParentHash
-
-let allSvmBlockFields: array<svmBlockField> = [Height, ParentSlot, ParentHash]
-let svmBlockFieldSchema = S.enum(allSvmBlockFields)
 
 // Static sets of field names whose source schemas must be wrapped with S.nullable.
 let evmNullableBlockFields = Utils.Set.fromArray(
@@ -416,6 +414,63 @@ type indexingContract = {
   effectiveStartBlock: int,
 }
 
+// What a single registration fetches and materialises. Field names are strings
+// so every ecosystem shares one type — the typed field variants are strings at
+// runtime. Always built through `makeFieldSelection`/`unionFieldSelection`
+// below, so a set and its mask are never derived from different inputs. Unlike
+// `eventConfig`, not `private` — that would block those two constructors too,
+// since a private record can only be coerced from a distinct record type.
+type fieldSelection = {
+  blockFields: Utils.Set.t<string>,
+  transactionFields: Utils.Set.t<string>,
+  instructionFields: Utils.Set.t<string>,
+  accountActivityFields: Utils.Set.t<string>,
+  logFields: Utils.Set.t<string>,
+  // The sets precompiled to the store selections `ChainState` materialises with.
+  blockMask: float,
+  transactionMask: float,
+}
+
+// `~blockMaskFn`/`~transactionMaskFn` are the ecosystem's `Evm`/`Svm`/`Fuel`
+// mask functions, which the ecosystem modules pass in (they depend on this
+// module, so it can't reach them).
+let makeFieldSelection = (
+  ~blockFields: Utils.Set.t<string>,
+  ~transactionFields: Utils.Set.t<string>,
+  ~instructionFields: Utils.Set.t<string>=Utils.Set.make(),
+  ~accountActivityFields: Utils.Set.t<string>=Utils.Set.make(),
+  ~logFields: Utils.Set.t<string>=Utils.Set.make(),
+  ~blockMaskFn: Utils.Set.t<string> => float,
+  ~transactionMaskFn: Utils.Set.t<string> => float,
+): fieldSelection => {
+  blockFields,
+  transactionFields,
+  instructionFields,
+  accountActivityFields,
+  logFields,
+  blockMask: blockMaskFn(blockFields),
+  transactionMask: transactionMaskFn(transactionFields),
+}
+
+// Two registrations merged into one dispatch off a single item, so it has to
+// carry the union of what both callbacks read. Each callback's type only claims
+// its own selection, so the extra fields are unread rather than unsound.
+//
+// The overwhelmingly common case is two registrations that never named fields
+// inline and so share their event config's sets by reference — returning those
+// unchanged keeps the merge allocation-free.
+let unionFields = (a, b) => a === b ? a : a->Utils.Set.union(b)
+
+let unionFieldSelection = (a: fieldSelection, b: fieldSelection): fieldSelection => {
+  blockFields: unionFields(a.blockFields, b.blockFields),
+  transactionFields: unionFields(a.transactionFields, b.transactionFields),
+  instructionFields: unionFields(a.instructionFields, b.instructionFields),
+  accountActivityFields: unionFields(a.accountActivityFields, b.accountActivityFields),
+  logFields: unionFields(a.logFields, b.logFields),
+  blockMask: FieldMask.orMask(a.blockMask, b.blockMask),
+  transactionMask: FieldMask.orMask(a.transactionMask, b.transactionMask),
+}
+
 // Definition of an event/instruction we know how to decode: identity + decode
 // schemas + chain-independent field selection. A pure function of the ABI +
 // config, shared across chains. `private` so it can only be coerced from an
@@ -427,22 +482,12 @@ type eventConfig = private {
   contractName: string,
   paramsRawEventSchema: S.schema<eventParams>,
   simulateParamsSchema: S.schema<eventParams>,
-  // Field names selected for the chain's transaction-store materialisation
-  // (camelCase, matching the ecosystem's `transactionFields`). Stored as a
-  // string set so the shared mask logic is ecosystem-agnostic; sources recover
-  // the typed view where they need it.
-  selectedTransactionFields: Utils.Set.t<string>,
-  // `selectedTransactionFields` precompiled to the transaction-store selection
-  // bitmask (bit per ecosystem field code). Materialisation reads this per item
-  // so each transaction decodes only the fields its event selected. `0.` when
-  // nothing is selected or the ecosystem carries the transaction inline (Fuel).
-  transactionFieldMask: float,
-  // Selected block fields precompiled to the block-store selection bitmask (bit
-  // per ecosystem field code). `0.` for ecosystems that carry the block fully
-  // inline (RPC/Fuel). The EVM selection always includes number/timestamp/hash,
-  // so an EVM mask always has their bits set; SVM stamps slot/time/hash inline
-  // from the response and its mask is the user's selection alone.
-  blockFieldMask: float,
+  // The `config.yaml` selection, which every registration of this event
+  // inherits unless it names its own fields inline. Held by reference, so two
+  // un-customized registrations share one set — which is what keeps a merge
+  // allocation-free and the per-source parser caches (keyed on set identity)
+  // effective.
+  fieldSelection: fieldSelection,
 }
 
 type fuelEventKind =
@@ -497,7 +542,6 @@ type onEventWhereArgs<'chain> = {chain: 'chain}
 
 type evmEventConfig = {
   ...eventConfig,
-  selectedBlockFields: Utils.Set.t<evmBlockField>,
   sighash: string,
   topicCount: int,
   paramsMetadata: array<paramMeta>,
@@ -525,24 +569,10 @@ type svmAccountFilterGroup = array<svmAccountFilter>
 
 type svmInstructionEventConfig = {
   ...eventConfig,
-  /** Block fields selected via `field_selection.block_fields` (`slot` is always
-   included and excluded from this set). Drives the block query columns;
-   precompiled to `blockFieldMask` for store materialisation. */
-  selectedBlockFields: Utils.Set.t<svmBlockField>,
   /** Base58 Solana program id this instruction belongs to. */
   programId: SvmTypes.Pubkey.t,
   /** Hex-encoded discriminator. `None` matches every instruction in the program. */
   discriminator: option<string>,
-  /** Length of the discriminator in bytes (0 / 1 / 2 / 4 / 8). Drives the
-   `dN` selector at query time and the dispatch-key precomputation in the
-   router. */
-  discriminatorByteLen: int,
-  includeLogs: bool,
-  /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
-   AND across positions. Empty outer array means "no account filter". */
-  accountFilters: array<svmAccountFilterGroup>,
-  /** `None` matches both outer and inner (CPI-invoked) instructions. */
-  isInner: option<bool>,
   /** Positional account names from the Borsh schema, in declared order.
    `[]` means no schema is attached for this instruction. */
   accounts: array<string>,
@@ -558,10 +588,11 @@ type svmInstructionEventConfig = {
 // Per-(event, chain) registration produced when user handler code registers an
 // event (`onEvent`) or a dynamic contract registers. References its definition
 // by value as `.eventConfig` and adds the handler binding plus the
-// registration/`where`-derived fetch state. Not `private`: Fuel/SVM
-// registrations add no ecosystem-specific fields (so they're bare aliases that
-// must stay directly constructable), and the evm→base cast in sources is sound
-// by ecosystem homogeneity — an EVM chain only ever holds `evmOnEventRegistration`s.
+// registration/`where`-derived fetch state. Not `private`: Fuel registrations
+// add no ecosystem-specific fields (so the alias must stay directly
+// constructable), and the ecosystem→base casts in sources are sound by
+// ecosystem homogeneity — an EVM chain only ever holds
+// `evmOnEventRegistration`s.
 type onEventRegistration = {
   // Chain-scoped sequential index — the registration's position in the
   // chain's onEventRegistrations array, assigned when registration finishes
@@ -589,6 +620,10 @@ type onEventRegistration = {
   // Final start block: the contract/chain config value, overridden by a
   // `where.block.number._gte` when the registered `where` supplies one.
   startBlock: option<int>,
+  // The `eventConfig` selection unless the registration passed an inline
+  // `fields` option, which replaces it. Two registrations of one event can
+  // select different fields, so this is per-registration rather than shared.
+  fieldSelection: fieldSelection,
 }
 
 type evmOnEventRegistration = {
@@ -596,11 +631,18 @@ type evmOnEventRegistration = {
   resolvedWhere: resolvedWhere,
 }
 
-// Fuel and SVM registrations add no ecosystem-specific fetch state (their
-// filters are config-derived and live on the definition), so they're bare
-// aliases of the base registration.
+// Fuel registrations add no ecosystem-specific fetch state, so it's a bare
+// alias of the base registration.
 type fuelOnEventRegistration = onEventRegistration
-type svmOnEventRegistration = onEventRegistration
+
+type svmOnEventRegistration = {
+  ...onEventRegistration,
+  /** Disjunctive normal form: outer array is OR of AND-groups, inner array is
+   AND across positions. Empty outer array means "no account filter". */
+  accountFilters: array<svmAccountFilterGroup>,
+  /** `None` matches both outer and inner (CPI-invoked) instructions. */
+  isInner: option<bool>,
+}
 
 type svmProgramConfig = {
   name: string,
@@ -625,6 +667,7 @@ type eventItem = private {
   chainId: ChainId.t,
   blockNumber: int,
   logIndex: int,
+  orderPath?: array<int>,
   // Within-block transaction index — the key into the per-chain transaction
   // store. Unused (0) for ecosystems that carry the transaction inline (Fuel).
   transactionIndex: int,
@@ -678,17 +721,31 @@ type item =
       chainId: ChainId.t,
       blockNumber: int,
       logIndex: int,
+      // Ordering tiebreak for ecosystems whose within-block order isn't a
+      // scalar. SVM keys an instruction by `(transactionIndex, path)`: the
+      // logIndex above is the transaction, this is its position in that
+      // transaction's CPI tree. Absent on EVM and Fuel, whose log/receipt
+      // index already totally orders a block.
+      orderPath?: array<int>,
       transactionIndex: int,
       payload: eventPayload,
     })
-  | @as(1) Block({onBlockRegistration: onBlockRegistration, blockNumber: int, logIndex: int})
+  | @as(1) Block({onBlockRegistration: onBlockRegistration, blockNumber: int})
 
 external castUnsafeEventItem: item => eventItem = "%identity"
 
 @get
 external getItemBlockNumber: item => int = "blockNumber"
+// Only meaningful on an `Event`: a block item has no log index, and the buffer
+// comparator reads this only after the kinds match.
 @get
 external getItemLogIndex: item => int = "logIndex"
+@get
+external getItemOrderPath: item => Nullable.t<array<int>> = "orderPath"
+// The variant tag. Read directly so the comparator can order every event of a
+// block ahead of that block's handlers without a `switch`.
+@get
+external getItemKind: item => int = "kind"
 
 let getItemChainId = item =>
   switch item {
@@ -696,9 +753,17 @@ let getItemChainId = item =>
   | Block({onBlockRegistration: {chainId}}) => chainId
   }
 
+// EVM `fields` bag. Parsed from the JS object as `unknown` at registration;
+// this record exists so ReScript tests can construct a typed EVM selection.
+type evmFieldsSelection = {
+  block?: array<string>,
+  transaction?: array<string>,
+}
+
 type eventOptions<'where> = {
   wildcard?: bool,
   where?: 'where,
+  fields?: unknown,
 }
 
 type fuelSupplyParams = {
@@ -722,12 +787,23 @@ let fuelTransferParamsSchema = S.schema(s => {
 
 type entity = private {id: string}
 
+// A data skipping index emitted into the history table DDL as
+// `INDEX <name> <expr> TYPE <type> GRANULARITY <granularity>`.
+type clickhouseSkippingIndex = {
+  name: string,
+  expr: string,
+  @as("type")
+  type_: string,
+  granularity?: int,
+}
+
 // Raw ClickHouse expressions/field names from the entity's
 // @storage(clickhouse: {...}) directive, applied to the history table DDL.
 type clickhouseTableOptions = {
   partitionBy?: string,
   orderBy?: array<string>,
   ttl?: string,
+  skippingIndexes?: array<clickhouseSkippingIndex>,
 }
 
 // Per-entity storage resolved at parse time against the global storage
@@ -748,6 +824,9 @@ type genericEntityConfig<'entity> = {
   // entity's `@crossChain`. When false the table carries a chain-id column in
   // its primary key and every row belongs to exactly one chain.
   crossChain: bool,
+  // `@internal` on the entity: stored and usable in handlers as normal, but
+  // never exposed through the GraphQL API (no Hasura tracking).
+  internal: bool,
 }
 type entityConfig = genericEntityConfig<entity>
 external fromGenericEntityConfig: genericEntityConfig<'entity> => entityConfig = "%identity"

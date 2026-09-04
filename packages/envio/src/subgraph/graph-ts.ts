@@ -871,22 +871,27 @@ function toRow(entityType: string, entity: Entity): Record<string, unknown> {
   // graph-ts holds a relation as the related entity's id under the field's own
   // name; envio's column for it is `<field>_id`.
   const refFields = new Set(schema.entityRefFields[entityType] ?? []);
+  const listFields = new Set(schema.entityListFields[entityType] ?? []);
   const row: Record<string, unknown> = {};
   for (const entry of entity.entries) {
     const column = refFields.has(entry.key) ? `${entry.key}_id` : entry.key;
+    // An id is a string column whatever the subgraph declared it as, and so is
+    // a relation, which carries one. Every other `Bytes` field is a bytes
+    // column, which is what `bytes_type: uint8array` makes of it.
+    const isId = entry.key === "id" || refFields.has(entry.key) || listFields.has(entry.key);
     row[column] = timestampFields.has(entry.key)
       ? new Date(Number(entry.value.toTimestamp() / 1000n))
-      : fromValue(entry.value);
+      : fromValue(entry.value, isId);
   }
   return row;
 }
 
-function fromValue(value: Value): unknown {
+function fromValue(value: Value, isId = false): unknown {
   switch (value.kind) {
     case ValueKind.NULL:
       return null;
     case ValueKind.BYTES:
-      return value.toBytes().toHexString();
+      return isId ? value.toBytes().toHexString() : Uint8Array.from(value.toBytes());
     case ValueKind.BIGINT:
       return value.toBigInt().valueOf();
     case ValueKind.INT8:
@@ -895,7 +900,7 @@ function fromValue(value: Value): unknown {
     case ValueKind.BIGDECIMAL:
       return value.toBigDecimal().value;
     case ValueKind.ARRAY:
-      return value.toArray().map(fromValue);
+      return value.toArray().map((item) => fromValue(item, isId));
     default:
       return value.data;
   }
@@ -949,6 +954,9 @@ function toValue(value: unknown, kind?: string): Value {
   if (Array.isArray(value)) return Value.fromArray(value.map((item) => toValue(item, kind)));
   switch (kind) {
     case "Bytes":
+      // A bytes column reads back as the bytes themselves; an id column
+      // declared `Bytes` is stored as text, and reads back hex.
+      if (value instanceof Uint8Array) return Value.fromBytes(Bytes.fromUint8Array(value));
       return typeof value === "string" ? Value.fromBytes(Bytes.fromHexString(value)) : Value.fromNull();
     case "BigInt":
     case "Int8":

@@ -1,16 +1,28 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const devAddon = path.join(repoRoot, "target", "debug", "envio.node");
 
 export default defineConfig({
   test: {
     include: ["test/**/*_test.res.mjs", "test/**/*.test.ts"],
     exclude: ["test/helpers/**"],
-    // No shared database or other cross-file state, so files can run in
-    // parallel (each fork gets its own process-level globals).
+    // Files run in parallel: every scenario indexer gets a Postgres schema of
+    // its own (see IndexerRunner.run). Tests within a file stay sequential —
+    // the handler registration a scenario activates is process-global.
+    sequence: {
+      concurrent: false,
+    },
     pool: "forks",
     testTimeout: 30_000,
     hookTimeout: 30_000,
     setupFiles: ["test/setup.ts"],
-    globalSetup: ["test/helpers/globalSetup.ts"],
+    globalSetup: ["test/helpers/globalSetup.ts", "test/helpers/GlobalSetup.res.mjs"],
+    env: {
+      ENVIO_DEV_ADDON: devAddon,
+    },
     passWithNoTests: true,
     server: {
       deps: {

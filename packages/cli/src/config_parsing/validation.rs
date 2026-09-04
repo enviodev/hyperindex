@@ -1,12 +1,8 @@
 // use super::chain_helpers;
 use super::human_config::{self, evm::HumanConfig};
-use crate::constants::reserved_keywords::{
-    ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
-    TYPESCRIPT_RESERVED_WORDS,
-};
+use crate::constants::reserved_keywords::RESERVED_NAMES;
 use anyhow::{anyhow, Context};
 use regex::Regex;
-use std::collections::HashSet;
 
 // It must start with a letter or underscore.
 // It can contain letters, numbers, and underscores.
@@ -36,27 +32,14 @@ fn are_contract_names_unique(contract_names: &[String]) -> bool {
     true
 }
 
-// Check for reserved words in a string, to be applied for schema and config.
-// Words from config and schema are used in the codegen and eventually in eventHandlers for the user, thus cannot contain any reserved words.
-fn check_reserved_words(words: &Vec<String>) -> Vec<String> {
-    let mut flagged_words = Vec::new();
-    // Creating a deduplicated set of reserved words from javascript, typescript and rescript
-    let mut set = HashSet::new();
-    set.extend(JAVASCRIPT_RESERVED_WORDS.iter());
-    set.extend(TYPESCRIPT_RESERVED_WORDS.iter());
-    set.extend(RESCRIPT_RESERVED_WORDS.iter());
-
-    let words_set: Vec<&str> = set.into_iter().cloned().collect();
-
-    // Find all alphanumeric words in the YAML string
-    for word in words {
-        let word = word.as_str();
-        if words_set.contains(&word) {
-            flagged_words.push(word.to_string());
-        }
-    }
-
-    flagged_words
+// Names from the config and the schema both become generated identifiers, so
+// they are held to the same list.
+fn check_reserved_words(words: &[String]) -> Vec<String> {
+    words
+        .iter()
+        .filter(|word| RESERVED_NAMES.contains(&word.as_str()))
+        .cloned()
+        .collect()
 }
 
 fn is_valid_identifier(s: &str) -> bool {
@@ -84,7 +67,7 @@ fn is_valid_identifier(s: &str) -> bool {
 
 // Check if all names in the config file are valid.
 pub fn validate_names_valid_rescript(
-    names_from_config: &Vec<String>,
+    names_from_config: &[String],
     part_of_config: String,
 ) -> anyhow::Result<()> {
     let detected_reserved_words = check_reserved_words(names_from_config);
@@ -159,10 +142,11 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
         chain.validate_finite_endblock_networks()?;
 
         // Addresses are compared case-insensitively: checksum and lowercase
-        // spellings of the same address collide on the (chainId, address)
-        // primary key of envio_addresses at runtime.
-        let mut contract_by_address: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
+        // spellings of the same address are one address at runtime. The same
+        // address under two different contracts is allowed — each contract
+        // indexes it with its own events.
+        let mut addresses_by_contract: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
 
         for contract in chain.contracts.as_ref().unwrap_or(&vec![]) {
             if contract.config.as_ref().is_some() {
@@ -181,31 +165,16 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
                     ));
                 }
 
-                match contract_by_address
-                    .insert(contract_address.to_lowercase(), contract.name.clone())
+                if !addresses_by_contract
+                    .insert((contract_address.to_lowercase(), contract.name.clone()))
                 {
-                    Some(existing_contract) if existing_contract == contract.name => {
-                        return Err(anyhow!(
-                            "Address {} is listed multiple times for the contract {} on chain {}. \
-                             Please remove the duplicate from your config.",
-                            contract_address,
-                            contract.name,
-                            chain.id
-                        ));
-                    }
-                    Some(existing_contract) => {
-                        return Err(anyhow!(
-                            "Address {} on chain {} is configured for multiple contracts: {} and \
-                             {}. Indexing the same address with multiple contract definitions is \
-                             not supported. Please define the events on a single contract \
-                             definition instead.",
-                            contract_address,
-                            chain.id,
-                            existing_contract,
-                            contract.name
-                        ));
-                    }
-                    None => {}
+                    return Err(anyhow!(
+                        "Address {} is listed multiple times for the contract {} on chain {}. \
+                         Please remove the duplicate from your config.",
+                        contract_address,
+                        contract.name,
+                        chain.id
+                    ));
                 }
             }
         }
@@ -232,10 +201,10 @@ pub fn is_valid_solana_pubkey(s: &str) -> bool {
 
 pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
     let hex = s.strip_prefix("0x").unwrap_or(s);
-    if !matches!(hex.len(), 2 | 4 | 8 | 16) {
+    if hex.is_empty() || !hex.len().is_multiple_of(2) {
         return Err(anyhow!(
-            "discriminator {:?} must be 1, 2, 4, or 8 bytes (i.e. 2, 4, 8, or 16 hex digits after \
-             stripping a `0x` prefix), got {} digits",
+            "discriminator {:?} must be a whole number of bytes (an even, non-zero count of hex \
+             digits after stripping a `0x` prefix), got {} digits",
             s,
             hex.len()
         ));
@@ -289,69 +258,6 @@ pub fn validate_deserialized_svm_config_yaml(
                         format!("instruction {:?} in program {:?}", instr.name, program.name)
                     })?;
                 }
-                if let Some(filters) = instr.account_filters.as_ref() {
-                    if let crate::config_parsing::human_config::svm::AccountFilters::AnyOf(any_of) =
-                        filters
-                    {
-                        if any_of.any_of.is_empty() {
-                            return Err(anyhow!(
-                                "`any_of` account filter on instruction {:?} (program {:?}) is \
-                                 empty; remove the `account_filters` field instead, or add at \
-                                 least one AND-group",
-                                instr.name,
-                                program.name
-                            ));
-                        }
-                    }
-                    let groups = filters.groups();
-                    for (group_idx, group) in groups.iter().enumerate() {
-                        if group.is_empty() {
-                            return Err(anyhow!(
-                                "Account filter group {} in instruction {:?} (program {:?}) is \
-                                 empty; each `any_of` branch must contain at least one entry",
-                                group_idx,
-                                instr.name,
-                                program.name
-                            ));
-                        }
-                        let mut seen_positions = std::collections::HashSet::new();
-                        for filter in group.iter() {
-                            if filter.position > 5 {
-                                return Err(anyhow!(
-                                    "Account filter position {} in instruction {:?} (program \
-                                     {:?}) must be in 0..=5 (positions 6..=9 are reserved for a \
-                                     future extension)",
-                                    filter.position,
-                                    instr.name,
-                                    program.name
-                                ));
-                            }
-                            if !seen_positions.insert(filter.position) {
-                                return Err(anyhow!(
-                                    "Duplicate position {} in account filter group {} of \
-                                     instruction {:?} (program {:?}); combine the pubkeys into a \
-                                     single `values` list, or use `any_of` to express OR across \
-                                     positions",
-                                    filter.position,
-                                    group_idx,
-                                    instr.name,
-                                    program.name
-                                ));
-                            }
-                            for value in &filter.values {
-                                if !is_valid_solana_pubkey(value) {
-                                    return Err(anyhow!(
-                                        "Account filter on instruction {:?} (program {:?}) has an \
-                                         invalid base58 pubkey {:?}",
-                                        instr.name,
-                                        program.name,
-                                        value
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
             }
         }
     }
@@ -367,28 +273,8 @@ pub fn validate_deserialized_svm_config_yaml(
     Ok(())
 }
 
-pub fn check_enums_for_internal_reserved_words(enum_name_words: Vec<String>) -> Vec<String> {
-    enum_name_words
-        .into_iter()
-        .filter(|word| ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES.contains(&word.as_str()))
-        .collect()
-}
-
-// Checking that schema does not include any reserved words
 pub fn check_names_from_schema_for_reserved_words(schema_words: Vec<String>) -> Vec<String> {
-    // Checking that schema does not include any reserved words
-    let mut detected_reserved_words_in_schema = Vec::new();
-    // Creating a deduplicated set of reserved words from javascript or rescript
-    let mut word_set: HashSet<&str> = HashSet::new();
-    word_set.extend(JAVASCRIPT_RESERVED_WORDS.iter());
-    word_set.extend(RESCRIPT_RESERVED_WORDS.iter());
-    for word in schema_words {
-        if word_set.contains(word.as_str()) {
-            detected_reserved_words_in_schema.push(word);
-        }
-    }
-
-    detected_reserved_words_in_schema
+    check_reserved_words(&schema_words)
 }
 
 pub fn check_schema_enums_are_valid_postgres(enum_names: &Vec<String>) -> Vec<String> {
@@ -493,8 +379,8 @@ mod tests {
             "like".to_string(),
             "break".to_string(),
             "import".to_string(),
-            "and".to_string(),
-            "symbol".to_string(),
+            "constructor".to_string(),
+            "enum".to_string(),
             "plus".to_string(),
             "unreserved".to_string(),
             "word".to_string(),
@@ -502,10 +388,7 @@ mod tests {
             "match.".to_string(),
         ];
         let flagged_words = super::check_reserved_words(&words);
-        assert_eq!(
-            flagged_words,
-            vec!["string", "with", "break", "import", "and", "symbol"]
-        );
+        assert_eq!(flagged_words, vec!["constructor", "enum"]);
     }
 
     #[test]
@@ -533,18 +416,32 @@ mod tests {
 
     #[test]
     fn test_names_from_schema_for_reserved_words() {
-        let names_from_schema = "Greeting id greetings lastGreeting lazy open catch"
+        let names_from_schema = "Greeting id greetings lastGreeting lazy open constructor"
             .split(" ")
             .map(|s| s.to_string())
             .collect();
         let flagged_words = super::check_names_from_schema_for_reserved_words(names_from_schema);
-        assert_eq!(flagged_words, vec!["lazy", "open", "catch"]);
+        assert_eq!(flagged_words, vec!["constructor"]);
+    }
+
+    #[test]
+    fn contract_named_like_a_prototype_key_is_rejected() {
+        let result = super::validate_names_valid_rescript(
+            &["MyContract".to_string(), "__proto__".to_string()],
+            "contract".to_string(),
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "The config contains reserved words for contract names: \"__proto__\". They are used \
+             for the generated code and must be valid identifiers, containing only alphanumeric \
+             characters and underscores."
+        );
     }
 
     #[test]
     fn test_contract_names_validation() {
         let valid_result = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -554,26 +451,26 @@ mod tests {
         assert!(valid_result.is_ok());
 
         let reserved_names = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
-                "Let".to_string(),
                 "module".to_string(),
-                "this".to_string(),
+                "constructor".to_string(),
+                "enum".to_string(),
                 "1".to_string(),
             ],
             "contract".to_string(),
         );
         assert_eq!(
             reserved_names.unwrap_err().to_string(),
-            "The config contains reserved words for contract names: \"module\", \"this\". They \
-             are used for the generated code and must be valid identifiers, containing only \
+            "The config contains reserved words for contract names: \"constructor\", \"enum\". \
+             They are used for the generated code and must be valid identifiers, containing only \
              alphanumeric characters and underscores."
         );
 
         let invalid_names = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -627,8 +524,15 @@ mod tests {
         }
 
         #[test]
-        fn discriminator_accepts_valid_lengths() {
-            for s in ["0x0f", "0x0fff", "0x0fffffff", "0x0fffffffffffffff"] {
+        fn discriminator_accepts_any_whole_byte_length() {
+            // Serum v3 dispatches on a version byte plus a 4-byte tag: 5 bytes.
+            for s in [
+                "0x0f",
+                "0x0fff",
+                "0x0fffff",
+                "0x000a000000",
+                "0x0fffffffffffffff",
+            ] {
                 assert!(
                     validate_svm_discriminator(s).is_ok(),
                     "expected {s:?} to be valid"
@@ -639,8 +543,8 @@ mod tests {
         }
 
         #[test]
-        fn discriminator_rejects_invalid_lengths_and_chars() {
-            for s in ["0x", "0x0", "0x012", "0xggggggg"] {
+        fn discriminator_rejects_partial_bytes_and_non_hex() {
+            for s in ["0x", "0x0", "0x012", "0xgggggggg"] {
                 assert!(
                     validate_svm_discriminator(s).is_err(),
                     "expected {s:?} to be rejected"
@@ -659,7 +563,8 @@ mod tests {
 name: x
 ecosystem: svm
 chains:
-  - start_block: 0
+  - id: solana
+    start_block: 0
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -675,40 +580,14 @@ chains:
         }
 
         #[test]
-        fn validation_accepts_any_of_with_cross_group_duplicate_positions() {
-            let cfg = parse(
-                r#"
-name: x
-ecosystem: svm
-chains:
-  - start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: P
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: I
-              account_filters:
-                any_of:
-                  - - position: 2
-                      values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-                  - - position: 2
-                      values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-"#,
-            );
-            assert!(validate_deserialized_svm_config_yaml(&cfg).is_ok());
-        }
-
-        #[test]
         fn validation_accepts_rpc_only_chain() {
             let cfg = parse(
                 r#"
 name: x
 ecosystem: svm
 chains:
-  - rpc: https://api.mainnet-beta.solana.com
+  - id: solana
+    rpc: https://api.mainnet-beta.solana.com
     start_block: 0
 "#,
             );

@@ -10,8 +10,8 @@ expression: json
   },
   "svm": {
     "chains": {
-      "0": {
-        "id": 0,
+      "7565164": {
+        "id": 7565164,
         "startBlock": 200000000,
         "hypersync": "https://solana.hypersync.xyz",
         "contracts": {
@@ -33,9 +33,6 @@ expression: json
             "kind": "svmInstruction",
             "svm": {
               "discriminator": "0x21",
-              "discriminatorByteLen": 1,
-              "transactionFields": [],
-              "includeLogs": false,
               "accounts": [
                 "metadata",
                 "mint",
@@ -73,21 +70,6 @@ expression: json
             "kind": "svmInstruction",
             "svm": {
               "discriminator": "0x0f",
-              "discriminatorByteLen": 1,
-              "transactionFields": [
-                "signatures"
-              ],
-              "includeLogs": false,
-              "accountFilters": [
-                [
-                  {
-                    "position": 0,
-                    "values": [
-                      "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
-                    ]
-                  }
-                ]
-              ],
               "accounts": [
                 "metadata",
                 "update_authority"

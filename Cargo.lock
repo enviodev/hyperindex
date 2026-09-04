@@ -1777,9 +1777,12 @@ dependencies = [
  "alloy-primitives 1.5.7",
  "anyhow",
  "arrayvec",
+ "arrow",
  "async-recursion",
  "bollard",
  "bs58",
+ "bytes",
+ "capnp",
  "clap",
  "clap-markdown",
  "colored",
@@ -1792,6 +1795,7 @@ dependencies = [
  "hyperfuel-client",
  "hypersync-client",
  "hypersync-client-solana",
+ "hypersync-net-types",
  "hypersync-solana-net-types",
  "include_dir",
  "inquire",
@@ -2627,9 +2631,9 @@ dependencies = [
 
 [[package]]
 name = "hypersync-client-solana"
-version = "0.0.7"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7c0572f6eace0f3238f81b849d71931a62c1813d5cdab354abe59f1fcd03789"
+checksum = "5be5d9c69d5c04fb9951dfe0eb73cbe677335321f31f5587a923883e9e5f3117"
 dependencies = [
  "anyhow",
  "arrow",
@@ -2693,10 +2697,11 @@ dependencies = [
 
 [[package]]
 name = "hypersync-solana-net-types"
-version = "0.0.7"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "152054aeabe0121f0425acdf5b970cdb19044b09f33d4c545dd63345c1e2eec0"
+checksum = "77ae897620fa0eea4e950a3bb98edb2f058e514017ca5362530455a9af1de2de"
 dependencies = [
+ "bs58",
  "schemars",
  "serde",
  "strum 0.27.2",
@@ -2705,9 +2710,9 @@ dependencies = [
 
 [[package]]
 name = "hypersync-solana-schema"
-version = "0.0.7"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "694330f97445b9e7914a8ac810851280c10ed21d913dcad8d24adf89338f86c4"
+checksum = "7f3d4e6ddfe70e881ea37aefe6a4f317c78a29ab093cfd8cdd877b1397ee6bee"
 dependencies = [
  "arrow",
 ]

@@ -32,6 +32,10 @@ const expectClickHouseReadOnlyError = (op: string, err: unknown) => {
   }
 };
 
+// Asserted by the ClickHouse parity suite, which needs an id it knows was
+// deleted rather than one that happens to be.
+const HOLDER_DELETED_SENTINEL = "holder-deleted-sentinel";
+
 indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, context }) => {
   const id = `${event.chainId}-${event.block.number}-${event.logIndex}`;
 
@@ -69,6 +73,13 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
     expectClickHouseReadOnlyError("getWhere", err);
   }
 
+  // @internal entity: written like any other, but invisible to Hasura.
+  context.TransferInternal.set({
+    id,
+    from: event.params.from,
+    value: event.params.value,
+  });
+
   // Mirror override: only ClickHouse receives this row.
   context.TransferChOnly.set({
     id,
@@ -84,6 +95,27 @@ indexer.onEvent({ contract: "ERC20", event: "Transfer" }, async ({ event, contex
     value: event.params.value,
   });
   context.ChainAccount.set({ id: event.params.from });
+
+  // Deleted on some events and set again on later ones, so the ClickHouse view
+  // has to resolve an id whose history interleaves SET and DELETE.
+  if (event.logIndex % 7 === 6) {
+    context.Holder.deleteUnsafe(event.params.from);
+  } else {
+    context.Holder.set({
+      id: event.params.from,
+      lastBlock: event.block.number,
+      lastValue: event.params.value,
+    });
+  }
+
+  // Set and deleted within one event, so both backends are guaranteed at least
+  // one id whose final state is deleted no matter what the block range holds.
+  context.Holder.set({
+    id: HOLDER_DELETED_SENTINEL,
+    lastBlock: event.block.number,
+    lastValue: event.params.value,
+  });
+  context.Holder.deleteUnsafe(HOLDER_DELETED_SENTINEL);
 
   // Values are chosen beyond float64 precision so a regression that lets
   // Hasura serve NUMERIC[] as numbers changes the digits, not just the type.

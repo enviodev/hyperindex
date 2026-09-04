@@ -212,6 +212,10 @@
     "Chain": {
       "type": "object",
       "properties": {
+        "id": {
+          "description": "Identifies the Svm cluster: the label \"solana\" (7565164) or \"solana-devnet\" (7565165), or an explicit number of your choosing for other clusters (up to Number.MAX_SAFE_INTEGER). Svm has no native numeric chain id, so the label ids are assigned by Envio and match the ids used for HyperSync usage attribution.",
+          "$ref": "#/$defs/ChainId"
+        },
         "skip": {
           "description": "Excludes the chain from indexing and migrations. Code generation is unaffected. For testing, prefer using a test framework instead.",
           "type": [
@@ -264,15 +268,44 @@
       },
       "additionalProperties": false,
       "required": [
+        "id",
         "start_block"
+      ]
+    },
+    "ChainId": {
+      "description": "The chain id of an Svm chain: either a known cluster label or an\nexplicit number (for private chains, rollups, or custom clusters).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ChainLabel"
+        },
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      ]
+    },
+    "ChainLabel": {
+      "type": "string",
+      "enum": [
+        "solana",
+        "solana-devnet"
       ]
     },
     "Experimental": {
       "type": "object",
       "properties": {
         "hypersync_config": {
-          "description": "HyperSync Config for fetching historical instructions on this chain.",
-          "$ref": "#/$defs/HypersyncConfig"
+          "description": "HyperSync Config for fetching historical instructions on this chain. Optional for the `solana` and `solana-devnet` chain ids, which default to their public HyperSync endpoints; required for any other chain id.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HypersyncConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "programs": {
           "description": "Solana programs to index on this chain.",
@@ -284,7 +317,6 @@
       },
       "additionalProperties": false,
       "required": [
-        "hypersync_config",
         "programs"
       ]
     },
@@ -292,7 +324,7 @@
       "type": "object",
       "properties": {
         "url": {
-          "description": "URL of the HyperSync endpoint (default: the public Solana HyperSync endpoint at https://solana.hypersync.xyz)",
+          "description": "URL of the HyperSync endpoint (defaults to the public endpoint of the chain id: https://solana.hypersync.xyz for `solana`, https://solana-devnet.hypersync.xyz for `solana-devnet`)",
           "type": "string"
         }
       },
@@ -349,43 +381,14 @@
           "type": "string"
         },
         "discriminator": {
-          "description": "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" optional). Must be 1, 2, 4, or 8 bytes after decoding. An 8-byte value matches the standard Anchor discriminator.",
+          "description": "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" optional), of any whole number of bytes; an 8-byte value matches the standard Anchor discriminator. Omit it to match every instruction of the program. Every instruction whose prefix an on-chain call carries receives it, so a program-wide entry fires alongside a keyed one, and two entries may share a prefix (say, the layouts before and after a program upgrade): each decodes with its own `args`, and one whose layout rejects the data is skipped for that call.",
           "type": [
             "string",
             "null"
           ]
         },
-        "is_inner": {
-          "description": "Filter on inner-vs-outer instructions. None / absent matches both.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "account_filters": {
-          "description": "Optional positional account filters. Two shapes are accepted: a flat list of `{position, values}` entries (AND across positions, OR within `values`); or `{any_of: [[...]] }`, a list of AND-groups that are OR-ed together. Positions must be in 0..=5; positions 6..=9 are reserved for a future extension.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AccountFilters"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "field_selection": {
-          "description": "Select which additional data to fetch for each matched instruction. Each key accepts `true` (include all fields) or a list of field names (per-field selection, not yet supported). When absent, only the instruction itself is included.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SvmFieldSelection"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "accounts": {
-          "description": "Optional positional account names. The Nth entry names account slot N on the dispatched instruction; surfaces as `event.instruction.decoded.accounts.<name>`. Accounts beyond the named list become `extra_accounts`.",
+          "description": "Optional positional account names. The Nth entry names account slot N on the dispatched instruction; surfaces as `instruction.accounts.<name>` when `fields.instruction` includes `accounts`.",
           "type": [
             "array",
             "null"
@@ -408,127 +411,6 @@
       "additionalProperties": false,
       "required": [
         "name"
-      ]
-    },
-    "AccountFilters": {
-      "anyOf": [
-        {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/AccountFilter"
-          }
-        },
-        {
-          "$ref": "#/$defs/AnyOfAccountFilters"
-        }
-      ]
-    },
-    "AccountFilter": {
-      "type": "object",
-      "properties": {
-        "position": {
-          "description": "Account position within the instruction (0..=5).",
-          "type": "integer",
-          "format": "uint8",
-          "minimum": 0,
-          "maximum": 255
-        },
-        "values": {
-          "description": "Allowed base58 pubkeys for this account position.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "position",
-        "values"
-      ]
-    },
-    "AnyOfAccountFilters": {
-      "type": "object",
-      "properties": {
-        "any_of": {
-          "description": "A non-empty list of AND-groups. Each group is itself a non-empty list of `{position, values}` entries that must all match the same instruction. An instruction matches `any_of` when any one group matches.",
-          "type": "array",
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/AccountFilter"
-            }
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "any_of"
-      ]
-    },
-    "SvmFieldSelection": {
-      "type": "object",
-      "properties": {
-        "transaction_fields": {
-          "description": "Parent-transaction fields to include on each matched instruction, as a list of field names. Omit (or pass an empty list) to include no transaction.",
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "$ref": "#/$defs/SvmTransactionField"
-          }
-        },
-        "block_fields": {
-          "description": "Block fields to include on each matched instruction's `block`, as a list of field names. `slot`/`time`/`hash` are always included; this adds `height`/`parentSlot`/`parentHash`.",
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "$ref": "#/$defs/SvmBlockField"
-          }
-        },
-        "log_fields": {
-          "description": "Set to `true` to include program logs scoped to each matched instruction.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "token_balance_fields": {
-          "description": "Set to `true` to include SPL Token / Token-2022 balance snapshots for the parent transaction, exposed as `transaction.tokenBalances`. Independent of `transaction_fields`.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        }
-      },
-      "additionalProperties": false
-    },
-    "SvmTransactionField": {
-      "description": "Selectable parent-transaction field names (camelCase), matching the\npublic `svmTransaction` shape. `tokenBalances` is selected via the\nseparate `token_balance_fields` toggle, so it isn't listed here.",
-      "type": "string",
-      "enum": [
-        "transactionIndex",
-        "signatures",
-        "feePayer",
-        "success",
-        "err",
-        "fee",
-        "computeUnitsConsumed",
-        "accountKeys",
-        "recentBlockhash",
-        "version"
-      ]
-    },
-    "SvmBlockField": {
-      "description": "Selectable block field names (camelCase), matching the public\n`instruction.block` shape. `slot`/`time`/`hash` are always included,\nso everything here is opt-in on top of that trio.",
-      "type": "string",
-      "enum": [
-        "height",
-        "parentSlot",
-        "parentHash"
       ]
     },
     "ArgDef": {

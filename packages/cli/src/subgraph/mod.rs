@@ -17,10 +17,10 @@ use serde::Serialize;
 
 use crate::config_parsing::human_config::{
     evm::{
-        AddressFormat, BlockField, Chain, ContractConfig, EventConfig, FieldSelection, For,
-        HumanConfig, Rpc, RpcBlockField, RpcSelection, RpcTransactionField, TransactionField,
+        AddressFormat, BlockField, Chain, ContractConfig, EventConfig, FieldSelection, HumanConfig,
+        Rpc, RpcSelection, TransactionField,
     },
-    BaseConfig, ChainContract, GlobalContract,
+    BaseConfig, BytesType, ChainContract, GlobalContract,
 };
 use crate::utils::normalized_list::NormalizedList;
 
@@ -153,7 +153,7 @@ pub fn graph_codegen_failed_message() -> String {
         .to_string()
 }
 
-fn field_selection_for(receipt: bool, rpc_only: bool, usage: &usage::FieldUsage) -> FieldSelection {
+fn field_selection_for(receipt: bool, usage: &usage::FieldUsage) -> FieldSelection {
     let mut transaction_fields = match &usage.transaction {
         Some(fields) => fields.clone(),
         None => DEFAULT_TRANSACTION_FIELDS.to_vec(),
@@ -165,17 +165,10 @@ fn field_selection_for(receipt: bool, rpc_only: bool, usage: &usage::FieldUsage)
             }
         }
     }
-    // An RPC serves a narrower set than HyperSync. Selecting a field it can't
-    // serve is rejected at config time, so a mapping indexing over RPC gets
-    // whatever RPC has rather than failing to start.
-    let mut block_fields = match &usage.block {
+    let block_fields = match &usage.block {
         Some(fields) => fields.clone(),
         None => DEFAULT_BLOCK_FIELDS.to_vec(),
     };
-    if rpc_only {
-        transaction_fields.retain(|field| RpcTransactionField::try_from(field.clone()).is_ok());
-        block_fields.retain(|field| RpcBlockField::try_from(field.clone()).is_ok());
-    }
     FieldSelection {
         transaction_fields: Some(transaction_fields),
         block_fields: Some(block_fields),
@@ -185,11 +178,14 @@ fn field_selection_for(receipt: bool, rpc_only: bool, usage: &usage::FieldUsage)
 fn contract_config(
     source: &mut DataSource,
     files: &HashMap<String, String>,
-    rpc_only: bool,
     usage: &usage::FieldUsage,
     report: &mut Report,
 ) -> ContractConfig {
-    let abi_path = source.abi.as_ref().and_then(|abi| source.abis.get(abi)).cloned();
+    let abi_path = source
+        .abi
+        .as_ref()
+        .and_then(|abi| source.abis.get(abi))
+        .cloned();
     let abi_json = abi_path.as_ref().and_then(|path| {
         files
             .get(path)
@@ -255,7 +251,7 @@ fn contract_config(
             EventConfig {
                 event,
                 name,
-                field_selection: Some(field_selection_for(handler.receipt, rpc_only, usage)),
+                field_selection: Some(field_selection_for(handler.receipt, usage)),
             }
         })
         .collect();
@@ -292,15 +288,6 @@ pub fn translate(
         Some(raw) => Some(parse_rpc_env(raw)?),
         None => None,
     };
-    // Only when RPC is the sync source; a fallback entry leaves HyperSync in
-    // charge of the fields.
-    let rpc_only = match &rpc {
-        Some(RpcSelection::Single(entry)) => entry.source_for == Some(For::Sync),
-        Some(RpcSelection::List(entries)) => {
-            entries.iter().any(|entry| entry.source_for == Some(For::Sync))
-        }
-        _ => false,
-    };
     let rpc_urls = match &rpc {
         Some(RpcSelection::Url(url)) => vec![url.clone()],
         Some(RpcSelection::Single(rpc)) => vec![rpc.url.clone()],
@@ -315,7 +302,7 @@ pub fn translate(
     for source in manifest.data_sources.iter_mut() {
         contracts.push(GlobalContract {
             name: source.name.clone(),
-            config: contract_config(source, files, rpc_only, &usage, &mut report),
+            config: contract_config(source, files, &usage, &mut report),
         });
 
         let Some(chain_id) = source.chain_id else {
@@ -363,7 +350,7 @@ pub fn translate(
         chains.keys().cloned().collect()
     };
     for source in manifest.templates.iter_mut() {
-        let config = contract_config(source, files, rpc_only, &usage, &mut report);
+        let config = contract_config(source, files, &usage, &mut report);
 
         // graph-node keeps `dataSources` and `templates` in separate namespaces,
         // so a name can appear in both — Balancer's FXPoolDeployer is a fixed
@@ -441,6 +428,9 @@ pub fn translate(
         // graph-ts renders addresses lowercase, and id/derived-key parity
         // depends on it. Not overridable.
         address_format: Some(AddressFormat::Lowercase),
+        // graph-ts `Bytes` is a `Uint8Array`, so a `Bytes` column holds the
+        // bytes themselves rather than a hex rendering of them.
+        bytes_type: Some(BytesType::Uint8Array),
     };
 
     Ok(Translation {
@@ -461,6 +451,7 @@ pub type SubgraphRpc = Rpc;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config_parsing::human_config::evm::RpcTransactionField;
 
     /// Mapping source the usage scan can't account for, so these cases see the
     /// full selection rather than a narrowed one.
@@ -526,7 +517,16 @@ type Gravatar @entity {
 
     #[test]
     fn builds_an_evm_config_from_a_manifest() {
-        let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous()).unwrap();
+        let translation = translate(
+            MANIFEST,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
         let config = &translation.human_config;
         let chain = &config.chains[0];
         let contract_names: Vec<&str> = config
@@ -566,7 +566,16 @@ type Gravatar @entity {
 
     #[test]
     fn carries_a_data_source_end_block_onto_its_chain() {
-        let single = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous()).unwrap();
+        let single = translate(
+            MANIFEST,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
 
         let bounded_source = MANIFEST.replace(
             "      startBlock: 6175244",
@@ -594,7 +603,16 @@ type Gravatar @entity {
 
     #[test]
     fn selects_receipt_fields_only_where_declared() {
-        let translation = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous()).unwrap();
+        let translation = translate(
+            MANIFEST,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
         let gravity = &translation.human_config.contracts.as_ref().unwrap()[0];
         let plain = gravity.config.events[0]
             .field_selection
@@ -632,9 +650,16 @@ type Gravatar @entity {
             .replace("      abi: Wallet", "      abi: Gravity")
             .replace("        - name: Wallet", "        - name: Gravity")
             .replace("./abis/Wallet.json", "./abis/Gravity.json");
-        let translation =
-            translate(&manifest, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous())
-                .unwrap();
+        let translation = translate(
+            &manifest,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .unwrap();
         let contracts = translation.human_config.contracts.as_ref().unwrap();
 
         assert_eq!(
@@ -664,11 +689,22 @@ type Gravatar @entity {
     #[test]
     fn selects_only_what_the_mappings_read() {
         let mappings = vec![
-            "entity.hash = event.transaction.hash; entity.time = event.block.timestamp;".to_string(),
+            "entity.hash = event.transaction.hash; entity.time = event.block.timestamp;"
+                .to_string(),
         ];
-        let translation =
-            translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new(), &mappings).unwrap();
-        let selection = translation.human_config.contracts.as_ref().unwrap()[0].config.events[0]
+        let translation = translate(
+            MANIFEST,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &mappings,
+        )
+        .unwrap();
+        let selection = translation.human_config.contracts.as_ref().unwrap()[0]
+            .config
+            .events[0]
             .field_selection
             .clone()
             .unwrap();
@@ -682,8 +718,12 @@ type Gravatar @entity {
         );
     }
 
+    // Every field a mapping can reach is one an RPC serves, so the selection is
+    // the same whichever source syncs the chain. If graph-ts ever exposes one
+    // that isn't — `accessList` — this fails rather than the indexer starting
+    // and finding the field absent.
     #[test]
-    fn narrows_the_field_selection_when_rpc_is_the_sync_source() {
+    fn selects_only_fields_an_rpc_can_serve() {
         let over_rpc = translate(
             MANIFEST,
             SCHEMA,
@@ -694,35 +734,40 @@ type Gravatar @entity {
             &ambiguous(),
         )
         .unwrap();
-        let over_hypersync = translate(MANIFEST, SCHEMA, "gravatar", None, ".", &HashMap::new(), &ambiguous())
-            .unwrap();
 
-        let fields = |t: &Translation| {
+        let selection = |t: &Translation| {
             t.human_config.contracts.as_ref().unwrap()[0].config.events[0]
                 .field_selection
-                .as_ref()
-                .unwrap()
-                .transaction_fields
                 .clone()
                 .unwrap()
         };
+        let selected = selection(&over_rpc);
+        let unservable: Vec<String> = selected
+            .transaction_fields
+            .clone()
+            .unwrap()
+            .into_iter()
+            .filter(|field| RpcTransactionField::try_from(field.clone()).is_err())
+            .map(|field| field.to_string())
+            .collect();
 
         assert_eq!(
             (
-                fields(&over_rpc).contains(&TransactionField::Gas),
-                fields(&over_rpc).contains(&TransactionField::Nonce),
-                fields(&over_rpc).contains(&TransactionField::Hash),
-                fields(&over_hypersync).contains(&TransactionField::Gas),
-                over_rpc.human_config.contracts.as_ref().unwrap()[0].config.events[0]
-                    .field_selection
-                    .as_ref()
+                unservable,
+                selection(
+                    &translate(
+                        MANIFEST,
+                        SCHEMA,
+                        "gravatar",
+                        None,
+                        ".",
+                        &HashMap::new(),
+                        &ambiguous()
+                    )
                     .unwrap()
-                    .block_fields
-                    .as_ref()
-                    .unwrap()
-                    .contains(&BlockField::Size),
+                ),
             ),
-            (false, false, true, true, false)
+            (Vec::<String>::new(), selected)
         );
     }
 
@@ -814,7 +859,11 @@ mod project_tests {
             r#"[{"type":"event","name":"NewGravatar","anonymous":false,"inputs":[{"name":"id","type":"uint256","indexed":false}]}]"#,
         )
         .unwrap();
-        fs::write(root.join("src/gravity.ts"), "export function handleNewGravatar() {}").unwrap();
+        fs::write(
+            root.join("src/gravity.ts"),
+            "export function handleNewGravatar() {}",
+        )
+        .unwrap();
         fs::write(
             root.join("schema.graphql"),
             "type Gravatar @entity {\n  id: Bytes!\n  owner: Bytes!\n}\n",
@@ -851,8 +900,7 @@ dataSources:
         )
         .unwrap();
 
-        let project_paths =
-            ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
+        let project_paths = ParsedProjectPaths::new(root.to_str().unwrap(), "config.yaml").unwrap();
         let config = SystemConfig::parse_from_project_files(&project_paths).unwrap();
         let json = config.to_public_config_json(false).unwrap();
 

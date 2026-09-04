@@ -26,7 +26,9 @@ fn map_scalar(name: &str) -> Option<&'static str> {
         "String" => Some("String"),
         "Int" => Some("Int"),
         "Boolean" => Some("Boolean"),
-        "Bytes" => Some("String"),
+        // Subgraph mode sets `bytes_type: uint8array`, so a `Bytes` column
+        // holds the bytes graph-ts hands it rather than a hex rendering.
+        "Bytes" => Some("Bytes"),
         "BigInt" => Some("BigInt"),
         "BigDecimal" => Some("BigDecimal"),
         // 64-bit in AssemblyScript; envio's Int is 32-bit and JS numbers are
@@ -146,7 +148,10 @@ fn render_fields(
     report: &mut Report,
 ) -> Vec<String> {
     let mut fields = Vec::new();
-    let declared = translation.entity_fields.entry(owner.to_string()).or_default();
+    let declared = translation
+        .entity_fields
+        .entry(owner.to_string())
+        .or_default();
     for field in source {
         if !declared.contains(&field.name) {
             declared.push(field.name.clone());
@@ -159,13 +164,12 @@ fn render_fields(
         for directive in &field.directives {
             let name = directive_name(directive);
             if name == "derivedFrom" {
-                derived_from = directive
-                    .arguments
-                    .iter()
-                    .find_map(|(key, value)| match (key.as_str(), value) {
+                derived_from = directive.arguments.iter().find_map(|(key, value)| {
+                    match (key.as_str(), value) {
                         ("field", Value::String(field)) => Some(field.clone()),
                         _ => None,
-                    });
+                    }
+                });
                 for (arg, _) in &directive.arguments {
                     if arg != "field" {
                         report.unknown(
@@ -406,7 +410,10 @@ pub fn translate(schema_text: &str, report: &mut Report) -> SchemaTranslation {
                 if bool_arg(entity, "timeseries") == Some(true) {
                     report.unsupported(
                         "timeseries and aggregations",
-                        format!("schema.graphql → type {} @entity(timeseries: true)", object.name),
+                        format!(
+                            "schema.graphql → type {} @entity(timeseries: true)",
+                            object.name
+                        ),
                     );
                 }
                 // `immutable: true` is validated and dropped: graph-node's
@@ -517,14 +524,18 @@ enum Status {
         assert_eq!(
             (
                 translation.text.as_str(),
-                translation.bytes_id_entities.iter().cloned().collect::<Vec<_>>(),
+                translation
+                    .bytes_id_entities
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>(),
                 translation.timestamp_fields.get("Gravatar").cloned(),
                 translation.entity_list_fields.get("Account").cloned(),
             ),
             (
                 "type Gravatar {\n  \
                    id: String!\n  \
-                   owner: String!\n  \
+                   owner: Bytes!\n  \
                    displayName: String!\n  \
                    score: BigInt!\n  \
                    createdAt: Timestamp!\n  \
@@ -575,7 +586,7 @@ type Transfer implements DomainEvent @entity {
             "interface DomainEvent {\n  \
                id: ID!\n  \
                domain: Domain!\n  \
-               txHash: String!\n\
+               txHash: Bytes!\n\
              }\n\n\
              type Domain {\n  \
                id: ID!\n  \
@@ -584,8 +595,8 @@ type Transfer implements DomainEvent @entity {
              type Transfer implements DomainEvent {\n  \
                id: ID!\n  \
                domain: Domain!\n  \
-               txHash: String!\n  \
-               owner: String!\n\
+               txHash: Bytes!\n  \
+               owner: Bytes!\n\
              }"
         );
     }

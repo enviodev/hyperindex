@@ -38,6 +38,10 @@ afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
+// A subgraph's `Bytes` column stores the bytes themselves: subgraph mode runs
+// with `bytes_type: uint8array`, which is what graph-ts hands the store.
+const bytes = (hex: string) => Uint8Array.from(Buffer.from(hex.slice(2), "hex"));
+
 describe("an unmodified subgraph project", () => {
   it("indexes a factory event, its contract call and its template", async () => {
     const indexer = createTestIndexer();
@@ -79,18 +83,18 @@ describe("an unmodified subgraph project", () => {
 
     expect(await indexer.Pair.getOrThrow(pair.toLowerCase())).toEqual({
       id: pair.toLowerCase(),
-      token0: Addresses.mockAddresses[1].toLowerCase(),
-      token1: Addresses.mockAddresses[2].toLowerCase(),
+      token0: bytes(Addresses.mockAddresses[1]),
+      token1: bytes(Addresses.mockAddresses[2]),
       // The second event read the first back through the generated `load()`.
       name: "Uniswap+Uniswap",
     });
 
-    const swaps = await indexer.Swap.getWhere({ pair: { _eq: pair.toLowerCase() } });
+    const swaps = await indexer.Swap.getWhere({ pair: { _eq: bytes(pair) } });
     expect(swaps).toEqual([
       {
         id: pair.toLowerCase() + "-2",
-        pair: pair.toLowerCase(),
-        sender: Addresses.mockAddresses[4].toLowerCase(),
+        pair: bytes(pair),
+        sender: bytes(Addresses.mockAddresses[4]),
         amount: 500n,
       },
     ]);

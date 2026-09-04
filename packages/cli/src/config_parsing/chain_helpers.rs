@@ -155,7 +155,7 @@ pub enum Network {
     )]
     EthereumMainnet = 1,
 
-    #[subenum(HypersyncChain)]
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
     Etherlink = 42793,
 
     #[subenum(NetworkWithExplorer)]
@@ -221,7 +221,10 @@ pub enum Network {
     #[subenum(HypersyncChain)]
     Katana = 747474,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    // HyperSync no longer serves Kroma (255.hypersync.xyz refuses
+    // connections and it's gone from active_chains), so it's not a
+    // HypersyncChain. Still resolvable via explorer.
+    #[subenum(NetworkWithExplorer)]
     Kroma = 255,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -384,6 +387,9 @@ pub enum Network {
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Sophon = 50104,
+
+    #[subenum(HypersyncChain)]
+    StablesKinshipGrass = 988,
 
     StatusSepolia = 1660990954,
 
@@ -604,6 +610,7 @@ impl Network {
             | Network::Injective
             | Network::Megaeth
             | Network::SeiTestnet
+            | Network::StablesKinshipGrass
             | Network::StatusSepolia
             | Network::Tempo
             | Network::Tron

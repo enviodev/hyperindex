@@ -10,65 +10,116 @@ type options = {
   addressStore: AddressStore.t,
 }
 
-// Synthesize a stable logIndex for an SVM instruction so the FetchState
-// ordering machinery (which compares by `(blockNumber, logIndex)`) sorts
-// instructions deterministically within a slot. The bit packing fits inside
-// JS's 53-bit safe-integer range: transactionIndex ≤ ~10k per slot,
-// instruction position ≤ 1000 per tx, depth ≤ ~10. Outer-only instructions
-// land at `tx * 65536`; inner ones append depth-weighted offsets.
-let synthLogIndex = (~transactionIndex, ~instructionAddress) => {
-  let addrSum = instructionAddress->Array.reduce(0, (acc, n) => acc * 1024 + n + 1)
-  transactionIndex * 65536 + addrSum
+let namedAccounts = (~idlNames: array<string>, ~accountArguments: array<string>): dict<
+  Envio.svmInstructionAccount,
+> => {
+  let out = Dict.make()
+  idlNames->Array.forEachWithIndex((name, i) =>
+    switch accountArguments->Array.get(i) {
+    | Some(address) =>
+      out->Dict.set(
+        name,
+        {
+          Envio.address: address->SvmTypes.Pubkey.fromStringUnsafe,
+          accountName: name,
+          instructionAccountIndex: i,
+        },
+      )
+    | None => ()
+    }
+  )
+  out
 }
 
-// Parse the Rust-decoded instruction (args/accounts arrive as JSON strings to
-// side-step napi-rs's lack of native JSON passthrough) into the public shape.
-let parseDecoded = (
-  d: SvmHyperSyncClient.ResponseTypes.decodedInstruction,
-): Envio.svmInstructionParams => {
-  let args = try JSON.parseOrThrow(d.argsJson) catch {
-  | _ => JSON.Object(Dict.make())
+let selectedLog = (
+  log: SvmHyperSyncClient.EventItems.log,
+  ~logFields: Utils.Set.t<string>,
+): Envio.svmLog => {
+  let out = Dict.make()
+  if logFields->Utils.Set.has("kind") {
+    switch log.kind->Null.toOption {
+    | Some(kind) => out->Dict.set("kind", kind)
+    | None => ()
+    }
   }
-  let accounts = try {
-    JSON.parseOrThrow(d.accountsJson)->(Utils.magic: JSON.t => dict<string>)
-  } catch {
-  | _ => Dict.make()
+  if logFields->Utils.Set.has("message") {
+    switch log.message->Null.toOption {
+    | Some(message) => out->Dict.set("message", message)
+    | None => ()
+    }
   }
-  {
-    name: d.name,
-    args,
-    accounts,
-    extraAccounts: d.extraAccounts,
-  }
+  out->(Utils.magic: dict<string> => Envio.svmLog)
 }
 
-// `block` is omitted; it's materialised from the block store at batch prep.
+let setField = (out: dict<unknown>, name: string, value: 'a) =>
+  out->Dict.set(name, value->(Utils.magic: 'a => unknown))
+
+// `block` and `transaction` are omitted; they're materialised from the stores
+// at batch prep. Named-account `.activity` is attached then too.
+// Unselected instruction keys must be omitted, not assigned `undefined`.
 let toSvmInstruction = (
   item: SvmHyperSyncClient.EventItems.item,
   ~programName,
   ~instructionName,
+  ~eventConfig: Internal.svmInstructionEventConfig,
+  ~fieldSelection: Internal.fieldSelection,
 ): Envio.svmInstruction => {
-  programName,
-  instructionName,
-  programId: item.programId->SvmTypes.Pubkey.fromStringUnsafe,
-  data: item.data,
-  accounts: item.accounts->SvmTypes.Pubkey.fromStringsUnsafe,
-  instructionAddress: item.instructionAddress,
-  isInner: item.isInner,
-  d1: ?item.d1,
-  d2: ?item.d2,
-  d4: ?item.d4,
-  d8: ?item.d8,
-  params: ?(item.decoded->Option.map(parseDecoded)),
-  logs: ?(
-    item.logs->Option.map(logs =>
-      logs->Array.map((log): Envio.svmLog => {kind: log.kind, message: log.message})
+  let hasSelection = name => fieldSelection.instructionFields->Utils.Set.has(name)
+  // A program-wide registration has no configured discriminator, so the whole
+  // data stands in, hex-encoded like a configured one would be.
+  let discriminator = switch eventConfig.discriminator {
+  | Some(d) => d
+  | None => "0x" ++ item.data->NodeJs.Buffer.fromUint8Array->NodeJs.Buffer.toHex
+  }
+  let out = Dict.make()
+  out->setField("programName", programName)
+  out->setField("instructionName", instructionName)
+  out->setField("discriminator", discriminator)
+  if hasSelection("programId") {
+    out->setField("programId", item.programId->SvmTypes.Pubkey.fromStringUnsafe)
+  }
+  if hasSelection("data") {
+    out->setField("data", item.data)
+  }
+  if hasSelection("path") {
+    out->setField("path", item.path)
+  }
+  if hasSelection("isInner") {
+    out->setField("isInner", item.isInner)
+  }
+  switch item.args->Null.toOption {
+  | Some(args) => out->setField("args", args)
+  | None => ()
+  }
+  if hasSelection("accounts") {
+    out->setField(
+      "accounts",
+      namedAccounts(~idlNames=eventConfig.accounts, ~accountArguments=item.accounts),
     )
-  ),
+  }
+  if hasSelection("accountArguments") {
+    out->setField("accountArguments", item.accounts->SvmTypes.Pubkey.fromStringsUnsafe)
+  }
+  if fieldSelection.logFields->Utils.Set.size > 0 {
+    out->setField(
+      "logs",
+      item.logs
+      ->Null.getOr([])
+      ->Array.map(log => selectedLog(log, ~logFields=fieldSelection.logFields)),
+    )
+  }
+  out->(Utils.magic: dict<unknown> => Envio.svmInstruction)
 }
 
 let make = (
-  {chainId, endpointUrl, apiToken, onEventRegistrations, clientTimeoutMillis, addressStore}: options,
+  {
+    chainId,
+    endpointUrl,
+    apiToken,
+    onEventRegistrations,
+    clientTimeoutMillis,
+    addressStore,
+  }: options,
 ): t => {
   let name = "SvmHyperSync"
 
@@ -79,9 +130,7 @@ let make = (
     ~url=endpointUrl,
     ~apiToken?,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
-    ~eventRegistrations=SvmHyperSyncClient.Registration.fromOnEventRegistrations(
-      onEventRegistrations,
-    ),
+    ~programs=SvmHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~addressStore,
   )
 
@@ -112,6 +161,9 @@ let make = (
       ~addressSet,
     ) catch {
     | exn =>
+      // A rate limit or a replica behind the head is recoverable and has its own
+      // backoff and failover, so it must not be buried in a generic retry.
+      HyperSync.reraiseIfRecoverable(exn)
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
@@ -133,17 +185,6 @@ let make = (
 
     let parsingRef = Performance.now()
 
-    // Per-slot blockTime lookup from the response's `blocks` table, for the
-    // batch's `latestFetchedBlockTimestamp`. Slots without a block row (rare;
-    // usually skipped slots) fall back to `None`.
-    let blockTimeBySlot = Dict.make()
-    resp.blocks->Array.forEach(b => {
-      switch b.blockTime {
-      | Some(t) => blockTimeBySlot->Dict.set(b.slot->Int.toString, t)
-      | None => ()
-      }
-    })
-
     let parsedQueueItems = resp.items->Array.map(item => {
       // Routing happened in Rust; the item references its registration by
       // chain-scoped index.
@@ -156,15 +197,20 @@ let make = (
         item,
         ~programName=eventConfig.contractName,
         ~instructionName=eventConfig.name,
+        ~eventConfig,
+        ~fieldSelection=onEventRegistration.fieldSelection,
       )
       Internal.Event({
-        onEventRegistration,
+        onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
         chainId,
         blockNumber: item.slot,
-        logIndex: synthLogIndex(
-          ~transactionIndex=item.transactionIndex,
-          ~instructionAddress=item.instructionAddress,
-        ),
+        // A slot orders by `(transactionIndex, path)` — the
+        // transaction, then the instruction's position in its CPI tree. Both
+        // ride the item so the buffer comparator can order on the pair
+        // directly; no single integer can hold it (Solana allows a CPI depth
+        // of 5, which needs more bits than a JS integer is exact to).
+        logIndex: item.transactionIndex,
+        orderPath: item.path,
         // The parent transaction is materialised from the store at batch prep.
         transactionIndex: item.transactionIndex,
         payload: payload->(Utils.magic: Envio.svmInstruction => Internal.eventPayload),
@@ -173,118 +219,35 @@ let make = (
 
     let parsingTimeElapsed = parsingRef->Performance.secondsSince
     let highestSlot = resp.nextSlot - 1
-    let latestBlockTime =
-      blockTimeBySlot
-      ->Utils.Dict.dangerouslyGetNonOption(highestSlot->Int.toString)
-      ->Option.getOr(0)
-
-    // Best-effort (slot, blockhash) pairs from the blocks the server returned
-    // for this range. Gaps (skipped slots, or slots without matched data) are
-    // fine — reorg detection only compares hashes for slots it has observed.
-    let blockHashes = resp.blocks->Array.map((b): ReorgDetection.blockData => {
-      blockNumber: b.slot,
-      blockHash: b.blockhash,
-    })
 
     let totalTimeElapsed = totalTimeRef->Performance.secondsSince
 
     {
-      latestFetchedBlockTimestamp: latestBlockTime,
       parsedQueueItems,
       // Raw transactions kept in Rust; materialised (selected fields) at batch prep.
       transactionStore: Some(transactionStore),
       // Raw blocks kept in Rust; materialised onto the payload at batch prep.
-      blockStore: Some(blockStore),
+      // Their (slot, blockhash) pairs also drive reorg detection on merge.
+      blockStore,
       latestFetchedBlockNumber: highestSlot,
       stats: {totalTimeElapsed, parsingTimeElapsed, pageFetchTime},
       knownHeight,
-      blockHashes,
       fromBlockQueried: fromBlock,
       requestStats,
     }
   }
 
-  // Fetch (slot, blockhash, blockTime) for blocks in an inclusive slot range,
-  // paginating on the server's `nextSlot` cursor. `toSlot` is exclusive on the
-  // wire, so we request `maxSlot + 1`; the caller filters to the exact slots.
-  let queryBlockDataRange = async (~fromSlot, ~toSlot) => {
-    let blockDatas = []
-    let requestStats = []
-    let fromRef = ref(fromSlot)
-    let keepGoing = ref(true)
-    while keepGoing.contents {
-      let query: SvmHyperSyncClient.query = {
-        fromSlot: fromRef.contents,
-        toSlot: toSlot + 1,
-        includeAllBlocks: true,
-        fields: {block: [Slot, Blockhash, BlockTime]},
-        maxNumBlocks: 1000,
-      }
-      let timerRef = Performance.now()
-      // Block-only query; the store pages are empty.
-      let (resp, _, _) = await client.get(~query)
-      requestStats
-      ->Array.push({Source.method: "getBlockHashes", seconds: timerRef->Performance.secondsSince})
-      ->ignore
-      resp.data.blocks->Array.forEach(b =>
-        blockDatas
-        ->Array.push({
-          ReorgDetection.blockNumber: b.slot,
-          blockHash: b.blockhash,
-          blockTimestamp: b.blockTime->Option.getOr(0),
-        })
-        ->ignore
-      )
-
-      // `nextSlot` is the (exclusive) resume cursor. Stop once it passes the
-      // range, or fails to advance — the latter guards against an infinite loop.
-      if resp.nextSlot > toSlot || resp.nextSlot <= fromRef.contents {
-        keepGoing := false
-      } else {
-        fromRef := resp.nextSlot
-      }
-    }
-    (blockDatas, requestStats)
-  }
-
-  let getBlockHashes = async (~blockNumbers, ~logger as _) =>
-    switch blockNumbers->Array.get(0) {
-    | None => {Source.result: Ok([]), requestStats: []}
-    | Some(firstSlot) =>
-      try {
-        let minSlot = ref(firstSlot)
-        let maxSlot = ref(firstSlot)
-        let requested = Utils.Set.make()
-        blockNumbers->Array.forEach(slot => {
-          if slot < minSlot.contents {
-            minSlot := slot
-          }
-          if slot > maxSlot.contents {
-            maxSlot := slot
-          }
-          requested->Utils.Set.add(slot)->ignore
-        })
-        let (blockDatas, requestStats) = await queryBlockDataRange(
-          ~fromSlot=minSlot.contents,
-          ~toSlot=maxSlot.contents,
-        )
-        // Keep one entry per requested slot; drop duplicates and unrelated slots.
-        {
-          Source.result: Ok(
-            blockDatas->Array.filter(data => requested->Utils.Set.delete(data.blockNumber)),
-          ),
-          requestStats,
-        }
-      } catch {
-      | exn => {Source.result: Error(exn), requestStats: []}
-      }
-    }
+  // Called through the client rather than passed as a value: the client is a
+  // napi class, so a detached method reference loses the instance it belongs to.
+  let getBlockHashes = HyperSync.makeGetBlockHashes(~query=(~blockNumbers) =>
+    client.getBlockHashes(~blockNumbers)
+  )
 
   {
     name,
     sourceFor: Sync,
     chainId,
-    pollingInterval: 1000,
+    pollingInterval: HyperSync.pollingInterval,
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {

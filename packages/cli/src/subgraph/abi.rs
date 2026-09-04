@@ -50,9 +50,7 @@ fn manifest_arg_types(signature: &str) -> Vec<(String, bool)> {
 
     args.into_iter()
         .map(|arg| {
-            let indexed = arg
-                .split_whitespace()
-                .any(|word| word == "indexed");
+            let indexed = arg.split_whitespace().any(|word| word == "indexed");
             let ty = arg
                 .trim_start_matches("indexed")
                 .trim_end_matches("indexed")
@@ -67,7 +65,10 @@ fn manifest_arg_types(signature: &str) -> Vec<(String, bool)> {
 /// A tuple's canonical Solidity type is its components, so an ABI input has to
 /// be flattened before it can be compared or printed.
 fn solidity_type(input: &Value) -> String {
-    let raw = input.get("type").and_then(Value::as_str).unwrap_or_default();
+    let raw = input
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if !raw.starts_with("tuple") {
         return raw.to_string();
     }
@@ -161,10 +162,17 @@ fn matching_entry(manifest_signature: &str, abi_json: Option<&str>) -> Option<Va
     found.into_iter().find(|candidate| {
         let inputs = inputs_of(candidate);
         inputs.len() == wanted.len()
-            && inputs.iter().zip(wanted.iter()).all(|(input, (ty, indexed))| {
-                &solidity_type(input) == ty
-                    && input.get("indexed").and_then(Value::as_bool).unwrap_or(false) == *indexed
-            })
+            && inputs
+                .iter()
+                .zip(wanted.iter())
+                .all(|(input, (ty, indexed))| {
+                    &solidity_type(input) == ty
+                        && input
+                            .get("indexed")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                            == *indexed
+                })
     })
 }
 

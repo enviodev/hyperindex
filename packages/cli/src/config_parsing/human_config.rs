@@ -1,3 +1,4 @@
+use crate::config_parsing::entity_parsing::DefaultChainScope;
 use crate::utils::normalized_list::{NormalizedList, SingleOrList};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
@@ -101,6 +102,19 @@ pub struct BaseConfig {
     pub disable_default_cross_chain: Option<bool>,
 }
 
+impl BaseConfig {
+    /// Entities and effect caches are shared across chains unless the config
+    /// opts out. Decides which entities get an appended chain-id column, so the
+    /// schema parser and the validators have to agree on it.
+    pub fn default_chain_scope(&self) -> DefaultChainScope {
+        if self.disable_default_cross_chain.unwrap_or(false) {
+            DefaultChainScope::PerChain
+        } else {
+            DefaultChainScope::CrossChain
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct StorageConfig {
@@ -133,6 +147,17 @@ pub enum ColumnNameFormat {
     Original,
     #[serde(rename = "snake_case")]
     SnakeCase,
+}
+
+/// How the schema.graphql `Bytes` scalar reaches handlers and storage.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Default, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum BytesType {
+    /// `0x`-prefixed hex strings, stored as text.
+    #[default]
+    Hex,
+    /// `Uint8Array` values, stored as raw bytes (`BYTEA` in Postgres, `String` in ClickHouse).
+    Uint8Array,
 }
 
 // Hand-rolled instead of #[serde(untagged)]: the untagged derive swallows
@@ -392,6 +417,17 @@ impl HumanConfig {
             HumanConfig::Svm(human_config) => &human_config.base,
         }
     }
+
+    /// Only EVM and Fuel can pick: their existing projects predate raw bytes and
+    /// keep hex strings unless they opt in. SVM shipped with `Uint8Array` and has
+    /// nothing to keep compatible with.
+    pub fn bytes_type(&self) -> BytesType {
+        match &self {
+            HumanConfig::Evm(human_config) => human_config.bytes_type.unwrap_or_default(),
+            HumanConfig::Fuel(human_config) => human_config.bytes_type.unwrap_or_default(),
+            HumanConfig::Svm(_) => BytesType::Uint8Array,
+        }
+    }
 }
 
 impl Display for HumanConfig {
@@ -410,7 +446,7 @@ impl Display for HumanConfig {
 
 pub mod evm {
     use super::{ChainContract, ChainId, GlobalContract};
-    use crate::config_parsing::human_config::BaseConfig;
+    use crate::config_parsing::human_config::{BaseConfig, BytesType};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -473,6 +509,14 @@ pub mod evm {
         #[schemars(description = "Address format for Ethereum addresses: 'checksum' or \
                                   'lowercase' (default: checksum)")]
         pub address_format: Option<AddressFormat>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How the `Bytes` scalar in schema.graphql is represented. `hex` keeps \
+                           0x-prefixed hex strings stored as text, `uint8array` exposes \
+                           `Uint8Array` values in handlers and stores raw bytes (BYTEA in \
+                           Postgres, String in ClickHouse). (default: hex)"
+        )]
+        pub bytes_type: Option<BytesType>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -507,6 +551,11 @@ pub mod evm {
         pub block_fields: Option<Vec<BlockField>>,
     }
 
+    // `RpcTransactionField` is the subset an RPC-synced chain can deliver:
+    // every field `eth_getTransactionByHash` or `eth_getTransactionReceipt`
+    // returns, which is all of them except the two array-shaped ones that have
+    // no parser in the runtime's field registry (`RpcSource.res`). Kept in step
+    // with that registry by `RpcFieldSelection_test.res`.
     #[subenum(RpcTransactionField)]
     #[derive(
         Debug,
@@ -531,6 +580,7 @@ pub mod evm {
         From,
         #[subenum(RpcTransactionField)]
         To,
+        #[subenum(RpcTransactionField)]
         Gas,
         #[subenum(RpcTransactionField)]
         GasPrice,
@@ -538,31 +588,50 @@ pub mod evm {
         MaxPriorityFeePerGas,
         #[subenum(RpcTransactionField)]
         MaxFeePerGas,
+        #[subenum(RpcTransactionField)]
         CumulativeGasUsed,
+        #[subenum(RpcTransactionField)]
         EffectiveGasPrice,
+        #[subenum(RpcTransactionField)]
         GasUsed,
         #[subenum(RpcTransactionField)]
         Input,
+        #[subenum(RpcTransactionField)]
         Nonce,
         #[subenum(RpcTransactionField)]
         Value,
+        #[subenum(RpcTransactionField)]
         V,
+        #[subenum(RpcTransactionField)]
         R,
+        #[subenum(RpcTransactionField)]
         S,
         #[subenum(RpcTransactionField)]
         ContractAddress,
+        #[subenum(RpcTransactionField)]
         LogsBloom,
+        #[subenum(RpcTransactionField)]
         Root,
+        #[subenum(RpcTransactionField)]
         Status,
+        #[subenum(RpcTransactionField)]
         YParity,
         AccessList,
+        #[subenum(RpcTransactionField)]
         MaxFeePerBlobGas,
+        #[subenum(RpcTransactionField)]
         BlobVersionedHashes,
+        #[subenum(RpcTransactionField)]
         Type,
+        #[subenum(RpcTransactionField)]
         L1Fee,
+        #[subenum(RpcTransactionField)]
         L1GasPrice,
+        #[subenum(RpcTransactionField)]
         L1GasUsed,
+        #[subenum(RpcTransactionField)]
         L1FeeScalar,
+        #[subenum(RpcTransactionField)]
         GasUsedForL1,
         AuthorizationList,
         // We want to encourage the use of context.chain.id instead
@@ -573,7 +642,6 @@ pub mod evm {
         // BlockNumber,
     }
 
-    #[subenum(RpcBlockField)]
     #[derive(
         Debug,
         Serialize,
@@ -589,30 +657,21 @@ pub mod evm {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     #[strum(serialize_all = "camelCase")]
     pub enum BlockField {
-        #[subenum(RpcBlockField)]
         ParentHash,
-        #[subenum(RpcBlockField)]
         Nonce,
         Sha3Uncles,
         LogsBloom,
         TransactionsRoot,
-        #[subenum(RpcBlockField)]
         StateRoot,
         ReceiptsRoot,
-        #[subenum(RpcBlockField)]
         Miner,
-        #[subenum(RpcBlockField)]
         Difficulty,
         TotalDifficulty,
-        #[subenum(RpcBlockField)]
         ExtraData,
         Size,
-        #[subenum(RpcBlockField)]
         GasLimit,
-        #[subenum(RpcBlockField)]
         GasUsed,
         Uncles,
-        #[subenum(RpcBlockField)]
         BaseFeePerGas,
         BlobGasUsed,
         ExcessBlobGas,
@@ -825,7 +884,7 @@ pub mod evm {
 pub mod fuel {
     use std::fmt::Display;
 
-    use crate::config_parsing::human_config::BaseConfig;
+    use crate::config_parsing::human_config::{BaseConfig, BytesType};
 
     use super::{ChainContract, ChainId, GlobalContract};
     use schemars::JsonSchema;
@@ -862,6 +921,14 @@ pub mod fuel {
                            false)"
         )]
         pub raw_events: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How the `Bytes` scalar in schema.graphql is represented. `hex` keeps \
+                           0x-prefixed hex strings stored as text, `uint8array` exposes \
+                           `Uint8Array` values in handlers and stores raw bytes (BYTEA in \
+                           Postgres, String in ClickHouse). (default: hex)"
+        )]
+        pub bytes_type: Option<BytesType>,
     }
 
     impl Display for HumanConfig {
@@ -984,19 +1051,68 @@ pub mod svm {
     #[serde(deny_unknown_fields)]
     pub struct HypersyncConfig {
         #[schemars(
-            description = "URL of the HyperSync endpoint (default: the public Solana HyperSync \
-                           endpoint at https://solana.hypersync.xyz)"
+            description = "URL of the HyperSync endpoint (defaults to the public endpoint of the \
+                           chain id: https://solana.hypersync.xyz for `solana`, \
+                           https://solana-devnet.hypersync.xyz for `solana-devnet`)"
         )]
         pub url: String,
+    }
+
+    /// Svm clusters have no native numeric chain id, so Envio assigns its own.
+    /// These are the ids HyperSync already stamps onto usage rows (HOS-1682);
+    /// they are Envio-internal, not a cross-vendor standard.
+    pub const SOLANA_MAINNET_CHAIN_ID: u64 = 7565164;
+    pub const SOLANA_DEVNET_CHAIN_ID: u64 = 7565165;
+
+    /// The chain id of an Svm chain: either a known cluster label or an
+    /// explicit number (for private chains, rollups, or custom clusters).
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(untagged)]
+    pub enum ChainId {
+        Label(ChainLabel),
+        // The ceiling matches ChainIdMode::resolve: chain ids live in JS
+        // numbers downstream, so anything above MAX_SAFE_INTEGER is rejected.
+        Id(#[schemars(range(max = 9_007_199_254_740_991u64))] u64),
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum ChainLabel {
+        Solana,
+        SolanaDevnet,
+    }
+
+    impl ChainId {
+        pub fn to_u64(&self) -> u64 {
+            match self {
+                ChainId::Label(ChainLabel::Solana) => SOLANA_MAINNET_CHAIN_ID,
+                ChainId::Label(ChainLabel::SolanaDevnet) => SOLANA_DEVNET_CHAIN_ID,
+                ChainId::Id(id) => *id,
+            }
+        }
+    }
+
+    /// The public HyperSync endpoint for a cluster Envio knows by id, so
+    /// `hypersync_config` can be omitted for Solana mainnet and devnet.
+    pub fn default_hypersync_endpoint(chain_id: u64) -> Option<String> {
+        match chain_id {
+            SOLANA_MAINNET_CHAIN_ID => Some("https://solana.hypersync.xyz".to_string()),
+            SOLANA_DEVNET_CHAIN_ID => Some("https://solana-devnet.hypersync.xyz".to_string()),
+            _ => None,
+        }
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Chain {
-        // #[schemars(
-        //     description = "The cluster's genesis hash used to identify the Svm blockchain."
-        // )]
-        // pub id: String,
+        #[schemars(
+            description = "Identifies the Svm cluster: the label \"solana\" (7565164) or \
+                           \"solana-devnet\" (7565165), or an explicit number of your choosing \
+                           for other clusters (up to Number.MAX_SAFE_INTEGER). Svm has no native \
+                           numeric chain id, so the label ids are assigned by Envio and match the \
+                           ids used for HyperSync usage attribution."
+        )]
+        pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Excludes the chain from indexing and migrations. Code \
                                   generation is unaffected. For testing, prefer using a test \
@@ -1034,10 +1150,13 @@ pub mod svm {
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Experimental {
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "HyperSync Config for fetching historical instructions on this chain."
+            description = "HyperSync Config for fetching historical instructions on this chain. \
+                           Optional for the `solana` and `solana-devnet` chain ids, which default \
+                           to their public HyperSync endpoints; required for any other chain id."
         )]
-        pub hypersync_config: HypersyncConfig,
+        pub hypersync_config: Option<HypersyncConfig>,
         #[schemars(description = "Solana programs to index on this chain.")]
         pub programs: Vec<Program>,
     }
@@ -1079,38 +1198,21 @@ pub mod svm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" \
-                           optional). Must be 1, 2, 4, or 8 bytes after decoding. An 8-byte value \
-                           matches the standard Anchor discriminator."
+                           optional), of any whole number of bytes; an 8-byte value matches the \
+                           standard Anchor discriminator. Omit it to match every instruction of \
+                           the program. Every instruction whose prefix an on-chain call carries \
+                           receives it, so a program-wide entry fires alongside a keyed one, and \
+                           two entries may share a prefix (say, the layouts before and after a \
+                           program upgrade): each decodes with its own `args`, and one whose \
+                           layout rejects the data is skipped for that call."
         )]
         pub discriminator: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Filter on inner-vs-outer instructions. None / absent matches both."
-        )]
-        pub is_inner: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional positional account filters. Two shapes are accepted: a flat \
-                           list of `{position, values}` entries (AND across positions, OR within \
-                           `values`); or `{any_of: [[...]] }`, a list of AND-groups that are \
-                           OR-ed together. Positions must be in 0..=5; positions 6..=9 are \
-                           reserved for a future extension."
-        )]
-        pub account_filters: Option<AccountFilters>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Select which additional data to fetch for each matched instruction. \
-                           Each key accepts `true` (include all fields) or a list of field names \
-                           (per-field selection, not yet supported). When absent, only the \
-                           instruction itself is included."
-        )]
-        pub field_selection: Option<SvmFieldSelection>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
             description = "Optional positional account names. The Nth entry names account slot N \
                            on the dispatched instruction; surfaces as \
-                           `event.instruction.decoded.accounts.<name>`. Accounts beyond the named \
-                           list become `extra_accounts`."
+                           `instruction.accounts.<name>` when `fields.instruction` includes \
+                           `accounts`."
         )]
         pub accounts: Option<Vec<String>>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1211,126 +1313,6 @@ pub mod svm {
         pub fields: Option<Vec<ArgDef>>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct AccountFilter {
-        #[schemars(description = "Account position within the instruction (0..=5).")]
-        pub position: u8,
-        #[schemars(description = "Allowed base58 pubkeys for this account position.")]
-        pub values: Vec<String>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct AnyOfAccountFilters {
-        #[schemars(
-            description = "A non-empty list of AND-groups. Each group is itself a non-empty list \
-                           of `{position, values}` entries that must all match the same \
-                           instruction. An instruction matches `any_of` when any one group \
-                           matches."
-        )]
-        pub any_of: Vec<Vec<AccountFilter>>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(untagged)]
-    pub enum AccountFilters {
-        Flat(Vec<AccountFilter>),
-        AnyOf(AnyOfAccountFilters),
-    }
-
-    impl AccountFilters {
-        pub fn groups(&self) -> Vec<&[AccountFilter]> {
-            match self {
-                AccountFilters::Flat(entries) => vec![entries.as_slice()],
-                AccountFilters::AnyOf(any_of) => {
-                    any_of.any_of.iter().map(|g| g.as_slice()).collect()
-                }
-            }
-        }
-    }
-
-    /// Selectable parent-transaction field names (camelCase), matching the
-    /// public `svmTransaction` shape. `tokenBalances` is selected via the
-    /// separate `token_balance_fields` toggle, so it isn't listed here.
-    #[derive(
-        Debug,
-        Serialize,
-        Deserialize,
-        Clone,
-        PartialEq,
-        Eq,
-        Hash,
-        JsonSchema,
-        strum::Display,
-        strum::EnumIter,
-    )]
-    #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    #[strum(serialize_all = "camelCase")]
-    pub enum SvmTransactionField {
-        TransactionIndex,
-        Signatures,
-        FeePayer,
-        Success,
-        Err,
-        Fee,
-        ComputeUnitsConsumed,
-        AccountKeys,
-        RecentBlockhash,
-        Version,
-    }
-
-    /// Selectable block field names (camelCase), matching the public
-    /// `instruction.block` shape. `slot`/`time`/`hash` are always included,
-    /// so everything here is opt-in on top of that trio.
-    #[derive(
-        Debug,
-        Serialize,
-        Deserialize,
-        Clone,
-        PartialEq,
-        Eq,
-        Hash,
-        JsonSchema,
-        strum::Display,
-        strum::EnumIter,
-    )]
-    #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    #[strum(serialize_all = "camelCase")]
-    pub enum SvmBlockField {
-        Height,
-        ParentSlot,
-        ParentHash,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct SvmFieldSelection {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Parent-transaction fields to include on each matched \
-                                  instruction, as a list of field names. Omit (or pass an empty \
-                                  list) to include no transaction.")]
-        pub transaction_fields: Option<Vec<SvmTransactionField>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Block fields to include on each matched instruction's \
-                                  `block`, as a list of field names. `slot`/`time`/`hash` are \
-                                  always included; this adds `height`/`parentSlot`/`parentHash`.")]
-        pub block_fields: Option<Vec<SvmBlockField>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Set to `true` to include program logs scoped to each matched \
-                           instruction."
-        )]
-        pub log_fields: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Set to `true` to include SPL Token / Token-2022 balance snapshots for \
-                           the parent transaction, exposed as `transaction.tokenBalances`. \
-                           Independent of `transaction_fields`."
-        )]
-        pub token_balance_fields: Option<bool>,
-    }
-
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[schemars(
         title = "Envio Svm Config Schema",
@@ -1422,6 +1404,60 @@ mod tests {
         assert_eq!(
             npm_schema, actual_schema,
             "Please run 'make update-generated-docs'"
+        );
+    }
+
+    #[test]
+    fn bytes_type_is_hex_unless_evm_or_fuel_opt_in_and_always_raw_on_svm() {
+        let evm = |extra: &str| {
+            super::HumanConfig::Evm(
+                serde_yaml::from_str::<HumanConfig>(&format!("name: t\nchains: []\n{extra}"))
+                    .unwrap(),
+            )
+        };
+        let fuel = |extra: &str| {
+            super::HumanConfig::Fuel(
+                serde_yaml::from_str::<fuel::HumanConfig>(&format!(
+                    "name: t\necosystem: fuel\nchains: []\n{extra}"
+                ))
+                .unwrap(),
+            )
+        };
+        let svm = |extra: &str| {
+            serde_yaml::from_str::<super::svm::HumanConfig>(&format!(
+                "name: t\necosystem: svm\nchains: []\n{extra}"
+            ))
+            .map(super::HumanConfig::Svm)
+            .map(|config: super::HumanConfig| config.bytes_type())
+            .map_err(|error: serde_yaml::Error| error.to_string())
+        };
+        assert_eq!(
+            (
+                evm("").bytes_type(),
+                evm("bytes_type: hex").bytes_type(),
+                evm("bytes_type: uint8array").bytes_type(),
+                fuel("").bytes_type(),
+                fuel("bytes_type: uint8array").bytes_type(),
+                svm(""),
+                svm("bytes_type: hex"),
+                serde_yaml::from_str::<HumanConfig>("name: t\nchains: []\nbytes_type: raw")
+                    .map(|_| ())
+                    .map_err(|error: serde_yaml::Error| error.to_string()),
+            ),
+            (
+                super::BytesType::Hex,
+                super::BytesType::Hex,
+                super::BytesType::Uint8Array,
+                super::BytesType::Hex,
+                super::BytesType::Uint8Array,
+                Ok(super::BytesType::Uint8Array),
+                Err("unknown field `bytes_type`".to_string()),
+                Err(
+                    "bytes_type: unknown variant `raw`, expected `hex` or `uint8array` at line 3 \
+                     column 13"
+                        .to_string()
+                ),
+            )
         );
     }
 
@@ -1616,6 +1652,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
+            bytes_type: None,
             chains: vec![fuel::Chain {
                 id: 0,
                 skip: None,
@@ -1669,6 +1706,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
+            bytes_type: None,
             chains: vec![],
         };
 
@@ -1686,7 +1724,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 name: metaplex-token-metadata
 ecosystem: svm
 chains:
-  - start_block: 200000000
+  - id: solana
+    start_block: 200000000
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz
@@ -1698,12 +1737,46 @@ chains:
               discriminator: "0x21"
             - name: UpdateMetadataAccountV2
               discriminator: "0x0f"
-              account_filters:
-                - position: 0
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
-              field_selection:
-                transaction_fields: [signatures, feePayer]
 "#;
+
+        #[test]
+        fn chain_id_accepts_labels_and_numbers_and_round_trips() {
+            let parse_chain = |id_yaml: &str| -> Chain {
+                let yaml = format!(
+                    "name: x\necosystem: svm\nchains:\n  - id: {id_yaml}\n    start_block: 0\n"
+                );
+                let mut cfg: HumanConfig = serde_yaml::from_str(&yaml).unwrap();
+                cfg.chains.remove(0)
+            };
+
+            let cases = [
+                (
+                    "solana",
+                    ChainId::Label(ChainLabel::Solana),
+                    SOLANA_MAINNET_CHAIN_ID,
+                ),
+                (
+                    "solana-devnet",
+                    ChainId::Label(ChainLabel::SolanaDevnet),
+                    SOLANA_DEVNET_CHAIN_ID,
+                ),
+                ("42", ChainId::Id(42), 42),
+            ];
+            for (id_yaml, expected, expected_u64) in cases {
+                let chain = parse_chain(id_yaml);
+                assert_eq!(chain.id, expected, "parsing id: {id_yaml}");
+                assert_eq!(chain.id.to_u64(), expected_u64, "resolving id: {id_yaml}");
+                // Round trip: serialization preserves the label-vs-number form.
+                let reparsed: Chain =
+                    serde_yaml::from_str(&serde_yaml::to_string(&chain).unwrap()).unwrap();
+                assert_eq!(reparsed, chain, "round trip for id: {id_yaml}");
+            }
+
+            // `id` is required: omitting it is a parse error.
+            let missing: Result<HumanConfig, _> =
+                serde_yaml::from_str("name: x\necosystem: svm\nchains:\n  - start_block: 0\n");
+            assert!(missing.is_err(), "config without chain id must be rejected");
+        }
 
         #[test]
         fn deserialize_metaplex_yaml() {
@@ -1712,7 +1785,7 @@ chains:
             let chain = &cfg.chains[0];
             let experimental = chain.experimental.as_ref().unwrap();
             assert_eq!(
-                experimental.hypersync_config.url.as_str(),
+                experimental.hypersync_config.as_ref().unwrap().url.as_str(),
                 "https://solana.hypersync.xyz"
             );
             let programs = &experimental.programs;
@@ -1729,31 +1802,12 @@ chains:
                         Instruction {
                             name: "CreateMetadataAccountV3".to_string(),
                             discriminator: Some("0x21".to_string()),
-                            is_inner: None,
-                            account_filters: None,
-                            field_selection: None,
                             accounts: None,
                             args: None,
                         },
                         Instruction {
                             name: "UpdateMetadataAccountV2".to_string(),
                             discriminator: Some("0x0f".to_string()),
-                            is_inner: None,
-                            account_filters: Some(AccountFilters::Flat(vec![AccountFilter {
-                                position: 0,
-                                values: vec![
-                                    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
-                                ],
-                            }])),
-                            field_selection: Some(SvmFieldSelection {
-                                transaction_fields: Some(vec![
-                                    SvmTransactionField::Signatures,
-                                    SvmTransactionField::FeePayer,
-                                ]),
-                                block_fields: None,
-                                log_fields: None,
-                                token_balance_fields: None,
-                            }),
                             accounts: None,
                             args: None,
                         },

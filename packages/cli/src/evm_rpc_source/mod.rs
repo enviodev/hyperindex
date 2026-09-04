@@ -9,12 +9,13 @@ mod classify;
 mod client;
 mod interval;
 
-use crate::address_store::{AddressSet, AddressStore, SetCache};
-use crate::evm_hypersync_source::decode::{Decoder, LogAddress, SelectionDecoder};
+use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
+use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistrationInput, ParamValue,
 };
+use crate::request_stats::RequestStat;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
 use hypersync_client::format::Hex;
@@ -116,12 +117,6 @@ impl RawLog {
             ..Default::default()
         }
     }
-}
-
-#[napi(object)]
-pub struct RequestStat {
-    pub method: String,
-    pub seconds: f64,
 }
 
 #[napi(object)]
@@ -519,10 +514,10 @@ impl EvmRpcClient {
                     .context("log.blockNumber")?
                     .try_into()
                     .context("log.blockNumber exceeds i64::MAX")?;
-                let log_address = LogAddress {
+                let log_address = Emitter {
                     key: &address_key,
-                    contract_name: set_cache.owner_of(&address_key),
-                    block_number,
+                    owners: set_cache.owners_of(&address_key),
+                    block: block_number,
                 };
                 // Per-registration decode failures are dropped inside
                 // `route_and_decode`; only structurally malformed logs error,
