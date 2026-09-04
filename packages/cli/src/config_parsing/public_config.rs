@@ -438,8 +438,8 @@ struct SvmAbiJson {
     /// runtime resolves these once per program at startup.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     defined_types: std::collections::BTreeMap<String, human_config::svm::ArgType>,
-    /// `"anchorIdl"`, `"bundled"`, or `"inline"`. Carried for diagnostics; the
-    /// runtime treats all three identically.
+    /// `"anchorIdl"` or `"inline"`. Carried for diagnostics; the runtime treats
+    /// both identically.
     source: &'static str,
 }
 
@@ -646,18 +646,17 @@ impl SystemConfig {
                     let svm_abi = match &contract.abi {
                         Abi::Svm(SvmAbi {
                             program_id,
-                            instructions: _,
-                            defined_types,
+                            idl,
                             source,
                         }) => Some(SvmAbiJson {
                             program_id: program_id.clone(),
-                            defined_types: defined_types
+                            defined_types: idl
+                                .defined_types
                                 .iter()
                                 .map(|(name, ty)| (name.clone(), field_type_to_arg_type(ty)))
                                 .collect(),
                             source: match source {
                                 SvmSchemaSource::AnchorIdl { .. } => "anchorIdl",
-                                SvmSchemaSource::Bundled { .. } => "bundled",
                                 SvmSchemaSource::Inline => "inline",
                             },
                         }),

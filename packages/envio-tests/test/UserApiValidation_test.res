@@ -1995,33 +1995,7 @@ chains:
           idl: idls/program.json
           instructions: []
 `,
-      "Resolving Borsh schema for program 'Program' (metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s): reading IDL at 'idls/program.json': Virtual config file \"idls/program.json\" was not provided",
-    )
-  })
-
-  it("rejects SVM IDL plus inline instruction layouts", t => {
-    expectParseError(
-      t,
-      ~files=Dict.fromArray([("idls/program.json", "{}")]),
-      `
-name: duplicate-svm-schema
-ecosystem: svm
-chains:
-  - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          idl: idls/program.json
-          instructions:
-            - name: Transfer
-              accounts: []
-              args: []
-`,
-      "Resolving Borsh schema for program 'Program' (metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s): Program 'Program': \`idl\` is mutually exclusive with per-instruction \`accounts\`/\`args\` overrides. Use one or the other.",
+      "Program 'Program': reading IDL at 'idls/program.json': Virtual config file \"idls/program.json\" was not provided",
     )
   })
 
@@ -2044,7 +2018,149 @@ chains:
             - name: Transfer
               accounts: []
 `,
-      "Layout for instruction 'Transfer': Instruction 'Transfer': \`accounts\` and \`args\` must be provided together (or both omitted to fall back to a bundled/IDL schema).",
+      "Program 'Program', instruction 'Transfer': set both 'accounts' and 'args', or omit both.",
+    )
+  })
+})
+
+describe("SVM IDL catalog", () => {
+  let poolIdl = `{
+    "instructions": [
+      {
+        "name": "swap",
+        "discriminator": [1],
+        "accounts": [{"name": "payer"}, {"name": "pool"}],
+        "args": [{"name": "amount", "type": "u64"}]
+      },
+      {
+        "name": "deposit",
+        "discriminator": [2],
+        "accounts": [{"name": "vault"}],
+        "args": []
+      }
+    ]
+  }`
+  let files = Dict.fromArray([("idls/program.json", poolIdl)])
+  let yaml = instructions =>
+    `
+name: svm-idl-catalog
+ecosystem: svm
+chains:
+  - id: solana
+    start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: Program
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          idl: idls/program.json
+${instructions}
+`
+
+  let catalog = (config: Config.t) =>
+    firstContract(config).events->Array.map(event => {
+      let svm = event->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+      (svm.name, svm.discriminator, svm.accounts, svm.args)
+    })
+
+  it("rejects a name-only YAML row next to idl", t => {
+    expectParseError(
+      t,
+      ~files,
+      yaml(`          instructions:
+            - name: swap
+`),
+      "Program 'Program', instruction 'swap': a YAML row next to 'idl' must set 'discriminator' to overwrite the IDL definition, or omit this row.",
+    )
+  })
+
+  it("keeps the full IDL catalog when YAML overwrites one instruction and adds another", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files,
+      ~schema=ApiTypesFixtures.schema,
+      ~configYaml=yaml(`          instructions:
+            - name: swap
+              discriminator: "0x09"
+              accounts: [source, dest]
+              args:
+                - { name: amountIn, type: u64 }
+            - name: extra
+              discriminator: "0xab"
+              accounts: [payer]
+              args:
+                - { name: tag, type: u8 }
+`),
+      ~handlers=`
+import { indexer } from "envio";
+indexer.onInstruction({ program: "Program", instruction: "deposit" }, async () => {});
+indexer.onInstruction({ program: "Program", instruction: "swap" }, async () => {});
+indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => {});
+`,
+    )
+    t.expect(catalog(config)).toEqual([
+      ("deposit", Some("0x02"), ["vault"], JSON.Null),
+      (
+        "swap",
+        Some("0x09"),
+        ["source", "dest"],
+        JSON.parseOrThrow(`[{"name":"amountIn","type":"u64"}]`),
+      ),
+      ("extra", Some("0xab"), ["payer"], JSON.parseOrThrow(`[{"name":"tag","type":"u8"}]`)),
+    ])
+  })
+
+  it("overwrites an IDL instruction from YAML without merging accounts or args", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files,
+      ~configYaml=yaml(`          instructions:
+            - name: swap
+              discriminator: "0x09"
+              accounts: [source]
+              args: []
+`),
+    )
+    t.expect(catalog(config)).toEqual([
+      ("deposit", Some("0x02"), ["vault"], JSON.Null),
+      ("swap", Some("0x09"), ["source"], JSON.Null),
+    ])
+  })
+
+  it("requires a discriminator on a YAML row next to idl even when layout is set", t => {
+    expectParseError(
+      t,
+      ~files,
+      yaml(`          instructions:
+            - name: swap
+              accounts: [source]
+              args: []
+`),
+      "Program 'Program', instruction 'swap': a YAML row next to 'idl' must set 'discriminator' to overwrite the IDL definition, or omit this row.",
+    )
+  })
+
+  it("rejects a discriminator-only YAML row next to idl", t => {
+    expectParseError(
+      t,
+      ~files,
+      yaml(`          instructions:
+            - name: swap
+              discriminator: "0x09"
+`),
+      "Program 'Program', instruction 'swap': set both 'accounts' and 'args' to overwrite the IDL layout.",
+    )
+  })
+
+  it("requires accounts and args together when overwriting an IDL instruction", t => {
+    expectParseError(
+      t,
+      ~files,
+      yaml(`          instructions:
+            - name: swap
+              discriminator: "0x09"
+              accounts: [source]
+`),
+      "Program 'Program', instruction 'swap': set both 'accounts' and 'args' to overwrite the IDL layout.",
     )
   })
 })

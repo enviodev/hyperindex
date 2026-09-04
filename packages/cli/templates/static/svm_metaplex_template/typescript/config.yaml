@@ -12,5 +12,18 @@ chains:
           instructions:
             - name: CreateMetadataAccountV3
               discriminator: "0x21"
+              accounts:
+                - metadata
+                - mint
+                - mint_authority
+                - payer
+                - update_authority
+                - system_program
+                - rent
+              args: []
             - name: UpdateMetadataAccountV2
               discriminator: "0x0f"
+              accounts:
+                - metadata
+                - update_authority
+              args: []
