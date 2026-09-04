@@ -2,23 +2,24 @@ let loadById: (
   ~loadManager: LoadManager.t,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
-  ~inMemoryStore: InMemoryStore.t,
+  ~scope: Internal.chainScope,
+  ~indexerState: IndexerState.t,
   ~shouldGroup: bool,
   ~item: Internal.item,
+  ~ecosystem: Ecosystem.t,
   ~entityId: string,
 ) => promise<option<Internal.entity>>
 
-let loadByField: (
+let loadByFilter: (
   ~loadManager: LoadManager.t,
   ~persistence: Persistence.t,
-  ~operator: TableIndices.Operator.t,
   ~entityConfig: Internal.entityConfig,
-  ~inMemoryStore: InMemoryStore.t,
-  ~fieldName: string,
-  ~fieldValueSchema: RescriptSchema.S.t<'fieldValue>,
+  ~scope: Internal.chainScope,
+  ~indexerState: IndexerState.t,
   ~shouldGroup: bool,
   ~item: Internal.item,
-  ~fieldValue: 'fieldValue,
+  ~ecosystem: Ecosystem.t,
+  ~filter: EntityFilter.t,
 ) => promise<array<Internal.entity>>
 
 let loadEffect: (
@@ -26,7 +27,9 @@ let loadEffect: (
   ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs: Internal.effectArgs,
-  ~inMemoryStore: InMemoryStore.t,
+  ~scope: Internal.chainScope,
+  ~indexerState: IndexerState.t,
   ~shouldGroup: bool,
   ~item: Internal.item,
+  ~ecosystem: Ecosystem.t,
 ) => promise<Internal.effectOutput>

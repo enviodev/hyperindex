@@ -1,0 +1,19 @@
+---
+source: packages/cli/src/hbs_templating/contract_import_templates.rs
+expression: template.render_schema_graphql()
+---
+type Contract1_NewGravatar {
+  id: ID!
+  event_id: BigInt!
+  owner: String!
+  displayName: String!
+  imageUrl: String!
+}
+
+type Contract1_UpdatedGravatar {
+  id: ID!
+  event_id: BigInt!
+  owner: String!
+  displayName: String!
+  imageUrl: String!
+}

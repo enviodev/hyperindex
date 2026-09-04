@@ -36,6 +36,7 @@ impl Template for fuel::Template {
 impl Template for svm::Template {
     fn to_dir_name(&self) -> String {
         match self {
+            svm::Template::MetaplexTokenMetadata => "svm_metaplex",
             svm::Template::FeatureBlockHandler => "svmblock",
         }
         .to_string()
@@ -158,7 +159,6 @@ pub struct TemplateDirs<'a> {
 #[strum(serialize_all = "lowercase")]
 enum TemplateType {
     Static,
-    Dynamic,
 }
 
 impl<'a> TemplateDirs<'a> {
@@ -196,79 +196,6 @@ impl<'a> TemplateDirs<'a> {
         self.get_shared_static_dir()?
             .get_dir(".claude/skills")
             .ok_or_else(|| anyhow!("Unexpected, shared .claude/skills dir does not exist"))
-    }
-
-    ///Gets directories within dynamic
-    fn get_dynamic_dir<T: Display>(&self, dirname: T) -> Result<RelativeDir<'a>> {
-        let template_dir = self
-            .get_template_dir(TemplateType::Dynamic)
-            .context("Failed getting template dir")?;
-
-        template_dir.get_dir(dirname.to_string()).ok_or_else(|| {
-            anyhow!(
-                "Unexpected, dynamic {} dir does not exist at {:?}",
-                dirname,
-                template_dir.parent_path
-            )
-        })
-    }
-
-    ///Gets template from templates/dynamic/contract_import_templates/{template}
-    fn get_contract_import_dynamic_dir<T: Display>(&self, template: T) -> Result<RelativeDir<'a>> {
-        let template_dir = self
-            .get_dynamic_dir("contract_import_templates")
-            .context("Failed getting template dir")?;
-
-        template_dir.get_dir(template.to_string()).ok_or_else(|| {
-            anyhow!(
-                "Unexpected, dynamic {} dir does not exist at {:?}",
-                template,
-                template_dir.parent_path
-            )
-        })
-    }
-
-    ///Gets template from templates/dynamic/contract_import_templates/shared
-    pub fn get_contract_import_shared_dir(&self) -> Result<RelativeDir<'a>> {
-        self.get_contract_import_dynamic_dir("shared")
-    }
-
-    ///Gets template from templates/dynamic/subgraph_migration_templates/{template}
-    fn get_subgraph_migration_dynamic_dir<T: Display>(
-        &self,
-        template: T,
-    ) -> Result<RelativeDir<'a>> {
-        let template_dir = self
-            .get_dynamic_dir("subgraph_migration_templates")
-            .context("Failed getting template dir")?;
-
-        template_dir.get_dir(template.to_string()).ok_or_else(|| {
-            anyhow!(
-                "Unexpected, dynamic {} dir does not exist at {:?}",
-                template,
-                template_dir.parent_path
-            )
-        })
-    }
-
-    ///Gets template from templates/dynamic/subgraph_migration_templates/{language} ie
-    ///(rescript, javascript or typescript)
-    pub fn get_subgraph_migration_lang_dir(&self, lang: &Language) -> Result<RelativeDir<'a>> {
-        self.get_subgraph_migration_dynamic_dir(lang.to_string().to_lowercase())
-    }
-
-    ///Gets dir at templates/dynamic/init_templates/shared
-    pub fn get_init_template_dynamic_shared(&self) -> Result<RelativeDir<'a>> {
-        let template_dir = self
-            .get_dynamic_dir("init_templates")
-            .context("Failed getting template dir")?;
-
-        template_dir.get_dir("shared").ok_or_else(|| {
-            anyhow!(
-                "Unexpected, dynamic shared dir does not exist at {:?}",
-                template_dir.parent_path
-            )
-        })
     }
 
     ///Gets template from templates/static/{init_template}
@@ -432,20 +359,23 @@ mod test {
         assert_eq!(
             names,
             vec![
+                "envio-cloud-cli",
+                "envio-docs",
                 "indexer-blocks",
                 "indexer-configuration",
                 "indexer-external-calls",
                 "indexer-factory",
                 "indexer-filters",
                 "indexer-handlers",
+                "indexer-local-parallel",
                 "indexer-multichain",
                 "indexer-performance",
                 "indexer-schema",
                 "indexer-testing",
                 "indexer-traces",
                 "indexer-transactions",
+                "indexer-troubleshooting",
                 "indexer-wildcard",
-                "migrate-from-subgraph",
             ]
         );
     }
@@ -482,10 +412,6 @@ mod test {
                 // Svm templates don't require a shared folder
             }
         }
-
-        template_dirs
-            .get_init_template_dynamic_shared()
-            .expect("dynami shared init template");
     }
 
     #[test]
@@ -537,41 +463,5 @@ mod test {
                 .get_blank_lang_dir(lang)
                 .expect("static blank lang");
         }
-    }
-
-    #[test]
-    fn contract_import_templates_exist() {
-        let template_dirs = TemplateDirs::new();
-        template_dirs
-            .get_contract_import_shared_dir()
-            .expect("contract import shared");
-    }
-
-    // Subgraph migration is a deprecated feature
-    // #[test]
-    // fn subgraph_migration_templates_exist() {
-    //     let template_dirs = TemplateDirs::new();
-    //
-    //     for lang in Language::iter() {
-    //         template_dirs
-    //             .get_subgraph_migration_lang_dir(&lang)
-    //             .expect("subgraph migration lang");
-    //     }
-    // }
-
-    #[test]
-    #[should_panic]
-    fn bad_dynamic_dir() {
-        let template_dirs = TemplateDirs::new();
-        template_dirs.get_dynamic_dir("bad_dynamic_path").unwrap();
-    }
-
-    #[test]
-    #[should_panic]
-    fn bad_dynamic_contract_dir() {
-        let template_dirs = TemplateDirs::new();
-        template_dirs
-            .get_contract_import_dynamic_dir("bad_dynamic_path")
-            .unwrap();
     }
 }

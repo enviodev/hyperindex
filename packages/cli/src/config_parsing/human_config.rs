@@ -1,3 +1,4 @@
+use crate::config_parsing::entity_parsing::DefaultChainScope;
 use crate::utils::normalized_list::{NormalizedList, SingleOrList};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
@@ -21,7 +22,7 @@ impl<T: Clone + JsonSchema> JsonSchema for SingleOrList<T> {
         })
     }
 
-    fn always_inline_schema() -> bool {
+    fn inline_schema() -> bool {
         true
     }
 }
@@ -71,32 +72,152 @@ pub struct BaseConfig {
     pub schema: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Optional relative path to handlers directory for auto-loading. Defaults \
-                   to 'src/handlers' if not specified."
+        description = "Optional relative path to handlers directory for auto-loading. Defaults to \
+                       'src/handlers' if not specified."
     )]
     pub handlers: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)"
+        description = "Target number of events to be processed per batch. Set it to smaller \
+                       number if you have many Effect API calls which are slow to resolve and \
+                       can't be batched. (Default: 5000)"
     )]
     pub full_batch_size: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Configuration for the storage backends the indexer writes to. Defaults to \
-                       `postgres: true` when omitted. ClickHouse requires Postgres to be enabled \
-                       (it is not supported as a single storage yet), and at least one backend \
-                       must be enabled."
+        description = "Storage backends the indexer writes data to. Defaults to Postgres when \
+                       omitted. Set `clickhouse: true` to additionally sync the indexed data to \
+                       ClickHouse. Mark a backend with `default: true` to store entities that \
+                       don't have an @storage directive in the schema, e.g. `clickhouse: \
+                       {default: true}`."
     )]
     pub storage: Option<StorageConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Make entities and effect caches per-chain instead of shared across every \
+                       chain (recommended). Sharing then becomes explicit — add `@crossChain` to \
+                       an entity in schema.graphql or `crossChain: true` to an effect. (default: \
+                       false)"
+    )]
+    pub disable_default_cross_chain: Option<bool>,
+}
+
+impl BaseConfig {
+    /// Entities and effect caches are shared across chains unless the config
+    /// opts out. Decides which entities get an appended chain-id column, so the
+    /// schema parser and the validators have to agree on it.
+    pub fn default_chain_scope(&self) -> DefaultChainScope {
+        if self.disable_default_cross_chain.unwrap_or(false) {
+            DefaultChainScope::PerChain
+        } else {
+            DefaultChainScope::CrossChain
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct StorageConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub postgres: Option<bool>,
+    pub postgres: Option<StorageBackendConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub clickhouse: Option<bool>,
+    pub clickhouse: Option<StorageBackendConfig>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Clone)]
+#[serde(untagged)]
+pub enum StorageBackendConfig {
+    Enabled(bool),
+    // The object form implies the backend is enabled.
+    Options(StorageBackendOptions),
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct StorageBackendOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column_name_format: Option<ColumnNameFormat>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
+pub enum ColumnNameFormat {
+    #[serde(rename = "original")]
+    Original,
+    #[serde(rename = "snake_case")]
+    SnakeCase,
+}
+
+/// How the schema.graphql `Bytes` scalar reaches handlers and storage.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Default, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum BytesType {
+    /// `0x`-prefixed hex strings, stored as text.
+    #[default]
+    Hex,
+    /// `Uint8Array` values, stored as raw bytes (`BYTEA` in Postgres, `String` in ClickHouse).
+    Uint8Array,
+}
+
+// Hand-rolled instead of #[serde(untagged)]: the untagged derive swallows
+// errors from inside the variants, so a typo like `{defautl: true}` would
+// surface as "data did not match any variant" instead of the precise
+// unknown-field error from StorageBackendOptions.
+impl<'de> Deserialize<'de> for StorageBackendConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct BackendVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for BackendVisitor {
+            type Value = StorageBackendConfig;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a boolean or an options object like `{default: true}`")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
+                Ok(StorageBackendConfig::Enabled(v))
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                StorageBackendOptions::deserialize(serde::de::value::MapAccessDeserializer::new(
+                    map,
+                ))
+                .map(StorageBackendConfig::Options)
+            }
+        }
+
+        deserializer.deserialize_any(BackendVisitor)
+    }
+}
+
+impl StorageBackendConfig {
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Self::Enabled(enabled) => *enabled,
+            Self::Options(_) => true,
+        }
+    }
+
+    pub fn entity_default(&self) -> Option<bool> {
+        match self {
+            Self::Enabled(_) => None,
+            Self::Options(options) => options.default,
+        }
+    }
+
+    pub fn column_name_format(&self) -> Option<ColumnNameFormat> {
+        match self {
+            Self::Enabled(_) => None,
+            Self::Options(options) => options.column_name_format,
+        }
+    }
 }
 
 // Hand-rolled JsonSchema so the generated YAML/JSON schema encodes the same
@@ -109,26 +230,64 @@ impl JsonSchema for StorageConfig {
     }
 
     fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        let backend = |description: &str, default_description: &str| {
+            serde_json::json!({
+                "description": description,
+                "anyOf": [
+                    { "type": ["boolean", "null"] },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "default": {
+                                "description": default_description,
+                                "type": ["boolean", "null"]
+                            },
+                            "column_name_format": {
+                                "description": "How entity fields are reflected in the storage column names. \
+                                                `original` keeps the schema.graphql field names as is, \
+                                                `snake_case` converts them to snake_case in the database \
+                                                while keeping the original casing in the exposed APIs. \
+                                                (default: original)",
+                                "type": ["string", "null"],
+                                "enum": ["original", "snake_case", null]
+                            }
+                        },
+                        "additionalProperties": false
+                    }
+                ]
+            })
+        };
+        // Matches a backend in any of its enabled spellings (the object
+        // form implies enabled).
+        let enabled = serde_json::json!({
+            "anyOf": [{ "const": true }, { "type": "object" }]
+        });
         json_schema!({
             "type": "object",
             "properties": {
-                "postgres": {
-                    "description": "Whether to use Postgres as a storage backend (default: true).",
-                    "type": ["boolean", "null"]
-                },
-                "clickhouse": {
-                    "description": "Whether to additionally sync the indexed data to ClickHouse. \
-                                    Requires Postgres to be enabled (default: false).",
-                    "type": ["boolean", "null"]
-                }
+                "postgres": (backend(
+                    "Whether to use Postgres as a storage backend (default: true). Accepts a \
+                     boolean or an options object (the object form implies the backend is \
+                     enabled).",
+                    "Whether entities without an @storage directive are stored in this backend \
+                     (default: true when Postgres is the only enabled backend, false otherwise)."
+                )),
+                "clickhouse": (backend(
+                    "Whether to additionally sync the indexed data to ClickHouse. Requires \
+                     Postgres to be enabled (default: false). Accepts a boolean or an options \
+                     object (the object form implies the backend is enabled).",
+                    "Whether entities without an @storage directive are stored in this backend \
+                     (default: false)."
+                ))
             },
             "additionalProperties": false,
             // Storage::resolve rejects two shapes:
             //   1. `postgres: false` (with any clickhouse value) — either
             //      fails as "ClickHouse not supported as a single storage
             //      yet" or resolves to all-backends-disabled.
-            //   2. `clickhouse: true` without an explicit `postgres: true` —
-            //      the user must opt in to Postgres alongside ClickHouse.
+            //   2. ClickHouse enabled without an explicitly enabled
+            //      postgres — the user must opt in to Postgres alongside
+            //      ClickHouse.
             "allOf": [
                 {
                     "not": {
@@ -141,13 +300,13 @@ impl JsonSchema for StorageConfig {
                 {
                     "if": {
                         "properties": {
-                            "clickhouse": { "const": true }
+                            "clickhouse": (enabled.clone())
                         },
                         "required": ["clickhouse"]
                     },
                     "then": {
                         "properties": {
-                            "postgres": { "const": true }
+                            "postgres": (enabled)
                         },
                         "required": ["postgres"]
                     }
@@ -258,6 +417,17 @@ impl HumanConfig {
             HumanConfig::Svm(human_config) => &human_config.base,
         }
     }
+
+    /// Only EVM and Fuel can pick: their existing projects predate raw bytes and
+    /// keep hex strings unless they opt in. SVM shipped with `Uint8Array` and has
+    /// nothing to keep compatible with.
+    pub fn bytes_type(&self) -> BytesType {
+        match &self {
+            HumanConfig::Evm(human_config) => human_config.bytes_type.unwrap_or_default(),
+            HumanConfig::Fuel(human_config) => human_config.bytes_type.unwrap_or_default(),
+            HumanConfig::Svm(_) => BytesType::Uint8Array,
+        }
+    }
 }
 
 impl Display for HumanConfig {
@@ -276,7 +446,7 @@ impl Display for HumanConfig {
 
 pub mod evm {
     use super::{ChainContract, ChainId, GlobalContract};
-    use crate::config_parsing::human_config::BaseConfig;
+    use crate::config_parsing::human_config::{BaseConfig, BytesType};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -339,6 +509,14 @@ pub mod evm {
         #[schemars(description = "Address format for Ethereum addresses: 'checksum' or \
                                   'lowercase' (default: checksum)")]
         pub address_format: Option<AddressFormat>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How the `Bytes` scalar in schema.graphql is represented. `hex` keeps \
+                           0x-prefixed hex strings stored as text, `uint8array` exposes \
+                           `Uint8Array` values in handlers and stores raw bytes (BYTEA in \
+                           Postgres, String in ClickHouse). (default: hex)"
+        )]
+        pub bytes_type: Option<BytesType>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -346,13 +524,6 @@ pub mod evm {
     pub enum AddressFormat {
         Checksum,
         Lowercase,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
-    #[serde(rename_all = "lowercase")]
-    pub enum Multichain {
-        Ordered,
-        Unordered,
     }
 
     impl Display for HumanConfig {
@@ -380,6 +551,11 @@ pub mod evm {
         pub block_fields: Option<Vec<BlockField>>,
     }
 
+    // `RpcTransactionField` is the subset an RPC-synced chain can deliver:
+    // every field `eth_getTransactionByHash` or `eth_getTransactionReceipt`
+    // returns, which is all of them except the two array-shaped ones that have
+    // no parser in the runtime's field registry (`RpcSource.res`). Kept in step
+    // with that registry by `RpcFieldSelection_test.res`.
     #[subenum(RpcTransactionField)]
     #[derive(
         Debug,
@@ -404,6 +580,7 @@ pub mod evm {
         From,
         #[subenum(RpcTransactionField)]
         To,
+        #[subenum(RpcTransactionField)]
         Gas,
         #[subenum(RpcTransactionField)]
         GasPrice,
@@ -411,31 +588,50 @@ pub mod evm {
         MaxPriorityFeePerGas,
         #[subenum(RpcTransactionField)]
         MaxFeePerGas,
+        #[subenum(RpcTransactionField)]
         CumulativeGasUsed,
+        #[subenum(RpcTransactionField)]
         EffectiveGasPrice,
+        #[subenum(RpcTransactionField)]
         GasUsed,
         #[subenum(RpcTransactionField)]
         Input,
+        #[subenum(RpcTransactionField)]
         Nonce,
         #[subenum(RpcTransactionField)]
         Value,
+        #[subenum(RpcTransactionField)]
         V,
+        #[subenum(RpcTransactionField)]
         R,
+        #[subenum(RpcTransactionField)]
         S,
         #[subenum(RpcTransactionField)]
         ContractAddress,
+        #[subenum(RpcTransactionField)]
         LogsBloom,
+        #[subenum(RpcTransactionField)]
         Root,
+        #[subenum(RpcTransactionField)]
         Status,
+        #[subenum(RpcTransactionField)]
         YParity,
         AccessList,
+        #[subenum(RpcTransactionField)]
         MaxFeePerBlobGas,
+        #[subenum(RpcTransactionField)]
         BlobVersionedHashes,
+        #[subenum(RpcTransactionField)]
         Type,
+        #[subenum(RpcTransactionField)]
         L1Fee,
+        #[subenum(RpcTransactionField)]
         L1GasPrice,
+        #[subenum(RpcTransactionField)]
         L1GasUsed,
+        #[subenum(RpcTransactionField)]
         L1FeeScalar,
+        #[subenum(RpcTransactionField)]
         GasUsedForL1,
         AuthorizationList,
         // We want to encourage the use of context.chain.id instead
@@ -446,7 +642,6 @@ pub mod evm {
         // BlockNumber,
     }
 
-    #[subenum(RpcBlockField)]
     #[derive(
         Debug,
         Serialize,
@@ -462,30 +657,21 @@ pub mod evm {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     #[strum(serialize_all = "camelCase")]
     pub enum BlockField {
-        #[subenum(RpcBlockField)]
         ParentHash,
-        #[subenum(RpcBlockField)]
         Nonce,
         Sha3Uncles,
         LogsBloom,
         TransactionsRoot,
-        #[subenum(RpcBlockField)]
         StateRoot,
         ReceiptsRoot,
-        #[subenum(RpcBlockField)]
         Miner,
-        #[subenum(RpcBlockField)]
         Difficulty,
         TotalDifficulty,
-        #[subenum(RpcBlockField)]
         ExtraData,
         Size,
-        #[subenum(RpcBlockField)]
         GasLimit,
-        #[subenum(RpcBlockField)]
         GasUsed,
         Uncles,
-        #[subenum(RpcBlockField)]
         BaseFeePerGas,
         BlobGasUsed,
         ExcessBlobGas,
@@ -532,8 +718,8 @@ pub mod evm {
         Fallback,
         #[schemars(
             description = "Use RPC for real-time indexing only. HyperSync will be used for \
-                           historical sync, then automatically switch to this RPC once synced \
-                           for lower latency."
+                           historical sync, then automatically switch to this RPC once synced for \
+                           lower latency."
         )]
         Realtime,
     }
@@ -551,12 +737,18 @@ pub mod evm {
         #[serde(rename = "for", skip_serializing_if = "Option::is_none")]
         pub source_for: Option<For>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional WebSocket endpoint URL (wss:// or ws://) for real-time block \
-                           header notifications via eth_subscribe(\"newHeads\"). Provides lower \
-                           latency than HTTP polling for detecting new blocks."
-        )]
+        #[schemars(description = "Optional WebSocket endpoint URL (wss:// or ws://) for \
+                                  real-time block header notifications via \
+                                  eth_subscribe(\"newHeads\"). Provides lower latency than HTTP \
+                                  polling for detecting new blocks.")]
         pub ws: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional HTTP headers sent with every request to this RPC endpoint, \
+                           e.g. an Authorization bearer token for gated endpoints. Values support \
+                           ${ENV_VAR} interpolation."
+        )]
+        pub headers: Option<std::collections::BTreeMap<String, String>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The starting interval in range of blocks per query")]
         pub initial_block_interval: Option<u32>,
@@ -610,9 +802,14 @@ pub mod evm {
         #[schemars(description = "The public blockchain chain ID.")]
         pub id: ChainId,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Excludes the chain from indexing and migrations. Code \
+                                  generation is unaffected. For testing, prefer using a test \
+                                  framework instead.")]
+        pub skip: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "RPC configuration for your indexer. If not specified \
-                                  otherwise, for chains supported by HyperSync, RPC serves as \
-                                  a fallback for added reliability. For others, it acts as the \
+                                  otherwise, for chains supported by HyperSync, RPC serves as a \
+                                  fallback for added reliability. For others, it acts as the \
                                   primary data-source. HyperSync offers significant performance \
                                   improvements, up to a 1000x faster than traditional RPC.")]
         pub rpc: Option<RpcSelection>,
@@ -627,8 +824,9 @@ pub mod evm {
         pub max_reorg_depth: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The number of blocks behind the chain head that the indexer should lag. \
-                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+            description = "The number of blocks behind the chain head that the indexer should \
+                           lag. Useful for avoiding reorg issues by indexing slightly behind the \
+                           tip."
         )]
         pub block_lag: Option<u32>,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
@@ -651,11 +849,9 @@ pub mod evm {
         )]
         pub abi_file_path: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional relative path to a file where handlers are registered for the \
-                           given contract. If not provided, handlers can be auto-loaded from src \
-                           directory."
-        )]
+        #[schemars(description = "Optional relative path to a file where handlers are \
+                                  registered for the given contract. If not provided, handlers \
+                                  can be auto-loaded from src directory.")]
         pub handler: Option<String>,
         #[schemars(description = "A list of events that should be indexed on this contract")]
         pub events: Vec<EventConfig>,
@@ -688,7 +884,7 @@ pub mod evm {
 pub mod fuel {
     use std::fmt::Display;
 
-    use crate::config_parsing::human_config::BaseConfig;
+    use crate::config_parsing::human_config::{BaseConfig, BytesType};
 
     use super::{ChainContract, ChainId, GlobalContract};
     use schemars::JsonSchema;
@@ -725,6 +921,14 @@ pub mod fuel {
                            false)"
         )]
         pub raw_events: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How the `Bytes` scalar in schema.graphql is represented. `hex` keeps \
+                           0x-prefixed hex strings stored as text, `uint8array` exposes \
+                           `Uint8Array` values in handlers and stores raw bytes (BYTEA in \
+                           Postgres, String in ClickHouse). (default: hex)"
+        )]
+        pub bytes_type: Option<BytesType>,
     }
 
     impl Display for HumanConfig {
@@ -759,6 +963,11 @@ pub mod fuel {
     pub struct Chain {
         #[schemars(description = "Public chain id")]
         pub id: ChainId,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Excludes the chain from indexing and migrations. Code \
+                                  generation is unaffected. For testing, prefer using a test \
+                                  framework instead.")]
+        pub skip: Option<bool>,
         #[schemars(description = "The block at which the indexer should start ingesting data")]
         pub start_block: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -775,8 +984,9 @@ pub mod fuel {
         pub max_reorg_depth: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The number of blocks behind the chain head that the indexer should lag. \
-                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+            description = "The number of blocks behind the chain head that the indexer should \
+                           lag. Useful for avoiding reorg issues by indexing slightly behind the \
+                           tip."
         )]
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -790,11 +1000,9 @@ pub mod fuel {
         #[schemars(description = "Relative path (from config) to a json abi.")]
         pub abi_file_path: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional relative path to a file where handlers are registered for the \
-                           given contract. If not provided, handlers can be auto-loaded from src \
-                           directory."
-        )]
+        #[schemars(description = "Optional relative path to a file where handlers are \
+                                  registered for the given contract. If not provided, handlers \
+                                  can be auto-loaded from src directory.")]
         pub handler: Option<String>,
         #[schemars(description = "A list of events that should be indexed on this contract")]
         pub events: Vec<EventConfig>,
@@ -841,15 +1049,82 @@ pub mod svm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct Chain {
-        // #[schemars(
-        //     description = "The cluster's genesis hash used to identify the Svm blockchain."
-        // )]
-        // pub id: String,
+    pub struct HypersyncConfig {
         #[schemars(
-            description = "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data."
+            description = "URL of the HyperSync endpoint (defaults to the public endpoint of the \
+                           chain id: https://solana.hypersync.xyz for `solana`, \
+                           https://solana-devnet.hypersync.xyz for `solana-devnet`)"
         )]
-        pub rpc: String,
+        pub url: String,
+    }
+
+    /// Svm clusters have no native numeric chain id, so Envio assigns its own.
+    /// These are the ids HyperSync already stamps onto usage rows (HOS-1682);
+    /// they are Envio-internal, not a cross-vendor standard.
+    pub const SOLANA_MAINNET_CHAIN_ID: u64 = 7565164;
+    pub const SOLANA_DEVNET_CHAIN_ID: u64 = 7565165;
+
+    /// The chain id of an Svm chain: either a known cluster label or an
+    /// explicit number (for private chains, rollups, or custom clusters).
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(untagged)]
+    pub enum ChainId {
+        Label(ChainLabel),
+        // The ceiling matches ChainIdMode::resolve: chain ids live in JS
+        // numbers downstream, so anything above MAX_SAFE_INTEGER is rejected.
+        Id(#[schemars(range(max = 9_007_199_254_740_991u64))] u64),
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, JsonSchema)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum ChainLabel {
+        Solana,
+        SolanaDevnet,
+    }
+
+    impl ChainId {
+        pub fn to_u64(&self) -> u64 {
+            match self {
+                ChainId::Label(ChainLabel::Solana) => SOLANA_MAINNET_CHAIN_ID,
+                ChainId::Label(ChainLabel::SolanaDevnet) => SOLANA_DEVNET_CHAIN_ID,
+                ChainId::Id(id) => *id,
+            }
+        }
+    }
+
+    /// The public HyperSync endpoint for a cluster Envio knows by id, so
+    /// `hypersync_config` can be omitted for Solana mainnet and devnet.
+    pub fn default_hypersync_endpoint(chain_id: u64) -> Option<String> {
+        match chain_id {
+            SOLANA_MAINNET_CHAIN_ID => Some("https://solana.hypersync.xyz".to_string()),
+            SOLANA_DEVNET_CHAIN_ID => Some("https://solana-devnet.hypersync.xyz".to_string()),
+            _ => None,
+        }
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Chain {
+        #[schemars(
+            description = "Identifies the Svm cluster: the label \"solana\" (7565164) or \
+                           \"solana-devnet\" (7565165), or an explicit number of your choosing \
+                           for other clusters (up to Number.MAX_SAFE_INTEGER). Svm has no native \
+                           numeric chain id, so the label ids are assigned by Envio and match the \
+                           ids used for HyperSync usage attribution."
+        )]
+        pub id: ChainId,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Excludes the chain from indexing and migrations. Code \
+                                  generation is unaffected. For testing, prefer using a test \
+                                  framework instead.")]
+        pub skip: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain \
+                           data. Required unless `experimental` is set, in which case it is \
+                           ignored in favour of the experimental HyperSync source."
+        )]
+        pub rpc: Option<String>,
         #[schemars(
             description = "The slot number at which the indexer should start ingesting data"
         )]
@@ -859,10 +1134,183 @@ pub mod svm {
         pub end_block: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "The number of blocks behind the chain head that the indexer should lag. \
-                           Useful for avoiding reorg issues by indexing slightly behind the tip."
+            description = "The number of blocks behind the chain head that the indexer should \
+                           lag. Useful for avoiding reorg issues by indexing slightly behind the \
+                           tip."
         )]
         pub block_lag: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Experimental HyperSync-backed instruction indexing. This config shape \
+                           Veil change in future releases."
+        )]
+        pub experimental: Option<Experimental>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Experimental {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "HyperSync Config for fetching historical instructions on this chain. \
+                           Optional for the `solana` and `solana-devnet` chain ids, which default \
+                           to their public HyperSync endpoints; required for any other chain id."
+        )]
+        pub hypersync_config: Option<HypersyncConfig>,
+        #[schemars(description = "Solana programs to index on this chain.")]
+        pub programs: Vec<Program>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Program {
+        #[schemars(
+            description = "A unique project-wide name for this program (used in generated code)."
+        )]
+        pub name: String,
+        #[schemars(description = "Base58-encoded program id (32 bytes).")]
+        pub program_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Optional relative path to a file where handlers are \
+                                  registered for the given program. If not provided, handlers \
+                                  can be auto-loaded from the src directory.")]
+        pub handler: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional path (relative to config.yaml) to an Anchor IDL JSON file. \
+                           When present, codegen parses the IDL and derives `accounts`/`args` for \
+                           every named instruction. Mutually exclusive with per-instruction \
+                           `accounts`/`args` overrides."
+        )]
+        pub idl: Option<String>,
+        #[schemars(description = "A list of instructions that should be indexed on this program.")]
+        pub instructions: Vec<Instruction>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Instruction {
+        #[schemars(
+            description = "Name of the instruction in the HyperIndex generated code. Should be \
+                           unique per program."
+        )]
+        pub name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" \
+                           optional), of any whole number of bytes; an 8-byte value matches the \
+                           standard Anchor discriminator. Omit it to match every instruction of \
+                           the program. Every instruction whose prefix an on-chain call carries \
+                           receives it, so a program-wide entry fires alongside a keyed one, and \
+                           two entries may share a prefix (say, the layouts before and after a \
+                           program upgrade): each decodes with its own `args`, and one whose \
+                           layout rejects the data is skipped for that call."
+        )]
+        pub discriminator: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional positional account names. The Nth entry names account slot N \
+                           on the dispatched instruction; surfaces as \
+                           `instruction.accounts.<name>` when `fields.instruction` includes \
+                           `accounts`."
+        )]
+        pub accounts: Option<Vec<String>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Optional Borsh argument schema. Each entry names one arg and gives its \
+                           type; the decoder walks the instruction data after the discriminator \
+                           in declared order. Mutually exclusive with the program-level `idl` \
+                           field."
+        )]
+        pub args: Option<Vec<ArgDef>>,
+    }
+
+    /// One named argument of an instruction. Mirrors
+    /// `hypersync_client_solana::decode::NamedField`.
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct ArgDef {
+        #[schemars(description = "Field name as it appears on the decoded args object.")]
+        pub name: String,
+        #[serde(rename = "type")]
+        #[schemars(description = "Borsh type of this field.")]
+        pub ty: ArgType,
+    }
+
+    /// User-facing Borsh type grammar. Mirrors
+    /// `hypersync_client_solana::decode::FieldType`. The YAML accepts either:
+    /// - A bare string for primitives (`"u64"`, `"pubkey"`, `"bool"`, ...).
+    /// - A tagged object for composites (`{ vec: u8 }`, `{ option: pubkey }`,
+    ///   `{ array: [u8, 32] }`, `{ defined: "DataV2" }`).
+    /// - An object with `kind: struct` or `kind: enum` for nominal types
+    ///   declared inline on this field. Most users will use `defined` and
+    ///   declare the nominal types under the program's `types:` block (Anchor
+    ///   IDL shape) once that lands; for now inline `struct` / `enum` is the
+    ///   only way to express nominal shapes ad-hoc.
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(untagged)]
+    pub enum ArgType {
+        Primitive(ArgPrimitive),
+        Composite(ArgComposite),
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(rename_all = "lowercase")]
+    pub enum ArgPrimitive {
+        Bool,
+        U8,
+        U16,
+        U32,
+        U64,
+        U128,
+        I8,
+        I16,
+        I32,
+        I64,
+        I128,
+        F32,
+        F64,
+        String,
+        Bytes,
+        Pubkey,
+        #[serde(rename = "publicKey")]
+        PublicKey,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub enum ArgComposite {
+        #[serde(rename = "option")]
+        Option(Box<ArgType>),
+        #[serde(rename = "vec")]
+        Vec(Box<ArgType>),
+        /// `[ <element type>, <length> ]` — same shape Anchor IDLs use.
+        #[serde(rename = "array")]
+        Array(Box<ArgType>, usize),
+        /// Reference to a nominal type defined in the program-level
+        /// `defined_types` registry (populated from an Anchor IDL `types:`
+        /// block or the bundled-Metaplex registry).
+        #[serde(rename = "defined")]
+        Defined(String),
+        /// Inline-or-registry struct. Used as a nominal type definition in
+        /// the `defined_types` registry; rarely seen at the field level.
+        #[serde(rename = "struct")]
+        Struct(Vec<ArgDef>),
+        /// Inline-or-registry enum. Same role as `Struct`: a nominal type
+        /// definition in the `defined_types` registry.
+        #[serde(rename = "enum")]
+        Enum(Vec<ArgEnumVariant>),
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct ArgEnumVariant {
+        pub name: String,
+        /// `None` for unit variants; `Some([])` for struct variants with no
+        /// fields. The Borsh wire format is identical in both cases (the
+        /// 1-byte tag), but the distinction is preserved for round-tripping.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub fields: Option<Vec<ArgDef>>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -903,7 +1351,7 @@ pub mod svm {
 #[cfg(test)]
 mod tests {
     use super::{
-        evm::{Chain, ContractConfig, HumanConfig},
+        evm::{ContractConfig, HumanConfig},
         ChainContract,
     };
     use crate::{
@@ -956,6 +1404,60 @@ mod tests {
         assert_eq!(
             npm_schema, actual_schema,
             "Please run 'make update-generated-docs'"
+        );
+    }
+
+    #[test]
+    fn bytes_type_is_hex_unless_evm_or_fuel_opt_in_and_always_raw_on_svm() {
+        let evm = |extra: &str| {
+            super::HumanConfig::Evm(
+                serde_yaml::from_str::<HumanConfig>(&format!("name: t\nchains: []\n{extra}"))
+                    .unwrap(),
+            )
+        };
+        let fuel = |extra: &str| {
+            super::HumanConfig::Fuel(
+                serde_yaml::from_str::<fuel::HumanConfig>(&format!(
+                    "name: t\necosystem: fuel\nchains: []\n{extra}"
+                ))
+                .unwrap(),
+            )
+        };
+        let svm = |extra: &str| {
+            serde_yaml::from_str::<super::svm::HumanConfig>(&format!(
+                "name: t\necosystem: svm\nchains: []\n{extra}"
+            ))
+            .map(super::HumanConfig::Svm)
+            .map(|config: super::HumanConfig| config.bytes_type())
+            .map_err(|error: serde_yaml::Error| error.to_string())
+        };
+        assert_eq!(
+            (
+                evm("").bytes_type(),
+                evm("bytes_type: hex").bytes_type(),
+                evm("bytes_type: uint8array").bytes_type(),
+                fuel("").bytes_type(),
+                fuel("bytes_type: uint8array").bytes_type(),
+                svm(""),
+                svm("bytes_type: hex"),
+                serde_yaml::from_str::<HumanConfig>("name: t\nchains: []\nbytes_type: raw")
+                    .map(|_| ())
+                    .map_err(|error: serde_yaml::Error| error.to_string()),
+            ),
+            (
+                super::BytesType::Hex,
+                super::BytesType::Hex,
+                super::BytesType::Uint8Array,
+                super::BytesType::Hex,
+                super::BytesType::Uint8Array,
+                Ok(super::BytesType::Uint8Array),
+                Err("unknown field `bytes_type`".to_string()),
+                Err(
+                    "bytes_type: unknown variant `raw`, expected `hex` or `uint8array` at line 3 \
+                     column 13"
+                        .to_string()
+                ),
+            )
         );
     }
 
@@ -1123,70 +1625,9 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             format!("# yaml-language-server: $schema=./node_modules/envio/evm.schema.json\n{raw}");
         assert_eq!(
             out, expected,
-            "Display output must remain byte-identical for config_hash stability — header and body both."
+            "Display output must remain byte-identical for config_hash stability — header and \
+             body both."
         );
-    }
-
-    // libyaml tags unquoted `0x…` as int. A 20-byte address overflows u64
-    // but serde_yaml hands the raw scalar text to the String visitor
-    // unchanged — locking that contract guards against a future YAML
-    // library that would coerce through f64 instead.
-    #[test]
-    fn deserialize_unquoted_hex_address_yaml() {
-        let single = "address: 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n";
-        #[derive(serde::Deserialize)]
-        struct Wrap {
-            address: NormalizedList<String>,
-        }
-        let de: Wrap = serde_yaml::from_str(single).unwrap();
-        assert_eq!(
-            Vec::<String>::from(de.address),
-            vec!["0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string()]
-        );
-
-        let list = "address:\n  - 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984\n  - 0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74\n";
-        let de: Wrap = serde_yaml::from_str(list).unwrap();
-        assert_eq!(
-            Vec::<String>::from(de.address),
-            vec![
-                "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984".to_string(),
-                "0x4537e328Bf7e4eFA29D05CAeA260D7fE26af9D74".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn deserializes_factory_contract_config() {
-        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test/configs/factory-contract-config.yaml");
-
-        let file_str = std::fs::read_to_string(config_path).unwrap();
-
-        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
-
-        let contracts = cfg.chains[0].contracts.as_ref().unwrap();
-        println!("{:?}", contracts[0]);
-
-        assert!(contracts[0].config.is_some());
-        assert!(contracts[1].config.is_some());
-        assert_eq!(contracts[1].address, None.into());
-    }
-
-    #[test]
-    fn deserializes_dynamic_contract_config() {
-        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test/configs/dynamic-address-config.yaml");
-
-        let file_str = std::fs::read_to_string(config_path).unwrap();
-
-        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
-
-        assert!(cfg.chains[0].contracts.as_ref().unwrap()[0]
-            .config
-            .is_some());
-        assert!(cfg.chains[1].contracts.as_ref().unwrap()[0]
-            .config
-            .is_none());
     }
 
     #[test]
@@ -1206,12 +1647,15 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 handlers: None,
                 full_batch_size: None,
                 storage: None,
+                disable_default_cross_chain: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
+            bytes_type: None,
             chains: vec![fuel::Chain {
                 id: 0,
+                skip: None,
                 start_block: 0,
                 end_block: None,
                 hyperfuel_config: None,
@@ -1257,10 +1701,12 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 handlers: None,
                 full_batch_size: None,
                 storage: None,
+                disable_default_cross_chain: None,
             },
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
+            bytes_type: None,
             chains: vec![],
         };
 
@@ -1270,87 +1716,104 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         );
     }
 
-    #[test]
-    fn deserialize_storage_config() {
-        use super::StorageConfig;
+    mod svm_yaml {
+        use crate::config_parsing::human_config::svm::*;
+        use pretty_assertions::assert_eq;
 
-        // Both fields present
-        let yaml = "postgres: true\nclickhouse: true\n";
-        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            de,
-            StorageConfig {
-                postgres: Some(true),
-                clickhouse: Some(true),
-            }
-        );
-
-        // Only clickhouse set
-        let yaml = "clickhouse: true\n";
-        let de: StorageConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            de,
-            StorageConfig {
-                postgres: None,
-                clickhouse: Some(true),
-            }
-        );
-
-        // Unknown field should fail (deny_unknown_fields)
-        let yaml = "postgres: true\nbigquery: true\n";
-        let err = serde_yaml::from_str::<StorageConfig>(yaml).unwrap_err();
-        assert!(
-            err.to_string().contains("unknown field `bigquery`"),
-            "Unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn deserialize_evm_config_with_storage() {
-        use super::evm::HumanConfig as EvmConfig;
-        let yaml = r#"
-name: storage-test
-storage:
-  postgres: true
-  clickhouse: true
+        const METAPLEX_YAML: &str = r#"
+name: metaplex-token-metadata
+ecosystem: svm
 chains:
-  - id: 1
-    start_block: 0
+  - id: solana
+    start_block: 200000000
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: TokenMetadata
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: CreateMetadataAccountV3
+              discriminator: "0x21"
+            - name: UpdateMetadataAccountV2
+              discriminator: "0x0f"
 "#;
-        let cfg: EvmConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            cfg.base.storage,
-            Some(super::StorageConfig {
-                postgres: Some(true),
-                clickhouse: Some(true),
-            })
-        );
-    }
 
-    #[test]
-    fn deserialize_underscores_between_numbers() {
-        let num = serde_json::json!(2_000_000);
-        let de: i32 = serde_json::from_value(num).unwrap();
-        assert_eq!(2_000_000, de);
-    }
+        #[test]
+        fn chain_id_accepts_labels_and_numbers_and_round_trips() {
+            let parse_chain = |id_yaml: &str| -> Chain {
+                let yaml = format!(
+                    "name: x\necosystem: svm\nchains:\n  - id: {id_yaml}\n    start_block: 0\n"
+                );
+                let mut cfg: HumanConfig = serde_yaml::from_str(&yaml).unwrap();
+                cfg.chains.remove(0)
+            };
 
-    #[test]
-    fn deserialize_chain_with_underscores_between_numbers() {
-        let chain_json = serde_json::json!({"id": 1, "start_block": 2_000, "end_block": 2_000_000, "contracts": []});
-        let de: Chain = serde_json::from_value(chain_json).unwrap();
+            let cases = [
+                (
+                    "solana",
+                    ChainId::Label(ChainLabel::Solana),
+                    SOLANA_MAINNET_CHAIN_ID,
+                ),
+                (
+                    "solana-devnet",
+                    ChainId::Label(ChainLabel::SolanaDevnet),
+                    SOLANA_DEVNET_CHAIN_ID,
+                ),
+                ("42", ChainId::Id(42), 42),
+            ];
+            for (id_yaml, expected, expected_u64) in cases {
+                let chain = parse_chain(id_yaml);
+                assert_eq!(chain.id, expected, "parsing id: {id_yaml}");
+                assert_eq!(chain.id.to_u64(), expected_u64, "resolving id: {id_yaml}");
+                // Round trip: serialization preserves the label-vs-number form.
+                let reparsed: Chain =
+                    serde_yaml::from_str(&serde_yaml::to_string(&chain).unwrap()).unwrap();
+                assert_eq!(reparsed, chain, "round trip for id: {id_yaml}");
+            }
 
-        assert_eq!(
-            Chain {
-                id: 1,
-                hypersync_config: None,
-                rpc: None,
-                start_block: 2_000,
-                max_reorg_depth: None,
-                block_lag: None,
-                end_block: Some(2_000_000),
-                contracts: Some(vec![])
-            },
-            de
-        );
+            // `id` is required: omitting it is a parse error.
+            let missing: Result<HumanConfig, _> =
+                serde_yaml::from_str("name: x\necosystem: svm\nchains:\n  - start_block: 0\n");
+            assert!(missing.is_err(), "config without chain id must be rejected");
+        }
+
+        #[test]
+        fn deserialize_metaplex_yaml() {
+            let cfg: HumanConfig = serde_yaml::from_str(METAPLEX_YAML).unwrap();
+            assert_eq!(cfg.chains.len(), 1);
+            let chain = &cfg.chains[0];
+            let experimental = chain.experimental.as_ref().unwrap();
+            assert_eq!(
+                experimental.hypersync_config.as_ref().unwrap().url.as_str(),
+                "https://solana.hypersync.xyz"
+            );
+            let programs = &experimental.programs;
+            assert_eq!(programs.len(), 1);
+            let program = &programs[0];
+            assert_eq!(
+                program,
+                &Program {
+                    name: "TokenMetadata".to_string(),
+                    program_id: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
+                    handler: None,
+                    idl: None,
+                    instructions: vec![
+                        Instruction {
+                            name: "CreateMetadataAccountV3".to_string(),
+                            discriminator: Some("0x21".to_string()),
+                            accounts: None,
+                            args: None,
+                        },
+                        Instruction {
+                            name: "UpdateMetadataAccountV2".to_string(),
+                            discriminator: Some("0x0f".to_string()),
+                            accounts: None,
+                            args: None,
+                        },
+                    ],
+                }
+            );
+        }
     }
 }

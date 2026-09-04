@@ -10,7 +10,6 @@ let getSourceRole: (
 
 let make: (
   ~sources: array<Source.t>,
-  ~maxPartitionConcurrency: int,
   ~isRealtime: bool,
   ~newBlockStallTimeout: int=?,
   ~newBlockStallTimeoutRealtime: int=?,
@@ -22,12 +21,47 @@ let make: (
 
 let getActiveSource: t => Source.t
 
-let fetchNext: (
+type requestStatSample = {
+  sourceName: string,
+  chainId: ChainId.t,
+  method: string,
+  count: int,
+  seconds: float,
+}
+
+let getRequestStatSamples: t => array<requestStatSample>
+
+type sourceHeightSample = {
+  sourceName: string,
+  chainId: ChainId.t,
+  height: int,
+}
+
+let getSourceHeightSamples: t => array<sourceHeightSample>
+
+type heightStreamSample = {
+  sourceName: string,
+  chainId: ChainId.t,
+  stream: HeightFeed.streamSample,
+}
+
+let getHeightStreamSamples: t => array<heightStreamSample>
+
+let idleSeconds: t => float
+let waitingForNewBlockSeconds: t => float
+let queryingSeconds: t => float
+
+let inFlightCount: t => int
+
+let onReorg: t => unit
+
+let dispatch: (
   t,
   ~fetchState: FetchState.t,
   ~executeQuery: FetchState.query => promise<unit>,
   ~waitForNewBlock: (~knownHeight: int) => promise<int>,
   ~onNewBlock: (~knownHeight: int) => unit,
+  ~action: FetchState.nextQuery,
   ~stateId: int,
 ) => promise<unit>
 
@@ -50,3 +84,16 @@ let makeGetHeightRetryInterval: (
   ~backoffMultiplicative: int,
   ~maxRetryInterval: int,
 ) => (~retry: int) => int
+
+let getBlockHashes: (t, ~blockNumbers: array<int>, ~isRealtime: bool) => promise<BlockStore.t>
+
+// Total time the indexer spent waiting on rate limits, including any
+// currently-in-progress window measured against Date.now() at call time.
+let getRateLimitTimeMs: t => float
+
+// True if at least one request is currently waiting on a rate-limit reset.
+let isRateLimited: t => bool
+
+// Milliseconds remaining until the longest active rate-limit window resets,
+// or None if not currently waiting (or the window has already elapsed).
+let getRateLimitResetInMs: t => option<float>

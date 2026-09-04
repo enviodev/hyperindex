@@ -20,6 +20,88 @@ type svmOnSlotArgs<'context> = {
   context: 'context,
 }
 
+type svmLamports = {
+  pre: bigint,
+  post: bigint,
+}
+
+type svmAccountToken = {
+  mint: SvmTypes.Pubkey.t,
+  owner: SvmTypes.Pubkey.t,
+  decimals: int,
+  preAmount?: bigint,
+  postAmount?: bigint,
+}
+
+type svmAccountActivity = {
+  address: SvmTypes.Pubkey.t,
+  transactionAccountIndex?: int,
+  isSigner?: bool,
+  isWritable?: bool,
+  lamports?: svmLamports,
+  token?: svmAccountToken,
+}
+
+type svmInstructionAccount = {
+  address: SvmTypes.Pubkey.t,
+  accountName: string,
+  instructionAccountIndex: int,
+  activity?: svmAccountActivity,
+}
+
+type svmTransaction = {
+  transactionIndex?: int,
+  signature?: string,
+  feePayer?: SvmTypes.Pubkey.t,
+  success?: bool,
+  err?: string,
+  fee?: bigint,
+  computeUnitsConsumed?: bigint,
+  accountKeys?: array<SvmTypes.Pubkey.t>,
+  recentBlockhash?: string,
+  version?: string,
+  allSignatures?: array<string>,
+  accountActivities?: array<svmAccountActivity>,
+}
+
+type svmLog = {
+  kind: string,
+  message: string,
+}
+
+type svmBlock = {
+  slot: int,
+  time?: int,
+  hash?: string,
+  height?: int,
+  parentSlot?: int,
+  parentHash?: string,
+}
+
+type svmInstruction = {
+  programName: string,
+  instructionName: string,
+  discriminator: string,
+  programId?: SvmTypes.Pubkey.t,
+  data?: Uint8Array.t,
+  path?: array<int>,
+  isInner?: bool,
+  // Decoded Borsh args; wide integers (u64/u128/i64/i128) are bigint, so the
+  // tree is not valid JSON.
+  args?: unknown,
+  accounts?: dict<svmInstructionAccount>,
+  accountArguments?: array<SvmTypes.Pubkey.t>,
+  transaction?: svmTransaction,
+  logs?: array<svmLog>,
+  block?: svmBlock,
+}
+
+/** Arguments passed to handlers registered via `indexer.onInstruction`. */
+type svmOnInstructionArgs<'context> = {
+  instruction: svmInstruction,
+  context: 'context,
+}
+
 // Internal-only type for the `indexer.onBlock` (and SVM `onSlot`) `where`
 // callback argument. The canonical TypeScript shape lives in
 // `packages/envio/index.d.ts`; the ReScript declaration here is free to
@@ -81,11 +163,20 @@ and effectOptions<'input, 'output> = {
   rateLimit: rateLimit,
   /** Whether the effect should be cached. */
   cache?: bool,
+  /** Whether the effect's cache is shared across all chains. Defaults to `true`,
+   or to `false` when config.yaml sets `disable_default_cross_chain: true`.
+   Set to `false` to isolate the cache (and rate limiting) per chain and enable
+   `context.chain.id` inside the handler. */
+  crossChain?: bool,
 }
+and effectChain = {id: int}
 and effectContext = {
   log: logger,
   effect: 'input 'output. (effect<'input, 'output>, 'input) => promise<'output>,
   mutable cache: bool,
+  /** The chain the effect was called on. Only available on chain-scoped
+   effects; accessing it on a cross-chain effect throws. */
+  chain: effectChain,
 }
 and effectArgs<'input> = {
   input: 'input,
@@ -100,10 +191,23 @@ let durationToMs = (duration: rateLimitDuration) =>
   | Milliseconds(ms) => ms
   }
 
+// The name becomes both a Postgres cache-table suffix and a .envio/cache file
+// path segment. Path separators are excluded from the charset and a leading dot
+// is disallowed, so a name can never be "." / ".." or otherwise traverse out of
+// the cache dir; dots elsewhere are fine and keep existing names like
+// "token.metadata" working, since the (name, scope) <-> table <-> path mapping
+// stays reversible.
+let effectNameRe = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/
+
 let createEffect = (
   options: effectOptions<'input, 'output>,
   handler: effectArgs<'input> => promise<'output>,
 ) => {
+  if !(effectNameRe->RegExp.test(options.name)) {
+    JsError.throwWithMessage(
+      `Invalid effect name "${options.name}". Effect names may contain letters, numbers, underscores, hyphens and dots (but must not start with a dot or contain a path separator), because the name is used as the cache table name and cache file path.`,
+    )
+  }
   let outputSchema =
     S.schema(_ => options.output)->(Utils.magic: S.t<S.t<'output>> => S.t<Internal.effectOutput>)
   let itemSchema = S.schema((s): Internal.effectCacheItem => {
@@ -117,8 +221,6 @@ let createEffect = (
         Internal.effectOutput,
       >
     ),
-    activeCallsCount: 0,
-    prevCallStartTimerRef: %raw(`null`),
     // This is the way to make the createEffect API
     // work without the need for users to call S.schema themselves,
     // but simply pass the desired object/tuple/etc.
@@ -128,7 +230,6 @@ let createEffect = (
     ),
     output: outputSchema,
     storageMeta: {
-      table: Internal.makeCacheTable(~effectName=options.name),
       outputSchema,
       itemSchema,
     },
@@ -136,16 +237,15 @@ let createEffect = (
     | Some(true) => true
     | _ => false
     },
+    // Left unresolved: the config's `defaultCrossChain` fills it in when the
+    // effect didn't state one, and the config isn't available here.
+    crossChain: options.crossChain,
     rateLimit: switch options.rateLimit {
     | Disable => None
     | Enable({calls, per}) =>
       Some({
         callsPerDuration: calls,
         durationMs: per->durationToMs,
-        availableCalls: calls,
-        windowStartTime: Date.now(),
-        queueCount: 0,
-        nextWindowPromise: None,
       })
     },
   }->(Utils.magic: Internal.effect => effect<'input, 'output>)
@@ -177,6 +277,22 @@ type fuelSimulateItem = {
   logIndex?: int,
   block?: fuelBlockInput,
   transaction?: fuelTransactionInput,
+}
+
+type svmSimulateItem = {
+  program: string,
+  instruction: string,
+  slot?: int,
+  path?: array<int>,
+  programId?: string,
+  data?: Uint8Array.t,
+  isInner?: bool,
+  args?: unknown,
+  accounts?: dict<{address: string}>,
+  accountArguments?: array<string>,
+  logs?: array<{kind?: string, message?: string}>,
+  block?: svmBlock,
+  transaction?: unknown,
 }
 
 // Detects contexts where a full-screen TUI is counter-productive: piped/redirected
@@ -216,7 +332,7 @@ module TestHelpers = {
         "0xbDA5747bFD65F08deb54cb465eB87D40e51B197E",
         "0xdD2FD4581271e230360230F9337D5c0430Bf44C0",
         "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
-      ]->Belt.Array.map(Address.Evm.fromStringOrThrow)
-    let defaultAddress = mockAddresses->Belt.Array.getUnsafe(0)
+      ]->Array.map(Address.Evm.fromStringOrThrow)
+    let defaultAddress = mockAddresses->Array.getUnsafe(0)
   }
 }

@@ -18,6 +18,6 @@
   "dependencies": ["rescript-schema", "@rescript/react"],
   "compiler-flags": ["-open RescriptSchema"],
   "warnings": {
-    "error": "+3"
+    "error": "+a"
   }
 }

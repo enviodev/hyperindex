@@ -2,5 +2,6 @@
 name: svm-onslot-test
 ecosystem: svm
 chains:
-  - rpc: https://api.mainnet-beta.solana.com
+  - id: solana
+    rpc: https://api.mainnet-beta.solana.com
     start_block: 0

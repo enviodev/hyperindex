@@ -99,6 +99,17 @@ await indexer.EntityName.getOrThrow("id"); // throws if not found
 await indexer.EntityName.getAll();         // returns all entities of this type
 ```
 
+## Test isolation
+
+Each `createTestIndexer()` has its own entity store; within one indexer, entity
+state and block progress persist across `process()` calls (each continues where
+the last stopped).
+
+Tests run in-process, so **module-level** state in your handler code (top-level
+`let`/`const`, memoized clients, effect caches) is shared across every indexer
+and test in the file and persists between them. Reset it yourself (e.g. in a
+`beforeEach`) if a test depends on it.
+
 ## result.changes
 
 `result.changes` is an array of per-block change objects. Each entry has `block`, `chainId`, `eventsProcessed`, plus entity names as keys with `sets` arrays of created/updated entities. Dynamic contract registrations appear under `addresses.sets`.
@@ -165,8 +176,4 @@ curl --request POST \
 
 Returns the earliest matching blocks. Use `from_block` to paginate forward. Pick a tight range (50–200 blocks) for fast, deterministic tests.
 
-Full HyperSync query reference: https://docs.envio.dev/docs/HyperSync-LLM/hypersync-complete
-
-## Deep Documentation
-
-Full reference: https://docs.envio.dev/docs/HyperIndex-LLM/hyperindex-complete
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

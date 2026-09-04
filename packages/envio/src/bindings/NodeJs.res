@@ -8,6 +8,7 @@ type exitCode = | @as(0) Success | @as(1) Failure
 // which exposes named exports (exit, cwd) but not EventEmitter prototype methods (on, off, emit).
 @val external globalProcess: t = "process"
 @send external onUnhandledRejection: (t, @as("unhandledRejection") _, exn => unit) => unit = "on"
+@val external setImmediate: (unit => unit) => unit = "setImmediate"
 
 module Util = {
   @unboxed
@@ -45,6 +46,85 @@ module Process = {
   @module external process: t = "process"
   @module("process") external cwd: unit => string = "cwd"
   @get external execPath: t => string = "execPath"
+
+  type memoryUsage = {
+    rss: float,
+    heapTotal: float,
+    heapUsed: float,
+    @as("external") external_: float,
+    arrayBuffers: float,
+  }
+  @module("process") external memoryUsage: unit => memoryUsage = "memoryUsage"
+
+  // Microseconds since process start.
+  type cpuUsage = {user: float, system: float}
+  @module("process") external cpuUsage: unit => cpuUsage = "cpuUsage"
+
+  @module("process") external uptime: unit => float = "uptime"
+  @module("process") external version: string = "version"
+  @module("process")
+  external getActiveResourcesInfo: unit => array<string> = "getActiveResourcesInfo"
+}
+
+module Buffer = {
+  type t
+  @val @scope("Buffer") external concat: array<t> => t = "concat"
+  @val @scope("Buffer") external alloc: int => t = "alloc"
+  @get external length: t => int = "length"
+  @send external toBase64: (t, @as("base64") _) => string = "toString"
+  @val @scope("Buffer") external fromUint8Array: Uint8Array.t => t = "from"
+  // A view over the bytes rather than a copy.
+  @val @scope("Buffer")
+  external fromArrayBuffer: (ArrayBuffer.t, ~byteOffset: int, ~length: int) => t = "from"
+  @val @scope("Buffer") external fromHex: (string, @as("hex") _) => t = "from"
+  @send external toHex: (t, @as("hex") _) => string = "toString"
+  let empty = alloc(0)
+}
+
+module V8 = {
+  type heapSpaceStatistics = {
+    @as("space_name") spaceName: string,
+    @as("space_size") spaceSize: float,
+    @as("space_used_size") spaceUsedSize: float,
+    @as("space_available_size") spaceAvailableSize: float,
+  }
+  @module("v8")
+  external getHeapSpaceStatistics: unit => array<heapSpaceStatistics> = "getHeapSpaceStatistics"
+}
+
+module PerfHooks = {
+  type eventLoopUtilization = {idle: float, active: float, utilization: float}
+  type performance
+  @module("perf_hooks") external performance: performance = "performance"
+  @send external eventLoopUtilization: performance => eventLoopUtilization = "eventLoopUtilization"
+
+  // Sampled event-loop delay histogram; values are nanoseconds.
+  type intervalHistogram = {
+    mean: float,
+    min: float,
+    max: float,
+    stddev: float,
+  }
+  type monitorOptions = {resolution?: int}
+  @module("perf_hooks")
+  external monitorEventLoopDelay: (~options: monitorOptions=?) => intervalHistogram =
+    "monitorEventLoopDelay"
+  @send external enable: intervalHistogram => bool = "enable"
+  @send external reset: intervalHistogram => unit = "reset"
+  @send external percentile: (intervalHistogram, int) => float = "percentile"
+
+  type performanceEntry = {
+    duration: float, // milliseconds
+    detail: {"kind": int},
+  }
+  type observerList
+  @send external getEntries: observerList => array<performanceEntry> = "getEntries"
+  type performanceObserver
+  type observeOptions = {entryTypes: array<string>}
+  @new @module("perf_hooks")
+  external makePerformanceObserver: (observerList => unit) => performanceObserver =
+    "PerformanceObserver"
+  @send external observe: (performanceObserver, observeOptions) => unit = "observe"
 }
 
 module ChildProcess = {
@@ -172,5 +252,10 @@ module Fs = {
 
     @module("fs") @scope("promises")
     external readdir: Path.t => promise<array<string>> = "readdir"
+
+    type stats
+    @module("fs") @scope("promises")
+    external stat: Path.t => promise<stats> = "stat"
+    @send external statsIsDirectory: stats => bool = "isDirectory"
   }
 }

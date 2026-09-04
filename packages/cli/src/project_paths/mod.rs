@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::{
     cli_args::{clap_definitions::ProjectPaths, init_config::InitConfig},
@@ -56,6 +56,19 @@ impl ParsedProjectPaths {
 
     pub fn default_with_root(project_root: &str) -> anyhow::Result<ParsedProjectPaths> {
         Self::new(project_root, DEFAULT_CONFIG_PATH)
+    }
+
+    /// The form consumers need when the project root acts as cwd. `None` when
+    /// the path sits outside the root, which has no such form.
+    pub fn relative_to_root(&self, path: &Path) -> Option<PathBuf> {
+        let normalized_root = path_utils::normalize_path(self.project_root.clone());
+        pathdiff::diff_paths(path, &normalized_root).filter(|relative| !relative.starts_with(".."))
+    }
+
+    /// The form consumers need when the project root acts as cwd.
+    pub fn config_relative_to_root(&self) -> PathBuf {
+        self.relative_to_root(&self.config)
+            .expect("config is validated to live under the project root")
     }
 
     /// Path to the codegen-emitted `.envio/types.d.ts` file.
@@ -171,5 +184,56 @@ mod tests {
     #[test]
     fn check_default_does_not_panic() {
         ParsedProjectPaths::default();
+    }
+
+    #[test]
+    fn test_config_relative_to_root_round_trips_through_directory_join() {
+        let paths = ParsedProjectPaths::new("envio/analytics", "config.yaml").unwrap();
+        let relative = paths.config_relative_to_root();
+        let round_tripped =
+            ParsedProjectPaths::new("envio/analytics", relative.to_str().unwrap()).unwrap();
+        assert_eq!(
+            (relative, round_tripped),
+            (PathBuf::from("config.yaml"), paths)
+        );
+    }
+
+    #[test]
+    fn test_config_relative_to_root_with_default_root() {
+        let paths = ParsedProjectPaths::new("./", "configs/config.yaml").unwrap();
+        assert_eq!(
+            paths.config_relative_to_root(),
+            PathBuf::from("configs/config.yaml")
+        );
+    }
+
+    #[test]
+    fn test_relative_to_root_with_default_relative_root() {
+        // The default root is the raw `.`, which a component-wise prefix strip
+        // never matches against a normalized path.
+        let paths = ParsedProjectPaths::new(".", "nested/config.yaml").unwrap();
+        assert_eq!(
+            paths.relative_to_root(&PathBuf::from("nested/schema.graphql")),
+            Some(PathBuf::from("nested/schema.graphql"))
+        );
+    }
+
+    #[test]
+    fn test_relative_to_root_rejects_path_outside_root() {
+        let paths = ParsedProjectPaths::new("my_dir/my_project", "config.yaml").unwrap();
+        assert_eq!(
+            paths.relative_to_root(&PathBuf::from("elsewhere/schema.graphql")),
+            None
+        );
+    }
+
+    #[test]
+    fn test_config_relative_to_root_with_absolute_config() {
+        let paths =
+            ParsedProjectPaths::new("/repo/project", "/repo/project/configs/config.yaml").unwrap();
+        assert_eq!(
+            paths.config_relative_to_root(),
+            PathBuf::from("configs/config.yaml")
+        );
     }
 }

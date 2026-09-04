@@ -1,11 +1,13 @@
 use super::{
-    entity_parsing::IndexFieldDirection,
-    field_types,
-    human_config::evm::For,
-    system_config::{self, Abi, Ecosystem, EventKind, FuelEventKind, SystemConfig},
+    entity_parsing, field_types,
+    human_config::{self, evm::For, ColumnNameFormat},
+    system_config::{
+        self, field_type_to_arg_type, named_field_to_arg_def, Abi, ChainIdMode, Ecosystem,
+        EventKind, FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
+    },
 };
 use crate::{config_parsing::chain_helpers::Network, utils::text::Capitalize};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -15,6 +17,13 @@ fn is_true(v: &bool) -> bool {
 
 fn is_false(v: &bool) -> bool {
     !v
+}
+
+// Int32 is what every config predating the field implies, so omitting it keeps
+// the JSON — and therefore the persisted envio_info fingerprint — byte-identical
+// for small-id projects.
+fn is_default_chain_id_mode(v: &ChainIdMode) -> bool {
+    matches!(v, ChainIdMode::Int32)
 }
 
 #[derive(Serialize, Debug)]
@@ -29,8 +38,6 @@ pub(crate) struct PublicConfigJson<'a> {
     #[serde(skip_serializing_if = "is_false")]
     is_dev: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    multichain: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     full_batch_size: Option<u64>,
     #[serde(skip_serializing_if = "is_true")]
     rollback_on_reorg: bool,
@@ -38,13 +45,20 @@ pub(crate) struct PublicConfigJson<'a> {
     save_full_history: bool,
     #[serde(skip_serializing_if = "is_false")]
     raw_events: bool,
+    #[serde(skip_serializing_if = "is_default_chain_id_mode")]
+    chain_id_mode: ChainIdMode,
+    // Omitted while true, which is what every config predating per-chain
+    // entities implies, so those projects keep producing the same JSON and
+    // the compat check doesn't ask them to reindex.
+    #[serde(skip_serializing_if = "is_true")]
+    default_cross_chain: bool,
     storage: StorageConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     evm: Option<EvmConfig<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     fuel: Option<FuelConfig<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    svm: Option<SvmConfig>,
+    svm: Option<SvmConfig<'a>>,
     enums: BTreeMap<String, Vec<String>>,
     entities: Vec<EntityJson>,
 }
@@ -55,13 +69,29 @@ struct StorageConfig {
     postgres: bool,
     #[serde(skip_serializing_if = "is_false")]
     clickhouse: bool,
+    // How each backend spells appended internal columns (currently only the
+    // per-chain chain-id column). Omitted when the backend is disabled or
+    // keeps the default `original` format.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    postgres_column_name_format: Option<ColumnNameFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clickhouse_column_name_format: Option<ColumnNameFormat>,
+}
+
+fn non_default_format(backend: Option<system_config::StorageBackend>) -> Option<ColumnNameFormat> {
+    match backend?.column_name_format {
+        ColumnNameFormat::Original => None,
+        format => Some(format),
+    }
 }
 
 impl From<&system_config::Storage> for StorageConfig {
     fn from(s: &system_config::Storage) -> Self {
         Self {
-            postgres: s.postgres,
-            clickhouse: s.clickhouse,
+            postgres: s.postgres.is_some(),
+            clickhouse: s.clickhouse.is_some(),
+            postgres_column_name_format: non_default_format(s.postgres),
+            clickhouse_column_name_format: non_default_format(s.clickhouse),
         }
     }
 }
@@ -70,17 +100,33 @@ impl From<&system_config::Storage> for StorageConfig {
 #[serde(rename_all = "camelCase")]
 struct EntityJson {
     name: String,
+    // Emitted only when the entity's resolved scope differs from
+    // `defaultCrossChain`, which the runtime falls back to. Repeating the
+    // default would diff against every project that predates the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cross_chain: Option<bool>,
     // Mirrors the user's `@storage(...)` directive verbatim: only the args
-    // they wrote are emitted, and the whole field is omitted when the
-    // directive is absent. Resolution against the global storage happens
-    // on the ReScript side.
+    // they wrote are emitted. Without a directive the entity gets the
+    // backends marked `default` in config.yaml — stamped here, except when
+    // they coincide with the enabled backends: then the field is omitted
+    // and the ReScript side falls back to the global storage, keeping the
+    // JSON byte-identical for projects predating per-backend `default`.
     #[serde(skip_serializing_if = "Option::is_none")]
     storage: Option<EntityStorageJson>,
+    // `@internal`: stored but never exposed through the GraphQL API. Omitted
+    // while false so projects predating the directive keep the same JSON.
+    #[serde(skip_serializing_if = "is_false")]
+    internal: bool,
     properties: Vec<PropertyJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     derived_fields: Vec<DerivedFieldJson>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    composite_indices: Vec<Vec<CompositeIndexJson>>,
+    // The JSON key is frozen: this config is persisted to `envio_info` and
+    // diffed against the running config on resume, so renaming it would make
+    // every deployed indexer with a composite index demand a reset.
+    #[serde(rename = "compositeIndices", skip_serializing_if = "Vec::is_empty")]
+    composite_indexes: Vec<Vec<CompositeIndexJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -88,13 +134,84 @@ struct EntityStorageJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     postgres: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    clickhouse: Option<bool>,
+    clickhouse: Option<EntityClickHouseStorageJson>,
+}
+
+// Mirrors the two forms of the directive's `clickhouse` arg: a boolean or a
+// table options object (implying the backend is enabled).
+#[derive(Serialize, Debug)]
+#[serde(untagged)]
+enum EntityClickHouseStorageJson {
+    Enabled(bool),
+    Options(EntityClickHouseOptionsJson),
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct EntityClickHouseOptionsJson {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    partition_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    order_by: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttl: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skipping_indexes: Option<Vec<EntityClickHouseSkippingIndexJson>>,
+}
+
+#[derive(Serialize, Debug)]
+struct EntityClickHouseSkippingIndexJson {
+    name: String,
+    expr: String,
+    #[serde(rename = "type")]
+    index_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    granularity: Option<u32>,
+}
+
+impl From<&entity_parsing::ClickHouseEntityStorage> for EntityClickHouseStorageJson {
+    fn from(storage: &entity_parsing::ClickHouseEntityStorage) -> Self {
+        match storage {
+            entity_parsing::ClickHouseEntityStorage::Enabled(enabled) => Self::Enabled(*enabled),
+            entity_parsing::ClickHouseEntityStorage::Options(options) => {
+                Self::Options(EntityClickHouseOptionsJson {
+                    partition_by: options.partition_by.clone(),
+                    order_by: options.order_by.as_ref().map(|columns| {
+                        columns
+                            .iter()
+                            .map(|column| column.field_name().to_string())
+                            .collect()
+                    }),
+                    ttl: options.ttl.clone(),
+                    skipping_indexes: options.skipping_indexes.as_ref().map(|indices| {
+                        indices
+                            .iter()
+                            .map(|index| EntityClickHouseSkippingIndexJson {
+                                name: index.name.clone(),
+                                expr: index.expr.clone(),
+                                index_type: index.index_type.clone(),
+                                granularity: index.granularity,
+                            })
+                            .collect()
+                    }),
+                })
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct PropertyJson {
     name: String,
+    // Per-backend database column names; each is emitted only when it
+    // differs from the default naming the runtime derives from `name`
+    // (`name` plus an `_id` suffix for entity references). They can diverge
+    // when the backends configure different `column_name_format`s.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    postgres_db_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clickhouse_db_name: Option<String>,
     #[serde(rename = "type")]
     field_type: String,
     #[serde(skip_serializing_if = "is_false")]
@@ -114,6 +231,8 @@ struct PropertyJson {
     precision: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     scale: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -122,6 +241,8 @@ struct DerivedFieldJson {
     field_name: String,
     derived_from_entity: String,
     derived_from_field: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -154,8 +275,10 @@ struct FuelConfig<'a> {
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct SvmConfig {
+struct SvmConfig<'a> {
     chains: BTreeMap<String, ChainConfig>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    programs: BTreeMap<&'a str, ContractConfig>,
 }
 
 #[derive(Serialize, Debug)]
@@ -166,6 +289,8 @@ struct RpcConfig {
     source_for: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     ws: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    headers: Option<std::collections::BTreeMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     initial_block_interval: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -273,7 +398,6 @@ fn abi_type_to_components(
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct ContractEventItem {
-    event: String,
     name: String,
     sighash: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -284,6 +408,39 @@ struct ContractEventItem {
     block_fields: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     transaction_fields: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    svm: Option<SvmEventItem>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct SvmEventItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    discriminator: Option<String>,
+    /// Positional account names, in the order the on-chain program expects.
+    /// `[]` means the runtime won't expose `decoded.accounts.<name>`; the
+    /// raw `instruction.accounts[i]` array is still available.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    accounts: Vec<String>,
+    /// Borsh args layout. `[]` means the runtime won't expose
+    /// `decoded.args`; the raw `instruction.data` hex is still available.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    args: Vec<human_config::svm::ArgDef>,
+}
+
+/// Program-level Borsh schema metadata. Emitted onto `ContractConfig.svm_abi`
+/// when at least one instruction in the program has a resolved schema.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct SvmAbiJson {
+    program_id: String,
+    /// Nominal-type registry referenced by `ArgComposite::Defined`. The
+    /// runtime resolves these once per program at startup.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    defined_types: std::collections::BTreeMap<String, human_config::svm::ArgType>,
+    /// `"anchorIdl"`, `"bundled"`, or `"inline"`. Carried for diagnostics; the
+    /// runtime treats all three identically.
+    source: &'static str,
 }
 
 #[derive(Serialize, Debug)]
@@ -294,6 +451,8 @@ struct ContractConfig {
     handler: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     events: Vec<ContractEventItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    svm_abi: Option<SvmAbiJson>,
 }
 
 fn chain_id_to_name(chain_id: u64, ecosystem: &Ecosystem) -> String {
@@ -310,10 +469,17 @@ impl SystemConfig {
     pub fn to_public_config_json(&self, is_dev: bool) -> Result<String> {
         let cfg = self;
 
+        let active_chains: Vec<_> = cfg.get_chains().into_iter().filter(|c| !c.skip).collect();
+
+        if active_chains.is_empty() {
+            return Err(anyhow!(
+                "All chains are skipped. At least one chain must be active to run the indexer."
+            ));
+        }
+
         // Build chains map
-        let chains: BTreeMap<String, ChainConfig> = cfg
-            .get_chains()
-            .iter()
+        let chains: BTreeMap<String, ChainConfig> = active_chains
+            .into_iter()
             .map(|network| {
                 let chain_name = chain_id_to_name(network.id, &cfg.get_ecosystem());
 
@@ -338,6 +504,7 @@ impl SystemConfig {
                                     ),
                                 },
                                 ws: rpc.ws.clone(),
+                                headers: rpc.headers.clone(),
                                 initial_block_interval: rpc.initial_block_interval,
                                 backoff_multiplicative: rpc.backoff_multiplicative,
                                 acceleration_additive: rpc.acceleration_additive,
@@ -353,7 +520,10 @@ impl SystemConfig {
                     system_config::DataSource::Fuel {
                         hypersync_endpoint_url,
                     } => (Some(hypersync_endpoint_url.clone()), vec![], None),
-                    system_config::DataSource::Svm { rpc } => (None, vec![], Some(rpc.clone())),
+                    system_config::DataSource::Svm {
+                        rpc,
+                        hypersync_endpoint_url,
+                    } => (hypersync_endpoint_url.clone(), vec![], rpc.clone()),
                 };
 
                 let chain_contracts: BTreeMap<String, ChainContractConfig> = network
@@ -392,19 +562,25 @@ impl SystemConfig {
             cfg.contracts
                 .values()
                 .map(|contract| -> Result<(&str, ContractConfig)> {
-                    let abi_str = match &contract.abi {
-                        Abi::Evm(abi) => &abi.raw,
-                        Abi::Fuel(abi) => &abi.raw,
+                    let abi_raw = match &contract.abi {
+                        Abi::Evm(abi) => {
+                            let abi_value: serde_json::Value = serde_json::from_str(&abi.raw)?;
+                            let abi_compact = serde_json::to_string(&abi_value)?;
+                            serde_json::value::RawValue::from_string(abi_compact)?
+                        }
+                        Abi::Fuel(abi) => {
+                            let abi_value: serde_json::Value = serde_json::from_str(&abi.raw)?;
+                            let abi_compact = serde_json::to_string(&abi_value)?;
+                            serde_json::value::RawValue::from_string(abi_compact)?
+                        }
+                        Abi::Svm(_) => serde_json::value::RawValue::from_string("null".into())?,
                     };
-                    let abi_value: serde_json::Value = serde_json::from_str(abi_str)?;
-                    let abi_compact = serde_json::to_string(&abi_value)?;
-                    let abi_raw = serde_json::value::RawValue::from_string(abi_compact)?;
 
                     let events: Vec<ContractEventItem> = contract
                         .events
                         .iter()
                         .map(|e| {
-                            let (params, kind) = match &e.kind {
+                            let (params, kind, svm) = match &e.kind {
                                 EventKind::Params(event_params) => {
                                     let params = event_params
                                         .iter()
@@ -424,7 +600,7 @@ impl SystemConfig {
                                             },
                                         })
                                         .collect();
-                                    (params, None)
+                                    (params, None, None)
                                 }
                                 EventKind::Fuel(fuel_kind) => {
                                     let kind_str = match fuel_kind {
@@ -434,11 +610,22 @@ impl SystemConfig {
                                         FuelEventKind::Transfer => "transfer",
                                         FuelEventKind::Call => "call",
                                     };
-                                    (vec![], Some(kind_str.to_string()))
+                                    (vec![], Some(kind_str.to_string()), None)
+                                }
+                                EventKind::Svm(svm_kind) => {
+                                    let svm_item = SvmEventItem {
+                                        discriminator: svm_kind.discriminator.clone(),
+                                        accounts: svm_kind.accounts.clone(),
+                                        args: svm_kind
+                                            .args
+                                            .iter()
+                                            .map(named_field_to_arg_def)
+                                            .collect(),
+                                    };
+                                    (vec![], Some("svmInstruction".to_string()), Some(svm_item))
                                 }
                             };
                             ContractEventItem {
-                                event: e.event_signature.clone(),
                                 name: e.name.clone(),
                                 sighash: e.sighash.clone(),
                                 params,
@@ -452,15 +639,38 @@ impl SystemConfig {
                                         .map(|f| f.name.clone())
                                         .collect()
                                 }),
+                                svm,
                             }
                         })
                         .collect();
+                    let svm_abi = match &contract.abi {
+                        Abi::Svm(SvmAbi {
+                            program_id,
+                            instructions: _,
+                            defined_types,
+                            source,
+                        }) => Some(SvmAbiJson {
+                            program_id: program_id.clone(),
+                            defined_types: defined_types
+                                .iter()
+                                .map(|(name, ty)| (name.clone(), field_type_to_arg_type(ty)))
+                                .collect(),
+                            source: match source {
+                                SvmSchemaSource::AnchorIdl { .. } => "anchorIdl",
+                                SvmSchemaSource::Bundled { .. } => "bundled",
+                                SvmSchemaSource::Inline => "inline",
+                            },
+                        }),
+                        _ => None,
+                    };
+
                     Ok((
                         contract.name.as_str(),
                         ContractConfig {
                             abi: abi_raw,
                             handler: contract.handler_path.clone(),
                             events,
+                            svm_abi,
                         },
                     ))
                 })
@@ -494,13 +704,14 @@ impl SystemConfig {
                 None,
             ),
             Ecosystem::Fuel => (None, Some(FuelConfig { chains, contracts }), None),
-            Ecosystem::Svm => (None, None, Some(SvmConfig { chains })),
-        };
-
-        // Build multichain value
-        let multichain = match cfg.multichain {
-            crate::config_parsing::human_config::evm::Multichain::Ordered => Some("ordered"),
-            crate::config_parsing::human_config::evm::Multichain::Unordered => None,
+            Ecosystem::Svm => (
+                None,
+                None,
+                Some(SvmConfig {
+                    chains,
+                    programs: contracts,
+                }),
+            ),
         };
 
         let enums_json: BTreeMap<String, Vec<String>> = cfg
@@ -530,6 +741,7 @@ impl SystemConfig {
                             match &f.field_type {
                                 Primitive::Boolean => ("boolean".into(), None, None, None, None),
                                 Primitive::String => ("string".into(), None, None, None, None),
+                                Primitive::Bytes => ("bytes".into(), None, None, None, None),
                                 Primitive::Int32 => ("int".into(), None, None, None, None),
                                 Primitive::BigInt { precision } => {
                                     ("bigint".into(), None, None, *precision, None)
@@ -548,12 +760,25 @@ impl SystemConfig {
                                 Primitive::Enum(name) => {
                                     ("enum".into(), Some(name.clone()), None, None, None)
                                 }
-                                Primitive::Entity(name) => {
-                                    ("entity".into(), None, Some(name.clone()), None, None)
+                            };
+                        let db_name_for =
+                            |backend: Option<system_config::StorageBackend>| match backend
+                                .map(|b| b.column_name_format)
+                            {
+                                None | Some(ColumnNameFormat::Original) => None,
+                                Some(ColumnNameFormat::SnakeCase) => {
+                                    let db_name = f.db_column_name(ColumnNameFormat::SnakeCase);
+                                    if db_name == f.db_column_name(ColumnNameFormat::Original) {
+                                        None
+                                    } else {
+                                        Some(db_name)
+                                    }
                                 }
                             };
                         PropertyJson {
                             name: f.field_name.clone(),
+                            postgres_db_name: db_name_for(cfg.storage.postgres),
+                            clickhouse_db_name: db_name_for(cfg.storage.clickhouse),
                             field_type,
                             is_nullable: f.is_nullable,
                             is_array: f.is_array,
@@ -563,6 +788,7 @@ impl SystemConfig {
                             entity: entity_name,
                             precision,
                             scale,
+                            description: f.description.clone(),
                         }
                     })
                     .collect();
@@ -577,22 +803,20 @@ impl SystemConfig {
                                 field_name: df.field_name,
                                 derived_from_entity: df.derived_from_entity,
                                 derived_from_field: df.derived_from_field,
+                                description: df.description,
                             })
                     })
                     .collect();
 
-                let composite_indices = entity
-                    .get_composite_indices()
+                let composite_indexes = entity
+                    .get_composite_indexes()
                     .into_iter()
                     .map(|fields| {
                         fields
                             .iter()
                             .map(|f| CompositeIndexJson {
-                                field_name: f.name.clone(),
-                                direction: match f.direction {
-                                    IndexFieldDirection::Asc => "Asc".to_string(),
-                                    IndexFieldDirection::Desc => "Desc".to_string(),
-                                },
+                                field_name: f.column.field_name().to_string(),
+                                direction: f.direction.as_pascal_str().to_string(),
                             })
                             .collect()
                     })
@@ -601,18 +825,44 @@ impl SystemConfig {
                 let storage = if entity.has_storage_directive() {
                     Some(EntityStorageJson {
                         postgres: entity.postgres,
-                        clickhouse: entity.clickhouse,
+                        clickhouse: entity.clickhouse.as_ref().map(Into::into),
                     })
                 } else {
-                    None
+                    let postgres_default = cfg.storage.postgres.is_some_and(|b| b.entity_default);
+                    let clickhouse_default =
+                        cfg.storage.clickhouse.is_some_and(|b| b.entity_default);
+                    if (postgres_default, clickhouse_default)
+                        == (
+                            cfg.storage.postgres.is_some(),
+                            cfg.storage.clickhouse.is_some(),
+                        )
+                    {
+                        None
+                    } else {
+                        // Emitted in the same shape a positive @storage directive
+                        // would produce, so switching an entity between the
+                        // directive and a config-level default doesn't diff.
+                        Some(EntityStorageJson {
+                            postgres: postgres_default.then_some(true),
+                            clickhouse: clickhouse_default
+                                .then_some(EntityClickHouseStorageJson::Enabled(true)),
+                        })
+                    }
                 };
 
                 Ok(EntityJson {
                     name: entity.name.clone(),
+                    cross_chain: Some(entity.is_cross_chain(cfg.default_chain_scope)).filter(
+                        |cross_chain| {
+                            *cross_chain != cfg.default_chain_scope.is_cross_chain_by_default()
+                        },
+                    ),
                     storage,
+                    internal: entity.internal,
                     properties,
                     derived_fields,
-                    composite_indices,
+                    composite_indexes,
+                    description: entity.description.clone(),
                 })
             })
             .collect::<Result<_>>()?;
@@ -623,11 +873,12 @@ impl SystemConfig {
             description: cfg.human_config.get_base_config().description.as_deref(),
             handlers: cfg.handlers.as_deref(),
             is_dev,
-            multichain,
             full_batch_size: cfg.human_config.get_base_config().full_batch_size,
             rollback_on_reorg: cfg.rollback_on_reorg,
             save_full_history: cfg.save_full_history,
             raw_events: cfg.enable_raw_events,
+            chain_id_mode: cfg.chain_id_mode,
+            default_cross_chain: cfg.default_chain_scope.is_cross_chain_by_default(),
             storage: (&cfg.storage).into(),
             evm,
             fuel,
@@ -642,7 +893,10 @@ impl SystemConfig {
     pub fn to_view_json(&self) -> Result<String> {
         let view = ConfigView {
             version: system_config::VERSION,
-            storage: (&self.storage).into(),
+            storage: ViewStorageConfig {
+                postgres: self.storage.postgres.is_some(),
+                clickhouse: self.storage.clickhouse.is_some(),
+            },
         };
         Ok(serde_json::to_string_pretty(&view)?)
     }
@@ -652,5 +906,15 @@ impl SystemConfig {
 #[serde(rename_all = "camelCase")]
 struct ConfigView<'a> {
     version: &'a str,
-    storage: StorageConfig,
+    storage: ViewStorageConfig,
+}
+
+// `envio config view` reports which backends are enabled, nothing more. Kept
+// separate from the internal config's `StorageConfig` so a field the runtime
+// needs doesn't silently become part of this command's output.
+#[derive(Serialize)]
+struct ViewStorageConfig {
+    postgres: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    clickhouse: bool,
 }

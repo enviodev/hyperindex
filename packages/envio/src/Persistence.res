@@ -6,15 +6,20 @@
 // DbFunctions, Db, Migrations, InMemoryStore modules which use codegen code directly.
 
 // The type reflects an cache table in the db
-// It might be present even if the effect is not used in the application
+// It might be present even if the effect is not used in the application.
+// `initialState.cache` is keyed by `tableName` (the full cache address), so a
+// cross-chain and a chain-scoped cache for the same effect are tracked
+// independently.
 type effectCacheRecord = {
   effectName: string,
+  scope: Internal.chainScope,
+  tableName: string,
   // Number of rows in the table
   mutable count: int,
 }
 
 type initialChainState = {
-  id: int,
+  id: ChainId.t,
   startBlock: int,
   endBlock: option<int>,
   maxReorgDepth: int,
@@ -22,35 +27,67 @@ type initialChainState = {
   numEventsProcessed: float,
   firstEventBlockNumber: option<int>,
   timestampCaughtUpToHeadOrEndblock: option<Date.t>,
-  indexingAddresses: array<Internal.indexingAddress>,
+  // Every address the chain indexes, columnar — config-declared and dynamically
+  // registered alike. The chain's address store seeds straight from it.
+  addressRows: AddressRows.seedRows,
   sourceBlockNumber: int,
 }
 
 type initialState = {
   cleanRun: bool,
+  // On a resume this is what the database holds, not what the config would
+  // derive — the ids must never reshuffle under stored rows.
+  contractMapping: ContractMapping.t,
+  // Public config snapshot, restored with the address rows. None when
+  // envio_info or envio_contracts is missing.
+  envioInfo: option<JSON.t>,
   cache: dict<effectCacheRecord>,
   chains: array<initialChainState>,
   checkpointId: Internal.checkpointId,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
-  // Public config snapshot read from envio_info, used by `Persistence.init`
-  // to compat-check a resume against the running config. None when the
-  // schema pre-dates envio_info or the row is missing — `init` treats that
-  // as a version mismatch.
-  envioInfo: option<JSON.t>,
 }
 
-type operator = [#">" | #"=" | #"<"]
-
+// Carries the already-resolved cache address (`table`) rather than an effect +
+// scope: the scope is contextual (resolved per call from the handler's chain),
+// so the write layer only needs the concrete table it targets.
 type updatedEffectCache = {
-  effect: Internal.effect,
+  table: Table.table,
+  itemSchema: S.t<Internal.effectCacheItem>,
   items: array<Internal.effectCacheItem>,
   shouldInitialize: bool,
 }
 
+type rollback = {
+  diffCheckpointId: Internal.checkpointId,
+  // How far back the deletes reach on each chain, travelling with the diff so
+  // the write leaves an untouched sibling's rows alone.
+  floors: RollbackFloors.t,
+  // The address registrations the rollback dropped, as the chains' address
+  // stores resolved them. Deleted by primary key in the same transaction.
+  rolledBackAddresses: array<AddressRows.key>,
+  // Where the rollback left every chain it moved. Written with the diff rather
+  // than waiting for a batch of those chains' own: the batch that carries the
+  // diff can belong to a chain the rollback never touched, and a chain whose
+  // stored progress outlived the checkpoints backing it would resume past
+  // blocks it never re-indexed. Also what `RollbackCommit.fire` reports once
+  // the diff is durably written.
+  progressedChains: array<InternalTable.Chains.progressedChain>,
+}
+
+// One flush group: the changes an entity accumulated within a single chain
+// scope. A per-chain entity contributes one group per chain, and the scope is
+// what stamps the chain id onto the rows — it's never re-derived downstream.
 type updatedEntity = {
   entityConfig: Internal.entityConfig,
-  updates: array<Internal.inMemoryStoreEntityUpdate<Internal.entity>>,
+  scope: Internal.chainScope,
+  changes: array<Change.t<Internal.entity>>,
+}
+
+// An id the rollback must delete, together with the scope its row lives in.
+type rollbackRemoval = {
+  entityId: EntityId.t,
+  scope: Internal.chainScope,
 }
 
 type storage = {
@@ -67,67 +104,95 @@ type storage = {
     ~chainConfigs: array<Config.chain>=?,
     ~entities: array<Internal.entityConfig>=?,
     ~enums: array<Table.enumConfig<Table.enum>>=?,
+    ~contractMapping: ContractMapping.t,
     ~envioInfo: JSON.t,
   ) => promise<initialState>,
-  resumeInitialState: unit => promise<initialState>,
+  // `throwIfIncompatible` gets what the storage holds before any sink is
+  // resumed, so a config the stored one rules out is reported as such rather
+  // than as the sink tripping over tables it never created.
+  resumeInitialState: (
+    ~entities: array<Internal.entityConfig>,
+    ~throwIfIncompatible: (
+      ~storedEnvioInfo: option<JSON.t>,
+      ~storedContractMapping: ContractMapping.t,
+    ) => unit,
+  ) => promise<initialState>,
+  // Returns rows matching the filter.
+  // Field values are serialized and rows parsed with the table's field schemas.
   @raises("StorageError")
-  loadByIdsOrThrow: 'item. (
-    ~ids: array<string>,
-    ~table: Table.table,
-    ~rowsSchema: S.t<array<'item>>,
-  ) => promise<array<'item>>,
-  @raises("StorageError")
-  loadByFieldOrThrow: 'item 'value. (
-    ~fieldName: string,
-    ~fieldSchema: S.t<'value>,
-    ~fieldValue: 'value,
-    ~operator: operator,
-    ~table: Table.table,
-    ~rowsSchema: S.t<array<'item>>,
-  ) => promise<array<'item>>,
+  loadOrThrow: (~filter: EntityFilter.t, ~table: Table.table) => promise<array<unknown>>,
+  // Creates whatever indexes the filters need and aren't there yet, resolving
+  // once they're queryable. Best-effort: it resolves even when a build fails,
+  // leaving the query to run unindexed rather than failing the handler.
+  ensureQueryIndexes: (~table: Table.table, ~filters: array<EntityFilter.t>) => promise<unit>,
+  // Creates every schema-defined index still missing, without touching
+  // `ready_at`. For a resumed indexer that is already ready and so never runs
+  // `finalizeBackfill`: an index dropped or invalidated while it was down would
+  // otherwise never be rebuilt. Best-effort, and safe to run with indexing live.
+  ensureSchemaIndexes: (~entities: array<Internal.entityConfig>) => promise<unit>,
+  // Creates every schema-defined index still missing, then stamps `ready_at` on
+  // the given chains. Called once, when backfill completes. The indexes are
+  // committed one at a time so a failure part way through doesn't undo the ones
+  // already built; `ready_at` is only written once they all verify, and all
+  // chains are stamped together.
+  finalizeBackfill: (
+    ~entities: array<Internal.entityConfig>,
+    ~chainIds: array<ChainId.t>,
+    ~readyAt: Date.t,
+  ) => promise<unit>,
   // This is to download cache from the database to .envio/cache
   dumpEffectCache: unit => promise<unit>,
   reset: unit => promise<unit>,
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
-  pruneStaleCheckpoints: (~safeCheckpointId: Internal.checkpointId) => promise<unit>,
+  pruneStaleCheckpoints: (~safeCheckpoints: CheckpointBounds.t) => promise<unit>,
   // Prune stale entity history
   pruneStaleEntityHistory: (
     ~entityName: string,
     ~entityIndex: int,
-    ~safeCheckpointId: Internal.checkpointId,
+    ~chainIdColumn: option<string>,
+    ~safeCheckpoints: CheckpointBounds.t,
   ) => promise<unit>,
   // Get rollback target checkpoint
   getRollbackTargetCheckpoint: (
-    ~reorgChainId: int,
+    ~reorgChainId: ChainId.t,
     ~lastKnownValidBlockNumber: int,
   ) => promise<option<Internal.checkpointId>>,
   // Get rollback progress diff
   getRollbackProgressDiff: (
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
+    ~floors: RollbackFloors.t,
   ) => promise<
     array<{
-      "chain_id": int,
+      "chain_id": ChainId.t,
       "events_processed_diff": string,
       "new_progress_block_number": int,
     }>,
   >,
-  // Get rollback data for entity
+  // Rollback data for an entity, as decoded entities rather than storage rows:
+  // only the storage knows how it encoded them, so each one decodes its own
+  // before handing them back.
   getRollbackData: (
     ~entityConfig: Internal.entityConfig,
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => promise<(array<{"id": string}>, array<unknown>)>,
+    ~floors: RollbackFloors.t,
+  ) => promise<(array<rollbackRemoval>, array<Internal.entity>)>,
   // Write batch to storage
   writeBatch: (
     ~batch: Batch.t,
-    ~rawEvents: array<InternalTable.RawEvents.t>,
-    ~rollbackTargetCheckpointId: option<Internal.checkpointId>,
+    ~rollback: option<rollback>,
     ~isInReorgThreshold: bool,
     ~config: Config.t,
     ~allEntities: array<Internal.entityConfig>,
     ~updatedEffectsCache: array<updatedEffectCache>,
     ~updatedEntities: array<updatedEntity>,
+    // Addresses this batch registered, with the checkpoint that covers them.
+    ~registeredAddresses: array<AddressRows.staged>,
+    // Chain metadata stale since the last write, persisted in the same
+    // transaction so it never races the batch write.
+    ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
+    // Reports each underlying storage's write duration (e.g. postgres and a
+    // configured sink separately), accumulated into the write metrics.
+    ~onWrite: (~storage: string, ~timeSeconds: float) => unit,
   ) => promise<unit>,
   // Release any long-lived resources (e.g. the postgres connection pool) so
   // short-lived CLI commands like `db-migrate setup` can exit cleanly.
@@ -155,7 +220,7 @@ let make = (
   ~allEnums,
   ~storage,
 ) => {
-  let allEntities = userEntities->Array.concat([InternalTable.EnvioAddresses.entityConfig])
+  let allEntities = userEntities
   let allEnums =
     allEnums->Array.concat([EntityHistory.RowAction.config->Table.fromGenericEnumConfig])
   {
@@ -168,7 +233,15 @@ let make = (
 }
 
 let init = {
-  async (persistence, ~chainConfigs, ~envioInfo, ~resetCommand, ~runCommand, ~reset=false) => {
+  async (
+    persistence,
+    ~chainConfigs,
+    ~contractMapping,
+    ~envioInfo,
+    ~resetCommand,
+    ~runCommand,
+    ~reset=false,
+  ) => {
     try {
       let shouldRun = switch persistence.storageStatus {
       | Unknown => true
@@ -190,6 +263,7 @@ let init = {
             ~entities=persistence.allEntities,
             ~enums=persistence.allEnums,
             ~chainConfigs,
+            ~contractMapping,
             ~envioInfo,
           )
           Logging.info(`The indexer storage is ready. Starting indexing!`)
@@ -203,35 +277,22 @@ let init = {
           }
         ) {
           Logging.info(`Found existing indexer storage. Resuming indexing state...`)
-          let initialState = await persistence.storage.resumeInitialState()
-          // Compat-check the running config against what was stored on the
-          // last successful initialize. None means the schema pre-dates
-          // envio_info (or the row was wiped out-of-band) and we can't
-          // compare — treat it as a version mismatch.
-          let changedPaths = switch initialState.envioInfo {
-          | None => ["envio info is missing — storage initialized by an older envio"]
-          | Some(stored) => Config.diffPaths(~stored, ~current=envioInfo)
-          }
-          // `storage.clickhouse` is serialized as a plain bool by the
-          // public config (see Rust `StorageConfig`), so probe for
-          // `Boolean(true)`, not an object.
-          let hasClickhouse = switch envioInfo {
-          | Object(d) =>
-            switch d->Dict.get("storage") {
-            | Some(Object(s)) =>
-              switch s->Dict.get("clickhouse") {
-              | Some(Boolean(true)) => true
-              | _ => false
-              }
-            | _ => false
-            }
-          | _ => false
-          }
-          Config.throwIfIncompatible(changedPaths, ~resetCommand, ~runCommand, ~hasClickhouse)
+          let initialState = await persistence.storage.resumeInitialState(
+            ~entities=persistence.allEntities,
+            ~throwIfIncompatible=(~storedEnvioInfo, ~storedContractMapping) =>
+              Config.throwIfResumeIncompatible(
+                ~storedEnvioInfo,
+                ~storedContractMapping,
+                ~envioInfo,
+                ~contractMapping,
+                ~resetCommand,
+                ~runCommand,
+              ),
+          )
           persistence.storageStatus = Ready(initialState)
           let progress = Dict.make()
           initialState.chains->Array.forEach(c => {
-            progress->Utils.Dict.setByInt(c.id, c.progressBlockNumber)
+            progress->ChainId.Dict.set(c.id, c.progressBlockNumber)
           })
           Logging.info({
             "msg": `Successfully resumed indexing state! Continuing from the last checkpoint.`,
@@ -261,135 +322,5 @@ let getInitializedState = persistence => {
   | Initializing(_) =>
     JsError.throwWithMessage(`Failed to access the initial state. The Persistence layer is not initialized.`)
   | Ready(initialState) => initialState
-  }
-}
-
-let writeBatch = (
-  persistence,
-  ~batch,
-  ~config,
-  ~inMemoryStore: InMemoryStore.t,
-  ~isInReorgThreshold,
-) =>
-  switch persistence.storageStatus {
-  | Unknown
-  | Initializing(_) =>
-    JsError.throwWithMessage(`Failed to access the indexer storage. The Persistence layer is not initialized.`)
-  | Ready({cache}) =>
-    let updatedEntities = persistence.allEntities->Belt.Array.keepMap(entityConfig => {
-      let updates =
-        inMemoryStore
-        ->InMemoryStore.getInMemTable(~entityConfig)
-        ->InMemoryTable.Entity.updates
-      if updates->Utils.Array.isEmpty {
-        None
-      } else {
-        Some({entityConfig, updates})
-      }
-    })
-    persistence.storage.writeBatch(
-      ~batch,
-      ~rawEvents=inMemoryStore.rawEvents->InMemoryTable.values,
-      ~rollbackTargetCheckpointId=inMemoryStore.rollbackTargetCheckpointId,
-      ~isInReorgThreshold,
-      ~config,
-      ~allEntities=persistence.allEntities,
-      ~updatedEntities,
-      ~updatedEffectsCache={
-        let acc = []
-        inMemoryStore.effects->Utils.Dict.forEach(inMemTable => {
-          let {idsToStore, dict, effect, invalidationsCount} = inMemTable
-          switch idsToStore {
-          | [] => ()
-          | ids =>
-            let items = Belt.Array.makeUninitializedUnsafe(ids->Belt.Array.length)
-            ids->Belt.Array.forEachWithIndex((index, id) => {
-              items->Array.setUnsafe(
-                index,
-                (
-                  {
-                    id,
-                    output: dict->Dict.getUnsafe(id),
-                  }: Internal.effectCacheItem
-                ),
-              )
-            })
-            let effectName = effect.name
-            let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(effectName) {
-            | Some(c) => c
-            | None =>
-              let c = {effectName, count: 0}
-              cache->Dict.set(effectName, c)
-              c
-            }
-            let shouldInitialize = effectCacheRecord.count === 0
-            effectCacheRecord.count =
-              effectCacheRecord.count + items->Array.length - invalidationsCount
-            Prometheus.EffectCacheCount.set(~count=effectCacheRecord.count, ~effectName)
-            acc->Array.push({effect, items, shouldInitialize})->ignore
-          }
-        })
-        acc
-      },
-    )
-  }
-
-let prepareRollbackDiff = async (
-  persistence: t,
-  ~rollbackTargetCheckpointId,
-  ~rollbackDiffCheckpointId,
-) => {
-  let inMemStore = InMemoryStore.make(
-    ~entities=persistence.allEntities,
-    ~rollbackTargetCheckpointId,
-  )
-
-  let deletedEntities = Dict.make()
-  let setEntities = Dict.make()
-
-  let _ = await persistence.allEntities
-  ->Belt.Array.map(async entityConfig => {
-    let entityTable = inMemStore->InMemoryStore.getInMemTable(~entityConfig)
-
-    let (removedIdsResult, restoredEntitiesResult) = await persistence.storage.getRollbackData(
-      ~entityConfig,
-      ~rollbackTargetCheckpointId,
-    )
-
-    // Process removed IDs
-    removedIdsResult->Array.forEach(data => {
-      deletedEntities->Utils.Dict.push(entityConfig.name, data["id"])
-      entityTable->InMemoryTable.Entity.set(
-        Delete({
-          entityId: data["id"],
-          checkpointId: rollbackDiffCheckpointId,
-        }),
-        ~shouldSaveHistory=false,
-        ~containsRollbackDiffChange=true,
-      )
-    })
-
-    let restoredEntities = restoredEntitiesResult->S.parseOrThrow(entityConfig.rowsSchema)
-
-    // Process restored entities
-    restoredEntities->Belt.Array.forEach((entity: Internal.entity) => {
-      setEntities->Utils.Dict.push(entityConfig.name, entity.id)
-      entityTable->InMemoryTable.Entity.set(
-        Set({
-          entityId: entity.id,
-          checkpointId: rollbackDiffCheckpointId,
-          entity,
-        }),
-        ~shouldSaveHistory=false,
-        ~containsRollbackDiffChange=true,
-      )
-    })
-  })
-  ->Promise.all
-
-  {
-    "inMemStore": inMemStore,
-    "deletedEntities": deletedEntities,
-    "setEntities": setEntities,
   }
 }

@@ -3,6 +3,7 @@ type rpc = {
   sourceFor: Source.sourceFor,
   syncConfig?: Config.sourceSyncOptions,
   ws?: string,
+  headers?: dict<string>,
 }
 
 let getSyncConfig = (
@@ -22,68 +23,58 @@ let getSyncConfig = (
     initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Option.getOr(
       initialBlockInterval->Option.getOr(10_000),
     ),
-    // After an RPC error, how much to scale back the number of blocks requested at once
     backoffMultiplicative: Env.Configurable.SyncConfig.backoffMultiplicative->Option.getOr(
       backoffMultiplicative->Option.getOr(0.8),
     ),
-    // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
     accelerationAdditive: Env.Configurable.SyncConfig.accelerationAdditive->Option.getOr(
       accelerationAdditive->Option.getOr(500),
     ),
-    // Do not further increase the block interval past this limit
     intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Option.getOr(
       intervalCeiling->Option.getOr(10_000),
     ),
-    // After an error, how long to wait before retrying
-    backoffMillis: backoffMillis->Option.getOr(5000),
-    // How long to wait before cancelling an RPC request
+    backoffMillis: backoffMillis->Option.getOr(2000),
     queryTimeoutMillis,
     fallbackStallTimeout: fallbackStallTimeout->Option.getOr(queryTimeoutMillis / 2),
-    // How frequently to check for new blocks in realtime (default: 1000ms)
     pollingInterval: pollingInterval->Option.getOr(1000),
   }
 }
 
 let makeSources = (
-  ~chain,
-  ~contracts: array<Internal.evmContractConfig>,
+  ~chainId,
+  ~onEventRegistrations: array<Internal.evmOnEventRegistration>,
   ~hyperSync,
-  ~allEventSignatures,
   ~rpcs: array<rpc>,
   ~lowercaseAddresses,
+  ~addressStore,
 ) => {
-  let eventRouter =
-    contracts
-    ->Belt.Array.flatMap(contract => contract.events)
-    ->EventRouter.fromEvmEventModsOrThrow(~chain)
-
   let sources = switch hyperSync {
   | Some(endpointUrl) => [
-      HyperSyncSource.make({
-        chain,
+      EvmHyperSyncSource.make({
+        chainId,
         endpointUrl,
-        allEventSignatures,
-        eventRouter,
+        onEventRegistrations,
         apiToken: Env.envioApiToken,
-        clientMaxRetries: Env.hyperSyncClientMaxRetries,
         clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
         lowercaseAddresses,
         serializationFormat: Env.hypersyncClientSerializationFormat,
         enableQueryCaching: Env.hypersyncClientEnableQueryCaching,
+        logLevel: Env.hypersyncLogLevel,
+        addressStore,
       }),
     ]
   | _ => []
   }
-  rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws}) => {
+  rpcs->Array.forEach(({?syncConfig, url, sourceFor, ?ws, ?headers}) => {
     let source = RpcSource.make({
-      chain,
+      chainId,
       sourceFor,
       syncConfig: getSyncConfig(syncConfig->Option.getOr({})),
       url,
-      eventRouter,
-      allEventSignatures,
+      onEventRegistrations,
       lowercaseAddresses,
+      addressStore,
       ?ws,
+      ?headers,
     })
     let _ = sources->Array.push(source)
   })

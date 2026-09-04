@@ -10,9 +10,20 @@ type chainAfterBatch = {
   isProgressAtHeadWhenBatchCreated: bool,
 }
 
+// A per-chain snapshot of the scanned block hashes still inside the reorg
+// threshold, taken when the batch is assembled. Immutable for the batch's
+// lifetime, unlike the live block store it is read from - so checkpoint hashes
+// can't shift under a concurrent store mutation. `blockNumbers` is ascending;
+// `hashByBlockNumber` is keyed by block number.
+type reorgHashSnapshot = {
+  blockNumbers: array<int>,
+  hashByBlockNumber: dict<string>,
+}
+
 type chainBeforeBatch = {
   fetchState: FetchState.t,
-  reorgDetection: ReorgDetection.t,
+  scannedHashes: reorgHashSnapshot,
+  shouldRollbackOnReorg: bool,
   progressBlockNumber: int,
   sourceBlockNumber: int,
   totalEventsProcessed: float,
@@ -23,73 +34,16 @@ type t = {
   totalBatchSize: int,
   items: array<Internal.item>,
   progressedChainsById: dict<chainAfterBatch>,
+  // Processed inside the reorg threshold. Drives whether history is saved, so
+  // writes never merge across a change in this value.
+  isInReorgThreshold: bool,
   // Unnest-like checkpoint fields:
   checkpointIds: array<bigint>,
-  checkpointChainIds: array<int>,
+  checkpointChainIds: array<ChainId.t>,
   checkpointBlockNumbers: array<int>,
   checkpointBlockHashes: array<Null.t<string>>,
   checkpointEventsProcessed: array<int>,
-}
-
-/**
- It either returnes an earliest item among all chains, or None if no chains are actively indexing
- */
-let getOrderedNextChain = (fetchStates: ChainMap.t<FetchState.t>, ~batchSizePerChain) => {
-  let earliestChain: ref<option<FetchState.t>> = ref(None)
-  let earliestChainTimestamp = ref(0)
-  let chainKeys = fetchStates->ChainMap.keys
-  for idx in 0 to chainKeys->Array.length - 1 {
-    let chain = chainKeys->Array.getUnsafe(idx)
-    let fetchState = fetchStates->ChainMap.get(chain)
-    if fetchState->FetchState.isActivelyIndexing {
-      let timestamp = fetchState->FetchState.getTimestampAt(
-        ~index=switch batchSizePerChain->Utils.Dict.dangerouslyGetByIntNonOption(
-          chain->ChainMap.Chain.toChainId,
-        ) {
-        | Some(batchSize) => batchSize
-        | None => 0
-        },
-      )
-      switch earliestChain.contents {
-      | Some(earliestChain)
-        if timestamp > earliestChainTimestamp.contents ||
-          (timestamp === earliestChainTimestamp.contents &&
-            chain->ChainMap.Chain.toChainId > earliestChain.chainId) => ()
-      | _ => {
-          earliestChain := Some(fetchState)
-          earliestChainTimestamp := timestamp
-        }
-      }
-    }
-  }
-  earliestChain.contents
-}
-
-// Save overhead of recreating the dict every time
-let immutableEmptyBatchSizePerChain: dict<int> = Dict.make()
-let hasOrderedReadyItem = (fetchStates: ChainMap.t<FetchState.t>) => {
-  switch fetchStates->getOrderedNextChain(~batchSizePerChain=immutableEmptyBatchSizePerChain) {
-  | Some(fetchState) => fetchState->FetchState.hasReadyItem
-  | None => false
-  }
-}
-
-let hasUnorderedReadyItem = (fetchStates: ChainMap.t<FetchState.t>) => {
-  fetchStates
-  ->ChainMap.values
-  ->Array.some(fetchState => {
-    fetchState->FetchState.isActivelyIndexing && fetchState->FetchState.hasReadyItem
-  })
-}
-
-let hasMultichainReadyItem = (
-  fetchStates: ChainMap.t<FetchState.t>,
-  ~multichain: Config.multichain,
-) => {
-  switch multichain {
-  | Ordered => hasOrderedReadyItem(fetchStates)
-  | Unordered => hasUnorderedReadyItem(fetchStates)
-  }
+  registeredAddresses: array<AddressRows.staged>,
 }
 
 let getProgressedChainsById = {
@@ -122,7 +76,7 @@ let getProgressedChainsById = {
   }
 
   (
-    ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
+    ~chainsBeforeBatch: dict<chainBeforeBatch>,
     ~batchSizePerChain: dict<int>,
     ~progressBlockNumberPerChain: dict<int>,
   ) => {
@@ -133,19 +87,19 @@ let getProgressedChainsById = {
     // - Accumulate registered dynamic contracts to store in the db
     // - Trigger onBlock pointer update
     chainsBeforeBatch
-    ->ChainMap.values
+    ->Dict.valuesToArray
     ->Array.forEach(chainBeforeBatch => {
       let fetchState = chainBeforeBatch.fetchState
 
       let progressBlockNumberAfterBatch = switch progressBlockNumberPerChain->Utils.Dict.dangerouslyGetNonOption(
-        fetchState.chainId->Int.toString,
+        fetchState.chainId->ChainId.toString,
       ) {
       | Some(progressBlockNumber) => progressBlockNumber
       | None => chainBeforeBatch.progressBlockNumber
       }
 
       switch switch batchSizePerChain->Utils.Dict.dangerouslyGetNonOption(
-        fetchState.chainId->Int.toString,
+        fetchState.chainId->ChainId.toString,
       ) {
       | Some(batchSize) =>
         let leftItems = fetchState.buffer->Array.slice(~start=batchSize)
@@ -165,10 +119,7 @@ let getProgressedChainsById = {
         )
       } {
       | Some(progressedChain) =>
-        progressedChainsById->Utils.Dict.setByInt(
-          chainBeforeBatch.fetchState.chainId,
-          progressedChain,
-        )
+        progressedChainsById->ChainId.Dict.set(chainBeforeBatch.fetchState.chainId, progressedChain)
       | None => ()
       }
     })
@@ -177,10 +128,27 @@ let getProgressedChainsById = {
   }
 }
 
+// Index of the first entry of an ascending array strictly above `blockNumber`,
+// or the array length when there is none.
+let seekFirstAbove = (blockNumbers: array<int>, blockNumber) => {
+  let low = ref(0)
+  let high = ref(blockNumbers->Array.length)
+  while low.contents < high.contents {
+    let mid = (low.contents + high.contents) / 2
+    if blockNumbers->Array.getUnsafe(mid) > blockNumber {
+      high := mid
+    } else {
+      low := mid + 1
+    }
+  }
+  low.contents
+}
+
 @inline
 let addReorgCheckpoints = (
   ~prevCheckpointId,
-  ~reorgDetection: ReorgDetection.t,
+  ~scannedHashes: reorgHashSnapshot,
+  ~shouldRollbackOnReorg,
   ~fromBlockExclusive,
   ~toBlockExclusive,
   ~chainId,
@@ -190,23 +158,30 @@ let addReorgCheckpoints = (
   ~mutCheckpointBlockHashes,
   ~mutCheckpointEventsProcessed,
 ) => {
-  if (
-    reorgDetection.shouldRollbackOnReorg && !(reorgDetection.dataByBlockNumber->Utils.Dict.isEmpty)
-  ) {
+  if shouldRollbackOnReorg {
     let prevCheckpointId = ref(prevCheckpointId)
-    for blockNumber in fromBlockExclusive + 1 to toBlockExclusive - 1 {
-      switch reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber) {
-      | Null.Value(hash) =>
-        let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
-        prevCheckpointId := checkpointId
+    // The snapshot already holds only in-threshold scanned hashes, ascending,
+    // so seeking to the gap's lower bound gives the gap checkpoints without
+    // rescanning the whole snapshot for every gap in the batch.
+    let blockNumbers = scannedHashes.blockNumbers
+    let length = blockNumbers->Array.length
+    let idx = ref(blockNumbers->seekFirstAbove(fromBlockExclusive))
+    while idx.contents < length && blockNumbers->Array.getUnsafe(idx.contents) < toBlockExclusive {
+      let blockNumber = blockNumbers->Array.getUnsafe(idx.contents)
+      let hash =
+        scannedHashes.hashByBlockNumber
+        ->Utils.Dict.dangerouslyGetByIntNonOption(blockNumber)
+        ->Option.getUnsafe
+      let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
+      prevCheckpointId := checkpointId
 
-        mutCheckpointIds->Array.push(checkpointId)
-        mutCheckpointChainIds->Array.push(chainId)
-        mutCheckpointBlockNumbers->Array.push(blockNumber)
-        mutCheckpointBlockHashes->Array.push(Null.Value(hash))
-        mutCheckpointEventsProcessed->Array.push(0)
-      | Null.Null => ()
-      }
+      mutCheckpointIds->Array.push(checkpointId)
+      mutCheckpointChainIds->Array.push(chainId)
+      mutCheckpointBlockNumbers->Array.push(blockNumber)
+      mutCheckpointBlockHashes->Array.push(Null.Value(hash))
+      mutCheckpointEventsProcessed->Array.push(0)
+
+      idx := idx.contents + 1
     }
     prevCheckpointId.contents
   } else {
@@ -214,163 +189,26 @@ let addReorgCheckpoints = (
   }
 }
 
-let prepareOrderedBatch = (
+// Checkpoint ids are handed out in ascending order as each chain's items are
+// walked in block order, so within a chain a higher id always means a later
+// block. Rollback preserves that: it deletes the chain's ids above its target
+// before any higher one is allocated, so the ids the re-indexed blocks get are
+// above everything the chain still holds. An isolated rollback leans on the
+// invariant — it deletes by `chain_id = c AND id > target`, which is only the
+// chain's stale suffix if ids and blocks agree on order within the chain. Ids
+// interleave freely *across* chains, which is exactly why that predicate can't
+// be the id bound alone.
+let prepareBatch = (
   ~checkpointIdBeforeBatch,
-  ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
+  ~chainsBeforeBatch: dict<chainBeforeBatch>,
   ~batchSizeTarget,
-) => {
-  let totalBatchSize = ref(0)
-  let isFinished = ref(false)
-  let prevCheckpointId = ref(checkpointIdBeforeBatch)
-  let mutBatchSizePerChain = Dict.make()
-  let mutProgressBlockNumberPerChain = Dict.make()
-
-  let fetchStates = chainsBeforeBatch->ChainMap.map(chainBeforeBatch => chainBeforeBatch.fetchState)
-
-  let items = []
-  let checkpointIds = []
-  let checkpointChainIds = []
-  let checkpointBlockNumbers = []
-  let checkpointBlockHashes = []
-  let checkpointEventsProcessed = []
-
-  while totalBatchSize.contents < batchSizeTarget && !isFinished.contents {
-    switch fetchStates->getOrderedNextChain(~batchSizePerChain=mutBatchSizePerChain) {
-    | Some(fetchState) => {
-        let chainBeforeBatch =
-          chainsBeforeBatch->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId=fetchState.chainId))
-        let itemsCountBefore = switch mutBatchSizePerChain->Utils.Dict.dangerouslyGetByIntNonOption(
-          fetchState.chainId,
-        ) {
-        | Some(batchSize) => batchSize
-        | None => 0
-        }
-
-        let prevBlockNumber = switch mutProgressBlockNumberPerChain->Utils.Dict.dangerouslyGetByIntNonOption(
-          fetchState.chainId,
-        ) {
-        | Some(progressBlockNumber) => progressBlockNumber
-        | None => chainBeforeBatch.progressBlockNumber
-        }
-
-        let newItemsCount = fetchState->FetchState.getReadyItemsCount(
-          // We should get items only for a single block
-          // Since for the ordered mode next block could be after another chain's block
-          ~targetSize=1,
-          ~fromItem=itemsCountBefore,
-        )
-
-        if newItemsCount > 0 {
-          let item0 = fetchState.buffer->Array.getUnsafe(itemsCountBefore)
-          let blockNumber = item0->Internal.getItemBlockNumber
-
-          prevCheckpointId :=
-            addReorgCheckpoints(
-              ~chainId=fetchState.chainId,
-              ~reorgDetection=chainBeforeBatch.reorgDetection,
-              ~prevCheckpointId=prevCheckpointId.contents,
-              ~fromBlockExclusive=prevBlockNumber,
-              ~toBlockExclusive=blockNumber,
-              ~mutCheckpointIds=checkpointIds,
-              ~mutCheckpointChainIds=checkpointChainIds,
-              ~mutCheckpointBlockNumbers=checkpointBlockNumbers,
-              ~mutCheckpointBlockHashes=checkpointBlockHashes,
-              ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
-            )
-
-          let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
-
-          items
-          ->Array.push(item0)
-          ->ignore
-          for idx in 1 to newItemsCount - 1 {
-            items
-            ->Array.push(fetchState.buffer->Belt.Array.getUnsafe(itemsCountBefore + idx))
-            ->ignore
-          }
-
-          checkpointIds
-          ->Array.push(checkpointId)
-          ->ignore
-          checkpointChainIds
-          ->Array.push(fetchState.chainId)
-          ->ignore
-          checkpointBlockNumbers
-          ->Array.push(blockNumber)
-          ->ignore
-          checkpointBlockHashes
-          ->Array.push(
-            chainBeforeBatch.reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber),
-          )
-          ->ignore
-          checkpointEventsProcessed
-          ->Array.push(newItemsCount)
-          ->ignore
-
-          prevCheckpointId := checkpointId
-          totalBatchSize := totalBatchSize.contents + newItemsCount
-          mutBatchSizePerChain->Utils.Dict.setByInt(
-            fetchState.chainId,
-            itemsCountBefore + newItemsCount,
-          )
-          mutProgressBlockNumberPerChain->Utils.Dict.setByInt(fetchState.chainId, blockNumber)
-        } else {
-          let blockNumberAfterBatch = fetchState->FetchState.bufferBlockNumber
-
-          prevCheckpointId :=
-            addReorgCheckpoints(
-              ~chainId=fetchState.chainId,
-              ~reorgDetection=chainBeforeBatch.reorgDetection,
-              ~prevCheckpointId=prevCheckpointId.contents,
-              ~fromBlockExclusive=prevBlockNumber,
-              ~toBlockExclusive=blockNumberAfterBatch + 1, // Make it inclusive
-              ~mutCheckpointIds=checkpointIds,
-              ~mutCheckpointChainIds=checkpointChainIds,
-              ~mutCheckpointBlockNumbers=checkpointBlockNumbers,
-              ~mutCheckpointBlockHashes=checkpointBlockHashes,
-              ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
-            )
-
-          // Since the chain was chosen as next
-          // the fact that it doesn't have new items means that it reached the buffer block number
-          mutProgressBlockNumberPerChain->Utils.Dict.setByInt(
-            fetchState.chainId,
-            blockNumberAfterBatch,
-          )
-          isFinished := true
-        }
-      }
-
-    | None => isFinished := true
-    }
-  }
-
-  {
-    totalBatchSize: totalBatchSize.contents,
-    items,
-    progressedChainsById: getProgressedChainsById(
-      ~chainsBeforeBatch,
-      ~batchSizePerChain=mutBatchSizePerChain,
-      ~progressBlockNumberPerChain=mutProgressBlockNumberPerChain,
-    ),
-    checkpointIds,
-    checkpointChainIds,
-    checkpointBlockNumbers,
-    checkpointBlockHashes,
-    checkpointEventsProcessed,
-  }
-}
-
-let prepareUnorderedBatch = (
-  ~checkpointIdBeforeBatch,
-  ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
-  ~batchSizeTarget,
+  ~isInReorgThreshold,
 ) => {
   let preparedFetchStates =
     chainsBeforeBatch
-    ->ChainMap.values
+    ->Dict.valuesToArray
     ->Array.map(chainBeforeBatch => chainBeforeBatch.fetchState)
-    ->FetchState.sortForUnorderedBatch(~batchSizeTarget)
+    ->FetchState.sortForBatch(~batchSizeTarget)
 
   let chainIdx = ref(0)
   let preparedNumber = preparedFetchStates->Array.length
@@ -398,12 +236,14 @@ let prepareUnorderedBatch = (
         ~fromItem=0,
       )
     let chainBeforeBatch =
-      chainsBeforeBatch->ChainMap.get(ChainMap.Chain.makeUnsafe(~chainId=fetchState.chainId))
+      chainsBeforeBatch
+      ->ChainId.Dict.dangerouslyGetNonOption(fetchState.chainId)
+      ->Option.getUnsafe
 
     let prevBlockNumber = ref(chainBeforeBatch.progressBlockNumber)
     if chainBatchSize > 0 {
       for idx in 0 to chainBatchSize - 1 {
-        let item = fetchState.buffer->Belt.Array.getUnsafe(idx)
+        let item = fetchState.buffer->Array.getUnsafe(idx)
         let blockNumber = item->Internal.getItemBlockNumber
 
         // Every new block we should create a new checkpoint
@@ -411,7 +251,8 @@ let prepareUnorderedBatch = (
           prevCheckpointId :=
             addReorgCheckpoints(
               ~chainId=fetchState.chainId,
-              ~reorgDetection=chainBeforeBatch.reorgDetection,
+              ~scannedHashes=chainBeforeBatch.scannedHashes,
+              ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
               ~prevCheckpointId=prevCheckpointId.contents,
               ~fromBlockExclusive=prevBlockNumber.contents,
               ~toBlockExclusive=blockNumber,
@@ -429,7 +270,12 @@ let prepareUnorderedBatch = (
           checkpointBlockNumbers->Array.push(blockNumber)->ignore
           checkpointBlockHashes
           ->Array.push(
-            chainBeforeBatch.reorgDetection->ReorgDetection.getHashByBlockNumber(~blockNumber),
+            switch chainBeforeBatch.scannedHashes.hashByBlockNumber->Utils.Dict.dangerouslyGetByIntNonOption(
+              blockNumber,
+            ) {
+            | Some(hash) => Null.Value(hash)
+            | None => Null.Null
+            },
           )
           ->ignore
           checkpointEventsProcessed->Array.push(1)->ignore
@@ -439,10 +285,7 @@ let prepareUnorderedBatch = (
         } else {
           let lastIndex = checkpointEventsProcessed->Array.length - 1
           checkpointEventsProcessed
-          ->Belt.Array.setUnsafe(
-            lastIndex,
-            checkpointEventsProcessed->Array.getUnsafe(lastIndex) + 1,
-          )
+          ->Array.setUnsafe(lastIndex, checkpointEventsProcessed->Array.getUnsafe(lastIndex) + 1)
           ->ignore
         }
 
@@ -450,16 +293,17 @@ let prepareUnorderedBatch = (
       }
 
       totalBatchSize := totalBatchSize.contents + chainBatchSize
-      mutBatchSizePerChain->Utils.Dict.setByInt(fetchState.chainId, chainBatchSize)
+      mutBatchSizePerChain->ChainId.Dict.set(fetchState.chainId, chainBatchSize)
     }
 
     let progressBlockNumberAfterBatch =
-      fetchState->FetchState.getUnorderedMultichainProgressBlockNumberAt(~index=chainBatchSize)
+      fetchState->FetchState.getProgressBlockNumberAt(~index=chainBatchSize)
 
     prevCheckpointId :=
       addReorgCheckpoints(
         ~chainId=fetchState.chainId,
-        ~reorgDetection=chainBeforeBatch.reorgDetection,
+        ~scannedHashes=chainBeforeBatch.scannedHashes,
+        ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
         ~prevCheckpointId=prevCheckpointId.contents,
         ~fromBlockExclusive=prevBlockNumber.contents,
         ~toBlockExclusive=progressBlockNumberAfterBatch + 1, // Make it inclusive
@@ -470,7 +314,7 @@ let prepareUnorderedBatch = (
         ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
       )
 
-    mutProgressBlockNumberPerChain->Utils.Dict.setByInt(
+    mutProgressBlockNumberPerChain->ChainId.Dict.set(
       fetchState.chainId,
       progressBlockNumberAfterBatch,
     )
@@ -486,30 +330,23 @@ let prepareUnorderedBatch = (
       ~batchSizePerChain=mutBatchSizePerChain,
       ~progressBlockNumberPerChain=mutProgressBlockNumberPerChain,
     ),
+    isInReorgThreshold,
     checkpointIds,
     checkpointChainIds,
     checkpointBlockNumbers,
     checkpointBlockHashes,
     checkpointEventsProcessed,
+    registeredAddresses: [],
   }
 }
 
 let make = (
   ~checkpointIdBeforeBatch,
-  ~chainsBeforeBatch: ChainMap.t<chainBeforeBatch>,
-  ~multichain: Config.multichain,
+  ~chainsBeforeBatch: dict<chainBeforeBatch>,
   ~batchSizeTarget,
+  ~isInReorgThreshold,
 ) => {
-  if (
-    switch multichain {
-    | Unordered => true
-    | Ordered => chainsBeforeBatch->ChainMap.size === 1
-    }
-  ) {
-    prepareUnorderedBatch(~checkpointIdBeforeBatch, ~chainsBeforeBatch, ~batchSizeTarget)
-  } else {
-    prepareOrderedBatch(~checkpointIdBeforeBatch, ~chainsBeforeBatch, ~batchSizeTarget)
-  }
+  prepareBatch(~checkpointIdBeforeBatch, ~chainsBeforeBatch, ~batchSizeTarget, ~isInReorgThreshold)
 }
 
 let findFirstEventBlockNumber = (batch: t, ~chainId) => {
@@ -538,7 +375,7 @@ let findLastEventItem = (batch: t, ~chainId) => {
     switch item {
     | Internal.Event(_) as eventItem => {
         let eventItem = eventItem->Internal.castUnsafeEventItem
-        if eventItem.chain->ChainMap.Chain.toChainId === chainId {
+        if eventItem.chainId === chainId {
           result := Some(eventItem)
         } else {
           idx := idx.contents - 1

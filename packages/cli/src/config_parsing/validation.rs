@@ -1,12 +1,8 @@
 // use super::chain_helpers;
 use super::human_config::{self, evm::HumanConfig};
-use crate::constants::reserved_keywords::{
-    ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
-    TYPESCRIPT_RESERVED_WORDS,
-};
-use anyhow::anyhow;
+use crate::constants::reserved_keywords::RESERVED_NAMES;
+use anyhow::{anyhow, Context};
 use regex::Regex;
-use std::collections::HashSet;
 
 // It must start with a letter or underscore.
 // It can contain letters, numbers, and underscores.
@@ -36,27 +32,14 @@ fn are_contract_names_unique(contract_names: &[String]) -> bool {
     true
 }
 
-// Check for reserved words in a string, to be applied for schema and config.
-// Words from config and schema are used in the codegen and eventually in eventHandlers for the user, thus cannot contain any reserved words.
-fn check_reserved_words(words: &Vec<String>) -> Vec<String> {
-    let mut flagged_words = Vec::new();
-    // Creating a deduplicated set of reserved words from javascript, typescript and rescript
-    let mut set = HashSet::new();
-    set.extend(JAVASCRIPT_RESERVED_WORDS.iter());
-    set.extend(TYPESCRIPT_RESERVED_WORDS.iter());
-    set.extend(RESCRIPT_RESERVED_WORDS.iter());
-
-    let words_set: Vec<&str> = set.into_iter().cloned().collect();
-
-    // Find all alphanumeric words in the YAML string
-    for word in words {
-        let word = word.as_str();
-        if words_set.contains(&word) {
-            flagged_words.push(word.to_string());
-        }
-    }
-
-    flagged_words
+// Names from the config and the schema both become generated identifiers, so
+// they are held to the same list.
+fn check_reserved_words(words: &[String]) -> Vec<String> {
+    words
+        .iter()
+        .filter(|word| RESERVED_NAMES.contains(&word.as_str()))
+        .cloned()
+        .collect()
 }
 
 fn is_valid_identifier(s: &str) -> bool {
@@ -84,15 +67,15 @@ fn is_valid_identifier(s: &str) -> bool {
 
 // Check if all names in the config file are valid.
 pub fn validate_names_valid_rescript(
-    names_from_config: &Vec<String>,
+    names_from_config: &[String],
     part_of_config: String,
 ) -> anyhow::Result<()> {
     let detected_reserved_words = check_reserved_words(names_from_config);
     if !detected_reserved_words.is_empty() {
         return Err(anyhow!(
-            "The config contains reserved words for {} names: {}. They are used for the \
-             generated code and must be valid identifiers, containing only alphanumeric \
-             characters and underscores.",
+            "The config contains reserved words for {} names: {}. They are used for the generated \
+             code and must be valid identifiers, containing only alphanumeric characters and \
+             underscores.",
             part_of_config,
             detected_reserved_words
                 .iter()
@@ -110,8 +93,8 @@ pub fn validate_names_valid_rescript(
     }
     if !invalid_names.is_empty() {
         return Err(anyhow!(
-            "The config contains invalid characters for {} names: {}. They are used for \
-             the generated code and must be valid identifiers, containing only alphanumeric \
+            "The config contains invalid characters for {} names: {}. They are used for the \
+             generated code and must be valid identifiers, containing only alphanumeric \
              characters and underscores.",
             part_of_config,
             invalid_names
@@ -126,34 +109,7 @@ pub fn validate_names_valid_rescript(
 }
 
 impl human_config::evm::Chain {
-    pub fn validate_finite_endblock_networks(
-        &self,
-        _human_config: &human_config::evm::HumanConfig,
-    ) -> anyhow::Result<()> {
-        // let is_ordered_multichain_mode =
-        //     matches!(human_config.multichain, Some(human_config::evm::Multichain::Ordered));
-        // let is_multichain_indexer = human_config.chains.len() > 1;
-        // if is_ordered_multichain_mode && is_multichain_indexer {
-        //     let make_err = |finite_end_block: u64| {
-        //         Err(anyhow!(
-        //             "Chain {} has a finite end block of {}. Please set an end_block that is \
-        //              less than or equal to the finite end block in your config or set \
-        //              \"multichain\" to \"unordered\". Your multichain indexer will \
-        //              otherwise be stuck when it reaches the end of this chain.",
-        //             self.id,
-        //             finite_end_block
-        //         ))
-        //     };
-        //     if let Ok(network) = chain_helpers::Network::from_network_id(self.id) {
-        //         match (self.end_block, network.get_finite_end_block()) {
-        //             (Some(end_block), Some(finite_end_block)) if end_block > finite_end_block => {
-        //                 return make_err(finite_end_block)
-        //             }
-        //             (None, Some(finite_end_block)) => return make_err(finite_end_block),
-        //             _ => (),
-        //         }
-        //     }
-        // }
+    pub fn validate_finite_endblock_networks(&self) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -161,9 +117,9 @@ impl human_config::evm::Chain {
         if let Some(network_endblock) = self.end_block {
             if network_endblock < self.start_block {
                 return Err(anyhow!(
-                    "The config file has an endBlock that is less than the startBlock for \
-                     network id: {}. The endBlock must be greater than the startBlock.",
-                    &self.id.to_string()
+                    "The config has an end_block smaller than start_block for chain {}. end_block \
+                     must be greater than or equal to start_block.",
+                    self.id
                 ));
             }
         }
@@ -183,7 +139,14 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     for chain in &evm_config.chains {
         // validate endblock is a greater than the startblock
         chain.validate_endblock_lte_startblock()?;
-        chain.validate_finite_endblock_networks(evm_config)?;
+        chain.validate_finite_endblock_networks()?;
+
+        // Addresses are compared case-insensitively: checksum and lowercase
+        // spellings of the same address are one address at runtime. The same
+        // address under two different contracts is allowed — each contract
+        // indexes it with its own events.
+        let mut addresses_by_contract: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
 
         for contract in chain.contracts.as_ref().unwrap_or(&vec![]) {
             if contract.config.as_ref().is_some() {
@@ -194,7 +157,23 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
             for contract_address in contract.address.clone().into_iter() {
                 if !is_valid_ethereum_address(&contract_address) {
                     return Err(anyhow!(
-                        "One of the contract addresses in the config file isn't valid",
+                        "Contract {:?} on chain {} has invalid address {:?}. Expected a 20-byte \
+                         hex string starting with 0x.",
+                        contract.name,
+                        chain.id,
+                        contract_address,
+                    ));
+                }
+
+                if !addresses_by_contract
+                    .insert((contract_address.to_lowercase(), contract.name.clone()))
+                {
+                    return Err(anyhow!(
+                        "Address {} is listed multiple times for the contract {} on chain {}. \
+                         Please remove the duplicate from your config.",
+                        contract_address,
+                        contract.name,
+                        chain.id
                     ));
                 }
             }
@@ -213,28 +192,89 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     Ok(())
 }
 
-pub fn check_enums_for_internal_reserved_words(enum_name_words: Vec<String>) -> Vec<String> {
-    enum_name_words
-        .into_iter()
-        .filter(|word| ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES.contains(&word.as_str()))
-        .collect()
+pub fn is_valid_solana_pubkey(s: &str) -> bool {
+    let mut decoded = [0_u8; 32];
+    bs58::decode(s)
+        .onto(&mut decoded)
+        .is_ok_and(|decoded_len| decoded_len == decoded.len())
 }
 
-// Checking that schema does not include any reserved words
-pub fn check_names_from_schema_for_reserved_words(schema_words: Vec<String>) -> Vec<String> {
-    // Checking that schema does not include any reserved words
-    let mut detected_reserved_words_in_schema = Vec::new();
-    // Creating a deduplicated set of reserved words from javascript or rescript
-    let mut word_set: HashSet<&str> = HashSet::new();
-    word_set.extend(JAVASCRIPT_RESERVED_WORDS.iter());
-    word_set.extend(RESCRIPT_RESERVED_WORDS.iter());
-    for word in schema_words {
-        if word_set.contains(word.as_str()) {
-            detected_reserved_words_in_schema.push(word);
+pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
+    let hex = s.strip_prefix("0x").unwrap_or(s);
+    if hex.is_empty() || !hex.len().is_multiple_of(2) {
+        return Err(anyhow!(
+            "discriminator {:?} must be a whole number of bytes (an even, non-zero count of hex \
+             digits after stripping a `0x` prefix), got {} digits",
+            s,
+            hex.len()
+        ));
+    }
+    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(anyhow!("discriminator {:?} contains non-hex characters", s));
+    }
+    Ok(())
+}
+
+pub fn validate_deserialized_svm_config_yaml(
+    svm_config: &super::human_config::svm::HumanConfig,
+) -> anyhow::Result<()> {
+    let mut all_program_names: Vec<String> = Vec::new();
+
+    for chain in &svm_config.chains {
+        if chain.experimental.is_none() && chain.rpc.is_none() {
+            return Err(anyhow!(
+                "A chain must define a data source: either an `rpc` endpoint or an `experimental` \
+                 HyperSync config. Both are missing."
+            ));
+        }
+
+        let programs = chain
+            .experimental
+            .as_ref()
+            .map(|e| e.programs.as_slice())
+            .unwrap_or(&[]);
+        for program in programs {
+            if !is_valid_solana_pubkey(&program.program_id) {
+                return Err(anyhow!(
+                    "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
+                     32-byte Solana pubkey",
+                    program.name,
+                    program.program_id
+                ));
+            }
+            all_program_names.push(program.name.clone());
+
+            let mut instruction_names = std::collections::HashSet::new();
+            for instr in &program.instructions {
+                if !instruction_names.insert(instr.name.clone()) {
+                    return Err(anyhow!(
+                        "Program {:?} declares the instruction {:?} more than once",
+                        program.name,
+                        instr.name
+                    ));
+                }
+                if let Some(discriminator) = &instr.discriminator {
+                    validate_svm_discriminator(discriminator).with_context(|| {
+                        format!("instruction {:?} in program {:?}", instr.name, program.name)
+                    })?;
+                }
+            }
         }
     }
 
-    detected_reserved_words_in_schema
+    if !are_contract_names_unique(&all_program_names) {
+        return Err(anyhow!(
+            "Duplicate program names detected. All program names must be unique across all chains \
+             and are case-insensitive."
+        ));
+    }
+    validate_names_valid_rescript(&all_program_names, "program".to_string())?;
+
+    Ok(())
+}
+
+pub fn check_names_from_schema_for_reserved_words(schema_words: Vec<String>) -> Vec<String> {
+    check_reserved_words(&schema_words)
 }
 
 pub fn check_schema_enums_are_valid_postgres(enum_names: &Vec<String>) -> Vec<String> {
@@ -339,8 +379,8 @@ mod tests {
             "like".to_string(),
             "break".to_string(),
             "import".to_string(),
-            "and".to_string(),
-            "symbol".to_string(),
+            "constructor".to_string(),
+            "enum".to_string(),
             "plus".to_string(),
             "unreserved".to_string(),
             "word".to_string(),
@@ -348,10 +388,7 @@ mod tests {
             "match.".to_string(),
         ];
         let flagged_words = super::check_reserved_words(&words);
-        assert_eq!(
-            flagged_words,
-            vec!["string", "with", "break", "import", "and", "symbol"]
-        );
+        assert_eq!(flagged_words, vec!["constructor", "enum"]);
     }
 
     #[test]
@@ -379,18 +416,32 @@ mod tests {
 
     #[test]
     fn test_names_from_schema_for_reserved_words() {
-        let names_from_schema = "Greeting id greetings lastGreeting lazy open catch"
+        let names_from_schema = "Greeting id greetings lastGreeting lazy open constructor"
             .split(" ")
             .map(|s| s.to_string())
             .collect();
         let flagged_words = super::check_names_from_schema_for_reserved_words(names_from_schema);
-        assert_eq!(flagged_words, vec!["lazy", "open", "catch"]);
+        assert_eq!(flagged_words, vec!["constructor"]);
+    }
+
+    #[test]
+    fn contract_named_like_a_prototype_key_is_rejected() {
+        let result = super::validate_names_valid_rescript(
+            &["MyContract".to_string(), "__proto__".to_string()],
+            "contract".to_string(),
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "The config contains reserved words for contract names: \"__proto__\". They are used \
+             for the generated code and must be valid identifiers, containing only alphanumeric \
+             characters and underscores."
+        );
     }
 
     #[test]
     fn test_contract_names_validation() {
         let valid_result = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -400,26 +451,26 @@ mod tests {
         assert!(valid_result.is_ok());
 
         let reserved_names = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
-                "Let".to_string(),
                 "module".to_string(),
-                "this".to_string(),
+                "constructor".to_string(),
+                "enum".to_string(),
                 "1".to_string(),
             ],
             "contract".to_string(),
         );
         assert_eq!(
             reserved_names.unwrap_err().to_string(),
-            "The config contains reserved words for contract names: \"module\", \"this\". \
+            "The config contains reserved words for contract names: \"constructor\", \"enum\". \
              They are used for the generated code and must be valid identifiers, containing only \
              alphanumeric characters and underscores."
         );
 
         let invalid_names = super::validate_names_valid_rescript(
-            &vec![
+            &[
                 "foo".to_string(),
                 "MyContract".to_string(),
                 "_Bar".to_string(),
@@ -435,10 +486,112 @@ mod tests {
         );
         assert_eq!(
             invalid_names.unwrap_err().to_string(),
-            "The config contains invalid characters for contract names: \
-             \"1StartsWithNumber\", \"Has-Hyphen\", \"Has.Dot\", \"Has Space\", \"Has\"Quote\". \
-             They are used for the generated code and must be valid identifiers, containing only \
-             alphanumeric characters and underscores."
+            "The config contains invalid characters for contract names: \"1StartsWithNumber\", \
+             \"Has-Hyphen\", \"Has.Dot\", \"Has Space\", \"Has\"Quote\". They are used for the \
+             generated code and must be valid identifiers, containing only alphanumeric \
+             characters and underscores."
         );
+    }
+
+    mod svm {
+        use crate::config_parsing::human_config::svm::HumanConfig;
+        use crate::config_parsing::validation::{
+            is_valid_solana_pubkey, validate_deserialized_svm_config_yaml,
+            validate_svm_discriminator,
+        };
+
+        const TOKEN_METADATA: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+
+        #[test]
+        fn pubkey_accepts_real_program_ids() {
+            assert!(is_valid_solana_pubkey(TOKEN_METADATA));
+            // System program (32 ones; base58 lower bound).
+            assert!(is_valid_solana_pubkey("11111111111111111111111111111111"));
+        }
+
+        #[test]
+        fn pubkey_rejects_garbage() {
+            assert!(!is_valid_solana_pubkey(""));
+            assert!(!is_valid_solana_pubkey("short"));
+            // Contains '0' which is not in the base58 alphabet.
+            assert!(!is_valid_solana_pubkey(
+                "0mp02000000000000000000000000000000000000000"
+            ));
+            // Too long.
+            assert!(!is_valid_solana_pubkey(&"1".repeat(64)));
+            // Valid base58 syntax and plausible encoded length, but decodes to 33 bytes.
+            assert!(!is_valid_solana_pubkey(&"1".repeat(33)));
+        }
+
+        #[test]
+        fn discriminator_accepts_any_whole_byte_length() {
+            // Serum v3 dispatches on a version byte plus a 4-byte tag: 5 bytes.
+            for s in [
+                "0x0f",
+                "0x0fff",
+                "0x0fffff",
+                "0x000a000000",
+                "0x0fffffffffffffff",
+            ] {
+                assert!(
+                    validate_svm_discriminator(s).is_ok(),
+                    "expected {s:?} to be valid"
+                );
+            }
+            // Prefix is optional.
+            assert!(validate_svm_discriminator("0f").is_ok());
+        }
+
+        #[test]
+        fn discriminator_rejects_partial_bytes_and_non_hex() {
+            for s in ["0x", "0x0", "0x012", "0xgggggggg"] {
+                assert!(
+                    validate_svm_discriminator(s).is_err(),
+                    "expected {s:?} to be rejected"
+                );
+            }
+        }
+
+        fn parse(yaml: &str) -> HumanConfig {
+            serde_yaml::from_str(yaml).unwrap()
+        }
+
+        #[test]
+        fn validation_accepts_a_minimal_program() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - id: solana
+    start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: TokenMetadata
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: UpdateMetadataAccountV2
+              discriminator: "0x0f"
+"#,
+            );
+            validate_deserialized_svm_config_yaml(&cfg).unwrap();
+        }
+
+        #[test]
+        fn validation_accepts_rpc_only_chain() {
+            let cfg = parse(
+                r#"
+name: x
+ecosystem: svm
+chains:
+  - id: solana
+    rpc: https://api.mainnet-beta.solana.com
+    start_block: 0
+"#,
+            );
+            validate_deserialized_svm_config_yaml(&cfg).unwrap();
+        }
     }
 }

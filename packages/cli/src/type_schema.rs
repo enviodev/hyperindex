@@ -100,7 +100,7 @@ impl TypeDecl {
         };
         format!(
             "{type_name}{parameters} = {type_expr}",
-            type_name = &self.name,
+            type_name = self.name,
             type_expr = self.type_expr
         )
     }
@@ -124,7 +124,7 @@ impl TypeDecl {
         };
         format!(
             "type {name}{parameters} = {type_expr};",
-            name = &self.name,
+            name = self.name,
             type_expr = self.type_expr.to_ts_type_string_with_namespace(ns)
         )
     }
@@ -144,7 +144,7 @@ impl TypeDecl {
             let args_joined = arguments.join(", ");
             format!("<{args_joined}>")
         };
-        Ok(format!("{}{arguments_code}", &self.name))
+        Ok(format!("{}{arguments_code}", self.name))
     }
 }
 
@@ -336,6 +336,7 @@ pub enum TypeIdent {
     BigDecimal,
     Address,
     String,
+    Bytes,
     Json,
     Bool,
     Unknown,
@@ -382,6 +383,7 @@ impl TypeIdent {
             Self::BigDecimal => "BigDecimal.t".to_string(),
             Self::Address => "Address.t".to_string(),
             Self::String => "string".to_string(),
+            Self::Bytes => "Uint8Array.t".to_string(),
             Self::Json => "JSON.t".to_string(),
             Self::ID => "id".to_string(),
             Self::Bool => "bool".to_string(),
@@ -407,7 +409,8 @@ impl TypeIdent {
                 //a codegen bug.
                 if fields.is_empty() {
                     unreachable!(
-                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component \
+                         structs"
                     )
                 }
                 let inner = fields
@@ -420,7 +423,7 @@ impl TypeIdent {
                 format!("{{{inner}}}")
             }
             Self::SchemaEnum(enum_name) => {
-                format!("Enums.{}.t", &enum_name.capitalized)
+                format!("Enums.{}.t", enum_name.capitalized)
             }
             // Lowercase generic params because of the issue https://github.com/rescript-lang/rescript-compiler/issues/6759
             Self::GenericParam(name) => format!("'{}", name.to_lowercase()),
@@ -482,7 +485,8 @@ impl TypeIdent {
                 // unreachable! in `to_string_internal` / `get_default_value_rescript`.
                 if fields.is_empty() {
                     unreachable!(
-                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component \
+                         structs"
                     )
                 }
                 let inner = fields
@@ -514,6 +518,7 @@ impl TypeIdent {
             Self::BigDecimal => "BigDecimal".to_string(),
             Self::Address => "Address".to_string(),
             Self::String => "string".to_string(),
+            Self::Bytes => "Uint8Array".to_string(),
             Self::Json => "unknown".to_string(),
             Self::ID => "string".to_string(),
             Self::Bool => "boolean".to_string(),
@@ -544,7 +549,8 @@ impl TypeIdent {
                 // unreachable! in `to_string_internal` / `get_default_value_rescript`.
                 if fields.is_empty() {
                     unreachable!(
-                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component \
+                         structs"
                     )
                 }
                 let inner = fields
@@ -563,7 +569,7 @@ impl TypeIdent {
             Self::SchemaEnum(enum_name) => {
                 // References the file-level `Enums` lookup table emitted by
                 // codegen_templates.rs::wrap_envio_module_augmentation.
-                format!("Enums[\"{}\"]", &enum_name.original)
+                format!("Enums[\"{}\"]", enum_name.original)
             }
             Self::GenericParam(name) => name.clone(),
             Self::TypeApplication {
@@ -591,13 +597,14 @@ impl TypeIdent {
             Self::BigDecimal => "BigDecimal.zero".to_string(),
             Self::Address => "Envio.TestHelpers.Addresses.defaultAddress".to_string(),
             Self::String => "\"default string value\"".to_string(),
+            Self::Bytes => "Uint8Array.fromLength(0)".to_string(),
             Self::ID => "\"my_id\"".to_string(),
             Self::Bool => "false".to_string(),
             Self::Timestamp => "Date.fromTime(0.)".to_string(),
             Self::Array(_) => "[]".to_string(),
             Self::Option(_) => "None".to_string(),
             Self::SchemaEnum(enum_name) => {
-                format!("Enums.{}.default", &enum_name.capitalized)
+                format!("Enums.{}.default", enum_name.capitalized)
             }
             Self::Tuple(inner_types) => {
                 let inner_types_str = inner_types
@@ -613,7 +620,8 @@ impl TypeIdent {
                 //literal must use the matching `{"key": value}` syntax.
                 if fields.is_empty() {
                     unreachable!(
-                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component \
+                         structs"
                     )
                 }
                 let inner = fields
@@ -675,13 +683,14 @@ impl TypeIdent {
                 .to_string(),
             Self::Address => "TestHelpers.Addresses.defaultAddress".to_string(),
             Self::String => "\"default string value\"".to_string(),
+            Self::Bytes => "new Uint8Array(0)".to_string(),
             Self::ID => "\"my_id\"".to_string(),
             Self::Bool => "false".to_string(),
             Self::Timestamp => "new Date(0)".to_string(),
             Self::Array(_) => "[]".to_string(),
             Self::Option(_) => "null".to_string(),
             Self::SchemaEnum(enum_name) => {
-                format!("{}Default", &enum_name.uncapitalized)
+                format!("{}Default", enum_name.uncapitalized)
             }
             Self::Tuple(inner_types) => {
                 let inner_types_str = inner_types
@@ -696,7 +705,8 @@ impl TypeIdent {
                 // codegen bug. Fail fast instead of silently emitting `{}`.
                 if fields.is_empty() {
                     unreachable!(
-                        "TypeIdent::Record with zero fields — Solidity forbids zero-component structs"
+                        "TypeIdent::Record with zero fields — Solidity forbids zero-component \
+                         structs"
                     )
                 }
                 let inner = fields
@@ -766,8 +776,8 @@ impl Display for TypeIdent {
     }
 }
 
-///Implementation of Serialize allows handlebars get a stringified
-///version of the string representation of the rescript type
+///Serializes to the stringified ReScript type rather than the struct's
+///fields, so consumers receive the same text as the `Display` impl.
 impl Serialize for TypeIdent {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

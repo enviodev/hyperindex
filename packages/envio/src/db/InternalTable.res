@@ -5,7 +5,167 @@ let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
 
-module EnvioAddresses = Config.EnvioAddresses
+// Postgres SQLSTATE for "undefined_table" — what a read gets when the schema was
+// initialized by an older envio that didn't have the table.
+let undefinedTableSqlState = "42P01"
+
+@get external getSqlStateCode: JsExn.t => option<string> = "code"
+
+let isUndefinedTable = exn =>
+  switch exn->JsExn.anyToExnInternal {
+  | JsExn(e) => e->getSqlStateCode === Some(undefinedTableSqlState)
+  | _ => false
+  }
+
+// The array type an unnest binds a chain-id column to. Resolved from the
+// config's mode, so every internal query casts the parameter the same way the
+// column was created.
+let chainIdArrayType = (~pgSchema, ~chainIdMode: ChainId.mode) =>
+  Table.getPgFieldType(
+    ~fieldType=ChainId,
+    ~pgSchema,
+    ~isArray=true,
+    ~isNumericArrayAsText=false,
+    ~isNullable=false,
+    ~chainIdMode,
+  )
+
+// The canonical contract ids. Written once at initialize from the config's
+// contract names in byte order, so an id names the same contract on every
+// chain and across restarts; read back on resume, where the stored mapping is
+// what every address row means.
+module EnvioContracts = {
+  let table = mkTable(
+    "envio_contracts",
+    ~fields=[
+      mkField("id", SmallInt, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField("name", String, ~fieldSchema=S.string),
+    ],
+  )
+
+  let makeInsertQuery = (~pgSchema) =>
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("id", "name")
+SELECT * FROM unnest($1::${(SmallInt: Postgres.columnType :> string)}[],$2::${(Text: Postgres.columnType :> string)}[]);`
+
+  // `contractNames` is the canonical list: a name's position is its id.
+  let insert = (sql, ~pgSchema, ~contractNames: array<string>) =>
+    sql
+    ->Postgres.preparedUnsafe(
+      makeInsertQuery(~pgSchema),
+      (contractNames->Array.mapWithIndex((_, idx) => idx), contractNames)->(
+        Utils.magic: ((array<int>, array<string>)) => unknown
+      ),
+    )
+    ->Utils.Promise.ignoreValue
+
+  // Ordered by id, so the result is the canonical list itself. None when the
+  // schema has no such table: it was written by an envio that predates the
+  // contract mapping, and every address row in it is shaped differently — so a
+  // resume has to stop at the compat check rather than at a missing column.
+  let read = async (sql, ~pgSchema): option<array<string>> =>
+    try {
+      let rows: array<{
+        "name": string,
+      }> = await sql->Postgres.unsafe(
+        `SELECT "name" FROM "${pgSchema}"."${table.tableName}" ORDER BY "id";`,
+      )
+      Some(rows->Array.map(row => row["name"]))
+    } catch {
+    | exn => isUndefinedTable(exn) ? None : throw(exn)
+    }
+}
+
+module EnvioAddresses = {
+  let name = "envio_addresses"
+
+  let table = mkTable(
+    name,
+    ~fields=[
+      mkField("chain_id", ChainId, ~fieldSchema=ChainId.schema, ~isPrimaryKey),
+      // The field schemas are unused: this table is read and written by the
+      // hand-written queries below, never through the generic row encoding.
+      mkField("address", Bytea, ~fieldSchema=S.string, ~isPrimaryKey),
+      mkField("contract_id", SmallInt, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField("registration_block", Int32, ~fieldSchema=S.int),
+    ],
+  )
+
+  let makeInsertQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
+    `INSERT INTO "${pgSchema}"."${table.tableName}" ("chain_id", "address", "contract_id", "registration_block")
+SELECT * FROM unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[],$4::${(Integer: Postgres.columnType :> string)}[])
+ON CONFLICT ("chain_id", "address", "contract_id") DO NOTHING;`
+  }
+
+  let insert = (
+    sql,
+    ~pgSchema,
+    ~rows: array<AddressRows.row>,
+    ~chainIdMode: ChainId.mode=Int32,
+  ) => {
+    let chainIds = []
+    let addresses = []
+    let contractIds = []
+    let registrationBlocks = []
+    rows->Array.forEach(row => {
+      chainIds->Array.push(row.chainId)->ignore
+      addresses->Array.push(row.address)->ignore
+      contractIds->Array.push(row.contractId)->ignore
+      registrationBlocks->Array.push(row.registrationBlock)->ignore
+    })
+    sql
+    ->Postgres.preparedUnsafe(
+      makeInsertQuery(~pgSchema, ~chainIdMode),
+      (
+        chainIds,
+        sql->Postgres.typed(addresses, Postgres.byteaArrayOid),
+        contractIds,
+        registrationBlocks,
+      )->(Utils.magic: ((array<ChainId.t>, unknown, array<int>, array<int>)) => unknown),
+    )
+    ->Utils.Promise.ignoreValue
+  }
+
+  let makeDeleteQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
+    `DELETE FROM "${pgSchema}"."${table.tableName}"
+USING unnest($1::${chainIdArrayType},$2::${(Bytea: Postgres.columnType :> string)}[],$3::${(SmallInt: Postgres.columnType :> string)}[]) AS dead(chain_id, address, contract_id)
+WHERE "${table.tableName}"."chain_id" = dead.chain_id
+  AND "${table.tableName}"."address" = dead.address
+  AND "${table.tableName}"."contract_id" = dead.contract_id;`
+  }
+
+  let delete = (
+    sql,
+    ~pgSchema,
+    ~keys: array<AddressRows.key>,
+    ~chainIdMode: ChainId.mode=Int32,
+  ) => {
+    let chainIds = []
+    let addresses = []
+    let contractIds = []
+    keys->Array.forEach(key => {
+      chainIds->Array.push(key.chainId)->ignore
+      addresses->Array.push(key.address)->ignore
+      contractIds->Array.push(key.contractId)->ignore
+    })
+    sql
+    ->Postgres.preparedUnsafe(
+      makeDeleteQuery(~pgSchema, ~chainIdMode),
+      (chainIds, sql->Postgres.typed(addresses, Postgres.byteaArrayOid), contractIds)->(
+        Utils.magic: ((array<ChainId.t>, unknown, array<int>)) => unknown
+      ),
+    )
+    ->Utils.Promise.ignoreValue
+  }
+
+  let makeGetRowsQuery = (~pgSchema) =>
+    `SELECT "chain_id" as "chainId",
+"address" as "address",
+"contract_id" as "contractId",
+"registration_block" as "registrationBlock"
+FROM "${pgSchema}"."${table.tableName}";`
+}
 
 module Chains = {
   type progressFields = [
@@ -17,6 +177,7 @@ module Chains = {
   type field = [
     | progressFields
     | #id
+    | #ecosystem
     | #start_block
     | #end_block
     | #max_reorg_depth
@@ -29,6 +190,7 @@ module Chains = {
 
   let fields: array<field> = [
     #id,
+    #ecosystem,
     #start_block,
     #end_block,
     #max_reorg_depth,
@@ -56,7 +218,8 @@ module Chains = {
   }
 
   type t = {
-    @as("id") id: int,
+    @as("id") id: ChainId.t,
+    @as("ecosystem") ecosystem: string,
     @as("start_block") startBlock: int,
     @as("end_block") endBlock: Null.t<int>,
     @as("max_reorg_depth") maxReorgDepth: int,
@@ -69,7 +232,11 @@ module Chains = {
   let table = mkTable(
     "envio_chains",
     ~fields=[
-      mkField((#id: field :> string), Int32, ~fieldSchema=S.int, ~isPrimaryKey),
+      mkField((#id: field :> string), ChainId, ~fieldSchema=ChainId.schema, ~isPrimaryKey),
+      // Which ecosystem the chain belongs to (evm / fuel / svm). Chain ids are
+      // only unique within an ecosystem (HOS-1880: Svm ids are Envio-assigned),
+      // so consumers should treat (ecosystem, id) as the chain's identity.
+      mkField((#ecosystem: field :> string), String, ~fieldSchema=S.string),
       // Values populated from config
       mkField((#start_block: field :> string), Int32, ~fieldSchema=S.int),
       mkField((#end_block: field :> string), Int32, ~fieldSchema=S.null(S.int), ~isNullable),
@@ -104,6 +271,7 @@ module Chains = {
   let initialFromConfig = (chainConfig: Config.chain) => {
     {
       id: chainConfig.id,
+      ecosystem: (chainConfig.ecosystem: Ecosystem.name :> string),
       startBlock: chainConfig.startBlock,
       endBlock: chainConfig.endBlock->Null.fromOption,
       maxReorgDepth: chainConfig.maxReorgDepth,
@@ -122,16 +290,17 @@ module Chains = {
       None
     } else {
       // Create column names list
-      let columnNames = fields->Belt.Array.map(field => `"${(field :> string)}"`)
+      let columnNames = fields->Array.map(field => `"${(field :> string)}"`)
 
       // Create VALUES rows for each chain config
-      let valuesRows = chainConfigs->Belt.Array.map(chainConfig => {
+      let valuesRows = chainConfigs->Array.map(chainConfig => {
         let initialValues = initialFromConfig(chainConfig)
-        let values = fields->Belt.Array.map((field: field) => {
+        let values = fields->Array.map((field: field) => {
           let value = initialValues->(Utils.magic: t => dict<unknown>)->Dict.get((field :> string))
           switch typeof(value) {
           | #object => "NULL"
-          | #number => value->(Utils.magic: option<unknown> => int)->Belt.Int.toString
+          | #string => `'${value->(Utils.magic: option<unknown> => string)}'`
+          | #number => value->(Utils.magic: option<unknown> => int)->Int.toString
           | #bigint => value->(Utils.magic: option<unknown> => bigint)->BigInt.toString
           | #boolean => value->(Utils.magic: option<unknown> => bool) ? "true" : "false"
           | _ => JsError.throwWithMessage("Invalid envio_chains value type")
@@ -153,10 +322,10 @@ VALUES ${valuesRows->Array.joinUnsafe(",\n       ")};`,
 
   let makeMetaFieldsUpdateQuery = (~pgSchema) => {
     // Generate SET clauses with parameter placeholders
-    let setClauses = Belt.Array.mapWithIndex(metaFields, (index, field) => {
+    let setClauses = Array.mapWithIndex(metaFields, (field, index) => {
       let fieldName = (field :> string)
       let paramIndex = index + 2 // +2 because $1 is for id in WHERE clause
-      `"${fieldName}" = $${Belt.Int.toString(paramIndex)}`
+      `"${fieldName}" = $${Int.toString(paramIndex)}`
     })
 
     `UPDATE "${pgSchema}"."${table.tableName}"
@@ -164,8 +333,24 @@ SET ${setClauses->Array.joinUnsafe(",\n    ")}
 WHERE "${(#id: field :> string)}" = $1;`
   }
 
+  // Written only once every schema-defined index is verified, so a chain is
+  // never reported ready without the indexes the schema promises. One row at a
+  // time, like `setMeta`: the id column is INTEGER or BIGINT depending on the
+  // configured `ChainId.mode`, and a bare `= $2` needs no cast either way.
+  //
+  // `IS NULL` so a chain keeps the timestamp it first caught up at, matching the
+  // sticky in-memory `ChainState.markReady`. Without it a partial recovery (eg a
+  // chain added to an already-synced indexer) would restamp the ready chains in
+  // the database while their in-memory copies kept the old value — and the next
+  // chain-metadata write would push the stale value back over the committed one.
+  let makeSetReadyAtQuery = (~pgSchema) =>
+    `UPDATE "${pgSchema}"."${table.tableName}"
+SET "${(#ready_at: field :> string)}" = $1
+WHERE "${(#id: field :> string)}" = $2
+  AND "${(#ready_at: field :> string)}" IS NULL;`
+
   type rawInitialState = {
-    id: int,
+    id: ChainId.t,
     startBlock: int,
     endBlock: Null.t<int>,
     maxReorgDepth: int,
@@ -173,7 +358,7 @@ WHERE "${(#id: field :> string)}" = $1;`
     timestampCaughtUpToHeadOrEndblock: Null.t<Date.t>,
     numEventsProcessed: float,
     progressBlockNumber: int,
-    indexingAddresses: array<Internal.indexingAddress>,
+    addressRows: AddressRows.seedRows,
     sourceBlockNumber: int,
   }
 
@@ -186,35 +371,45 @@ WHERE "${(#id: field :> string)}" = $1;`
 "${(#ready_at: field :> string)}" as "timestampCaughtUpToHeadOrEndblock",
 "${(#events_processed: field :> string)}"::float8 as "numEventsProcessed",
 "${(#progress_block: field :> string)}" as "progressBlockNumber",
-"${(#source_block: field :> string)}" as "sourceBlockNumber",
-(
-  -- envio_addresses.id is a composite "{chainId}-{address}" string produced by
-  -- Config.EnvioAddresses.makeId; extract the address by taking everything
-  -- after the first '-'. Keep in sync with makeId / getAddress.
-  SELECT COALESCE(json_agg(json_build_object(
-    'address', SUBSTRING("id" FROM POSITION('-' IN "id") + 1),
-    'contractName', "contract_name",
-    'registrationBlock', "registration_block"
-  )), '[]'::json)
-  FROM "${pgSchema}"."${EnvioAddresses.table.tableName}"
-  WHERE "chain_id" = chains."${(#id: field :> string)}"
-) as "indexingAddresses"
-FROM "${pgSchema}"."${table.tableName}" as chains;`
+"${(#source_block: field :> string)}" as "sourceBlockNumber"
+FROM "${pgSchema}"."${table.tableName}";`
   }
 
-  let getInitialState = (sql, ~pgSchema) => {
-    sql
-    ->Postgres.unsafe(makeGetInitialStateQuery(~pgSchema))
-    ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>)
+  // Addresses are read as plain rows rather than aggregated per chain with
+  // json_agg: a single chain's aggregate can exceed V8's max string length
+  // (postgres.js decodes the column with Buffer.toString and throws
+  // ERR_STRING_TOO_LONG). Grouping happens in JS instead — see getInitialState.
+  let getInitialState = async (sql, ~pgSchema) => {
+    let (rawInitialStates, rawAddressRows) = await Promise.all2((
+      sql
+      ->Postgres.unsafe(makeGetInitialStateQuery(~pgSchema))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<rawInitialState>>),
+      sql
+      ->Postgres.unsafe(EnvioAddresses.makeGetRowsQuery(~pgSchema))
+      ->(Utils.magic: promise<array<unknown>> => promise<array<AddressRows.row>>),
+    ))
+
+    let addressRowsByChainId = rawAddressRows->AddressRows.group
+
+    rawInitialStates->Array.map(rawInitialState => {
+      let id = rawInitialState.id->ChainId.normalizeOrThrow
+      {
+        ...rawInitialState,
+        id,
+        addressRows: addressRowsByChainId
+        ->Utils.Dict.dangerouslyGetNonOption(id->ChainId.toString)
+        ->Option.getOr(AddressRows.emptySeedRows()),
+      }
+    })
   }
 
   let progressFields: array<progressFields> = [#progress_block, #events_processed, #source_block]
 
   let makeProgressFieldsUpdateQuery = (~pgSchema) => {
-    let setClauses = Belt.Array.mapWithIndex(progressFields, (index, field) => {
+    let setClauses = Array.mapWithIndex(progressFields, (field, index) => {
       let fieldName = (field :> string)
       let paramIndex = index + 2 // +2 because $1 is for id in WHERE clause
-      `"${fieldName}" = $${Belt.Int.toString(paramIndex)}`
+      `"${fieldName}" = $${Int.toString(paramIndex)}`
     })
 
     `UPDATE "${pgSchema}"."${table.tableName}"
@@ -247,7 +442,7 @@ WHERE "id" = $1;`
   }
 
   type progressedChain = {
-    chainId: int,
+    chainId: ChainId.t,
     progressBlockNumber: int,
     sourceBlockNumber: int,
     totalEventsProcessed: float,
@@ -261,7 +456,7 @@ WHERE "id" = $1;`
     progressedChains->Array.forEach(data => {
       let params = []
 
-      params->Array.push(data.chainId->(Utils.magic: int => unknown))->ignore
+      params->Array.push(data.chainId->(Utils.magic: ChainId.t => unknown))->ignore
 
       progressFields->Array.forEach(field => {
         params
@@ -299,25 +494,15 @@ module EnvioInfo = {
     ],
   )
 
-  // Postgres SQLSTATE for "undefined_table" — what we get when the schema
-  // was initialized by an older envio that didn't have `envio_info`.
-  let undefinedTableSqlState = "42P01"
-
-  @get external getCode: JsExn.t => option<string> = "code"
-
   let read = async (sql, ~pgSchema): option<JSON.t> => {
     let rows: array<{
       "config": string,
     }> = try await sql->Postgres.unsafe(
       `SELECT "config" FROM "${pgSchema}"."${table.tableName}" LIMIT 1;`,
     ) catch {
-    | exn =>
-      switch exn->JsExn.anyToExnInternal {
-      | JsExn(e) if e->getCode === Some(undefinedTableSqlState) => []
-      | _ => throw(exn)
-      }
+    | exn => isUndefinedTable(exn) ? [] : throw(exn)
     }
-    rows->Belt.Array.get(0)->Belt.Option.map(row => row["config"]->JSON.parseOrThrow)
+    rows->Array.get(0)->Option.map(row => row["config"]->JSON.parseOrThrow)
   }
 
   // Upsert keyed on the fixed id so the table stays a singleton even if
@@ -345,7 +530,7 @@ module Checkpoints = {
   type t = {
     id: bigint,
     @as("chain_id")
-    chainId: int,
+    chainId: ChainId.t,
     @as("block_number")
     blockNumber: int,
     @as("block_hash")
@@ -357,7 +542,7 @@ module Checkpoints = {
   // Schema for parsing DB results where BIGINT columns come back as strings
   let dbSchema = S.object(s => {
     id: s.field("id", Utils.BigInt.schema),
-    chainId: s.field("chain_id", S.int),
+    chainId: s.field("chain_id", ChainId.schema),
     blockNumber: s.field("block_number", S.int),
     blockHash: s.field(
       "block_hash",
@@ -371,18 +556,64 @@ module Checkpoints = {
 
   let initialCheckpointId = 0n
 
-  let table = mkTable(
-    "envio_checkpoints",
-    ~fields=[
-      mkField((#id: field :> string), UInt64, ~fieldSchema=S.bigint, ~isPrimaryKey),
-      mkField((#chain_id: field :> string), Int32, ~fieldSchema=S.int),
-      mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
-      mkField((#block_hash: field :> string), String, ~fieldSchema=S.null(S.string), ~isNullable),
-      mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
-    ],
-  )
+  // One definition per column, carrying what each storage needs: the field
+  // itself, the type ClickHouse gives it where that differs from Postgres, and
+  // where a batch keeps the column's values.
+  type column = {
+    field: fieldOrDerived,
+    clickHouseFieldType: fieldType,
+    valuesOf: Batch.t => array<unknown>,
+  }
+
+  let columns: array<column> = [
+    {
+      field: mkField((#id: field :> string), UInt64, ~fieldSchema=S.bigint, ~isPrimaryKey),
+      clickHouseFieldType: UInt64,
+      valuesOf: batch => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
+    },
+    {
+      field: mkField((#chain_id: field :> string), ChainId, ~fieldSchema=ChainId.schema),
+      clickHouseFieldType: ChainId,
+      valuesOf: batch =>
+        batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
+    },
+    {
+      field: mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
+      clickHouseFieldType: Int32,
+      valuesOf: batch => batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
+    },
+    {
+      field: mkField(
+        (#block_hash: field :> string),
+        String,
+        ~fieldSchema=S.null(S.string),
+        ~isNullable,
+      ),
+      clickHouseFieldType: String,
+      valuesOf: batch =>
+        batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
+    },
+    {
+      field: mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
+      // A count of every event a chain has processed outgrows an Int32 where
+      // Postgres keeps one, and ClickHouse has the id's width to spare.
+      clickHouseFieldType: UInt64,
+      valuesOf: batch =>
+        batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
+    },
+  ]
+
+  let table = mkTable("envio_checkpoints", ~fields=columns->Array.map(({field}) => field))
 
   let makeGetReorgCheckpointsQuery = (~pgSchema): string => {
+    // The safe_block checkpoint itself is included, so it can be used for safe
+    // checkpoint tracking.
+    //
+    // Ordered by id, which within a chain is block order: both consumers of
+    // these rows — the safe-checkpoint scan and the block-store seed — read them
+    // as ascending. Physical row order can't stand in for that, since a rollback
+    // frees space that later checkpoints are written back into.
+    //
     // Use CTE to pre-filter chains and compute safe_block once per chain
     // This is faster because:
     // 1. Chains table is small, so filtering it first is cheap
@@ -405,16 +636,18 @@ FROM "${pgSchema}"."${table.tableName}" cp
 INNER JOIN reorg_chains rc 
   ON cp."${(#chain_id: field :> string)}" = rc.id
 WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
-  AND cp."${(#block_number: field :> string)}" >= rc.safe_block;` // Include safe_block checkpoint to use it for safe checkpoint tracking
+  AND cp."${(#block_number: field :> string)}" >= rc.safe_block
+ORDER BY cp."${(#id: field :> string)}";`
   }
 
   let makeCommitedCheckpointIdQuery = (~pgSchema) => {
     `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->BigInt.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
   }
 
-  let makeInsertCheckpointQuery = (~pgSchema) => {
+  let makeInsertCheckpointQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
     `INSERT INTO "${pgSchema}"."${table.tableName}" ("${(#id: field :> string)}", "${(#chain_id: field :> string)}", "${(#block_number: field :> string)}", "${(#block_hash: field :> string)}", "${(#events_processed: field :> string)}")
-SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Integer: Postgres.columnType :> string)}[],$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
+SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chainIdArrayType},$3::${(Integer: Postgres.columnType :> string)}[],$4::${(Text: Postgres.columnType :> string)}[],$5::${(Integer: Postgres.columnType :> string)}[]);`
   }
 
   let insert = (
@@ -425,8 +658,9 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
     ~checkpointBlockNumbers,
     ~checkpointBlockHashes,
     ~checkpointEventsProcessed,
+    ~chainIdMode: ChainId.mode=Int32,
   ) => {
-    let query = makeInsertCheckpointQuery(~pgSchema)
+    let query = makeInsertCheckpointQuery(~pgSchema, ~chainIdMode)
 
     // Convert bigint arrays to string arrays for postgres driver compatibility
     let checkpointIdStrings = checkpointIds->Utils.BigInt.arrayToStringArray
@@ -441,34 +675,40 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${(Int
         checkpointEventsProcessed,
       )->(
         Utils.magic: (
-          (array<string>, array<int>, array<int>, array<Null.t<string>>, array<int>)
+          (array<string>, array<ChainId.t>, array<int>, array<Null.t<string>>, array<int>)
         ) => unknown
       ),
     )
     ->Utils.Promise.ignoreValue
   }
 
-  let rollback = (sql, ~pgSchema, ~rollbackTargetCheckpointId: Internal.checkpointId) => {
+  // Optional to match the entity tables', where a cross-chain entity has none.
+  let chainIdColumn = Some((#chain_id: field :> string))
+
+  let rollback = (sql, ~pgSchema, ~floors: RollbackFloors.t) => {
+    let tableRef = `"${pgSchema}"."${table.tableName}"`
+    let bounds = floors.floors->CheckpointBounds.sql(~chainIdColumn, ~tableRef)
     sql
     ->Postgres.preparedUnsafe(
-      `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" > $1;`,
-      [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+      `DELETE FROM ${tableRef}${bounds.using} WHERE "${(#id: field :> string)}" > ${bounds.checkpointId}${bounds.usingMatch};`,
+      floors.floors->CheckpointBounds.params,
     )
     ->Utils.Promise.ignoreValue
   }
 
-  let makePruneStaleCheckpointsQuery = (~pgSchema) => {
-    `DELETE FROM "${pgSchema}"."${table.tableName}" WHERE "${(#id: field :> string)}" < $1;`
+  let makePruneStaleCheckpointsQuery = (~pgSchema, ~safeCheckpoints: CheckpointBounds.t) => {
+    let tableRef = `"${pgSchema}"."${table.tableName}"`
+    let bounds = safeCheckpoints->CheckpointBounds.sql(~chainIdColumn, ~tableRef)
+    `DELETE FROM ${tableRef}${bounds.using} WHERE "${(#id: field :> string)}" < ${bounds.checkpointId}${bounds.usingMatch};`
   }
 
-  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpointId: bigint) => {
+  let pruneStaleCheckpoints = (sql, ~pgSchema, ~safeCheckpoints) =>
     sql
     ->Postgres.preparedUnsafe(
-      makePruneStaleCheckpointsQuery(~pgSchema),
-      [safeCheckpointId->BigInt.toString]->Obj.magic,
+      makePruneStaleCheckpointsQuery(~pgSchema, ~safeCheckpoints),
+      safeCheckpoints->CheckpointBounds.params,
     )
     ->Utils.Promise.ignoreValue
-  }
 
   let makeGetRollbackTargetCheckpointQuery = (~pgSchema) => {
     `SELECT "${(#id: field :> string)}" FROM "${pgSchema}"."${table.tableName}"
@@ -482,7 +722,7 @@ LIMIT 1;`
   let getRollbackTargetCheckpoint = (
     sql,
     ~pgSchema,
-    ~reorgChainId: int,
+    ~reorgChainId: ChainId.t,
     ~lastKnownValidBlockNumber: int,
   ) => {
     let rawResult: promise<array<{"id": string}>> =
@@ -493,77 +733,60 @@ LIMIT 1;`
       )
       ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>)
     rawResult->Promise.thenResolve(rows => {
-      rows->Belt.Array.get(0)->Belt.Option.map(row => row["id"]->BigInt.fromStringOrThrow)
+      rows->Array.get(0)->Option.map(row => row["id"]->BigInt.fromStringOrThrow)
     })
   }
 
-  let makeGetRollbackProgressDiffQuery = (~pgSchema) => {
+  let makeGetRollbackProgressDiffQuery = (~pgSchema, ~floors: RollbackFloors.t) => {
+    let bounds = floors.floors->CheckpointBounds.sql(~chainIdColumn, ~tableRef="t")
     `SELECT 
-  "${(#chain_id: field :> string)}",
-  SUM("${(#events_processed: field :> string)}") as events_processed_diff,
-  MIN("${(#block_number: field :> string)}") - 1 as new_progress_block_number
-FROM "${pgSchema}"."${table.tableName}"
-WHERE "${(#id: field :> string)}" > $1
-GROUP BY "${(#chain_id: field :> string)}";`
+  t."${(#chain_id: field :> string)}"::float8 as "${(#chain_id: field :> string)}",
+  SUM(t."${(#events_processed: field :> string)}") as events_processed_diff,
+  MIN(t."${(#block_number: field :> string)}") - 1 as new_progress_block_number
+FROM "${pgSchema}"."${table.tableName}" t${bounds.join}
+WHERE t."${(#id: field :> string)}" > ${bounds.checkpointId}
+GROUP BY t."${(#chain_id: field :> string)}";`
   }
 
-  let getRollbackProgressDiff = (
-    sql,
-    ~pgSchema,
-    ~rollbackTargetCheckpointId: Internal.checkpointId,
-  ) => {
+  let getRollbackProgressDiff = (sql, ~pgSchema, ~floors: RollbackFloors.t) =>
     sql
     ->Postgres.preparedUnsafe(
-      makeGetRollbackProgressDiffQuery(~pgSchema),
-      [rollbackTargetCheckpointId->BigInt.toString]->Obj.magic,
+      makeGetRollbackProgressDiffQuery(~pgSchema, ~floors),
+      floors.floors->CheckpointBounds.params,
     )
     ->(
       Utils.magic: promise<unknown> => promise<
         array<{
-          "chain_id": int,
+          "chain_id": ChainId.t,
           "events_processed_diff": string,
           "new_progress_block_number": int,
         }>,
       >
     )
-  }
 }
 
 module RawEvents = {
-  type t = {
-    @as("chain_id") chainId: int,
-    @as("event_id") eventId: bigint,
-    @as("event_name") eventName: string,
-    @as("contract_name") contractName: string,
-    @as("block_number") blockNumber: int,
-    @as("log_index") logIndex: int,
-    @as("src_address") srcAddress: Address.t,
-    @as("block_hash") blockHash: string,
-    @as("block_timestamp") blockTimestamp: int,
-    @as("block_fields") blockFields: JSON.t,
-    @as("transaction_fields") transactionFields: JSON.t,
-    params: JSON.t,
-  }
+  type t = Internal.rawEvent
 
-  let schema = S.schema(s => {
-    chainId: s.matches(S.int),
-    eventId: s.matches(S.bigint),
-    eventName: s.matches(S.string),
-    contractName: s.matches(S.string),
-    blockNumber: s.matches(S.int),
-    logIndex: s.matches(S.int),
-    srcAddress: s.matches(Address.schema),
-    blockHash: s.matches(S.string),
-    blockTimestamp: s.matches(S.int),
-    blockFields: s.matches(S.json(~validate=false)),
-    transactionFields: s.matches(S.json(~validate=false)),
+  let schema = S.schema((s): t => {
+    chain_id: s.matches(ChainId.schema),
+    event_id: s.matches(S.bigint),
+    event_name: s.matches(S.string),
+    contract_name: s.matches(S.string),
+    block_number: s.matches(S.int),
+    log_index: s.matches(S.int),
+    src_address: s.matches(Address.schema),
+    block_hash: s.matches(S.string),
+    block_timestamp: s.matches(S.int),
+    block_fields: s.matches(S.json(~validate=false)),
+    transaction_fields: s.matches(S.json(~validate=false)),
     params: s.matches(S.json(~validate=false)),
   })
 
   let table = mkTable(
     "raw_events",
     ~fields=[
-      mkField("chain_id", Int32, ~fieldSchema=S.int),
+      mkField("chain_id", ChainId, ~fieldSchema=ChainId.schema),
       mkField("event_id", UInt64, ~fieldSchema=S.bigint),
       mkField("event_name", String, ~fieldSchema=S.string),
       mkField("contract_name", String, ~fieldSchema=S.string),
@@ -589,6 +812,7 @@ module Views = {
     `CREATE VIEW "${pgSchema}"."${metaViewName}" AS 
 SELECT 
   "${(#id: Chains.field :> string)}" AS "chainId",
+  "${(#ecosystem: Chains.field :> string)}" AS "ecosystem",
   "${(#start_block: Chains.field :> string)}" AS "startBlock", 
   "${(#end_block: Chains.field :> string)}" AS "endBlock",
   "${(#progress_block: Chains.field :> string)}" AS "progressBlock",
@@ -607,6 +831,7 @@ ORDER BY "${(#id: Chains.field :> string)}";`
 SELECT 
   "${(#source_block: Chains.field :> string)}" AS "block_height",
   "${(#id: Chains.field :> string)}" AS "chain_id",
+  "${(#ecosystem: Chains.field :> string)}" AS "ecosystem",
   "${(#end_block: Chains.field :> string)}" AS "end_block", 
   "${(#first_event_block: Chains.field :> string)}" AS "first_event_block_number",
   "${(#_is_hyper_sync: Chains.field :> string)}" AS "is_hyper_sync",

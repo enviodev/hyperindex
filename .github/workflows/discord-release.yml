@@ -12,7 +12,30 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.release.draft == false
     steps:
+      # Announce major and minor releases only. A release qualifies when the
+      # tag is an exact "X.Y.0" (strip a leading "v"): patch is 0, and there is
+      # no pre-release suffix. This skips patch releases and release candidates
+      # such as v3.0.0-rc.1, which GitHub does not always flag as prereleases.
+      - name: Check if release is major or minor
+        id: classify
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          version="${TAG#v}"
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            echo "$TAG is a prerelease; skipping"
+            echo "announce=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$version" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
+            echo "$TAG is a major/minor release; announcing"
+            echo "announce=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$TAG is a patch release; skipping"
+            echo "announce=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Post release to Discord
+        if: steps.classify.outputs.announce == 'true'
         uses: SethCohen/github-releases-to-discord@24d166886aee4646d448c8a389ff9e1ebcab3682 # v1.20.0
         with:
           webhook_url: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}

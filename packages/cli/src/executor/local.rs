@@ -23,7 +23,7 @@ pub async fn run_local(
                 // compute the indexer_env fresh.
                 docker_env::up(docker_env::UpOptions {
                     project_root: &config.parsed_project_paths.project_root,
-                    clickhouse: config.storage.clickhouse,
+                    clickhouse: config.storage.clickhouse.is_some(),
                 })
                 .await
                 .map(|_| ())?;

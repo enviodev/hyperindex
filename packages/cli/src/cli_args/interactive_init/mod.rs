@@ -129,17 +129,6 @@ async fn get_ecosystem_from_cli(init_flow: InitFlow, language: &Language) -> Res
         InitFlow::Template(args) => Ok(Ecosystem::Evm {
             init_flow: evm::InitFlow::Template(args.template.unwrap_or(evm::Template::Greeter)),
         }),
-        InitFlow::SubgraphMigration(args) => {
-            let subgraph_id = match args.subgraph_id {
-                Some(id) => id,
-                None => Text::new("[BETA VERSION] What is the subgraph ID?")
-                    .prompt()
-                    .context("Prompting user for subgraph id")?,
-            };
-            Ok(Ecosystem::Evm {
-                init_flow: evm::InitFlow::SubgraphID(subgraph_id),
-            })
-        }
         InitFlow::ContractImport(args) => Ok(Ecosystem::Evm {
             init_flow: evm_prompts::prompt_contract_import_init_flow(args).await?,
         }),
@@ -158,11 +147,10 @@ async fn get_ecosystem_from_prompt(language: &Language) -> Result<Ecosystem> {
     match ecosystem_option {
         EcosystemOption::Evm => prompt_evm_init_option(language).await,
         EcosystemOption::Fuel => prompt_fuel_init_option(language).await,
-        // SVM only has one template option, skip the selection prompt
         EcosystemOption::Svm => Ok(Ecosystem::Svm {
-            init_flow: crate::init_config::svm::InitFlow::Template(
-                crate::init_config::svm::Template::FeatureBlockHandler,
-            ),
+            init_flow: svm_prompts::prompt_template_init_flow(
+                clap_definitions::svm::TemplateArgs { template: None },
+            )?,
         }),
     }
 }
@@ -275,6 +263,7 @@ enum ApiTokenInput {
 pub async fn prompt_missing_init_args(
     init_args: InitArgs,
     project_paths: &ProjectPaths,
+    is_non_interactive: bool,
 ) -> Result<InitConfig> {
     let directory: String = match &project_paths.directory {
         Some(args_directory) => {
@@ -292,18 +281,26 @@ pub async fn prompt_missing_init_args(
                     });
             if has_invalid_component {
                 anyhow::bail!(
-                    "Invalid --directory value {args_directory:?}: folder names cannot \
-                     contain any of: / \\ : * ? \" ' < > |, and cannot be empty."
+                    "Invalid --directory value {args_directory:?}: folder names cannot contain \
+                     any of: / \\ : * ? \" ' < > |, and cannot be empty."
                 );
             }
             args_directory.clone()
         }
-        None => Text::new("Specify a folder name (ENTER to skip): ")
-            .with_default(DEFAULT_PROJECT_ROOT_PATH)
-            .with_validator(is_valid_foldername_inquire_validator)
-            .with_validator(is_directory_new_validator)
-            .with_validator(contains_no_whitespace_validator)
-            .prompt()?,
+        None => {
+            if is_non_interactive {
+                anyhow::bail!(
+                    "Running non-interactively but no project directory was provided. Pass \
+                     `--directory <name>` (or `-d <name>`) to set where the indexer is created."
+                );
+            }
+            Text::new("Specify a folder name (ENTER to skip): ")
+                .with_default(DEFAULT_PROJECT_ROOT_PATH)
+                .with_validator(is_valid_foldername_inquire_validator)
+                .with_validator(is_directory_new_validator)
+                .with_validator(contains_no_whitespace_validator)
+                .prompt()?
+        }
     };
 
     let name: String = match init_args.name {
@@ -329,8 +326,15 @@ pub async fn prompt_missing_init_args(
     let api_token: Option<String> = match init_args.api_token {
         Some(k) => Ok::<_, anyhow::Error>(Some(k)),
         None if ecosystem.uses_hypersync() => {
+            if is_non_interactive {
+                anyhow::bail!(
+                    "Running non-interactively but no Envio API token was provided. Pass \
+                     `--api-token <token>` or set the ENVIO_API_TOKEN environment variable. \
+                     Create one at https://envio.dev/app/api-tokens."
+                );
+            }
             let select = Select::new(
-                "Add an API token for HyperSync to your .env file?",
+                "Add an Envio API token to your .env file?",
                 ApiTokenInput::iter().collect(),
             )
             .prompt()

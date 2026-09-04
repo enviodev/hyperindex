@@ -176,3 +176,15 @@ type SimpleEntity {
   id: ID!
   value: String!
 }
+
+# Non-string entity ids: the id column and any foreign key referencing it adopt
+# the id's scalar, and the generated get/getOrThrow/deleteUnsafe are keyed by it.
+type IntIdEntity {
+  id: Int!
+  value: String!
+}
+
+type BigIntIdEntity {
+  id: BigInt!
+  numericRef: IntIdEntity!
+}

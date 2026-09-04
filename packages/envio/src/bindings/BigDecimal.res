@@ -22,7 +22,7 @@ type rec t = {
 // Methods
 @send external toString: t => string = "toString"
 @send external toFixed: t => string = "toFixed"
-let toInt = (b: t): option<int> => b->toString->Belt.Int.fromString
+let toInt = (b: t): option<int> => b->toString->Int.fromString
 @send external toNumber: t => float = "toNumber"
 
 // Arithmetic Operations

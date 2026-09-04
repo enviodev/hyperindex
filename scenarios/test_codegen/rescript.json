@@ -20,8 +20,10 @@
   },
   "dependencies": [
     "rescript-schema",
-    "helpers",
     "envio"
   ],
-  "compiler-flags": ["-open RescriptSchema"]
+  "compiler-flags": ["-open RescriptSchema"],
+  "warnings": {
+    "error": "+a"
+  }
 }

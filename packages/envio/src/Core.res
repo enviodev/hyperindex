@@ -1,12 +1,81 @@
 // Resolution order:
-//   1. Production: require("envio-{os}-{arch}") — platform-specific npm package
-//   2. Dev build:  find repo → cargo build --lib → load from target/debug/
+//   1. Production: require("envio-{os}-{arch}") - platform-specific npm package
+//   2. Dev build:  find repo -> cargo build --lib -> load from target/debug/
 
 // NAPI encodes Rust `Option<T>` as `null | T` (never `undefined`), so the
 // tighter `Null.t` captures the exact boundary shape.
+type evmHyperSyncClientCtor
+type evmRpcClientCtor
+type svmHyperSyncClientCtor
+type fuelHyperSyncClientCtor
+type transactionStoreCtor
+type blockStoreCtor
+type clickHouseSinkCtor
+type addressStoreCtor
+// Test-only: a local HyperSync server, bound by MockHyperSyncServer in envio-tests.
+type mockHyperSyncServerCtor
+type fromUserApiOptions = {
+  schema?: string,
+  env?: dict<string>,
+  files?: dict<string>,
+  withIndexerTypes?: bool,
+}
+
+type fromUserApiResult = {
+  config: string,
+  indexerTypes: Null.t<string>,
+  indexerCode: Null.t<string>,
+}
+
 type addon = {
   getConfigJson: (~configPath: Null.t<string>, ~directory: Null.t<string>) => string,
+  encodeIndexedTopic: (~abiType: string, ~value: unknown) => EvmTypes.Hex.t,
+  isSvmPubkey: (~value: string) => bool,
+  fromUserApi: (string, fromUserApiOptions) => fromUserApiResult,
   runCli: (~args: array<string>, ~envioPackageDir: Null.t<string>) => promise<Null.t<string>>,
+  @as("EvmHyperSyncClient")
+  evmHyperSyncClient: evmHyperSyncClientCtor,
+  @as("EvmRpcClient")
+  evmRpcClient: evmRpcClientCtor,
+  @as("SvmHyperSyncClient")
+  svmHyperSyncClient: svmHyperSyncClientCtor,
+  @as("FuelHyperSyncClient")
+  fuelHyperSyncClient: fuelHyperSyncClientCtor,
+  @as("TransactionStore")
+  transactionStore: transactionStoreCtor,
+  @as("BlockStore")
+  blockStore: blockStoreCtor,
+  @as("AddressStore")
+  addressStore: addressStoreCtor,
+  @as("ClickHouseSink")
+  clickHouseSink: clickHouseSinkCtor,
+  @as("MockHyperSyncServer")
+  mockHyperSyncServer: mockHyperSyncServerCtor,
+  encodeAddresses: (~ecosystem: string, ~addresses: array<Address.t>) => array<NodeJs.Buffer.t>,
+  renderAddresses: (
+    ~ecosystem: string,
+    ~shouldChecksum: bool,
+    ~bytes: NodeJs.Buffer.t,
+    ~lengths: array<int>,
+  ) => array<Address.t>,
+  renderContractAddresses: (
+    ~ecosystem: string,
+    ~shouldChecksum: bool,
+    ~bytes: NodeJs.Buffer.t,
+    ~lengths: array<int>,
+    ~contractIds: array<int>,
+    ~contractId: int,
+  ) => array<Address.t>,
+  canonicalContractNames: array<string> => array<string>,
+  // Ordered transaction-field names exposed for the field-code contract test
+  // (the ReScript `transactionFields` arrays must match the Rust ordinals).
+  evmTransactionFieldNames: unit => array<string>,
+  svmTransactionFieldNames: unit => array<string>,
+  // Ordered block-field names for the same contract test (`blockFields` arrays
+  // must match the Rust ordinals).
+  evmBlockFieldNames: unit => array<string>,
+  svmBlockFieldNames: unit => array<string>,
+  fuelBlockFieldNames: unit => array<string>,
 }
 
 @module("node:module") external createRequire: string => {..} = "createRequire"
@@ -34,6 +103,10 @@ let loadDevAddon: ({..}, string) => addon = %raw(`function(req, envioDir) {
   var cp = Nodechild_process;
   var path = Nodepath;
   var fs = Nodefs;
+
+  // Vitest test.env points workers at the addon globalSetup already built.
+  var preBuilt = process.env.ENVIO_DEV_ADDON;
+  if (preBuilt && fs.existsSync(preBuilt)) return req(preBuilt);
 
   var repoRoot = null;
   var dir = path.resolve(envioDir);
@@ -115,8 +188,8 @@ let loadAddon = () => {
   }
 
   // Only swallow MODULE_NOT_FOUND (the optional package isn't installed on
-  // this host). Any other failure — corrupt .node, ABI mismatch, dlopen
-  // error — is a real load failure and must surface.
+  // this host). Any other failure - corrupt .node, ABI mismatch, dlopen
+  // error - is a real load failure and must surface.
   let rec tryRequire = i =>
     switch candidates[i] {
     | None => None
@@ -167,6 +240,24 @@ let getConfigJson = (~configPath=?, ~directory=?) => {
   addon.getConfigJson(
     ~configPath=configPath->Null.fromOption,
     ~directory=directory->Null.fromOption,
+  )
+}
+
+// Pure config entry point: no cwd, config file, schema file, .env, or process env lookup.
+// A supplied schema is authoritative; omitted or blank schema text means an empty schema.
+// With `withIndexerTypes`, the single parse also returns the generated
+// `.envio/types.d.ts`, so callers can type-check handlers against the config's
+// `indexer` surface without re-parsing.
+let fromUserApi = (~schema=?, ~env=?, ~files=?, ~withIndexerTypes=false, yaml) => {
+  let addon = getAddon()
+  addon.fromUserApi(
+    yaml,
+    {
+      ?schema,
+      ?env,
+      ?files,
+      withIndexerTypes,
+    },
   )
 }
 

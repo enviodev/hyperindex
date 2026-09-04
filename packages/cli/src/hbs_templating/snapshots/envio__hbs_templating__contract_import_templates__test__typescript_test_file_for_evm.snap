@@ -34,12 +34,13 @@ describe("Contract1 contract NewGravatar event tests", () => {
     let actualContract1NewGravatar = await indexer.Contract1_NewGravatar.getOrThrow("1_0_0");
 
     // Creating the expected entity
-    const expectedContract1NewGravatar: Contract1_NewGravatar = {
+    const expectedContract1NewGravatar = {
       id: "1_0_0",
       event_id: event.params.id,
       owner: event.params.owner,
       displayName: event.params.displayName,
       imageUrl: event.params.imageUrl,
+      chainId: 1,
     };
     // Asserting that the entity in the mock database is the same as the expected entity
     t.expect(actualContract1NewGravatar, "Actual Contract1NewGravatar should be the same as the expected Contract1NewGravatar").toEqual(expectedContract1NewGravatar);

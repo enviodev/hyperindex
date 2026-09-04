@@ -54,9 +54,20 @@ let deleteKey: (dict<'value>, string) => unit = (_obj, _k) => %raw(`delete _obj[
 let timeoutAfter = timeoutMillis =>
   Utils.delay(timeoutMillis)->Promise.then(() =>
     Promise.reject(
-      LoaderTimeout(`Query took longer than ${Belt.Int.toString(timeoutMillis / 1000)} seconds`),
+      LoaderTimeout(`Query took longer than ${Int.toString(timeoutMillis / 1000)} seconds`),
     )
   )
+
+// Remember `k` as cached, evicting the oldest entry once the cache is full.
+let rememberLoaded = (am: asyncMap<'key, 'value>, k: 'key) => {
+  if am.loadedKeys->SDSL.Queue.push(k) > am._cacheSize {
+    switch am.loadedKeys->SDSL.Queue.pop {
+    | None => ()
+    | Some(old) =>
+      let _ = am.externalPromises->Utils.Map.delete(old)
+    }
+  }
+}
 
 let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
   // Track that we are loading it now
@@ -67,7 +78,7 @@ let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
     // Resolve the external promise
     am.resolvers
     ->Utils.Map.get(k)
-    ->Belt.Option.forEach(r => {
+    ->Option.forEach(r => {
       let _ = am.resolvers->Utils.Map.delete(k)
       r(val)
     })
@@ -75,17 +86,7 @@ let rec loadNext = async (am: asyncMap<'key, 'value>, k: 'key) => {
     // Track that it is no longer in progress
     let _ = am.inProgress->Utils.Set.delete(k)
 
-    // Track that we've loaded this key
-    let loadedKeysNumber = am.loadedKeys->SDSL.Queue.push(k)
-
-    // Delete the oldest key if the cache is overly full
-    if loadedKeysNumber > am._cacheSize {
-      switch am.loadedKeys->SDSL.Queue.pop {
-      | None => ()
-      | Some(old) =>
-        let _ = am.externalPromises->Utils.Map.delete(old)
-      }
-    }
+    am->rememberLoaded(k)
 
     // Load the next one, if there is anything in the queue
     switch am.loaderQueue->SDSL.Queue.pop {

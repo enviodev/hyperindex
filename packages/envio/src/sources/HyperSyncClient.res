@@ -15,7 +15,6 @@ type cfg = {
   /** Milliseconds to wait for a response before timing out. Default: 30000. */
   httpReqTimeoutMillis?: int,
   /** Number of retries to attempt before returning error. Default: 12. */
-  maxNumRetries?: int,
   /** Milliseconds that would be used for retry backoff increasing. Default: 500. */
   retryBackoffMs?: int,
   /** Initial wait time for request backoff. Default: 200. */
@@ -28,6 +27,7 @@ type cfg = {
   serializationFormat?: serializationFormat,
   /** Whether to use query caching when using CapnProto serialization format. */
   enableQueryCaching?: bool,
+  logLevel?: string,
 }
 
 module QueryTypes = {
@@ -112,34 +112,10 @@ module QueryTypes = {
     | Topic2
     | Topic3
 
-  type traceField =
-    | From
-    | To
-    | CallType
-    | Gas
-    | Input
-    | Init
-    | Value
-    | Author
-    | RewardType
-    | BlockHash
-    | BlockNumber
-    | Address
-    | Code
-    | GasUsed
-    | Output
-    | Subtraces
-    | TraceAddress
-    | TransactionHash
-    | TransactionPosition
-    | Type
-    | Error
-
   type fieldSelection = {
     block?: array<blockField>,
     transaction?: array<transactionField>,
     log?: array<logField>,
-    trace?: array<traceField>,
   }
   type topicFilter = array<EvmTypes.Hex.t>
   type topic0 = topicFilter
@@ -155,368 +131,213 @@ module QueryTypes = {
   )
 
   type logFilter = {
-    /**
-     * Address of the contract, any logs that has any of these addresses will be returned.
-     * Empty means match all.
-     */
     address?: array<Address.t>,
-    /**
-     * Topics to match, each member of the top level array is another array, if the nth topic matches any
-     *  topic specified in topics[n] the log will be returned. Empty means match all.
-     */
     topics: topicSelection,
   }
 
   let makeLogSelection = (~address, ~topics) => {address, topics}
 
   type transactionFilter = {
-    /**
-     * Address the transaction should originate from. If transaction.from matches any of these, the transaction
-     *  will be returned. Keep in mind that this has an and relationship with to filter, so each transaction should
-     *  match both of them. Empty means match all.
-     */
     from?: array<Address.t>,
-    /**
-     * Address the transaction should go to. If transaction.to matches any of these, the transaction will
-     *  be returned. Keep in mind that this has an and relationship with from filter, so each transaction should
-     *  match both of them. Empty means match all.
-     */
-    @as("to")
-    to_?: array<Address.t>,
-    /** If first 4 bytes of transaction input matches any of these, transaction will be returned. Empty means match all. */
+    @as("to") to_?: array<Address.t>,
     sighash?: array<string>,
-    /** If tx.status matches this it will be returned. */
     status?: int,
-    /** If transaction.type matches any of these values, the transaction will be returned */
-    @as("type")
-    type_?: array<int>,
+    @as("type") type_?: array<int>,
     contractAddress?: array<Address.t>,
   }
 
-  type traceSelection = {
-    from?: array<Address.t>,
-    @as("to") to_?: array<Address.t>,
-    address?: array<Address.t>,
-    callType?: array<string>,
-    rewardType?: array<string>,
-    @as("type")
-    type_?: array<string>,
-    sighash?: array<string>,
-  }
-
   type blockSelection = {
-    /**
-     * Hash of a block, any blocks that have one of these hashes will be returned.
-     * Empty means match all.
-     */
     hash?: array<string>,
-    /**
-     * Miner address of a block, any blocks that have one of these miners will be returned.
-     * Empty means match all.
-     */
     miner?: array<Address.t>,
   }
 
   type joinMode = | @as(0) Default | @as(1) JoinAll | @as(2) JoinNothing
 
   type query = {
-    /** The block to start the query from */
     fromBlock: int,
-    /**
-     * The block to end the query at. If not specified, the query will go until the
-     *  end of data. Exclusive, the returned range will be [from_block..to_block).
-     *
-     * The query will return before it reaches this target block if it hits the time limit
-     *  configured on the server. The user should continue their query by putting the
-     *  next_block field in the response into from_block field of their next query. This implements
-     *  pagination.
-     */
-    @as("toBlock")
-    toBlockExclusive?: int,
-    /**
-     * List of log selections, these have an or relationship between them, so the query will return logs
-     * that match any of these selections.
-     */
+    @as("toBlock") toBlockExclusive?: int,
     logs?: array<logFilter>,
-    /**
-     * List of transaction selections, the query will return transactions that match any of these selections and
-     *  it will return transactions that are related to the returned logs.
-     */
     transactions?: array<transactionFilter>,
-    /**
-     * List of trace selections, the query will return traces that match any of these selections and
-     *  it will re turn traces that are related to the returned logs.
-     */
-    traces?: array<traceSelection>,
-    /** List of block selections, the query will return blocks that match any of these selections */
     blocks?: array<blockSelection>,
-    /**
-     * Field selection. The user can select which fields they are interested in, requesting less fields will improve
-     *  query execution time and reduce the payload size so the user should always use a minimal number of fields.
-     */
     fieldSelection: fieldSelection,
-    /**
-     * Maximum number of blocks that should be returned, the server might return more blocks than this number but
-     *  it won't overshoot by too much.
-     */
     maxNumBlocks?: int,
-    /**
-     * Maximum number of transactions that should be returned, the server might return more transactions than this number but
-     *  it won't overshoot by too much.
-     */
     maxNumTransactions?: int,
-    /**
-     * Maximum number of logs that should be returned, the server might return more logs than this number but
-     *  it won't overshoot by too much.
-     */
     maxNumLogs?: int,
-    /**
-     * Maximum number of traces that should be returned, the server might return more traces than this number but
-     *  it won't overshoot by too much.
-     */
-    maxNumTraces?: int,
-    /**
-     * Selects join mode for the query,
-     * Default: join in this order logs -> transactions -> traces -> blocks
-     * JoinAll: join everything to everything. For example if logSelection matches log0, we get the
-     * associated transaction of log0 and then we get associated logs of that transaction as well. Applites similarly
-     * to blocks, traces.
-     * JoinNothing: join nothing.
-     */
     joinMode?: joinMode,
-    /**
-     * If set to true, the server will return data for all blocks in the requested range [from_block, to_block).
-     */
     includeAllBlocks?: bool,
   }
 }
 
-module ResponseTypes = {
-  type withdrawal = {
-    index?: string,
-    validatorIndex?: string,
-    address?: Address.t,
-    amount?: string,
-  }
-
-  type block = {
-    number?: int,
-    hash?: string,
-    parentHash?: string,
-    nonce?: bigint,
-    sha3Uncles?: string,
-    logsBloom?: string,
-    transactionsRoot?: string,
-    stateRoot?: string,
-    receiptsRoot?: string,
-    miner?: Address.t,
-    difficulty?: bigint,
-    totalDifficulty?: bigint,
-    extraData?: string,
-    size?: bigint,
-    gasLimit?: bigint,
-    gasUsed?: bigint,
-    timestamp?: int,
-    uncles?: array<string>,
-    baseFeePerGas?: bigint,
-    blobGasUsed?: bigint,
-    excessBlobGas?: bigint,
-    parentBeaconBlockRoot?: string,
-    withdrawalsRoot?: string,
-    withdrawals?: array<withdrawal>,
-    l1BlockNumber?: int,
-    sendCount?: string,
-    sendRoot?: string,
-    mixHash?: string,
-  }
-
-  type accessList = {
-    address?: Address.t,
-    storageKeys?: array<string>,
-  }
-
-  let accessListSchema = S.object(s => {
-    address: ?s.field("address", S.option(Address.schema)),
-    storageKeys: ?s.field("storageKeys", S.option(S.array(S.string))),
-  })
-
-  type authorizationList = {
-    chainId: bigint,
-    address: Address.t,
-    nonce: int,
-    yParity: [#0 | #1],
-    r: string,
-    s: string,
-  }
-
-  let authorizationListSchema = S.object(s => {
-    chainId: s.field("chainId", S.bigint),
-    address: s.field("address", Address.schema),
-    nonce: s.field("nonce", S.int),
-    yParity: s.field("yParity", S.enum([#0, #1])),
-    r: s.field("r", S.string),
-    s: s.field("s", S.string),
-  })
-
-  type transaction = {
-    blockHash?: string,
-    blockNumber?: int,
-    from?: string,
-    gas?: bigint,
-    gasPrice?: bigint,
-    hash?: string,
-    input?: string,
-    nonce?: bigint,
-    to?: string,
-    transactionIndex?: int,
-    value?: bigint,
-    v?: string,
-    r?: string,
-    s?: string,
-    yParity?: string,
-    maxPriorityFeePerGas?: bigint,
-    maxFeePerGas?: bigint,
-    chainId?: int,
-    accessList?: array<accessList>,
-    maxFeePerBlobGas?: bigint,
-    blobVersionedHashes?: array<string>,
-    cumulativeGasUsed?: bigint,
-    effectiveGasPrice?: bigint,
-    gasUsed?: bigint,
-    contractAddress?: string,
-    logsBloom?: string,
-    @as("type")
-    type_?: int,
-    root?: string,
-    status?: int,
-    l1Fee?: bigint,
-    l1GasPrice?: bigint,
-    l1GasUsed?: bigint,
-    l1FeeScalar?: float,
-    gasUsedForL1?: bigint,
-    authorizationList?: array<authorizationList>,
-  }
-
-  type log = {
-    removed?: bool,
-    @as("logIndex") index?: int,
-    transactionIndex?: int,
-    transactionHash?: string,
-    blockHash?: string,
-    blockNumber?: int,
-    address?: Address.t,
-    data?: string,
-    topics?: array<Nullable.t<EvmTypes.Hex.t>>,
-  }
-
-  type event = {
-    transaction?: transaction,
-    block?: block,
-    log: log,
-  }
-
-  type rollbackGuard = {
-    /** Block number of the last scanned block */
-    blockNumber: int,
-    /** Block timestamp of the last scanned block */
-    timestamp: int,
-    /** Block hash of the last scanned block */
-    hash: string,
-    /**
-   * Block number of the first scanned block in memory.
-   *
-   * This might not be the first scanned block. It only includes blocks that are in memory (possible to be rolled back).
-   */
-    firstBlockNumber: int,
-    /**
-   * Parent hash of the first scanned block in memory.
-   *
-   * This might not be the first scanned block. It only includes blocks that are in memory (possible to be rolled back).
-   */
-    firstParentHash: string,
-  }
-
-  type eventResponse = {
-    /** Current height of the source hypersync instance */
-    archiveHeight: option<int>,
-    /**
-     * Next block to query for, the responses are paginated so,
-     *  the caller should continue the query from this block if they
-     *  didn't get responses up to the to_block they specified in the Query.
-     */
-    nextBlock: int,
-    /** Total time it took the hypersync instance to execute the query. */
-    totalExecutionTime: int,
-    /** Response data */
-    data: array<event>,
-    /** Rollback guard, supposed to be used to detect rollbacks */
-    rollbackGuard: option<rollbackGuard>,
-  }
-}
-
 type query = QueryTypes.query
-type eventResponse = ResponseTypes.eventResponse
 
-type queryResponseData = {
-  blocks: array<ResponseTypes.block>,
-  transactions: array<ResponseTypes.transaction>,
-  logs: array<ResponseTypes.log>,
+module Registration = {
+  // One topic position of the resolved `where`: static topic values, or
+  // `None` — the "currently registered addresses of this contract" marker,
+  // expanded to padded address topics when Rust builds a query.
+  type topicFilterInput = option<array<string>>
+
+  type topicSelectionInput = {
+    topic0: array<string>,
+    topic1: topicFilterInput,
+    topic2: topicFilterInput,
+    topic3: topicFilterInput,
+  }
+
+  // The full per-(event, chain) registration passed to the Rust clients at
+  // construction: decode metadata, routing identity, and the fetch state
+  // queries are built from.
+  type input = {
+    // Chain-scoped sequential registration index, echoed back on routed items.
+    index: int,
+    sighash: string,
+    topicCount: int,
+    eventName: string,
+    contractName: string,
+    isWildcard: bool,
+    dependsOnAddresses: bool,
+    // Earliest block this registration accepts; `None` is unrestricted. The
+    // address store's start block is contract-wide, so it can't hold one
+    // registration back when a sibling declares no start block.
+    startBlock: option<int>,
+    params: array<Internal.paramMeta>,
+    topicSelections: array<topicSelectionInput>,
+    // Capitalized field names matching the Rust BlockField/TransactionField
+    // string enums.
+    blockFields: array<string>,
+    transactionFields: array<string>,
+  }
+
+  let toTopicFilterInput = (filter: Internal.topicFilter): topicFilterInput =>
+    switch filter {
+    | Values(values) => Some(values->EvmTypes.Hex.toStrings)
+    | ContractAddresses(_) => None
+    }
+
+  let fromOnEventRegistrations = (
+    onEventRegistrations: array<Internal.evmOnEventRegistration>,
+  ): array<input> => {
+    onEventRegistrations->Array.map(reg => {
+      let event = reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.evmEventConfig)
+      {
+        index: reg.index,
+        sighash: event.sighash,
+        topicCount: event.topicCount,
+        eventName: event.name,
+        contractName: event.contractName,
+        isWildcard: reg.isWildcard,
+        dependsOnAddresses: reg.dependsOnAddresses,
+        startBlock: reg.startBlock,
+        params: event.paramsMetadata,
+        topicSelections: reg.resolvedWhere.topicSelections->Array.map((ts): topicSelectionInput => {
+          topic0: ts.topic0->EvmTypes.Hex.toStrings,
+          topic1: ts.topic1->toTopicFilterInput,
+          topic2: ts.topic2->toTopicFilterInput,
+          topic3: ts.topic3->toTopicFilterInput,
+        }),
+        // Capitalized to match the Rust BlockField/TransactionField string
+        // enums.
+        blockFields: reg.fieldSelection.blockFields
+        ->Utils.Set.toArray
+        ->Array.map(Utils.String.capitalize),
+        transactionFields: reg.fieldSelection.transactionFields
+        ->Utils.Set.toArray
+        ->Array.map(Utils.String.capitalize),
+      }
+    })
+  }
 }
 
-type queryResponse = {
-  archiveHeight: option<int>,
-  nextBlock: int,
-  totalExecutionTime: int,
-  data: queryResponseData,
-  rollbackGuard: option<ResponseTypes.rollbackGuard>,
-}
+module EventItems = {
+  // The whole per-query input beside the partition's address set: block range
+  // and the registration selection (by id). Log selections, field selection,
+  // and the routing index are derived on the Rust side.
+  type query = {
+    fromBlock: int,
+    // Inclusive; None queries to the end of available data.
+    toBlock: option<int>,
+    // Absent means no server-side cap on the number of logs returned.
+    maxNumLogs?: int,
+    registrationIndexes: array<int>,
+    // Contract names to fetch address-free even though their registrations
+    // depend on addresses (client-side filtering). None/empty means
+    // every address-dependent contract is filtered server-side.
+    clientFilteredContracts: option<array<string>>,
+  }
 
-//Todo, add bindings for these types
-type streamConfig
-type queryResponseStream
-type eventStream
+  type item = {
+    logIndex: int,
+    srcAddress: Address.t,
+    // Number of the block this log belongs to; the block itself is resolved from
+    // `response.blocks`, deduplicated across items sharing a block.
+    blockNumber: int,
+    // Key (with the block number) into the transaction store; the transaction
+    // is resolved from the store on demand.
+    transactionIndex: int,
+    // The registration this log routed to, by chain-scoped index. Logs that
+    // route to no registration never cross the boundary.
+    onEventRegistrationIndex: int,
+    params: Internal.eventParams,
+  }
 
-@tag("type")
-type heightStreamEvent =
-  | Height({height: int})
-  | Connected
-  | Reconnecting({delayMillis: int, errorMsg: string})
-
-module HeightStream = {
-  type t = {
-    /** Close the height stream */
-    close: unit => promise<unit>,
-    /** Receive the next height stream event from the stream */
-    recv: unit => promise<heightStreamEvent>,
+  type response = {
+    archiveHeight: option<int>,
+    nextBlock: int,
+    items: array<item>,
   }
 }
 
 type t = {
+  // Block-hash query construction and pagination live in Rust; only the
+  // aggregate response store crosses the boundary.
+  getBlockHashes: (
+    ~blockNumbers: array<int>,
+  ) => promise<(BlockStore.t, array<RequestStat.t>)>,
+  // Returns the response plus page stores owning this page's raw transactions
+  // and blocks.
+  getEventItems: (
+    ~query: EventItems.query,
+    ~addressSet: AddressSet.t,
+  ) => promise<(EventItems.response, TransactionStore.t, BlockStore.t)>,
   getHeight: unit => promise<int>,
-  collect: (~query: query, ~config: streamConfig) => promise<queryResponse>,
-  collectEvents: (~query: query, ~config: streamConfig) => promise<eventResponse>,
-  collectParquet: (~path: string, ~query: query, ~config: streamConfig) => promise<unit>,
-  get: (~query: query) => promise<queryResponse>,
-  getEvents: (~query: query) => promise<eventResponse>,
-  stream: (~query: query, ~config: streamConfig) => promise<queryResponseStream>,
-  streamEvents: (~query: query, ~config: streamConfig) => promise<eventStream>,
-  streamHeight: unit => promise<HeightStream.t>,
 }
 
-@module("@envio-dev/hypersync-client") @scope("HypersyncClient")
-external makeWithAgent: (cfg, ~userAgent: string) => t = "newWithAgent"
+@send
+external classNew: (
+  Core.evmHyperSyncClientCtor,
+  cfg,
+  string,
+  array<Registration.input>,
+  AddressStore.t,
+) => t = "new"
+
+let makeWithAgent = (cfg, ~userAgent, ~eventRegistrations, ~addressStore) =>
+  Core.getAddon().evmHyperSyncClient->classNew(cfg, userAgent, eventRegistrations, addressStore)
+
+type logLevel = [#trace | #debug | #info | #warn | #error]
+let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
+
+let logLevelToString = (level: logLevel) =>
+  switch level {
+  | #trace => "trace"
+  | #debug => "debug"
+  | #info => "info"
+  | #warn => "warn"
+  | #error => "error"
+  }
 
 let make = (
   ~url,
   ~apiToken,
   ~httpReqTimeoutMillis,
-  ~maxNumRetries,
+  ~eventRegistrations,
   ~enableChecksumAddresses=true,
   ~serializationFormat=?,
   ~enableQueryCaching=?,
   ~retryBaseMs=?,
   ~retryBackoffMs=?,
   ~retryCeilingMs=?,
+  ~logLevel=#info,
+  ~addressStore,
 ) => {
   let envioVersion = Utils.EnvioPackage.value.version
   makeWithAgent(
@@ -525,72 +346,15 @@ let make = (
       enableChecksumAddresses,
       apiToken,
       httpReqTimeoutMillis,
-      maxNumRetries,
       ?serializationFormat,
       ?enableQueryCaching,
       ?retryBaseMs,
       ?retryBackoffMs,
       ?retryCeilingMs,
+      logLevel: logLevelToString(logLevel),
     },
     ~userAgent=`hyperindex/${envioVersion}`,
+    ~eventRegistrations,
+    ~addressStore,
   )
-}
-
-type logLevel = [#trace | #debug | #info | #warn | #error]
-let logLevelSchema: S.t<logLevel> = S.enum([#trace, #debug, #info, #warn, #error])
-
-/**
- * Set the log level for the underlying Rust logger in hypersync-client.
- * Must be called before creating any HypersyncClient.
- */
-@module("@envio-dev/hypersync-client")
-external setLogLevel: logLevel => unit = "setLogLevel"
-
-module Decoder = {
-  type rec decodedSolType<'a> = {val: 'a}
-
-  @unboxed
-  type rec decodedRaw =
-    | DecodedBool(bool)
-    | DecodedStr(string)
-    | DecodedNum(bigint)
-    | DecodedVal(decodedSolType<decodedRaw>)
-    | DecodedArr(array<decodedRaw>)
-
-  @unboxed
-  type rec decodedUnderlying =
-    | Bool(bool)
-    | Str(string)
-    | Num(bigint)
-    | Arr(array<decodedUnderlying>)
-
-  let rec toUnderlying = (d: decodedRaw): decodedUnderlying => {
-    switch d {
-    | DecodedVal(v) => v.val->toUnderlying
-    | DecodedBool(v) => Bool(v)
-    | DecodedStr(v) => Str(v)
-    | DecodedNum(v) => Num(v)
-    | DecodedArr(v) => v->Belt.Array.map(toUnderlying)->Arr
-    }
-  }
-
-  type decodedEvent = {
-    indexed: array<decodedRaw>,
-    body: array<decodedRaw>,
-  }
-
-  type log
-  type t = {
-    enableChecksummedAddresses: unit => unit,
-    disableChecksummedAddresses: unit => unit,
-    decodeLogs: array<log> => promise<array<Nullable.t<decodedEvent>>>,
-    decodeLogsSync: array<log> => array<Nullable.t<decodedEvent>>,
-    decodeEvents: array<ResponseTypes.event> => promise<array<Nullable.t<decodedEvent>>>,
-    decodeEventsSync: array<ResponseTypes.event> => array<Nullable.t<decodedEvent>>,
-  }
-
-  @module("@envio-dev/hypersync-client") @scope("Decoder")
-  external fromSignatures: array<string> => t = "fromSignatures"
-  // Keep the @envio-dev/hypersync-client import inside of the package
-  let fromSignatures = fromSignatures
 }

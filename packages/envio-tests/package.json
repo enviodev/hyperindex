@@ -1,0 +1,31 @@
+{
+  "name": "envio-tests",
+  "version": "0.0.1-dev",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "rescript",
+    "watch": "rescript watch",
+    "lint": "node scripts/lint-inputs.ts",
+    "test": "node scripts/lint-inputs.ts && rescript && vitest run",
+    "test:update-log-snapshots": "ENVIO_TEST_LOGGING_FORMAT=1 node scripts/update-log-snapshots.mjs"
+  },
+  "devDependencies": {
+    "@rescript/runtime": "12.2.0",
+    "@types/node": "24.12.2",
+    "@types/ws": "8.18.1",
+    "rescript": "12.2.0",
+    "rescript-schema": "9.5.1",
+    "ts-expect": "1.3.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.0",
+    "ws": "8.21.3"
+  },
+  "dependencies": {
+    "bignumber.js": "9.3.1",
+    "envio": "file:../envio"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  }
+}

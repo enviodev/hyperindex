@@ -1,8 +1,17 @@
-type registrations = {onBlockByChainId: dict<array<Internal.onBlockConfig>>}
+type chainRegistrations = {
+  onEventRegistrations: array<Internal.onEventRegistration>,
+  onBlockRegistrations: array<Internal.onBlockRegistration>,
+}
+type registrationsByChainId = dict<chainRegistrations>
 
-let startRegistration: (~ecosystem: Ecosystem.t, ~multichain: Internal.multichain) => unit
+let startRegistration: (~config: Config.t) => unit
+
+type registration
+let makeRegistration: (~config: Config.t) => registration
+let useRegistration: (registration, unit => promise<'a>) => promise<'a>
+let resetOnEventRegistrations: unit => unit
 let isPendingRegistration: unit => bool
-let finishRegistration: unit => registrations
+let finishRegistration: (~config: Config.t) => registrationsByChainId
 let throwIfFinishedRegistration: (~methodName: string) => unit
 
 let setHandler: (
@@ -10,29 +19,32 @@ let setHandler: (
   ~eventName: string,
   Internal.genericHandler<Internal.genericHandlerArgs<'event, Internal.handlerContext>>,
   ~eventOptions: option<Internal.eventOptions<'where>>,
-  ~logger: Pino.t=?,
 ) => unit
 let setContractRegister: (
   ~contractName: string,
   ~eventName: string,
   Internal.genericContractRegister<Internal.genericContractRegisterArgs<'event, 'context>>,
   ~eventOptions: option<Internal.eventOptions<'where>>,
-  ~logger: Pino.t=?,
 ) => unit
-let getHandler: (~contractName: string, ~eventName: string) => option<Internal.handler>
-let getContractRegister: (
-  ~contractName: string,
-  ~eventName: string,
-) => option<Internal.contractRegister>
-let getOnEventWhere: (~contractName: string, ~eventName: string) => option<JSON.t>
 let isWildcard: (~contractName: string, ~eventName: string) => bool
-let hasRegistration: (~contractName: string, ~eventName: string) => bool
+let isDroppedByWhere: (~config: Config.t, Internal.onEventRegistration) => bool
+let getSimulateOnEventRegistrations: (
+  ~config: Config.t,
+  ~chainId: ChainId.t,
+  ~eventConfig: Internal.eventConfig,
+) => array<Internal.onEventRegistration>
+
+type blockRange = {
+  _gte: option<int>,
+  _lte: option<int>,
+  _every: int,
+}
+let blockRangeSchema: S.t<blockRange>
+let defaultBlockRange: blockRange
 
 let registerOnBlock: (
   ~name: string,
-  ~chainId: int,
-  ~interval: int,
-  ~startBlock: option<int>,
-  ~endBlock: option<int>,
+  ~where: unknown,
   ~handler: Internal.onBlockArgs => promise<unit>,
+  ~getChainsObject: Config.t => dict<unknown>,
 ) => unit

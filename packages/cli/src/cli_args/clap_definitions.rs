@@ -31,14 +31,15 @@ pub struct ProjectPaths {
     #[arg(global = true, short, long)]
     pub directory: Option<String>,
 
-    ///The file in the project containing the configuration. It can also be set via the `ENVIO_CONFIG` environment variable.
+    ///The config file path, resolved relative to the project directory. It can also be set via the `ENVIO_CONFIG` environment variable.
     #[arg(global = true, long, env = "ENVIO_CONFIG", default_value_t=String::from(DEFAULT_CONFIG_PATH))]
     pub config: String,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum CommandType {
-    ///Initialize an indexer with one of the initialization options
+    ///Create a new indexer
+    #[command(before_long_help = crate::executor::init::init_help_preamble())]
     Init(InitArgs),
 
     /// Development commands for starting, stopping, and restarting the indexer. Runs codegen automatically before launching.
@@ -59,11 +60,15 @@ pub enum CommandType {
     Start(StartArgs),
 
     ///Fetch raw Prometheus metrics from the running indexer's /metrics endpoint
-    Metrics,
+    Metrics(MetricsArgs),
 
     ///Manage Envio-provided Claude Code skills under `.claude/skills/`
     #[command(subcommand)]
     Skills(SkillsSubcommand),
+
+    ///Tools for people and AI agents (search-docs, fetch-docs). Run `envio tools help` for details
+    #[command(subcommand)]
+    Tools(ToolsSubcommand),
 
     ///Inspect the indexer config
     #[command(subcommand)]
@@ -78,6 +83,26 @@ pub enum CommandType {
 pub enum ConfigSubcommand {
     ///Print the resolved indexer config as JSON
     View,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ToolsSubcommand {
+    ///Full-text search over Envio docs; prints matching titles, URLs, and snippets. Pair with `fetch-docs` to read a hit in full.
+    SearchDocs(SearchDocsArgs),
+    ///Print the full markdown of a docs page by URL. Use a URL returned by `search-docs`.
+    FetchDocs(FetchDocsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SearchDocsArgs {
+    ///The search query
+    pub query: String,
+}
+
+#[derive(Debug, Args)]
+pub struct FetchDocsArgs {
+    ///The full URL of the documentation page to fetch
+    pub url: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -118,6 +143,18 @@ pub struct StartArgs {
     ///Clear your database and restart indexing from scratch
     #[arg(short = 'r', long, action)]
     pub restart: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct MetricsArgs {
+    #[command(subcommand)]
+    pub subcommand: Option<MetricsSubcommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MetricsSubcommand {
+    ///Fetch runtime metrics from the running indexer's /metrics/runtime endpoint
+    Runtime,
 }
 
 #[derive(Debug, Subcommand)]
@@ -168,25 +205,25 @@ pub struct InitArgs {
     #[clap(value_enum)]
     pub package_manager: Option<init_config::PackageManager>,
 
-    ///The hypersync API key to be initialized in your templates .env file
-    #[arg(global = true, long)]
+    ///The Envio API token to be initialized in your templates .env file.
+    ///Falls back to the `ENVIO_API_TOKEN` environment variable. Create one at
+    ///https://envio.dev/app/api-tokens
+    // The token is a secret, so render `[env: ENVIO_API_TOKEN]` in --help
+    // without leaking its current value.
+    #[arg(global = true, long, env = "ENVIO_API_TOKEN", hide_env_values = true)]
     pub api_token: Option<String>,
 }
 
 #[subenum(EvmInitFlowInteractive)]
 #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
 pub enum InitFlow {
-    ///Initialize Evm indexer by importing config from a contract for a given chain
+    ///[Advanced] Initialize Evm indexer by importing config from a contract for a given chain
     #[subenum(EvmInitFlowInteractive)]
     #[strum(serialize = "Contract Import")]
     ContractImport(evm::ContractImportArgs),
-    ///Initialize Evm indexer from an example template
+    ///[Advanced] Initialize Evm indexer from an example template
     #[subenum(EvmInitFlowInteractive)]
     Template(evm::TemplateArgs),
-    ///Initialize Evm indexer by migrating config from an existing subgraph
-    #[clap(hide = true)] //hiding for now until this is more stable
-    #[strum(serialize = "Subgraph Migration (Experimental)")]
-    SubgraphMigration(evm::SubgraphMigrationArgs),
     ///Initialization option for creating Svm indexer
     Svm {
         #[command(subcommand)]
@@ -236,14 +273,6 @@ pub mod evm {
         #[arg(short, long)]
         #[clap(value_enum)]
         pub template: Option<init_config::evm::Template>,
-    }
-
-    type SubgraphMigrationID = String;
-    #[derive(Args, Debug, Default, Clone)]
-    pub struct SubgraphMigrationArgs {
-        ///Subgraph ID to start a migration from
-        #[arg(short, long)]
-        pub subgraph_id: Option<SubgraphMigrationID>,
     }
 
     #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
@@ -446,6 +475,7 @@ pub mod svm {
 #[cfg(test)]
 mod test {
     use super::*;
+    use clap::CommandFactory;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 
@@ -464,5 +494,32 @@ mod test {
             md_output.trim(),
             "Please run 'make update-generated-docs'"
         );
+    }
+
+    #[test]
+    fn envio_help_snapshot() {
+        let mut cmd = CommandLineArgs::command().version("0.0.0-test");
+        let rendered = cmd.render_help().to_string();
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn envio_init_help_snapshot() {
+        let mut cmd = CommandLineArgs::command();
+        let init_cmd = cmd
+            .find_subcommand_mut("init")
+            .expect("init subcommand exists");
+        let rendered = init_cmd.render_long_help().to_string();
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn envio_tools_help_snapshot() {
+        let mut cmd = CommandLineArgs::command();
+        let tools_cmd = cmd
+            .find_subcommand_mut("tools")
+            .expect("tools subcommand exists");
+        let rendered = tools_cmd.render_help().to_string();
+        insta::assert_snapshot!(rendered);
     }
 }

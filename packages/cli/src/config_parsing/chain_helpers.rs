@@ -84,7 +84,7 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Blast = 81457,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    #[subenum(NetworkWithExplorer)]
     BlastSepolia = 168587773,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -155,6 +155,9 @@ pub enum Network {
     )]
     EthereumMainnet = 1,
 
+    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    Etherlink = 42793,
+
     #[subenum(NetworkWithExplorer)]
     Evmos = 9001,
 
@@ -196,7 +199,9 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Harmony = 1666600000,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    // HyperSync no longer serves Holesky (17000.hypersync.xyz no longer
+    // resolves), so it's not a HypersyncChain. Still resolvable via explorer.
+    #[subenum(NetworkWithExplorer)]
     Holesky = 17000,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -213,7 +218,13 @@ pub enum Network {
     #[subenum(HypersyncChain)]
     Ink = 57073,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
+    #[subenum(HypersyncChain)]
+    Katana = 747474,
+
+    // HyperSync no longer serves Kroma (255.hypersync.xyz refuses
+    // connections and it's gone from active_chains), so it's not a
+    // HypersyncChain. Still resolvable via explorer.
+    #[subenum(NetworkWithExplorer)]
     Kroma = 255,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
@@ -242,9 +253,6 @@ pub enum Network {
 
     #[subenum(HypersyncChain)]
     Megaeth = 4326,
-
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
-    MegaethTestnet = 6342,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     MegaethTestnet2 = 6343,
@@ -338,9 +346,12 @@ pub enum Network {
     Rinkeby = 4,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
-    Rsk = 30,
+    Robinhood = 4663,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
+    Rsk = 30,
+
+    #[subenum(NetworkWithExplorer)]
     Saakuru = 7225878,
 
     #[subenum(GraphNetwork, HypersyncChain, NetworkWithExplorer)]
@@ -377,10 +388,9 @@ pub enum Network {
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Sophon = 50104,
 
-    #[subenum(HypersyncChain, NetworkWithExplorer)]
-    SophonTestnet = 531050104,
-
     #[subenum(HypersyncChain)]
+    StablesKinshipGrass = 988,
+
     StatusSepolia = 1660990954,
 
     #[subenum(HypersyncChain)]
@@ -396,7 +406,10 @@ pub enum Network {
     Tangle = 5845,
 
     #[subenum(HypersyncChain)]
-    Taraxa = 841,
+    Tempo = 4217,
+
+    #[subenum(HypersyncChain)]
+    Tron = 728126428,
 
     #[subenum(HypersyncChain, NetworkWithExplorer)]
     Unichain = 130,
@@ -501,6 +514,7 @@ impl Network {
             | Network::Darwinia
             | Network::Evmos
             | Network::EthereumMainnet
+            | Network::Etherlink
             | Network::Fantom
             | Network::FantomTestnet
             | Network::FhenixHelium
@@ -515,6 +529,7 @@ impl Network {
             | Network::Harmony
             | Network::Holesky
             | Network::IncoGentryTestnet
+            | Network::Katana
             | Network::Kroma
             | Network::Linea
             | Network::LineaSepolia
@@ -548,7 +563,6 @@ impl Network {
             | Network::Sepolia
             | Network::ShimmerEvm
             | Network::Sophon
-            | Network::SophonTestnet
             | Network::XLayer
             | Network::XLayerTestnet
             | Network::Zeta
@@ -585,115 +599,45 @@ impl Network {
             | Network::Hyperliquid
             | Network::PharosDevnet
             | Network::Superseed
-            | Network::MegaethTestnet
             | Network::MegaethTestnet2
             | Network::Curtis
             | Network::Worldchain
             | Network::Sonic
             | Network::SonicTestnet
             | Network::Swell
-            | Network::Taraxa
             | Network::Citrea
             | Network::Hoodi
             | Network::Injective
             | Network::Megaeth
             | Network::SeiTestnet
-            | Network::StatusSepolia => None,
-        }
-    }
-}
-
-#[derive(Deserialize, Debug, PartialEq, strum::Display)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum ChainTier {
-    Gold,
-    Silver,
-    Bronze,
-    #[serde(alias = "TESTNET")]
-    Stone,
-    #[serde(alias = "HIDDEN", alias = "EXPERIMENTAL")]
-    Internal,
-}
-
-impl ChainTier {
-    pub fn get_icon(&self) -> &str {
-        match self {
-            Self::Gold => "🥇",
-            Self::Silver => "🥈",
-            Self::Bronze => "🥉",
-            Self::Stone => "🪨",
-            Self::Internal => "🔒",
-        }
-    }
-
-    pub fn is_public(&self) -> bool {
-        match self {
-            Self::Gold | Self::Silver | Self::Bronze | Self::Stone => true,
-            Self::Internal => false,
+            | Network::StablesKinshipGrass
+            | Network::StatusSepolia
+            | Network::Tempo
+            | Network::Tron
+            | Network::Robinhood => None,
         }
     }
 }
 
 impl HypersyncChain {
-    // This is a custom iterator that returns all the HypersyncChain enums that is made public accross crates (for convenience)
     pub fn iter_hypersync_chains() -> impl Iterator<Item = HypersyncChain> {
         HypersyncChain::iter()
-    }
-    pub fn get_tier(&self) -> ChainTier {
-        use ChainTier::*;
-        use HypersyncChain::*;
-        match self {
-            EthereumMainnet | Optimism | MonadTestnet | Monad | Gnosis | Sei | Base => Gold,
-
-            Xdc | Polygon | ArbitrumOne | MegaethTestnet | MegaethTestnet2 | Sonic | Megaeth => {
-                Silver
-            }
-
-            Linea | Berachain | Blast | Amoy | ZksyncEra | ArbitrumNova | Avalanche | Bsc
-            | Taraxa | Plasma | Lukso | CitreaTestnet | Injective | Citrea => Bronze,
-
-            Curtis | PolygonZkevm | Abstract | Zora | Unichain | Aurora | Zeta | Manta | Kroma
-            | Flare | Mantle | ShimmerEvm | Boba | Ink | Metall2 | SophonTestnet | BscTestnet
-            | Zircuit | Celo | Opbnb | GnosisChiado | LuksoTestnet | BlastSepolia | Holesky
-            | OptimismSepolia | Fuji | ArbitrumSepolia | Fraxtal | Soneium | BaseSepolia
-            | Merlin | Mode | XdcTestnet | Morph | Harmony | Saakuru | Cyber | Superseed
-            | Worldchain | Sophon | Fantom | Sepolia | Rsk | Chiliz | Lisk | Hyperliquid
-            | Swell | Moonbeam | Plume | Scroll | Ab | ArcTestnet | SonicTestnet | SeiTestnet
-            | Hoodi | StatusSepolia => Stone,
-        }
     }
 
     pub fn get_plain_name(&self) -> String {
         Network::from(*self).to_string()
     }
-
-    pub fn get_pretty_name(&self) -> String {
-        let name = Network::from(*self).to_string();
-        let tier = self.get_tier();
-        let icon = tier.get_icon();
-        format!("{name} {icon}")
-    }
 }
 
 impl fmt::Display for HypersyncChain {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.get_pretty_name())
-    }
-}
-
-impl NetworkWithExplorer {
-    pub fn get_pretty_name(&self) -> String {
-        let network = Network::from(*self);
-        match HypersyncChain::try_from(network) {
-            Ok(hypersync_chain) => hypersync_chain.get_pretty_name(),
-            Err(_) => network.to_string(),
-        }
+        write!(f, "{}", self.get_plain_name())
     }
 }
 
 impl fmt::Display for NetworkWithExplorer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.get_pretty_name())
+        write!(f, "{}", Network::from(*self))
     }
 }
 

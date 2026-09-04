@@ -9,65 +9,65 @@ module Transaction = {
   type t = {
     transactionIndex: int,
     hash: string,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - from")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - from")
     from?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - to")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - to")
     to?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - gas")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - gas")
     gas?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - gasPrice")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - gasPrice")
     gasPrice?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - maxPriorityFeePerGas")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - maxPriorityFeePerGas")
     maxPriorityFeePerGas?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - maxFeePerGas")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - maxFeePerGas")
     maxFeePerGas?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - cumulativeGasUsed")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - cumulativeGasUsed")
     cumulativeGasUsed?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - effectiveGasPrice")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - effectiveGasPrice")
     effectiveGasPrice?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - gasUsed")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - gasUsed")
     gasUsed?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - input")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - input")
     input?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - nonce")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - nonce")
     nonce?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - value")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - value")
     value?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - v")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - v")
     v?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - r")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - r")
     r?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - s")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - s")
     s?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - contractAddress")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - contractAddress")
     contractAddress?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - logsBloom")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - logsBloom")
     logsBloom?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - root")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - root")
     root?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - status")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - status")
     status?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - yParity")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - yParity")
     yParity?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - accessList")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - accessList")
     accessList?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - maxFeePerBlobGas")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - maxFeePerBlobGas")
     maxFeePerBlobGas?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - blobVersionedHashes")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - blobVersionedHashes")
     blobVersionedHashes?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - type")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - type")
     type_?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - l1Fee")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - l1Fee")
     l1Fee?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - l1GasPrice")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - l1GasPrice")
     l1GasPrice?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - l1GasUsed")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - l1GasUsed")
     l1GasUsed?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - l1FeeScalar")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - l1FeeScalar")
     l1FeeScalar?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - gasUsedForL1")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - gasUsedForL1")
     gasUsedForL1?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      transaction_fields:\n        - authorizationList")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      transaction_fields:\n        - authorizationList")
     authorizationList?: unit,
 }
 }
@@ -77,53 +77,53 @@ module Block = {
     number: int,
     timestamp: int,
     hash: string,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - parentHash")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - parentHash")
     parentHash?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - nonce")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - nonce")
     nonce?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - sha3Uncles")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - sha3Uncles")
     sha3Uncles?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - logsBloom")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - logsBloom")
     logsBloom?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - transactionsRoot")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - transactionsRoot")
     transactionsRoot?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - stateRoot")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - stateRoot")
     stateRoot?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - receiptsRoot")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - receiptsRoot")
     receiptsRoot?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - miner")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - miner")
     miner?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - difficulty")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - difficulty")
     difficulty?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - totalDifficulty")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - totalDifficulty")
     totalDifficulty?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - extraData")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - extraData")
     extraData?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - size")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - size")
     size?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - gasLimit")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - gasLimit")
     gasLimit?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - gasUsed")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - gasUsed")
     gasUsed?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - uncles")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - uncles")
     uncles?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - baseFeePerGas")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - baseFeePerGas")
     baseFeePerGas?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - blobGasUsed")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - blobGasUsed")
     blobGasUsed?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - excessBlobGas")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - excessBlobGas")
     excessBlobGas?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - parentBeaconBlockRoot")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - parentBeaconBlockRoot")
     parentBeaconBlockRoot?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - withdrawalsRoot")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - withdrawalsRoot")
     withdrawalsRoot?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - l1BlockNumber")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - l1BlockNumber")
     l1BlockNumber?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - sendCount")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - sendCount")
     sendCount?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - sendRoot")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - sendRoot")
     sendRoot?: unit,
-    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: global\n    field_selection:\n      block_fields:\n        - mixHash")
+    @deprecated("Not selected for this event. To enable, add to config.yaml:\nevents:\n  - event: <EventName>\n    field_selection:\n      block_fields:\n        - mixHash")
     mixHash?: unit,
 }
 }
@@ -194,140 +194,240 @@ module Entities = {
   type id = string
 
   module A = {
-    type t = {id: id, b_id: id, optionalStringToTestLinkedEntities: option<string>}
+    type id = string
+    type t = {id: id, b_id: string, optionalStringToTestLinkedEntities: option<string>}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("b_id") b?: Envio.whereOperator<id>, @as("optionalStringToTestLinkedEntities") optionalStringToTestLinkedEntities?: Envio.whereOperator<option<string>>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("b_id") b?: Envio.whereOperator<string>, @as("optionalStringToTestLinkedEntities") optionalStringToTestLinkedEntities?: Envio.whereOperator<option<string>>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module B = {
-    type t = {id: id, c_id: option<id>}
+    type id = string
+    type t = {id: id, c_id: option<string>}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("c_id") c?: Envio.whereOperator<option<id>>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("c_id") c?: Envio.whereOperator<option<string>>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
+  }
+
+  module BigIntIdEntity = {
+    type id = bigint
+    type t = {id: bigint, numericRef_id: int}
+
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<bigint>, @as("numericRef_id") numericRef?: Envio.whereOperator<int>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module C = {
-    type t = {id: id, a_id: id, stringThatIsMirroredToA: string}
+    type id = string
+    type t = {id: id, a_id: string, stringThatIsMirroredToA: string}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("a_id") a?: Envio.whereOperator<id>, @as("stringThatIsMirroredToA") stringThatIsMirroredToA?: Envio.whereOperator<string>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("a_id") a?: Envio.whereOperator<string>, @as("stringThatIsMirroredToA") stringThatIsMirroredToA?: Envio.whereOperator<string>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module CustomSelectionTestPass = {
+    type id = string
     type t = {id: id}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module D = {
+    type id = string
     type t = {id: id, c: id}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("c") c?: Envio.whereOperator<id>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module EntityWith63LenghtName______________________________________one = {
+    type id = string
     type t = {id: id}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module EntityWith63LenghtName______________________________________two = {
+    type id = string
     type t = {id: id}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module EntityWithAllNonArrayTypes = {
+    type id = string
     type t = {id: id, string: string, optString: option<string>, int_: int, optInt: option<int>, float_: float, optFloat: option<float>, bool: bool, optBool: option<bool>, bigInt: bigint, optBigInt: option<bigint>, bigDecimal: BigDecimal.t, optBigDecimal: option<BigDecimal.t>, bigDecimalWithConfig: BigDecimal.t, enumField: Enums.AccountType.t, optEnumField: option<Enums.AccountType.t>, timestamp: Date.t, optTimestamp: option<Date.t>}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("string") string?: Envio.whereOperator<string>, @as("optString") optString?: Envio.whereOperator<option<string>>, @as("int_") int_?: Envio.whereOperator<int>, @as("optInt") optInt?: Envio.whereOperator<option<int>>, @as("float_") float_?: Envio.whereOperator<float>, @as("optFloat") optFloat?: Envio.whereOperator<option<float>>, @as("bool") bool?: Envio.whereOperator<bool>, @as("optBool") optBool?: Envio.whereOperator<option<bool>>, @as("bigInt") bigInt?: Envio.whereOperator<bigint>, @as("optBigInt") optBigInt?: Envio.whereOperator<option<bigint>>, @as("bigDecimal") bigDecimal?: Envio.whereOperator<BigDecimal.t>, @as("optBigDecimal") optBigDecimal?: Envio.whereOperator<option<BigDecimal.t>>, @as("bigDecimalWithConfig") bigDecimalWithConfig?: Envio.whereOperator<BigDecimal.t>, @as("enumField") enumField?: Envio.whereOperator<Enums.AccountType.t>, @as("optEnumField") optEnumField?: Envio.whereOperator<option<Enums.AccountType.t>>, @as("timestamp") timestamp?: Envio.whereOperator<Date.t>, @as("optTimestamp") optTimestamp?: Envio.whereOperator<option<Date.t>>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module EntityWithAllTypes = {
+    type id = string
     type t = {id: id, string: string, optString: option<string>, arrayOfStrings: array<string>, int_: int, optInt: option<int>, arrayOfInts: array<int>, float_: float, optFloat: option<float>, arrayOfFloats: array<float>, bool: bool, optBool: option<bool>, bigInt: bigint, optBigInt: option<bigint>, arrayOfBigInts: array<bigint>, bigDecimal: BigDecimal.t, optBigDecimal: option<BigDecimal.t>, bigDecimalWithConfig: BigDecimal.t, arrayOfBigDecimals: array<BigDecimal.t>, timestamp: Date.t, optTimestamp: option<Date.t>, json: JSON.t, enumField: Enums.AccountType.t, optEnumField: option<Enums.AccountType.t>}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("string") string?: Envio.whereOperator<string>, @as("optString") optString?: Envio.whereOperator<option<string>>, @as("arrayOfStrings") arrayOfStrings?: Envio.whereOperator<array<string>>, @as("int_") int_?: Envio.whereOperator<int>, @as("optInt") optInt?: Envio.whereOperator<option<int>>, @as("arrayOfInts") arrayOfInts?: Envio.whereOperator<array<int>>, @as("float_") float_?: Envio.whereOperator<float>, @as("optFloat") optFloat?: Envio.whereOperator<option<float>>, @as("arrayOfFloats") arrayOfFloats?: Envio.whereOperator<array<float>>, @as("bool") bool?: Envio.whereOperator<bool>, @as("optBool") optBool?: Envio.whereOperator<option<bool>>, @as("bigInt") bigInt?: Envio.whereOperator<bigint>, @as("optBigInt") optBigInt?: Envio.whereOperator<option<bigint>>, @as("arrayOfBigInts") arrayOfBigInts?: Envio.whereOperator<array<bigint>>, @as("bigDecimal") bigDecimal?: Envio.whereOperator<BigDecimal.t>, @as("optBigDecimal") optBigDecimal?: Envio.whereOperator<option<BigDecimal.t>>, @as("bigDecimalWithConfig") bigDecimalWithConfig?: Envio.whereOperator<BigDecimal.t>, @as("arrayOfBigDecimals") arrayOfBigDecimals?: Envio.whereOperator<array<BigDecimal.t>>, @as("timestamp") timestamp?: Envio.whereOperator<Date.t>, @as("optTimestamp") optTimestamp?: Envio.whereOperator<option<Date.t>>, @as("json") json?: Envio.whereOperator<JSON.t>, @as("enumField") enumField?: Envio.whereOperator<Enums.AccountType.t>, @as("optEnumField") optEnumField?: Envio.whereOperator<option<Enums.AccountType.t>>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module EntityWithBigDecimal = {
+    type id = string
     type t = {id: id, bigDecimal: BigDecimal.t}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("bigDecimal") bigDecimal?: Envio.whereOperator<BigDecimal.t>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module EntityWithRestrictedReScriptField = {
+    type id = string
     type t = {id: id, @as("type") type_: string}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("type") type_?: Envio.whereOperator<string>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module EntityWithTimestamp = {
+    type id = string
     type t = {id: id, timestamp: Date.t}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("timestamp") timestamp?: Envio.whereOperator<Date.t>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module Gravatar = {
-    type t = {id: id, owner_id: id, displayName: string, imageUrl: string, updatesCount: bigint, size: Enums.GravatarSize.t}
+    type id = string
+    type t = {id: id, owner_id: string, displayName: string, imageUrl: string, updatesCount: bigint, size: Enums.GravatarSize.t}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("owner_id") owner?: Envio.whereOperator<id>, @as("displayName") displayName?: Envio.whereOperator<string>, @as("imageUrl") imageUrl?: Envio.whereOperator<string>, @as("updatesCount") updatesCount?: Envio.whereOperator<bigint>, @as("size") size?: Envio.whereOperator<Enums.GravatarSize.t>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("owner_id") owner?: Envio.whereOperator<string>, @as("displayName") displayName?: Envio.whereOperator<string>, @as("imageUrl") imageUrl?: Envio.whereOperator<string>, @as("updatesCount") updatesCount?: Envio.whereOperator<bigint>, @as("size") size?: Envio.whereOperator<Enums.GravatarSize.t>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
+  }
+
+  module IntIdEntity = {
+    type id = int
+    type t = {id: int, value: string}
+
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<int>, @as("value") value?: Envio.whereOperator<string>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module NftCollection = {
+    type id = string
     type t = {id: id, contractAddress: string, name: string, symbol: string, maxSupply: bigint, currentSupply: int}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("contractAddress") contractAddress?: Envio.whereOperator<string>, @as("name") name?: Envio.whereOperator<string>, @as("symbol") symbol?: Envio.whereOperator<string>, @as("maxSupply") maxSupply?: Envio.whereOperator<bigint>, @as("currentSupply") currentSupply?: Envio.whereOperator<int>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module PostgresNumericPrecisionEntityTester = {
+    type id = string
     type t = {id: id, exampleBigInt: option<bigint>, exampleBigIntRequired: bigint, exampleBigIntArray: option<array<bigint>>, exampleBigIntArrayRequired: array<bigint>, exampleBigDecimal: option<BigDecimal.t>, exampleBigDecimalRequired: BigDecimal.t, exampleBigDecimalArray: option<array<BigDecimal.t>>, exampleBigDecimalArrayRequired: array<BigDecimal.t>, exampleBigDecimalOtherOrder: BigDecimal.t}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("exampleBigInt") exampleBigInt?: Envio.whereOperator<option<bigint>>, @as("exampleBigIntRequired") exampleBigIntRequired?: Envio.whereOperator<bigint>, @as("exampleBigIntArray") exampleBigIntArray?: Envio.whereOperator<option<array<bigint>>>, @as("exampleBigIntArrayRequired") exampleBigIntArrayRequired?: Envio.whereOperator<array<bigint>>, @as("exampleBigDecimal") exampleBigDecimal?: Envio.whereOperator<option<BigDecimal.t>>, @as("exampleBigDecimalRequired") exampleBigDecimalRequired?: Envio.whereOperator<BigDecimal.t>, @as("exampleBigDecimalArray") exampleBigDecimalArray?: Envio.whereOperator<option<array<BigDecimal.t>>>, @as("exampleBigDecimalArrayRequired") exampleBigDecimalArrayRequired?: Envio.whereOperator<array<BigDecimal.t>>, @as("exampleBigDecimalOtherOrder") exampleBigDecimalOtherOrder?: Envio.whereOperator<BigDecimal.t>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module SimpleEntity = {
+    type id = string
     type t = {id: id, value: string}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("value") value?: Envio.whereOperator<string>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module SimulateTestEvent = {
+    type id = string
     type t = {id: id, blockNumber: int, logIndex: int, timestamp: int}
 
     type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("blockNumber") blockNumber?: Envio.whereOperator<int>, @as("logIndex") logIndex?: Envio.whereOperator<int>, @as("timestamp") timestamp?: Envio.whereOperator<int>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module Token = {
-    type t = {id: id, tokenId: bigint, collection_id: id, owner_id: id}
+    type id = string
+    type t = {id: id, tokenId: bigint, collection_id: string, owner_id: string}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("tokenId") tokenId?: Envio.whereOperator<bigint>, @as("collection_id") collection?: Envio.whereOperator<id>, @as("owner_id") owner?: Envio.whereOperator<id>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("tokenId") tokenId?: Envio.whereOperator<bigint>, @as("collection_id") collection?: Envio.whereOperator<string>, @as("owner_id") owner?: Envio.whereOperator<string>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
   module User = {
-    type t = {id: id, address: string, gravatar_id: option<id>, updatesCountOnUserForTesting: int, accountType: Enums.AccountType.t}
+    type id = string
+    type t = {id: id, address: string, gravatar_id: option<string>, updatesCountOnUserForTesting: int, accountType: Enums.AccountType.t}
 
-    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("address") address?: Envio.whereOperator<string>, @as("gravatar_id") gravatar?: Envio.whereOperator<option<id>>, @as("updatesCountOnUserForTesting") updatesCountOnUserForTesting?: Envio.whereOperator<int>, @as("accountType") accountType?: Envio.whereOperator<Enums.AccountType.t>}
+    type getWhereFilter = {@as("id") id?: Envio.whereOperator<id>, @as("address") address?: Envio.whereOperator<string>, @as("gravatar_id") gravatar?: Envio.whereOperator<option<string>>, @as("updatesCountOnUserForTesting") updatesCountOnUserForTesting?: Envio.whereOperator<int>, @as("accountType") accountType?: Envio.whereOperator<Enums.AccountType.t>}
+
+    type testIndexerRow = t
+    type testIndexerGetWhereFilter = getWhereFilter
   }
 
-  type rec name<'entity> =
-    | @as("A") A: name<A.t>
-    | @as("B") B: name<B.t>
-    | @as("C") C: name<C.t>
-    | @as("CustomSelectionTestPass") CustomSelectionTestPass: name<CustomSelectionTestPass.t>
-    | @as("D") D: name<D.t>
-    | @as("EntityWith63LenghtName______________________________________one") EntityWith63LenghtName______________________________________one: name<EntityWith63LenghtName______________________________________one.t>
-    | @as("EntityWith63LenghtName______________________________________two") EntityWith63LenghtName______________________________________two: name<EntityWith63LenghtName______________________________________two.t>
-    | @as("EntityWithAllNonArrayTypes") EntityWithAllNonArrayTypes: name<EntityWithAllNonArrayTypes.t>
-    | @as("EntityWithAllTypes") EntityWithAllTypes: name<EntityWithAllTypes.t>
-    | @as("EntityWithBigDecimal") EntityWithBigDecimal: name<EntityWithBigDecimal.t>
-    | @as("EntityWithRestrictedReScriptField") EntityWithRestrictedReScriptField: name<EntityWithRestrictedReScriptField.t>
-    | @as("EntityWithTimestamp") EntityWithTimestamp: name<EntityWithTimestamp.t>
-    | @as("Gravatar") Gravatar: name<Gravatar.t>
-    | @as("NftCollection") NftCollection: name<NftCollection.t>
-    | @as("PostgresNumericPrecisionEntityTester") PostgresNumericPrecisionEntityTester: name<PostgresNumericPrecisionEntityTester.t>
-    | @as("SimpleEntity") SimpleEntity: name<SimpleEntity.t>
-    | @as("SimulateTestEvent") SimulateTestEvent: name<SimulateTestEvent.t>
-    | @as("Token") Token: name<Token.t>
-    | @as("User") User: name<User.t>
+  type rec name<'entity, 'id, 'getWhereFilter> =
+    | @as("A") A: name<A.testIndexerRow, A.id, A.testIndexerGetWhereFilter>
+    | @as("B") B: name<B.testIndexerRow, B.id, B.testIndexerGetWhereFilter>
+    | @as("BigIntIdEntity") BigIntIdEntity: name<BigIntIdEntity.testIndexerRow, BigIntIdEntity.id, BigIntIdEntity.testIndexerGetWhereFilter>
+    | @as("C") C: name<C.testIndexerRow, C.id, C.testIndexerGetWhereFilter>
+    | @as("CustomSelectionTestPass") CustomSelectionTestPass: name<CustomSelectionTestPass.testIndexerRow, CustomSelectionTestPass.id, CustomSelectionTestPass.testIndexerGetWhereFilter>
+    | @as("D") D: name<D.testIndexerRow, D.id, D.testIndexerGetWhereFilter>
+    | @as("EntityWith63LenghtName______________________________________one") EntityWith63LenghtName______________________________________one: name<EntityWith63LenghtName______________________________________one.testIndexerRow, EntityWith63LenghtName______________________________________one.id, EntityWith63LenghtName______________________________________one.testIndexerGetWhereFilter>
+    | @as("EntityWith63LenghtName______________________________________two") EntityWith63LenghtName______________________________________two: name<EntityWith63LenghtName______________________________________two.testIndexerRow, EntityWith63LenghtName______________________________________two.id, EntityWith63LenghtName______________________________________two.testIndexerGetWhereFilter>
+    | @as("EntityWithAllNonArrayTypes") EntityWithAllNonArrayTypes: name<EntityWithAllNonArrayTypes.testIndexerRow, EntityWithAllNonArrayTypes.id, EntityWithAllNonArrayTypes.testIndexerGetWhereFilter>
+    | @as("EntityWithAllTypes") EntityWithAllTypes: name<EntityWithAllTypes.testIndexerRow, EntityWithAllTypes.id, EntityWithAllTypes.testIndexerGetWhereFilter>
+    | @as("EntityWithBigDecimal") EntityWithBigDecimal: name<EntityWithBigDecimal.testIndexerRow, EntityWithBigDecimal.id, EntityWithBigDecimal.testIndexerGetWhereFilter>
+    | @as("EntityWithRestrictedReScriptField") EntityWithRestrictedReScriptField: name<EntityWithRestrictedReScriptField.testIndexerRow, EntityWithRestrictedReScriptField.id, EntityWithRestrictedReScriptField.testIndexerGetWhereFilter>
+    | @as("EntityWithTimestamp") EntityWithTimestamp: name<EntityWithTimestamp.testIndexerRow, EntityWithTimestamp.id, EntityWithTimestamp.testIndexerGetWhereFilter>
+    | @as("Gravatar") Gravatar: name<Gravatar.testIndexerRow, Gravatar.id, Gravatar.testIndexerGetWhereFilter>
+    | @as("IntIdEntity") IntIdEntity: name<IntIdEntity.testIndexerRow, IntIdEntity.id, IntIdEntity.testIndexerGetWhereFilter>
+    | @as("NftCollection") NftCollection: name<NftCollection.testIndexerRow, NftCollection.id, NftCollection.testIndexerGetWhereFilter>
+    | @as("PostgresNumericPrecisionEntityTester") PostgresNumericPrecisionEntityTester: name<PostgresNumericPrecisionEntityTester.testIndexerRow, PostgresNumericPrecisionEntityTester.id, PostgresNumericPrecisionEntityTester.testIndexerGetWhereFilter>
+    | @as("SimpleEntity") SimpleEntity: name<SimpleEntity.testIndexerRow, SimpleEntity.id, SimpleEntity.testIndexerGetWhereFilter>
+    | @as("SimulateTestEvent") SimulateTestEvent: name<SimulateTestEvent.testIndexerRow, SimulateTestEvent.id, SimulateTestEvent.testIndexerGetWhereFilter>
+    | @as("Token") Token: name<Token.testIndexerRow, Token.id, Token.testIndexerGetWhereFilter>
+    | @as("User") User: name<User.testIndexerRow, User.id, User.testIndexerGetWhereFilter>
 }
+
+type chainId = [#1337 | #1 | #100 | #137]
 
 type handlerEntityOperations<'entity, 'getWhereFilter> = {
   get: string => promise<option<'entity>>,
@@ -338,13 +438,31 @@ type handlerEntityOperations<'entity, 'getWhereFilter> = {
   deleteUnsafe: string => unit,
 }
 
+type handlerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
+  get: 'id => promise<option<'entity>>,
+  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
+  getOrCreate: 'entity => promise<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: 'id => unit,
+}
+
+/** The chain the event being handled belongs to. */
+type handlerChain = {
+  /** The unique identifier of the blockchain network where this event occurred. */
+  id: chainId,
+  /** Whether all chains have entered real-time indexing mode (caught up to head, or reached their configured endBlock for finite-range indexers). */
+  isRealtime: bool,
+}
+
 type handlerContext = {
   log: Envio.logger,
   effect: 'input 'output. (Envio.effect<'input, 'output>, 'input) => promise<'output>,
   isPreload: bool,
-  chain: Internal.chainInfo,
+  chain: handlerChain,
   \"A": handlerEntityOperations<Entities.A.t, Entities.A.getWhereFilter>,
   \"B": handlerEntityOperations<Entities.B.t, Entities.B.getWhereFilter>,
+  \"BigIntIdEntity": handlerEntityOperationsWithCustomId<Entities.BigIntIdEntity.t, Entities.BigIntIdEntity.id, Entities.BigIntIdEntity.getWhereFilter>,
   \"C": handlerEntityOperations<Entities.C.t, Entities.C.getWhereFilter>,
   \"CustomSelectionTestPass": handlerEntityOperations<Entities.CustomSelectionTestPass.t, Entities.CustomSelectionTestPass.getWhereFilter>,
   \"D": handlerEntityOperations<Entities.D.t, Entities.D.getWhereFilter>,
@@ -356,6 +474,7 @@ type handlerContext = {
   \"EntityWithRestrictedReScriptField": handlerEntityOperations<Entities.EntityWithRestrictedReScriptField.t, Entities.EntityWithRestrictedReScriptField.getWhereFilter>,
   \"EntityWithTimestamp": handlerEntityOperations<Entities.EntityWithTimestamp.t, Entities.EntityWithTimestamp.getWhereFilter>,
   \"Gravatar": handlerEntityOperations<Entities.Gravatar.t, Entities.Gravatar.getWhereFilter>,
+  \"IntIdEntity": handlerEntityOperationsWithCustomId<Entities.IntIdEntity.t, Entities.IntIdEntity.id, Entities.IntIdEntity.getWhereFilter>,
   \"NftCollection": handlerEntityOperations<Entities.NftCollection.t, Entities.NftCollection.getWhereFilter>,
   \"PostgresNumericPrecisionEntityTester": handlerEntityOperations<Entities.PostgresNumericPrecisionEntityTester.t, Entities.PostgresNumericPrecisionEntityTester.getWhereFilter>,
   \"SimpleEntity": handlerEntityOperations<Entities.SimpleEntity.t, Entities.SimpleEntity.getWhereFilter>,
@@ -363,8 +482,6 @@ type handlerContext = {
   \"Token": handlerEntityOperations<Entities.Token.t, Entities.Token.getWhereFilter>,
   \"User": handlerEntityOperations<Entities.User.t, Entities.User.getWhereFilter>,
 }
-
-type chainId = [#1337 | #1 | #100 | #137]
 
 type contractRegisterContract = { add: Address.t => unit }
 
@@ -1959,13 +2076,28 @@ type testIndexerProcessConfig = {
 }
 
 /** Entity operations for direct access outside handlers. */
-type testIndexerEntityOperations<'entity> = {
+type testIndexerEntityOperations<'entity, 'getWhereFilter> = {
   /** Get an entity by ID. */
   get: string => promise<option<'entity>>,
   /** Get all entities. */
   getAll: unit => promise<array<'entity>>,
+  /** Get the entities matching a filter. */
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
   /** Get an entity by ID or throw if not found. */
   getOrThrow: (string, ~message: string=?) => promise<'entity>,
+  /** Set (create or update) an entity. */
+  set: 'entity => unit,
+}
+
+type testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = {
+  /** Get an entity by ID. */
+  get: 'id => promise<option<'entity>>,
+  /** Get all entities. */
+  getAll: unit => promise<array<'entity>>,
+  /** Get the entities matching a filter. */
+  getWhere: 'getWhereFilter => promise<array<'entity>>,
+  /** Get an entity by ID or throw if not found. */
+  getOrThrow: ('id, ~message: string=?) => promise<'entity>,
   /** Set (create or update) an entity. */
   set: 'entity => unit,
 }
@@ -1978,28 +2110,30 @@ type testIndexer = {
   chainIds: array<chainId>,
   /** Per-chain configuration keyed by chain ID. */
   chains: indexerChains,
-  \"A": testIndexerEntityOperations<Entities.A.t>,
-  \"B": testIndexerEntityOperations<Entities.B.t>,
-  \"C": testIndexerEntityOperations<Entities.C.t>,
-  \"CustomSelectionTestPass": testIndexerEntityOperations<Entities.CustomSelectionTestPass.t>,
-  \"D": testIndexerEntityOperations<Entities.D.t>,
-  \"EntityWith63LenghtName______________________________________one": testIndexerEntityOperations<Entities.EntityWith63LenghtName______________________________________one.t>,
-  \"EntityWith63LenghtName______________________________________two": testIndexerEntityOperations<Entities.EntityWith63LenghtName______________________________________two.t>,
-  \"EntityWithAllNonArrayTypes": testIndexerEntityOperations<Entities.EntityWithAllNonArrayTypes.t>,
-  \"EntityWithAllTypes": testIndexerEntityOperations<Entities.EntityWithAllTypes.t>,
-  \"EntityWithBigDecimal": testIndexerEntityOperations<Entities.EntityWithBigDecimal.t>,
-  \"EntityWithRestrictedReScriptField": testIndexerEntityOperations<Entities.EntityWithRestrictedReScriptField.t>,
-  \"EntityWithTimestamp": testIndexerEntityOperations<Entities.EntityWithTimestamp.t>,
-  \"Gravatar": testIndexerEntityOperations<Entities.Gravatar.t>,
-  \"NftCollection": testIndexerEntityOperations<Entities.NftCollection.t>,
-  \"PostgresNumericPrecisionEntityTester": testIndexerEntityOperations<Entities.PostgresNumericPrecisionEntityTester.t>,
-  \"SimpleEntity": testIndexerEntityOperations<Entities.SimpleEntity.t>,
-  \"SimulateTestEvent": testIndexerEntityOperations<Entities.SimulateTestEvent.t>,
-  \"Token": testIndexerEntityOperations<Entities.Token.t>,
-  \"User": testIndexerEntityOperations<Entities.User.t>,
+  \"A": testIndexerEntityOperations<Entities.A.testIndexerRow, Entities.A.testIndexerGetWhereFilter>,
+  \"B": testIndexerEntityOperations<Entities.B.testIndexerRow, Entities.B.testIndexerGetWhereFilter>,
+  \"BigIntIdEntity": testIndexerEntityOperationsWithCustomId<Entities.BigIntIdEntity.testIndexerRow, Entities.BigIntIdEntity.id, Entities.BigIntIdEntity.testIndexerGetWhereFilter>,
+  \"C": testIndexerEntityOperations<Entities.C.testIndexerRow, Entities.C.testIndexerGetWhereFilter>,
+  \"CustomSelectionTestPass": testIndexerEntityOperations<Entities.CustomSelectionTestPass.testIndexerRow, Entities.CustomSelectionTestPass.testIndexerGetWhereFilter>,
+  \"D": testIndexerEntityOperations<Entities.D.testIndexerRow, Entities.D.testIndexerGetWhereFilter>,
+  \"EntityWith63LenghtName______________________________________one": testIndexerEntityOperations<Entities.EntityWith63LenghtName______________________________________one.testIndexerRow, Entities.EntityWith63LenghtName______________________________________one.testIndexerGetWhereFilter>,
+  \"EntityWith63LenghtName______________________________________two": testIndexerEntityOperations<Entities.EntityWith63LenghtName______________________________________two.testIndexerRow, Entities.EntityWith63LenghtName______________________________________two.testIndexerGetWhereFilter>,
+  \"EntityWithAllNonArrayTypes": testIndexerEntityOperations<Entities.EntityWithAllNonArrayTypes.testIndexerRow, Entities.EntityWithAllNonArrayTypes.testIndexerGetWhereFilter>,
+  \"EntityWithAllTypes": testIndexerEntityOperations<Entities.EntityWithAllTypes.testIndexerRow, Entities.EntityWithAllTypes.testIndexerGetWhereFilter>,
+  \"EntityWithBigDecimal": testIndexerEntityOperations<Entities.EntityWithBigDecimal.testIndexerRow, Entities.EntityWithBigDecimal.testIndexerGetWhereFilter>,
+  \"EntityWithRestrictedReScriptField": testIndexerEntityOperations<Entities.EntityWithRestrictedReScriptField.testIndexerRow, Entities.EntityWithRestrictedReScriptField.testIndexerGetWhereFilter>,
+  \"EntityWithTimestamp": testIndexerEntityOperations<Entities.EntityWithTimestamp.testIndexerRow, Entities.EntityWithTimestamp.testIndexerGetWhereFilter>,
+  \"Gravatar": testIndexerEntityOperations<Entities.Gravatar.testIndexerRow, Entities.Gravatar.testIndexerGetWhereFilter>,
+  \"IntIdEntity": testIndexerEntityOperationsWithCustomId<Entities.IntIdEntity.testIndexerRow, Entities.IntIdEntity.id, Entities.IntIdEntity.testIndexerGetWhereFilter>,
+  \"NftCollection": testIndexerEntityOperations<Entities.NftCollection.testIndexerRow, Entities.NftCollection.testIndexerGetWhereFilter>,
+  \"PostgresNumericPrecisionEntityTester": testIndexerEntityOperations<Entities.PostgresNumericPrecisionEntityTester.testIndexerRow, Entities.PostgresNumericPrecisionEntityTester.testIndexerGetWhereFilter>,
+  \"SimpleEntity": testIndexerEntityOperations<Entities.SimpleEntity.testIndexerRow, Entities.SimpleEntity.testIndexerGetWhereFilter>,
+  \"SimulateTestEvent": testIndexerEntityOperations<Entities.SimulateTestEvent.testIndexerRow, Entities.SimulateTestEvent.testIndexerGetWhereFilter>,
+  \"Token": testIndexerEntityOperations<Entities.Token.testIndexerRow, Entities.Token.testIndexerGetWhereFilter>,
+  \"User": testIndexerEntityOperations<Entities.User.testIndexerRow, Entities.User.testIndexerGetWhereFilter>,
 }
 
-@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity>) => testIndexerEntityOperations<'entity> = ""
+@get_index external getTestIndexerEntityOperations: (testIndexer, Entities.name<'entity, 'id, 'getWhereFilter>) => testIndexerEntityOperationsWithCustomId<'entity, 'id, 'getWhereFilter> = ""
 
 @module("envio") external indexer: indexer = "indexer"
 

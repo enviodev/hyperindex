@@ -1,19 +1,24 @@
 open Source
 
-exception QueryTimout(string)
+// eth_getTransactionByHash/eth_getTransactionReceipt returning null is usually
+// transient: a load-balanced provider can route the lookup to a node that
+// hasn't caught up with the one that served eth_getLogs. Must stay retryable,
+// unlike other field-selection failures which disable the source.
+exception TransactionDataNotFound({message: string})
 
 // Minimal block data needed for infrastructure (reorg guard, timestamps, etc.)
 type blockInfo = {
   number: int,
   timestamp: int,
   hash: string,
+  parentHash: string,
 }
 
 let getKnownRawBlock = async (~client, ~blockNumber) =>
   switch await Rpc.getRawBlock(~client, ~blockNumber) {
   | Some(json) => json
   | None =>
-    JsError.throwWithMessage(`RPC returned null for blockNumber ${blockNumber->Belt.Int.toString}`)
+    JsError.throwWithMessage(`RPC returned null for blockNumber ${blockNumber->Int.toString}`)
   }
 
 // Extract infrastructure fields (number, timestamp, hash) from raw block JSON
@@ -29,359 +34,127 @@ let parseBlockInfo = (json: JSON.t): blockInfo => {
     hash: jsonDict
     ->Dict.getUnsafe("hash")
     ->S.parseOrThrow(S.string),
+    parentHash: jsonDict
+    ->Dict.getUnsafe("parentHash")
+    ->S.parseOrThrow(S.string),
   }
 }
 
 let getKnownRawBlockWithBackoff = async (
   ~client,
   ~sourceName,
-  ~chain,
+  ~chainId,
   ~blockNumber,
   ~backoffMsOnFailure,
+  ~recordRequest: (~method: string, ~seconds: float) => unit,
 ) => {
   let currentBackoff = ref(backoffMsOnFailure)
   let result = ref(None)
 
   while result.contents->Option.isNone {
-    Prometheus.SourceRequestCount.increment(
-      ~sourceName,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-      ~method="eth_getBlockByNumber",
-    )
+    let timerRef = Performance.now()
     switch await getKnownRawBlock(~client, ~blockNumber) {
     | exception err =>
+      recordRequest(~method="eth_getBlockByNumber", ~seconds=timerRef->Performance.secondsSince)
       Logging.warn({
         "err": err->Utils.prettifyExn,
-        "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Belt.Int.toString}ms and try again.`,
+        "msg": `Issue while running fetching batch of events from the RPC. Will wait ${currentBackoff.contents->Int.toString}ms and try again.`,
         "source": sourceName,
-        "chainId": chain->ChainMap.Chain.toChainId,
+        "chainId": chainId,
         "type": "EXPONENTIAL_BACKOFF",
       })
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=currentBackoff.contents)
       currentBackoff := currentBackoff.contents * 2
-    | json => result := Some(json)
+    | json =>
+      recordRequest(~method="eth_getBlockByNumber", ~seconds=timerRef->Performance.secondsSince)
+      result := Some(json)
     }
   }
   result.contents->Option.getOrThrow
 }
-let getSuggestedBlockIntervalFromExn = {
-  // Unknown provider: "retry with the range 123-456"
-  let suggestedRangeRegExp = /retry with the range (\d+)-(\d+)/
-
-  // QuickNode, 1RPC, Blast: "limited to a 1000 blocks range"
-  let blockRangeLimitRegExp = /limited to a (\d+) blocks range/
-
-  // Alchemy: "up to a 500 block range"
-  let alchemyRangeRegExp = /up to a (\d+) block range/
-
-  // Cloudflare: "Max range: 3500"
-  let cloudflareRangeRegExp = /Max range: (\d+)/
-
-  // Thirdweb: "Maximum allowed number of requested blocks is 3500"
-  let thirdwebRangeRegExp = /Maximum allowed number of requested blocks is (\d+)/
-
-  // BlockPI: "limited to 2000 block"
-  let blockpiRangeRegExp = /limited to (\d+) block/
-
-  // Base: "block range too large" - fixed 2000 block limit
-  let baseRangeRegExp = /block range too large/
-
-  // evm-rpc.sei-apis.com: "block range too large (2000), maximum allowed is 1000 blocks"
-  let maxAllowedBlocksRegExp = /maximum allowed is (\d+) blocks/
-
-  // Blast (paid): "exceeds the range allowed for your plan (5000 > 3000)"
-  let blastPaidRegExp = /exceeds the range allowed for your plan \(\d+ > (\d+)\)/
-
-  // Chainstack: "Block range limit exceeded" - 10000 block limit
-  let chainstackRegExp = /Block range limit exceeded./
-
-  // Coinbase: "please limit the query to at most 1000 blocks"
-  let coinbaseRegExp = /please limit the query to at most (\d+) blocks/
-
-  // PublicNode: "maximum block range: 2000"
-  let publicNodeRegExp = /maximum block range: (\d+)/
-
-  // Hyperliquid: "query exceeds max block range 1000"
-  let hyperliquidRegExp = /query exceeds max block range (\d+)/
-
-  // TODO: Reproduce how the error message looks like
-  // when we send request with numeric block range instead of hex
-  // Infura, ZkSync: "Try with this block range [0x123,0x456]"
-
-  // Future handling needed for these providers that don't suggest ranges:
-  // - Ankr: "block range is too wide"
-  // - 1RPC: "response size should not greater than 10000000 bytes"
-  // - ZkEVM: "query returned more than 10000 results"
-  // - LlamaRPC: "query exceeds max results"
-  // - Optimism: "backend response too large" or "Block range is too large"
-  // - Arbitrum: "logs matched by query exceeds limit of 10000"
-
-  let parseMessageForBlockRange = (message: string) => {
-    // Helper to extract block range from regex match
-    let extractBlockRange = (execResult, ~isMaxRange) =>
-      switch execResult->RegExp.Result.matches {
-      | [Some(blockRangeLimit)] =>
-        switch blockRangeLimit->Int.fromString {
-        | Some(blockRangeLimit) if blockRangeLimit > 0 => Some(blockRangeLimit, isMaxRange)
+// Pulls the underlying provider error message back out of a caught exn, for
+// logging/debugging. Provider JSON-RPC errors surface as `Rpc.JsonRpcError`;
+// the paging retry decision (see `parseGetNextPageRetryError` below) surfaces
+// as a napi `JsExn` whose message is the JSON payload `EvmRpcClient.getNextPage`
+// throws, carrying the classified message (if any) under `errorMessage`.
+let getErrorMessage = (exn: exn): option<string> =>
+  switch exn {
+  | Rpc.JsonRpcError({message}) => Some(message)
+  | JsExn(e) =>
+    switch e->JsExn.message {
+    | Some(msg) =>
+      switch msg->JSON.parseOrThrow->JSON.Decode.object {
+      | exception _ => None
+      | None => None
+      | Some(obj) =>
+        switch obj->Dict.get("errorMessage") {
+        | Some(String(message)) => Some(message)
         | _ => None
         }
-      | _ => None
       }
+    | None => None
+    }
+  | _ => None
+  }
 
-    // Try each regex pattern in order
-    switch suggestedRangeRegExp->RegExp.exec(message) {
-    | Some(execResult) =>
-      switch execResult->RegExp.Result.matches {
-      | [Some(fromBlock), Some(toBlock)] =>
-        switch (fromBlock->Int.fromString, toBlock->Int.fromString) {
-        | (Some(fromBlock), Some(toBlock)) if toBlock >= fromBlock =>
-          Some(toBlock - fromBlock + 1, false)
-        | _ => None
-        }
-      | _ => None
-      }
-    | None =>
-      // Try each provider's specific error pattern
-      switch blockRangeLimitRegExp->RegExp.exec(message) {
-      | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-      | None =>
-        switch alchemyRangeRegExp->RegExp.exec(message) {
-        | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-        | None =>
-          switch cloudflareRangeRegExp->RegExp.exec(message) {
-          | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-          | None =>
-            switch thirdwebRangeRegExp->RegExp.exec(message) {
-            | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-            | None =>
-              switch blockpiRangeRegExp->RegExp.exec(message) {
-              | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-              | None =>
-                switch maxAllowedBlocksRegExp->RegExp.exec(message) {
-                | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-                | None =>
-                  switch baseRangeRegExp->RegExp.exec(message) {
-                  | Some(_) => Some(2000, true)
-                  | None =>
-                    switch blastPaidRegExp->RegExp.exec(message) {
-                    | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-                    | None =>
-                      switch chainstackRegExp->RegExp.exec(message) {
-                      | Some(_) => Some(10000, true)
-                      | None =>
-                        switch coinbaseRegExp->RegExp.exec(message) {
-                        | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-                        | None =>
-                          switch publicNodeRegExp->RegExp.exec(message) {
-                          | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-                          | None =>
-                            switch hyperliquidRegExp->RegExp.exec(message) {
-                            | Some(execResult) => extractBlockRange(execResult, ~isMaxRange=true)
-                            | None => None
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
+// `EvmRpcClient.getNextPage` throws a napi error whose message is a JSON
+// payload describing the retry decision:
+// `{"kind":"Retry","attemptedToBlock":int,"errorMessage":string|null,
+// "requestStats":[{"method":string,"seconds":float}],"retry":
+// {"tag":"WithSuggestedToBlock","toBlock":int} |
+// {"tag":"WithBackoff","message":string,"backoffMillis":int}}`.
+let parseGetNextPageRetryError = (exn: exn): option<(
+  int,
+  Source.getItemsRetry,
+  array<Source.requestStat>,
+)> =>
+  switch exn {
+  | JsExn(e) =>
+    switch e->JsExn.message {
+    | Some(msg) =>
+      switch msg->JSON.parseOrThrow->JSON.Decode.object {
+      | exception _ => None
+      | None => None
+      | Some(obj) =>
+        switch (obj->Dict.get("kind"), obj->Dict.get("attemptedToBlock"), obj->Dict.get("retry")) {
+        | (Some(String("Retry")), Some(Number(attemptedToBlock)), Some(Object(retryObj))) =>
+          let requestStats = switch obj->Dict.get("requestStats") {
+          | Some(Array(stats)) =>
+            stats->Array.filterMap(s =>
+              switch s->JSON.Decode.object {
+              | Some(o) =>
+                switch (o->Dict.get("method"), o->Dict.get("seconds")) {
+                | (Some(String(method)), Some(Number(seconds))) => Some({Source.method, seconds})
+                | _ => None
                 }
+              | None => None
               }
-            }
+            )
+          | _ => []
           }
+          let retry = switch retryObj->Dict.get("tag") {
+          | Some(String("WithSuggestedToBlock")) =>
+            switch retryObj->Dict.get("toBlock") {
+            | Some(Number(toBlock)) =>
+              Some(Source.WithSuggestedToBlock({toBlock: toBlock->Float.toInt}))
+            | _ => None
+            }
+          | Some(String("WithBackoff")) =>
+            switch (retryObj->Dict.get("message"), retryObj->Dict.get("backoffMillis")) {
+            | (Some(String(message)), Some(Number(backoffMillis))) =>
+              Some(Source.WithBackoff({message, backoffMillis: backoffMillis->Float.toInt}))
+            | _ => None
+            }
+          | _ => None
+          }
+          retry->Option.map(retry => (attemptedToBlock->Float.toInt, retry, requestStats))
+        | _ => None
         }
       }
+    | None => None
     }
+  | _ => None
   }
-
-  (exn): option<(
-    // The suggested block range
-    int,
-    // Whether it's the max range that the provider allows
-    bool,
-  )> =>
-    switch exn {
-    | Rpc.JsonRpcError({message}) => parseMessageForBlockRange(message)
-    | JsExn(error) =>
-      try {
-        let message: string = (error->Obj.magic)["error"]["message"]
-        message->S.assertOrThrow(S.string)
-        parseMessageForBlockRange(message)
-      } catch {
-      | _ => None
-      }
-    | _ => None
-    }
-}
-
-type eventBatchQuery = {
-  logs: array<Rpc.GetLogs.log>,
-  latestFetchedBlockInfo: blockInfo,
-}
-
-let maxSuggestedBlockIntervalKey = "max"
-
-let getNextPage = (
-  ~fromBlock,
-  ~toBlock,
-  ~addresses,
-  ~topicQuery,
-  ~loadBlock,
-  ~syncConfig as sc: Config.sourceSync,
-  ~client,
-  ~mutSuggestedBlockIntervals,
-  ~partitionId,
-  ~sourceName,
-  ~chainId,
-): promise<eventBatchQuery> => {
-  //If the query hangs for longer than this, reject this promise to reduce the block interval
-  let queryTimoutPromise =
-    Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
-      Promise.reject(
-        QueryTimout(
-          `Query took longer than ${Belt.Int.toString(sc.queryTimeoutMillis / 1000)} seconds`,
-        ),
-      )
-    )
-
-  let latestFetchedBlockPromise = loadBlock(toBlock)
-  Prometheus.SourceRequestCount.increment(~sourceName, ~chainId, ~method="eth_getLogs")
-  let logsPromise = Rpc.getLogs(
-    ~client,
-    ~param={
-      address: ?addresses,
-      topics: topicQuery,
-      fromBlock,
-      toBlock,
-    },
-  )->Promise.then(async logs => {
-    {
-      logs,
-      latestFetchedBlockInfo: await latestFetchedBlockPromise,
-    }
-  })
-
-  [queryTimoutPromise, logsPromise]
-  ->Promise.race
-  ->Promise.catch(err => {
-    switch getSuggestedBlockIntervalFromExn(err) {
-    | Some((nextBlockIntervalTry, isMaxRange)) =>
-      mutSuggestedBlockIntervals->Dict.set(
-        isMaxRange ? maxSuggestedBlockIntervalKey : partitionId,
-        nextBlockIntervalTry,
-      )
-      throw(
-        Source.GetItemsError(
-          FailedGettingItems({
-            exn: err,
-            attemptedToBlock: toBlock,
-            retry: WithSuggestedToBlock({
-              toBlock: fromBlock + nextBlockIntervalTry - 1,
-            }),
-          }),
-        ),
-      )
-    | None =>
-      let executedBlockInterval = toBlock - fromBlock + 1
-      let nextBlockIntervalTry =
-        (executedBlockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)->Belt.Int.fromFloat
-      mutSuggestedBlockIntervals->Dict.set(partitionId, nextBlockIntervalTry)
-      throw(
-        Source.GetItemsError(
-          Source.FailedGettingItems({
-            exn: err,
-            attemptedToBlock: toBlock,
-            retry: WithBackoff({
-              message: `Failed getting data for the block range. Will try smaller block range for the next attempt.`,
-              backoffMillis: sc.backoffMillis,
-            }),
-          }),
-        ),
-      )
-    }
-  })
-}
-
-type logSelection = {
-  addresses: option<array<Address.t>>,
-  topicQuery: Rpc.GetLogs.topicQuery,
-}
-
-type selectionConfig = {
-  getLogSelectionOrThrow: (~addressesByContractName: dict<array<Address.t>>) => logSelection,
-}
-
-let getSelectionConfig = (selection: FetchState.selection, ~chain) => {
-  let staticTopicSelections = []
-  let dynamicEventFilters = []
-
-  selection.eventConfigs
-  ->(Utils.magic: array<Internal.eventConfig> => array<Internal.evmEventConfig>)
-  ->Belt.Array.forEach(({getEventFiltersOrThrow}) => {
-    switch getEventFiltersOrThrow(chain) {
-    | Static(s) => staticTopicSelections->Array.pushMany(s)->ignore
-    | Dynamic(fn) => dynamicEventFilters->Array.push(fn)->ignore
-    }
-  })
-
-  let getLogSelectionOrThrow = switch (
-    staticTopicSelections->LogSelection.compressTopicSelections,
-    dynamicEventFilters,
-  ) {
-  | ([], []) =>
-    throw(
-      Source.GetItemsError(
-        UnsupportedSelection({
-          message: "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
-        }),
-      ),
-    )
-  | ([topicSelection], []) => {
-      let topicQuery = topicSelection->Rpc.GetLogs.mapTopicQuery
-      (~addressesByContractName) => {
-        addresses: switch addressesByContractName->FetchState.addressesByContractNameGetAll {
-        | [] => None
-        | addresses => Some(addresses)
-        },
-        topicQuery,
-      }
-    }
-  | ([], [dynamicEventFilter]) if selection.eventConfigs->Array.length === 1 =>
-    let eventConfig = selection.eventConfigs->Utils.Array.firstUnsafe
-
-    (~addressesByContractName) => {
-      let addresses = addressesByContractName->FetchState.addressesByContractNameGetAll
-      {
-        addresses: eventConfig.isWildcard ? None : Some(addresses),
-        topicQuery: switch dynamicEventFilter(addresses) {
-        | [topicSelection] => topicSelection->Rpc.GetLogs.mapTopicQuery
-        | _ =>
-          throw(
-            Source.GetItemsError(
-              UnsupportedSelection({
-                message: "RPC data-source currently doesn't support an array of event filters. Please, create a GitHub issue if it's a blocker for you.",
-              }),
-            ),
-          )
-        },
-      }
-    }
-  | _ =>
-    throw(
-      Source.GetItemsError(
-        UnsupportedSelection({
-          message: "RPC data-source currently supports event filters only when there's a single wildcard event. Please, create a GitHub issue if it's a blocker for you.",
-        }),
-      ),
-    )
-  }
-
-  {
-    getLogSelectionOrThrow: getLogSelectionOrThrow,
-  }
-}
-
-let memoGetSelectionConfig = (~chain) =>
-  Utils.WeakMap.memoize(selection => selection->getSelectionConfig(~chain))
 
 // Type-erase a schema for storage in the field registry
 external toFieldSchema: S.t<'a> => S.t<JSON.t> = "%identity"
@@ -522,6 +295,10 @@ let makeThrowingGetEventBlock = (
     )(log)
   }
 }
+
+// `number` is always part of the selected block fields, so it can be read
+// from the assembled block for the item's own `blockNumber`.
+@get external getBlockNumber: Internal.eventBlock => int = "number"
 
 // Field source classification for RPC calls
 type fieldSource = TransactionOnly | ReceiptOnly | Both
@@ -686,6 +463,21 @@ let makeFieldRegistry = (addressSchema: S.t<JSON.t>): Utils.Record.t<
 let fieldRegistryLowercase = makeFieldRegistry(lowercaseAddressSchema)
 let fieldRegistryChecksum = makeFieldRegistry(checksumAddressSchema)
 
+// Whether an RPC source can populate a transaction field. The getter skips a
+// field it can't parse, so this is what separates "absent because the chain has
+// none" from "absent because RPC never provides it". `hash` and
+// `transactionIndex` come off the log itself, so they have no registry entry.
+// Blocks need no equivalent: `eth_getBlockByNumber` carries every block field,
+// which `RpcFieldSelection_test.res` holds the registry to.
+let isRpcTransactionField = (name: string) =>
+  switch name {
+  | "transactionIndex" | "hash" => true
+  | _ =>
+    fieldRegistryChecksum
+    ->Utils.Record.get(name->(Utils.magic: string => Internal.evmTransactionField))
+    ->Option.isSome
+  }
+
 type fetchStrategy = NoRpc | TransactionOnly | ReceiptOnly | TransactionAndReceipt
 
 // Parse fields from a raw JSON object into a result dict.
@@ -710,6 +502,30 @@ let parseFieldsFromJson = (
   })
 }
 
+let effectiveGasPriceKey = (Internal.EffectiveGasPrice: Internal.evmTransactionField :> string)
+
+// Pre-EIP-1559 receipts carry no `effectiveGasPrice` — every Optimism block
+// below the Bedrock migration at 105235063, for one. Those chains price every
+// transaction the legacy way, so the transaction's `gasPrice` is the effective
+// price, which is the same substitution HyperSync serves for those blocks.
+// Reads `gasPrice` but stores under `effectiveGasPrice`.
+let effectiveGasPriceFallbackDef = {
+  location: EffectiveGasPrice,
+  jsonKey: "gasPrice",
+  schema: Rpc.hexBigintSchema->toFieldSchema,
+  source: TransactionOnly,
+}
+
+let fillEffectiveGasPriceOrThrow = (mutTransactionAcc: dict<JSON.t>, txJson: JSON.t) => {
+  let gasPrice =
+    txJson->(Utils.magic: JSON.t => dict<JSON.t>)->Utils.Dict.dangerouslyGetNonOption("gasPrice")
+  switch gasPrice {
+  | None =>
+    JsError.throwWithMessage(`Neither "effectiveGasPrice" nor "gasPrice" is present in the RPC response for the transaction. Remove "effectiveGasPrice" from the field selection, or index this chain via HyperSync.`)
+  | Some(_) => parseFieldsFromJson(mutTransactionAcc, [effectiveGasPriceFallbackDef], txJson)
+  }
+}
+
 let makeThrowingGetEventTransaction = (
   ~getTransactionJson: string => promise<JSON.t>,
   ~getReceiptJson: string => promise<JSON.t>,
@@ -730,6 +546,7 @@ let makeThrowingGetEventTransaction = (
           // Classify fields: log-derived vs RPC fields
           let hasTransactionIndex = ref(false)
           let hasHash = ref(false)
+          let hasEffectiveGasPrice = ref(false)
           let txFields: array<fieldDef> = []
           let receiptFields: array<fieldDef> = []
           let bothFields: array<fieldDef> = []
@@ -741,6 +558,15 @@ let makeThrowingGetEventTransaction = (
             | _ =>
               switch fieldRegistry->Utils.Record.get(fieldName) {
               | Some(def) =>
+                // Absent from the receipt means fall back to the transaction's
+                // `gasPrice`, so this one field parses leniently rather than
+                // throwing on a receipt that omits it.
+                let def = if fieldName === EffectiveGasPrice {
+                  hasEffectiveGasPrice := true
+                  {...def, schema: S.nullable(def.schema)->toFieldSchema}
+                } else {
+                  def
+                }
                 switch def.source {
                 | TransactionOnly => txFields->Array.push(def)->ignore
                 | ReceiptOnly => receiptFields->Array.push(def)->ignore
@@ -803,10 +629,8 @@ let makeThrowingGetEventTransaction = (
                 | _ => Promise.resolve(None)
                 }
 
-                Promise.all2((txJsonPromise, receiptJsonPromise))->Promise.thenResolve(((
-                  txJson,
-                  receiptJson,
-                )) => {
+                Promise.all2((txJsonPromise, receiptJsonPromise))
+                ->Promise.then(((txJson, receiptJson)) => {
                   let mutTransactionAcc = Dict.make()
                   setLogFields(mutTransactionAcc, log)
 
@@ -819,6 +643,30 @@ let makeThrowingGetEventTransaction = (
                   | None => ()
                   }
 
+                  // Only the chains that omit it pay for the extra request, and
+                  // only when the receipt has already come back without it.
+                  if (
+                    hasEffectiveGasPrice.contents &&
+                    mutTransactionAcc
+                    ->Utils.Dict.dangerouslyGetNonOption(effectiveGasPriceKey)
+                    ->Option.isNone
+                  ) {
+                    switch txJson {
+                    | Some(json) => {
+                        fillEffectiveGasPriceOrThrow(mutTransactionAcc, json)
+                        Promise.resolve(mutTransactionAcc)
+                      }
+                    | None =>
+                      getTransactionJson(log.transactionHash)->Promise.thenResolve(json => {
+                        fillEffectiveGasPriceOrThrow(mutTransactionAcc, json)
+                        mutTransactionAcc
+                      })
+                    }
+                  } else {
+                    Promise.resolve(mutTransactionAcc)
+                  }
+                })
+                ->Promise.thenResolve(mutTransactionAcc => {
                   mutTransactionAcc->(Utils.magic: dict<JSON.t> => 'a)
                 })
               }
@@ -836,11 +684,14 @@ type options = {
   sourceFor: Source.sourceFor,
   syncConfig: Config.sourceSync,
   url: string,
-  chain: ChainMap.Chain.t,
-  eventRouter: EventRouter.t<Internal.evmEventConfig>,
-  allEventSignatures: array<string>,
+  chainId: ChainId.t,
+  // The chain's registrations, indexed by their sequential `index`.
+  onEventRegistrations: array<Internal.evmOnEventRegistration>,
   lowercaseAddresses: bool,
+  // The chain's address index; the client reads it while routing.
+  addressStore: AddressStore.t,
   ws?: string,
+  headers?: dict<string>,
 }
 
 let make = (
@@ -848,46 +699,72 @@ let make = (
     sourceFor,
     syncConfig,
     url,
-    chain,
-    eventRouter,
-    allEventSignatures,
+    chainId,
+    onEventRegistrations,
     lowercaseAddresses,
+    addressStore,
     ?ws,
+    ?headers,
   }: options,
 ): t => {
-  let chainId = chain->ChainMap.Chain.toChainId
   let urlHost = switch Utils.Url.getHostFromUrl(url) {
   | None =>
     JsError.throwWithMessage(
-      `The RPC url for chain ${chainId->Belt.Int.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
+      `The RPC url for chain ${chainId->ChainId.toString} is in incorrect format. The RPC url needs to start with either http:// or https://`,
     )
   | Some(host) => host
   }
   let name = `RPC (${urlHost})`
 
-  let getSelectionConfig = memoGetSelectionConfig(~chain)
+  let client = Rpc.makeClient(url, ~headers?)
+  let rpcClient = EvmRpcClient.make(
+    ~url,
+    ~eventRegistrations=HyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
+    ~checksumAddresses=!lowercaseAddresses,
+    ~syncConfig,
+    ~headers?,
+    ~addressStore,
+  )
 
-  let mutSuggestedBlockIntervals = Dict.make()
-
-  let client = Rpc.makeClient(url)
+  // Requests are made from shared, memoized loaders, so they can't be
+  // attributed to a single getItemsOrThrow/getHeightOrThrow/getBlockHashes
+  // call at its call site. Every actual request (cache/dedup hits never reach
+  // recordRequest) pushes here; each method drains whatever is pending when it
+  // returns. Since a push always lands in exactly one drain, per-source totals
+  // stay exact even with concurrent in-flight calls — which call happens to
+  // drain a given entry doesn't matter, since SourceManager aggregates by
+  // (source, method) regardless of which call returned it.
+  let pendingRequestStats: array<Source.requestStat> = []
+  let recordRequest = (~method, ~seconds) => {
+    pendingRequestStats->Array.push({Source.method, seconds})->ignore
+  }
+  let drainRequestStats = () => {
+    let stats = pendingRequestStats->Utils.Array.copy
+    pendingRequestStats->Utils.Array.clearInPlace
+    stats
+  }
 
   let makeTransactionLoader = () =>
     LazyLoader.make(
       ~loaderFn=transactionHash => {
-        Prometheus.SourceRequestCount.increment(
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~method="eth_getTransactionByHash",
-        )
-        Rpc.GetTransactionByHash.rawRoute->Rest.fetch(transactionHash, ~client)
+        let timerRef = Performance.now()
+        Rpc.GetTransactionByHash.rawRoute
+        ->Rest.fetch(transactionHash, ~client)
+        ->Promise.thenResolve(res => {
+          recordRequest(
+            ~method="eth_getTransactionByHash",
+            ~seconds=timerRef->Performance.secondsSince,
+          )
+          res
+        })
       },
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
-              ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+              ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
-          "chainId": chain->ChainMap.Chain.toChainId,
+          "chainId": chainId,
           "metadata": {
             {
               "asyncTaskName": "transactionLoader: fetching transaction data - `getTransaction` rpc call",
@@ -904,18 +781,19 @@ let make = (
         getKnownRawBlockWithBackoff(
           ~client,
           ~sourceName=name,
-          ~chain,
+          ~chainId,
           ~backoffMsOnFailure=1000,
           ~blockNumber,
+          ~recordRequest,
         )
       },
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
-              ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+              ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
-          "chainId": chain->ChainMap.Chain.toChainId,
+          "chainId": chainId,
           "metadata": {
             {
               "asyncTaskName": "blockLoader: fetching block data - `getBlock` rpc call",
@@ -929,20 +807,24 @@ let make = (
   let makeReceiptLoader = () =>
     LazyLoader.make(
       ~loaderFn=transactionHash => {
-        Prometheus.SourceRequestCount.increment(
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~method="eth_getTransactionReceipt",
-        )
-        Rpc.GetTransactionReceipt.rawRoute->Rest.fetch(transactionHash, ~client)
+        let timerRef = Performance.now()
+        Rpc.GetTransactionReceipt.rawRoute
+        ->Rest.fetch(transactionHash, ~client)
+        ->Promise.thenResolve(res => {
+          recordRequest(
+            ~method="eth_getTransactionReceipt",
+            ~seconds=timerRef->Performance.secondsSince,
+          )
+          res
+        })
       },
       ~onError=(am, ~exn) => {
         Logging.error({
           "err": exn->Utils.prettifyExn,
           "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
-              ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+              ->Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
           "source": name,
-          "chainId": chain->ChainMap.Chain.toChainId,
+          "chainId": chainId,
           "metadata": {
             {
               "asyncTaskName": "receiptLoader: fetching transaction receipt - `getTransactionReceipt` rpc call",
@@ -957,6 +839,12 @@ let make = (
   let transactionLoader = ref(makeTransactionLoader())
   let receiptLoader = ref(makeReceiptLoader())
 
+  let resetCachedLoaders = () => {
+    blockLoader := makeBlockLoader()
+    transactionLoader := makeTransactionLoader()
+    receiptLoader := makeReceiptLoader()
+  }
+
   let getEventBlockOrThrow = makeThrowingGetEventBlock(
     ~getBlockJson=blockNumber => blockLoader.contents->LazyLoader.get(blockNumber),
     ~lowercaseAddresses,
@@ -965,67 +853,38 @@ let make = (
     ~getTransactionJson=async transactionHash => {
       switch await transactionLoader.contents->LazyLoader.get(transactionHash) {
       | Some(json) => json
-      | None => JsError.throwWithMessage(`Transaction not found for hash: ${transactionHash}`)
+      | None =>
+        throw(
+          TransactionDataNotFound({message: `Transaction not found for hash: ${transactionHash}`}),
+        )
       }
     },
     ~getReceiptJson=async transactionHash => {
       switch await receiptLoader.contents->LazyLoader.get(transactionHash) {
       | Some(json) => json
       | None =>
-        JsError.throwWithMessage(`Transaction receipt not found for hash: ${transactionHash}`)
+        throw(
+          TransactionDataNotFound({
+            message: `Transaction receipt not found for hash: ${transactionHash}`,
+          }),
+        )
       }
     },
     ~lowercaseAddresses,
   )
 
-  let convertLogToHyperSyncEvent = (log: Rpc.GetLogs.log): HyperSyncClient.ResponseTypes.event => {
-    let hyperSyncLog: HyperSyncClient.ResponseTypes.log = {
-      removed: log.removed,
-      index: log.logIndex,
-      transactionIndex: log.transactionIndex,
-      transactionHash: log.transactionHash,
-      blockHash: log.blockHash,
-      blockNumber: log.blockNumber,
-      address: log.address,
-      data: log.data,
-      topics: log.topics->(Utils.magic: array<string> => array<Nullable.t<EvmTypes.Hex.t>>),
-    }
-    {log: hyperSyncLog}
-  }
-
-  let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
-  let getHscDecoder = () => {
-    switch hscDecoder.contents {
-    | Some(decoder) => decoder
-    | None => {
-        let decoder = HyperSyncClient.Decoder.fromSignatures(allEventSignatures)
-        decoder
-      }
-    }
-  }
-
   let getItemsOrThrow = async (
     ~fromBlock,
     ~toBlock,
-    ~addressesByContractName,
-    ~indexingAddresses,
+    ~addressSet,
     ~knownHeight,
     ~partitionId,
     ~selection: FetchState.selection,
-    ~retry as _,
+    ~itemsTarget as _,
+    ~retry,
     ~logger as _,
   ) => {
-    let startFetchingBatchTimeRef = Hrtime.makeTimer()
-
-    let suggestedBlockInterval = switch mutSuggestedBlockIntervals->Utils.Dict.dangerouslyGetNonOption(
-      maxSuggestedBlockIntervalKey,
-    ) {
-    | Some(maxSuggestedBlockInterval) => maxSuggestedBlockInterval
-    | None =>
-      mutSuggestedBlockIntervals
-      ->Utils.Dict.dangerouslyGetNonOption(partitionId)
-      ->Belt.Option.getWithDefault(syncConfig.initialBlockInterval)
-    }
+    let startFetchingBatchTimeRef = Performance.now()
 
     // Always have a toBlock for an RPC worker
     let toBlock = switch toBlock {
@@ -1033,249 +892,265 @@ let make = (
     | None => knownHeight
     }
 
-    let suggestedToBlock = Pervasives.min(fromBlock + suggestedBlockInterval - 1, toBlock)
-    //Defensively ensure we never query a target block below fromBlock
-    ->Pervasives.max(fromBlock)
-
-    let firstBlockParentPromise =
-      fromBlock > 0
+    // The seam block (`fromBlock - 1`) is the only block this range shares with
+    // what the store already scanned, so it is where a reorg at the boundary
+    // shows up. Reading it directly would answer from the block cache — it was
+    // the previous range's `toBlock`, so it is always cached, and always on the
+    // chain that range saw. Read `fromBlock` instead, which no earlier range
+    // touched, and take the seam's hash from its `parentHash`.
+    let firstBlockPromise =
+      fromBlock > 0 && fromBlock <= toBlock
         ? blockLoader.contents
-          ->LazyLoader.get(fromBlock - 1)
+          ->LazyLoader.get(fromBlock)
           ->Promise.thenResolve(json => Some(parseBlockInfo(json)))
         : Promise.resolve(None)
 
-    let {getLogSelectionOrThrow} = getSelectionConfig(selection)
-    let {addresses, topicQuery} = getLogSelectionOrThrow(~addressesByContractName)
-
-    let {logs, latestFetchedBlockInfo} = await getNextPage(
-      ~fromBlock,
-      ~toBlock=suggestedToBlock,
-      ~addresses,
-      ~topicQuery,
-      ~loadBlock=blockNumber =>
-        blockLoader.contents
-        ->LazyLoader.get(blockNumber)
-        ->Promise.thenResolve(parseBlockInfo),
-      ~syncConfig,
-      ~client,
-      ~mutSuggestedBlockIntervals,
-      ~partitionId,
-      ~sourceName=name,
-      ~chainId=chain->ChainMap.Chain.toChainId,
-    )
-
-    let executedBlockInterval = suggestedToBlock - fromBlock + 1
-
-    // Increase the suggested block interval only when it was actually applied
-    // and we didn't query to a hard toBlock
-    // We also don't care about it when we have a hard max block interval
-    if (
-      executedBlockInterval >= suggestedBlockInterval &&
-        !(mutSuggestedBlockIntervals->Utils.Dict.has(maxSuggestedBlockIntervalKey))
-    ) {
-      // Increase batch size going forward, but do not increase past a configured maximum
-      // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
-      mutSuggestedBlockIntervals->Dict.set(
-        partitionId,
-        Pervasives.min(
-          executedBlockInterval + syncConfig.accelerationAdditive,
-          syncConfig.intervalCeiling,
-        ),
-      )
-    }
-
-    // Convert RPC logs to HyperSync events
-    let hyperSyncEvents = logs->Belt.Array.map(convertLogToHyperSyncEvent)
-
-    // Decode using HyperSyncClient decoder
-    let parsedEvents = try await getHscDecoder().decodeEvents(hyperSyncEvents) catch {
-    | exn =>
+    if selection.onEventRegistrations->Utils.Array.isEmpty {
       throw(
         Source.GetItemsError(
-          FailedGettingItems({
-            exn,
-            attemptedToBlock: toBlock,
-            retry: ImpossibleForTheQuery({
-              message: "Failed to parse events using hypersync client decoder. Please double-check your ABI.",
-            }),
+          UnsupportedSelection({
+            message: "Invalid events configuration for the partition. Nothing to fetch. Please, report to the Envio team.",
           }),
         ),
       )
     }
 
-    let parsedQueueItems = await logs
-    ->Array.zip(parsedEvents)
-    ->Array.filterMap(((
-      log: Rpc.GetLogs.log,
-      maybeDecodedEvent: Nullable.t<HyperSyncClient.Decoder.decodedEvent>,
-    )) => {
-      let topic0 = log.topics[0]->Option.getOr("0x0")
-      let routedAddress = if lowercaseAddresses {
-        log.address->Address.Evm.fromAddressLowercaseOrThrow
-      } else {
-        log.address->Address.Evm.fromAddressOrThrow
+    let {items, toBlock: queriedToBlock, requestStats} = try await rpcClient.getNextPage(
+      {
+        fromBlock,
+        toBlockCeiling: toBlock,
+        partitionId,
+        registrationIndexes: selection.onEventRegistrations->Array.map(reg => reg.index),
+        clientFilteredContracts: selection.clientFilteredContracts,
+      },
+      addressSet,
+    ) catch {
+    | exn =>
+      switch exn->parseGetNextPageRetryError {
+      | Some((attemptedToBlock, retry, requestStats)) =>
+        requestStats->Array.forEach(stat =>
+          recordRequest(~method=stat.method, ~seconds=stat.seconds)
+        )
+        throw(Source.GetItemsError(FailedGettingItems({exn, attemptedToBlock, retry})))
+      | None =>
+        throw(
+          Source.GetItemsError(
+            FailedGettingItems({
+              exn,
+              attemptedToBlock: toBlock,
+              retry: WithBackoff({
+                message: "Unexpected issue while fetching events from the RPC client. Attempt a retry.",
+                backoffMillis: switch retry {
+                | 0 => 500
+                | _ => 1000 * retry
+                },
+              }),
+            }),
+          ),
+        )
       }
+    }
+    requestStats->Array.forEach(stat => recordRequest(~method=stat.method, ~seconds=stat.seconds))
 
-      switch eventRouter->EventRouter.get(
-        ~tag=EventRouter.getEvmEventId(~sighash=topic0, ~topicCount=log.topics->Array.length),
-        ~indexingAddresses,
-        ~contractAddress=routedAddress,
-        ~blockNumber=log.blockNumber,
-      ) {
-      | None => None
-      | Some(eventConfig) =>
-        switch maybeDecodedEvent {
-        | Value(decoded) =>
-          Some(
-            (
-              async () => {
-                let (block, transaction) = try await Promise.all2((
-                  log->getEventBlockOrThrow(~selectedBlockFields=eventConfig.selectedBlockFields),
-                  log->getEventTransactionOrThrow(
-                    ~selectedTransactionFields=eventConfig.selectedTransactionFields,
-                  ),
-                )) catch {
-                | exn =>
-                  throw(
-                    Source.GetItemsError(
-                      FailedGettingFieldSelection({
-                        message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
-                        exn,
-                        blockNumber: log.blockNumber,
-                        logIndex: log.logIndex,
-                      }),
-                    ),
-                  )
-                }
+    let latestFetchedBlockInfo = await blockLoader.contents
+    ->LazyLoader.get(queriedToBlock)
+    ->Promise.thenResolve(parseBlockInfo)
 
-                Internal.Event({
-                  eventConfig: (eventConfig :> Internal.eventConfig),
-                  timestamp: block->Evm.getTimestamp,
-                  blockNumber: block->Evm.getNumber,
-                  chain,
+    let parsedQueueItems = await items
+    ->Array.map(({log, onEventRegistrationIndex, params: decoded}: EvmRpcClient.rpcEventItem) => {
+      // `log.address` comes back already normalized to the client's casing.
+      let onEventRegistration = onEventRegistrations->Array.getUnsafe(onEventRegistrationIndex)
+      let eventConfig =
+        onEventRegistration.eventConfig->(
+          Utils.magic: Internal.eventConfig => Internal.evmEventConfig
+        )
+
+      (
+        async () => {
+          let (block, transaction) = try await Promise.all2((
+            log->getEventBlockOrThrow(
+              ~selectedBlockFields=onEventRegistration.fieldSelection.blockFields->(
+                Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmBlockField>
+              ),
+            ),
+            log->getEventTransactionOrThrow(
+              ~selectedTransactionFields=onEventRegistration.fieldSelection.transactionFields->(
+                Utils.magic: Utils.Set.t<string> => Utils.Set.t<Internal.evmTransactionField>
+              ),
+            ),
+          )) catch {
+          | TransactionDataNotFound({message}) =>
+            let backoffMillis = switch retry {
+            | 0 => 100
+            | _ => 500 * retry
+            }
+            throw(
+              Source.GetItemsError(
+                FailedGettingItems({
+                  exn: %raw(`null`),
+                  attemptedToBlock: toBlock,
+                  retry: WithBackoff({
+                    message: `${message}. The RPC provider might be load-balanced between nodes that drift independently slightly from the head. Indexing should continue correctly after retrying the query in ${backoffMillis->Int.toString}ms.`,
+                    backoffMillis,
+                  }),
+                }),
+              ),
+            )
+          | exn =>
+            throw(
+              Source.GetItemsError(
+                FailedGettingFieldSelection({
+                  message: "Failed getting selected fields. Please double-check your RPC provider returns correct data.",
+                  exn,
+                  blockNumber: log.blockNumber,
                   logIndex: log.logIndex,
-                  event: {
-                    contractName: eventConfig.contractName,
-                    eventName: eventConfig.name,
-                    chainId: chain->ChainMap.Chain.toChainId,
-                    params: decoded->eventConfig.convertHyperSyncEventArgs,
-                    transaction,
-                    block,
-                    srcAddress: routedAddress,
-                    logIndex: log.logIndex,
-                  }->Internal.fromGenericEvent,
-                })
-              }
-            )(),
-          )
-        | Null | Undefined => None
+                }),
+              ),
+            )
+          }
+
+          Internal.Event({
+            onEventRegistration: (onEventRegistration :> Internal.onEventRegistration),
+            blockNumber: block->getBlockNumber,
+            chainId,
+            logIndex: log.logIndex,
+            transactionIndex: log.transactionIndex,
+            payload: {
+              contractName: eventConfig.contractName,
+              eventName: eventConfig.name,
+              chainId,
+              params: decoded,
+              block,
+              transaction,
+              srcAddress: log.address,
+              logIndex: log.logIndex,
+            }->Evm.fromPayload,
+          })
         }
-      }
+      )()
     })
     ->Promise.all
 
-    let optFirstBlockParent = await firstBlockParentPromise
+    let optFirstBlock = await firstBlockPromise
 
-    let totalTimeElapsed = startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toSecondsFloat
+    let totalTimeElapsed = startFetchingBatchTimeRef->Performance.secondsSince
 
-    let reorgGuard: ReorgDetection.reorgGuard = {
-      prevRangeLastBlock: optFirstBlockParent->Option.map(b => {
-        ReorgDetection.blockNumber: b.number,
+    // Every fetched block carries `hash` and `parentHash`, so each one yields
+    // two confirmed (number, hash) pairs for reorg detection at no extra cost.
+    // Both these blocks and the logs' own `blockHash` come from this range's
+    // responses, never from the block cache's older view of the chain. They go
+    // into a hash-only page store merged into the chain store, where hash
+    // comparison happens. The block data itself stays inline on the payload.
+    let observedBlocks: array<BlockStore.inputBlock> = []
+    let pushBlockInfo = (b: blockInfo) => {
+      observedBlocks
+      ->Array.push({
+        BlockStore.blockNumber: b.number,
         blockHash: b.hash,
-      }),
-      rangeLastBlock: {
-        blockNumber: latestFetchedBlockInfo.number,
-        blockHash: latestFetchedBlockInfo.hash,
-      },
+        blockTimestamp: b.timestamp,
+      })
+      ->ignore
+      if b.number > 0 {
+        observedBlocks
+        ->Array.push({BlockStore.blockNumber: b.number - 1, blockHash: b.parentHash})
+        ->ignore
+      }
     }
+    pushBlockInfo(latestFetchedBlockInfo)
+    switch optFirstBlock {
+    | Some(b) => pushBlockInfo(b)
+    | None => ()
+    }
+    items->Array.forEach(({log}) =>
+      observedBlocks
+      ->Array.push({BlockStore.blockNumber: log.blockNumber, blockHash: log.blockHash})
+      ->ignore
+    )
 
     {
-      latestFetchedBlockTimestamp: latestFetchedBlockInfo.timestamp,
       latestFetchedBlockNumber: latestFetchedBlockInfo.number,
       parsedQueueItems,
+      // RPC keeps the transaction and block inline on the payload; no
+      // transaction page, and the block page carries only observed hashes.
+      transactionStore: None,
+      blockStore: BlockStore.fromJs(
+        observedBlocks,
+        ~ecosystem=Evm,
+        ~shouldChecksum=!lowercaseAddresses,
+      ),
       stats: {
         totalTimeElapsed: totalTimeElapsed,
       },
       knownHeight,
-      reorgGuard,
       fromBlockQueried: fromBlock,
+      requestStats: drainRequestStats(),
     }
   }
 
-  let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
-    // Clear cache by creating a fresh LazyLoader
-    // This is important, since we call this
-    // function when a reorg is detected
-    blockLoader := makeBlockLoader()
-    transactionLoader := makeTransactionLoader()
-    receiptLoader := makeReceiptLoader()
+  let onReorg = () => {
+    // Drop cached block/transaction/receipt data — after a reorg or an
+    // internally inconsistent response these may refer to orphaned-chain values.
+    resetCachedLoaders()
+  }
 
+  let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
     blockNumbers
     ->Array.map(blockNum => blockLoader.contents->LazyLoader.get(blockNum))
     ->Promise.all
     ->Promise.thenResolve(rawBlocks => {
-      rawBlocks
-      ->Array.map(json => {
+      // Each block is fetched in its own request, so responses can mix forks.
+      // The parent hash becomes a minimal extra row: when consecutive blocks
+      // are requested, the page's own hash-collision check cross-validates the
+      // separately fetched responses.
+      let observedBlocks: array<BlockStore.inputBlock> = []
+      rawBlocks->Array.forEach(json => {
         let b = parseBlockInfo(json)
-
-        (
-          {
-            blockNumber: b.number,
-            blockHash: b.hash,
-            blockTimestamp: b.timestamp,
-          }: ReorgDetection.blockDataWithTimestamp
-        )
+        observedBlocks
+        ->Array.push({
+          BlockStore.blockNumber: b.number,
+          blockHash: b.hash,
+          blockTimestamp: b.timestamp,
+        })
+        ->ignore
+        if b.number > 0 {
+          observedBlocks
+          ->Array.push({BlockStore.blockNumber: b.number - 1, blockHash: b.parentHash})
+          ->ignore
+        }
       })
-      ->Ok
+      let blockStore =
+        observedBlocks->BlockStore.fromJs(~ecosystem=Evm, ~shouldChecksum=!lowercaseAddresses)
+      {Source.result: Ok(blockStore), requestStats: drainRequestStats()}
     })
-    ->Promise.catch(exn => exn->Error->Promise.resolve)
+    ->Promise.catch(exn =>
+      {Source.result: Error(exn), requestStats: drainRequestStats()}->Promise.resolve
+    )
   }
 
   let createHeightSubscription =
-    ws->Belt.Option.map(wsUrl =>
-      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight)
+    ws->Option.map(wsUrl =>
+      (~onHeight, ~onStatus) => EvmRpcWs.subscribe(~wsUrl, ~onHeight, ~onStatus)
     )
 
   {
     name,
     sourceFor,
-    chain,
+    chainId,
     poweredByHyperSync: false,
     pollingInterval: syncConfig.pollingInterval,
     getBlockHashes,
+    onReorg,
     getHeightOrThrow: async () => {
-      let timerRef = Hrtime.makeTimer()
+      let timerRef = Performance.now()
       let height = try {
-        await Rpc.GetBlockHeight.route->Rest.fetch((), ~client)
+        await rpcClient.getHeight()
       } catch {
       | exn =>
-        let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-        Prometheus.SourceRequestCount.increment(
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~method="eth_blockNumber",
-        )
-        Prometheus.SourceRequestCount.addSeconds(
-          ~sourceName=name,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~method="eth_blockNumber",
-          ~seconds,
-        )
+        recordRequest(~method="eth_blockNumber", ~seconds=timerRef->Performance.secondsSince)
         exn->throw
       }
-      let seconds = timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat
-      Prometheus.SourceRequestCount.increment(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="eth_blockNumber",
-      )
-      Prometheus.SourceRequestCount.addSeconds(
-        ~sourceName=name,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~method="eth_blockNumber",
-        ~seconds,
-      )
-      height
+      recordRequest(~method="eth_blockNumber", ~seconds=timerRef->Performance.secondsSince)
+      {height, requestStats: drainRequestStats()}
     },
     getItemsOrThrow,
     ?createHeightSubscription,

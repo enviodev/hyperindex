@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=../../../envio/evm.schema.json
+name: clickhouse-options
+schema: ../schemas/schema-with-clickhouse-options.graphql
+storage:
+  postgres:
+    default: true
+  clickhouse: true
+chains:
+  - id: 1
+    start_block: 0
+    contracts: []

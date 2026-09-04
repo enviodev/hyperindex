@@ -10,7 +10,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { ChildProcess } from "child_process";
+import { ChildProcess, execFile } from "child_process";
+import { promisify } from "util";
 import { config } from "../config.js";
 import {
   startBackground,
@@ -41,7 +42,27 @@ interface MetricsResult {
   stderr: string;
 }
 
-describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
+// `envio dev` brings up Postgres and Hasura through Docker, and
+// ensureClickHouse() starts a container, so without a Docker daemon there is
+// nothing to test against. Skipping keeps a local `pnpm test` usable on a
+// machine without Docker; in CI the services are always provisioned, so an
+// unreachable daemon means a broken pipeline and must fail loudly instead.
+const dockerAvailable = await (async () => {
+  try {
+    await promisify(execFile)("docker", ["info"], { timeout: 15_000 });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+if (!dockerAvailable && process.env.CI) {
+  throw new Error(
+    "Docker is unavailable, so the e2e suite cannot run. Refusing to skip it in CI."
+  );
+}
+
+describe.skipIf(!dockerAvailable)("E2E: Indexer with GraphQL and ClickHouse sink", () => {
   let indexerProcess: ChildProcess | null = null;
   let graphql: GraphQLClient;
   let metricsWhileRunning: MetricsResult | null = null;
@@ -169,6 +190,150 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     expect(result.data?._meta).toEqual([{ chainId: 1, isReady: true }]);
   });
 
+  it("should expose schema descriptions via GraphQL introspection", async () => {
+    // Pulls the whole introspected schema from the live Hasura endpoint and
+    // snapshots descriptions on user-defined entity types — covers entity
+    // (table comment), regular fields (column comment), and indexed field
+    // round-tripping from schema.graphql through to Hasura introspection.
+    // `#` line comments are GraphQL comments (not descriptions) and must
+    // NOT appear.
+    //
+    // Note on relationships: Hasura overrides the `comment` on array/object
+    // relationships with hardcoded defaults ("An array relationship" / "An
+    // aggregate relationship" / "An object relationship") in GraphQL
+    // introspection. The schema-level description we set still lands in
+    // Hasura's metadata API, but it does not surface here, so the snapshot
+    // captures Hasura's defaults for relationship fields.
+    interface IntrospectedTypeRef {
+      name: string | null;
+      kind: string;
+      ofType: IntrospectedTypeRef | null;
+    }
+    interface IntrospectedField {
+      name: string;
+      description: string | null;
+      type: IntrospectedTypeRef;
+    }
+    interface IntrospectedType {
+      name: string;
+      description: string | null;
+      fields: IntrospectedField[] | null;
+    }
+    const result = await graphql.query<{
+      __schema: { types: IntrospectedType[] };
+    }>(`{
+      __schema {
+        types {
+          name
+          description
+          fields {
+            name
+            description
+            type {
+              name
+              kind
+              ofType {
+                name
+                kind
+                ofType {
+                  name
+                  kind
+                  ofType { name kind }
+                }
+              }
+            }
+          }
+        }
+      }
+    }`);
+
+    const formatType = (t: IntrospectedTypeRef | null): string => {
+      if (!t) return "?";
+      if (t.kind === "NON_NULL") return `${formatType(t.ofType)}!`;
+      if (t.kind === "LIST") return `[${formatType(t.ofType)}]`;
+      return t.name ?? "?";
+    };
+
+    const userTypeNames = new Set(["Transfer", "Account"]);
+    const userTypes = (result.data?.__schema.types ?? [])
+      .filter((t) => userTypeNames.has(t.name))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((t) => ({
+        name: t.name,
+        description: t.description,
+        fields: t.fields
+          ?.slice()
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((f) => ({
+            name: f.name,
+            description: f.description,
+            type: formatType(f.type),
+          })),
+      }));
+
+    expect(userTypes).toMatchInlineSnapshot(`
+      [
+        {
+          "description": "An on-chain account participating in transfers",
+          "fields": [
+            {
+              "description": "The account's Ethereum address",
+              "name": "id",
+              "type": "String!",
+            },
+            {
+              "description": "An array relationship",
+              "name": "outgoing",
+              "type": "[Transfer!]!",
+            },
+            {
+              "description": "An aggregate relationship",
+              "name": "outgoing_aggregate",
+              "type": "Transfer_aggregate!",
+            },
+          ],
+          "name": "Account",
+        },
+        {
+          "description": "An ERC-20 transfer event",
+          "fields": [
+            {
+              "description": "Block number the transfer was emitted in",
+              "name": "blockNumber",
+              "type": "Int!",
+            },
+            {
+              "description": "Sender address",
+              "name": "from",
+              "type": "String!",
+            },
+            {
+              "description": "Composite ID built from chainId-block-logIndex",
+              "name": "id",
+              "type": "String!",
+            },
+            {
+              "description": "Recipient address",
+              "name": "to",
+              "type": "String!",
+            },
+            {
+              "description": "Hash of the transaction that emitted the transfer",
+              "name": "transactionHash",
+              "type": "String!",
+            },
+            {
+              "description": "Token amount transferred (raw, no decimals applied)",
+              "name": "value",
+              "type": "numeric!",
+            },
+          ],
+          "name": "Transfer",
+        },
+      ]
+    `);
+  });
+
   it("should have Transfer entities indexed", async () => {
     const result = await graphql.poll<{
       Transfer: Array<{
@@ -199,6 +364,105 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       blockNumber: expect.any(Number),
       transactionHash: expect.any(String),
     });
+  });
+
+  // The per-chain pair. Their tables carry a chain-id column in the primary
+  // key, spelled per backend: `chain_id` in Postgres (column_name_format:
+  // snake_case) and `chainId` in ClickHouse (the default format).
+  it("gives per-chain entities a chain-id column in both backends", async () => {
+    const pgColumns = await runPgSql(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'ChainTransfer'
+        ORDER BY column_name`
+    );
+    expect(pgColumns.map((r) => r[0])).toContain("chain_id");
+
+    const pgPrimaryKey = await runPgSql(
+      `SELECT a.attname FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+        WHERE i.indrelid = '"ChainTransfer"'::regclass AND i.indisprimary
+        ORDER BY a.attname`
+    );
+    expect(pgPrimaryKey.map((r) => r[0])).toEqual(["chain_id", "id"]);
+
+    const chColumns = await queryClickHouse<
+      ClickHouseResult<{ name: string }>
+    >(
+      `SELECT name FROM system.columns
+        WHERE database = '${CH_DATABASE}' AND table = 'ChainTransfer'
+        FORMAT JSON`
+    );
+    expect(chColumns.data.map((r) => r.name)).toContain("chainId");
+  });
+
+  it("serves per-chain rows through ClickHouse deduped per (id, chain)", async () => {
+    const pgRows = await runPgSql(`SELECT count(*)::text FROM "ChainTransfer"`);
+    const pgCount = Number(pgRows[0]?.[0]);
+    expect(pgCount).toBeGreaterThan(0);
+
+    // The view dedups with LIMIT 1 BY (id, chainId); a dedup on id alone would
+    // collapse rows that differ only by chain.
+    const chRows = await queryClickHouse<
+      ClickHouseResult<{ c: string; chains: string }>
+    >(
+      `SELECT count() as c, uniqExact(chainId) as chains
+         FROM ${CH_DATABASE}.ChainTransfer FORMAT JSON`
+    );
+    expect({
+      rows: Number(chRows.data[0]?.c),
+      chains: Number(chRows.data[0]?.chains),
+    }).toEqual({ rows: pgCount, chains: 1 });
+  });
+
+  it("keeps a per-chain relationship from reaching another chain's row", async () => {
+    // Only one chain is indexed, so a second chain's row is planted directly to
+    // give the relationship something wrong to resolve to. It shares the `from`
+    // value the relationship joins on, and differs only by chain.
+    const account = await runPgSql(
+      `SELECT "id" FROM "ChainAccount" LIMIT 1`
+    );
+    const accountId = account[0]?.[0];
+    expect(accountId).toBeTruthy();
+
+    // A per-chain entity's table is partitioned by chain id and only the
+    // configured chains get a partition, so chain 999 needs one before a row
+    // can be routed to it. The name is this test's own — the indexer's
+    // partitions are named elsewhere, and nothing here should depend on how.
+    await runPgSql(
+      `CREATE TABLE "ChainTransfer_planted"
+       PARTITION OF "ChainTransfer" FOR VALUES IN (999)`
+    );
+
+    // Dropped before asserting, and in a `finally` so that a query throwing
+    // doesn't leave the partition behind either — the tests that follow count
+    // rows in this table, and a leftover partition would also collide with the
+    // `CREATE` above on the next run. Dropping it takes its row with it.
+    let transfers: Array<{ id: string; chainId: number }>;
+    try {
+      await runPgSql(
+        `INSERT INTO "ChainTransfer" ("id", "from", "value", "chain_id")
+         VALUES ('planted-other-chain', '${accountId}', 1, 999)
+         ON CONFLICT DO NOTHING`
+      );
+
+      const result = await graphql.query<{
+        ChainAccount: Array<{
+          id: string;
+          transfers: Array<{ id: string; chainId: number }>;
+        }>;
+      }>(
+        `{ ChainAccount(where: {id: {_eq: "${accountId}"}}) { id transfers { id chainId } } }`
+      );
+      transfers = result.data?.ChainAccount[0]?.transfers ?? [];
+    } finally {
+      await runPgSql(`DROP TABLE "ChainTransfer_planted"`);
+    }
+
+    expect(transfers.length).toBeGreaterThan(0);
+    expect({
+      plantedRowReached: transfers.some((tr) => tr.id === "planted-other-chain"),
+      chains: [...new Set(transfers.map((tr) => tr.chainId))],
+    }).toEqual({ plantedRowReached: false, chains: [1] });
   });
 
   it("should be able to query GraphQL schema", async () => {
@@ -268,27 +532,49 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
     });
   });
 
+  it("ClickHouse history table has the schema-declared skipping indexes", async () => {
+    // Transfer declares two bloom-filter skipping indexes via
+    // @storage(clickhouse: {skippingIndexes: [...]}). An omitted granularity falls
+    // back to ClickHouse's default of 1.
+    const result = await queryClickHouse<
+      ClickHouseResult<{ name: string; type_full: string; granularity: number }>
+    >(
+      `SELECT name, type_full, toUInt32(granularity) as granularity
+       FROM system.data_skipping_indices
+       WHERE database = '${CH_DATABASE}' AND table = 'envio_history_Transfer'
+       ORDER BY name
+       FORMAT JSON`
+    );
+
+    expect(result.data).toEqual([
+      { name: "idx_from", type_full: "bloom_filter(0.01)", granularity: 4 },
+      { name: "idx_to", type_full: "bloom_filter(0.01)", granularity: 1 },
+    ]);
+  });
+
   // --- Per-entity @storage routing ---
   //
   // The e2e_test schema declares:
-  //   Transfer        @storage(postgres: true, clickhouse: true)
-  //   TransferPgOnly  @storage(postgres: true)
-  //   TransferChOnly  @storage(clickhouse: true)
+  //   Transfer         @storage(postgres: true, clickhouse: true)
+  //   TransferPgOnly   @storage(postgres: true)
+  //   TransferChOnly   @storage(clickhouse: true)
+  //   TransferInternal @internal @storage(postgres: true)
   //
   // Each backend should host exactly the entities that opted into it, with
-  // at least one row each. Hasura sits on top of Postgres so it must
-  // expose Transfer and TransferPgOnly only.
+  // at least one row each. Hasura sits on top of Postgres, minus @internal
+  // entities, so it must expose Transfer and TransferPgOnly only.
 
   it("Postgres has tables for postgres-enabled entities only", async () => {
     const tables = await runPgSql(`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public'
-        AND table_name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly')
+        AND table_name IN ('Transfer', 'TransferPgOnly', 'TransferChOnly', 'TransferInternal')
       ORDER BY table_name
     `);
     expect(tables.map((r) => r[0])).toMatchInlineSnapshot(`
       [
         "Transfer",
+        "TransferInternal",
         "TransferPgOnly",
       ]
     `);
@@ -303,6 +589,57 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
 
     const pgOnlyRows = await runPgSql(`SELECT count(*)::text FROM "TransferPgOnly"`);
     expect(Number(pgOnlyRows[0]?.[0])).toBe(transferCount);
+
+    // @internal entities keep their Postgres table and handler writes; only
+    // the GraphQL exposure is removed (asserted in the introspection test).
+    const internalRows = await runPgSql(`SELECT count(*)::text FROM "TransferInternal"`);
+    expect(Number(internalRows[0]?.[0])).toBe(transferCount);
+  });
+
+  it("Postgres raw_events holds one row per indexed event with decoded data", async () => {
+    // config.yaml sets `raw_events: true`, so every processed event is
+    // mirrored into the internal raw_events table. There's one Transfer
+    // event per Transfer entity, so the counts must match.
+    const transferRows = await runPgSql(`SELECT count(*)::text FROM "Transfer"`);
+    const transferCount = Number(transferRows[0]?.[0]);
+    expect(transferCount).toBeGreaterThan(0);
+
+    const rawCountRows = await runPgSql(`SELECT count(*)::text FROM raw_events`);
+    expect(Number(rawCountRows[0]?.[0])).toBe(transferCount);
+
+    // Spot-check the first known event (chain 1, block 10861674, log index
+    // 23) against the deterministic decoded values from the smoke-test
+    // snapshot. Addresses are lower-cased to avoid checksum-casing churn.
+    const row = await runPgSql(`
+      SELECT
+        chain_id,
+        event_name,
+        contract_name,
+        block_number,
+        log_index,
+        lower(src_address),
+        transaction_fields->>'hash',
+        lower(params->>'from'),
+        lower(params->>'to'),
+        params->>'value'
+      FROM raw_events
+      WHERE block_number = 10861674 AND log_index = 23
+    `);
+
+    expect(row).toEqual([
+      [
+        "1",
+        "Transfer",
+        "ERC20",
+        "10861674",
+        "23",
+        "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+        "0x4b37d2f343608457ca3322accdab2811c707acf3eb07a40dd8d9567093ea5b82",
+        "0x0000000000000000000000000000000000000000",
+        "0x41653c7d61609d856f29355e404f310ec4142cfb",
+        "1000000000000000000000000000",
+      ],
+    ]);
   });
 
   it("ClickHouse has tables for clickhouse-enabled entities only", async () => {
@@ -357,7 +694,12 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
       }
     }`);
 
-    const userEntityNames = ["Transfer", "TransferPgOnly", "TransferChOnly"];
+    const userEntityNames = [
+      "Transfer",
+      "TransferPgOnly",
+      "TransferChOnly",
+      "TransferInternal",
+    ];
     const isEntityQuery = (name: string) =>
       userEntityNames.some((p) => name === p || name.startsWith(`${p}_`));
 
@@ -409,6 +751,55 @@ describe("E2E: Indexer with GraphQL and ClickHouse sink", () => {
         ],
       }
     `);
+  });
+
+  it("Hasura serves numeric arrays as strings", async () => {
+    // NUMERIC[] columns are created as TEXT[] when Hasura is enabled, because
+    // Hasura otherwise returns the elements as numbers and drops precision on
+    // large values. https://github.com/enviodev/hyperindex/issues/788
+    const result = await graphql.query<{
+      NumericArrays: Array<{ bigInts: string[]; bigDecimals: string[] }>;
+    }>(`{ NumericArrays { bigInts bigDecimals } }`);
+
+    expect(result).toEqual({
+      data: {
+        NumericArrays: [
+          {
+            bigInts: ["9007199254740993", "1000000000000000000000000000"],
+            bigDecimals: ["3.3", "123456789012345678.123456789"],
+          },
+        ],
+      },
+    });
+  });
+
+  // Overwrites events_processed, so it has to follow the tests that read it.
+  it("_meta and chain_metadata serve events processed as a number", async () => {
+    // Above int32 max, so a column type regression surfaces as an overflow.
+    await runPgSql(
+      `UPDATE public.envio_chains SET events_processed = 2147487821 WHERE id = 1`
+    );
+
+    // Both views cast to float4, which Hasura returns as a number rather than
+    // stringifying it under HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES. float4
+    // carries ~7 digits, so the round trip loses the tail of the value.
+    const meta = await graphql.query<{
+      _meta: Array<{ chainId: number; eventsProcessed: number }>;
+    }>(`{ _meta { chainId eventsProcessed } }`);
+    const chainMetadata = await graphql.query<{
+      chain_metadata: Array<{ chain_id: number; num_events_processed: number }>;
+    }>(`{ chain_metadata { chain_id num_events_processed } }`);
+
+    expect({ meta, chainMetadata }).toEqual({
+      meta: {
+        data: { _meta: [{ chainId: 1, eventsProcessed: 2147487700 }] },
+      },
+      chainMetadata: {
+        data: {
+          chain_metadata: [{ chain_id: 1, num_events_processed: 2147487700 }],
+        },
+      },
+    });
   });
 
   it("should resume with DB state on second start", async () => {

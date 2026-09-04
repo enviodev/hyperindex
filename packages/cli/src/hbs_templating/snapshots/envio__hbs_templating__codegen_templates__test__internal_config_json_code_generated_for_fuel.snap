@@ -30,13 +30,11 @@ expression: json
         "handler": "./src/EventHandlers.js",
         "events": [
           {
-            "event": "",
             "name": "NewGreeting",
             "sighash": "5586735131546214350",
             "kind": "logData"
           },
           {
-            "event": "",
             "name": "ClearGreeting",
             "sighash": "4485582493926303652",
             "kind": "logData"

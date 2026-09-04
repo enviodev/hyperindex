@@ -1,5 +1,5 @@
 use crate::{
-    clap_definitions::{ConfigSubcommand, JsonSchema, Script, SkillsSubcommand},
+    clap_definitions::{ConfigSubcommand, JsonSchema, MetricsSubcommand, Script, SkillsSubcommand},
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
@@ -15,6 +15,7 @@ pub mod init;
 mod local;
 mod metrics;
 mod skills;
+mod tools;
 
 use anyhow::{Context, Result};
 use schemars::schema_for;
@@ -81,13 +82,19 @@ pub async fn execute(
             Ok(None)
         }
 
-        CommandType::Metrics => {
-            metrics::run().await?;
+        CommandType::Metrics(metrics_args) => {
+            let runtime = matches!(metrics_args.subcommand, Some(MetricsSubcommand::Runtime));
+            metrics::run(runtime, &parsed_project_paths.project_root).await?;
             Ok(None)
         }
 
         CommandType::Skills(SkillsSubcommand::Update) => {
             skills::run_update(&parsed_project_paths)?;
+            Ok(None)
+        }
+
+        CommandType::Tools(tools_subcommand) => {
+            tools::run(tools_subcommand).await?;
             Ok(None)
         }
 
@@ -167,6 +174,9 @@ pub async fn execute(
 /// `ENVIO_CONFIG` is always present in the returned `env`; callers may
 /// append extra env pairs (e.g. ClickHouse credentials from Docker for
 /// `envio dev`).
+///
+/// `ENVIO_CONFIG` is root-relative: consumers resolve it against
+/// `cwd` / `--directory`, so a cwd-joined value would double the prefix.
 pub fn build_start_command(
     config: &SystemConfig,
     reset: bool,
@@ -175,7 +185,7 @@ pub fn build_start_command(
 ) -> Result<Command> {
     let config_path = config
         .parsed_project_paths
-        .config
+        .config_relative_to_root()
         .to_string_lossy()
         .into_owned();
 

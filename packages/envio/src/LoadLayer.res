@@ -1,30 +1,65 @@
+// A per-chain entity's rows must never dedup or merge across chains, so both
+// the load-group key and the storage query carry the scope.
+let scopeKeySuffix = (scope: Internal.chainScope) =>
+  switch scope {
+  | CrossChain => ""
+  | Chain(chainId) => `.${chainId->ChainId.toString}`
+  }
+
+// Narrows a query to the scope's chain. Cross-chain entities have no chain-id
+// column, so their filter is left untouched.
+let scopeFilter = (filter: EntityFilter.t, ~table: Table.table, ~scope: Internal.chainScope) =>
+  switch (scope, table->Table.getChainIdField) {
+  | (Chain(chainId), Some(field)) =>
+    EntityFilter.And({
+      filters: [
+        filter,
+        Eq({
+          fieldName: field.fieldName,
+          fieldValue: chainId->(Utils.magic: ChainId.t => unknown),
+        }),
+      ],
+    })
+  | _ => filter
+  }
+
 let loadById = (
   ~loadManager,
   ~persistence: Persistence.t,
   ~entityConfig: Internal.entityConfig,
-  ~inMemoryStore,
+  ~scope: Internal.chainScope,
+  ~indexerState,
   ~shouldGroup,
   ~item,
+  ~ecosystem,
   ~entityId,
 ) => {
-  let key = `${entityConfig.name}.get`
-  let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+  let key = `${entityConfig.name}.get${scope->scopeKeySuffix}`
+  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
 
   let load = async (idsToLoad, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
-    let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
+    let timerRef =
+      indexerState->IndexerState.startStorageLoad(~storage=storage.name, ~operation=key)
 
-    // Since LoadManager.call prevents registerign entities already existing in the inMemoryStore,
+    // Since LoadManager.call prevents registering entities already in the in-memory store,
     // we can be sure that we load only the new ones.
     let dbEntities = try {
-      await storage.loadByIdsOrThrow(
-        ~table=entityConfig.table,
-        ~rowsSchema=entityConfig.rowsSchema,
-        ~ids=idsToLoad,
-      )
+      (
+        await storage.loadOrThrow(
+          ~table=entityConfig.table,
+          ~filter=EntityFilter.In({
+            fieldName: Table.idFieldName,
+            fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
+          })->scopeFilter(~table=entityConfig.table, ~scope),
+        )
+      )->(Utils.magic: array<unknown> => array<Internal.entity>)
     } catch {
     | Persistence.StorageError({message, reason}) =>
-      reason->ErrorHandling.mkLogAndRaise(~logger=item->Logging.getItemLogger, ~msg=message)
+      reason->ErrorHandling.mkLogAndRaise(
+        ~logger=Ecosystem.getItemLogger(item, ~ecosystem),
+        ~msg=message,
+      )
     }
 
     let entitiesMap = Dict.make()
@@ -36,13 +71,14 @@ let loadById = (
     }
     idsToLoad->Array.forEach(entityId => {
       inMemTable->InMemoryTable.Entity.initValue(
-        ~allowOverWriteEntity=false,
+        ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
         ~key=entityId,
         ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
       )
     })
 
-    timerRef->Prometheus.StorageLoad.endOperation(
+    indexerState->IndexerState.endStorageLoad(
+      timerRef,
       ~storage=storage.name,
       ~operation=key,
       ~whereSize=idsToLoad->Array.length,
@@ -56,7 +92,7 @@ let loadById = (
     ~shouldGroup,
     ~hasher=LoadManager.noopHasher,
     ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafe,
-    ~hasInMemory=hash => inMemTable.table->InMemoryTable.hasByHash(hash),
+    ~hasInMemory=hash => inMemTable.latestEntityChangeById->Dict.has(hash),
     ~input=entityId,
   )
 }
@@ -64,73 +100,40 @@ let loadById = (
 let callEffect = (
   ~effect: Internal.effect,
   ~arg: Internal.effectArgs,
-  ~inMemTable: InMemoryStore.effectCacheInMemTable,
+  ~inMemTable: EffectState.effectCacheInMemTable,
   ~timerRef,
   ~onError,
 ) => {
-  let effectName = effect.name
-  let hadActiveCalls = effect.activeCallsCount > 0
-  effect.activeCallsCount = effect.activeCallsCount + 1
-  Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
-    ~labels=effectName,
-    ~value=effect.activeCallsCount,
-  )
-
-  if hadActiveCalls {
-    let elapsed = Hrtime.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=timerRef)
-    if elapsed > 0. {
-      Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
-        ~labels=effectName,
-        ~value=elapsed,
-      )
-    }
-  }
-  effect.prevCallStartTimerRef = timerRef
+  inMemTable.stats->EffectState.startCall(~timerRef)
 
   effect.handler(arg)
   ->Promise.thenResolve(output => {
-    inMemTable.dict->Dict.set(arg.cacheKey, output)
-    if arg.context.cache {
-      inMemTable.idsToStore->Array.push(arg.cacheKey)->ignore
-    }
+    inMemTable->InMemoryStore.setEffectOutput(
+      ~checkpointId=arg.checkpointId,
+      ~cacheKey=arg.cacheKey,
+      ~output,
+      ~shouldCache=arg.context.cache,
+    )
   })
   ->Utils.Promise.catchResolve(exn => {
     onError(~inputKey=arg.cacheKey, ~exn)
   })
   ->Promise.finally(() => {
-    effect.activeCallsCount = effect.activeCallsCount - 1
-    Prometheus.EffectCalls.activeCallsCount->Prometheus.SafeGauge.handleInt(
-      ~labels=effectName,
-      ~value=effect.activeCallsCount,
-    )
-    let newTimer = Hrtime.makeTimer()
-    Prometheus.EffectCalls.timeCounter->Prometheus.SafeCounter.handleFloat(
-      ~labels=effectName,
-      ~value=Hrtime.secondsBetween(~from=effect.prevCallStartTimerRef, ~to=newTimer),
-    )
-    effect.prevCallStartTimerRef = newTimer
-
-    Prometheus.EffectCalls.totalCallsCount->Prometheus.SafeCounter.increment(~labels=effectName)
-    Prometheus.EffectCalls.sumTimeCounter->Prometheus.SafeCounter.handleFloat(
-      ~labels=effectName,
-      ~value=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
-    )
+    inMemTable.stats->EffectState.endCall(~startTimerRef=timerRef)
   })
 }
 
 let rec executeWithRateLimit = (
   ~effect: Internal.effect,
   ~effectArgs: array<Internal.effectArgs>,
-  ~inMemTable,
+  ~inMemTable: EffectState.effectCacheInMemTable,
   ~onError,
   ~isFromQueue: bool,
 ) => {
-  let effectName = effect.name
-
-  let timerRef = Hrtime.makeTimer()
+  let timerRef = Performance.now()
   let promises = []
 
-  switch effect.rateLimit {
+  switch inMemTable.rateLimitState {
   | None =>
     // No rate limiting - execute all immediately
     for idx in 0 to effectArgs->Array.length - 1 {
@@ -159,8 +162,8 @@ let rec executeWithRateLimit = (
 
     // Split into immediate and queued
     let immediateCount = Math.Int.min(state.availableCalls, effectArgs->Array.length)
-    let immediateArgs = effectArgs->Belt.Array.slice(~offset=0, ~len=immediateCount)
-    let queuedArgs = effectArgs->Belt.Array.sliceToEnd(immediateCount)
+    let immediateArgs = effectArgs->Array.slice(~start=0, ~end=immediateCount)
+    let queuedArgs = effectArgs->Array.slice(~start=immediateCount)
 
     // Update available calls
     state.availableCalls = state.availableCalls - immediateCount
@@ -181,17 +184,13 @@ let rec executeWithRateLimit = (
     }
 
     if immediateCount > 0 && isFromQueue {
-      // Update queue count metric
-      state.queueCount = state.queueCount - immediateCount
-      Prometheus.EffectQueueCount.set(~count=state.queueCount, ~effectName)
+      inMemTable.stats->EffectState.queueDequeued(~count=immediateCount)
     }
 
     // Handle queued items
     if queuedArgs->Utils.Array.notEmpty {
       if !isFromQueue {
-        // Update queue count metric
-        state.queueCount = state.queueCount + queuedArgs->Array.length
-        Prometheus.EffectQueueCount.set(~count=state.queueCount, ~effectName)
+        inMemTable.stats->EffectState.queueEnqueued(~count=queuedArgs->Array.length)
       }
 
       let millisUntilReset = ref(0)
@@ -211,9 +210,8 @@ let rec executeWithRateLimit = (
         nextWindowPromise
         ->Promise.then(() => {
           if millisUntilReset.contents > 0 {
-            Prometheus.EffectQueueCount.timeCounter->Prometheus.SafeCounter.handleFloat(
-              ~labels=effectName,
-              ~value=millisUntilReset.contents->Int.toFloat /. 1000.,
+            inMemTable.stats->EffectState.addQueueWaitSeconds(
+              ~seconds=millisUntilReset.contents->Int.toFloat /. 1000.,
             )
           }
           executeWithRateLimit(
@@ -239,13 +237,23 @@ let loadEffect = (
   ~persistence: Persistence.t,
   ~effect: Internal.effect,
   ~effectArgs,
-  ~inMemoryStore,
+  ~scope: Internal.chainScope,
+  ~indexerState,
   ~shouldGroup,
   ~item,
+  ~ecosystem,
 ) => {
   let effectName = effect.name
-  let key = `${effectName}.effect`
-  let inMemTable = inMemoryStore->InMemoryStore.getEffectInMemTable(~effect)
+  let inMemTable = indexerState->InMemoryStore.getEffectInMemTable(~effect, ~scope)
+  let table = inMemTable.table
+  let tableName = table.tableName
+  // The operation key must differ per scope so chain-scoped calls with the same
+  // input never dedup across chains. Cross-chain keeps the bare effect name so
+  // the storage-load metric stays stable.
+  let key = switch scope {
+  | CrossChain => `${effectName}.effect`
+  | Chain(chainId) => `${effectName}.effect.${chainId->ChainId.toString}`
+  }
 
   let load = async (args, ~onError) => {
     let idsToLoad = args->Array.map((arg: Internal.effectArgs) => arg.cacheKey)
@@ -253,25 +261,28 @@ let loadEffect = (
 
     if (
       switch persistence.storageStatus {
-      | Ready({cache}) => cache->Utils.Dict.has(effectName)
+      | Ready({cache}) => cache->Dict.has(tableName)
       | _ => false
       }
     ) {
       let storage = persistence->Persistence.getInitializedStorageOrThrow
-      let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
-      let {table, outputSchema} = effect.storageMeta
+      let timerRef =
+        indexerState->IndexerState.startStorageLoad(~storage=storage.name, ~operation=key)
+      let {outputSchema} = effect.storageMeta
 
       let dbEntities = try {
-        await storage.loadByIdsOrThrow(
-          ~table,
-          ~rowsSchema=Internal.effectCacheItemRowsSchema,
-          ~ids=idsToLoad,
-        )
+        (
+          await storage.loadOrThrow(
+            ~table,
+            ~filter=EntityFilter.In({
+              fieldName: Table.idFieldName,
+              fieldValue: idsToLoad->(Utils.magic: array<string> => array<unknown>),
+            }),
+          )
+        )->(Utils.magic: array<unknown> => array<Internal.effectCacheItem>)
       } catch {
       | exn =>
-        item
-        ->Logging.getItemLogger
-        ->Logging.childWarn({
+        Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childWarn({
           "msg": `Failed to load cache effect cache. The indexer will continue working, but the effect will not be able to use the cache.`,
           "err": exn->Utils.prettifyExn,
           "effect": effectName,
@@ -283,14 +294,11 @@ let loadEffect = (
         try {
           let output = dbEntity.output->S.parseOrThrow(outputSchema)
           idsFromCache->Utils.Set.add(dbEntity.id)->ignore
-          inMemTable.dict->Dict.set(dbEntity.id, output)
+          inMemTable->InMemoryStore.initEffectOutputFromDb(~cacheKey=dbEntity.id, ~output)
         } catch {
         | S.Raised(error) =>
-          inMemTable.invalidationsCount = inMemTable.invalidationsCount + 1
-          Prometheus.EffectCacheInvalidationsCount.increment(~effectName)
-          item
-          ->Logging.getItemLogger
-          ->Logging.childTrace({
+          inMemTable->EffectState.recordInvalidation
+          Ecosystem.getItemLogger(item, ~ecosystem)->Logging.childTrace({
             "msg": "Invalidated effect cache",
             "input": dbEntity.id,
             "effect": effectName,
@@ -299,7 +307,8 @@ let loadEffect = (
         }
       })
 
-      timerRef->Prometheus.StorageLoad.endOperation(
+      indexerState->IndexerState.endStorageLoad(
+        timerRef,
         ~storage=storage.name,
         ~operation=key,
         ~whereSize=idsToLoad->Array.length,
@@ -334,70 +343,63 @@ let loadEffect = (
     ~load,
     ~shouldGroup,
     ~hasher=args => args.cacheKey,
-    ~getUnsafeInMemory=hash => inMemTable.dict->Dict.getUnsafe(hash),
-    ~hasInMemory=hash => inMemTable.dict->Utils.Dict.has(hash),
+    ~getUnsafeInMemory=hash => inMemTable->InMemoryStore.getEffectOutputUnsafe(hash),
+    ~hasInMemory=hash => inMemTable->InMemoryStore.hasEffectOutput(hash),
     ~input=effectArgs,
   )
 }
 
-let loadByField = (
+let loadByFilter = (
   ~loadManager,
   ~persistence: Persistence.t,
-  ~operator: TableIndices.Operator.t,
   ~entityConfig: Internal.entityConfig,
-  ~inMemoryStore,
-  ~fieldName,
-  ~fieldValueSchema,
+  ~scope: Internal.chainScope,
+  ~indexerState,
   ~shouldGroup,
   ~item,
-  ~fieldValue,
+  ~ecosystem,
+  ~filter: EntityFilter.t,
 ) => {
-  let operatorCallName = switch operator {
-  | Eq => "eq"
-  | Gt => "gt"
-  | Lt => "lt"
-  }
-  let key = `${entityConfig.name}.getWhere.${fieldName}.${operatorCallName}`
-  let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityConfig)
+  let key =
+    filter->EntityFilter.toOperationKey(~entityName=entityConfig.name) ++ scope->scopeKeySuffix
+  let inMemTable = indexerState->InMemoryStore.getInMemTable(~entityConfig, ~scope)
 
-  let load = async (fieldValues: array<'fieldValue>, ~onError as _) => {
+  let load = async (filters: array<EntityFilter.t>, ~onError as _) => {
     let storage = persistence->Persistence.getInitializedStorageOrThrow
-    let timerRef = Prometheus.StorageLoad.startOperation(~storage=storage.name, ~operation=key)
+
+    let timerRef =
+      indexerState->IndexerState.startStorageLoad(~storage=storage.name, ~operation=key)
 
     let size = ref(0)
 
-    let indiciesToLoad = fieldValues->Array.map((fieldValue): TableIndices.Index.t => {
-      Single({
-        fieldName,
-        fieldValue: TableIndices.FieldValue.castFrom(fieldValue),
-        operator,
-      })
-    })
+    filters->Array.forEach(filter => inMemTable->InMemoryTable.Entity.addEmptyIndex(~filter))
 
-    let _ = await indiciesToLoad
-    ->Array.map(async index => {
-      inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
+    // Any non-derived field can be filtered on, so the columns this query reads
+    // are indexed on demand before it runs rather than promised by the schema.
+    // Inside the load timing: waiting on the build is time the handler spends
+    // waiting for this operation, and it's the only thing that explains an
+    // occasional very slow getWhere.
+    await storage.ensureQueryIndexes(~table=entityConfig.table, ~filters)
+
+    // Loading a superset of rows via a merged query is safe: every loaded
+    // entity is matched against all registered indexes, not only the
+    // query's own filter.
+    let queries = filters->EntityFilter.merge
+
+    let _ = await queries
+    ->Array.map(async filter => {
       try {
-        let entities = await storage.loadByFieldOrThrow(
-          ~operator=switch index {
-          | Single({operator: Gt}) => #">"
-          | Single({operator: Eq}) => #"="
-          | Single({operator: Lt}) => #"<"
-          },
-          ~table=entityConfig.table,
-          ~rowsSchema=entityConfig.rowsSchema,
-          ~fieldName=index->TableIndices.Index.getFieldName,
-          ~fieldValue=switch index {
-          | Single({fieldValue}) => fieldValue
-          },
-          ~fieldSchema=fieldValueSchema->(
-            Utils.magic: S.t<'fieldValue> => S.t<TableIndices.FieldValue.t>
-          ),
-        )
+        let entities =
+          (
+            await storage.loadOrThrow(
+              ~table=entityConfig.table,
+              ~filter=filter->scopeFilter(~table=entityConfig.table, ~scope),
+            )
+          )->(Utils.magic: array<unknown> => array<Internal.entity>)
 
         entities->Array.forEach(entity => {
           inMemTable->InMemoryTable.Entity.initValue(
-            ~allowOverWriteEntity=false,
+            ~committedCheckpointId=indexerState->IndexerState.committedCheckpointId,
             ~key=entity.id,
             ~entity=Some(entity),
           )
@@ -408,12 +410,14 @@ let loadByField = (
       | Persistence.StorageError({message, reason}) =>
         reason->ErrorHandling.mkLogAndRaise(
           ~logger=Logging.createChildFrom(
-            ~logger=item->Logging.getItemLogger,
+            ~logger=Ecosystem.getItemLogger(item, ~ecosystem),
+            // The executed query might be merged from multiple getWhere
+            // calls, so report it as the operation users write with the
+            // values bound to its placeholders, instead of an internal
+            // filter representation they never constructed.
             ~params={
-              "operator": operatorCallName,
-              "tableName": entityConfig.table.tableName,
-              "fieldName": fieldName,
-              "fieldValue": fieldValue,
+              "operation": key,
+              "params": filter->EntityFilter.getParams,
             },
           ),
           ~msg=message,
@@ -422,10 +426,11 @@ let loadByField = (
     })
     ->Promise.all
 
-    timerRef->Prometheus.StorageLoad.endOperation(
+    indexerState->IndexerState.endStorageLoad(
+      timerRef,
       ~storage=storage.name,
       ~operation=key,
-      ~whereSize=fieldValues->Array.length,
+      ~whereSize=queries->Array.reduce(0, (acc, query) => acc + query->EntityFilter.valuesCount),
       ~size=size.contents,
     )
   }
@@ -433,11 +438,10 @@ let loadByField = (
   loadManager->LoadManager.call(
     ~key,
     ~load,
-    ~input=fieldValue,
+    ~input=filter,
     ~shouldGroup,
-    ~hasher=fieldValue =>
-      fieldValue->TableIndices.FieldValue.castFrom->TableIndices.FieldValue.toString,
-    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex(~fieldName, ~operator),
-    ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex(~fieldName, ~operator),
+    ~hasher=EntityFilter.toString,
+    ~getUnsafeInMemory=inMemTable->InMemoryTable.Entity.getUnsafeOnIndex,
+    ~hasInMemory=inMemTable->InMemoryTable.Entity.hasIndex,
   )
 }

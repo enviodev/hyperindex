@@ -18,5 +18,8 @@ type EmptyEntity @storage(postgres: true, clickhouse: true) {
   related: RelatedEntity!
   optionalRelated: RelatedEntity
   tags: [String!]!
-  optionalTags: [String!]
+}
+
+type UnannotatedEntity {
+  id: ID!
 }

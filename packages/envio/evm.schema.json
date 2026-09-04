@@ -4,16 +4,16 @@
   "description": "Schema for a YAML config for an envio indexer",
   "type": "object",
   "properties": {
+    "name": {
+      "description": "Name of the project",
+      "type": "string"
+    },
     "description": {
       "description": "Description of the project",
       "type": [
         "string",
         "null"
       ]
-    },
-    "name": {
-      "description": "Name of the project",
-      "type": "string"
     },
     "schema": {
       "description": "Custom path to schema.graphql file",
@@ -39,7 +39,7 @@
       "minimum": 0
     },
     "storage": {
-      "description": "Configuration for the storage backends the indexer writes to. Defaults to `postgres: true` when omitted. ClickHouse requires Postgres to be enabled (it is not supported as a single storage yet), and at least one backend must be enabled.",
+      "description": "Storage backends the indexer writes data to. Defaults to Postgres when omitted. Set `clickhouse: true` to additionally sync the indexed data to ClickHouse. Mark a backend with `default: true` to store entities that don't have an @storage directive in the schema, e.g. `clickhouse: {default: true}`.",
       "anyOf": [
         {
           "$ref": "#/$defs/StorageConfig"
@@ -47,6 +47,13 @@
         {
           "type": "null"
         }
+      ]
+    },
+    "disable_default_cross_chain": {
+      "description": "Make entities and effect caches per-chain instead of shared across every chain (recommended). Sharing then becomes explicit — add `@crossChain` to an entity in schema.graphql or `crossChain: true` to an effect. (default: false)",
+      "type": [
+        "boolean",
+        "null"
       ]
     },
     "ecosystem": {
@@ -67,7 +74,7 @@
         "null"
       ],
       "items": {
-        "$ref": "#/$defs/GlobalContract_for_ContractConfig"
+        "$ref": "#/$defs/GlobalContract"
       }
     },
     "chains": {
@@ -119,6 +126,17 @@
           "type": "null"
         }
       ]
+    },
+    "bytes_type": {
+      "description": "How the `Bytes` scalar in schema.graphql is represented. `hex` keeps 0x-prefixed hex strings stored as text, `uint8array` exposes `Uint8Array` values in handlers and stores raw bytes (BYTEA in Postgres, String in ClickHouse). (default: hex)",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BytesType"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -131,17 +149,75 @@
       "type": "object",
       "properties": {
         "postgres": {
-          "description": "Whether to use Postgres as a storage backend (default: true).",
-          "type": [
-            "boolean",
-            "null"
+          "description": "Whether to use Postgres as a storage backend (default: true). Accepts a boolean or an options object (the object form implies the backend is enabled).",
+          "anyOf": [
+            {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "default": {
+                  "description": "Whether entities without an @storage directive are stored in this backend (default: true when Postgres is the only enabled backend, false otherwise).",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "column_name_format": {
+                  "description": "How entity fields are reflected in the storage column names. `original` keeps the schema.graphql field names as is, `snake_case` converts them to snake_case in the database while keeping the original casing in the exposed APIs. (default: original)",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "original",
+                    "snake_case",
+                    null
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
           ]
         },
         "clickhouse": {
-          "description": "Whether to additionally sync the indexed data to ClickHouse. Requires Postgres to be enabled (default: false).",
-          "type": [
-            "boolean",
-            "null"
+          "description": "Whether to additionally sync the indexed data to ClickHouse. Requires Postgres to be enabled (default: false). Accepts a boolean or an options object (the object form implies the backend is enabled).",
+          "anyOf": [
+            {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "default": {
+                  "description": "Whether entities without an @storage directive are stored in this backend (default: false).",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "column_name_format": {
+                  "description": "How entity fields are reflected in the storage column names. `original` keeps the schema.graphql field names as is, `snake_case` converts them to snake_case in the database while keeping the original casing in the exposed APIs. (default: original)",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "original",
+                    "snake_case",
+                    null
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
           ]
         }
       },
@@ -163,7 +239,14 @@
           "if": {
             "properties": {
               "clickhouse": {
-                "const": true
+                "anyOf": [
+                  {
+                    "const": true
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
               }
             },
             "required": [
@@ -173,7 +256,14 @@
           "then": {
             "properties": {
               "postgres": {
-                "const": true
+                "anyOf": [
+                  {
+                    "const": true
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
               }
             },
             "required": [
@@ -189,7 +279,7 @@
         "evm"
       ]
     },
-    "GlobalContract_for_ContractConfig": {
+    "GlobalContract": {
       "type": "object",
       "properties": {
         "name": {
@@ -356,6 +446,13 @@
           "format": "uint64",
           "minimum": 0
         },
+        "skip": {
+          "description": "Excludes the chain from indexing and migrations. Code generation is unaffected. For testing, prefer using a test framework instead.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "rpc": {
           "description": "RPC configuration for your indexer. If not specified otherwise, for chains supported by HyperSync, RPC serves as a fallback for added reliability. For others, it acts as the primary data-source. HyperSync offers significant performance improvements, up to a 1000x faster than traditional RPC.",
           "anyOf": [
@@ -418,7 +515,7 @@
             "null"
           ],
           "items": {
-            "$ref": "#/$defs/ChainContract_for_ContractConfig"
+            "$ref": "#/$defs/ChainContract"
           }
         }
       },
@@ -468,6 +565,16 @@
             "string",
             "null"
           ]
+        },
+        "headers": {
+          "description": "Optional HTTP headers sent with every request to this RPC endpoint, e.g. an Authorization bearer token for gated endpoints. Values support ${ENV_VAR} interpolation.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
         },
         "initial_block_interval": {
           "description": "The starting interval in range of blocks per query",
@@ -578,7 +685,7 @@
         "url"
       ]
     },
-    "ChainContract_for_ContractConfig": {
+    "ChainContract": {
       "type": "object",
       "properties": {
         "name": {
@@ -661,6 +768,21 @@
       "enum": [
         "checksum",
         "lowercase"
+      ]
+    },
+    "BytesType": {
+      "description": "How the schema.graphql `Bytes` scalar reaches handlers and storage.",
+      "oneOf": [
+        {
+          "description": "`0x`-prefixed hex strings, stored as text.",
+          "type": "string",
+          "const": "hex"
+        },
+        {
+          "description": "`Uint8Array` values, stored as raw bytes (`BYTEA` in Postgres, `String` in ClickHouse).",
+          "type": "string",
+          "const": "uint8array"
+        }
       ]
     }
   }

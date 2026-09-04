@@ -6,14 +6,14 @@ let make = (~loaded, ~buffered=?, ~outOf, ~barWidth=36, ~loadingColor=Style.Seco
 
   let loadedFraction = loaded->Int.toFloat /. outOf->Int.toFloat
   let loadedCount = Pervasives.min(
-    Math.floor(maxCount->Int.toFloat *. loadedFraction)->Belt.Float.toInt,
+    Math.floor(maxCount->Int.toFloat *. loadedFraction)->Float.toInt,
     maxCount,
   )
 
   let bufferedCount = buffered->Option.mapOr(loadedCount, buffered => {
     let bufferedFraction = buffered->Int.toFloat /. outOf->Int.toFloat
     Pervasives.min(
-      Math.floor(maxCount->Int.toFloat *. bufferedFraction)->Belt.Float.toInt,
+      Math.floor(maxCount->Int.toFloat *. bufferedFraction)->Float.toInt,
       maxCount,
     )
   })

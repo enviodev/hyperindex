@@ -1,38 +1,27 @@
-type hyperSyncPage<'item> = {
-  items: array<'item>,
+type logsQueryPage = {
+  items: array<HyperSyncClient.EventItems.item>,
   nextBlock: int,
   archiveHeight: int,
-  rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
-  events: array<HyperSyncClient.ResponseTypes.event>,
+  transactionStore: TransactionStore.t,
+  blockStore: BlockStore.t,
 }
 
-module Log: {
-  type t = {
-    address: Address.t,
-    data: string,
-    topics: array<EvmTypes.Hex.t>,
-    logIndex: int,
-  }
-}
+// How often a HyperSync source is asked for the height while nothing is pushing
+// one. Every ecosystem's client talks to the same service, so they wait alike.
+let pollingInterval: int
 
-type logsQueryPageItem = {
-  log: Log.t,
-  block: HyperSyncClient.ResponseTypes.block,
-  transaction: Internal.eventTransaction,
-}
+// Map a native client's `PREFIX:<int>` failure marker onto the exception
+// SourceManager retries on (`RateLimited` / `SourceBehindHead`), falling back to
+// the original cause.
+let mapNativeFailure: Source.nativeRequestFailure => exn
+let mapNativeFailureExn: exn => exn
+let reraiseIfRecoverable: exn => unit
 
-type logsQueryPage = hyperSyncPage<logsQueryPageItem>
-
-type missingParams = {
-  queryName: string,
-  missingParams: array<string>,
-}
-
-type queryError = UnexpectedMissingParams(missingParams)
-
-let queryErrorToMsq: queryError => string
-
-type queryResponse<'a> = result<'a, queryError>
+// Wrap a native client's paginated block-hash query as a `Source.getBlockHashes`,
+// keeping the request timings whether it succeeds or fails.
+let makeGetBlockHashes: (
+  ~query: (~blockNumbers: array<int>) => promise<(BlockStore.t, array<Source.requestStat>)>,
+) => (~blockNumbers: array<int>, ~logger: Pino.t) => promise<Source.getBlockHashesResponse>
 
 module GetLogs: {
   type error =
@@ -41,31 +30,15 @@ module GetLogs: {
 
   exception Error(error)
 
+  let extractMissingParams: exn => option<array<string>>
+
   let query: (
     ~client: HyperSyncClient.t,
     ~fromBlock: int,
     ~toBlock: option<int>,
-    ~logSelections: array<LogSelection.t>,
-    ~fieldSelection: HyperSyncClient.QueryTypes.fieldSelection,
-    ~nonOptionalBlockFieldNames: array<string>,
-    ~nonOptionalTransactionFieldNames: array<string>,
+    ~maxNumLogs: option<int>,
+    ~registrationIndexes: array<int>,
+    ~addressSet: AddressSet.t,
+    ~clientFilteredContracts: option<array<string>>,
   ) => promise<logsQueryPage>
 }
-
-let queryBlockData: (
-  ~client: HyperSyncClient.t,
-  ~blockNumber: int,
-  ~sourceName: string,
-  ~chainId: int,
-  ~logger: Pino.t,
-) => promise<queryResponse<option<ReorgDetection.blockDataWithTimestamp>>>
-
-let queryBlockDataMulti: (
-  ~client: HyperSyncClient.t,
-  ~blockNumbers: array<int>,
-  ~sourceName: string,
-  ~chainId: int,
-  ~logger: Pino.t,
-) => promise<queryResponse<array<ReorgDetection.blockDataWithTimestamp>>>
-
-let mapExn: queryResponse<'a> => result<'a, exn>

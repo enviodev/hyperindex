@@ -13,6 +13,7 @@ module ChainLine = {
     ~endBlock,
     ~poweredByHyperSync,
     ~eventsProcessed,
+    ~blockUnit: string,
   ) => {
     let chainsWidth = Pervasives.min(stdoutColumns - 2, 60)
     let headerWidth = maxChainIdLength + 10 // 10 for additional text
@@ -27,9 +28,10 @@ module ChainLine = {
       let toBlockStr = toBlock->TuiData.formatLocaleString
       let eventsStr = eventsProcessed->TuiData.formatFloatLocaleString
 
+      let endLabel = ` (End ${blockUnit})`
       let blocksText =
-        `Blocks: ${progressBlockStr} / ${toBlockStr}` ++
-        (endBlock->Option.isSome ? " (End Block)" : "") ++ `  `
+        `${blockUnit}s: ${progressBlockStr} / ${toBlockStr}` ++
+        (endBlock->Option.isSome ? endLabel : "") ++ `  `
       let eventsText = `Events: ${eventsStr}`
 
       let fitsSameLine = blocksText->String.length + eventsText->String.length <= chainsWidth
@@ -92,7 +94,7 @@ module EventsPerSecond = {
     }
   }
 
-  let use = (~totalEventsProcessed: float) => {
+  let use = (~totalEventsProcessed: float, ~tick: int) => {
     let (samples, setSamples) = React.useState((): array<sample> => [])
 
     React.useEffect1(() => {
@@ -103,7 +105,7 @@ module EventsPerSecond = {
         kept->Array.concat([{time: now, events: totalEventsProcessed}])
       })
       None
-    }, [totalEventsProcessed])
+    }, [tick])
 
     computeEps(samples)
   }
@@ -132,12 +134,15 @@ module App = {
   @react.component
   let make = (~getState) => {
     let stdoutColumns = Hooks.useStdoutColumns()
-    let (state: GlobalState.t, setState) = React.useState(() => getState())
+    // IndexerState is mutated in place — passing the same ref to useState
+    // would bail out via Object.is and skip the re-render. Tick a counter
+    // instead and read state freshly from getState() on every render.
+    let (tick, setTick) = React.useState(() => 0)
+    let state: IndexerState.t = getState()
 
-    // useEffect to refresh state every 500ms
     React.useEffect(() => {
       let intervalId = setInterval(() => {
-        setState(_ => getState())
+        setTick(t => t + 1)
       }, 500)
 
       Some(
@@ -148,18 +153,19 @@ module App = {
     }, [getState])
 
     let chains =
-      state.chainManager.chainFetchers
-      ->ChainMap.values
-      ->Array.map(cf => {
-        let {numEventsProcessed, fetchState} = cf
-        let latestFetchedBlockNumber = Pervasives.max(fetchState->FetchState.bufferBlockNumber, 0)
-        let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
-        let knownHeight =
-          cf->ChainFetcher.hasProcessedToEndblock
-            ? cf.fetchState.endBlock->Option.getOr(cf.fetchState.knownHeight)
-            : cf.fetchState.knownHeight
+      state
+      ->IndexerState.chainStates
+      ->Dict.valuesToArray
+      ->Array.map(cs => {
+        let data = cs->ChainState.toMetrics
+        let numEventsProcessed = data.numEventsProcessed
+        let committedProgressBlockNumber = cs->ChainState.committedProgressBlockNumber
+        let timestampCaughtUpToHeadOrEndblock = data.timestampCaughtUpToHeadOrEndblock
+        let sourceManager = cs->ChainState.sourceManager
+        let latestFetchedBlockNumber = data.latestFetchedBlockNumber
+        let hasProcessedToEndblock = cs->ChainState.hasProcessedToEndblock
 
-        let firstEventBlock = cf.fetchState.firstEventBlock
+        let firstEventBlock = data.firstEventBlockNumber
         let progress: TuiData.progress = if hasProcessedToEndblock {
           // If the endblock has been reached then set the progress to synced.
           // if there's chains that have no events in the block range start->end,
@@ -167,25 +173,25 @@ module App = {
           // This ensures TUI still displays synced in this case
           Synced({
             firstEventBlockNumber: firstEventBlock->Option.getOr(0),
-            latestProcessedBlock: cf.committedProgressBlockNumber,
-            timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock->Option.getOr(
+            latestProcessedBlock: committedProgressBlockNumber,
+            timestampCaughtUpToHeadOrEndblock: timestampCaughtUpToHeadOrEndblock->Option.getOr(
               Date.now()->Date.fromTime,
             ),
             numEventsProcessed,
           })
         } else {
-          switch (firstEventBlock, cf.timestampCaughtUpToHeadOrEndblock) {
+          switch (firstEventBlock, timestampCaughtUpToHeadOrEndblock) {
           | (Some(firstEventBlockNumber), Some(timestampCaughtUpToHeadOrEndblock)) =>
             Synced({
               firstEventBlockNumber,
-              latestProcessedBlock: cf.committedProgressBlockNumber,
+              latestProcessedBlock: committedProgressBlockNumber,
               timestampCaughtUpToHeadOrEndblock,
               numEventsProcessed,
             })
           | (Some(firstEventBlockNumber), None) =>
             Syncing({
               firstEventBlockNumber,
-              latestProcessedBlock: cf.committedProgressBlockNumber,
+              latestProcessedBlock: committedProgressBlockNumber,
               numEventsProcessed,
             })
           | (None, _) => SearchingForEvents
@@ -195,21 +201,26 @@ module App = {
         (
           {
             progress,
-            knownHeight,
+            knownHeight: data.knownHeight,
             latestFetchedBlockNumber,
             eventsProcessed: numEventsProcessed,
-            chainId: cf.chainConfig.id->Int.toString,
-            progressBlock: cf.committedProgressBlockNumber < cf.fetchState.startBlock
-              ? Some(cf.fetchState.startBlock)
-              : Some(cf.committedProgressBlockNumber),
+            chainId: (cs->ChainState.chainConfig).id->ChainId.toString,
+            progressBlock: committedProgressBlockNumber < data.startBlock
+              ? Some(data.startBlock)
+              : Some(committedProgressBlockNumber),
             bufferBlock: Some(latestFetchedBlockNumber),
-            sourceBlock: Some(cf.fetchState.knownHeight),
-            firstEventBlockNumber: cf.fetchState.firstEventBlock,
-            startBlock: cf.fetchState.startBlock,
-            endBlock: cf.fetchState.endBlock,
-            poweredByHyperSync: (
-              cf.sourceManager->SourceManager.getActiveSource
-            ).poweredByHyperSync,
+            sourceBlock: Some(cs->ChainState.knownHeight),
+            firstEventBlockNumber: firstEventBlock,
+            startBlock: data.startBlock,
+            endBlock: data.endBlock,
+            poweredByHyperSync: data.poweredByHyperSync,
+            blockUnit: switch (state->IndexerState.config).ecosystem.name {
+            | Svm => "Slot"
+            | Evm | Fuel => "Block"
+            },
+            rateLimitTimeMs: sourceManager->SourceManager.getRateLimitTimeMs,
+            isRateLimited: sourceManager->SourceManager.isRateLimited,
+            rateLimitResetInMs: sourceManager->SourceManager.getRateLimitResetInMs,
           }: TuiData.chain
         )
       })
@@ -225,7 +236,7 @@ module App = {
         acc
       }
     })
-    let eventsPerSecond = EventsPerSecond.use(~totalEventsProcessed)
+    let eventsPerSecond = EventsPerSecond.use(~totalEventsProcessed, ~tick)
 
     <Box flexDirection={Column}>
       <BigText
@@ -249,6 +260,7 @@ module App = {
           stdoutColumns={stdoutColumns}
           poweredByHyperSync={chainData.poweredByHyperSync}
           eventsProcessed={chainData.eventsProcessed}
+          blockUnit={chainData.blockUnit}
         />
       })
       ->React.array}
@@ -256,7 +268,39 @@ module App = {
         totalEventsProcessed
         eventsPerSecond={SyncETA.isIndexerFullySynced(chains) ? None : eventsPerSecond}
       />
-      <SyncETA chains indexerStartTime=state.indexerStartTime />
+      <SyncETA chains indexerStartTime={state->IndexerState.indexerStartTime} />
+      {
+        let maxRateLimitTimeMs =
+          chains->Array.reduce(0., (acc, chain) => Pervasives.max(acc, chain.rateLimitTimeMs))
+        let maxResetInMs =
+          chains->Array.reduce(0.0, (acc, chain) =>
+            Pervasives.max(acc, chain.rateLimitResetInMs->Option.getOr(0.0))
+          )
+        maxRateLimitTimeMs > 1000.
+          ? {
+              let rateLimitSecs = Math.round(maxRateLimitTimeMs /. 1000.)
+              let activeSuffix = if maxResetInMs > 0.0 {
+                let resetSecs = Pervasives.max(1.0, Math.ceil(maxResetInMs /. 1000.))
+                ` (⏳ ${resetSecs->TuiData.formatFloatLocaleString}s until reset)`
+              } else {
+                ""
+              }
+              <Box flexDirection={Column}>
+                <Newline />
+                <Text color={Danger}>
+                  {`Backfill ${rateLimitSecs->TuiData.formatFloatLocaleString}s slower due to your plan's rate limit${activeSuffix}`->React.string}
+                </Text>
+                <Text color={Danger}>
+                  <Text color={Danger}> {"Upgrade at "->React.string} </Text>
+                  <Text color={Danger} underline=true>
+                    {"https://envio.dev/app/api-tokens"->React.string}
+                  </Text>
+                  <Text color={Danger}> {" for higher rate limits."->React.string} </Text>
+                </Text>
+              </Box>
+            }
+          : React.null
+      }
       <Newline />
       <Box flexDirection={Row}>
         <Text> {"GraphQL: "->React.string} </Text>
@@ -270,7 +314,7 @@ module App = {
           }
         }
       </Box>
-      {if state.ctx.config.isDev {
+      {if (state->IndexerState.config).isDev {
         <Box flexDirection={Row}>
           <Text> {"Dev Console: "->React.string} </Text>
           <Text color={Info} underline=true> {`${Env.envioAppUrl}/console`->React.string} </Text>
@@ -278,7 +322,7 @@ module App = {
       } else {
         React.null
       }}
-      {switch (state.ctx.config.storage.clickhouse, Env.ClickHouse.host()) {
+      {switch ((state->IndexerState.config).storage.clickhouse, Env.ClickHouse.host()) {
       | (true, Some(host)) =>
         <Box flexDirection={Row}>
           <Text> {"ClickHouse: "->React.string} </Text>
@@ -286,7 +330,7 @@ module App = {
         </Box>
       | _ => React.null
       }}
-      <Messages config=state.ctx.config />
+      <Messages config={state->IndexerState.config} />
     </Box>
   }
 }

@@ -48,6 +48,12 @@ export type EffectCaller = <I, O>(
   input: I extends undefined ? undefined : I
 ) => Promise<O>;
 
+/** The chain an Effect was called on. Available only on chain-scoped effects. */
+export type EffectChain = {
+  /** The chain id the effect handler was called on. */
+  readonly id: number;
+};
+
 /** Context passed to an Effect's handler function. */
 export type EffectContext = {
   /** Access the logger instance with the event as context. */
@@ -57,6 +63,9 @@ export type EffectContext = {
   /** Whether to cache this call's result. Defaults to the effect's `cache`
    * option; set to `false` to skip caching for this specific invocation. */
   cache: boolean;
+  /** The chain the effect was called on. Only available on chain-scoped
+   * effects; accessing it on a cross-chain effect throws. */
+  readonly chain: EffectChain;
 };
 
 /** Rate-limit window for an {@link Effect}. Strings resolve to common
@@ -82,6 +91,12 @@ export type EffectOptions<Input, Output> = {
   readonly rateLimit: RateLimit;
   /** Whether the effect should be cached. */
   readonly cache?: boolean;
+  /** Whether the effect's cache is shared across all chains. Defaults to
+   * `true`, or to `false` when config.yaml sets
+   * `disable_default_cross_chain: true`. Set to `false` to isolate the cache
+   * and rate limiting per chain and enable `context.chain.id` inside the
+   * handler. Changing this changes the effect's cache identity. */
+  readonly crossChain?: boolean;
 };
 
 /** Arguments passed to the handler function of an {@link Effect}. */
@@ -107,7 +122,7 @@ export type Prettify<T> = { [K in keyof T]: T[K] } & {};
 
 /**
  * Operator for filtering entity fields in getWhere queries.
- * Only fields with `@index` in the schema can be queried at runtime.
+ * Only `id` and fields with `@index` in the schema can be queried at runtime.
  */
 export type GetWhereOperator<T> = {
   /** Matches entities where the field equals the given value. */
@@ -128,7 +143,7 @@ export type GetWhereOperator<T> = {
  * Constructs a getWhere filter type from an entity type.
  * Each field can be filtered using {@link GetWhereOperator} (`_eq`, `_gt`, `_lt`, `_gte`, `_lte`, `_in`).
  *
- * Note: only fields with `@index` in the schema can be queried at runtime.
+ * Note: only `id` and fields with `@index` in the schema can be queried at runtime.
  * Attempting to filter on a non-indexed field will throw a descriptive error.
  */
 export type GetWhereFilter<E> = {
@@ -209,6 +224,12 @@ export function createEffect<
     readonly rateLimit: RateLimit;
     /** Whether the effect should be cached. */
     readonly cache?: boolean;
+    /** Whether the effect's cache is shared across all chains. Defaults to
+     * `true`, or to `false` when config.yaml sets
+     * `disable_default_cross_chain: true`. Set to `false` to isolate the cache
+     * and rate limiting per chain and enable `context.chain.id` inside the
+     * handler. */
+    readonly crossChain?: boolean;
   },
   handler: (args: EffectArgs<I>) => Promise<R>
 ): Effect<I, O>;
@@ -299,8 +320,6 @@ type IndexerConfig = {
   description?: string;
   /** Path to handlers directory for auto-loading (default: "src/handlers"). */
   handlers?: string;
-  /** Multichain mode: ordered or unordered (default: "unordered"). */
-  multichain?: "ordered" | "unordered";
   /** Target batch size for event processing (default: 5000). */
   fullBatchSize?: number;
   /** Whether to rollback on chain reorg (default: true). */
@@ -485,6 +504,8 @@ type IndexerConfigTypes = {
   };
   svm?: { chains: Record<string, { id: number }> };
   entities?: Record<string, object>;
+  // Union of the entity names whose rows belong to a single chain, or `never`.
+  perChainEntities?: string;
   enums?: Record<string, string>;
 };
 
@@ -568,14 +589,18 @@ export type SvmOnSlotContext<Config extends IndexerConfigTypes = GlobalConfig> =
   BaseHandlerContext<Config, SvmChainIds<Config>>
 >;
 
+/** The entity's `id` type. `ID!`/`String!` ids are `string`; `Int!` is `number`
+ * and `BigInt!` is `bigint`, so id-keyed operations accept the real scalar. */
+type EntityId<Entity> = Entity extends { readonly id: infer Id } ? Id : string;
+
 /** Entity operations available in handler contexts. */
 type EntityOperations<Entity> = {
-  readonly get: (id: string) => Promise<Entity | undefined>;
-  readonly getOrThrow: (id: string, message?: string) => Promise<Entity>;
+  readonly get: (id: EntityId<Entity>) => Promise<Entity | undefined>;
+  readonly getOrThrow: (id: EntityId<Entity>, message?: string) => Promise<Entity>;
   readonly getWhere: (filter: GetWhereFilter<Entity>) => Promise<Entity[]>;
   readonly getOrCreate: (entity: Entity) => Promise<Entity>;
   readonly set: (entity: Entity) => void;
-  readonly deleteUnsafe: (id: string) => void;
+  readonly deleteUnsafe: (id: EntityId<Entity>) => void;
 };
 
 /** Contract registration handle. */
@@ -700,17 +725,188 @@ export type FuelOnEventWhere<Params, ContractName extends string> =
 type _ProjectEvmEvent = EvmEvent extends EventLike ? EvmEvent : never;
 type _ProjectFuelEvent = FuelEvent extends EventLike ? FuelEvent : never;
 
+// ============== EVM inline field selection ==============
+
+/** Marks a block/transaction field the registration doesn't select. Reading such
+ * a field is a type error; the message names the field and where to add it. */
+export type FieldNotSelected<Message extends string> = { readonly __fieldNotSelected: Message };
+
+/** Every EVM block field, with the type it has once selected. Declared by hand
+ * so the `fields` option types work in a project that never ran codegen; kept
+ * in sync with the config-parsing enums by a test in `codegen_templates.rs`. */
+export type EvmAllBlockFields = {
+  readonly number: number;
+  readonly timestamp: number;
+  readonly hash: string;
+  readonly parentHash: string;
+  readonly nonce: bigint | undefined;
+  readonly sha3Uncles: string;
+  readonly logsBloom: string;
+  readonly transactionsRoot: string;
+  readonly stateRoot: string;
+  readonly receiptsRoot: string;
+  readonly miner: Address;
+  readonly difficulty: bigint | undefined;
+  readonly totalDifficulty: bigint | undefined;
+  readonly extraData: string;
+  readonly size: bigint;
+  readonly gasLimit: bigint;
+  readonly gasUsed: bigint;
+  readonly uncles: readonly string[] | undefined;
+  readonly baseFeePerGas: bigint | undefined;
+  readonly blobGasUsed: bigint | undefined;
+  readonly excessBlobGas: bigint | undefined;
+  readonly parentBeaconBlockRoot: string | undefined;
+  readonly withdrawalsRoot: string | undefined;
+  readonly l1BlockNumber: number | undefined;
+  readonly sendCount: string | undefined;
+  readonly sendRoot: string | undefined;
+  readonly mixHash: string | undefined;
+};
+
+export type EvmAllTransactionFields = {
+  readonly transactionIndex: number;
+  readonly hash: string;
+  readonly from: Address | undefined;
+  readonly to: Address | undefined;
+  readonly gas: bigint;
+  readonly gasPrice: bigint | undefined;
+  readonly maxPriorityFeePerGas: bigint | undefined;
+  readonly maxFeePerGas: bigint | undefined;
+  readonly cumulativeGasUsed: bigint;
+  readonly effectiveGasPrice: bigint;
+  readonly gasUsed: bigint;
+  readonly input: string;
+  readonly nonce: bigint;
+  readonly value: bigint;
+  readonly v: string | undefined;
+  readonly r: string | undefined;
+  readonly s: string | undefined;
+  readonly contractAddress: Address | undefined;
+  readonly logsBloom: string;
+  readonly root: string | undefined;
+  readonly status: number | undefined;
+  readonly yParity: string | undefined;
+  readonly accessList: readonly unknown[] | undefined;
+  readonly maxFeePerBlobGas: bigint | undefined;
+  readonly blobVersionedHashes: readonly string[] | undefined;
+  readonly type: number | undefined;
+  readonly l1Fee: bigint | undefined;
+  readonly l1GasPrice: bigint | undefined;
+  readonly l1GasUsed: bigint | undefined;
+  readonly l1FeeScalar: number | undefined;
+  readonly gasUsedForL1: bigint | undefined;
+  readonly authorizationList: readonly unknown[] | undefined;
+};
+
+export type EvmBlockFieldName = keyof EvmAllBlockFields & string;
+export type EvmTransactionFieldName = keyof EvmAllTransactionFields & string;
+
+/** The `fields` option of `indexer.onEvent` / `indexer.contractRegister`.
+ * Names the block and transaction fields this registration reads. Replaces
+ * `field_selection` from `config.yaml` for this registration — fields selected
+ * there but not listed here are not readable. */
+export type EvmFieldsSelection = {
+  readonly block?: readonly EvmBlockFieldName[];
+  readonly transaction?: readonly EvmTransactionFieldName[];
+};
+
+/** Included in every inline selection without being listed. `block.number` is
+ * the item's own key, so it costs nothing extra. */
+type EvmAlwaysSelectedBlockField = "number";
+
+type EvmSelectedFields<All, Selected extends string, Knob extends string> = {
+  readonly [K in keyof All]: K extends Selected
+    ? All[K]
+    : FieldNotSelected<`Field '${K &
+        string}' is not selected for this handler. Add it to fields.${Knob} in the registration options.`>;
+};
+
+/** Field names listed under `Knob`, or `never` when the key is absent or lists
+ * nothing. Reads the value through `EvmListedArray` for the same reason that
+ * type exists: an optional property doesn't satisfy a `Record<Knob, _>`
+ * conditional, which would type every listed field as unselected for a
+ * selection whose keys are optional. Element access rather than `infer`, which
+ * falls back to its `string` constraint on an absent key — naming every field
+ * as selected. */
+type EvmListedFields<Fields, Knob extends keyof EvmFieldsSelection> = NonNullable<
+  EvmListedArray<Fields, Knob>
+>[number] &
+  string;
+
+/** The value listed under `Knob`, keeping optional keys (which a `Record<Knob, _>`
+ * conditional would miss, since an optional property doesn't satisfy a required
+ * one). `never` when the key is absent from the selection entirely. */
+type EvmListedArray<Fields, Knob extends keyof EvmFieldsSelection> = Fields[Knob &
+  keyof Fields];
+
+/** True for an unbounded `T[]` / `readonly T[]`, false for a literal tuple —
+ * and false for an absent key, so a selection that names only one knob passes. */
+type IsWidenedArray<T> = [NonNullable<T>] extends [never]
+  ? false
+  : [NonNullable<T>] extends [readonly unknown[]]
+    ? number extends NonNullable<T>["length"]
+      ? true
+      : false
+    : false;
+
+/** Rejected in place of the `fields` option when a selection isn't written as a
+ * literal. Reading it as an array type would only tell us the field union, not
+ * which fields this registration listed, so every field would type as selected
+ * while the runtime selected a subset. */
+export type EvmFieldsMustBeLiteral<Knob extends string> = {
+  readonly __fieldsMustBeLiteral: `fields.${Knob} must be a literal array, so its element types name the selected fields. Write it inline, or annotate the variable with 'as const' instead of a field-name array type.`;
+};
+
+/** `unknown` (a no-op intersection) when every listed selection is a literal
+ * array, otherwise the branded type that rejects the option. */
+type EvmFieldsLiteralCheck<Fields> = [Fields] extends [undefined]
+  ? unknown
+  : IsWidenedArray<EvmListedArray<Fields, "block">> extends true
+    ? EvmFieldsMustBeLiteral<"block">
+    : IsWidenedArray<EvmListedArray<Fields, "transaction">> extends true
+      ? EvmFieldsMustBeLiteral<"transaction">
+      : unknown;
+
+/** Rebinds an event's `block`/`transaction` to an inline `fields` selection.
+ * With no `fields` option the event type passes through, so the `config.yaml`
+ * `field_selection` path is unaffected. */
+export type EvmEventWithFields<Event, Fields> = [Fields] extends [EvmFieldsSelection]
+  ? Omit<Event, "block" | "transaction"> & {
+      readonly block: EvmSelectedFields<
+        EvmAllBlockFields,
+        EvmAlwaysSelectedBlockField | EvmListedFields<Fields, "block">,
+        "block"
+      >;
+      readonly transaction: EvmSelectedFields<
+        EvmAllTransactionFields,
+        EvmListedFields<Fields, "transaction">,
+        "transaction"
+      >;
+    }
+  : Event;
+
 /** Options for registering an EVM onEvent handler. Contract and event literal names are derived from the Event type.
  * The conditional `Event extends EventLike` distributes over union members so that each member's
  * contractName/eventName pair is constrained together — preventing invalid cross-member pairings.
  * The `Params` generic carries the indexed-parameter shape (looked up via `EvmEventFilters[C][E]["params"]`
  * by callers) so the `where` option enforces the same per-event narrowing as the inline handler signature. */
-export type EvmOnEventOptions<Event extends EventLike = _ProjectEvmEvent, Params = {}> = Event extends EventLike
+export type EvmOnEventOptions<
+  Event extends EventLike = _ProjectEvmEvent,
+  Params = {},
+  Fields extends EvmFieldsSelection | undefined = undefined,
+> = Event extends EventLike
   ? {
       readonly contract: Event["contractName"];
       readonly event: Event["eventName"];
       readonly wildcard?: boolean;
       readonly where?: EvmOnEventWhere<Params, Event["contractName"] & string>;
+      /** Pass the selection's literal type as the `Fields` generic to get the
+       * same narrowing `indexer.onEvent` infers from the call site. Defaults to
+       * no selection: `EvmFieldsSelection` names no fields in particular, so an
+       * options value declared without the generic would carry a selection
+       * `onEvent` can only reject. */
+      readonly fields?: Fields & EvmFieldsLiteralCheck<Fields>;
     }
   : never;
 
@@ -724,7 +920,8 @@ export type EvmOnEventHandler<
 export type EvmContractRegisterOptions<
   Event extends EventLike = _ProjectEvmEvent,
   Params = {},
-> = EvmOnEventOptions<Event, Params>;
+  Fields extends EvmFieldsSelection | undefined = undefined,
+> = EvmOnEventOptions<Event, Params, Fields>;
 
 /** Handler function for an EVM contractRegister registration. */
 export type EvmContractRegisterHandler<
@@ -961,6 +1158,395 @@ export type SvmOnSlotOptions<Config extends IndexerConfigTypes = GlobalConfig> =
   readonly where?: (args: SvmOnSlotWhereArgs<Config>) => SvmOnSlotWhereResult;
 };
 
+// ============== SVM onInstruction types ==============
+
+export type SvmLogKind =
+  | "invoke"
+  | "success"
+  | "failed"
+  | "consumed"
+  | "log"
+  | "data"
+  | (string & {});
+
+export type SvmAllLogFields = {
+  readonly kind: SvmLogKind;
+  readonly message: string;
+};
+
+export type SvmAllAccountLamportsFields = {
+  readonly pre: bigint;
+  readonly post: bigint;
+};
+
+export type SvmAllAccountTokenActivityFields = {
+  readonly mint: string;
+  readonly owner: string;
+  readonly decimals: number;
+  readonly preAmount: bigint | undefined;
+  readonly postAmount: bigint | undefined;
+};
+
+export type SvmAllAccountActivityFields = {
+  readonly address: string;
+  readonly transactionAccountIndex: number;
+  readonly isSigner: boolean;
+  readonly isWritable: boolean;
+  readonly lamports: SvmAllAccountLamportsFields | undefined;
+  readonly token: SvmAllAccountTokenActivityFields | undefined;
+};
+
+export type SvmAllBlockFields = {
+  readonly slot: number;
+  readonly time: number;
+  readonly hash: string;
+  readonly height: number;
+  readonly parentSlot: number;
+  readonly parentHash: string;
+};
+
+/** All SVM parent-transaction fields. Handler `fields.transaction` narrows
+ *  this via {@link SvmTransaction}; `accountActivities` is implied by
+ *  `fields.accountActivity`. */
+export type SvmAllTransactionFields = {
+  readonly transactionIndex: number;
+  readonly signature: string;
+  readonly feePayer: string;
+  readonly success: boolean;
+  readonly err: string | undefined;
+  readonly fee: bigint;
+  readonly computeUnitsConsumed: bigint | undefined;
+  readonly accountKeys: readonly string[];
+  readonly recentBlockhash: string;
+  readonly version: string | undefined;
+  readonly allSignatures: readonly string[];
+};
+
+export type SvmInstructionFieldName =
+  | "args"
+  | "accounts"
+  | "accountArguments"
+  | "programId"
+  | "data"
+  | "path"
+  | "isInner";
+export type SvmTransactionFieldName =
+  | "transactionIndex"
+  | "signature"
+  | "feePayer"
+  | "success"
+  | "err"
+  | "fee"
+  | "computeUnitsConsumed"
+  | "accountKeys"
+  | "recentBlockhash"
+  | "version"
+  | "allSignatures";
+export type SvmAccountActivityFieldName =
+  | "address"
+  | "transactionAccountIndex"
+  | "isSigner"
+  | "isWritable"
+  | "lamports.pre"
+  | "lamports.post"
+  | "token.mint"
+  | "token.owner"
+  | "token.decimals"
+  | "token.preAmount"
+  | "token.postAmount";
+export type SvmBlockFieldName =
+  | "slot"
+  | "time"
+  | "hash"
+  | "height"
+  | "parentSlot"
+  | "parentHash";
+export type SvmLogFieldName = "kind" | "message";
+
+export type SvmFieldsSelection = {
+  readonly instruction?: readonly SvmInstructionFieldName[];
+  readonly transaction?: readonly SvmTransactionFieldName[];
+  readonly accountActivity?: readonly SvmAccountActivityFieldName[];
+  readonly block?: readonly SvmBlockFieldName[];
+  readonly log?: readonly SvmLogFieldName[];
+};
+
+/** A {@link SvmFieldsSelection} with every field selected.
+ *
+ * Type-level only — its knobs are field-name arrays rather than literals, so it
+ * describes a payload (`SvmInstruction<SvmAllFieldsSelection>`) but can't be
+ * passed as a registration's `fields` value. */
+export type SvmAllFieldsSelection = {
+  readonly instruction: readonly SvmInstructionFieldName[];
+  readonly transaction: readonly SvmTransactionFieldName[];
+  readonly accountActivity: readonly SvmAccountActivityFieldName[];
+  readonly block: readonly SvmBlockFieldName[];
+  readonly log: readonly SvmLogFieldName[];
+};
+
+type SvmListedArray<Fields, Knob extends keyof SvmFieldsSelection> = Fields[Knob &
+  keyof Fields];
+type SvmListedFields<Fields, Knob extends keyof SvmFieldsSelection> = NonNullable<
+  SvmListedArray<Fields, Knob>
+>[number] &
+  string;
+
+type SvmFieldsLiteralCheck<Fields> = [Fields] extends [undefined]
+  ? unknown
+  : IsWidenedArray<SvmListedArray<Fields, "instruction">> extends true
+    ? EvmFieldsMustBeLiteral<"instruction">
+    : IsWidenedArray<SvmListedArray<Fields, "transaction">> extends true
+      ? EvmFieldsMustBeLiteral<"transaction">
+      : IsWidenedArray<SvmListedArray<Fields, "accountActivity">> extends true
+        ? EvmFieldsMustBeLiteral<"accountActivity">
+        : IsWidenedArray<SvmListedArray<Fields, "block">> extends true
+          ? EvmFieldsMustBeLiteral<"block">
+          : IsWidenedArray<SvmListedArray<Fields, "log">> extends true
+            ? EvmFieldsMustBeLiteral<"log">
+            : unknown;
+
+type SvmActivityListed<Fields> = SvmListedFields<Fields, "accountActivity">;
+type SvmActivityHas<Fields, Name extends string> = [SvmActivityListed<Fields>] extends [never]
+  ? false
+  : Name extends SvmActivityListed<Fields>
+    ? true
+    : false;
+
+type SvmActivityField<Fields, Name extends string, T> = SvmActivityHas<
+  Fields,
+  Name
+> extends true
+  ? T
+  : FieldNotSelected<`Field '${Name}' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>;
+
+/** The pre/post lamport balances of a {@link SvmAccountActivity}, narrowed to
+ * the registration's fields selection. */
+export type SvmAccountLamports<Fields extends SvmFieldsSelection> = [
+  SvmActivityListed<Fields> & `lamports.${string}`,
+] extends [never]
+  ? FieldNotSelected<`Field 'lamports' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>
+  : {
+      readonly [K in keyof SvmAllAccountLamportsFields]: SvmActivityHas<Fields, `lamports.${K & string}`> extends true
+        ? SvmAllAccountLamportsFields[K]
+        : FieldNotSelected<`Field 'lamports.${K & string}' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>;
+    } | undefined;
+
+/** The token activity of a {@link SvmAccountActivity}, narrowed to the
+ * registration's fields selection. */
+export type SvmAccountTokenActivity<Fields extends SvmFieldsSelection> = [SvmActivityListed<Fields> & `token.${string}`] extends [never]
+  ? FieldNotSelected<`Field 'token' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>
+  : {
+      readonly [K in keyof SvmAllAccountTokenActivityFields]: SvmActivityHas<Fields, `token.${K & string}`> extends true
+        ? SvmAllAccountTokenActivityFields[K]
+        : FieldNotSelected<`Field 'token.${K & string}' is not selected for this handler. Add it to fields.accountActivity in the registration options.`>;
+    } | undefined;
+
+/** An account activity of a {@link SvmTransaction}, narrowed to the
+ * registration's fields selection. */
+export type SvmAccountActivity<Fields extends SvmFieldsSelection> = {
+  readonly address: string;
+  readonly transactionAccountIndex: SvmActivityField<Fields, "transactionAccountIndex", number>;
+  readonly isSigner: SvmActivityField<Fields, "isSigner", boolean>;
+  readonly isWritable: SvmActivityField<Fields, "isWritable", boolean>;
+  readonly lamports: SvmAccountLamports<Fields>;
+  readonly token: SvmAccountTokenActivity<Fields>;
+};
+
+type SvmInstrListed<Fields> = SvmListedFields<Fields, "instruction">;
+type SvmInstrField<Fields, Name extends SvmInstructionFieldName, T> = Name extends SvmInstrListed<Fields>
+  ? T
+  : FieldNotSelected<`Field '${Name}' is not selected for this handler. Add it to fields.instruction in the registration options.`>;
+
+/** A named account of a {@link SvmInstruction}. Its `activity` narrows to the
+ * registration's fields selection. */
+export type SvmInstructionAccount<
+  Fields extends SvmFieldsSelection,
+  Name extends string = string,
+> = {
+  readonly address: string;
+  readonly accountName: Name;
+  readonly instructionAccountIndex: number;
+  readonly activity:
+    | ([SvmActivityListed<Fields>] extends [never]
+        ? FieldNotSelected<`Field 'activity' is not selected for this handler. Add fields.accountActivity in the registration options.`>
+        : SvmAccountActivity<Fields>)
+    | undefined;
+};
+
+type SvmNamedAccounts<
+  Acc extends Readonly<Record<string, unknown>>,
+  Fields extends SvmFieldsSelection,
+> = {
+  readonly [K in keyof Acc & string]: SvmInstructionAccount<Fields, K>;
+};
+
+/** The parent transaction of a {@link SvmInstruction}, narrowed to the
+ * registration's fields selection. */
+export type SvmTransaction<Fields extends SvmFieldsSelection> = {
+  readonly [K in keyof SvmAllTransactionFields]: K extends SvmListedFields<Fields, "transaction">
+    ? SvmAllTransactionFields[K]
+    : FieldNotSelected<`Field '${K & string}' is not selected for this handler. Add it to fields.transaction in the registration options.`>;
+} & {
+  readonly accountActivities: [SvmActivityListed<Fields>] extends [never]
+    ? FieldNotSelected<`Field 'accountActivities' is not selected for this handler. Add fields.accountActivity in the registration options.`>
+    : readonly SvmAccountActivity<Fields>[];
+};
+
+/** The block of a {@link SvmInstruction}, narrowed to the registration's
+ * fields selection. `slot` is always selected. */
+export type SvmBlock<Fields extends SvmFieldsSelection> = {
+  readonly [K in keyof SvmAllBlockFields]: K extends "slot"
+    ? SvmAllBlockFields[K]
+    : K extends SvmListedFields<Fields, "block">
+      ? SvmAllBlockFields[K]
+      : FieldNotSelected<`Field '${K & string}' is not selected for this handler. Add it to fields.block in the registration options.`>;
+};
+
+/** A log of a {@link SvmInstruction}, narrowed to the registration's fields
+ * selection. */
+export type SvmLog<Fields extends SvmFieldsSelection> = {
+  readonly kind: "kind" extends SvmListedFields<Fields, "log">
+    ? SvmLogKind
+    : FieldNotSelected<`Field 'kind' is not selected for this handler. Add it to fields.log in the registration options.`>;
+  readonly message: "message" extends SvmListedFields<Fields, "log">
+    ? string
+    : FieldNotSelected<`Field 'message' is not selected for this handler. Add it to fields.log in the registration options.`>;
+};
+
+type SvmAnyProgramInstruction = {
+  readonly args: unknown;
+  readonly accounts: Readonly<Record<string, string>>;
+};
+
+type SvmSelectedInstruction<Fields extends SvmFieldsSelection, ProgInstr> = {
+  readonly programName: string;
+  readonly instructionName: string;
+  readonly discriminator: string;
+  readonly programId: SvmInstrField<Fields, "programId", string>;
+  readonly data: SvmInstrField<Fields, "data", Uint8Array>;
+  readonly path: SvmInstrField<Fields, "path", readonly number[]>;
+  readonly isInner: SvmInstrField<Fields, "isInner", boolean>;
+  readonly args: SvmInstrField<
+    Fields,
+    "args",
+    ProgInstr extends { readonly args: infer A } ? A : unknown
+  >;
+  readonly accounts: SvmInstrField<
+    Fields,
+    "accounts",
+    ProgInstr extends { readonly accounts: infer Acc extends Readonly<Record<string, unknown>> }
+      ? SvmNamedAccounts<Acc, Fields>
+      : SvmNamedAccounts<Readonly<Record<string, string>>, Fields>
+  >;
+  readonly accountArguments: SvmInstrField<Fields, "accountArguments", readonly string[]>;
+  readonly logs: [SvmListedFields<Fields, "log">] extends [never]
+    ? FieldNotSelected<`Field 'logs' is not selected for this handler. Add fields.log in the registration options.`>
+    : readonly SvmLog<Fields>[];
+  readonly transaction: SvmTransaction<Fields>;
+  readonly block: SvmBlock<Fields>;
+};
+
+type SvmConfiguredInstruction<Program extends string, Instruction extends string> = [
+  Program,
+] extends [never]
+  ? SvmAnyProgramInstruction
+  : Program extends keyof SvmProgramsT
+    ? Instruction extends keyof SvmProgramsT[Program]
+      ? SvmProgramsT[Program][Instruction]
+      : SvmAnyProgramInstruction
+    : SvmAnyProgramInstruction;
+
+/** The `instruction` payload of an `indexer.onInstruction` handler. `Fields`
+ * must be the registration's fields selection (use `typeof fields` on a
+ * `const fields = {...} as const satisfies SvmFieldsSelection`, or
+ * {@link SvmAllFieldsSelection}). Pass the config-declared program and
+ * instruction names to type `args` and `accounts`. */
+export type SvmInstruction<
+  Fields extends SvmFieldsSelection,
+  Program extends keyof SvmProgramsT & string = never,
+  Instruction extends keyof SvmProgramsT[Program] & string = never,
+> = SvmSelectedInstruction<Fields, SvmConfiguredInstruction<Program, Instruction>>;
+
+type SvmOnInstructionArgsFor<Instr, Config extends IndexerConfigTypes> = {
+  readonly instruction: Instr;
+  readonly context: SvmOnSlotContext<Config>;
+};
+
+type SvmOnInstructionHandlerFor<Instr, Config extends IndexerConfigTypes> = (
+  args: SvmOnInstructionArgsFor<Instr, Config>,
+) => Promise<void>;
+
+/** Arguments passed to handlers registered via `indexer.onInstruction`.
+ * Takes the same type arguments as {@link SvmInstruction}. */
+export type SvmOnInstructionHandlerArgs<
+  Fields extends SvmFieldsSelection,
+  Program extends keyof SvmProgramsT & string = never,
+  Instruction extends keyof SvmProgramsT[Program] & string = never,
+> = SvmOnInstructionArgsFor<SvmInstruction<Fields, Program, Instruction>, GlobalConfig>;
+
+/** The named accounts of a configured instruction. Falls back to an open
+ * record when the instruction carries no resolved schema, so its filter keys
+ * are unconstrained rather than unusable. */
+type SvmAccountsOf<Program extends string, Instruction extends string> =
+  SvmConfiguredInstruction<Program, Instruction>["accounts"];
+
+/** One AND-group of account narrowings: every named account must match one of
+ * its listed pubkeys. Names are the instruction's own account names. */
+export type SvmAccountsFilter<Accounts> = {
+  readonly [K in keyof Accounts]?: string | readonly string[];
+};
+
+/** The `where` option value of `indexer.onInstruction`.
+ *
+ * `accounts` accepts either a single AND-group of account narrowings, or an
+ * array of them (OR semantics). `block.slot._gte` promotes to the
+ * registration's startBlock and overrides the chain-level `start_block` — use
+ * it to restrict per-instruction processing without touching `config.yaml`.
+ * Only `_gte` is supported here; use `indexer.onSlot` for `_lte` / `_every`. */
+export type SvmOnInstructionWhere<Accounts> = {
+  /** Match only inner (CPI-invoked) or only outer instructions. Absent
+   * matches both. */
+  readonly isInner?: boolean;
+  readonly accounts?: SvmAccountsFilter<Accounts> | readonly SvmAccountsFilter<Accounts>[];
+  readonly block?: {
+    readonly slot?: {
+      readonly _gte?: number;
+    };
+  };
+};
+
+/** Options for an SVM `indexer.onInstruction` registration. */
+export type SvmOnInstructionOptions<
+  P extends string = string,
+  I extends string = string,
+  Fields extends SvmFieldsSelection = {},
+> = {
+  /** Program name as declared under `chains[].programs[].name` in
+   * `config.yaml`. */
+  readonly program: P;
+  /** Instruction name as declared under
+   * `chains[].programs[].instructions[].name` in `config.yaml`. */
+  readonly instruction: I;
+  readonly fields?: Fields & SvmFieldsLiteralCheck<Fields>;
+  readonly where?: SvmOnInstructionWhere<SvmAccountsOf<P, I>>;
+};
+
+/** Handler function for an SVM `indexer.onInstruction` registration. Takes
+ * the same type arguments as {@link SvmInstruction}, so a standalone handler
+ * needs a single annotation:
+ *
+ *     const handleSwap: SvmOnInstructionHandler<typeof fields, "Swapper", "swap"> =
+ *       async ({ instruction, context }) => { ... };
+ */
+export type SvmOnInstructionHandler<
+  Fields extends SvmFieldsSelection,
+  Program extends keyof SvmProgramsT & string = never,
+  Instruction extends keyof SvmProgramsT[Program] & string = never,
+> = SvmOnInstructionHandlerFor<
+  SvmInstruction<Fields, Program, Instruction>,
+  GlobalConfig
+>;
+
 // ============== Indexer Types ==============
 
 // Helper: Check if an ecosystem is configured. Single-ecosystem indexers only
@@ -1015,7 +1601,8 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                 /** Register an event handler. */
                 readonly onEvent: <
                   C extends keyof Contracts & string,
-                  E extends keyof Contracts[C] & string
+                  E extends keyof Contracts[C] & string,
+                  const F extends EvmFieldsSelection | undefined
                 >(
                   options: {
                     readonly contract: C;
@@ -1029,13 +1616,17 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                         : {},
                       C
                     >;
+                    /** Block and transaction fields this handler reads. Replaces
+                     * `field_selection` from `config.yaml` for this registration. */
+                    readonly fields?: F & EvmFieldsLiteralCheck<F>;
                   },
-                  handler: EvmOnEventHandler<Contracts[C][E], EvmOnEventContext<Config>>
+                  handler: EvmOnEventHandler<EvmEventWithFields<Contracts[C][E], F>, EvmOnEventContext<Config>>
                 ) => void;
                 /** Register a contract register handler for dynamic contract indexing. */
                 readonly contractRegister: <
                   C extends keyof Contracts & string,
-                  E extends keyof Contracts[C] & string
+                  E extends keyof Contracts[C] & string,
+                  const F extends EvmFieldsSelection | undefined
                 >(
                   options: {
                     readonly contract: C;
@@ -1049,8 +1640,11 @@ type EvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
                         : {},
                       C
                     >;
+                    /** Block and transaction fields this handler reads. Replaces
+                     * `field_selection` from `config.yaml` for this registration. */
+                    readonly fields?: F & EvmFieldsLiteralCheck<F>;
                   },
-                  handler: EvmContractRegisterHandler<Contracts[C][E], EvmContractRegisterContext<Config>>
+                  handler: EvmContractRegisterHandler<EvmEventWithFields<Contracts[C][E], F>, EvmContractRegisterContext<Config>>
                 ) => void;
               }
             : {})
@@ -1138,7 +1732,14 @@ type FuelEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
       : never
     : never;
 
-// SVM ecosystem type — chains plus onSlot handler method. SVM has no onEvent yet.
+// Surfaced when an SVM indexer configures no `programs`, so there's no
+// instruction to register a handler for. Mirrors `CodegenRequiredHint`: the
+// string literal becomes the argument type, so any `onInstruction` call fails
+// with this text naming the fix.
+type SvmNoProgramsHint =
+  "Add at least one entry under `svm.programs` in config.yaml to register instruction handlers with onInstruction.";
+
+// SVM ecosystem type — chains plus instruction + slot handler methods.
 type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
   "svm" extends keyof Config
     ? Config["svm"] extends { chains: infer Chains }
@@ -1162,7 +1763,36 @@ type SvmEcosystem<Config extends IndexerConfigTypes = GlobalConfig> =
               options: SvmOnSlotOptions<Config>,
               handler: SvmOnSlotHandler<Config>,
             ) => void;
+          } & (Config["svm"] extends {
+            programs: infer Programs extends Record<string, Record<string, any>>;
           }
+            ? {
+                /**
+                 * Register an instruction handler. Dispatch matches on
+                 * `(programId, discriminator)` from the YAML config.
+                 * Handler `fields` is the only source of payload selection.
+                 */
+                readonly onInstruction: <
+                  P extends keyof Programs & string,
+                  I extends keyof Programs[P] & string,
+                  const F extends SvmFieldsSelection = {},
+                >(
+                  options: SvmOnInstructionOptions<P, I, F>,
+                  handler: SvmOnInstructionHandlerFor<
+                    SvmSelectedInstruction<F, Programs[P][I]>,
+                    Config
+                  >,
+                ) => void;
+              }
+            : {
+                /** No `programs` configured under `svm` in config.yaml, so
+                 * there's nothing to register an instruction handler for. The
+                 * rest parameter is typed as a string-literal hint so any call
+                 * site fails with a message naming the fix. */
+                readonly onInstruction: (
+                  ...hint: SvmNoProgramsHint[]
+                ) => void;
+              })
         : never
       : never
     : never;
@@ -1178,6 +1808,7 @@ type CodegenRequiredHint =
   "Run 'envio codegen' to generate handler types from config.yaml. Without codegen, the indexer has no contracts, chains, or events to register handlers for.";
 type CodegenRequiredFallback = {
   readonly onEvent: (...hint: CodegenRequiredHint[]) => void;
+  readonly onInstruction: (...hint: CodegenRequiredHint[]) => void;
   readonly onBlock: (...hint: CodegenRequiredHint[]) => void;
   readonly onSlot: (...hint: CodegenRequiredHint[]) => void;
   readonly contractRegister: (...hint: CodegenRequiredHint[]) => void;
@@ -1203,6 +1834,18 @@ export type IndexerFromConfig<Config extends IndexerConfigTypes = GlobalConfig> 
     readonly name: string;
     /** The indexer description from config.yaml. */
     readonly description: string | undefined;
+    /**
+     * Internal, unstable API that will be removed without notice. Registers a
+     * callback fired once per chain affected by a reorg rollback, after the
+     * rollback is durably written to the database. A throwing callback crashes
+     * the indexer through the same path as a failed write.
+     */
+    readonly "~internalAndWillBeRemovedSoon_onRollbackCommit": (
+      callback: (args: {
+        readonly chainId: number;
+        readonly rollbackToBlock: number;
+      }) => Promise<void>,
+    ) => void;
   } & SingleEcosystemChains<Config>
 >;
 
@@ -1278,14 +1921,71 @@ type FuelTestIndexerChainConfig<Config extends IndexerConfigTypes = GlobalConfig
   simulate?: FuelSimulateItem<Config>[];
 };
 
-/** Configuration for a single SVM chain in the test indexer. SVM has no
- * `onEvent` handlers yet, so simulate items aren't supported — only slot
- * range overrides for driving `indexer.onSlot` block handlers under test. */
-type SvmTestIndexerChainConfig = {
+/** Simulate item type for SVM ecosystem. */
+type SvmSimulateItem<Config extends IndexerConfigTypes = GlobalConfig> =
+  Config["svm"] extends { programs: infer Programs extends Record<string, Record<string, any>> }
+    ? {
+        [P in keyof Programs]: {
+          [I in keyof Programs[P]]: {
+            /** Program name as declared under `chains[].programs[].name`. */
+            program: P;
+            /** Instruction name as declared under the program. */
+            instruction: I;
+            /** Override the slot. Auto-increments by default. */
+            slot?: number;
+            /** Instruction path in the CPI tree. Defaults to `[0]`. */
+            path?: readonly number[];
+            /** Override the program id. Defaults to the configured `program_id`. */
+            programId?: string;
+            /** Raw instruction data. Defaults to the configured discriminator bytes. */
+            data?: Uint8Array;
+            /** Whether this is a CPI-invoked inner instruction. */
+            isInner?: boolean;
+            /** Decoded args. Keys match the instruction's arg names. */
+            args?: Programs[P][I] extends { args: infer A } ? A : unknown;
+            /** Named accounts. Keys match the instruction's account names. */
+            accounts?: Programs[P][I] extends { accounts: infer Acc extends Record<string, unknown> }
+              ? { readonly [K in keyof Acc]?: { readonly address: string } }
+              : Record<string, { readonly address: string }>;
+            /** Positional account addresses, zipped onto IDL names when `accounts` is omitted. */
+            accountArguments?: readonly string[];
+            /** Logs scoped to this instruction. */
+            logs?: readonly { readonly kind?: string; readonly message?: string }[];
+            /** Override block fields. */
+            block?: Partial<SvmAllBlockFields>;
+            /** Override transaction fields. `accountActivities` are joined onto named accounts at process time. */
+            transaction?: Partial<SvmAllTransactionFields> & {
+              readonly accountActivities?: readonly {
+                readonly address: string;
+                readonly transactionAccountIndex?: number;
+                readonly isSigner?: boolean;
+                readonly isWritable?: boolean;
+                readonly lamports?: {
+                  readonly pre?: bigint;
+                  readonly post?: bigint;
+                };
+                readonly token?: {
+                  readonly mint?: string;
+                  readonly owner?: string;
+                  readonly decimals?: number;
+                  readonly preAmount?: bigint;
+                  readonly postAmount?: bigint;
+                };
+              }[];
+            };
+          };
+        }[keyof Programs[P]];
+      }[keyof Programs]
+    : never;
+
+/** Configuration for a single SVM chain in the test indexer. */
+type SvmTestIndexerChainConfig<Config extends IndexerConfigTypes = GlobalConfig> = {
   /** The slot number to start processing from. Defaults to config startBlock or progressBlock+1. */
   startBlock?: number;
-  /** The slot number to stop processing at. */
+  /** The slot number to stop processing at. Defaults to max simulate slot when simulate is provided. */
   endBlock?: number;
+  /** Simulate items to process instead of fetching from real sources. */
+  simulate?: SvmSimulateItem<Config>[];
 };
 
 /** Entity change value containing sets and/or deleted IDs. */
@@ -1293,7 +1993,7 @@ type EntityChangeValue<Entity> = {
   /** Entities that were created or updated. */
   readonly sets?: readonly Entity[];
   /** IDs of entities that were deleted. */
-  readonly deleted?: readonly string[];
+  readonly deleted?: readonly EntityId<Entity>[];
 };
 
 /** A dynamic contract address registration. */
@@ -1308,14 +2008,33 @@ type AddressRegistration = {
 type ConfigEntities<Config extends IndexerConfigTypes = GlobalConfig> =
   Config["entities"] extends Record<string, object> ? Config["entities"] : {};
 
+/** Entity names whose rows belong to a single chain. */
+type PerChainEntityNames<Config extends IndexerConfigTypes = GlobalConfig> =
+  Config extends { perChainEntities: infer Names extends string } ? Names : never;
+
+/** The row shape the chain-agnostic test-indexer operations exchange. A
+ * per-chain entity's row is only identified together with its chain, so the
+ * chain id travels alongside the entity fields. */
+type TestIndexerEntityRow<
+  Config extends IndexerConfigTypes,
+  Name,
+  Entity
+> = Name extends PerChainEntityNames<Config>
+  ? Entity & { readonly chainId: number }
+  : Entity;
+
 /** Entity operations available on test indexer for direct entity manipulation. */
 type TestIndexerEntityOperations<Entity> = {
   /** Get an entity by ID. Returns undefined if not found. */
-  readonly get: (id: string) => Promise<Entity | undefined>;
+  readonly get: (id: EntityId<Entity>) => Promise<Entity | undefined>;
   /** Get an entity by ID or throw if not found. */
-  readonly getOrThrow: (id: string, message?: string) => Promise<Entity>;
+  readonly getOrThrow: (id: EntityId<Entity>, message?: string) => Promise<Entity>;
   /** Get all entities. */
   readonly getAll: () => Promise<Entity[]>;
+  /** Get the entities matching a filter. For a per-chain entity the filter
+   * accepts `chainId`, which is how an id present on several chains is
+   * narrowed to one. */
+  readonly getWhere: (filter: GetWhereFilter<Entity>) => Promise<Entity[]>;
   /** Set (create or update) an entity. */
   readonly set: (entity: Entity) => void;
 };
@@ -1374,7 +2093,7 @@ type FuelTestChains<Config extends IndexerConfigTypes = GlobalConfig> =
 
 type SvmTestChains<Config extends IndexerConfigTypes = GlobalConfig> =
   HasSvm<Config> extends true
-    ? { [K in SvmChainIds<Config>]?: SvmTestIndexerChainConfig }
+    ? { [K in SvmChainIds<Config>]?: SvmTestIndexerChainConfig<Config> }
     : {};
 
 /** Process configuration for the test indexer, with chains keyed by chain ID. */
@@ -1490,7 +2209,7 @@ export type TestIndexerFromConfig<Config extends IndexerConfigTypes = GlobalConf
 } & SingleEcosystemTestChains<Config> & {
   /** Entity operations for direct manipulation outside of handlers. */
   readonly [K in keyof ConfigEntities<Config>]: TestIndexerEntityOperations<
-    ConfigEntities<Config>[K]
+    TestIndexerEntityRow<Config, K, ConfigEntities<Config>[K]>
   >;
 };
 
@@ -1504,6 +2223,7 @@ type EvmContractsT  = GlobalConfig extends { evm:  { contracts: infer X extends 
 type FuelChainsT    = GlobalConfig extends { fuel: { chains:    infer X extends Record<string, { id: number }> } } ? X : {};
 type FuelContractsT = GlobalConfig extends { fuel: { contracts: infer X extends Record<string, Record<string, any>> } } ? X : {};
 type SvmChainsT     = GlobalConfig extends { svm:  { chains:    infer X extends Record<string, { id: number }> } } ? X : {};
+type SvmProgramsT   = GlobalConfig extends { svm:  { programs:  infer X extends Record<string, Record<string, any>> } } ? X : {};
 type EntitiesT      = GlobalConfig extends { entities: infer X extends Record<string, object> } ? X : {};
 type EnumsT         = GlobalConfig extends { enums: infer X extends Record<string, any> } ? X : {};
 

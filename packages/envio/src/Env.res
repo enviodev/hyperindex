@@ -3,13 +3,30 @@
 
 %%private(let envSafe = EnvSafe.make())
 
-// resets the timestampCaughtUpToHeadOrEndblock after a restart when true
-let updateSyncTimeOnRestart =
-  envSafe->EnvSafe.get("UPDATE_SYNC_TIME_ON_RESTART", S.bool, ~fallback=true)
 let targetBufferSize = envSafe->EnvSafe.get("ENVIO_INDEXING_MAX_BUFFER_SIZE", S.option(S.int))
 let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fallback=5_000)
-let maxPartitionConcurrency =
-  envSafe->EnvSafe.get("ENVIO_MAX_PARTITION_CONCURRENCY", S.int, ~fallback=10)
+
+// Most parallel in-flight queries a single chain may have at once, across all
+// its partitions (consumed as FetchState.maxChainConcurrency).
+let maxChainConcurrency = 100
+
+// Switch a single contract to client-side address filtering
+// once its registered address count crosses this threshold. Keeping addresses
+// server-side spreads the contract across ceil(count / maxAddrInPartition)
+// partitions, each holding an in-flight query slot; capping a contract at half
+// the chain's concurrency budget stops one busy contract from monopolising them.
+let clientFilterAddressThreshold =
+  envSafe->EnvSafe.get(
+    "ENVIO_CLIENT_FILTER_ADDRESS_THRESHOLD",
+    S.int,
+    ~fallback=maxAddrInPartition * maxChainConcurrency / 2,
+  )
+
+// Target number of in-memory objects (uncommitted entity/effect changes plus
+// unwritten batch items) the store holds before processing waits for the write
+// cycle to catch up.
+let inMemoryObjectsTarget =
+  envSafe->EnvSafe.get("ENVIO_IN_MEMORY_OBJECTS_TARGET", S.int, ~fallback=100_000)->Int.toFloat
 
 // FIXME: This broke HS grafana dashboard. Should investigate it later. Maybe we should use :: as a default value?
 // We want to be able to set it to 0.0.0.0
@@ -47,13 +64,6 @@ let envioApiToken = envSafe->EnvSafe.get("ENVIO_API_TOKEN", S.option(S.string))
 let hyperSyncClientTimeoutMillis =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_TIMEOUT_MILLIS", S.int, ~fallback=120_000)
 
-/** 
-This is the number of retries that the binary client makes before rejecting the promise with an error 
-Default is 0 so that the indexer can handle retries internally
-*/
-let hyperSyncClientMaxRetries =
-  envSafe->EnvSafe.get("ENVIO_HYPERSYNC_CLIENT_MAX_RETRIES", S.int, ~fallback=0)
-
 let hypersyncClientSerializationFormat =
   envSafe->EnvSafe.get(
     "ENVIO_HYPERSYNC_CLIENT_SERIALIZATION_FORMAT",
@@ -66,7 +76,6 @@ let hypersyncClientEnableQueryCaching =
 
 let hypersyncLogLevel =
   envSafe->EnvSafe.get("ENVIO_HYPERSYNC_LOG_LEVEL", HyperSyncClient.logLevelSchema, ~fallback=#info)
-HyperSyncClient.setLogLevel(hypersyncLogLevel)
 
 let logStrategy =
   envSafe->EnvSafe.get(
@@ -88,7 +97,7 @@ Logging.setLogger(
     ~logStrategy,
     ~logFilePath,
     ~defaultFileLogLevel,
-    ~userLogLevel=userLogLevel->Belt.Option.getWithDefault(#info),
+    ~userLogLevel=userLogLevel->Option.getOr(#info),
   ),
 )
 

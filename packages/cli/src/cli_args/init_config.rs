@@ -84,7 +84,7 @@ pub mod evm {
                     )
                     .context(format!(
                         "Unexpected, failed to add global contract {}. Contract should have \
-                     unique names",
+                         unique names",
                         selected_contract.name
                     ))?;
                     None
@@ -128,6 +128,7 @@ pub mod evm {
 
                             Chain {
                                 id: selected_chain.network.get_network_id(),
+                                skip: None,
                                 hypersync_config: None,
                                 rpc,
                                 start_block: selected_chain.network.get_start_block(),
@@ -166,6 +167,9 @@ pub mod evm {
                     handlers: None,
                     full_batch_size: None,
                     storage: None,
+                    // The recommended mode for a new indexer: an entity id is
+                    // scoped to its chain unless it opts into `@crossChain`.
+                    disable_default_cross_chain: Some(true),
                 },
                 ecosystem: None,
                 contracts,
@@ -174,6 +178,7 @@ pub mod evm {
                 save_full_history: None,
                 field_selection: None,
                 raw_events: None,
+                bytes_type: None,
                 address_format: None,
             })
         }
@@ -188,7 +193,6 @@ pub mod evm {
     #[derive(Clone, Debug, Display)]
     pub enum InitFlow {
         Template(Template),
-        SubgraphID(String),
         ContractImport(ContractImportSelection),
     }
 
@@ -197,7 +201,6 @@ pub mod evm {
             match self {
                 Self::Template(_) => true,
                 Self::ContractImport(selection) => selection.uses_hypersync(),
-                Self::SubgraphID(_) => todo!("Subgraph migration not yet handled"),
             }
         }
     }
@@ -270,6 +273,7 @@ pub mod fuel {
                     None => (),
                     Some(contracts) => network_configs.push(ChainConfig {
                         id: network as u64,
+                        skip: None,
                         start_block: 0,
                         end_block: None,
                         hyperfuel_config: None,
@@ -308,10 +312,14 @@ pub mod fuel {
                     handlers: None,
                     full_batch_size: None,
                     storage: None,
+                    // The recommended mode for a new indexer: an entity id is
+                    // scoped to its chain unless it opts into `@crossChain`.
+                    disable_default_cross_chain: Some(true),
                 },
                 ecosystem: EcosystemTag::Fuel,
                 contracts: None,
                 raw_events: None,
+                bytes_type: None,
                 chains: network_configs,
             }
         }
@@ -331,7 +339,9 @@ pub mod svm {
 
     #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
     pub enum Template {
-        #[strum(serialize = "Feature: Block Handler")]
+        #[strum(serialize = "Metaplex Token Metadata (instructions) (Experimental)")]
+        MetaplexTokenMetadata,
+        #[strum(serialize = "Feature: Block Handler (onSlot)")]
         FeatureBlockHandler,
     }
 

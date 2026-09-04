@@ -13,7 +13,9 @@ expression: json
   "rawEvents": true,
   "storage": {
     "postgres": true,
-    "clickhouse": true
+    "clickhouse": true,
+    "postgresColumnNameFormat": "snake_case",
+    "clickhouseColumnNameFormat": "snake_case"
   },
   "evm": {
     "chains": {
@@ -48,7 +50,6 @@ expression: json
         "handler": "./src/EventHandler.js",
         "events": [
           {
-            "event": "NewGravatar(uint256 id, address owner, string displayName, string imageUrl)",
             "name": "NewGravatar",
             "sighash": "0x9ab3aefb2ba6dc12910ac1bce4692cf5c3c0d06cff16327c64a3ef78228b130b",
             "params": [
@@ -80,7 +81,6 @@ expression: json
             ]
           },
           {
-            "event": "UpdatedGravatar(uint256 id, address owner, string displayName, string imageUrl)",
             "name": "UpdatedGravatar",
             "sighash": "0x76571b7a897a1509c641587568218a290018fbdc8b9a724f17b77ff0eec22c0c",
             "params": [
@@ -133,6 +133,8 @@ expression: json
         },
         {
           "name": "emptyField",
+          "postgresDbName": "empty_field",
+          "clickhouseDbName": "empty_field",
           "type": "string"
         },
         {
@@ -142,32 +144,28 @@ expression: json
         },
         {
           "name": "optionalStatus",
+          "postgresDbName": "optional_status",
+          "clickhouseDbName": "optional_status",
           "type": "enum",
           "isNullable": true,
           "enum": "Status"
         },
         {
           "name": "related",
-          "type": "entity",
-          "linkedEntity": "RelatedEntity",
-          "entity": "RelatedEntity"
+          "type": "string",
+          "linkedEntity": "RelatedEntity"
         },
         {
           "name": "optionalRelated",
-          "type": "entity",
+          "postgresDbName": "optional_related_id",
+          "clickhouseDbName": "optional_related_id",
+          "type": "string",
           "isNullable": true,
-          "linkedEntity": "RelatedEntity",
-          "entity": "RelatedEntity"
+          "linkedEntity": "RelatedEntity"
         },
         {
           "name": "tags",
           "type": "string",
-          "isArray": true
-        },
-        {
-          "name": "optionalTags",
-          "type": "string",
-          "isNullable": true,
           "isArray": true
         }
       ]
@@ -185,6 +183,18 @@ expression: json
         },
         {
           "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "UnannotatedEntity",
+      "storage": {
+        "clickhouse": true
+      },
+      "properties": [
+        {
+          "name": "id",
           "type": "string"
         }
       ]

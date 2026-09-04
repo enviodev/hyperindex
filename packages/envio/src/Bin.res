@@ -71,6 +71,9 @@ let run = async args => {
       }
     }
   } catch {
+  | Main.FatalError(_) =>
+    // Already logged with full context by Main.start's onError; just exit.
+    NodeJs.process->NodeJs.exitWithCode(Failure)
   | exn =>
     // Log just the exception's own message — wrapping it in "Failed at
     // initialization" and pino's err serializer buries the real cause under

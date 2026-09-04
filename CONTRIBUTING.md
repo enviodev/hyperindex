@@ -13,6 +13,7 @@ By submitting a Pull Request or making any contribution to this project, you aut
 - [Generate code according to configuration](#generate-code-according-to-configuration)
 - [Run the indexer](#run-the-indexer)
 - [View the database](#view-the-database)
+- [Linting Rust code](#linting-rust-code)
 
 ## Installation
 
@@ -123,7 +124,7 @@ Entry point:
   - Initializes the Persistence layer (Postgres + Hasura) — a single `init()` call that also handles `~reset` + `upsertPersistedState` when `~migrate` is provided.
   - Loads user handler modules via `HandlerLoader.registerAllHandlers`.
   - Loads initial state (to resume from a previous run).
-  - Spawns the `GlobalStateManager.res` which orchestrates fetch & process loops.
+  - Builds the indexer state (`IndexerState.make`) and starts `IndexerLoop.res`, which orchestrates the fetch / process / rollback loops.
 
 Configuration layer:
 
@@ -140,16 +141,17 @@ Persistence layer:
 
 Data sourcing (fetch side):
 
-- `ChainManager.res` – picks the next chain / block range to fetch. (manages multiple chain buffers)
-- `ChainFetcher.res` – per-chain data source progress. (should be refactored in favor `FetchState.res` and `SourceManager.res`)
+- `ChainState.res` – per-chain runtime state (buffer/progress); mutated in place through its setters. (the chain collection now lives on `IndexerState.res`)
 - `FetchState.res` – in-memory buffer and query bookkeeping. (per-chain)
 - `SourceManager.res` – selects data source & handles fallbacks. (per-chain)
 
 Event processing:
 
-- `GlobalStateManager.res` – top-level scheduler:
-  1. `NextQuery` – fetch more events.
-  2. `ProcessEventBatch` – execute handlers - usually 5000-event batches.
+- `IndexerState.res` – the indexer state record and its named transitions; all state reads and mutations go through it.
+- `IndexerLoop.res` – owns scheduling and wires the per-operation modules together, handing each the `schedule*` effects it needs to re-enter the loop.
+- `ChainFetching.res` – fetches more events for a chain.
+- `BatchProcessing.res` – the single batch-processing loop (usually 5000-event batches).
+- `Rollback.res` – the reorg rollback state machine.
 - `EventProcessing.res` – runs handlers & builds in-memory entity updates.
 - `IO.res` – flushes the batch to Postgres in a single transaction.
 
@@ -250,6 +252,24 @@ pnpm start
 To view the data in the database open http://localhost:8080/console.
 
 Admin-secret for local Hasura is `testing`.
+
+## Linting Rust code
+
+CI runs these against `packages/cli` and fails on any warning, so run them
+before pushing:
+
+```sh
+cargo fmt
+cargo clippy --all-targets --all-features
+```
+
+`--all-targets` matters: without it Clippy skips the test code, which is most
+of the crate.
+
+Severity is configured by `[lints]` in `packages/cli/Cargo.toml` rather than by
+flags on the command line, so a bare `cargo clippy` reproduces the CI result.
+The toolchain is pinned in `rust-toolchain.toml`; bump it deliberately, and fix
+any newly-surfaced lints in the same change.
 
 ## Testing
 

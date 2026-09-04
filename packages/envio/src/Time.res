@@ -16,7 +16,7 @@ let rec retryAsyncWithExponentialBackOff = async (
       let nextRetryCount = retryCount + 1
       let log = retryCount === 0 ? Logging.childTrace : Logging.childWarn
       logger->log({
-        "msg": `Retrying query ${nextRetryCount->Belt.Int.toString}/${maxRetries->Belt.Int.toString} in ${backOffMillis->Belt.Int.toString}ms - waiting for correct result.`,
+        "msg": `Retrying query ${nextRetryCount->Int.toString}/${maxRetries->Int.toString} in ${backOffMillis->Int.toString}ms - waiting for correct result.`,
         "err": exn->Utils.prettifyExn,
       })
       await resolvePromiseAfterDelay(~delayMilliseconds=backOffMillis)
@@ -32,7 +32,7 @@ let rec retryAsyncWithExponentialBackOff = async (
       exn
       ->ErrorHandling.make(
         ~logger,
-        ~msg=`Failure. Max retries ${retryCount->Belt.Int.toString}/${maxRetries->Belt.Int.toString} exceeded`,
+        ~msg=`Failure. Max retries ${retryCount->Int.toString}/${maxRetries->Int.toString} exceeded`,
       )
       ->ErrorHandling.log
       await Promise.reject(exn->JsExn.anyToExnInternal)

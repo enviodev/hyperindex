@@ -9,7 +9,7 @@
 # - You have a "test" script defined in package.json (e.g., "test": "vitest run")
 #
 # Required: ENVIO_API_TOKEN
-# Envio indexers use HyperSync as the default data source, which requires an API token.
+# Envio indexers use HyperSync as the default data source, which requires an Envio API token.
 # Add ENVIO_API_TOKEN to your repository secrets before running this workflow.
 # To add the secret: Repository Settings > Secrets and variables > Actions > New repository secret
 # Get your token at: https://envio.dev

@@ -1,15 +1,38 @@
-type Transfer @storage(postgres: true, clickhouse: true) {
+# Hash comments are ignored by the GraphQL parser and should NOT appear
+# in introspection. Only string descriptions ("""...""" or "...") are exposed.
+
+"An ERC-20 transfer event"
+type Transfer @crossChain @storage(postgres: true, clickhouse: {
+  skippingIndexes: [
+    { name: "idx_from", expr: "from", type: "bloom_filter(0.01)", granularity: 4 }
+    { name: "idx_to", expr: "to", type: "bloom_filter(0.01)" }
+  ]
+}) {
+  "Composite ID built from chainId-block-logIndex"
   id: ID!
+  "Sender address"
   from: String! @index
+  "Recipient address"
   to: String! @index
+  "Token amount transferred (raw, no decimals applied)"
   value: BigInt!
+  "Block number the transfer was emitted in"
   blockNumber: Int!
+  "Hash of the transaction that emitted the transfer"
   transactionHash: String!
+}
+
+"An on-chain account participating in transfers"
+type Account @crossChain @storage(postgres: true) {
+  "The account's Ethereum address"
+  id: ID!
+  "All transfers sent from this account"
+  outgoing: [Transfer!]! @derivedFrom(field: "from")
 }
 
 # Override the global multi-storage default: this entity only lives in
 # Postgres. ClickHouse will not receive writes for it.
-type TransferPgOnly @storage(postgres: true) {
+type TransferPgOnly @crossChain @storage(postgres: true) {
   id: ID!
   from: String!
   value: BigInt!
@@ -17,8 +40,51 @@ type TransferPgOnly @storage(postgres: true) {
 
 # Mirror override: this entity only lives in ClickHouse, so it is
 # absent from the Postgres-backed `pgUserEntities` (and from Hasura).
-type TransferChOnly @storage(clickhouse: true) {
+type TransferChOnly @crossChain @storage(clickhouse: true) {
   id: ID!
   from: String!
   value: BigInt!
+}
+
+# Written under the sender's address on every transfer, so ids repeat across
+# events and the two backends have to agree on which write won: Postgres keeps
+# one upserted row, ClickHouse keeps every change and its view picks the highest
+# checkpoint. A zero-value transfer deletes the row, which is the only way a
+# DELETE row reaches the ClickHouse history table.
+type Holder @crossChain @storage(postgres: true, clickhouse: true) {
+  id: ID!
+  lastBlock: Int!
+  lastValue: BigInt!
+}
+
+# @internal: stored in Postgres and written from handlers like any entity,
+# but never tracked in Hasura, so it must not appear in the GraphQL schema.
+type TransferInternal @crossChain @internal @storage(postgres: true) {
+  id: ID!
+  from: String!
+  value: BigInt!
+}
+
+# NUMERIC[] columns are created as TEXT[] when Hasura is enabled, so Hasura
+# returns the elements as strings rather than numbers that lose precision.
+# https://github.com/enviodev/hyperindex/issues/788
+type NumericArrays @crossChain @storage(postgres: true) {
+  id: ID!
+  bigInts: [BigInt!]!
+  bigDecimals: [BigDecimal!]!
+}
+
+# Per-chain entities: their tables carry a chain-id column in the primary key,
+# spelled per backend (snake_case in Postgres, original in ClickHouse). The
+# relationship between them must join on the chain too, or Hasura would resolve
+# it to another chain's row with the same id.
+type ChainTransfer @storage(postgres: true, clickhouse: true) {
+  id: ID!
+  from: String! @index
+  value: BigInt!
+}
+
+type ChainAccount @storage(postgres: true) {
+  id: ID!
+  transfers: [ChainTransfer!]! @derivedFrom(field: "from")
 }

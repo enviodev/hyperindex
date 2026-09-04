@@ -1,9 +1,0 @@
-.DS_Store
-/node_modules/
-/lib/
-.bsb.lock
-.merlin
-*.bs.js
-*.res.js
-*.res.mjs
-.pnpm-store

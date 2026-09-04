@@ -1,5 +1,3 @@
-let getCacheRowCountFnName = "get_cache_row_count"
-
 let makeClient = () => {
   Postgres.makeSql(
     ~config={
@@ -22,69 +20,84 @@ let makeClient = () => {
   )
 }
 
-let makeCreateIndexQuery = (~tableName, ~indexFields, ~pgSchema) => {
-  let indexName = tableName ++ "_" ++ indexFields->Array.joinUnsafe("_")
+let formatSeconds = (timeRef: Performance.timeRef) =>
+  (Math.round(timeRef->Performance.secondsSince *. 100.) /. 100.)->Float.toString
 
-  // Case for indexer before envio@2.28
-  let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Array.joinUnsafe(", ")
-  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
+// Every index build blocks writes to its table for as long as it runs, and on a
+// large database that is not quick. Both build paths say so up front, so a
+// stalled-looking indexer is explainable from the logs alone.
+let slowOnLargeDatabaseNotice = "This can take a long time on a large database."
+
+// Every index the entity schema promises: an `@index` field, a composite index,
+// or the index backing a derived relationship. Deferred past the initial DDL and
+// created in one transaction once backfill completes, so a resumed indexer that
+// reports itself ready always has all of them.
+//
+// `entities` is the Postgres-backed set, and every `@derivedFrom` target within
+// it resolves: config parsing rejects a Postgres entity deriving from one that
+// isn't in Postgres (`validate_relationship_storage`).
+let getSchemaIndexes = (~entities: array<Internal.entityConfig>): array<IndexDefinition.t> => {
+  let derivedSchema = Schema.make(entities->Array.map(e => e.table))
+  let all = []
+
+  entities->Array.forEach(({table}) => {
+    table
+    ->Table.getSingleIndexes
+    ->Array.forEach(column =>
+      all->Array.push(IndexDefinition.single(~tableName=table.tableName, ~column))->ignore
+    )
+    table
+    ->Table.getCompositeIndexes
+    ->Array.forEach(indexFields =>
+      all
+      ->Array.push(IndexDefinition.fromIndexFields(~tableName=table.tableName, ~indexFields))
+      ->ignore
+    )
+  })
+
+  entities->Array.forEach(({table}) =>
+    table
+    ->Table.getDerivedFromFields
+    ->Array.forEach(derivedFromField => {
+      let column =
+        derivedSchema->Schema.getDerivedFromPgFieldName(derivedFromField)->Utils.unwrapResultExn
+      all
+      ->Array.push(IndexDefinition.single(~tableName=derivedFromField.derivedFromEntity, ~column))
+      ->ignore
+    })
+  )
+
+  // An `@index` field and a derived relationship pointing at it describe the
+  // same index, so the list is deduped on identity rather than on name.
+  let seen = Utils.Set.make()
+  all->Array.filter(definition => {
+    let key = definition->IndexDefinition.key
+    if seen->Utils.Set.has(key) {
+      false
+    } else {
+      seen->Utils.Set.add(key)->ignore
+      true
+    }
+  })
 }
 
-let directionToSql = (direction: Table.indexFieldDirection) =>
-  switch direction {
-  | Asc => ""
-  | Desc => " DESC"
-  }
-
-let directionToIndexName = (direction: Table.indexFieldDirection) =>
-  switch direction {
-  | Asc => ""
-  | Desc => "_desc"
-  }
-
-let makeCreateCompositeIndexQuery = (
-  ~tableName,
-  ~indexFields: array<Table.compositeIndexField>,
+let makeCreateTableQuery = (
+  table: Table.table,
   ~pgSchema,
+  ~isNumericArrayAsText,
+  ~chainIdMode: ChainId.mode=Int32,
+  ~partitionByColumn: option<string>=?,
 ) => {
-  let indexName =
-    tableName ++
-    "_" ++
-    indexFields
-    ->Array.map(f => f.fieldName ++ directionToIndexName(f.direction))
-    ->Array.joinUnsafe("_")
-  let index =
-    indexFields
-    ->Belt.Array.map(f => `"${f.fieldName}"${directionToSql(f.direction)}`)
-    ->Array.joinUnsafe(", ")
-  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${pgSchema}"."${tableName}"(${index});`
-}
-
-let makeCreateTableIndicesQuery = (table: Table.table, ~pgSchema) => {
-  let tableName = table.tableName
-  let createIndex = indexField =>
-    makeCreateIndexQuery(~tableName, ~indexFields=[indexField], ~pgSchema)
-  let createCompositeIndex = indexFields => {
-    makeCreateCompositeIndexQuery(~tableName, ~indexFields, ~pgSchema)
-  }
-
-  let singleIndices = table->Table.getSingleIndices
-  let compositeIndices = table->Table.getCompositeIndices
-
-  singleIndices->Array.map(createIndex)->Array.joinUnsafe("\n") ++
-    compositeIndices->Array.map(createCompositeIndex)->Array.joinUnsafe("\n")
-}
-
-let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText) => {
   let fieldsMapped =
     table
     ->Table.getFields
     ->Array.map(field => {
       let {fieldType, isNullable, isArray, defaultValue} = field
-      let fieldName = field->Table.getDbFieldName
+      let fieldName = field->Table.getPgDbFieldName
 
       {
         `"${fieldName}" ${Table.getPgFieldType(
+            ~chainIdMode,
             ~fieldType,
             ~pgSchema,
             ~isArray,
@@ -98,13 +111,59 @@ let makeCreateTableQuery = (table: Table.table, ~pgSchema, ~isNumericArrayAsText
     })
     ->Array.joinUnsafe(", ")
 
-  let primaryKeyFieldNames = table->Table.getPrimaryKeyFieldNames
+  let primaryKeyFieldNames = table->Table.getPgPrimaryKeyFieldNames
   let primaryKey = primaryKeyFieldNames->Array.map(field => `"${field}"`)->Array.joinUnsafe(", ")
 
   `CREATE TABLE IF NOT EXISTS "${pgSchema}"."${table.tableName}"(${fieldsMapped}${primaryKeyFieldNames->Array.length > 0
       ? `, PRIMARY KEY(${primaryKey})`
-      : ""});`
+      : ""})${switch partitionByColumn {
+    | Some(column) => ` PARTITION BY LIST ("${column}")`
+    | None => ""
+    }};`
 }
+
+// A per-chain entity's rows are partitioned by the chain that owns them, so a
+// chain-filtered read scans one chain's partition rather than the whole table.
+// `$` can't occur in a GraphQL entity name, so a partition name can never
+// collide with the table another entity claims; past the identifier limit the
+// entity index keeps what survives truncation unique.
+let partitionTableName = (~entityConfig: Internal.entityConfig, ~chainId: ChainId.t) => {
+  let chainIdStr = chainId->ChainId.toString
+  Table.fitPgTableName(
+    `${entityConfig.table.tableName}$${chainIdStr}`,
+    ~uniqueSuffix=`$${entityConfig.index->Int.toString}$${chainIdStr}`,
+  )
+}
+
+// The entity as it's stored: the handler-visible schema plus the chain-id
+// column a per-chain entity's table carries. The value for that column is
+// stamped from the flush group's scope right before serialization, so it never
+// has to be re-derived from a checkpoint.
+let rowSchemaCache = Utils.WeakMap.make()
+let getRowSchema = (entityConfig: Internal.entityConfig): S.t<Internal.entity> =>
+  switch rowSchemaCache->Utils.WeakMap.get(entityConfig) {
+  | Some(cached) => cached
+  | None =>
+    let schema = switch entityConfig.table->Table.getChainIdField {
+    | None => entityConfig.schema
+    | Some(chainIdField) =>
+      S.schema(s => {
+        let dict = Dict.make()
+        switch entityConfig.schema->S.classify {
+        | Object({items}) =>
+          items->Array.forEach(({location, schema}) => dict->Dict.set(location, s.matches(schema)))
+        | _ =>
+          JsError.throwWithMessage(
+            `Unexpected non-object schema for entity "${entityConfig.name}".`,
+          )
+        }
+        dict->Dict.set(chainIdField.fieldName, s.matches(ChainId.schema->S.toUnknown))
+        dict
+      })->(Utils.magic: S.t<dict<unknown>> => S.t<Internal.entity>)
+    }
+    rowSchemaCache->Utils.WeakMap.set(entityConfig, schema)->ignore
+    schema
+  }
 
 let entityHistoryCache = Utils.WeakMap.make()
 let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgEntityHistory<
@@ -116,12 +175,15 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
     let cache = {
       let id = "id"
 
-      let dataFields = entityConfig.table.fields->Belt.Array.keepMap(field =>
+      let dataFields = entityConfig.table.fields->Array.filterMap(field =>
         switch field {
         | Field(field) =>
           switch field.fieldName {
           //id is not nullable and should be part of the pk
           | "id" => {...field, fieldName: id, isPrimaryKey: true}->Table.Field->Some
+          // Same for the chain id of a per-chain entity: it completes the row's
+          // identity, so it can neither be nulled out nor left out of the pk.
+          | _ if field.isChainId => field->Table.Field->Some
           | _ =>
             {
               ...field,
@@ -154,13 +216,16 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
         ~entityName=entityTableName,
         ~entityIndex=entityConfig.index,
       )
-      //ignore composite indices
+      //ignore composite indexes
       let table = Table.mkTable(
         historyTableName,
-        ~fields=dataFields->Belt.Array.concat([checkpointIdField, actionField]),
+        ~fields=dataFields->Array.concat([checkpointIdField, actionField]),
       )
 
-      let setChangeSchema = EntityHistory.makeSetUpdateSchema(entityConfig.schema)
+      let setChangeSchema = EntityHistory.makeSetUpdateSchema(
+        ~idSchema=entityConfig.table->Table.getIdSchema,
+        entityConfig->getRowSchema,
+      )
 
       {
         EntityHistory.table,
@@ -174,6 +239,40 @@ let getEntityHistory = (~entityConfig: Internal.entityConfig): EntityHistory.pgE
   }
 }
 
+// Every table an entity needs: its own, one partition per chain when it's
+// per-chain, and its history table. The chain set is fixed for the life of a
+// schema — changing it fails the resume compat check against `envio_info` and
+// forces a resync — so every partition the entity will ever need is created
+// here, at init.
+//
+// History stays unpartitioned: it is only ever read by checkpoint, never by
+// chain, so partitioning it would route every write and prune nothing.
+let makeCreateEntityTableQueries = (
+  entityConfig: Internal.entityConfig,
+  ~pgSchema,
+  ~isNumericArrayAsText,
+  ~chainIdMode: ChainId.mode=Int32,
+  ~chainIds: array<ChainId.t>,
+) => {
+  let createTable = (table, ~partitionByColumn=?) =>
+    makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText, ~chainIdMode, ~partitionByColumn?)
+
+  switch entityConfig.table->Table.getChainIdField {
+  | None => [entityConfig.table->createTable]
+  | Some(chainIdField) =>
+    [
+      entityConfig.table->createTable(~partitionByColumn=chainIdField->Table.getPgDbFieldName),
+    ]->Array.concat(
+      chainIds->Array.map(chainId =>
+        `CREATE TABLE IF NOT EXISTS "${pgSchema}"."${partitionTableName(
+            ~entityConfig,
+            ~chainId,
+          )}" PARTITION OF "${pgSchema}"."${entityConfig.table.tableName}" FOR VALUES IN (${chainId->ChainId.toString});`
+      ),
+    )
+  }->Array.concat([getEntityHistory(~entityConfig).table->createTable])
+}
+
 let makeInitializeTransaction = (
   ~pgSchema,
   ~pgUser,
@@ -182,22 +281,40 @@ let makeInitializeTransaction = (
   ~entities=[],
   ~enums=[],
   ~isEmptyPgSchema=false,
+  // Backfill writes are far cheaper without the schema's read indexes, so the
+  // initial DDL creates only tables, primary keys, views and chain rows; the
+  // rest is created by `finalizeBackfill` before the indexer reports ready.
+  ~deferSchemaIndexes=false,
+  ~chainIdMode: ChainId.mode=Int32,
 ) => {
   let generalTables = [
     InternalTable.Chains.table,
     InternalTable.EnvioInfo.table,
+    InternalTable.EnvioContracts.table,
+    InternalTable.EnvioAddresses.table,
     InternalTable.Checkpoints.table,
     InternalTable.RawEvents.table,
   ]
 
-  let allTables = generalTables->Array.copy
-  let allEntityTables = []
-  entities->Array.forEach((entityConfig: Internal.entityConfig) => {
-    allEntityTables->Array.push(entityConfig.table)->ignore
-    allTables->Array.push(entityConfig.table)->ignore
-    allTables->Array.push(getEntityHistory(~entityConfig).table)->ignore
-  })
-  let derivedSchema = Schema.make(allEntityTables)
+  let chainIds = chainConfigs->Array.map((chainConfig: Config.chain) => chainConfig.id)
+
+  let tableQueries =
+    generalTables
+    ->Array.map(table =>
+      makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=isHasuraEnabled, ~chainIdMode)
+    )
+    ->Array.concat(
+      entities->Array.flatMap((entityConfig: Internal.entityConfig) =>
+        entityConfig->makeCreateEntityTableQueries(
+          ~pgSchema,
+          ~isNumericArrayAsText=isHasuraEnabled,
+          ~chainIdMode,
+          ~chainIds,
+        )
+      ),
+    )
+
+  let schemaIndexes = getSchemaIndexes(~entities)
 
   let query = ref(
     (
@@ -224,38 +341,16 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   })
 
   // Batch all table creation first (optimal for PostgreSQL)
-  allTables->Array.forEach((table: Table.table) => {
-    query :=
-      query.contents ++
-      "\n" ++
-      makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=isHasuraEnabled)
+  tableQueries->Array.forEach(tableQuery => {
+    query := query.contents ++ "\n" ++ tableQuery
   })
 
-  // Then batch all indices (better performance when tables exist)
-  allTables->Array.forEach((table: Table.table) => {
-    let indices = makeCreateTableIndicesQuery(table, ~pgSchema)
-    if indices !== "" {
-      query := query.contents ++ "\n" ++ indices
-    }
-  })
-
-  // Add derived indices
-  entities->Array.forEach((entity: Internal.entityConfig) => {
-    entity.table
-    ->Table.getDerivedFromFields
-    ->Array.forEach(derivedFromField => {
-      let indexField =
-        derivedSchema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
-      query :=
-        query.contents ++
-        "\n" ++
-        makeCreateIndexQuery(
-          ~tableName=derivedFromField.derivedFromEntity,
-          ~indexFields=[indexField],
-          ~pgSchema,
-        )
+  // Then batch all indexes (better performance when tables exist)
+  if !deferSchemaIndexes {
+    schemaIndexes->Array.forEach(definition => {
+      query := query.contents ++ "\n" ++ definition->IndexDefinition.makeCreateQuery(~pgSchema)
     })
-  })
+  }
 
   // Create views for Hasura integration
   query := query.contents ++ "\n" ++ InternalTable.Views.makeMetaViewQuery(~pgSchema)
@@ -267,49 +362,149 @@ GRANT ALL ON SCHEMA "${pgSchema}" TO public;`,
   | None => ()
   }
 
-  [
-    query.contents,
-    `CREATE OR REPLACE FUNCTION ${getCacheRowCountFnName}(table_name text) 
-RETURNS integer AS $$
-DECLARE
-  result integer;
-BEGIN
-  EXECUTE format('SELECT COUNT(*) FROM "${pgSchema}".%I', table_name) INTO result;
-  RETURN result;
-END;
-$$ LANGUAGE plpgsql;`,
-  ]
+  [query.contents]
 }
 
-let makeLoadByIdQuery = (~pgSchema, ~tableName) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = $1 LIMIT 1;`
+let makeLoadQuery = (~pgSchema, ~tableName, ~condition) => {
+  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE ${condition};`
 }
 
-let makeLoadByFieldQuery = (~pgSchema, ~tableName, ~fieldName, ~operator) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE "${fieldName}" ${operator} $1;`
+// Appends the filter's serialized field values to params (mutated in place)
+// and returns the matching SQL condition referencing them by index.
+// Field names are spliced as quoted identifiers only after the queryFields
+// lookup proves they exist on the table (and they originate from
+// codegen-validated schemas), so the interpolation can't be abused.
+let rec makeFilterCondition = (
+  ~filter: EntityFilter.t,
+  ~table: Table.table,
+  ~params: array<unknown>,
+) => {
+  // Filters reference fields by API name, while the SQL references columns
+  // by their possibly renamed db names.
+  let getQueryFieldOrThrow = fieldName =>
+    switch table->Table.queryFields->Dict.get(fieldName) {
+    | Some(queryField) => queryField
+    | None =>
+      throw(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from storage. The table doesn't have the field "${fieldName}".`,
+          reason: Table.NonExistingTableField(fieldName),
+        }),
+      )
+    }
+  let serializeParamOrThrow = (
+    ~queryField: Table.queryField,
+    ~fieldName,
+    ~fieldValue: unknown,
+    ~isArray,
+  ) => {
+    let param = try fieldValue->S.reverseConvertOrThrow(
+      isArray ? queryField.arrayFieldSchema : queryField.fieldSchema,
+    ) catch {
+    | exn =>
+      throw(
+        Persistence.StorageError({
+          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
+          reason: exn,
+        }),
+      )
+    }
+    params->Array.push(param)->ignore
+    `$${params->Array.length->Int.toString}`
+  }
+  let scalarCondition = (~fieldName, ~fieldValue, ~op) => {
+    let queryField = getQueryFieldOrThrow(fieldName)
+    `"${queryField.pgDbFieldName}" ${op} ${serializeParamOrThrow(
+        ~queryField,
+        ~fieldName,
+        ~fieldValue,
+        ~isArray=false,
+      )}`
+  }
+  switch filter {
+  // A per-chain entity's table is partitioned by its chain-id column, and
+  // Postgres can only prune a plan it caches when that column is a constant in
+  // the SQL. Bound, the cached plan has to keep every partition, and the
+  // planner ends up throwing it away and re-planning on every execution
+  // instead — measured at 315us per load against 218us with the id written in,
+  // on 30 chains.
+  //
+  // The cost is that each chain gets its own query text, so Postgres caches a
+  // prepared statement per (entity, chain, filter shape) rather than per
+  // (entity, filter shape). Measured at ~8KB of plan cache each, which is ~10MB
+  // per connection for 40 entities across 30 chains — accepted, since the
+  // alternative is a cached plan that can't prune.
+  //
+  // `LoadLayer.scopeFilter` is what puts this filter here, and the value is
+  // range-checked to a non-negative safe integer, so it can carry nothing but
+  // digits.
+  | Eq({fieldName, fieldValue}) if getQueryFieldOrThrow(fieldName).isChainId =>
+    `"${getQueryFieldOrThrow(fieldName).pgDbFieldName}" = ${fieldValue
+      ->ChainId.normalizeOrThrow
+      ->ChainId.toString}`
+  | Eq({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="=")
+  | Gt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op=">")
+  | Lt({fieldName, fieldValue}) => scalarCondition(~fieldName, ~fieldValue, ~op="<")
+  | In({fieldName, fieldValue}) => {
+      let queryField = getQueryFieldOrThrow(fieldName)
+      `"${queryField.pgDbFieldName}" = ANY(${serializeParamOrThrow(
+          ~queryField,
+          ~fieldName,
+          ~fieldValue=fieldValue->(Utils.magic: array<unknown> => unknown),
+          ~isArray=true,
+        )})`
+    }
+  | And({filters: []}) =>
+    throw(
+      Persistence.StorageError({
+        message: `Failed loading "${table.tableName}" from storage. The "and" filter must contain at least one nested filter.`,
+        reason: Utils.Error.make(`Empty "and" filter`),
+      }),
+    )
+  | And({filters}) =>
+    `(${filters
+      ->Array.map(filter => makeFilterCondition(~filter, ~table, ~params))
+      ->Array.join(" AND ")})`
+  }
 }
 
-let makeLoadByIdsQuery = (~pgSchema, ~tableName) => {
-  `SELECT * FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::text[]);`
+// The chain-id predicate a per-chain entity's row-level SQL needs, already
+// including the leading AND. Empty for cross-chain entities and for internal
+// tables, which have no such column.
+//
+// The chain id is written into the SQL rather than bound, because the table is
+// partitioned by it — see `makeFilterCondition` for why a partition key has to
+// be a constant.
+let makeChainIdCondition = (~table: Table.table, ~chainId: option<ChainId.t>) =>
+  switch (table->Table.getChainIdField, chainId) {
+  | (Some(field), Some(chainId)) =>
+    ` AND "${field->Table.getPgDbFieldName}" = ${chainId->ChainId.toString}`
+  | _ => ""
+  }
+
+let makeDeleteByIdQuery = (~pgSchema, ~tableName, ~chainIdCondition) => {
+  `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = $1${chainIdCondition};`
 }
 
-let makeDeleteByIdQuery = (~pgSchema, ~tableName) => {
-  `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = $1;`
-}
-
-let makeDeleteByIdsQuery = (~pgSchema, ~tableName) => {
-  `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::text[]);`
+let makeDeleteByIdsQuery = (~pgSchema, ~tableName, ~idPgType, ~chainIdCondition) => {
+  `DELETE FROM "${pgSchema}"."${tableName}" WHERE id = ANY($1::${idPgType}[])${chainIdCondition};`
 }
 
 let makeLoadAllQuery = (~pgSchema, ~tableName) => {
   `SELECT * FROM "${pgSchema}"."${tableName}";`
 }
 
-let makeInsertUnnestSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~isRawEvents) => {
+let makeInsertUnnestSetQuery = (
+  ~pgSchema,
+  ~table: Table.table,
+  ~itemSchema,
+  ~isRawEvents,
+  ~chainIdMode: ChainId.mode=Int32,
+) => {
   let {quotedFieldNames, quotedNonPrimaryFieldNames, arrayFieldTypes} =
-    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
+    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
 
-  let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
+  let primaryKeyFieldNames = Table.getPgPrimaryKeyFieldNames(table)
 
   `INSERT INTO "${pgSchema}"."${table.tableName}" (${quotedFieldNames->Array.joinUnsafe(", ")})
 SELECT * FROM unnest(${arrayFieldTypes
@@ -335,11 +530,17 @@ SELECT * FROM unnest(${arrayFieldTypes
   } ++ ";"
 }
 
-let makeInsertValuesSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema, ~itemsCount) => {
+let makeInsertValuesSetQuery = (
+  ~pgSchema,
+  ~table: Table.table,
+  ~itemSchema,
+  ~itemsCount,
+  ~chainIdMode: ChainId.mode=Int32,
+) => {
   let {quotedFieldNames, quotedNonPrimaryFieldNames} =
-    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
+    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
 
-  let primaryKeyFieldNames = Table.getPrimaryKeyFieldNames(table)
+  let primaryKeyFieldNames = Table.getPgPrimaryKeyFieldNames(table)
   let fieldsCount = quotedFieldNames->Array.length
 
   // Create placeholder variables for the VALUES clause - using $1, $2, etc.
@@ -380,8 +581,14 @@ VALUES${placeholders.contents}` ++
 // Constants for chunking
 let maxItemsPerQuery = 500
 
-let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'item>) => {
-  let {dbSchema, hasArrayField} = table->Table.toSqlParams(~schema=itemSchema, ~pgSchema)
+let makeTableBatchSetQuery = (
+  ~pgSchema,
+  ~table: Table.table,
+  ~itemSchema: S.t<'item>,
+  ~chainIdMode: ChainId.mode=Int32,
+) => {
+  let {dbSchema, hasArrayField, byteaColumnIndexes} =
+    table->Table.toSqlParams(~schema=itemSchema, ~pgSchema, ~chainIdMode)
 
   // Should move this to a better place
   // We need it for the isRawEvents check in makeTableBatchSet
@@ -405,9 +612,24 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
 
   if (isRawEvents || !hasArrayField) && !isHistoryUpdate {
     {
-      "query": makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents),
+      "query": makeInsertUnnestSetQuery(~pgSchema, ~table, ~itemSchema, ~isRawEvents, ~chainIdMode),
       "convertOrThrow": S.compile(
-        S.unnest(dbSchema),
+        S.unnest(dbSchema)->S.preprocess(_ => {
+          serializer: columns => {
+            let columns = columns->(Utils.magic: unknown => array<unknown>)
+            byteaColumnIndexes->Array.forEach(index =>
+              columns->Array.setUnsafe(
+                index,
+                columns
+                ->Array.getUnsafe(index)
+                ->(Utils.magic: unknown => array<unknown>)
+                ->Utils.Bytes.toPgArrayLiteral
+                ->(Utils.magic: string => unknown),
+              )
+            )
+            columns->(Utils.magic: array<unknown> => unknown)
+          },
+        }),
         ~input=Value,
         ~output=Unknown,
         ~mode=Sync,
@@ -422,6 +644,7 @@ let makeTableBatchSetQuery = (~pgSchema, ~table: Table.table, ~itemSchema: S.t<'
         ~table,
         ~itemSchema,
         ~itemsCount=maxItemsPerQuery,
+        ~chainIdMode,
       ),
       "convertOrThrow": S.compile(
         S.unnest(itemSchema)->S.preprocess(_ => {
@@ -450,30 +673,79 @@ let chunkArray = (arr: array<'a>, ~chunkSize) => {
   chunks
 }
 
-let removeInvalidUtf8InPlace = entities =>
-  entities->Array.forEach(item => {
-    let dict = item->(Utils.magic: 'a => dict<unknown>)
-    dict->Utils.Dict.forEachWithKey((value, key) => {
-      if value->typeof === #string {
-        let value = value->(Utils.magic: unknown => string)
+// Strips NUL bytes, recursing into nested objects/arrays so a NUL buried
+// inside a jsonb column (an event param object, a json entity field) is
+// removed too — Postgres rejects it in both text (0x00) and jsonb (22P05).
+let rec removeInvalidUtf8DeepInPlace = (value: unknown): unknown => {
+  if value->typeof === #string {
+    value
+    ->(Utils.magic: unknown => string)
+    ->Utils.String.replaceAll("\x00", "")
+    ->(Utils.magic: string => unknown)
+  } else if value->typeof === #object && value !== %raw(`null`) {
+    let dict = value->(Utils.magic: unknown => dict<unknown>)
+    dict->Utils.Dict.forEachWithKey((v, k) => dict->Dict.set(k, removeInvalidUtf8DeepInPlace(v)))
+    value
+  } else {
+    value
+  }
+}
 
-        dict->Dict.set(
-          key,
-          value
-          ->Utils.String.replaceAll("\x00", "")
-          ->(Utils.magic: string => unknown),
-        )
-      }
-    })
-  })
+let removeInvalidUtf8InPlace = items =>
+  items->Array.forEach(item =>
+    removeInvalidUtf8DeepInPlace(item->(Utils.magic: 'a => unknown))->ignore
+  )
 
 let pgErrorMessageSchema = S.object(s => s.field("message", S.string))
 
 exception PgEncodingError({table: Table.table})
 
-// WeakMap for caching table batch set queries
-let setQueryCache = Utils.WeakMap.make()
-let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema) => {
+// Classifies a write failure, parking it in `specificError` so the
+// transaction can unwind and the outer handler can react. Both Postgres
+// encoding failures we recognize are NUL-related — `0x00` in a text column
+// and a NUL rejected by jsonb (22P05) — so they become a PgEncodingError
+// that triggers an escape-and-retry of the offending table, where deep NUL
+// stripping resolves them. We escape lazily on first failure to keep the
+// happy path free of per-item sanitization. The aborted-transaction cascade
+// is ignored so it never masks the original error.
+let classifyWriteError = (~specificError: ref<option<exn>>, ~table: Table.table, ~exn) => {
+  /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
+  let normalizedExn = switch exn {
+  | JsExn(_) => exn
+  | Persistence.StorageError({reason: exn}) => exn
+  | _ => exn
+  }->JsExn.anyToExnInternal
+
+  switch normalizedExn {
+  | JsExn(error) =>
+    switch error->S.parseOrThrow(pgErrorMessageSchema) {
+    | `current transaction is aborted, commands ignored until end of transaction block` => ()
+    | `invalid byte sequence for encoding "UTF8": 0x00`
+    | `unsupported Unicode escape sequence` =>
+      specificError.contents = Some(PgEncodingError({table: table}))
+    | _ => specificError.contents = Some(exn->Utils.prettifyExn)
+    | exception _ => ()
+    }
+  | S.Raised(_) => throw(normalizedExn) // But rethrow this one, since it's not a PG error
+  | _ => ()
+  }
+}
+
+// Batch set queries, cached per table. The query text bakes in the schema and
+// the chain-id mode, so the cache belongs to the storage instance those came
+// from — `make` creates one and threads it down. A process-wide cache would
+// hand a second storage the first one's schema.
+let makeSetQueryCache = () => Utils.WeakMap.make()
+
+let setOrThrow = async (
+  sql,
+  ~items,
+  ~table: Table.table,
+  ~itemSchema,
+  ~pgSchema,
+  ~setQueryCache,
+  ~chainIdMode: ChainId.mode=Int32,
+) => {
   if items->Array.length === 0 {
     ()
   } else {
@@ -485,6 +757,7 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
           ~pgSchema,
           ~table,
           ~itemSchema=itemSchema->S.toUnknown,
+          ~chainIdMode,
         )
         setQueryCache->Utils.WeakMap.set(table, newQuery)->ignore
         newQuery
@@ -505,7 +778,13 @@ let setOrThrow = async (sql, ~items, ~table: Table.table, ~itemSchema, ~pgSchema
           let response = isFullChunk
             ? sql->Postgres.preparedUnsafe(data["query"], params)
             : sql->Postgres.unpreparedUnsafe(
-                makeInsertValuesSetQuery(~pgSchema, ~table, ~itemSchema, ~itemsCount=chunkSize),
+                makeInsertValuesSetQuery(
+                  ~pgSchema,
+                  ~table,
+                  ~itemSchema,
+                  ~itemsCount=chunkSize,
+                  ~chainIdMode,
+                ),
                 params,
               )
           responses->Array.push(response)->ignore
@@ -546,8 +825,6 @@ let makeSchemaTableNamesQuery = (~pgSchema) => {
   `SELECT table_name FROM information_schema.tables WHERE table_schema = '${pgSchema}';`
 }
 
-let cacheTablePrefixLength = Internal.cacheTablePrefix->String.length
-
 type schemaCacheTableInfo = {
   @as("table_name")
   tableName: string,
@@ -555,13 +832,36 @@ type schemaCacheTableInfo = {
   count: int,
 }
 
-let makeSchemaCacheTableInfoQuery = (~pgSchema) => {
-  `SELECT 
-    t.table_name,
-    ${getCacheRowCountFnName}(t.table_name) as count
+type cacheRowCount = {
+  @as("count")
+  count: int,
+}
+
+// Matches both the cross-chain (`envio_effect_<name>`) and chain-scoped
+// (`envio_<chainId>_effect_<name>`) cache-table formats. Kept in sync with
+// Internal.EffectCache.
+let makeEffectCacheTableNamesQuery = (~pgSchema) => {
+  // The column guard requires the effect-cache shape (exactly an `id` + `output`
+  // pair) so a user entity table that happens to match the name pattern is never
+  // mistaken for an effect cache.
+  `SELECT t.table_name
    FROM information_schema.tables t
-   WHERE t.table_schema = '${pgSchema}' 
-   AND t.table_name LIKE '${Internal.cacheTablePrefix}%';`
+   WHERE t.table_schema = '${pgSchema}'
+   AND t.table_name ~ '^envio_([0-9]+_)?effect_.+'
+   AND (
+     SELECT array_agg(c.column_name::text ORDER BY c.column_name::text)
+     FROM information_schema.columns c
+     WHERE c.table_schema = t.table_schema AND c.table_name = t.table_name
+   ) = ARRAY['id', 'output'];`
+}
+
+let makeCacheRowCountQuery = (~pgSchema, ~tableName) => {
+  // The table name comes from information_schema, so anything cache-shaped that
+  // was created out-of-band in the schema reaches here. Splice both identifiers
+  // as quoted identifiers, doubling embedded quotes, so a crafted name can't
+  // break out into raw SQL.
+  let quoteIdent = ident => `"${ident->String.replaceAll("\"", "\"\"")}"`
+  `SELECT COUNT(*)::int AS count FROM ${quoteIdent(pgSchema)}.${quoteIdent(tableName)};`
 }
 
 type psqlExecState =
@@ -628,18 +928,34 @@ let getConnectedPsqlExec = {
   }
 }
 
-let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids, ~table: Table.table) => {
+let deleteByIdsOrThrow = async (
+  sql,
+  ~pgSchema,
+  ~ids: array<EntityId.t>,
+  ~table: Table.table,
+  ~chainId: option<ChainId.t>=None,
+) => {
+  let chainIdCondition = makeChainIdCondition(~table, ~chainId)
+  // A JSON array of the serialized ids. For a single id the query binds it as
+  // `$1` directly (the array is the positional-params array); for many it binds
+  // the whole array to `$1` behind an `ANY(...)`.
+  let idsJson = table->Table.encodeIdsToJson(ids)
   switch await (
     switch ids {
     | [_] =>
       sql->Postgres.preparedUnsafe(
-        makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName),
-        ids->Obj.magic,
+        makeDeleteByIdQuery(~pgSchema, ~tableName=table.tableName, ~chainIdCondition),
+        idsJson->(Utils.magic: JSON.t => array<unknown>)->Obj.magic,
       )
     | _ =>
       sql->Postgres.preparedUnsafe(
-        makeDeleteByIdsQuery(~pgSchema, ~tableName=table.tableName),
-        [ids]->Obj.magic,
+        makeDeleteByIdsQuery(
+          ~pgSchema,
+          ~tableName=table.tableName,
+          ~idPgType=table->Table.getIdPgFieldType(~pgSchema),
+          ~chainIdCondition,
+        ),
+        [idsJson->(Utils.magic: JSON.t => unknown)]->Obj.magic,
       )
     }
   ) {
@@ -654,16 +970,20 @@ let deleteByIdsOrThrow = async (sql, ~pgSchema, ~ids, ~table: Table.table) => {
   }
 }
 
-let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
+let makeInsertDeleteUpdatesQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~pgSchema,
+  ~chainId: option<ChainId.t>,
+) => {
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
   )
 
   // Get all field names for the INSERT statement
-  let allHistoryFieldNames = entityConfig.table.fields->Belt.Array.keepMap(fieldOrDerived =>
+  let allHistoryFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
-    | Field(field) => field->Table.getDbFieldName->Some
+    | Field(field) => field->Table.getPgDbFieldName->Some
     | DerivedFrom(_) => None
     }
   )
@@ -671,16 +991,24 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
   allHistoryFieldNames->Array.push(EntityHistory.changeFieldName)->ignore
 
   let allHistoryFieldNamesStr =
-    allHistoryFieldNames->Belt.Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
+    allHistoryFieldNames->Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
 
   // Build the SELECT part: id from unnest, envio_checkpoint_id from unnest, 'DELETE' for action, NULL for all other fields
-  let selectParts = allHistoryFieldNames->Belt.Array.map(fieldName => {
+  // The chain-id column is part of the history primary key, so a DELETE row
+  // carries the scope's chain — bound once as $3 — rather than the NULL every
+  // other data field gets.
+  let chainIdColumn = switch (entityConfig.table->Table.getChainIdField, chainId) {
+  | (Some(field), Some(_)) => field->Table.getPgDbFieldName
+  | _ => ""
+  }
+  let selectParts = allHistoryFieldNames->Array.map(fieldName => {
     switch fieldName {
     | field if field == Table.idFieldName => `u.${Table.idFieldName}`
     | field if field == EntityHistory.checkpointIdFieldName =>
       `u.${EntityHistory.checkpointIdFieldName}`
     | field if field == EntityHistory.changeFieldName =>
       `'${(EntityHistory.RowAction.DELETE :> string)}'`
+    | field if chainIdColumn !== "" && field == chainIdColumn => "$3"
     | _ => "NULL"
     }
   })
@@ -695,9 +1023,11 @@ let makeInsertDeleteUpdatesQuery = (~entityConfig: Internal.entityConfig, ~pgSch
     ~isNullable=false,
   )
 
+  let idPgType = entityConfig.table->Table.getIdPgFieldType(~pgSchema)
+
   `INSERT INTO "${pgSchema}"."${historyTableName}" (${allHistoryFieldNamesStr})
 SELECT ${selectPartsStr}
-FROM UNNEST($1::text[], $2::${checkpointIdPgType}[]) AS u(${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
+FROM UNNEST($1::${idPgType}[], $2::${checkpointIdPgType}[]) AS u(${Table.idFieldName}, ${EntityHistory.checkpointIdFieldName})`
 }
 
 let executeSet = (
@@ -715,44 +1045,156 @@ let executeSet = (
 let rec writeBatch = async (
   sql,
   ~batch: Batch.t,
-  ~rawEvents,
   ~pgSchema,
-  ~rollbackTargetCheckpointId,
+  ~rollback: option<Persistence.rollback>,
   ~isInReorgThreshold,
   ~config: Config.t,
   ~allEntities: array<Internal.entityConfig>,
   ~setEffectCacheOrThrow,
+  ~setQueryCache,
   ~updatedEffectsCache,
   ~updatedEntities: array<Persistence.updatedEntity>,
+  ~registeredAddresses: array<AddressRows.staged>,
   ~sinkPromise: option<promise<option<exn>>>,
+  ~chainMetaData: option<dict<InternalTable.Chains.metaFields>>,
   ~escapeTables=?,
 ) => {
   try {
+    let chainIdMode = config.chainIdMode
     let shouldSaveHistory = config->Config.shouldSaveHistory(~isInReorgThreshold)
 
     let specificError = ref(None)
 
-    let setRawEvents = executeSet(
-      _,
-      ~dbFunction=(sql, items) => {
-        sql->setOrThrow(
-          ~items,
-          ~table=InternalTable.RawEvents.table,
-          ~itemSchema=InternalTable.RawEvents.schema,
-          ~pgSchema,
-        )
-      },
-      ~items=rawEvents,
-    )
+    let rawEvents = if config.enableRawEvents {
+      // A single on-chain log fans out to one item per matching registration;
+      // `raw_events` records the log itself, so dedupe by its coordinate
+      // (chain, block, logIndex) to keep one row per log.
+      let seenLogCoordinates = Utils.Set.make()
+      let rows = batch.items->Array.filterMap(item =>
+        switch item {
+        | Internal.Event(_) =>
+          let eventItem = item->Internal.castUnsafeEventItem
+          let coordinate = `${eventItem.chainId->ChainId.toString}-${eventItem.blockNumber->Int.toString}-${eventItem.logIndex->Int.toString}`
+          if seenLogCoordinates->Utils.Set.has(coordinate) {
+            None
+          } else {
+            seenLogCoordinates->Utils.Set.add(coordinate)->ignore
+            Some(config.ecosystem.toRawEvent(item->Internal.castUnsafeEventItem))
+          }
+        | Internal.Block(_) => None
+        }
+      )
+      switch escapeTables {
+      | Some(tables) if tables->Utils.Set.has(InternalTable.RawEvents.table) =>
+        rows->removeInvalidUtf8InPlace
+      | _ => ()
+      }
+      rows
+    } else {
+      []
+    }
 
-    let setEntities = updatedEntities->Belt.Array.map(({entityConfig, updates}) => {
+    let setRawEvents = async sql => {
+      try {
+        await sql->executeSet(~dbFunction=(sql, items) => {
+          sql->setOrThrow(
+            ~items,
+            ~table=InternalTable.RawEvents.table,
+            ~itemSchema=InternalTable.RawEvents.schema,
+            ~pgSchema,
+            ~chainIdMode,
+            ~setQueryCache,
+          )
+        }, ~items=rawEvents)
+      } catch {
+      | exn => classifyWriteError(~specificError, ~table=InternalTable.RawEvents.table, ~exn)
+      }
+    }
+
+    let setEntities = updatedEntities->Array.map(({entityConfig, scope, changes}) => {
       let entitiesToSet = []
       let idsToDelete = []
 
-      updates->Array.forEach(row => {
-        switch row {
-        | {latestChange: Set({entity})} => entitiesToSet->Belt.Array.push(entity)
-        | {latestChange: Delete({entityId})} => idsToDelete->Belt.Array.push(entityId)
+      // Every row in this group belongs to the group's scope, so the chain id
+      // is stamped once here instead of being looked up per row downstream.
+      let scopeChainId = switch scope {
+      | Internal.CrossChain => None
+      | Chain(chainId) => Some(chainId)
+      }
+      let shouldSaveHistory =
+        config->Config.shouldSaveHistory(~isInReorgThreshold, ~chainId=?scopeChainId)
+      let changes = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
+      | (Some(field), Some(chainId)) =>
+        changes->Array.map(change =>
+          switch change {
+          | Change.Set(set) =>
+            Change.Set({
+              ...set,
+              entity: set.entity->Internal.stampChainId(~fieldName=field.fieldName, ~chainId),
+            })
+          | Delete(_) => change
+          }
+        )
+      | _ => changes
+      }
+
+      // Bound as $3 by the history-delete query, after its two unnest arrays.
+      // Empty for cross-chain entities, whose SQL has no such param.
+      let chainIdParams = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
+      | (Some(_), Some(chainId)) => [chainId->(Utils.magic: ChainId.t => unknown)]
+      | _ => []
+      }
+
+      // The rollback-diff change is written to the entity table only, never the
+      // history table; when present it is an id's oldest change.
+      let diffCheckpointId = rollback->Option.map(r => r.diffCheckpointId)
+
+      // History batches, populated only when saving history.
+      let batchSetUpdates = []
+      let batchDeleteEntityIds = []
+      let batchDeleteCheckpointIds = []
+      let idsWithDiff = Utils.Set.make()
+
+      // Single pass over the change log: track each id's latest change (the last
+      // one seen) and, when saving history, fan every non-diff change out to the
+      // history-table batches.
+      // Keyed/deduped in memory by the id's string key (toKey), while the
+      // batches sent to SQL keep the real id values so they serialize with the
+      // id column's type.
+      let latestChangeById = Dict.make()
+      let orderedIds = []
+      changes->Array.forEach(change => {
+        let entityId = change->Change.getEntityId
+        let entityKey = entityId->EntityId.toKey
+        if latestChangeById->Utils.Dict.dangerouslyGetNonOption(entityKey)->Option.isNone {
+          orderedIds->Array.push(entityId)
+        }
+        latestChangeById->Dict.set(entityKey, change)
+        if shouldSaveHistory {
+          if Some(change->Change.getCheckpointId) === diffCheckpointId {
+            idsWithDiff->Utils.Set.add(entityKey)->ignore
+          } else {
+            switch change {
+            | Delete({entityId, checkpointId}) =>
+              batchDeleteEntityIds->Array.push(entityId)->ignore
+              batchDeleteCheckpointIds->Array.push(checkpointId)->ignore
+            | Set(_) => batchSetUpdates->Array.push(change)->ignore
+            }
+          }
+        }
+      })
+
+      let backfillHistoryIds = Utils.Set.make()
+      orderedIds->Array.forEach(entityId => {
+        let entityKey = entityId->EntityId.toKey
+        switch latestChangeById->Dict.getUnsafe(entityKey) {
+        | Set({entity}) => entitiesToSet->Array.push(entity)
+        | Delete({entityId}) => idsToDelete->Array.push(entityId)
+        }
+
+        // An id needs a history backfill iff none of its changes is the diff.
+        if shouldSaveHistory && !(idsWithDiff->Utils.Set.has(entityKey)) {
+          backfillHistoryIds->Utils.Set.add(entityId)->ignore
         }
       })
 
@@ -766,54 +1208,33 @@ let rec writeBatch = async (
           let promises = []
 
           if shouldSaveHistory {
-            let backfillHistoryIds = Utils.Set.make()
-            let batchSetUpdates = []
-            // Use unnest approach
-            let batchDeleteCheckpointIds = []
-            let batchDeleteEntityIds = []
-
-            updates->Array.forEach(update => {
-              switch update {
-              | {history, containsRollbackDiffChange} =>
-                history->Array.forEach(
-                  (change: Change.t<'a>) => {
-                    if !containsRollbackDiffChange {
-                      backfillHistoryIds->Utils.Set.add(change->Change.getEntityId)->ignore
-                    }
-                    switch change {
-                    | Delete({entityId}) => {
-                        batchDeleteEntityIds->Belt.Array.push(entityId)->ignore
-                        batchDeleteCheckpointIds
-                        ->Belt.Array.push(change->Change.getCheckpointId)
-                        ->ignore
-                      }
-                    | Set(_) => batchSetUpdates->Array.push(change)->ignore
-                    }
-                  },
-                )
-              }
-            })
-
             if backfillHistoryIds->Utils.Set.size !== 0 {
               // This must run before updating entity or entity history tables
               await EntityHistory.backfillHistory(
                 sql,
                 ~pgSchema,
-                ~entityName=entityConfig.name,
+                ~table=entityConfig.table,
                 ~entityIndex=entityConfig.index,
+                ~chainId=scopeChainId,
                 ~ids=backfillHistoryIds->Utils.Set.toArray,
               )
             }
 
             if batchDeleteCheckpointIds->Utils.Array.notEmpty {
-              promises->Belt.Array.push(
+              promises->Array.push(
                 sql
                 ->Postgres.preparedUnsafe(
-                  makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema),
-                  (
-                    batchDeleteEntityIds,
-                    batchDeleteCheckpointIds->Utils.BigInt.arrayToStringArray,
-                  )->Obj.magic,
+                  makeInsertDeleteUpdatesQuery(~entityConfig, ~pgSchema, ~chainId=scopeChainId),
+                  [
+                    entityConfig.table
+                    ->Table.encodeIdsToJson(batchDeleteEntityIds)
+                    ->(Utils.magic: JSON.t => unknown),
+                    batchDeleteCheckpointIds
+                    ->Utils.BigInt.arrayToStringArray
+                    ->(Utils.magic: array<string> => unknown),
+                  ]
+                  ->Array.concat(chainIdParams)
+                  ->Obj.magic,
                 )
                 ->Utils.Promise.ignoreValue,
               )
@@ -839,6 +1260,8 @@ let rec writeBatch = async (
                   ~itemSchema=entityHistory.setChangeSchema,
                   ~table=entityHistory.table,
                   ~pgSchema,
+                  ~chainIdMode,
+                  ~setQueryCache,
                 ),
               )
               ->ignore
@@ -849,18 +1272,25 @@ let rec writeBatch = async (
             if shouldRemoveInvalidUtf8 {
               entitiesToSet->removeInvalidUtf8InPlace
             }
-            promises->Belt.Array.push(
+            promises->Array.push(
               sql->setOrThrow(
                 ~items=entitiesToSet,
                 ~table=entityConfig.table,
-                ~itemSchema=entityConfig.schema,
+                ~itemSchema=entityConfig->getRowSchema,
                 ~pgSchema,
+                ~chainIdMode,
+                ~setQueryCache,
               ),
             )
           }
           if idsToDelete->Utils.Array.notEmpty {
-            promises->Belt.Array.push(
-              sql->deleteByIdsOrThrow(~pgSchema, ~ids=idsToDelete, ~table=entityConfig.table),
+            promises->Array.push(
+              sql->deleteByIdsOrThrow(
+                ~pgSchema,
+                ~ids=idsToDelete,
+                ~table=entityConfig.table,
+                ~chainId=scopeChainId,
+              ),
             )
           }
 
@@ -870,42 +1300,11 @@ let rec writeBatch = async (
         // might throw PG error, earlier, than the handled error
         // from setOrThrow will be passed through.
         // This is needed for the utf8 encoding fix.
-        | exn => {
-            /* Note: Entity History doesn't return StorageError yet, and directly throws JsError */
-            let normalizedExn = switch exn {
-            | JsExn(_) => exn
-            | Persistence.StorageError({reason: exn}) => exn
-            | _ => exn
-            }->JsExn.anyToExnInternal
-
-            switch normalizedExn {
-            | JsExn(error) =>
-              // Workaround for https://github.com/enviodev/hyperindex/issues/446
-              // We do escaping only when we actually got an error writing for the first time.
-              // This is not perfect, but an optimization to avoid escaping for every single item.
-
-              switch error->S.parseOrThrow(pgErrorMessageSchema) {
-              | `current transaction is aborted, commands ignored until end of transaction block` => ()
-              | `invalid byte sequence for encoding "UTF8": 0x00` =>
-                // Since the transaction is aborted at this point,
-                // we can't simply retry the function with escaped items,
-                // so propagate the error, to restart the whole batch write.
-                // Also, pass the failing table, to escape only its items.
-                // TODO: Ideally all this should be done in the file,
-                // so it'll be easier to work on PG specific logic.
-                specificError.contents = Some(PgEncodingError({table: entityConfig.table}))
-              | _ => specificError.contents = Some(exn->Utils.prettifyExn)
-              | exception _ => ()
-              }
-            | S.Raised(_) => throw(normalizedExn) // But rethrow this one, since it's not a PG error
-            | _ => ()
-            }
-
-            // Improtant: Don't rethrow here, since it'll result in
-            // an unhandled rejected promise error.
-            // That's fine not to throw, since sql->Postgres.beginSql
-            // will fail anyways.
-          }
+        //
+        // Important: Don't rethrow here, since it'll result in an unhandled
+        // rejected promise error. That's fine not to throw, since
+        // sql->Postgres.beginSql will fail anyways.
+        | exn => classifyWriteError(~specificError, ~table=entityConfig.table, ~exn)
         }
       }
     })
@@ -913,23 +1312,53 @@ let rec writeBatch = async (
     //In the event of a rollback, rollback all meta tables based on the given
     //valid event identifier, where all rows created after this eventIdentifier should
     //be deleted
-    let rollbackTables = switch rollbackTargetCheckpointId {
-    | Some(rollbackTargetCheckpointId) =>
+    let rollbackTables = switch rollback {
+    | Some({floors, rolledBackAddresses, progressedChains}) =>
       Some(
         sql => {
-          let promises = allEntities->Array.map(entityConfig => {
-            sql->EntityHistory.rollback(
-              ~pgSchema,
-              ~entityName=entityConfig.name,
-              ~entityIndex=entityConfig.index,
-              ~rollbackTargetCheckpointId,
-            )
-          })
+          // Postgres owns history tables only for Postgres-backed entities;
+          // ClickHouse-only entities have none to roll back.
+          let promises =
+            allEntities
+            ->Array.filter(entityConfig => entityConfig.storage.postgres)
+            ->Array.map(entityConfig => {
+              sql->EntityHistory.rollback(
+                ~pgSchema,
+                ~entityName=entityConfig.name,
+                ~entityIndex=entityConfig.index,
+                ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+                ~floors,
+              )
+            })
           promises
-          ->Array.push(
-            sql->InternalTable.Checkpoints.rollback(~pgSchema, ~rollbackTargetCheckpointId),
-          )
+          ->Array.push(sql->InternalTable.Checkpoints.rollback(~pgSchema, ~floors))
           ->ignore
+
+          // Runs before the batch's own progress write below, so a chain the
+          // batch also progressed keeps the batch's later value.
+          if progressedChains->Utils.Array.notEmpty {
+            promises
+            ->Array.push(
+              sql->InternalTable.Chains.setProgressedChains(~pgSchema, ~progressedChains),
+            )
+            ->ignore
+          }
+
+          // Addresses are insert-only, so undoing their registrations is a
+          // delete rather than a history replay. It runs before the batch's own
+          // inserts in the same transaction, so a re-registered address lands
+          // after its old row is gone.
+          if rolledBackAddresses->Utils.Array.notEmpty {
+            promises
+            ->Array.push(
+              sql->InternalTable.EnvioAddresses.delete(
+                ~pgSchema,
+                ~keys=rolledBackAddresses,
+                ~chainIdMode,
+              ),
+            )
+            ->ignore
+          }
           Promise.all(promises)
         },
       )
@@ -960,10 +1389,30 @@ let rec writeBatch = async (
                 }),
               ),
             setRawEvents,
-          ]->Belt.Array.concat(setEntities)
+          ]->Array.concat(setEntities)
+
+          switch chainMetaData {
+          | Some(chainsData) =>
+            setOperations
+            ->Array.push(sql =>
+              sql->InternalTable.Chains.setMeta(~pgSchema, ~chainsData)->Utils.Promise.ignoreValue
+            )
+            ->ignore
+          | None => ()
+          }
+
+          if registeredAddresses->Utils.Array.notEmpty {
+            setOperations->Array.push(sql =>
+              sql->InternalTable.EnvioAddresses.insert(
+                ~pgSchema,
+                ~rows=registeredAddresses->Array.map(staged => staged.row),
+                ~chainIdMode,
+              )
+            )
+          }
 
           if shouldSaveHistory {
-            setOperations->Belt.Array.push(sql =>
+            setOperations->Array.push(sql =>
               sql->InternalTable.Checkpoints.insert(
                 ~pgSchema,
                 ~checkpointIds=batch.checkpointIds,
@@ -971,12 +1420,13 @@ let rec writeBatch = async (
                 ~checkpointBlockNumbers=batch.checkpointBlockNumbers,
                 ~checkpointBlockHashes=batch.checkpointBlockHashes,
                 ~checkpointEventsProcessed=batch.checkpointEventsProcessed,
+                ~chainIdMode,
               )
             )
           }
 
           await setOperations
-          ->Belt.Array.map(dbFunc => sql->dbFunc)
+          ->Array.map(dbFunc => sql->dbFunc)
           ->Promise.all
           ->Utils.Promise.ignoreValue
 
@@ -992,8 +1442,10 @@ let rec writeBatch = async (
         // Since effect cache currently doesn't support rollback,
         // we can run it outside of the transaction for simplicity.
         updatedEffectsCache
-        ->Belt.Array.map(({effect, items, shouldInitialize}: Persistence.updatedEffectCache) => {
-          setEffectCacheOrThrow(~effect, ~items, ~initialize=shouldInitialize)
+        ->Array.map((
+          {table, itemSchema, items, shouldInitialize}: Persistence.updatedEffectCache,
+        ) => {
+          setEffectCacheOrThrow(~table, ~itemSchema, ~items, ~initialize=shouldInitialize)
         })
         ->Promise.all,
       ))
@@ -1023,68 +1475,139 @@ let rec writeBatch = async (
     await writeBatch(
       sql,
       ~escapeTables,
-      ~rawEvents,
       ~batch,
       ~pgSchema,
-      ~rollbackTargetCheckpointId,
+      ~setQueryCache,
+      ~rollback,
       ~isInReorgThreshold,
       ~config,
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
       ~allEntities,
       ~updatedEntities,
+      ~registeredAddresses,
       ~sinkPromise,
+      ~chainMetaData,
     )
   }
 }
 
-// Returns the most recent entity state for IDs that need to be restored during rollback.
-// For each ID modified after the rollback target, retrieves its latest state at or before the target.
-let makeGetRollbackRestoredEntitiesQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
-  let dataFieldNames = entityConfig.table.fields->Belt.Array.keepMap(fieldOrDerived =>
+// Returns the most recent history row at or before the rollback target for IDs changed after it.
+// envio_change is included so ReScript can turn SET rows into restores and DELETE rows into removals.
+// The columns that identify a history row: the id, plus the chain id for a
+// per-chain entity.
+let rollbackKeyColumns = (entityConfig: Internal.entityConfig) =>
+  switch entityConfig.table->Table.getChainIdField {
+  | Some(field) => [Table.idFieldName, field->Table.getPgDbFieldName]
+  | None => [Table.idFieldName]
+  }
+
+let makeGetRollbackPreTargetRowsQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~pgSchema,
+  ~floors: RollbackFloors.t,
+) => {
+  let dataFieldNames = entityConfig.table.fields->Array.filterMap(fieldOrDerived =>
     switch fieldOrDerived {
-    | Field(field) => field->Table.getDbFieldName->Some
+    | Field(field) => field->Table.getPgDbFieldName->Some
     | DerivedFrom(_) => None
     }
   )
 
-  let dataFieldsCommaSeparated =
-    dataFieldNames->Belt.Array.map(name => `"${name}"`)->Array.joinUnsafe(", ")
-
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
   )
+  // Every column is qualified: the per-chain bounds relation joined in has a
+  // `chain_id` of its own, which a snake_case chain column shares.
+  let tableRef = `"${historyTableName}"`
+  let dataFieldsCommaSeparated =
+    dataFieldNames->Array.map(name => `${tableRef}."${name}"`)->Array.joinUnsafe(", ")
 
-  `SELECT DISTINCT ON (${Table.idFieldName}) ${dataFieldsCommaSeparated}
-FROM "${pgSchema}"."${historyTableName}"
-WHERE "${EntityHistory.checkpointIdFieldName}" <= $1
-  AND EXISTS (
-    SELECT 1
-    FROM "${pgSchema}"."${historyTableName}" h
-    WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
-      AND h."${EntityHistory.checkpointIdFieldName}" > $1
-  )
-ORDER BY ${Table.idFieldName}, "${EntityHistory.checkpointIdFieldName}" DESC`
+  // A per-chain entity's rows are only comparable within a chain, so the row's
+  // identity here is (id, chain id) rather than the id alone.
+  let keyColumns = rollbackKeyColumns(entityConfig)
+  let keyColumnsCommaSeparated =
+    keyColumns->Array.map(c => `${tableRef}."${c}"`)->Array.joinUnsafe(", ")
+  let keyMatch =
+    keyColumns->Array.map(c => `h."${c}" = ${tableRef}."${c}"`)->Array.joinUnsafe(" AND ")
+  let bounds =
+    floors.floors->CheckpointBounds.sql(
+      ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+      ~tableRef,
+    )
+
+  `SELECT DISTINCT ON (${keyColumnsCommaSeparated}) ${dataFieldsCommaSeparated}, ${tableRef}."${EntityHistory.changeFieldName}"
+  FROM "${pgSchema}"."${historyTableName}"${bounds.join}
+  WHERE ${tableRef}."${EntityHistory.checkpointIdFieldName}" <= ${bounds.checkpointId}
+    AND EXISTS (
+      SELECT 1
+      FROM "${pgSchema}"."${historyTableName}" h
+      WHERE ${keyMatch}
+        AND h."${EntityHistory.checkpointIdFieldName}" > ${bounds.checkpointId}
+    )
+  ORDER BY ${keyColumnsCommaSeparated}, ${tableRef}."${EntityHistory.checkpointIdFieldName}" DESC`
 }
 
 // Returns entity IDs that were created after the rollback target and have no history before it.
-// These entities should be deleted during rollback.
-let makeGetRollbackRemovedIdsQuery = (~entityConfig: Internal.entityConfig, ~pgSchema) => {
+// DELETE rows at or before the target are returned by the restore query and classified in ReScript.
+let makeGetRollbackRemovedIdsQuery = (
+  ~entityConfig: Internal.entityConfig,
+  ~pgSchema,
+  ~floors: RollbackFloors.t,
+) => {
   let historyTableName = EntityHistory.historyTableName(
     ~entityName=entityConfig.name,
     ~entityIndex=entityConfig.index,
   )
-  `SELECT DISTINCT ${Table.idFieldName}
-FROM "${pgSchema}"."${historyTableName}"
-WHERE "${EntityHistory.checkpointIdFieldName}" > $1
-AND NOT EXISTS (
-  SELECT 1
-  FROM "${pgSchema}"."${historyTableName}" h
-  WHERE h.${Table.idFieldName} = "${historyTableName}".${Table.idFieldName}
-    AND h."${EntityHistory.checkpointIdFieldName}" <= $1
-)`
+  let tableRef = `"${historyTableName}"`
+  let keyColumns = rollbackKeyColumns(entityConfig)
+  let keyMatch =
+    keyColumns->Array.map(c => `h."${c}" = ${tableRef}."${c}"`)->Array.joinUnsafe(" AND ")
+  let bounds =
+    floors.floors->CheckpointBounds.sql(
+      ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
+      ~tableRef,
+    )
+
+  `SELECT DISTINCT ${keyColumns->Array.map(c => `${tableRef}."${c}"`)->Array.joinUnsafe(", ")}
+  FROM "${pgSchema}"."${historyTableName}"${bounds.join}
+  WHERE ${tableRef}."${EntityHistory.checkpointIdFieldName}" > ${bounds.checkpointId}
+    AND NOT EXISTS (
+      SELECT 1
+      FROM "${pgSchema}"."${historyTableName}" h
+      WHERE ${keyMatch}
+        AND h."${EntityHistory.checkpointIdFieldName}" <= ${bounds.checkpointId}
+    )`
 }
+
+// Memoized per table so the id is parsed with that entity's id schema (a
+// numeric id comes back from Postgres as a number, not a string) and the
+// schema's operations compile once rather than per rollback row.
+let rollbackRowStateSchema: Table.table => S.t<(
+  EntityId.t,
+  EntityHistory.RowAction.t,
+)> = Utils.WeakMap.memoize(table =>
+  S.object(s => (
+    s.field(Table.idFieldName, table->Table.getIdSchema),
+    s.field(EntityHistory.changeFieldName, EntityHistory.RowAction.schema),
+  ))
+)
+
+// The chain a rollback row belongs to, read from the chain-id column both
+// rollback queries select. None for a cross-chain entity, which has no column.
+let rollbackChainIdSchema: Table.table => option<S.t<ChainId.t>> = Utils.WeakMap.memoize(table =>
+  table
+  ->Table.getChainIdField
+  ->Option.map(field => S.object(s => s.field(field->Table.getPgDbFieldName, ChainId.schema)))
+)
+
+// Same reason as above for the id-only rows: both rollback queries must yield
+// ids in the entity's own representation, or the two halves of the diff would
+// disagree (Postgres hands back a NUMERIC id as a string, not a bigint).
+let rollbackRemovedIdSchema: Table.table => S.t<EntityId.t> = Utils.WeakMap.memoize(table =>
+  S.object(s => s.field(Table.idFieldName, table->Table.getIdSchema))
+)
 
 let make = (
   ~sql: Postgres.sql,
@@ -1095,6 +1618,10 @@ let make = (
   ~pgDatabase,
   ~pgPassword,
   ~isHasuraEnabled,
+  ~chainIdMode: ChainId.mode=Int32,
+  // Decides how wide an address key is, both when the config's addresses are
+  // encoded at initialize and when stored rows are grouped on resume.
+  ~ecosystem: Ecosystem.name,
   ~sink: option<Sink.t>=?,
   ~onInitialize=?,
   ~onNewTables=?,
@@ -1111,6 +1638,39 @@ let make = (
     "cache",
   ])
 
+  // The metric label, the `storage` field on this backend's logs, and the
+  // storage record's own name are all the same string.
+  let storageName = "postgres"
+
+  let indexManager = IndexManager.make()
+  let setQueryCache = makeSetQueryCache()
+
+  let loadCatalogRows = (sql, ~indexName=?) =>
+    sql
+    ->Postgres.unsafe(IndexCatalog.makeQuery(~pgSchema, ~indexName?))
+    ->Promise.thenResolve(rows => rows->S.parseOrThrow(IndexCatalog.rowsSchema))
+
+  // The whole-schema snapshot, taken on a clean initialize and on every resume.
+  // Individual indexes are re-read from the catalog as they are built, so this
+  // is the only point where the full listing is needed.
+  let refreshIndexCatalog = async () => {
+    let rows = await sql->loadCatalogRows
+    indexManager->IndexManager.reload(~rows)
+  }
+
+  let reloadIndexCatalog = async () => {
+    let catalog = await refreshIndexCatalog()
+    switch catalog->IndexCatalog.invalidNames {
+    | [] => ()
+    | invalidIndexNames =>
+      Logging.warn({
+        "storage": storageName,
+        "msg": `Ignoring invalid PostgreSQL indexes in schema "${pgSchema}". They can't serve queries, so the indexer builds its own alongside them.`,
+        "indexes": invalidIndexNames,
+      })
+    }
+  }
+
   let isInitialized = async () => {
     let envioTables = await sql->Postgres.unsafe(
       `SELECT table_schema FROM information_schema.tables WHERE table_schema = '${pgSchema}' AND (table_name = '${// This is for indexer before envio@2.28
@@ -1119,32 +1679,83 @@ let make = (
     envioTables->Utils.Array.notEmpty
   }
 
+  // Scans .envio/cache into a list of (cache table, absolute TSV path). Flat
+  // `<name>.tsv` files map to cross-chain caches; a numeric subdirectory
+  // `<chainId>/<name>.tsv` maps to a chain-scoped cache. Exactly one directory
+  // level is supported. A non-numeric directory that contains TSVs is rejected.
+  // Returns [] when .envio/cache doesn't exist.
+  let scanCacheDir = async () => {
+    let topEntries = try {
+      await NodeJs.Fs.Promises.readdir(cacheDirPath)
+    } catch {
+    | _ => []
+    }
+    let result = []
+    let _ = await topEntries
+    ->Array.map(async entry => {
+      let entryPath = NodeJs.Path.join(cacheDirPath, entry)
+      let isDir = (await NodeJs.Fs.Promises.stat(entryPath))->NodeJs.Fs.Promises.statsIsDirectory
+      if isDir {
+        let subEntries = await NodeJs.Fs.Promises.readdir(entryPath)
+        let tsvs = subEntries->Array.filter(sub => sub->String.endsWith(".tsv"))
+        switch Internal.EffectCache.parseChainId(entry) {
+        | Some(chainId) =>
+          tsvs->Array.forEach(sub => {
+            let effectName = sub->String.slice(~start=0, ~end=-4)
+            let table = Internal.makeCacheTable(~effectName, ~scope=Chain(chainId))
+            result
+            ->Array.push((table, NodeJs.Path.join(entryPath, sub)->NodeJs.Path.toString))
+            ->ignore
+          })
+        | None =>
+          if tsvs->Utils.Array.notEmpty {
+            JsError.throwWithMessage(
+              `Invalid effect cache directory ".envio/cache/${entry}". Chain cache directories must be named by a numeric chain id (e.g. "1"). Found cache files: ${tsvs->Array.joinUnsafe(
+                  ", ",
+                )}.`,
+            )
+          }
+        }
+      } else if entry->String.endsWith(".tsv") {
+        let effectName = entry->String.slice(~start=0, ~end=-4)
+        let table = Internal.makeCacheTable(~effectName, ~scope=CrossChain)
+        result->Array.push((table, entryPath->NodeJs.Path.toString))->ignore
+      }
+    })
+    ->Promise.all
+    result
+  }
+
+  // Each indexer counts the effect-cache tables in its own schema. The counts
+  // are computed here per table rather than through a shared SQL helper so
+  // indexers isolated by schema in one database never touch each other's state.
+  let queryCacheTableInfo = async (): array<schemaCacheTableInfo> => {
+    let tableNames: array<schemaTableName> = await sql->Postgres.unsafe(
+      makeEffectCacheTableNamesQuery(~pgSchema),
+    )
+    await tableNames
+    ->Array.map(async ({tableName}) => {
+      let rows: array<cacheRowCount> = await sql->Postgres.unsafe(
+        makeCacheRowCountQuery(~pgSchema, ~tableName),
+      )
+      ({tableName, count: (rows->Array.getUnsafe(0)).count}: schemaCacheTableInfo)
+    })
+    ->Promise.all
+  }
+
   let restoreEffectCache = async (~withUpload) => {
     if withUpload {
-      // Try to restore cache tables from binary files
-      let nothingToUploadErrorMessage = "Nothing to upload."
-
-      switch await Promise.all2((
-        NodeJs.Fs.Promises.readdir(cacheDirPath)
-        ->Promise.thenResolve(e => Ok(e))
-        ->Promise.catch(_ => Promise.resolve(Error(nothingToUploadErrorMessage))),
-        getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName),
-      )) {
-      | (Ok(entries), Ok(psqlExec)) => {
-          let cacheFiles = entries->Array.filter(entry => {
-            entry->String.endsWith(".tsv")
-          })
-
-          let _ = await cacheFiles
-          ->Array.map(entry => {
-            let effectName = entry->String.slice(~start=0, ~end=-4)
-            let table = Internal.makeCacheTable(~effectName)
-
+      // Try to restore cache tables from the .envio/cache TSV files
+      switch await scanCacheDir() {
+      | [] => Logging.info("No cache found to upload.")
+      | entries =>
+        switch await getConnectedPsqlExec(~pgUser, ~pgHost, ~pgDatabase, ~pgPort, ~containerName) {
+        | Ok(psqlExec) =>
+          let _ = await entries
+          ->Array.map(((table, inputFile)) => {
             sql
             ->Postgres.unsafe(makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false))
             ->Promise.then(() => {
-              let inputFile = NodeJs.Path.join(cacheDirPath, entry)->NodeJs.Path.toString
-
               let command = `${psqlExec} -c 'COPY "${pgSchema}"."${table.tableName}" FROM STDIN WITH (FORMAT text, HEADER);' < ${inputFile}`
 
               Promise.make(
@@ -1164,22 +1775,14 @@ let make = (
             })
           })
           ->Promise.all
-
           Logging.info("Successfully uploaded cache.")
-        }
-      | (Error(message), _)
-      | (_, Error(message)) =>
-        if message === nothingToUploadErrorMessage {
-          Logging.info("No cache found to upload.")
-        } else {
+        | Error(message) =>
           Logging.error(`Failed to upload cache, continuing without it. ${message}`)
         }
       }
     }
 
-    let cacheTableInfo: array<schemaCacheTableInfo> = await sql->Postgres.unsafe(
-      makeSchemaCacheTableInfoQuery(~pgSchema),
-    )
+    let cacheTableInfo = await queryCacheTableInfo()
 
     if withUpload && cacheTableInfo->Utils.Array.notEmpty {
       // Integration with other tools like Hasura
@@ -1196,8 +1799,14 @@ let make = (
 
     let cache = Dict.make()
     cacheTableInfo->Array.forEach(({tableName, count}) => {
-      let effectName = tableName->String.slice(~start=cacheTablePrefixLength)
-      cache->Dict.set(effectName, ({effectName, count}: Persistence.effectCacheRecord))
+      switch Internal.EffectCache.fromTableName(tableName) {
+      | Some((effectName, scope)) =>
+        cache->Dict.set(
+          tableName,
+          ({effectName, scope, tableName, count}: Persistence.effectCacheRecord),
+        )
+      | None => ()
+      }
     })
     cache
   }
@@ -1206,13 +1815,12 @@ let make = (
     ~chainConfigs=[],
     ~entities=[],
     ~enums=[],
+    ~contractMapping,
     ~envioInfo,
   ): Persistence.initialState => {
-    // Per-entity storage routing: PG owns tables only for entities that
-    // opted into Postgres; the sink mirrors only those that opted into
-    // ClickHouse.
+    // PG owns tables only for entities that opted into Postgres; the sink
+    // picks its own out of the full list.
     let pgEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres)
-    let chEntities = entities->Array.filter((e: Internal.entityConfig) => e.storage.clickhouse)
 
     let schemaTableNames: array<schemaTableName> = await sql->Postgres.unsafe(
       makeSchemaTableNamesQuery(~pgSchema),
@@ -1241,7 +1849,7 @@ let make = (
 
     // Call sink.initialize before executing PG queries
     switch sink {
-    | Some(sink) => await sink.initialize(~chainConfigs, ~entities=chEntities, ~enums)
+    | Some(sink) => await sink.initialize(~entities)
     | None => ()
     }
 
@@ -1253,41 +1861,44 @@ let make = (
       ~chainConfigs,
       ~isEmptyPgSchema=schemaTableNames->Utils.Array.isEmpty,
       ~isHasuraEnabled,
+      ~deferSchemaIndexes=true,
+      ~chainIdMode,
     )
     // Execute all queries within a single transaction for integrity.
     // The envio_info row is written in the same transaction so a successful
     // initialize is atomic — no schema can come up without the matching row.
+    let rowsByChain =
+      chainConfigs->Array.map(chainConfig =>
+        chainConfig->ChainState.configStorageRows(~ecosystem, ~contractMapping)
+      )
+    let configAddressRows = rowsByChain->Array.flat
+
+    // The contract mapping and the config's addresses join the schema in the
+    // same transaction as envio_info: a schema that comes up without them would
+    // resume against ids nothing assigned.
     let _ = await sql->Postgres.beginSql(async sql => {
       // Promise.all might be not safe to use here,
       // but it's just how it worked before.
       let _ = await Promise.all(queries->Array.map(query => sql->Postgres.unsafe(query)))
       await InternalTable.EnvioInfo.write(sql, ~pgSchema, ~envioInfo)
-    })
-
-    // Populate config addresses into envio_addresses with registration_block/log = -1
-    let ids = []
-    let addrChainIds = []
-    let addrContractNames = []
-    chainConfigs->Array.forEach(chain => {
-      chain.contracts->Array.forEach(contract => {
-        contract.addresses->Array.forEach(
-          address => {
-            ids->Array.push(Config.EnvioAddresses.makeId(~chainId=chain.id, ~address))->ignore
-            addrChainIds->Array.push(chain.id)->ignore
-            addrContractNames->Array.push(contract.name)->ignore
-          },
-        )
-      })
-    })
-    if ids->Array.length > 0 {
-      await sql->Postgres.unpreparedUnsafe(
-        `INSERT INTO "${pgSchema}"."${Config.EnvioAddresses.table.tableName}" ("id", "chain_id", "registration_block", "registration_log_index", "contract_name")
-SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::text[]) AS t(id, chain_id, contract_name);`,
-        (ids, addrChainIds, addrContractNames)->(Utils.magic: _ => unknown),
+      await InternalTable.EnvioContracts.insert(
+        sql,
+        ~pgSchema,
+        ~contractNames=contractMapping->ContractMapping.names,
       )
-    }
+      if configAddressRows->Utils.Array.notEmpty {
+        await InternalTable.EnvioAddresses.insert(
+          sql,
+          ~pgSchema,
+          ~rows=configAddressRows,
+          ~chainIdMode,
+        )
+      }
+    })
 
     let cache = await restoreEffectCache(~withUpload=true)
+
+    await reloadIndexCatalog()
 
     // Integration with other tools like Hasura
     switch onInitialize {
@@ -1299,10 +1910,12 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       cleanRun: true,
       cache,
       reorgCheckpoints: [],
-      // Just-written row; resume's compat check would no-op on a clean run,
-      // but keep the field consistent with the resume path's shape.
+      contractMapping,
       envioInfo: Some(envioInfo),
-      chains: chainConfigs->Array.map((chainConfig): Persistence.initialChainState => {
+      chains: chainConfigs->Array.mapWithIndex((
+        chainConfig,
+        idx,
+      ): Persistence.initialChainState => {
         id: chainConfig.id,
         startBlock: chainConfig.startBlock,
         endBlock: chainConfig.endBlock,
@@ -1311,41 +1924,33 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
         numEventsProcessed: 0.,
         firstEventBlockNumber: None,
         timestampCaughtUpToHeadOrEndblock: None,
-        indexingAddresses: ChainFetcher.configAddresses(chainConfig),
+        addressRows: rowsByChain->Array.getUnsafe(idx)->AddressRows.seedRowsOf,
         sourceBlockNumber: 0,
       }),
       checkpointId: InternalTable.Checkpoints.initialCheckpointId,
     }
   }
 
-  let loadByIdsOrThrow = async (~ids, ~table: Table.table, ~rowsSchema) => {
-    switch await (
-      switch ids {
-      | [_] =>
-        sql->Postgres.preparedUnsafe(
-          makeLoadByIdQuery(~pgSchema, ~tableName=table.tableName),
-          ids->Obj.magic,
-        )
-      | _ =>
-        sql->Postgres.preparedUnsafe(
-          makeLoadByIdsQuery(~pgSchema, ~tableName=table.tableName),
-          [ids]->Obj.magic,
-        )
-      }
+  let loadOrThrow = async (~filter: EntityFilter.t, ~table: Table.table) => {
+    let params = []
+    let condition = makeFilterCondition(~filter, ~table, ~params)
+    switch await sql->Postgres.preparedUnsafe(
+      makeLoadQuery(~pgSchema, ~tableName=table.tableName, ~condition),
+      params->Obj.magic,
     ) {
     | exception exn =>
       throw(
         Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage by ids`,
+          message: `Failed loading "${table.tableName}" from storage by condition: ${condition}`,
           reason: exn,
         }),
       )
     | rows =>
-      try rows->S.parseOrThrow(rowsSchema) catch {
+      try rows->S.parseOrThrow(table->Table.pgEntityRowsSchema) catch {
       | exn =>
         throw(
           Persistence.StorageError({
-            message: `Failed to parse "${table.tableName}" loaded from storage by ids`,
+            message: `Failed to parse "${table.tableName}" loaded from storage by condition: ${condition}`,
             reason: exn,
           }),
         )
@@ -1353,50 +1958,251 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     }
   }
 
-  let loadByFieldOrThrow = async (
-    ~fieldName: string,
-    ~fieldSchema,
-    ~fieldValue,
-    ~operator: Persistence.operator,
-    ~table: Table.table,
-    ~rowsSchema,
-  ) => {
-    let params = try [fieldValue->S.reverseConvertToJsonOrThrow(fieldSchema)]->Obj.magic catch {
-    | exn =>
-      throw(
-        Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}". Couldn't serialize provided value.`,
-          reason: exn,
-        }),
-      )
+  // The physical columns a filter reads, deduped and in first-seen order.
+  // Unknown field names are left to `loadOrThrow`, which reports them properly.
+  let filterColumns = (~table: Table.table, ~filters: array<EntityFilter.t>) => {
+    let queryFields = table->Table.queryFields
+    let columns = []
+    let seen = Utils.Set.make()
+    let rec collect = (filter: EntityFilter.t) =>
+      switch filter {
+      | Eq({fieldName}) | Gt({fieldName}) | Lt({fieldName}) | In({fieldName}) =>
+        switch queryFields->Utils.Dict.dangerouslyGetNonOption(fieldName) {
+        | Some({pgDbFieldName}) =>
+          if !(seen->Utils.Set.has(pgDbFieldName)) {
+            seen->Utils.Set.add(pgDbFieldName)->ignore
+            columns->Array.push(pgDbFieldName)->ignore
+          }
+        | None => ()
+        }
+      | And({filters}) => filters->Array.forEach(collect)
+      }
+    filters->Array.forEach(collect)
+    columns
+  }
+
+  // Runs a prepared build's DDL and reads the index back from pg_catalog before
+  // it counts as existing. `sql` is the transaction's handle when there is one,
+  // so a failed verification rolls the DDL back with it.
+  let runAndVerify = async (sql, prepared: IndexManager.prepared) => {
+    // Sequential rather than Promise.all: inside a transaction they share one
+    // connection, and a rebuild's DROP has to land before its CREATE.
+    for idx in 0 to prepared.queries->Array.length - 1 {
+      let _ = await sql->Postgres.unsafe(prepared.queries->Array.getUnsafe(idx))
     }
-    switch await sql->Postgres.preparedUnsafe(
-      makeLoadByFieldQuery(
-        ~pgSchema,
-        ~tableName=table.tableName,
-        ~fieldName,
-        ~operator=(operator :> string),
-      ),
-      params,
-    ) {
+    let rows = await sql->loadCatalogRows(~indexName=prepared.name)
+    prepared->IndexManager.verifyOrThrow(~rows, ~pgSchema)
+  }
+
+  // A build outside a transaction can commit its DDL and still fail — the
+  // read-back is a second round trip. Re-reading the index puts the catalog
+  // back in step, so the next attempt plans against what the database holds
+  // instead of retrying a create that can only raise "already exists".
+  //
+  // If this read fails too, the next attempt does waste a create before landing
+  // here again — bounded, and it recovers as soon as the database answers.
+  let resyncIndex = async name =>
+    switch await sql->loadCatalogRows(~indexName=name) {
+    | rows => indexManager->IndexManager.resync(~name, ~rows)
     | exception exn =>
-      throw(
-        Persistence.StorageError({
-          message: `Failed loading "${table.tableName}" from storage by field "${fieldName}"`,
-          reason: exn,
-        }),
+      Logging.debug({
+        "storage": storageName,
+        "msg": `Could not re-read the index "${name}" after a failed build. The next attempt reads it again.`,
+        "err": exn->Utils.prettifyExn,
+      })
+    }
+
+  let ensureQueryIndexes = async (~table: Table.table, ~filters: array<EntityFilter.t>) => {
+    let columns = filterColumns(~table, ~filters)
+    let _ = await columns
+    ->Array.map(column => {
+      let definition = IndexDefinition.single(~tableName=table.tableName, ~column)
+      indexManager
+      ->IndexManager.ensure(~definition, ~coverage=LeadingColumns, ~build=async () => {
+        // Resolved before logging so a rebuild is reported as one, and an
+        // unrelated index holding the name fails before any DDL runs.
+        switch indexManager->IndexManager.prepare(
+          ~definition,
+          ~coverage=LeadingColumns,
+          ~pgSchema,
+        ) {
+        | None => ()
+        | Some(prepared) =>
+          let verb = prepared.isRebuild ? "Rebuilding unusable index" : "Creating index"
+          // Logged from inside the build so it reports the one request that
+          // actually creates the index, not the ones waiting on it.
+          Logging.info({
+            "storage": storageName,
+            "msg": `${verb} "${prepared.name}" to serve a getWhere query on "${table.tableName}". Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
+          })
+          let timeRef = Performance.now()
+          let entry = await sql->runAndVerify(prepared)
+          indexManager->IndexManager.record(entry)
+          Logging.info({
+            "storage": storageName,
+            "msg": `Index "${prepared.name}" is ready after ${timeRef->formatSeconds}s. Resuming indexing.`,
+          })
+        }
+      })
+      // A failed build records nothing, so the next getWhere retries. Meanwhile
+      // the query still runs — just without the index.
+      ->Promise.catch(async exn => {
+        Logging.warn({
+          "storage": storageName,
+          "msg": `Failed to create an index on "${table.tableName}"("${column}") for a getWhere query. The query runs without it.`,
+          "err": exn->Utils.prettifyExn,
+        })
+        await resyncIndex(definition->IndexDefinition.name)
+      })
+    })
+    ->Promise.all
+  }
+
+  // Goes through `IndexManager.ensure`, unlike `finalizeBackfill` below: that
+  // one runs with processing paused, while this runs on a resumed indexer that
+  // is already ready, so handlers may be issuing getWhere queries alongside it
+  // and the per-table queues are what keep the two from colliding. Nothing here
+  // writes `ready_at` — the chains already carry theirs.
+  let ensureSchemaIndexes = async (~entities: array<Internal.entityConfig>) => {
+    let schemaIndexes = getSchemaIndexes(
+      ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
+    )
+
+    let _ = await schemaIndexes
+    ->Array.map(definition =>
+      indexManager
+      ->IndexManager.ensure(~definition, ~coverage=Exact, ~build=async () => {
+        switch indexManager->IndexManager.prepare(~definition, ~coverage=Exact, ~pgSchema) {
+        | None => ()
+        | Some(prepared) =>
+          let verb = prepared.isRebuild ? "Rebuilding unusable index" : "Creating missing index"
+          Logging.info({
+            "storage": storageName,
+            "msg": `${verb} "${prepared.name}" the schema promises but the database no longer has. Writes to the table are paused until it completes. ${slowOnLargeDatabaseNotice}`,
+          })
+          let timeRef = Performance.now()
+          let entry = await sql->runAndVerify(prepared)
+          indexManager->IndexManager.record(entry)
+          Logging.info({
+            "storage": storageName,
+            "msg": `Index "${prepared.name}" is ready after ${timeRef->formatSeconds}s.`,
+          })
+        }
+      })
+      ->Promise.catch(async exn => {
+        Logging.warn({
+          "storage": storageName,
+          "msg": `Failed to restore the schema index "${definition->IndexDefinition.name}". Queries relying on it run unindexed until the next restart.`,
+          "err": exn->Utils.prettifyExn,
+        })
+        await resyncIndex(definition->IndexDefinition.name)
+      })
+    )
+    ->Promise.all
+  }
+
+  // Unlike `ensureQueryIndexes`, this doesn't go through `IndexManager.ensure`.
+  // It's safe because the caller guarantees exclusivity — `FinalizeBackfill.run`
+  // is reached from the processing loop with processing already paused, so no
+  // handler can be running a getWhere.
+  //
+  // Each index is built on its own rather than in one transaction with
+  // `ready_at`: a build that dies half way through a large schema would
+  // otherwise roll back every index before it and make the retry start over.
+  let finalizeBackfill = async (
+    ~entities: array<Internal.entityConfig>,
+    ~chainIds: array<ChainId.t>,
+    ~readyAt: Date.t,
+  ) => {
+    let schemaIndexes = getSchemaIndexes(
+      ~entities=entities->Array.filter((e: Internal.entityConfig) => e.storage.postgres),
+    )
+
+    // Resolved up front so a name held by an unrelated index fails before any
+    // DDL runs, rather than part way through the set.
+    //
+    // `Exact`, so the set built here is decided by the schema alone: matching a
+    // declared index against a composite that happens to lead with the same
+    // column would make a fresh database and an upgraded one end up holding
+    // different tables.
+    let missing =
+      schemaIndexes->Array.filterMap(definition =>
+        indexManager->IndexManager.prepare(~definition, ~coverage=Exact, ~pgSchema)
       )
-    | rows =>
-      try rows->S.parseOrThrow(rowsSchema) catch {
-      | exn =>
-        throw(
-          Persistence.StorageError({
-            message: `Failed to parse "${table.tableName}" loaded from storage by ids`,
-            reason: exn,
-          }),
-        )
+
+    switch missing->Array.filter((prepared: IndexManager.prepared) => prepared.isRebuild) {
+    | [] => ()
+    | rebuilt =>
+      Logging.warn({
+        "storage": storageName,
+        "msg": `PostgreSQL reports ${rebuilt
+          ->Array.length
+          ->Int.toString} of the indexer's own indexes as invalid, so they can't serve queries. Rebuilding them.`,
+        "indexes": rebuilt->Array.map((prepared: IndexManager.prepared) => prepared.name),
+      })
+    }
+
+    switch missing {
+    | [] =>
+      Logging.info({
+        "storage": storageName,
+        "msg": `All ${schemaIndexes
+          ->Array.length
+          ->Int.toString} schema indexes are already in place. Marking the indexer ready.`,
+      })
+    | _ =>
+      Logging.info({
+        "storage": storageName,
+        "msg": `Creating the ${missing
+          ->Array.length
+          ->Int.toString} remaining schema indexes before the indexer reports ready. Writes are paused until they are committed. ${slowOnLargeDatabaseNotice}`,
+        "indexes": missing->Array.map((prepared: IndexManager.prepared) => prepared.name),
+      })
+    }
+    let timeRef = Performance.now()
+
+    // Sequential, one committed index at a time: whatever is built before a
+    // failure stays built and recorded, so the retry owes only the rest.
+    for idx in 0 to missing->Array.length - 1 {
+      let prepared = missing->Array.getUnsafe(idx)
+      switch await sql->runAndVerify(prepared) {
+      | entry => indexManager->IndexManager.record(entry)
+      | exception exn =>
+        // The DDL is outside a transaction, so a create that commits and then
+        // fails its read-back leaves the index in place and unrecorded.
+        // Re-reading it means the retry plans against the database rather than
+        // replaying a create that can only raise "already exists".
+        await resyncIndex(prepared.name)
+        throw(exn)
       }
     }
+
+    // Reached only once every definition is verified against pg_catalog, so a
+    // crash either leaves `ready_at` null and the retry finds the indexes
+    // already built, or commits readiness the schema backs.
+    //
+    // One transaction for the whole set: readiness is an indexer-wide fact, and
+    // a crash part way through would otherwise leave some chains stamped and
+    // some not, reporting the indexer as half ready.
+    let setReadyAtQuery = InternalTable.Chains.makeSetReadyAtQuery(~pgSchema)
+    let _ = await sql->Postgres.beginSql(async sql => {
+      for idx in 0 to chainIds->Array.length - 1 {
+        let _ = await sql->Postgres.preparedUnsafe(
+          setReadyAtQuery,
+          [
+            readyAt->(Utils.magic: Date.t => unknown),
+            chainIds->Array.getUnsafe(idx)->(Utils.magic: ChainId.t => unknown),
+          ]->(Utils.magic: array<unknown> => unknown),
+        )
+      }
+    })
+
+    Logging.info({
+      "storage": storageName,
+      "msg": `Committed ${missing
+        ->Array.length
+        ->Int.toString} schema indexes and the ready timestamp in ${timeRef->formatSeconds}s.`,
+    })
   }
 
   let setOrThrow = (
@@ -1411,16 +2217,17 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~table,
       ~itemSchema=itemSchema->S.toUnknown,
       ~pgSchema,
+      ~setQueryCache,
+      ~chainIdMode,
     )
   }
 
   let setEffectCacheOrThrow = async (
-    ~effect: Internal.effect,
+    ~table: Table.table,
+    ~itemSchema,
     ~items: array<Internal.effectCacheItem>,
     ~initialize: bool,
   ) => {
-    let {table, itemSchema} = effect.storageMeta
-
     if initialize {
       let _ = await sql->Postgres.unsafe(
         makeCreateTableQuery(table, ~pgSchema, ~isNumericArrayAsText=false),
@@ -1437,10 +2244,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
 
   let dumpEffectCache = async () => {
     try {
-      let cacheTableInfo: array<schemaCacheTableInfo> =
-        (await sql->Postgres.unsafe(makeSchemaCacheTableInfoQuery(~pgSchema)))->Array.filter(i =>
-          i.count > 0
-        )
+      let cacheTableInfo = (await queryCacheTableInfo())->Array.filter(i => i.count > 0)
 
       if cacheTableInfo->Utils.Array.notEmpty {
         // Create .envio/cache directory if it doesn't exist
@@ -1460,30 +2264,42 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
             Logging.info(
               `Dumping cache: ${cacheTableInfo
                 ->Array.map(({tableName, count}) =>
-                  tableName ++ " (" ++ count->Belt.Int.toString ++ " rows)"
+                  tableName ++ " (" ++ count->Int.toString ++ " rows)"
                 )
                 ->Array.joinUnsafe(", ")}`,
             )
 
             let promises = cacheTableInfo->Array.map(async ({tableName}) => {
-              let cacheName = tableName->String.slice(~start=cacheTablePrefixLength)
-              let outputFile =
-                NodeJs.Path.join(cacheDirPath, cacheName ++ ".tsv")->NodeJs.Path.toString
-
-              let command = `${psqlExec} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
-
-              Promise.make((resolve, reject) => {
-                NodeJs.ChildProcess.execWithOptions(
-                  command,
-                  psqlExecOptions,
-                  (~error, ~stdout, ~stderr as _) => {
-                    switch error {
-                    | Value(error) => reject(error)
-                    | Null => resolve(stdout)
-                    }
-                  },
+              switch Internal.EffectCache.fromTableName(tableName) {
+              | Some((effectName, scope)) =>
+                // Reverse mapping: chain-scoped caches dump into a per-chain
+                // subdirectory, created here if needed.
+                let outputPath = NodeJs.Path.join(
+                  cacheDirPath,
+                  Internal.EffectCache.toCachePath(~effectName, ~scope),
                 )
-              })
+                let _ = await NodeJs.Fs.Promises.mkdir(
+                  ~path=NodeJs.Path.dirname(outputPath->NodeJs.Path.toString),
+                  ~options={recursive: true},
+                )
+                let outputFile = outputPath->NodeJs.Path.toString
+
+                let command = `${psqlExec} -c 'COPY "${pgSchema}"."${tableName}" TO STDOUT WITH (FORMAT text, HEADER);' > ${outputFile}`
+
+                await Promise.make((resolve, reject) => {
+                  NodeJs.ChildProcess.execWithOptions(
+                    command,
+                    psqlExecOptions,
+                    (~error, ~stdout, ~stderr as _) => {
+                      switch error {
+                      | Value(error) => reject(error)
+                      | Null => resolve(stdout)
+                      }
+                    },
+                  )
+                })
+              | None => ""
+              }
             })
 
             let _ = await promises->Promise.all
@@ -1497,14 +2313,20 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     }
   }
 
-  let resumeInitialState = async (): Persistence.initialState => {
-    let (cache, chains, checkpointIdResult, reorgCheckpoints, envioInfo) = await Promise.all5((
+  let resumeInitialState = async (~entities, ~throwIfIncompatible): Persistence.initialState => {
+    let (
+      cache,
+      chains,
+      checkpointIdResult,
+      reorgCheckpoints,
+      (storedEnvioInfo, storedContractMapping),
+    ) = await Promise.all5((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
         ~pgSchema,
       )->Promise.thenResolve(rawInitialStates => {
-        rawInitialStates->Belt.Array.map((rawInitialState): Persistence.initialChainState => {
+        rawInitialStates->Array.map((rawInitialState): Persistence.initialChainState => {
           id: rawInitialState.id,
           startBlock: rawInitialState.startBlock,
           endBlock: rawInitialState.endBlock->Null.toOption,
@@ -1513,7 +2335,7 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
           timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Null.toOption,
           numEventsProcessed: rawInitialState.numEventsProcessed,
           progressBlockNumber: rawInitialState.progressBlockNumber,
-          indexingAddresses: rawInitialState.indexingAddresses,
+          addressRows: rawInitialState.addressRows,
           sourceBlockNumber: rawInitialState.sourceBlockNumber,
         })
       }),
@@ -1532,22 +2354,37 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
           }>,
         >
       ),
-      InternalTable.EnvioInfo.read(sql, ~pgSchema),
+      Promise.all2((
+        InternalTable.EnvioInfo.read(sql, ~pgSchema),
+        InternalTable.EnvioContracts.read(sql, ~pgSchema),
+      ))->Promise.thenResolve(((info, names)) =>
+        // Both tables join the schema in one transaction. A missing mapping
+        // means an older envio wrote this schema, so treat the snapshot as
+        // unreadable rather than decoding address rows against ids nothing assigned.
+        switch (info, names) {
+        | (Some(info), Some(names)) => (Some(info), ContractMapping.fromStoredNames(names))
+        | _ => (None, ContractMapping.empty)
+        }
+      ),
     ))
 
-    let checkpointId = (checkpointIdResult->Belt.Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
+    throwIfIncompatible(~storedEnvioInfo, ~storedContractMapping)
+
+    await reloadIndexCatalog()
+
+    let checkpointId = (checkpointIdResult->Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
 
     // Convert string checkpoint IDs from DB to bigint
-    let reorgCheckpoints = Belt.Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
+    let reorgCheckpoints = Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
       checkpointId: raw["id"]->BigInt.fromStringOrThrow,
-      chainId: raw["chain_id"],
+      chainId: raw["chain_id"]->ChainId.normalizeOrThrow,
       blockNumber: raw["block_number"],
       blockHash: raw["block_hash"],
     })
 
     // Resume sink if present - needed to rollback any reorg changes
     switch sink {
-    | Some(sink) => await sink.resume(~checkpointId)
+    | Some(sink) => await sink.resume(~checkpointId, ~chains, ~entities)
     | None => ()
     }
 
@@ -1557,7 +2394,8 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       cache,
       chains,
       checkpointId,
-      envioInfo,
+      contractMapping: storedContractMapping,
+      envioInfo: storedEnvioInfo,
     }
   }
 
@@ -1571,16 +2409,17 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       %raw(`undefined`)
     )
 
-  let pruneStaleCheckpoints = (~safeCheckpointId) =>
-    InternalTable.Checkpoints.pruneStaleCheckpoints(sql, ~pgSchema, ~safeCheckpointId)
+  let pruneStaleCheckpoints = (~safeCheckpoints) =>
+    InternalTable.Checkpoints.pruneStaleCheckpoints(sql, ~pgSchema, ~safeCheckpoints)
 
-  let pruneStaleEntityHistory = (~entityName, ~entityIndex, ~safeCheckpointId) =>
+  let pruneStaleEntityHistory = (~entityName, ~entityIndex, ~chainIdColumn, ~safeCheckpoints) =>
     EntityHistory.pruneStaleEntityHistory(
       sql,
       ~pgSchema,
       ~entityName,
       ~entityIndex,
-      ~safeCheckpointId,
+      ~chainIdColumn,
+      ~safeCheckpoints,
     )
 
   let getRollbackTargetCheckpoint = (~reorgChainId, ~lastKnownValidBlockNumber) =>
@@ -1591,40 +2430,66 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
       ~lastKnownValidBlockNumber,
     )
 
-  let getRollbackProgressDiff = (~rollbackTargetCheckpointId) =>
-    InternalTable.Checkpoints.getRollbackProgressDiff(sql, ~pgSchema, ~rollbackTargetCheckpointId)
+  let getRollbackProgressDiff = (~floors) =>
+    InternalTable.Checkpoints.getRollbackProgressDiff(sql, ~pgSchema, ~floors)
 
-  let getRollbackData = async (
-    ~entityConfig: Internal.entityConfig,
-    ~rollbackTargetCheckpointId,
-  ) => {
-    await Promise.all2((
+  let getRollbackData = async (~entityConfig: Internal.entityConfig, ~floors: RollbackFloors.t) => {
+    let params = floors.floors->CheckpointBounds.params
+    let (removedIdRows, rollbackRows) = await Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
       sql
       ->Postgres.preparedUnsafe(
-        makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        makeGetRollbackRemovedIdsQuery(~entityConfig, ~pgSchema, ~floors),
+        params,
       )
-      ->(Utils.magic: promise<unknown> => promise<array<{"id": string}>>),
-      // Get entities that should be restored to their state at or before rollback target
+      ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
+      // Get the latest pre-target row, including its SET or DELETE action.
       sql
       ->Postgres.preparedUnsafe(
-        makeGetRollbackRestoredEntitiesQuery(~entityConfig, ~pgSchema),
-        [rollbackTargetCheckpointId->BigInt.toString]->(Utils.magic: array<string> => unknown),
+        makeGetRollbackPreTargetRowsQuery(~entityConfig, ~pgSchema, ~floors),
+        params,
       )
       ->(Utils.magic: promise<unknown> => promise<array<unknown>>),
     ))
+
+    let chainIdSchema = rollbackChainIdSchema(entityConfig.table)
+    let scopeOf = row =>
+      switch chainIdSchema {
+      | None => Internal.CrossChain
+      | Some(schema) => Internal.Chain(row->S.parseOrThrow(schema))
+      }
+    let removals = removedIdRows->Array.map((row): Persistence.rollbackRemoval => {
+      entityId: row->S.parseOrThrow(rollbackRemovedIdSchema(entityConfig.table)),
+      scope: scopeOf(row),
+    })
+    let restoredEntitiesResult = []
+    rollbackRows->Array.forEach(row => {
+      let (entityId, action) = row->S.parseOrThrow(rollbackRowStateSchema(entityConfig.table))
+      switch action {
+      | SET => restoredEntitiesResult->Array.push(row)->ignore
+      | DELETE => removals->Array.push({entityId, scope: scopeOf(row)})->ignore
+      }
+    })
+
+    (
+      removals,
+      restoredEntitiesResult
+      ->S.parseOrThrow(entityConfig.table->Table.pgRowsSchema)
+      ->(Utils.magic: array<unknown> => array<Internal.entity>),
+    )
   }
 
   let writeBatchMethod = async (
     ~batch,
-    ~rawEvents,
-    ~rollbackTargetCheckpointId,
+    ~rollback,
     ~isInReorgThreshold,
     ~config,
     ~allEntities,
     ~updatedEffectsCache,
     ~updatedEntities,
+    ~registeredAddresses,
+    ~chainMetaData,
+    ~onWrite,
   ) => {
     let pgUpdates = []
     let chUpdates = []
@@ -1642,14 +2507,11 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     // Initialize sink if configured
     let sinkPromise = switch sink {
     | Some(sink) => {
-        let timerRef = Hrtime.makeTimer()
+        let timerRef = Performance.now()
         Some(
           sink.writeBatch(~batch, ~updatedEntities=chUpdates)
           ->Promise.thenResolve(_ => {
-            Prometheus.StorageWrite.increment(
-              ~storage=sink.name,
-              ~timeSeconds=timerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
-            )
+            onWrite(~storage=sink.name, ~timeSeconds=timerRef->Performance.secondsSince)
             None
           })
           // Otherwise it fails with unhandled exception
@@ -1659,36 +2521,37 @@ SELECT id, chain_id, -1, -1, contract_name FROM unnest($1::text[],$2::int[],$3::
     | None => None
     }
 
-    let primaryTimerRef = Hrtime.makeTimer()
+    let primaryTimerRef = Performance.now()
     await writeBatch(
       sql,
       ~batch,
-      ~rawEvents,
       ~pgSchema,
-      ~rollbackTargetCheckpointId,
+      ~setQueryCache,
+      ~rollback,
       ~isInReorgThreshold,
       ~config,
       ~allEntities,
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
       ~updatedEntities=pgUpdates,
+      ~registeredAddresses,
       ~sinkPromise,
+      ~chainMetaData,
     )
-    Prometheus.StorageWrite.increment(
-      ~storage="postgres",
-      ~timeSeconds=primaryTimerRef->Hrtime.timeSince->Hrtime.toSecondsFloat,
-    )
+    onWrite(~storage=storageName, ~timeSeconds=primaryTimerRef->Performance.secondsSince)
   }
 
   let close = () => sql->Postgres.endSql
 
   {
-    name: "postgres",
+    name: storageName,
     isInitialized,
     initialize,
     resumeInitialState,
-    loadByFieldOrThrow,
-    loadByIdsOrThrow,
+    loadOrThrow,
+    ensureQueryIndexes,
+    ensureSchemaIndexes,
+    finalizeBackfill,
     dumpEffectCache,
     reset,
     setChainMeta,
@@ -1716,6 +2579,8 @@ let makeStorageFromEnv = (
     ~pgPort=Env.Db.port,
     ~pgDatabase=Env.Db.database,
     ~pgPassword=Env.Db.password,
+    ~chainIdMode=config.chainIdMode,
+    ~ecosystem=config.ecosystem.name,
     ~sink=?{
       // Internally ClickHouse storage is implemented as a sync of the
       // Postgres storage. Required env vars are validated here only when
@@ -1748,6 +2613,7 @@ let makeStorageFromEnv = (
             ~database=database->Option.getUnsafe,
             ~username=username->Option.getUnsafe,
             ~password=password->Option.getUnsafe,
+            ~chainIdMode=config.chainIdMode,
           ),
         )
       } else {
@@ -1767,7 +2633,7 @@ let makeStorageFromEnv = (
               ~pgSchema,
               ~userEntities=config->Config.getPgUserEntities,
               ~responseLimit=Env.Hasura.responseLimit,
-              ~schema=Schema.make(config.allEntities->Belt.Array.map(e => e.table)),
+              ~schema=Schema.make(config.userEntities->Array.map(e => e.table)),
               ~aggregateEntities=Env.Hasura.aggregateEntities,
             )->Promise.catch(err => {
               Logging.errorWithExn(err->Utils.prettifyExn, `Error tracking tables`)->Promise.resolve
@@ -1789,7 +2655,11 @@ let makeStorageFromEnv = (
                 secret: Env.Hasura.secret,
               },
               ~pgSchema,
-              ~tableNames,
+              ~tableConfigs=tableNames->Array.map(tableName => {
+                Hasura.tableName,
+                description: None,
+                columnConfigs: dict{},
+              }),
             )->Promise.catch(err => {
               Logging.errorWithExn(
                 err->Utils.prettifyExn,

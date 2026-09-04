@@ -19,15 +19,52 @@
 
 - Rust CLI: `packages/cli`, entry at `lib.rs`, commands at `commands.rs`.
 - Config parsing pipeline: `human_config.rs` → `system_config.rs` → internal JSON → `hbs_templating/codegen_templates.rs` → `Config.res`.
-- Shared runtime library: `packages/envio`.
+- Shared runtime library: `packages/envio`. Its tests: `packages/envio-tests`.
+- Scenario projects: `scenarios/` — `test_codegen`, `e2e_test`, `fuel_test`, `svm_test`.
 - To edit runtime code, edit templates under `packages/cli/templates/` or `packages/envio/`, not the codegen output under `<project>/.envio/`.
 - Prefer reading `.res` modules directly; ignore compiled `.js` artifacts.
+- The napi boundary between the Rust addon (`#[napi]` exports) and ReScript (`Core.addon`) is internal, not a published API. Change both sides freely to get the better shape — don't keep an awkward export for compatibility. The addon must be rebuilt for ReScript tests to see the change (see below).
 
-## Testing
+### Building the native addon
 
-Prefer Public module API for testing.
+ReScript tests call into the Rust addon, so a Rust change needs a rebuild before they see it:
 
-Verify that tests pass by running a compiler `pnpm rescript` and tests `pnpm vitest run`.
+```
+SVM_TARGET_PLATFORM=linux-amd64 cargo build --lib
+mkdir -p node_modules/envio-linux-x64
+cp target/debug/libenvio.so node_modules/envio-linux-x64/envio.node
+printf '{"name":"envio-linux-x64","version":"0.0.1-dev","main":"envio.node"}\n' > node_modules/envio-linux-x64/package.json
+```
+
+`Core.loadAddon` resolves the platform package by name, which is why the debug build is staged into `node_modules` rather than loaded from `target/`.
+
+## Storage
+
+- No in-place migrations and no dynamic chain addition: on schema or config changes the user is expected to resync from scratch. Don't design or propose migration paths for existing deployments.
+
+## Testing and Development
+
+Every change starts with a failing reproduction — bug fix, review finding, or new feature. Write it before touching the source, watch it fail, then fix. No change without one.
+
+Reproduce from the outside in — real `config.yaml`, real `schema.graphql`, real handler source. Never reach into an internal module to trigger a bug. If it can't be reached from the outside, that's the finding: say so before writing a fix.
+
+Pick the highest rung that reproduces:
+
+1. **User API** — `packages/envio-tests`, via `InternalTestIndexer.fromUserApi(~configYaml, ~schema, ~handlers, ~test)`. User YAML, schema and handler source, type-checked and executed, with `createTestIndexer()` in the test. No codegen, no database. See `TokenIndexer_test.res`. Default — start here.
+   `cd packages/envio-tests && pnpm rescript && pnpm vitest run -t "name"`
+2. **Mock indexer** — `scenarios/test_codegen`, via `test/helpers/MockIndexer.res`. Real indexer loop over the generated config with `Source` and `Storage` mocked, Postgres included. Use when the bug is in the loop itself: fetching, reorgs, batching, writes. The config can still come from `fromUserApi` — see `YamlConfigIndexer_test.res`.
+   `cd scenarios/test_codegen && pnpm exec envio codegen && pnpm rescript && pnpm vitest run test/X_test.res`
+3. **End to end** — `scenarios/e2e_test`. For what the rungs above can't mock: ClickHouse, Hasura, and the CLI itself. CI runs it against real services, so anything beyond the local smoke test lands here.
+   `cd scenarios/e2e_test && pnpm exec envio codegen && pnpm test`
+
+Link the issue above the case when there is one: `// https://github.com/enviodev/hyperindex/issues/N`
+
+Run only the tests relevant to your change — never the full suite locally. CI runs it on push.
+
+`pnpm vitest run` skips the checks that guard test inputs, so a green local run can
+still fail CI. Run `pnpm lint` in `packages/envio-tests` before you push: it takes
+under a second, and CI runs it ahead of every test. A CI failure whose closing line
+is `Test failed` while naming no test is this lint, not a test.
 
 ## ReScript
 

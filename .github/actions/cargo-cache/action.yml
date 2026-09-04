@@ -1,5 +1,10 @@
 name: Cargo cache
-description: Cache Cargo registry and build artifacts using actions/cache v5 (Node.js 24).
+description: >
+  Cache Cargo registry and build artifacts using Swatinem/rust-cache.
+  Unlike a plain actions/cache of target/, it prunes non-dependency and
+  stale artifacts before saving. With plain caching the restore-keys
+  chain grew the cache monotonically (~5GB compressed) until extraction
+  filled the disk on ubuntu-22.04 runners and crashed the job.
 
 inputs:
   cache-suffix:
@@ -10,14 +15,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/cache@v5
+    - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ inputs.cache-suffix }}${{ inputs.cache-suffix && '-' || '' }}${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-${{ inputs.cache-suffix }}${{ inputs.cache-suffix && '-' || '' }}
+        key: ${{ inputs.cache-suffix }}
