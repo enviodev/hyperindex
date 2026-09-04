@@ -2451,10 +2451,13 @@ export function createResolver<
   readonly private?: boolean;
   /** @deprecated The former spelling of `private`, and identical to it. */
   readonly admin?: boolean;
-  /** Refuse to answer when the furthest-behind chain is more than this many
-   *  blocks from head, with a 503. Omitted, the resolver answers whatever the
-   *  index currently holds. */
-  readonly maxBlocksBehind?: number;
+  /** Refuse to answer with a 503 when the index is further behind head than
+   *  this. A number applies to every chain; an object of chainId to blocks
+   *  applies per chain and ignores the chains it does not name — which is
+   *  usually what you want, since a few hundred blocks is seconds on one chain
+   *  and hours on another. Omitted, the resolver answers whatever the index
+   *  currently holds. */
+  readonly maxBlocksBehind?: number | Readonly<Record<number, number>>;
   /** The `statement_timeout` every query this resolver runs is bounded by.
    *  Required: it is the only thing bounding a runaway query. */
   readonly timeoutMs: number;
