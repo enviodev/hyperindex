@@ -436,7 +436,6 @@ let resume = async (
     committedCheckpointId: frontier->Frontier.get(chain.id)->BigInt.toString,
   })
   try await sink->ClickHouseSink.resume({
-    checkpointId: frontier->Frontier.max->BigInt.toString,
     perChain: switch sequence {
     | PerChain => true
     | Global => false

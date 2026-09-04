@@ -72,9 +72,6 @@ type initializeInput = {
 type historyTableInput = {name: string, chainIdColumn?: string}
 
 type resumeInput = {
-  // The highest committed id across every chain. What a shared sequence trims
-  // to; ignored when each chain has its own.
-  checkpointId: string,
   perChain: bool,
   chainProgress: array<chainProgressInput>,
   historyTables: array<historyTableInput>,

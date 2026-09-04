@@ -1064,7 +1064,14 @@ let rec writeBatch = async (
 ) => {
   try {
     let chainIdMode = config.chainIdMode
-    let shouldSaveCheckpoints = batch.history === Keep
+    // A checkpoint anchors the history its chain keeps, so the batch's
+    // decision picks the checkpoints chain by chain. Under one shared sequence
+    // that is all of them or none.
+    let checkpointIndexes =
+      batch.checkpointChainIds->Array.filterMapWithIndex((chainId, index) =>
+        batch.history->HistoryPolicy.forChain(chainId) === Keep ? Some(index) : None
+      )
+    let pickCheckpoints = column => checkpointIndexes->Array.map(index => column->Array.getUnsafe(index))
 
     let specificError = ref(None)
 
@@ -1416,15 +1423,15 @@ let rec writeBatch = async (
             )
           }
 
-          if shouldSaveCheckpoints {
+          if checkpointIndexes->Utils.Array.notEmpty {
             setOperations->Array.push(sql =>
               sql->InternalTable.Checkpoints.insert(
                 ~pgSchema,
-                ~checkpointIds=batch.checkpointIds,
-                ~checkpointChainIds=batch.checkpointChainIds,
-                ~checkpointBlockNumbers=batch.checkpointBlockNumbers,
-                ~checkpointBlockHashes=batch.checkpointBlockHashes,
-                ~checkpointEventsProcessed=batch.checkpointEventsProcessed,
+                ~checkpointIds=batch.checkpointIds->pickCheckpoints,
+                ~checkpointChainIds=batch.checkpointChainIds->pickCheckpoints,
+                ~checkpointBlockNumbers=batch.checkpointBlockNumbers->pickCheckpoints,
+                ~checkpointBlockHashes=batch.checkpointBlockHashes->pickCheckpoints,
+                ~checkpointEventsProcessed=batch.checkpointEventsProcessed->pickCheckpoints,
                 ~chainIdMode,
               )
             )

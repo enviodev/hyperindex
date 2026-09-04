@@ -2,8 +2,10 @@
 // the type is opaque in the interface so callers can read fields but can only
 // change them through the sanctioned mutators.
 
-// Whether the chain's progress has entered its reorg threshold.
+// Whether the chain's progress has entered its reorg threshold, or is a chain
+// no rollback can ever reach.
 type threshold =
+  | NoRollback
   | BelowThreshold
   | InThreshold
 
@@ -48,7 +50,8 @@ type t = {
   maxReorgDepth: int,
   // Whether the chain has progressed inside its reorg threshold. One-way: past
   // it, everything the chain writes can still be rolled back, so it keeps
-  // history from here on.
+  // history from here on. A chain no rollback can reach never leaves
+  // `NoRollback`.
   mutable threshold: threshold,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
   // transactionIndex). Fetch responses merge their page in; entries are pruned
@@ -135,7 +138,7 @@ let make = (
   ~safeCheckpointTracking=None,
   ~shouldRollbackOnReorg,
   ~maxReorgDepth,
-  ~threshold=BelowThreshold,
+  ~threshold=?,
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
@@ -165,7 +168,10 @@ let make = (
     safeCheckpointTracking,
     shouldRollbackOnReorg,
     maxReorgDepth,
-    threshold,
+    threshold: switch threshold {
+    | Some(threshold) => threshold
+    | None => !shouldRollbackOnReorg || maxReorgDepth == 0 ? NoRollback : BelowThreshold
+    },
     transactionStore,
     blockStore,
     reorgThresholdReadyTolerance,
@@ -383,7 +389,13 @@ let makeInternal = (
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
     ~maxReorgDepth,
-    ~threshold=isInReorgThreshold ? InThreshold : BelowThreshold,
+    ~threshold=if !config.shouldRollbackOnReorg || maxReorgDepth == 0 {
+      NoRollback
+    } else if isInReorgThreshold {
+      InThreshold
+    } else {
+      BelowThreshold
+    },
     ~safeCheckpointTracking=SafeCheckpointTracking.make(
       ~maxReorgDepth,
       ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
@@ -1004,8 +1016,11 @@ let setEndBlockToFirstEvent = (cs: t, ~blockNumber) =>
   | Some(_) => ()
   }
 
-// One-way: a chain past its reorg threshold keeps history from here on.
-let markInReorgThreshold = (cs: t) => cs.threshold = InThreshold
+let markInReorgThreshold = (cs: t) =>
+  switch cs.threshold {
+  | NoRollback => ()
+  | BelowThreshold | InThreshold => cs.threshold = InThreshold
+  }
 
 // Shrink the fetch buffer by the configured blockLag on entering the reorg threshold.
 let enterReorgThreshold = (cs: t) => {
@@ -1013,10 +1028,24 @@ let enterReorgThreshold = (cs: t) => {
   cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
 }
 
+// The run-wide reading the fetch buffer, the metrics and the entry check use.
+// A chain with no reorg depth has no pre-threshold lag to shed and nothing left
+// to enter, so it reads as inside it from the start — while a run that can't
+// roll back at all has no threshold to be inside of.
 let isInReorgThreshold = (cs: t) =>
   switch cs.threshold {
   | InThreshold => true
+  | NoRollback => cs.shouldRollbackOnReorg
   | BelowThreshold => false
+  }
+
+// Whether the chain's writes need history: only what a rollback could still
+// reach. A chain no rollback can reach has nothing to keep, however far its
+// progress has run.
+let keepsHistory = (cs: t) =>
+  switch cs.threshold {
+  | InThreshold => true
+  | NoRollback | BelowThreshold => false
   }
 
 // Snapshot the chain's metadata fields for staging into the chains table.

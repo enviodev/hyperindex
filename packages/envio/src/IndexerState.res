@@ -139,7 +139,6 @@ let make = (
   ~config: Config.t,
   ~persistence: Persistence.t,
   ~chainStates: dict<ChainState.t>,
-  ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
   ~committedFrontier=Frontier.empty(),
@@ -183,7 +182,6 @@ let make = (
     isProcessing: false,
     crossChainState: CrossChainState.make(
       ~chainStates,
-      ~isInReorgThreshold,
       ~isRealtime,
       ~targetBufferSize,
     ),
@@ -278,7 +276,6 @@ let makeFromDbState = (
     ~config,
     ~persistence,
     ~chainStates,
-    ~isInReorgThreshold,
     ~isRealtime,
     ~targetBufferSize,
     ~committedFrontier=initialState.checkpointFrontier,
@@ -491,16 +488,19 @@ let processedFrontier = (state: t) => state.processedFrontier
 let committedCheckpointIdFor = (state: t, ~scope) =>
   state.config.checkpointSequence->CheckpointSequence.forScope(state.committedFrontier, ~scope)
 
-// What a rollback stamps on the diff rows it stages: the first id after what
-// each chain it moves has committed, so the diff outranks every row it replaces
-// and is itself outranked by everything the next batch writes. Only those
-// chains — a sibling the rollback leaves alone gets no diff row, and burning an
-// id on it would leave a hole in its sequence.
-let rollbackDiffFrontier = (state: t, ~floors: RollbackFloors.t) =>
-  floors.floors.byChain
-  ->Frontier.chainIds
-  ->Array.map(chainId => (chainId, state.committedFrontier->Frontier.get(chainId)->BigInt.add(1n)))
-  ->Frontier.fromEntries
+// What a rollback stamps on the diff rows it stages, taken from the same
+// allocator a batch's checkpoints come from: under one shared sequence the ids
+// are then distinct across chains and above every committed id, rather than
+// each chain's own committed id plus one — which two chains can share. Only the
+// chains the rollback moves: a sibling it leaves alone gets no diff row, and
+// burning an id on it would leave a hole in its sequence.
+let rollbackDiffFrontier = (state: t, ~floors: RollbackFloors.t) => {
+  let chainIds = floors.floors.byChain->Frontier.chainIds
+  let cursor =
+    state.config.checkpointSequence->CheckpointSequence.cursor(~frontier=state.committedFrontier)
+  chainIds->Array.forEach(chainId => cursor->CheckpointSequence.next(~chainId)->ignore)
+  cursor->CheckpointSequence.cursorFrontier->Frontier.pick(~chainIds)
+}
 let processedBatches = (state: t) => state.processedBatches
 let processedBatchesCount = (state: t) => state.processedBatchesCount
 let writeFiber = (state: t) => state.writeFiber

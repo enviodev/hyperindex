@@ -1,8 +1,10 @@
 // Per-chain runtime state. `t` is opaque: other modules read it through the
 // accessors and change it only through the mutators exposed here.
 
-// Whether the chain's progress has entered its reorg threshold.
+// Whether the chain's progress has entered its reorg threshold, or is a chain
+// no rollback can ever reach.
 type threshold =
+  | NoRollback
   | BelowThreshold
   | InThreshold
 
@@ -162,6 +164,7 @@ let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let markInReorgThreshold: t => unit
 let enterReorgThreshold: t => unit
 let isInReorgThreshold: t => bool
+let keepsHistory: t => bool
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: (t, ~readyAt: Date.t) => unit

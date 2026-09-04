@@ -1110,9 +1110,6 @@ let getEventConfig = (config: t, ~contractName, ~eventName, ~chainId: option<Cha
   })
 }
 
-let shouldPruneHistory = (config, ~isInReorgThreshold) =>
-  !config.shouldSaveFullHistory && (config.shouldRollbackOnReorg && isInReorgThreshold)
-
 let getChain = (config, ~chainId) =>
   config.chainMap->ChainMap.has(chainId)
     ? chainId

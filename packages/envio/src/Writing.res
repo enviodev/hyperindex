@@ -113,9 +113,6 @@ let runOneWrite = async (state: IndexerState.t) => {
     | None => batch.checkpointFrontier
     }
 
-    let isInReorgThreshold = state->IndexerState.isInReorgThreshold
-    let isChainInReorgThreshold = chainId =>
-      state->IndexerState.crossChainState->CrossChainState.isChainInReorgThreshold(chainId)
     let updatedEntities = []
     state->IndexerState.eachEntityTable((~entityConfig, ~scope, ~table) => {
       let changes =
@@ -133,11 +130,7 @@ let runOneWrite = async (state: IndexerState.t) => {
               entityConfig,
               scope,
               changes,
-              history: config->HistoryPolicy.forScope(
-                ~scope,
-                ~isInReorgThreshold,
-                ~isChainInReorgThreshold,
-              ),
+              history: batch.history->HistoryPolicy.forScope(~scope),
             }: Persistence.updatedEntity
           ),
         )

@@ -16,7 +16,7 @@ let emptyBatch = (~checkpointId): Batch.t => {
   totalBatchSize: 0,
   items: [],
   progressedChainsById: Dict.make(),
-  history: Skip,
+  history: Shared(Skip),
   checkpointFrontier: Frontier.empty(),
   checkpointIds: [checkpointId],
   checkpointChainIds: [1->ChainId.fromInt],

@@ -51,17 +51,64 @@ let makeResumedChainState = (
   sourceBlockNumber: 1000,
 }
 
-let makeChainState = (resumedChainState, ~reorgCheckpoints=[]) =>
+let makeChainState = (
+  resumedChainState,
+  ~reorgCheckpoints=[],
+  ~config=TestConfig.default,
+  ~isInReorgThreshold=false,
+) =>
   ChainState.makeFromDbState(
     baseChainConfig,
     ~resumedChainState,
     ~reorgCheckpoints,
-    ~isInReorgThreshold=false,
+    ~isInReorgThreshold,
     ~isRealtime=false,
-    ~config=TestConfig.default,
-    ~contractMapping=TestConfig.default.contractMapping,
+    ~config,
+    ~contractMapping=config.contractMapping,
     ~registrationsByChainId,
   )
+
+let resumed = (~maxReorgDepth) => {
+  ...makeResumedChainState(
+    ~progressBlockNumber=110,
+    ~numEventsProcessed=0.,
+    ~firstEventBlockNumber=None,
+  ),
+  maxReorgDepth,
+}
+
+describe("ChainState history reachability", () => {
+  // A chain keeps history only for what a rollback could still reach: inside
+  // its reorg threshold, with a reorg depth to be rolled back through, on a run
+  // that rolls back at all.
+  it("Keeps history only inside the threshold, and never without a reorg depth", t => {
+    let inThreshold = makeChainState(resumed(~maxReorgDepth=200), ~isInReorgThreshold=true)
+    let belowThreshold = makeChainState(resumed(~maxReorgDepth=200))
+    let noDepth = makeChainState(resumed(~maxReorgDepth=0), ~isInReorgThreshold=true)
+    t.expect((
+      inThreshold->ChainState.keepsHistory,
+      belowThreshold->ChainState.keepsHistory,
+      noDepth->ChainState.keepsHistory,
+    )).toEqual((true, false, false))
+  })
+
+  // Entering the threshold is what turns history on — but a chain no rollback
+  // can reach stays where it is.
+  it("Leaves a chain no rollback can reach alone when the threshold is entered", t => {
+    let noDepth = makeChainState(resumed(~maxReorgDepth=0))
+    let noRollback = makeChainState(
+      resumed(~maxReorgDepth=200),
+      ~config={...TestConfig.default, shouldRollbackOnReorg: false},
+    )
+    let entering = makeChainState(resumed(~maxReorgDepth=200))
+    [noDepth, noRollback, entering]->Array.forEach(ChainState.enterReorgThreshold)
+    t.expect((
+      noDepth->ChainState.keepsHistory,
+      noRollback->ChainState.keepsHistory,
+      entering->ChainState.keepsHistory,
+    )).toEqual((false, false, true))
+  })
+})
 
 describe("ChainState chain density seed (on resume)", () => {
   it("seeds from cumulative resumed progress when there's a first event block", t => {
@@ -147,7 +194,7 @@ describe("ChainState chain density EMA (per batch)", () => {
       )
       d
     },
-    history: Skip,
+    history: Shared(Skip),
     checkpointFrontier: Frontier.empty(),
     checkpointIds: [],
     checkpointChainIds: [],

@@ -311,7 +311,7 @@ describe("Per-chain history pruning", () => {
   // A prune runs once per interval, so the one after the restart is the one
   // observed: it sees both chains' committed rows with a fresh interval.
   zeroDepthScenario->Scenario.it(
-    "Writes no history for a chain with no reorg depth and prunes its checkpoints as they commit",
+    "Writes neither history nor checkpoints for a chain with no reorg depth",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -341,13 +341,13 @@ describe("Per-chain history pruning", () => {
 
       t.expect(
         await Promise.all2((counterHistory(restarted), checkpointsByChain(restarted))),
-        ~message="Chain 1337 wrote no history and kept only its latest committed checkpoint; chain 100 pruned to its own safe checkpoint",
+        ~message="Chain 1337 wrote neither history nor the checkpoints that would anchor it; chain 100 pruned to its own safe checkpoint",
       ).toEqual((
         [
           counterSet(~checkpointId=3n, ~chain=100, ~count=3n),
           counterSet(~checkpointId=5n, ~chain=100, ~count=4n),
         ],
-        [(3n, 100), (4n, 100), (4n, 1337), (5n, 100), (6n, 100)],
+        [(3n, 100), (4n, 100), (5n, 100), (6n, 100)],
       ))
     },
   )

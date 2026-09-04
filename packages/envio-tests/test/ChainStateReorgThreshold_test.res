@@ -133,7 +133,7 @@ describe("ChainState reorg threshold", () => {
       totalBatchSize: 0,
       items: [],
       progressedChainsById,
-      history: Keep,
+      history: Shared(Keep),
       checkpointFrontier: Frontier.empty(),
       checkpointIds: [],
       checkpointChainIds: [],

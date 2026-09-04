@@ -14,7 +14,6 @@ let make: (
   ~config: Config.t,
   ~persistence: Persistence.t,
   ~chainStates: dict<ChainState.t>,
-  ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~targetBufferSize: int=?,
   ~committedFrontier: Frontier.t=?,

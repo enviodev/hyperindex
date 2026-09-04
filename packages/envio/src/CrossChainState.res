@@ -27,13 +27,9 @@ let calculateTargetBufferSize = () =>
 
 let make = (
   ~chainStates,
-  ~isInReorgThreshold,
   ~isRealtime,
   ~targetBufferSize=calculateTargetBufferSize(),
 ): t => {
-  if isInReorgThreshold {
-    chainStates->Utils.Dict.forEach(ChainState.markInReorgThreshold)
-  }
   {
     chainStates,
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
@@ -53,14 +49,20 @@ let getChainState = (crossChainState: t, chainId) =>
 let chainStates = (crossChainState: t) => crossChainState.chainStates
 let isRealtime = (crossChainState: t) => crossChainState.isRealtime
 let isCaughtUp = (crossChainState: t) => crossChainState.isCaughtUp
-// Chains enter the threshold together, so this is both "any" and "all". It is
-// the run-wide reading; what a write keeps is decided per chain.
-let isInReorgThreshold = (crossChainState: t) =>
-  crossChainState.chainStates->Dict.valuesToArray->Array.some(ChainState.isInReorgThreshold)
-
-let isChainInReorgThreshold = (crossChainState: t, chainId) =>
-  crossChainState->getChainState(chainId)->ChainState.isInReorgThreshold
+// Chains enter the threshold together, but a chain with no reorg depth has no
+// lag to shed and reads as inside it from the start — so the run has entered
+// once every chain has. It is the run-wide reading; what a write keeps is
+// decided per chain.
+let isInReorgThreshold = (crossChainState: t) => {
+  let chainStates = crossChainState.chainStates->Dict.valuesToArray
+  chainStates->Utils.Array.notEmpty && chainStates->Array.every(ChainState.isInReorgThreshold)
+}
 let targetBufferSize = (crossChainState: t) => crossChainState.targetBufferSize
+
+// Whether each chain's writes still need history, keyed by chain id — what the
+// history policy is built from.
+let keepsHistory = (crossChainState: t) =>
+  crossChainState.chainStates->Utils.Dict.mapValues(ChainState.keepsHistory)
 
 // Ready-to-process items across every chain — the live draw against
 // targetBufferSize, which is a budget of processable events (items stuck behind
@@ -107,9 +109,7 @@ let createBatch = (
 ): Batch.t => {
   Batch.make(
     ~sequence=config.checkpointSequence,
-    ~history=config->HistoryPolicy.forBatch(
-      ~isInReorgThreshold=crossChainState->isInReorgThreshold,
-    ),
+    ~history=config->HistoryPolicy.decide(~keepsHistory=crossChainState->keepsHistory),
     ~frontier,
     ~chainsBeforeBatch=crossChainState.chainStates->Utils.Dict.mapValues(
       ChainState.toChainBeforeBatch,

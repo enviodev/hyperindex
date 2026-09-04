@@ -182,8 +182,9 @@ pub struct ChainProgressInput {
     /// Decimal digits: chain ids outrun what a JS number holds exactly.
     pub chain_id: String,
     pub progress_block_number: i32,
-    /// The chain's own committed checkpoint id. Equal to `checkpoint_id` for
-    /// every chain under a shared sequence.
+    /// The chain's own committed checkpoint id. Under a shared sequence these
+    /// come from one counter, so the highest of them is what the whole resume
+    /// trims to.
     pub committed_checkpoint_id: String,
 }
 
@@ -198,8 +199,6 @@ pub struct HistoryTableInput {
 
 #[napi(object)]
 pub struct ResumeInput {
-    /// The highest committed id across every chain.
-    pub checkpoint_id: String,
     /// Whether each chain counts its own checkpoint ids.
     pub per_chain: bool,
     pub chain_progress: Vec<ChainProgressInput>,
@@ -696,19 +695,24 @@ impl ClickHouseSink {
     /// passed is one whose rows a replay will not write again.
     async fn resume_bounds(
         &self,
-        committed: &str,
+        committed: u64,
         per_chain: bool,
         chain_progress: &[ChainProgressInput],
     ) -> Result<ResumeBounds> {
+        let mut committed_by_chain: Vec<(String, u64)> = Vec::with_capacity(chain_progress.len());
         for chain in chain_progress {
             digits_only(&chain.chain_id, "a chain id")?;
             digits_only(&chain.committed_checkpoint_id, "a checkpoint id")?;
+            committed_by_chain.push((
+                chain.chain_id.clone(),
+                chain.committed_checkpoint_id.parse()?,
+            ));
         }
         if chain_progress.is_empty() {
             return Ok(if per_chain {
                 ResumeBounds::PerChain(Vec::new())
             } else {
-                ResumeBounds::Shared(committed.parse::<u64>()?.to_string())
+                ResumeBounds::Shared(committed.to_string())
             });
         }
         let covered = chain_progress
@@ -733,7 +737,6 @@ impl ClickHouseSink {
         );
 
         if !per_chain {
-            let committed: u64 = committed.parse()?;
             let answer = self
                 .post_statement(format!(
                     "SELECT {aggregates} FROM {table} FORMAT TabSeparated"
@@ -769,22 +772,19 @@ impl ClickHouseSink {
             answered.insert(chain_id, read_aggregates(&rest));
         }
         Ok(ResumeBounds::PerChain(
-            chain_progress
-                .iter()
-                .map(|chain| {
-                    let committed: u64 = chain.committed_checkpoint_id.parse()?;
+            committed_by_chain
+                .into_iter()
+                .map(|(chain_id, committed)| {
                     // A chain the checkpoints table says nothing about holds
                     // nothing to trim beyond what Postgres already committed.
                     let (first_uncovered, highest) = answered
-                        .get(chain.chain_id.as_str())
+                        .get(chain_id.as_str())
                         .copied()
                         .unwrap_or((0, committed));
-                    Ok((
-                        chain.chain_id.clone(),
-                        safe_of(first_uncovered, highest, committed).to_string(),
-                    ))
+                    let safe = safe_of(first_uncovered, highest, committed).to_string();
+                    (chain_id, safe)
                 })
-                .collect::<Result<Vec<_>>>()?,
+                .collect::<Vec<_>>(),
         ))
     }
 
@@ -810,16 +810,21 @@ impl ClickHouseSink {
 
     async fn resume_inner(&self, input: ResumeInput) -> Result<()> {
         let ResumeInput {
-            checkpoint_id,
             per_chain,
             chain_progress,
             history_tables,
             replicated,
             database_engine,
         } = input;
-        digits_only(&checkpoint_id, "a checkpoint id")?;
+        // Under a shared sequence every chain counts from the same run of the
+        // counter, so the highest committed id is where the whole resume trims.
+        let committed = chain_progress
+            .iter()
+            .map(|chain| chain.committed_checkpoint_id.parse::<u64>().unwrap_or_default())
+            .max()
+            .unwrap_or_default();
         let bounds = self
-            .resume_bounds(&checkpoint_id, per_chain, &chain_progress)
+            .resume_bounds(committed, per_chain, &chain_progress)
             .await?;
 
         let above_by_table = history_tables
@@ -1366,12 +1371,10 @@ mod tests {
     }
 
     fn resume_input(
-        checkpoint_id: String,
         chain_progress: Vec<ChainProgressInput>,
         history_tables: Vec<String>,
     ) -> ResumeInput {
         ResumeInput {
-            checkpoint_id,
             per_chain: false,
             chain_progress,
             history_tables: history_tables
@@ -1443,9 +1446,7 @@ mod tests {
         sink.resume(ResumeInput {
             per_chain: true,
             chain_progress: vec![committed("1", 100, "5"), committed("137", 200, "9")],
-            ..resume_input(
-                "9".to_string(),
-                Vec::new(),
+            ..resume_input(Vec::new(),
                 vec!["envio_history_a".to_string()],
             )
         })
@@ -1484,9 +1485,7 @@ mod tests {
         sink.resume(ResumeInput {
             per_chain: true,
             chain_progress: vec![committed("1", 100, "5"), committed("137", 200, "3")],
-            ..resume_input(
-                "8".to_string(),
-                Vec::new(),
+            ..resume_input(Vec::new(),
                 vec!["envio_history_a".to_string()],
             )
         })
@@ -1520,7 +1519,7 @@ mod tests {
                     name: "envio_history_a".to_string(),
                     chain_id_column: None,
                 }],
-                ..resume_input("8".to_string(), Vec::new(), Vec::new())
+                ..resume_input(Vec::new(), Vec::new())
             })
             .await
             .unwrap_err();
@@ -1550,7 +1549,7 @@ mod tests {
         .unwrap();
 
         let err = unreachable
-            .resume(resume_input("42".to_string(), Vec::new(), Vec::new()))
+            .resume(resume_input(Vec::new(), Vec::new()))
             .await
             .unwrap_err();
 
@@ -1574,7 +1573,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume(resume_input("42".to_string(), Vec::new(), Vec::new()))
+            .resume(resume_input(Vec::new(), Vec::new()))
             .await
             .unwrap_err();
 
@@ -1602,7 +1601,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume(resume_input("42".to_string(), Vec::new(), Vec::new()))
+            .resume(resume_input(Vec::new(), Vec::new()))
             .await
             .unwrap_err();
 
@@ -1632,7 +1631,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume(resume_input("42".to_string(), Vec::new(), Vec::new()))
+            .resume(resume_input(Vec::new(), Vec::new()))
             .await
             .unwrap_err();
 
@@ -1666,8 +1665,7 @@ mod tests {
         sink.resume(ResumeInput {
             database_engine: Some("Replicated('/clickhouse/{shard}', '{replica}')".to_string()),
             ..resume_input(
-                "42".to_string(),
-                Vec::new(),
+                vec![committed("1", 100, "42")],
                 vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
             )
         })
@@ -1720,8 +1718,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         sink.resume(resume_input(
-            "42".to_string(),
-            Vec::new(),
+            vec![committed("1", 100, "42")],
             vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
         ))
         .await
@@ -1754,6 +1751,35 @@ mod tests {
         );
     }
 
+    /// Under a shared sequence every chain counts from the same run of the
+    /// counter, so the id the resume trims to is the highest any chain has
+    /// committed — read off the chain progress rather than taken as a separate
+    /// number that can disagree with it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_shared_resume_trims_to_the_highest_committed_chain() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0\t0",
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(resume_input(vec![committed("1", 100, "5"), committed("137", 200, "42")],
+            vec!["envio_history_a".to_string()],
+        ))
+        .await
+        .unwrap();
+
+        assert!(
+            server
+                .statements_seen()
+                .into_iter()
+                .any(|statement| statement.contains("`envio_checkpoint_id` > 42")),
+            "the trim should follow the highest committed chain, got: {:?}",
+            server.statements_seen()
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_reads_nothing_out_of_the_servers_catalog() {
         let server = mock_server::MockClickHouse::answering_statements(resume_answers(
@@ -1763,9 +1789,7 @@ mod tests {
         .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(resume_input(
-            "42".to_string(),
-            Vec::new(),
+        sink.resume(resume_input(Vec::new(),
             vec!["envio_history_a".to_string()],
         ))
         .await
@@ -1796,8 +1820,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         sink.resume(resume_input(
-            "42".to_string(),
-            Vec::new(),
+            vec![committed("1", 100, "42")],
             vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
         ))
         .await
@@ -1826,9 +1849,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume(resume_input(
-                "42".to_string(),
-                Vec::new(),
+            .resume(resume_input(Vec::new(),
                 vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
             ))
             .await
@@ -1865,8 +1886,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         sink.resume(resume_input(
-            "42".to_string(),
-            Vec::new(),
+            vec![committed("1", 100, "42")],
             vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
         ))
         .await
@@ -1899,9 +1919,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         // What Postgres commits during backfill: no checkpoint at all.
-        sink.resume(resume_input(
-            "0".to_string(),
-            vec![progress("1", 10), progress("137", -1)],
+        sink.resume(resume_input(vec![progress("1", 10), progress("137", -1)],
             vec!["envio_history_a".to_string()],
         ))
         .await
@@ -1946,9 +1964,7 @@ mod tests {
         .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(resume_input(
-            "42".to_string(),
-            vec![progress("1", 10)],
+        sink.resume(resume_input(vec![progress("1", 10)],
             vec!["envio_history_a".to_string()],
         ))
         .await
@@ -1977,9 +1993,7 @@ mod tests {
         .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(resume_input(
-            "0".to_string(),
-            vec![progress("1", 500)],
+        sink.resume(resume_input(vec![progress("1", 500)],
             vec!["envio_history_a".to_string()],
         ))
         .await

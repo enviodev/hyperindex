@@ -153,7 +153,7 @@ let emptyBatch: Batch.t = {
   totalBatchSize: 0,
   items: [],
   progressedChainsById: Dict.make(),
-  history: Skip,
+  history: Shared(Skip),
   checkpointFrontier: Frontier.empty(),
   checkpointIds: [],
   checkpointChainIds: [],
@@ -168,7 +168,7 @@ let makeCrossChainState = (~chainStatesList, ~isRealtime=false, ~targetBufferSiz
   chainStatesList->Array.forEach(cs =>
     chainStates->ChainId.Dict.set((cs->ChainState.chainConfig).id, cs)
   )
-  CrossChainState.make(~chainStates, ~isInReorgThreshold=false, ~isRealtime, ~targetBufferSize)
+  CrossChainState.make(~chainStates, ~isRealtime, ~targetBufferSize)
 }
 
 let makeRegistration = (~contractName, ~index): Internal.onEventRegistration =>

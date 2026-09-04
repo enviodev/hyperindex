@@ -7,7 +7,6 @@ let calculateTargetBufferSize: unit => int
 
 let make: (
   ~chainStates: dict<ChainState.t>,
-  ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~targetBufferSize: int=?,
 ) => t
@@ -17,8 +16,8 @@ let chainStates: t => dict<ChainState.t>
 let isRealtime: t => bool
 let isCaughtUp: t => bool
 let isInReorgThreshold: t => bool
-let isChainInReorgThreshold: (t, ChainId.t) => bool
 let targetBufferSize: t => int
+let keepsHistory: t => dict<bool>
 
 // Derived (pure).
 let nextItemIsNone: t => bool

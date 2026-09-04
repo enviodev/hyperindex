@@ -64,8 +64,7 @@ let make = (~config=config, ~persistence=?, ~entities=[]) => {
     },
     // A trivial chain state map for store-only tests that never run the loop.
     ~chainStates=Dict.make(),
-    ~isInReorgThreshold=false,
-    ~isRealtime=false,
+      ~isRealtime=false,
     // The cycle never runs here, so a write only means a test is wired wrong.
     ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
   )

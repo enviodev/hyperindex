@@ -67,3 +67,24 @@ describe("CheckpointSequence.params", () => {
     ).toEqual(["2"])
   })
 })
+
+// The ids a rollback stamps on its diff rows come from this cursor, the same
+// one a batch's checkpoints come from. Under a shared sequence that is what
+// makes them distinct across chains and above every committed id — a chain
+// behind its sibling would otherwise be handed an id the sibling already used.
+describe("CheckpointSequence.cursor", () => {
+  it("Hands two chains distinct ids above every committed one under a shared sequence", t => {
+    let cursor = CheckpointSequence.Global->CheckpointSequence.cursor(~frontier)
+    let ids = [chain1, chain137]->Array.map(chainId => cursor->CheckpointSequence.next(~chainId))
+    t.expect((ids, cursor->CheckpointSequence.cursorFrontier->Frontier.entries)).toEqual((
+      [10n, 11n],
+      [(chain1, 10n), (chain137, 11n)],
+    ))
+  })
+
+  it("Continues each chain's own count under per-chain sequences", t => {
+    let cursor = CheckpointSequence.PerChain->CheckpointSequence.cursor(~frontier)
+    let ids = [chain1, chain137]->Array.map(chainId => cursor->CheckpointSequence.next(~chainId))
+    t.expect(ids).toEqual([10n, 3n])
+  })
+})

@@ -523,8 +523,8 @@ describe("Isolated multichain rollback", () => {
         [
           checkpoint(~id=3n, ~chain=100, ~block=101, ~events=1),
           checkpoint(~id=4n, ~chain=1337, ~block=101, ~events=1),
-          checkpoint(~id=8n, ~chain=100, ~block=102, ~events=1),
-          checkpoint(~id=9n, ~chain=1337, ~block=102, ~events=1),
+          checkpoint(~id=9n, ~chain=100, ~block=102, ~events=1),
+          checkpoint(~id=10n, ~chain=1337, ~block=102, ~events=1),
         ],
         [{id: "total", count: 1002n, chainId: 100}, {id: "total", count: 999n, chainId: 1337}],
         [{id: "total", count: 999n}],

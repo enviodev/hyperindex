@@ -90,7 +90,7 @@ type updatedEntity = {
   changes: array<Change.t<Internal.entity>>,
   // Decided where the chain states are in reach; storage writes what it is
   // handed rather than re-deriving the rule.
-  history: HistoryPolicy.t,
+  history: HistoryPolicy.keep,
 }
 
 // An id the rollback must delete, together with the scope its row lives in.

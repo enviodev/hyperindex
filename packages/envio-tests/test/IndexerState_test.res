@@ -140,7 +140,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     ~config,
     ~persistence=TestIndexerState.defaultPersistence(),
     ~chainStates,
-    ~isInReorgThreshold=false,
+
     ~isRealtime=false,
     ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
   )
@@ -325,7 +325,7 @@ describe("IndexerState", () => {
             ~config,
             ~persistence=TestIndexerState.defaultPersistence(),
             ~chainStates,
-            ~isInReorgThreshold=false,
+
             ~isRealtime=false,
             ~onError=errHandler => errHandler->ErrorHandling.raiseExn,
           )

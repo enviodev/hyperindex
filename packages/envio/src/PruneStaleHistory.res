@@ -98,7 +98,11 @@ let selectFrom = (
 
 let select = (state: IndexerState.t, ~writtenEntityNames, ~isRollback) => {
   let config = state->IndexerState.config
-  if config->Config.shouldPruneHistory(~isInReorgThreshold=state->IndexerState.isInReorgThreshold) {
+  if (
+    config->HistoryPolicy.mayPrune(
+      ~keepsHistory=state->IndexerState.crossChainState->CrossChainState.keepsHistory,
+    )
+  ) {
     state
     ->selectSafeCheckpoints
     ->Option.map(safeCheckpoints =>
