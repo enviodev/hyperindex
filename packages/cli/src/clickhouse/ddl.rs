@@ -325,14 +325,17 @@ pub fn create_checkpoints_table(
         .iter()
         .map(|(name, ch_type)| format!("  {} {ch_type}", quoted(name)))
         .collect();
+    // Keyed on the id alone, even where each chain counts its own. Every read of
+    // every entity view resolves `max(id)` here, which leading `id` answers from
+    // the last granule and any other key turns into a full scan; the per-chain
+    // trim that would prefer a leading chain runs once, on resume.
     format!(
-        "CREATE TABLE IF NOT EXISTS {}.{}{} (\n{}\n)\nENGINE = {}\nORDER BY ({}, {}){}",
+        "CREATE TABLE IF NOT EXISTS {}.{}{} (\n{}\n)\nENGINE = {}\nORDER BY ({}){}",
         quoted(database),
         quoted(&history.checkpoints_table),
         topology.on_cluster(),
         definitions.join(",\n"),
         topology.engine(),
-        quoted(&history.checkpoint_chain_id_column),
         quoted(&history.id_column),
         topology.settings(),
     )
@@ -710,7 +713,7 @@ mod tests {
              `block_hash` Nullable(String)\n\
              )\n\
              ENGINE = MergeTree()\n\
-             ORDER BY (`chain_id`, `id`)"
+             ORDER BY (`id`)"
         );
     }
 
@@ -723,7 +726,7 @@ mod tests {
              `id` UInt64\n\
              )\n\
              ENGINE = ReplicatedMergeTree\n\
-             ORDER BY (`chain_id`, `id`)\n\
+             ORDER BY (`id`)\n\
              SETTINGS replicated_deduplication_window = 0"
         );
     }
