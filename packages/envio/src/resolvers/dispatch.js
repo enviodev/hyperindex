@@ -96,32 +96,51 @@ export function createDispatcher({ resolvers, pool, exposeErrors = false, onErro
     byName.set(resolver.name, resolver);
   }
 
-  let cachedBehind = { at: 0, blocks: null };
+  let cachedHeights = { at: 0, chains: null };
 
   /**
-   * How far the furthest-behind chain is from head, or null when that cannot
-   * be read. Null means "do not know", and a gate that cannot read the answer
-   * lets the request through: refusing everything because the freshness probe
-   * itself failed would turn one broken query into a total outage.
+   * Every chain's distance from head, or null when that cannot be read. Null
+   * means "do not know", and a gate that cannot read the answer lets the
+   * request through: refusing everything because the freshness probe itself
+   * failed would turn one broken query into a total outage.
    */
-  const blocksBehindHead = async () => {
+  const chainsBehindHead = async () => {
     const now = Date.now();
-    if (cachedBehind.blocks !== null && now - cachedBehind.at < STALENESS_CACHE_MS) {
-      return cachedBehind.blocks;
+    if (cachedHeights.chains !== null && now - cachedHeights.at < STALENESS_CACHE_MS) {
+      return cachedHeights.chains;
     }
     try {
       const heights = await pool
         .forResolver({ name: "staleness", timeoutMs: 2_000 })
         .chainHeights();
-      const behind = Object.values(heights).map((chain) =>
-        Math.max(0, chain.sourceBlock - chain.progressBlock)
-      );
-      const worst = behind.length === 0 ? 0 : Math.max(...behind);
-      cachedBehind = { at: now, blocks: worst };
-      return worst;
+      const chains = Object.values(heights).map((chain) => ({
+        chainId: chain.chainId,
+        behind: Math.max(0, chain.sourceBlock - chain.progressBlock),
+      }));
+      cachedHeights = { at: now, chains };
+      return chains;
     } catch {
       return null;
     }
+  };
+
+  /**
+   * The first chain past its limit, or null when all of them are inside it.
+   *
+   * A bare number applies to every chain; an object gives a limit per chain
+   * and covers only the chains it names. That distinction matters on a
+   * multichain indexer, because "blocks behind" is not comparable between
+   * chains — a few hundred blocks is seconds on Arbitrum and hours on
+   * Ethereum — and because a resolver reading one chain's tables should not be
+   * refused for another chain's lag.
+   */
+  const chainPastLimit = (chains, limit) => {
+    for (const chain of chains) {
+      const cap = typeof limit === "number" ? limit : limit[chain.chainId];
+      if (cap === undefined) continue;
+      if (chain.behind > cap) return { ...chain, cap };
+    }
+    return null;
   };
 
   return async function dispatch(request, { privateKeyOk = false } = {}) {
@@ -163,10 +182,11 @@ export function createDispatcher({ resolvers, pool, exposeErrors = false, onErro
     // index that is behind head is worse than not answering, because the
     // numbers look real.
     if (resolver.maxBlocksBehind !== undefined) {
-      const behind = await blocksBehindHead();
-      if (behind !== null && behind > resolver.maxBlocksBehind) {
+      const chains = await chainsBehindHead();
+      const stale = chains === null ? null : chainPastLimit(chains, resolver.maxBlocksBehind);
+      if (stale !== null) {
         return errorBody(
-          `Indexer is ${behind} blocks behind head, past this resolver's limit of ${resolver.maxBlocksBehind}; refusing to answer from a stale index`,
+          `Chain ${stale.chainId} is ${stale.behind} blocks behind head, past this resolver's limit of ${stale.cap}; refusing to answer from a stale index`,
           "SERVICE_UNAVAILABLE"
         );
       }
