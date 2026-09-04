@@ -39,6 +39,14 @@ type sourceHeightSample = {
 
 let getSourceHeightSamples: t => array<sourceHeightSample>
 
+type heightStreamSample = {
+  sourceName: string,
+  chainId: ChainId.t,
+  stream: HeightFeed.streamSample,
+}
+
+let getHeightStreamSamples: t => array<heightStreamSample>
+
 let idleSeconds: t => float
 let waitingForNewBlockSeconds: t => float
 let queryingSeconds: t => float

@@ -205,7 +205,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     name,
     sourceFor: Sync,
     chainId,
-    pollingInterval: 100,
+    pollingInterval: HyperSync.pollingInterval,
     poweredByHyperSync: true,
     getBlockHashes,
     getHeightOrThrow: async () => {
@@ -227,7 +227,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
       {height, requestStats: [{method: "getHeight", seconds}]}
     },
     getItemsOrThrow,
-    createHeightSubscription: (~onHeight) =>
-      HyperSyncHeightStream.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~chainId, ~onHeight),
+    createHeightSubscription: (~onHeight, ~onStatus) =>
+      HyperSyncSSE.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight, ~onStatus),
   }
 }

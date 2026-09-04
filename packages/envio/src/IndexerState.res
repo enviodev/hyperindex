@@ -542,6 +542,7 @@ let toMetrics = (state: t): Metrics.t => {
   let chainStates = state.crossChainState->CrossChainState.chainStates
   let sourceRequests = []
   let sourceHeights = []
+  let sourceHeightStreams = []
   chainStates->Utils.Dict.forEach(cs => {
     let sourceManager = cs->ChainState.sourceManager
     sourceManager
@@ -562,6 +563,16 @@ let toMetrics = (state: t): Metrics.t => {
         Metrics.source: s.sourceName,
         chainId: s.chainId,
         height: s.height,
+      })
+    )
+    sourceManager
+    ->SourceManager.getHeightStreamSamples
+    ->Array.forEach(s =>
+      sourceHeightStreams->Array.push({
+        Metrics.source: s.sourceName,
+        chainId: s.chainId,
+        connectCount: s.stream.connectCount,
+        disconnectsByReason: s.stream.disconnectsByReason,
       })
     )
   })
@@ -626,6 +637,7 @@ let toMetrics = (state: t): Metrics.t => {
     historyPrunes,
     sourceRequests,
     sourceHeights,
+    sourceHeightStreams,
   }
 }
 

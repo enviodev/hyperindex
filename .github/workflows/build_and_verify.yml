@@ -200,7 +200,7 @@ jobs:
           POSTGRES_DB: envio-dev
           POSTGRES_USER: postgres
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres -d envio-dev"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -224,6 +224,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/prepare-envio-artifacts
+
+      - name: Lint test inputs
+        working-directory: packages/envio-tests
+        run: pnpm lint
 
       - name: envio-tests (${{ matrix.storage }})
         working-directory: packages/envio-tests
@@ -261,7 +265,7 @@ jobs:
           POSTGRES_DB: envio-dev
           POSTGRES_USER: postgres
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres -d envio-dev"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -331,7 +335,7 @@ jobs:
           POSTGRES_DB: envio-dev
           POSTGRES_USER: postgres
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres -d envio-dev"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5

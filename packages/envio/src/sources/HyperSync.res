@@ -1,3 +1,8 @@
+// Short enough that a chain at the head is not held up behind it, long enough
+// that a wait polling through a whole block interval is not thousands of
+// requests.
+let pollingInterval = 400
+
 // A napi error carries nothing but a message, so the native clients signal the
 // recoverable conditions SourceManager knows how to retry as a `PREFIX:<int>`
 // marker. Keep in sync with `request_stats.rs`.
