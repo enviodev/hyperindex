@@ -1140,13 +1140,24 @@ pub mod svm {
         pub handler: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional path (relative to config.yaml) to an Anchor IDL JSON file. \
-                           When present, codegen parses the IDL and derives `accounts`/`args` for \
-                           every named instruction. Mutually exclusive with per-instruction \
-                           `accounts`/`args` overrides."
+            description = "Optional path (relative to config.yaml) to an IDL JSON file (Anchor \
+                           0.30+, legacy Anchor, Shank, or Codama). When present, every usable \
+                           instruction is in the catalog and `onInstruction` selects by name. \
+                           Omit YAML `instructions` to take that catalog as-is. A YAML row \
+                           overwrites the IDL instruction of the same name, or adds a name the \
+                           IDL did not declare."
         )]
         pub idl: Option<String>,
-        #[schemars(description = "A list of instructions that should be indexed on this program.")]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schemars(
+            description = "Instructions to index. With `idl:`, omit this list to take the full \
+                           usable IDL catalog. A YAML row overwrites the IDL instruction of the \
+                           same name, or adds a new name to the catalog, and must set \
+                           `discriminator` plus both `accounts` and `args`. Without `idl:`, \
+                           omit `discriminator` to match every \
+                           instruction of the program; set both `accounts` and `args`, or omit \
+                           both."
+        )]
         pub instructions: Vec<Instruction>,
     }
 
@@ -1162,12 +1173,14 @@ pub mod svm {
         #[schemars(
             description = "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" \
                            optional), of any whole number of bytes; an 8-byte value matches the \
-                           standard Anchor discriminator. Omit it to match every instruction of \
-                           the program. Every instruction whose prefix an on-chain call carries \
-                           receives it, so a program-wide entry fires alongside a keyed one, and \
-                           two entries may share a prefix (say, the layouts before and after a \
-                           program upgrade): each decodes with its own `args`, and one whose \
-                           layout rejects the data is skipped for that call."
+                           standard Anchor discriminator. With `idl:` on the program, this field \
+                           is required on every YAML row. Without `idl:`, omit it to match every \
+                           instruction of the program. Every instruction whose prefix an \
+                           on-chain call carries receives it, so a program-wide entry fires \
+                           alongside a keyed one, and two entries may share a prefix (say, the \
+                           layouts before and after a program upgrade): each decodes with its \
+                           own `args`, and one whose layout rejects the data is skipped for that \
+                           call."
         )]
         pub discriminator: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1182,8 +1195,8 @@ pub mod svm {
         #[schemars(
             description = "Optional Borsh argument schema. Each entry names one arg and gives its \
                            type; the decoder walks the instruction data after the discriminator \
-                           in declared order. Mutually exclusive with the program-level `idl` \
-                           field."
+                           in declared order. Must be set together with `accounts` when either is \
+                           present."
         )]
         pub args: Option<Vec<ArgDef>>,
     }
@@ -1252,7 +1265,7 @@ pub mod svm {
         Array(Box<ArgType>, usize),
         /// Reference to a nominal type defined in the program-level
         /// `defined_types` registry (populated from an Anchor IDL `types:`
-        /// block or the bundled-Metaplex registry).
+        /// block).
         #[serde(rename = "defined")]
         Defined(String),
         /// Inline-or-registry struct. Used as a nominal type definition in
