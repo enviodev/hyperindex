@@ -82,12 +82,13 @@ let crossChainLaggingFirstScenario = Scenario.make(
   ~configYaml=makeConfigYaml("per-chain-prune-cross-chain-lagging-first", ~laggingChainId=5),
 )
 
-// Both chains reach a safe checkpoint of their own, at a different one each, so
-// the prune is bounded per chain with more than one bound to apply at once.
-let twoBoundsScenario = Scenario.make(
+// Every chain reaches a safe checkpoint of its own, so the prune carries a bound
+// per chain. Three of them rather than two: a pair of bounds can be crossed and
+// still look right, while three cannot.
+let manyBoundsScenario = Scenario.make(
   ~schema,
   ~configYaml=`
-name: per-chain-prune-two-bounds
+name: per-chain-prune-many-bounds
 rollback_on_reorg: true
 disable_default_cross_chain: true
 contracts:
@@ -98,7 +99,7 @@ chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
       200,
       ~startBlock=210,
       ~maxReorgDepth=15,
-    )}
+    )}${chainYaml(300, ~startBlock=310, ~maxReorgDepth=15)}
 `,
 )
 
@@ -192,12 +193,12 @@ describe("Per-chain history pruning", () => {
         ~message="Chain 100 dropped what its own safe block put out of reach, keeping the anchor; chain 1337 kept everything, having nothing safe yet",
       ).toEqual((
         [
+          counterSet(~checkpointId=1n, ~chain=1337, ~count=20n),
           // The anchor: chain 100's last state at or below its own safe block.
           counterSet(~checkpointId=2n, ~chain=100, ~count=2n),
-          counterSet(~checkpointId=3n, ~chain=1337, ~count=20n),
-          counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
+          counterSet(~checkpointId=3n, ~chain=100, ~count=3n),
         ],
-        [(2n, 100), (3n, 1337), (4n, 1337), (5n, 100), (6n, 100)],
+        [(2n, 100), (1n, 1337), (2n, 1337), (3n, 100), (4n, 100)],
       ))
     },
   )
@@ -227,62 +228,82 @@ describe("Per-chain history pruning", () => {
     },
   )
 
-  // Both chains prune, to a different checkpoint each — the case where more than
-  // one bound reaches the database at once.
-  twoBoundsScenario->Scenario.it(
+  // Every chain prunes, to a different checkpoint each — the case where several
+  // bounds reach the database in one statement. The chains are given different
+  // numbers of blocks on purpose, so their safe checkpoints land on different
+  // ids: bounds crossed between chains would survive a symmetric setup.
+  manyBoundsScenario->Scenario.it(
     "Holds each chain to its own bound when several chains prune at once",
-    ~sources=[{chain: 100, methods}, {chain: 200, methods}],
+    ~sources=[{chain: 100, methods}, {chain: 200, methods}, {chain: 300, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
-      let source100 = source(100)
-      let source200 = source(200)
+      // Each chain runs a hundred blocks apart from the next, with its own
+      // number of events below its safe block.
+      let chains = [
+        (100, [(111, 1n), (112, 2n)], (120, 3n)),
+        (200, [(211, 11n), (212, 12n), (213, 13n)], (220, 14n)),
+        (300, [(311, 21n)], (320, 22n)),
+      ]
 
-      let _ = await Promise.all2((
-        Scenario.resolveInitialHeight(~t, ~source=source100, ~head=120),
-        Scenario.resolveInitialHeight(~t, ~source=source200, ~head=220),
-      ))
-
-      source100.resolveGetItemsOrThrow(
-        [setCounter(~block=111, ~count=1n), setCounter(~block=112, ~count=2n)],
-        ~latestFetchedBlockNumber=112,
+      let _ = await chains
+      ->Array.map(
+        ((chain, _, _)) =>
+          Scenario.resolveInitialHeight(~t, ~source=source(chain), ~head=chain + 20),
       )
-      source200.resolveGetItemsOrThrow(
-        [setCounter(~block=211, ~count=11n), setCounter(~block=212, ~count=12n)],
-        ~latestFetchedBlockNumber=212,
+      ->Promise.all
+
+      // Each chain stops fetching at its own last event, so no chain picks up a
+      // gap checkpoint the others don't and their safe ids stay distinct.
+      let lastBackfillBlock = backfill =>
+        backfill->Array.reduce(0, (highest, (block, _)) => Pervasives.max(highest, block))
+
+      chains->Array.forEach(
+        ((chain, backfill, _)) =>
+          source(chain).resolveGetItemsOrThrow(
+            backfill->Array.map(((block, count)) => setCounter(~block, ~count)),
+            ~latestFetchedBlockNumber=lastBackfillBlock(backfill),
+          ),
       )
       await indexer.getBatchWritePromise()
 
-      source100.setAutoHeight(130)
-      source200.setAutoHeight(230)
-      source100.resolveGetItemsOrThrow(
-        [setCounter(~block=120, ~count=3n)],
-        ~filter=MockSource.coveringBlock(113),
-        ~latestFetchedBlockNumber=130,
-      )
-      source200.resolveGetItemsOrThrow(
-        [setCounter(~block=220, ~count=13n)],
-        ~filter=MockSource.coveringBlock(213),
-        ~latestFetchedBlockNumber=230,
+      chains->Array.forEach(
+        ((chain, backfill, (block, count))) => {
+          source(chain).setAutoHeight(chain + 30)
+          source(chain).resolveGetItemsOrThrow(
+            [setCounter(~block, ~count)],
+            ~filter=MockSource.coveringBlock(lastBackfillBlock(backfill) + 1),
+            ~latestFetchedBlockNumber=chain + 30,
+          )
+        },
       )
       await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
 
+      let checkpoints = await checkpointsByChain(indexer)
+      let history = (await counterHistory(indexer))->Array.map(
+        change =>
+          switch change {
+          | Set({checkpointId, entity}) => (checkpointId, entity.chainId, entity.count)
+          | Delete({checkpointId}) => (checkpointId, 0, 0n)
+          },
+      )
+      let forChain = chain => (
+        checkpoints->Array.filterMap(((id, rowChain)) => rowChain === chain ? Some(id) : None),
+        history->Array.filterMap(
+          ((id, rowChain, count)) => rowChain === chain ? Some((id, count)) : None,
+        ),
+      )
+
       t.expect(
-        await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),
+        (forChain(100), forChain(200), forChain(300)),
         ~message="Each chain kept its own anchor and dropped only what its own safe block put out of reach",
       ).toEqual((
-        [
-          counterSet(~checkpointId=2n, ~chain=100, ~count=2n),
-          counterSet(~checkpointId=4n, ~chain=200, ~count=12n),
-          counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
-          counterSet(~checkpointId=6n, ~chain=200, ~count=13n),
-        ],
-        // Checkpoint ids come from one sequence shared by every chain, so which
-        // chain claims which id is whichever of them commits first — the two
-        // alternate here rather than each taking a pair. What this pins is per
-        // chain: three checkpoints each, and history kept only above each
-        // chain's own safe block.
-        [(2n, 100), (4n, 200), (5n, 100), (6n, 200), (7n, 100), (8n, 200)],
+        // Two blocks below its safe block, so chain 100 is bounded at id 2.
+        ([2n, 3n, 4n], [(2n, 2n), (3n, 3n)]),
+        // Three, so chain 200 is bounded at 3.
+        ([3n, 4n, 5n], [(3n, 13n), (4n, 14n)]),
+        // One, so chain 300 is bounded at 1 and keeps everything it has.
+        ([1n, 2n, 3n], [(1n, 21n), (2n, 22n)]),
       ))
     },
   )
@@ -290,7 +311,7 @@ describe("Per-chain history pruning", () => {
   // A prune runs once per interval, so the one after the restart is the one
   // observed: it sees both chains' committed rows with a fresh interval.
   zeroDepthScenario->Scenario.it(
-    "Writes no history for a chain with no reorg depth and prunes its checkpoints as they commit",
+    "Writes neither history nor checkpoints for a chain with no reorg depth",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
     ~reorgThresholdReadyTolerance=0,
     async (~t, ~indexer, ~source) => {
@@ -320,13 +341,13 @@ describe("Per-chain history pruning", () => {
 
       t.expect(
         await Promise.all2((counterHistory(restarted), checkpointsByChain(restarted))),
-        ~message="Chain 1337 wrote no history and kept only its latest committed checkpoint; chain 100 pruned to its own safe checkpoint",
+        ~message="Chain 1337 wrote neither history nor the checkpoints that would anchor it; chain 100 pruned to its own safe checkpoint",
       ).toEqual((
         [
-          counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
-          counterSet(~checkpointId=9n, ~chain=100, ~count=4n),
+          counterSet(~checkpointId=3n, ~chain=100, ~count=3n),
+          counterSet(~checkpointId=5n, ~chain=100, ~count=4n),
         ],
-        [(5n, 100), (6n, 100), (8n, 1337), (9n, 100), (10n, 100)],
+        [(3n, 100), (4n, 100), (5n, 100), (6n, 100)],
       ))
     },
   )

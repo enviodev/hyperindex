@@ -12,7 +12,7 @@ let maxEntitiesPerWrite = 5
 let forcedIntervalMultiplier = 5.
 
 type targets = {
-  safeCheckpoints: CheckpointBounds.t,
+  safeCheckpoints: CheckpointSequence.bounds,
   concurrent: array<Internal.entityConfig>,
   forced: array<Internal.entityConfig>,
 }
@@ -28,25 +28,20 @@ type targets = {
 // every chain back to one checkpoint, which can sit below another chain's safe
 // point, so the lowest is the only bound every chain agrees on.
 let selectSafeCheckpoints = (state: IndexerState.t) => {
+  let sequence = (state->IndexerState.config).checkpointSequence
   let byChain = state->IndexerState.getSafeCheckpointIdByChain
   let safe =
     byChain->Array.filterMap(((chainId, checkpointId)) =>
       checkpointId->Option.map(checkpointId => (chainId, checkpointId))
     )
-  if state->IndexerState.config->Config.isIsolatedMultichain {
-    safe->Utils.Array.notEmpty ? Some(CheckpointBounds.PerChain(safe)) : None
-  } else if safe->Array.length === byChain->Array.length {
-    let (_, lowest) = safe->Array.getUnsafe(0)
-    Some(
-      CheckpointBounds.EveryChain(
-        safe->Array.reduce(lowest, (lowest, (_, checkpointId)) =>
-          Pervasives.min(lowest, checkpointId)
-        ),
-      ),
-    )
-  } else {
-    None
+  // Under one shared sequence the bound is the lowest of them, which only
+  // exists once every chain has one; the rendering takes that minimum, so the
+  // frontier handed over is the same shape either way.
+  let hasBound = switch sequence {
+  | PerChain => safe->Utils.Array.notEmpty
+  | Global => safe->Array.length === byChain->Array.length
   }
+  hasBound ? Some(CheckpointSequence.bounds(sequence, Frontier.fromEntries(safe))) : None
 }
 
 let selectFrom = (
@@ -103,7 +98,7 @@ let selectFrom = (
 
 let select = (state: IndexerState.t, ~writtenEntityNames, ~isRollback) => {
   let config = state->IndexerState.config
-  if config->Config.shouldPruneHistory(~isInReorgThreshold=state->IndexerState.isInReorgThreshold) {
+  if config->HistoryPolicy.mayPrune(~keepsHistory=state->IndexerState.keepsHistory) {
     state
     ->selectSafeCheckpoints
     ->Option.map(safeCheckpoints =>

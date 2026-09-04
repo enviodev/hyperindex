@@ -26,6 +26,7 @@ let make: (
   ~safeCheckpointTracking: option<SafeCheckpointTracking.t>=?,
   ~shouldRollbackOnReorg: bool,
   ~maxReorgDepth: int,
+  ~isInReorgThreshold: bool=?,
   ~numEventsProcessed: float=?,
   ~timestampCaughtUpToHeadOrEndblock: option<Date.t>=?,
   ~isProgressAtHead: bool=?,
@@ -154,6 +155,8 @@ let resetPendingQueries: t => unit
 let updateKnownHeight: (t, ~knownHeight: int) => unit
 let setEndBlockToFirstEvent: (t, ~blockNumber: int) => unit
 let enterReorgThreshold: t => unit
+let isInReorgThreshold: t => bool
+let keepsHistory: t => bool
 let advanceAfterBatch: (t, ~batch: Batch.t, ~enteringReorgThreshold: bool) => unit
 let applyBatchProgress: (t, ~batch: Batch.t, ~blockTimestampName: string) => unit
 let markReady: (t, ~readyAt: Date.t) => unit

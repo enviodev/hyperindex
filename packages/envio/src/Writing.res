@@ -101,22 +101,39 @@ let runOneWrite = async (state: IndexerState.t) => {
     | None => ()
     }
   | _ =>
-    let committedCheckpointId = state->IndexerState.committedCheckpointId
     let batch = state->IndexerState.drainBatchRun
-    // The run's last checkpoint; entity changes above it stay queued for the next write.
-    let upToCheckpointId = switch batch.checkpointIds->Utils.Array.last {
-    | Some(checkpointId) => checkpointId
-    | None => committedCheckpointId
-    }
 
     let rollback = state->IndexerState.takeRollback
+
+    // Where the run leaves each chain; entity changes above it stay queued for
+    // the next write. A rollback's diff rows sit on chains the batch may not
+    // have progressed at all, so the write has to reach them too.
+    let upToFrontier = switch rollback {
+    | Some({diffFrontier}) => Frontier.mergeMax(batch.checkpointFrontier, diffFrontier)
+    | None => batch.checkpointFrontier
+    }
 
     let updatedEntities = []
     state->IndexerState.eachEntityTable((~entityConfig, ~scope, ~table) => {
       let changes =
-        table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId, ~upToCheckpointId)
+        table->InMemoryTable.Entity.snapshotChanges(
+          ~committedCheckpointId=state->IndexerState.committedCheckpointIdFor(~scope),
+          ~upToCheckpointId=config.checkpointSequence->CheckpointSequence.forScope(
+            upToFrontier,
+            ~scope,
+          ),
+        )
       if changes->Utils.Array.notEmpty {
-        updatedEntities->Array.push(({entityConfig, scope, changes}: Persistence.updatedEntity))
+        updatedEntities->Array.push(
+          (
+            {
+              entityConfig,
+              scope,
+              changes,
+              history: batch.history->HistoryPolicy.forScope(~scope),
+            }: Persistence.updatedEntity
+          ),
+        )
       }
     })
     let updatedEffectsCache = snapshotEffects(state, ~cache)
@@ -142,7 +159,6 @@ let runOneWrite = async (state: IndexerState.t) => {
       persistence.storage.writeBatch(
         ~batch,
         ~rollback,
-        ~isInReorgThreshold=batch.isInReorgThreshold,
         ~config,
         ~allEntities=persistence.allEntities,
         ~updatedEntities,
@@ -155,7 +171,7 @@ let runOneWrite = async (state: IndexerState.t) => {
       PruneStaleHistory.runConcurrent(state, ~targets=pruneTargets),
     ))
 
-    state->IndexerState.markCommitted(~upToCheckpointId)
+    state->IndexerState.markCommitted(~upToFrontier)
 
     switch rollback {
     | Some({progressedChains}) if RollbackCommit.callbacks->Utils.Array.notEmpty =>
@@ -218,14 +234,19 @@ let commitBatch = (state: IndexerState.t, ~batch: Batch.t) => {
 // Drops committed entity and effect entries across all tables. With
 // keepLoadedFromDb, entries seeded from a db read are spared.
 let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
-  let committedCheckpointId = state->IndexerState.committedCheckpointId
-  state->IndexerState.eachEntityTable((~entityConfig as _, ~scope as _, ~table) =>
-    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
+  state->IndexerState.eachEntityTable((~entityConfig as _, ~scope, ~table) =>
+    table->InMemoryTable.Entity.dropCommittedChanges(
+      ~committedCheckpointId=state->IndexerState.committedCheckpointIdFor(~scope),
+      ~keepLoadedFromDb,
+    )
   )
   state
   ->IndexerState.effectState
   ->EffectState.forEach(inMemTable =>
-    inMemTable->InMemoryStore.dropCommittedEffects(~committedCheckpointId, ~keepLoadedFromDb)
+    inMemTable->InMemoryStore.dropCommittedEffects(
+      ~committedCheckpointId=state->IndexerState.committedCheckpointIdFor(~scope=inMemTable.scope),
+      ~keepLoadedFromDb,
+    )
   )
 }
 

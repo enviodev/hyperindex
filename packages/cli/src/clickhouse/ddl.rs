@@ -53,6 +53,53 @@ pub struct HistorySchema {
     pub checkpoint_block_number_column: String,
 }
 
+/// The rows a resume has to remove: everything written past the checkpoint it
+/// resumes from. One id every chain is held to under a shared sequence, one id
+/// per chain when each chain counts its own — a chain's ids then say nothing
+/// about another's, so one bound cannot stand for all of them.
+#[derive(Debug, Clone)]
+pub enum ResumeBounds {
+    Shared(String),
+    PerChain(Vec<(String, String)>),
+}
+
+impl ResumeBounds {
+    /// Nothing for a resume to hold rows to: a per-chain sequence naming no
+    /// chain, which is a run that has committed nothing anywhere. Its `above`
+    /// matches no row, so the trim it would drive has nothing to remove.
+    pub fn bounds_nothing(&self) -> bool {
+        matches!(self, ResumeBounds::PerChain(bounds) if bounds.is_empty())
+    }
+
+    /// The predicate matching the rows above the bound in a table whose chain
+    /// column is `chain_column`. Per-chain bounds need that column: without it
+    /// a row can't be attributed to the sequence its id came from.
+    pub fn above(&self, chain_column: Option<&str>, checkpoint_column: &str) -> Result<String> {
+        let checkpoint = quoted(checkpoint_column);
+        match self {
+            ResumeBounds::Shared(checkpoint_id) => Ok(format!("{checkpoint} > {checkpoint_id}")),
+            // No chain has anything above its bound, which no row can satisfy.
+            ResumeBounds::PerChain(bounds) if bounds.is_empty() => Ok("0".to_string()),
+            ResumeBounds::PerChain(bounds) => {
+                let Some(chain_column) = chain_column else {
+                    bail!(
+                        "Internal error: per-chain checkpoint bounds can't bound a table with no \
+                         chain-id column. Only a schema whose entities are all per-chain has them."
+                    )
+                };
+                let chain = quoted(chain_column);
+                Ok(bounds
+                    .iter()
+                    .map(|(chain_id, checkpoint_id)| {
+                        format!("({chain} = {chain_id} AND {checkpoint} > {checkpoint_id})")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" OR "))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Topology {
     pub replicated: bool,
@@ -285,6 +332,10 @@ pub fn create_checkpoints_table(
         .iter()
         .map(|(name, ch_type)| format!("  {} {ch_type}", quoted(name)))
         .collect();
+    // Keyed on the id alone, even where each chain counts its own. Every read of
+    // every entity view resolves `max(id)` here, which leading `id` answers from
+    // the last granule and any other key turns into a full scan; the per-chain
+    // trim that would prefer a leading chain runs once, on resume.
     format!(
         "CREATE TABLE IF NOT EXISTS {}.{}{} (\n{}\n)\nENGINE = {}\nORDER BY ({}){}",
         quoted(database),
@@ -357,29 +408,18 @@ pub fn insert_query(
 /// the table's own scope and carry a prefix no entity field can, since `exists`
 /// loses its alias under the old analyzer and a user may have named a column
 /// `name`.
-pub fn holds_rows_above_checkpoint(
-    database: &str,
-    history_tables: &[String],
-    history: &HistorySchema,
-    checkpoint_id: &str,
-) -> String {
-    let branch = |table: &str, column: &str| {
-        format!(
-            "SELECT {} AS `_envio_table`, count() AS `_envio_holds` FROM (SELECT 1 FROM {}.{} \
-             WHERE {} > {checkpoint_id} LIMIT 1)",
-            literal(table),
-            quoted(database),
-            quoted(table),
-            quoted(column)
-        )
-    };
-    let branches: Vec<String> = history_tables
+pub fn holds_rows_above_checkpoint(database: &str, above_by_table: &[(String, String)]) -> String {
+    let branches: Vec<String> = above_by_table
         .iter()
-        .map(|table| branch(table, &history.checkpoint_id_column))
-        .chain(std::iter::once(branch(
-            &history.checkpoints_table,
-            &history.id_column,
-        )))
+        .map(|(table, above)| {
+            format!(
+                "SELECT {} AS `_envio_table`, count() AS `_envio_holds` FROM (SELECT 1 FROM {}.{} \
+                 WHERE {above} LIMIT 1)",
+                literal(table),
+                quoted(database),
+                quoted(table),
+            )
+        })
         .collect();
     format!(
         "SELECT `_envio_table`, `_envio_holds` FROM ({}) FORMAT TabSeparated",
@@ -394,17 +434,11 @@ pub fn holds_rows_above_checkpoint(
 /// resume would report a rewind it has only asked for. Waiting for every
 /// replica (`2`) is what makes the storage actually be at the checkpoint by the
 /// time the indexer starts writing again.
-pub fn trim_history_table(
-    database: &str,
-    table: &str,
-    history: &HistorySchema,
-    checkpoint_id: &str,
-) -> String {
+pub fn trim_history_table(database: &str, table: &str, above: &str) -> String {
     format!(
-        "ALTER TABLE {}.{} DELETE WHERE {} > {checkpoint_id} SETTINGS mutations_sync = 2",
+        "ALTER TABLE {}.{} DELETE WHERE {above} SETTINGS mutations_sync = 2",
         quoted(database),
         quoted(table),
-        quoted(&history.checkpoint_id_column)
     )
 }
 
@@ -416,12 +450,11 @@ pub fn trim_history_table(
 /// the server default, which a profile is free to set to 0: resume would then
 /// return with checkpoints still above the frontier, and replayed rows would
 /// become readable through a checkpoint that no longer covers them.
-pub fn trim_checkpoints(database: &str, history: &HistorySchema, checkpoint_id: &str) -> String {
+pub fn trim_checkpoints(database: &str, history: &HistorySchema, above: &str) -> String {
     format!(
-        "DELETE FROM {}.{} WHERE {} > {checkpoint_id} SETTINGS lightweight_deletes_sync = 2",
+        "DELETE FROM {}.{} WHERE {above} SETTINGS lightweight_deletes_sync = 2",
         quoted(database),
         quoted(&history.checkpoints_table),
-        quoted(&history.id_column)
     )
 }
 
@@ -667,8 +700,8 @@ mod tests {
     #[test]
     fn creates_the_checkpoints_table() {
         let columns = [
-            column("id", "UInt64"),
             column("chain_id", "ChainId"),
+            column("id", "UInt64"),
             column("block_number", "Int32"),
             ColumnSpec {
                 field: FieldSpec {
@@ -681,8 +714,8 @@ mod tests {
         assert_eq!(
             create_checkpoints_table(&typed(&columns), "test_db", &history_schema(), plain()),
             "CREATE TABLE IF NOT EXISTS `test_db`.`envio_checkpoints` (\n  \
-             `id` UInt64,\n  \
              `chain_id` Int32,\n  \
+             `id` UInt64,\n  \
              `block_number` Int32,\n  \
              `block_hash` Nullable(String)\n\
              )\n\
@@ -777,10 +810,16 @@ mod tests {
     #[test]
     fn trims_history_and_checkpoints_past_a_checkpoint() {
         let history = history_schema();
+        let bounds = ResumeBounds::Shared("42".to_string());
+        let above = |column: &str| bounds.above(None, column).unwrap();
         assert_eq!(
             (
-                trim_history_table("db", "envio_history_Account", &history, "42"),
-                trim_checkpoints("db", &history, "42")
+                trim_history_table(
+                    "db",
+                    "envio_history_Account",
+                    &above(&history.checkpoint_id_column)
+                ),
+                trim_checkpoints("db", &history, &above(&history.id_column))
             ),
             (
                 "ALTER TABLE `db`.`envio_history_Account` DELETE WHERE \

@@ -1079,8 +1079,10 @@ describe("LoadLayer effect scope isolation", () => {
 
     // A reorg wipes the effect in-mem tables (IndexerState.beginRollbackDiff).
     indexerState->IndexerState.beginRollbackDiff(
-      ~diffCheckpointId=0n,
-      ~floors=RollbackFloors.global(
+      ~diffFrontier=Frontier.empty(),
+      ~floors=RollbackFloors.make(
+        ~sequence=Global,
+        ~chainIds=[1->ChainId.fromInt],
         ~floorCheckpointId=0n,
         ~reorgChainId=1->ChainId.fromInt,
         ~forkBlockNumber=0,

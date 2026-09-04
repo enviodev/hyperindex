@@ -556,31 +556,58 @@ module Checkpoints = {
 
   let initialCheckpointId = 0n
 
+  // The checkpoint a rollback's diff rows are stamped with. It never reaches
+  // Postgres — there the diff is written straight to the entity table — but an
+  // append-only sink resolves current state through the checkpoints, so without
+  // one of these the diff sits above the frontier while the rows it supersedes
+  // sit below it, and the orphaned values are what a reader sees.
+  type diffCheckpoint = {
+    chainId: ChainId.t,
+    checkpointId: Internal.checkpointId,
+    // Where the rollback left the chain. At or below its stored progress, so a
+    // resume counts the row as covered rather than as something to trim back to.
+    blockNumber: int,
+  }
+
   // One definition per column, carrying what each storage needs: the field
   // itself, the type ClickHouse gives it where that differs from Postgres, and
-  // where a batch keeps the column's values.
+  // where a batch — or a rollback diff — keeps the column's values.
   type column = {
     field: fieldOrDerived,
     clickHouseFieldType: fieldType,
     valuesOf: Batch.t => array<unknown>,
+    diffValuesOf: array<diffCheckpoint> => array<unknown>,
   }
 
+  // The chain leads the key: ids are only unique within a chain, and every
+  // query that narrows to one chain reads a contiguous run of it.
   let columns: array<column> = [
+    {
+      field: mkField(
+        (#chain_id: field :> string),
+        ChainId,
+        ~fieldSchema=ChainId.schema,
+        ~isPrimaryKey,
+      ),
+      clickHouseFieldType: ChainId,
+      valuesOf: batch =>
+        batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
+      diffValuesOf: diffs =>
+        diffs->Array.map(diff => diff.chainId->(Utils.magic: ChainId.t => unknown)),
+    },
     {
       field: mkField((#id: field :> string), UInt64, ~fieldSchema=S.bigint, ~isPrimaryKey),
       clickHouseFieldType: UInt64,
       valuesOf: batch => batch.checkpointIds->(Utils.magic: array<bigint> => array<unknown>),
-    },
-    {
-      field: mkField((#chain_id: field :> string), ChainId, ~fieldSchema=ChainId.schema),
-      clickHouseFieldType: ChainId,
-      valuesOf: batch =>
-        batch.checkpointChainIds->(Utils.magic: array<ChainId.t> => array<unknown>),
+      diffValuesOf: diffs =>
+        diffs->Array.map(diff => diff.checkpointId->(Utils.magic: bigint => unknown)),
     },
     {
       field: mkField((#block_number: field :> string), Int32, ~fieldSchema=S.int),
       clickHouseFieldType: Int32,
       valuesOf: batch => batch.checkpointBlockNumbers->(Utils.magic: array<int> => array<unknown>),
+      diffValuesOf: diffs =>
+        diffs->Array.map(diff => diff.blockNumber->(Utils.magic: int => unknown)),
     },
     {
       field: mkField(
@@ -592,6 +619,8 @@ module Checkpoints = {
       clickHouseFieldType: String,
       valuesOf: batch =>
         batch.checkpointBlockHashes->(Utils.magic: array<Null.t<string>> => array<unknown>),
+      diffValuesOf: diffs =>
+        diffs->Array.map(_ => Null.Null->(Utils.magic: Null.t<string> => unknown)),
     },
     {
       field: mkField((#events_processed: field :> string), Int32, ~fieldSchema=S.int),
@@ -600,10 +629,34 @@ module Checkpoints = {
       clickHouseFieldType: UInt64,
       valuesOf: batch =>
         batch.checkpointEventsProcessed->(Utils.magic: array<int> => array<unknown>),
+      diffValuesOf: diffs => diffs->Array.map(_ => 0->(Utils.magic: int => unknown)),
     },
   ]
 
-  let table = mkTable("envio_checkpoints", ~fields=columns->Array.map(({field}) => field))
+  let tableName = "envio_checkpoints"
+
+  let table = mkTable(tableName, ~fields=columns->Array.map(({field}) => field))
+
+  // Where each chain counts its own ids the chain has to be part of the key,
+  // and every bound a rollback or a prune applies names it. Under one shared
+  // sequence the id is unique by itself and those bounds are id ranges with no
+  // chain in them — which a key led by the chain can't serve.
+  let globalTable = mkTable(
+    tableName,
+    ~fields=columns->Array.map(({field: column}) =>
+      switch column {
+      | Table.Field(f) if f.fieldName === (#chain_id: field :> string) =>
+        Table.Field({...f, isPrimaryKey: false})
+      | column => column
+      }
+    ),
+  )
+
+  let tableFor = (sequence: CheckpointSequence.t) =>
+    switch sequence {
+    | Global => globalTable
+    | PerChain => table
+    }
 
   let makeGetReorgCheckpointsQuery = (~pgSchema): string => {
     // The safe_block checkpoint itself is included, so it can be used for safe
@@ -640,8 +693,10 @@ WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
 ORDER BY cp."${(#id: field :> string)}";`
   }
 
-  let makeCommitedCheckpointIdQuery = (~pgSchema) => {
-    `SELECT COALESCE(MAX(${(#id: field :> string)}), ${initialCheckpointId->BigInt.toString}) AS id FROM "${pgSchema}"."${table.tableName}";`
+  // Where each chain's sequence stands. A chain with no checkpoint left (never
+  // written, or all pruned) answers no row and resumes from the initial id.
+  let makeCommitedCheckpointFrontierQuery = (~pgSchema) => {
+    `SELECT "${(#chain_id: field :> string)}"::TEXT AS chain_id, MAX("${(#id: field :> string)}")::TEXT AS id FROM "${pgSchema}"."${table.tableName}" GROUP BY "${(#chain_id: field :> string)}";`
   }
 
   let makeInsertCheckpointQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
@@ -687,18 +742,18 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
 
   let rollback = (sql, ~pgSchema, ~floors: RollbackFloors.t) => {
     let tableRef = `"${pgSchema}"."${table.tableName}"`
-    let bounds = floors.floors->CheckpointBounds.sql(~chainIdColumn, ~tableRef)
+    let bounds = floors.floors->CheckpointSequence.sql(~chainIdColumn, ~tableRef)
     sql
     ->Postgres.preparedUnsafe(
       `DELETE FROM ${tableRef}${bounds.using} WHERE "${(#id: field :> string)}" > ${bounds.checkpointId}${bounds.usingMatch};`,
-      floors.floors->CheckpointBounds.params,
+      floors.floors->CheckpointSequence.params,
     )
     ->Utils.Promise.ignoreValue
   }
 
-  let makePruneStaleCheckpointsQuery = (~pgSchema, ~safeCheckpoints: CheckpointBounds.t) => {
+  let makePruneStaleCheckpointsQuery = (~pgSchema, ~safeCheckpoints: CheckpointSequence.bounds) => {
     let tableRef = `"${pgSchema}"."${table.tableName}"`
-    let bounds = safeCheckpoints->CheckpointBounds.sql(~chainIdColumn, ~tableRef)
+    let bounds = safeCheckpoints->CheckpointSequence.sql(~chainIdColumn, ~tableRef)
     `DELETE FROM ${tableRef}${bounds.using} WHERE "${(#id: field :> string)}" < ${bounds.checkpointId}${bounds.usingMatch};`
   }
 
@@ -706,7 +761,7 @@ SELECT * FROM unnest($1::${(BigInt: Postgres.columnType :> string)}[],$2::${chai
     sql
     ->Postgres.preparedUnsafe(
       makePruneStaleCheckpointsQuery(~pgSchema, ~safeCheckpoints),
-      safeCheckpoints->CheckpointBounds.params,
+      safeCheckpoints->CheckpointSequence.params,
     )
     ->Utils.Promise.ignoreValue
 
@@ -738,7 +793,7 @@ LIMIT 1;`
   }
 
   let makeGetRollbackProgressDiffQuery = (~pgSchema, ~floors: RollbackFloors.t) => {
-    let bounds = floors.floors->CheckpointBounds.sql(~chainIdColumn, ~tableRef="t")
+    let bounds = floors.floors->CheckpointSequence.sql(~chainIdColumn, ~tableRef="t")
     `SELECT 
   t."${(#chain_id: field :> string)}"::float8 as "${(#chain_id: field :> string)}",
   SUM(t."${(#events_processed: field :> string)}") as events_processed_diff,
@@ -752,7 +807,7 @@ GROUP BY t."${(#chain_id: field :> string)}";`
     sql
     ->Postgres.preparedUnsafe(
       makeGetRollbackProgressDiffQuery(~pgSchema, ~floors),
-      floors.floors->CheckpointBounds.params,
+      floors.floors->CheckpointSequence.params,
     )
     ->(
       Utils.magic: promise<unknown> => promise<

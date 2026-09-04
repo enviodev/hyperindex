@@ -289,11 +289,66 @@ describe("Per-chain entity DDL", () => {
   })
 })
 
-let globalFloors = RollbackFloors.global(
+let globalFloors = RollbackFloors.make(
+  ~sequence=Global,
+  ~chainIds=[1->ChainId.fromInt],
   ~floorCheckpointId=1n,
   ~reorgChainId=1->ChainId.fromInt,
   ~forkBlockNumber=0,
 )
+
+// The checkpoints key follows the sequence: ids are only unique within a chain
+// where each chain counts its own, and under one shared sequence every bound a
+// rollback or a prune applies is an id range the chain would only get in the way
+// of.
+describe("Checkpoints primary key", () => {
+  let checkpointsDdl = (~schema) => {
+    let config = InternalTestIndexer.fromUserApi(
+      ~configYaml=configYaml(~disableDefaultCrossChain=true),
+      ~schema,
+    ).config
+    PgStorage.makeInitializeTransaction(
+      ~pgSchema="public",
+      ~pgUser="postgres",
+      ~isHasuraEnabled=false,
+      ~checkpointSequence=config.checkpointSequence,
+      ~entities=config.userEntities,
+    )
+    ->Array.flatMap(query => query->String.split("\n"))
+    ->Array.find(query => query->String.includes(`"envio_checkpoints"`))
+    ->Option.getOrThrow
+  }
+
+  it("Keys on the chain and the id when each chain counts its own", t => {
+    t.expect(
+      checkpointsDdl(
+        ~schema=`
+type Counter {
+  id: ID!
+  count: BigInt!
+}
+`,
+      ),
+    ).toBe(`CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("chain_id" INTEGER NOT NULL, "id" BIGINT NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("chain_id", "id"));`)
+  })
+
+  it("Keys on the id alone once a cross-chain entity makes the sequence shared", t => {
+    t.expect(
+      checkpointsDdl(
+        ~schema=`
+type Counter {
+  id: ID!
+  count: BigInt!
+}
+type Total @crossChain {
+  id: ID!
+  count: BigInt!
+}
+`,
+      ),
+    ).toBe(`CREATE TABLE IF NOT EXISTS "public"."envio_checkpoints"("chain_id" INTEGER NOT NULL, "id" BIGINT NOT NULL, "block_number" INTEGER NOT NULL, "block_hash" TEXT, "events_processed" INTEGER NOT NULL, PRIMARY KEY("id"));`)
+  })
+})
 
 describe("Per-chain rollback and delete SQL", () => {
   it("Keys the removed-ids query on (id, chain id)", t => {
@@ -357,9 +412,14 @@ describe("Per-chain rollback and delete SQL", () => {
         ~chainIdColumn=Some("chainId"),
         ~safeCheckpoints,
       )
-    let query = makeQuery(CheckpointBounds.EveryChain(10n))
+    let query = makeQuery(
+      CheckpointSequence.bounds(Global, Frontier.fromEntries([(1->ChainId.fromInt, 10n)])),
+    )
     let perChain = makeQuery(
-      CheckpointBounds.PerChain([(1->ChainId.fromInt, 10n), (137->ChainId.fromInt, 20n)]),
+      CheckpointSequence.bounds(
+        PerChain,
+        Frontier.fromEntries([(1->ChainId.fromInt, 10n), (137->ChainId.fromInt, 20n)]),
+      ),
     )
     t.expect((
       query->String.includes(`GROUP BY t.id, t."chainId"`),

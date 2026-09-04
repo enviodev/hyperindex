@@ -16,7 +16,8 @@ let emptyBatch = (~checkpointId): Batch.t => {
   totalBatchSize: 0,
   items: [],
   progressedChainsById: Dict.make(),
-  isInReorgThreshold: false,
+  history: Shared(Skip),
+  checkpointFrontier: Frontier.empty(),
   checkpointIds: [checkpointId],
   checkpointChainIds: [1->ChainId.fromInt],
   checkpointBlockNumbers: [checkpointId->BigInt.toInt],
@@ -39,7 +40,6 @@ let makeStore = () => {
     writeBatch: (
       ~batch as _,
       ~rollback as _,
-      ~isInReorgThreshold as _,
       ~config as _,
       ~allEntities as _,
       ~updatedEffectsCache as _,

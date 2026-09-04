@@ -34,9 +34,11 @@ type t = {
   totalBatchSize: int,
   items: array<Internal.item>,
   progressedChainsById: dict<chainAfterBatch>,
-  // Processed inside the reorg threshold. Drives whether history is saved, so
-  // writes never merge across a change in this value.
-  isInReorgThreshold: bool,
+  // Whether the batch's rows get history. Writes never merge across a change in
+  // it, so a single write can't mix the two.
+  history: HistoryPolicy.t,
+  // Where the batch leaves each chain's checkpoint sequence.
+  checkpointFrontier: Frontier.t,
   // Unnest-like checkpoint fields:
   checkpointIds: array<bigint>,
   checkpointChainIds: array<ChainId.t>,
@@ -146,7 +148,7 @@ let seekFirstAbove = (blockNumbers: array<int>, blockNumber) => {
 
 @inline
 let addReorgCheckpoints = (
-  ~prevCheckpointId,
+  ~cursor,
   ~scannedHashes: reorgHashSnapshot,
   ~shouldRollbackOnReorg,
   ~fromBlockExclusive,
@@ -159,7 +161,6 @@ let addReorgCheckpoints = (
   ~mutCheckpointEventsProcessed,
 ) => {
   if shouldRollbackOnReorg {
-    let prevCheckpointId = ref(prevCheckpointId)
     // The snapshot already holds only in-threshold scanned hashes, ascending,
     // so seeking to the gap's lower bound gives the gap checkpoints without
     // rescanning the whole snapshot for every gap in the batch.
@@ -172,8 +173,7 @@ let addReorgCheckpoints = (
         scannedHashes.hashByBlockNumber
         ->Utils.Dict.dangerouslyGetByIntNonOption(blockNumber)
         ->Option.getUnsafe
-      let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
-      prevCheckpointId := checkpointId
+      let checkpointId = cursor->CheckpointSequence.next(~chainId)
 
       mutCheckpointIds->Array.push(checkpointId)
       mutCheckpointChainIds->Array.push(chainId)
@@ -183,26 +183,24 @@ let addReorgCheckpoints = (
 
       idx := idx.contents + 1
     }
-    prevCheckpointId.contents
-  } else {
-    prevCheckpointId
   }
 }
 
-// Checkpoint ids are handed out in ascending order as each chain's items are
-// walked in block order, so within a chain a higher id always means a later
-// block. Rollback preserves that: it deletes the chain's ids above its target
-// before any higher one is allocated, so the ids the re-indexed blocks get are
-// above everything the chain still holds. An isolated rollback leans on the
-// invariant — it deletes by `chain_id = c AND id > target`, which is only the
-// chain's stale suffix if ids and blocks agree on order within the chain. Ids
-// interleave freely *across* chains, which is exactly why that predicate can't
-// be the id bound alone.
-let prepareBatch = (
-  ~checkpointIdBeforeBatch,
+// A chain's checkpoint ids ascend as its items are walked in block order, so
+// within a chain a higher id always means a later block. Rollback preserves
+// that: it deletes the chain's ids above its target before any higher one is
+// allocated, so the ids the re-indexed blocks get are above everything the
+// chain still holds. Both rollback shapes lean on the invariant — they delete
+// by `id > target`, per chain or across every chain, which is only the stale
+// suffix if ids and blocks agree on order within each chain. Under one shared
+// sequence ids interleave freely *across* chains, which is exactly why an
+// isolated rollback can't take the id bound alone.
+let make = (
+  ~sequence: CheckpointSequence.t,
+  ~frontier: Frontier.t,
   ~chainsBeforeBatch: dict<chainBeforeBatch>,
   ~batchSizeTarget,
-  ~isInReorgThreshold,
+  ~history,
 ) => {
   let preparedFetchStates =
     chainsBeforeBatch
@@ -214,7 +212,7 @@ let prepareBatch = (
   let preparedNumber = preparedFetchStates->Array.length
   let totalBatchSize = ref(0)
 
-  let prevCheckpointId = ref(checkpointIdBeforeBatch)
+  let cursor = sequence->CheckpointSequence.cursor(~frontier)
   let mutBatchSizePerChain = Dict.make()
   let mutProgressBlockNumberPerChain = Dict.make()
 
@@ -248,22 +246,21 @@ let prepareBatch = (
 
         // Every new block we should create a new checkpoint
         if blockNumber !== prevBlockNumber.contents {
-          prevCheckpointId :=
-            addReorgCheckpoints(
-              ~chainId=fetchState.chainId,
-              ~scannedHashes=chainBeforeBatch.scannedHashes,
-              ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
-              ~prevCheckpointId=prevCheckpointId.contents,
-              ~fromBlockExclusive=prevBlockNumber.contents,
-              ~toBlockExclusive=blockNumber,
-              ~mutCheckpointIds=checkpointIds,
-              ~mutCheckpointChainIds=checkpointChainIds,
-              ~mutCheckpointBlockNumbers=checkpointBlockNumbers,
-              ~mutCheckpointBlockHashes=checkpointBlockHashes,
-              ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
-            )
+          addReorgCheckpoints(
+            ~chainId=fetchState.chainId,
+            ~scannedHashes=chainBeforeBatch.scannedHashes,
+            ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
+            ~cursor,
+            ~fromBlockExclusive=prevBlockNumber.contents,
+            ~toBlockExclusive=blockNumber,
+            ~mutCheckpointIds=checkpointIds,
+            ~mutCheckpointChainIds=checkpointChainIds,
+            ~mutCheckpointBlockNumbers=checkpointBlockNumbers,
+            ~mutCheckpointBlockHashes=checkpointBlockHashes,
+            ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
+          )
 
-          let checkpointId = prevCheckpointId.contents->BigInt.add(1n)
+          let checkpointId = cursor->CheckpointSequence.next(~chainId=fetchState.chainId)
 
           checkpointIds->Array.push(checkpointId)->ignore
           checkpointChainIds->Array.push(fetchState.chainId)->ignore
@@ -281,7 +278,6 @@ let prepareBatch = (
           checkpointEventsProcessed->Array.push(1)->ignore
 
           prevBlockNumber := blockNumber
-          prevCheckpointId := checkpointId
         } else {
           let lastIndex = checkpointEventsProcessed->Array.length - 1
           checkpointEventsProcessed
@@ -299,20 +295,19 @@ let prepareBatch = (
     let progressBlockNumberAfterBatch =
       fetchState->FetchState.getProgressBlockNumberAt(~index=chainBatchSize)
 
-    prevCheckpointId :=
-      addReorgCheckpoints(
-        ~chainId=fetchState.chainId,
-        ~scannedHashes=chainBeforeBatch.scannedHashes,
-        ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
-        ~prevCheckpointId=prevCheckpointId.contents,
-        ~fromBlockExclusive=prevBlockNumber.contents,
-        ~toBlockExclusive=progressBlockNumberAfterBatch + 1, // Make it inclusive
-        ~mutCheckpointIds=checkpointIds,
-        ~mutCheckpointChainIds=checkpointChainIds,
-        ~mutCheckpointBlockNumbers=checkpointBlockNumbers,
-        ~mutCheckpointBlockHashes=checkpointBlockHashes,
-        ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
-      )
+    addReorgCheckpoints(
+      ~chainId=fetchState.chainId,
+      ~scannedHashes=chainBeforeBatch.scannedHashes,
+      ~shouldRollbackOnReorg=chainBeforeBatch.shouldRollbackOnReorg,
+      ~cursor,
+      ~fromBlockExclusive=prevBlockNumber.contents,
+      ~toBlockExclusive=progressBlockNumberAfterBatch + 1, // Make it inclusive
+      ~mutCheckpointIds=checkpointIds,
+      ~mutCheckpointChainIds=checkpointChainIds,
+      ~mutCheckpointBlockNumbers=checkpointBlockNumbers,
+      ~mutCheckpointBlockHashes=checkpointBlockHashes,
+      ~mutCheckpointEventsProcessed=checkpointEventsProcessed,
+    )
 
     mutProgressBlockNumberPerChain->ChainId.Dict.set(
       fetchState.chainId,
@@ -330,7 +325,8 @@ let prepareBatch = (
       ~batchSizePerChain=mutBatchSizePerChain,
       ~progressBlockNumberPerChain=mutProgressBlockNumberPerChain,
     ),
-    isInReorgThreshold,
+    history,
+    checkpointFrontier: cursor->CheckpointSequence.cursorFrontier,
     checkpointIds,
     checkpointChainIds,
     checkpointBlockNumbers,
@@ -338,15 +334,6 @@ let prepareBatch = (
     checkpointEventsProcessed,
     registeredAddresses: [],
   }
-}
-
-let make = (
-  ~checkpointIdBeforeBatch,
-  ~chainsBeforeBatch: dict<chainBeforeBatch>,
-  ~batchSizeTarget,
-  ~isInReorgThreshold,
-) => {
-  prepareBatch(~checkpointIdBeforeBatch, ~chainsBeforeBatch, ~batchSizeTarget, ~isInReorgThreshold)
 }
 
 let findFirstEventBlockNumber = (batch: t, ~chainId) => {

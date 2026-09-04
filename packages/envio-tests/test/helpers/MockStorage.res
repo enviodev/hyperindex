@@ -177,7 +177,6 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
       writeBatch: (
         ~batch as _,
         ~rollback as _,
-        ~isInReorgThreshold as _,
         ~config as _,
         ~allEntities as _,
         ~updatedEffectsCache as _,
@@ -201,7 +200,7 @@ let toPersistence = (storageMock: t, ~config: Config.t) => {
       cache: Dict.make(),
       chains: [],
       reorgCheckpoints: [],
-      checkpointId: 0n,
+      checkpointFrontier: Frontier.empty(),
     }),
   }
 }
