@@ -12,12 +12,13 @@ use super::{
             RpcSelection,
         },
         fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
-        svm, HumanConfig,
+        svm, BytesType, HumanConfig,
     },
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
 };
-use crate::utils::dotenv::{self, EnvMap};
+use crate::clickhouse::ch_type;
+use crate::utils::project_env::ProjectEnv;
 use crate::{
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH},
     evm::abi::AbiOrNestedAbi,
@@ -35,7 +36,7 @@ use regex::Regex;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env, fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use hypersync_client_solana::decode::{
@@ -60,52 +61,6 @@ pub enum Ecosystem {
     Svm,
 }
 
-// Allows to get an env var with a lazy loading of .env file
-#[derive(Debug)]
-pub struct EnvState {
-    // Lazy loading of .env file
-    maybe_dotenv: Option<EnvMap>,
-    project_root: PathBuf,
-}
-
-impl EnvState {
-    pub fn new(project_root: &Path) -> Self {
-        EnvState {
-            maybe_dotenv: None,
-            project_root: PathBuf::from(project_root),
-        }
-    }
-
-    pub fn var(&mut self, name: &str) -> Option<String> {
-        match std::env::var(name) {
-            Ok(val) => Some(val),
-            Err(_) => {
-                let result = match &self.maybe_dotenv {
-                    Some(env_map) => env_map.var(name),
-                    None => match dotenv::from_path(self.project_root.join(".env")) {
-                        Ok(env_map) => {
-                            self.maybe_dotenv = Some(env_map.clone());
-                            env_map.var(name)
-                        }
-                        Err(err) => {
-                            match err {
-                                dotenv::Error::Io(_, _) => (),
-                                _ => println!(
-                                    "Warning: Failed loading .env file with unexpected error: \
-                                     {err}"
-                                ),
-                            };
-                            self.maybe_dotenv = Some(EnvMap::new());
-                            Err(err)
-                        }
-                    },
-                };
-                result.ok()
-            }
-        }
-    }
-}
-
 #[derive(Debug)]
 struct ResolvedConfigFile {
     path: PathBuf,
@@ -126,6 +81,7 @@ trait ConfigSource {
         &self,
         configured_path: &Option<String>,
         default_scope: DefaultChainScope,
+        bytes_type: BytesType,
     ) -> Result<Schema>;
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
     fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
@@ -133,14 +89,14 @@ trait ConfigSource {
 
 struct FilesystemConfigSource<'a> {
     project_paths: &'a ParsedProjectPaths,
-    env: EnvState,
+    env: ProjectEnv,
 }
 
 impl<'a> FilesystemConfigSource<'a> {
     fn new(project_paths: &'a ParsedProjectPaths) -> Self {
         Self {
             project_paths,
-            env: EnvState::new(&project_paths.project_root),
+            env: ProjectEnv::new(&project_paths.project_root),
         }
     }
 }
@@ -165,9 +121,15 @@ impl ConfigSource for FilesystemConfigSource<'_> {
         &self,
         configured_path: &Option<String>,
         default_scope: DefaultChainScope,
+        bytes_type: BytesType,
     ) -> Result<Schema> {
-        Schema::parse_from_file(self.project_paths, configured_path, default_scope)
-            .context("Parsing schema file for config")
+        Schema::parse_from_file(
+            self.project_paths,
+            configured_path,
+            default_scope,
+            bytes_type,
+        )
+        .context("Parsing schema file for config")
     }
 
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
@@ -254,14 +216,18 @@ impl ConfigSource for MemoryConfigSource<'_> {
         &self,
         configured_path: &Option<String>,
         default_scope: DefaultChainScope,
+        bytes_type: BytesType,
     ) -> Result<Schema> {
         // Parsed as given: schema errors carry the line and column they were
         // raised at, and trimming first would report them against text the
         // caller never wrote.
         match self.schema {
-            Some(schema) if !schema.trim().is_empty() => {
-                Schema::from_string_at(schema, default_scope, &schema_source_label(configured_path))
-            }
+            Some(schema) if !schema.trim().is_empty() => Schema::from_string_at(
+                schema,
+                default_scope,
+                bytes_type,
+                &schema_source_label(configured_path),
+            ),
             _ => Ok(Schema::empty()),
         }
     }
@@ -326,7 +292,7 @@ pub fn get_envio_version(envio_package_dir: Option<&str>) -> Result<String> {
 /// maximum active chain id and carried through the public config, so a resume
 /// against a schema built for the other mode is rejected rather than silently
 /// truncating ids.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ChainIdMode {
     Int32,
@@ -355,6 +321,14 @@ impl ChainIdMode {
         } else {
             Self::Int64
         })
+    }
+
+    /// Reads the mode back out of the form it is serialized in, which is how it
+    /// reaches the ClickHouse sink: through the generated config and the JS
+    /// runtime, both of which carry it as that string.
+    pub fn parse(mode: &str) -> Result<Self> {
+        serde_json::from_value(serde_json::Value::String(mode.to_string()))
+            .with_context(|| format!("unknown chain id mode `{mode}`"))
     }
 }
 
@@ -441,11 +415,6 @@ impl Storage {
         })
     }
 }
-
-/// Largest BigInt precision ClickHouse still stores as a numeric `Decimal`;
-/// above this (or with no precision) it falls back to `String`. Kept in sync
-/// with the BigInt branch of `getClickHouseFieldType` in ClickHouse.res.
-const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = 38;
 
 /// Check per-entity `@storage` directives against the resolved global storage.
 /// Malformed directives are raised earlier, during schema parsing.
@@ -690,6 +659,8 @@ pub fn validate_db_column_names(storage: &Storage, schema: &Schema) -> anyhow::R
     Ok(())
 }
 
+const CLICKHOUSE_DECIMAL_MAX_PRECISION: u32 = crate::clickhouse::ch_type::MAX_DECIMAL_PRECISION;
+
 /// What to add to a field so ClickHouse stores it as a numeric Decimal. A
 /// BigDecimal needs both parameters — `@config(precision:)` alone is rejected
 /// by the field parser, so naming only it would send the user in a circle.
@@ -705,27 +676,23 @@ fn precision_fix(stored: &GqlScalar) -> String {
 
 /// ClickHouse stores a BigInt or BigDecimal whose precision is unset (or
 /// outside what its `Decimal` can express) as a String, which sorts
-/// lexicographically — wrong for anything in the sorting key. See the BigInt and
-/// BigDecimal branches of `getClickHouseFieldType` in ClickHouse.res.
+/// lexicographically — wrong for anything in the sorting key.
 ///
 /// Which column that applies to depends on `@storage(clickhouse: {orderBy})`:
-/// without it the sorting key is `id`, with it the listed columns replace `id`
-/// (see `makeCreateHistoryTableQuery`). Runs on the resolved schema, so a
-/// relation in the sorting key resolves to the id it actually stores.
+/// without it the sorting key is `id`, with it the listed columns replace `id`.
+/// Runs on the resolved schema, so a relation in the sorting key resolves to
+/// the id it actually stores.
 pub fn validate_clickhouse_sorting_key_scalars(
     storage: &Storage,
     schema: &Schema,
 ) -> anyhow::Result<()> {
     let clickhouse_default = storage.clickhouse.is_some_and(|b| b.entity_default);
-    // Mirrors getClickHouseFieldType: only a Decimal that fits keeps numeric
-    // ordering, and a BigDecimal's scale has to fit inside its precision.
     let stored_as_string = |scalar: &GqlScalar| match scalar {
-        GqlScalar::BigInt(precision) => {
-            !precision.is_some_and(|p| p <= CLICKHOUSE_DECIMAL_MAX_PRECISION)
-        }
-        GqlScalar::BigDecimal(config) => !config.is_some_and(|(precision, scale)| {
-            precision <= CLICKHOUSE_DECIMAL_MAX_PRECISION && scale <= precision
-        }),
+        GqlScalar::BigInt(precision) => ch_type::stored_as_string(*precision, 0),
+        GqlScalar::BigDecimal(config) => match config {
+            Some((precision, scale)) => ch_type::stored_as_string(Some(*precision), *scale),
+            None => true,
+        },
         _ => false,
     };
 
@@ -1434,42 +1401,16 @@ impl SystemConfig {
                             .instructions
                             .iter()
                             .map(|instr| -> Result<Event> {
-                                let (normalized_discriminator, byte_len) =
-                                    match &instr.discriminator {
-                                        Some(d) => {
-                                            let hex = d.strip_prefix("0x").unwrap_or(d);
-                                            let byte_len = (hex.len() / 2) as u8;
-                                            (Some(format!("0x{hex}")), byte_len)
-                                        }
-                                        None => (None, 0u8),
-                                    };
+                                let normalized_discriminator = instr
+                                    .discriminator
+                                    .as_deref()
+                                    .map(|d| format!("0x{}", d.strip_prefix("0x").unwrap_or(d)));
                                 let (accounts, args) = resolve_instruction_layout(instr, &svm_abi)
                                     .with_context(|| {
                                         format!("Layout for instruction '{}'", instr.name)
                                     })?;
                                 let svm_kind = SvmEventKind {
                                     discriminator: normalized_discriminator.clone(),
-                                    discriminator_byte_len: byte_len,
-                                    account_filters: instr
-                                        .account_filters
-                                        .as_ref()
-                                        .map(|filters| {
-                                            filters
-                                                .groups()
-                                                .into_iter()
-                                                .map(|group| {
-                                                    group
-                                                        .iter()
-                                                        .map(|af| SvmAccountFilter {
-                                                            position: af.position,
-                                                            values: af.values.clone(),
-                                                        })
-                                                        .collect()
-                                                })
-                                                .collect()
-                                        })
-                                        .unwrap_or_default(),
-                                    is_inner: instr.is_inner,
                                     accounts,
                                     args,
                                 };
@@ -1630,7 +1571,11 @@ impl SystemConfig {
 
         let base_config = human_config.get_base_config();
         let default_scope = base_config.default_chain_scope();
-        let schema = source.load_schema(&base_config.schema, default_scope)?;
+        let schema = source.load_schema(
+            &base_config.schema,
+            default_scope,
+            human_config.bytes_type(),
+        )?;
         Self::from_human_config_with_source(human_config, schema, source)
     }
 }
@@ -1870,11 +1815,12 @@ impl EvmAbi {
                 let path = resolved.path;
                 let mut raw = resolved.raw;
 
+                let source = path_utils::normalize_path(PathBuf::from(abi_file_path))
+                    .display()
+                    .to_string();
+
                 // Abi files generated by the hardhat plugin can contain a nested abi field. This code to support that.
-                let typed = match serde_json::from_str::<AbiOrNestedAbi>(&raw).context(format!(
-                    "Failed to decode ABI file at \"{}\"",
-                    abi_file_path
-                ))? {
+                let typed = match crate::evm::abi::parse(Some(&source), &raw)? {
                     AbiOrNestedAbi::Abi(abi) => abi,
                     AbiOrNestedAbi::NestedAbi { abi } => {
                         raw = serde_json::to_string(&abi)
@@ -2246,13 +2192,15 @@ impl Contract {
         }
 
         // Two events on one contract that share a dispatch key are
-        // indistinguishable at routing time — one log/instruction would decode
-        // to both — so reject them here. The key mirrors the runtime `eventId`:
-        // sighash plus indexed-topic count for EVM, the discriminator for SVM
-        // (already program-scoped, since these are one program's instructions),
-        // the sighash for Fuel (a `LogData` logId or a fixed `mint`/`burn`/…).
-        // Names are unique by the check above, so a collision here is always
-        // between two differently-named events.
+        // indistinguishable at routing time — one log would decode to both —
+        // so reject them here. The key mirrors the runtime `eventId`: sighash
+        // plus indexed-topic count for EVM, the sighash for Fuel (a `LogData`
+        // logId or a fixed `mint`/`burn`/…). SVM instructions are exempt: a
+        // call routes to every instruction whose prefix it carries, each
+        // decoding with its own layout and dropped on its own when the layout
+        // rejects the data, so two instructions sharing a prefix are two
+        // instructions, not an ambiguity. Names are unique by the check above,
+        // so a collision here is always between two differently-named events.
         let mut seen_by_dispatch_key: HashMap<String, String> = HashMap::new();
         for event in &events {
             let dispatch_key = match &event.kind {
@@ -2260,14 +2208,7 @@ impl Contract {
                     let indexed_count = params.iter().filter(|p| p.indexed).count();
                     Some(format!("{}_{}", event.sighash, indexed_count))
                 }
-                // The router decodes the discriminator to bytes before matching,
-                // so `0x0f` and `0x0F` collide — lowercase before keying.
-                EventKind::Svm(svm) => Some(
-                    svm.discriminator
-                        .as_ref()
-                        .map(|d| d.to_lowercase())
-                        .unwrap_or_else(|| "none".to_string()),
-                ),
+                EventKind::Svm(_) => None,
                 EventKind::Fuel(_) => Some(event.sighash.clone()),
             };
             if let Some(dispatch_key) = dispatch_key {
@@ -2318,25 +2259,10 @@ pub enum FuelEventKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SvmAccountFilter {
-    pub position: u8,
-    pub values: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
     /// instruction in the program.
     pub discriminator: Option<String>,
-    /// Length of the decoded discriminator in bytes (0 / 1 / 2 / 4 / 8). The
-    /// router precomputes a per-program ordering on this so dispatch tries
-    /// longest first.
-    pub discriminator_byte_len: u8,
-    /// Disjunctive normal form: outer list is OR of AND-groups, inner list is
-    /// AND across positions. An empty outer list means "no account filter".
-    pub account_filters: Vec<Vec<SvmAccountFilter>>,
-    /// `None` matches both outer and inner (CPI-invoked) instructions.
-    pub is_inner: Option<bool>,
     /// Positional account names. Empty when the user supplied no schema and
     /// no bundled/IDL schema applies; in that case `decoded.accounts` is `{}`.
     pub accounts: Vec<String>,
@@ -3012,6 +2938,68 @@ mod test {
         );
     }
 
+    const ABI_CONFIG: &str = r#"
+name: abi-test
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Comptroller
+        abi_file_path: ./abis/Comptroller.json
+        address: "0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b"
+        handler: ./src/handlers.ts
+        events:
+          - event: Failure(string action)
+"#;
+
+    fn parse_with_abi(abi: &str) -> anyhow::Result<SystemConfig> {
+        let files = HashMap::from([("abis/Comptroller.json".to_string(), abi.to_string())]);
+        SystemConfig::parse_yaml(
+            ABI_CONFIG,
+            Some("type T @entity { id: ID! }"),
+            &HashMap::new(),
+            &files,
+            false,
+        )
+    }
+
+    // The ABI spec lets an event that is not anonymous say so by omission, and
+    // hand-written ABI files do.
+    #[test]
+    fn indexes_a_contract_whose_abi_leaves_out_what_the_spec_lets_it() {
+        let config = parse_with_abi(
+            r#"[{"type": "event", "name": "Failure", "inputs": [{"name": "action", "type": "string"}]}]"#,
+        )
+        .expect("config");
+
+        assert_eq!(
+            config
+                .get_contract(&"Comptroller".to_string())
+                .expect("contract")
+                .events
+                .iter()
+                .map(|event| event.name.clone())
+                .collect::<Vec<_>>(),
+            vec!["Failure"]
+        );
+    }
+
+    #[test]
+    fn reports_which_entry_of_which_abi_file_is_unreadable() {
+        let err = parse_with_abi(
+            r#"[{"type": "event", "name": "Failure", "inputs": [{"name": "action", "type": "string"}]},
+                {"type": "wormhole", "name": "Warp"}]"#,
+        )
+        .expect_err("unreadable ABI");
+
+        assert_eq!(
+            format!("{err:#}"),
+            "Failed parsing abi types for events in contract Comptroller on network 1: \
+             abis/Comptroller.json:2:17: \"Warp\": unknown entry type \"wormhole\". Expected one \
+             of \"constructor\", \"fallback\", \"receive\", \"function\", \"event\", \"error\"."
+        );
+    }
+
     #[test]
     fn test_get_contract_abi() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
@@ -3555,6 +3543,7 @@ mod test {
     mod internal_relationship_validation {
         use super::super::validate_internal_relationships;
         use crate::config_parsing::entity_parsing::{DefaultChainScope, Schema};
+        use crate::config_parsing::human_config::BytesType;
 
         #[test]
         fn public_reference_to_internal_entity_rejected() {
@@ -3568,6 +3557,7 @@ type Secret @internal {
   id: ID!
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             let err = validate_internal_relationships(&schema)
@@ -3592,6 +3582,7 @@ type Order @internal {
   trader: Trader!
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             let err = validate_internal_relationships(&schema)
@@ -3620,6 +3611,7 @@ type SecretB @internal {
   entries: [SecretA!]! @derivedFrom(field: "other")
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             assert!(validate_internal_relationships(&schema).is_ok());
@@ -3632,12 +3624,12 @@ type SecretB @internal {
         use super::super::{validate_db_column_names, Storage};
         use crate::config_parsing::{
             entity_parsing::{DefaultChainScope, Schema},
-            human_config::ColumnNameFormat,
+            human_config::{BytesType, ColumnNameFormat},
         };
 
         // Cross-chain: these fixtures declare no chain column.
         fn parse_schema(schema: &str) -> Schema {
-            Schema::from_string(schema, DefaultChainScope::CrossChain).unwrap()
+            Schema::from_string(schema, DefaultChainScope::CrossChain, BytesType::Hex).unwrap()
         }
 
         fn storage(column_name_format: ColumnNameFormat) -> Storage {
@@ -3725,7 +3717,7 @@ type Transfer {
         use super::super::{validate_clickhouse_nullable_arrays, Storage, StorageBackend};
         use crate::config_parsing::{
             entity_parsing::{DefaultChainScope, Schema},
-            human_config::ColumnNameFormat,
+            human_config::{BytesType, ColumnNameFormat},
         };
 
         fn backend(entity_default: bool) -> Option<StorageBackend> {
@@ -3751,6 +3743,7 @@ type Foo @storage(postgres: true, clickhouse: true) {
   tags: [String!]!
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, false), &schema).is_ok());
@@ -3767,6 +3760,7 @@ type Foo @storage(postgres: true) {
   tags: [String!]
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_ok());
@@ -3784,6 +3778,7 @@ type Foo {
   tags: [String!]
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             assert!(validate_clickhouse_nullable_arrays(&multi(false, true), &schema).is_err());
@@ -3799,6 +3794,7 @@ type Foo {
   tags: [String!]
 }"#,
                 DefaultChainScope::CrossChain,
+                BytesType::Hex,
             )
             .unwrap();
             let storage = Storage {
@@ -3839,20 +3835,15 @@ type Foo {
                 .events
                 .iter()
                 .map(|e| match &e.kind {
-                    EventKind::Svm(k) => (
-                        e.name.as_str(),
-                        k.discriminator.as_deref(),
-                        k.discriminator_byte_len,
-                        k.account_filters.len(),
-                    ),
+                    EventKind::Svm(k) => (e.name.as_str(), k.discriminator.as_deref()),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
                 })
                 .collect();
             assert_eq!(
                 kinds,
                 vec![
-                    ("CreateMetadataAccountV3", Some("0x21"), 1, 0),
-                    ("UpdateMetadataAccountV2", Some("0x0f"), 1, 1),
+                    ("CreateMetadataAccountV3", Some("0x21")),
+                    ("UpdateMetadataAccountV2", Some("0x0f")),
                 ],
             );
 

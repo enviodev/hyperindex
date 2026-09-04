@@ -446,7 +446,6 @@ fn push_unique(missing: &mut Vec<String>, name: String) {
 /// (surfaced as `ImpossibleForTheQuery` on the JS side) when the source omitted
 /// a requested non-nullable field or a joined row, and propagates genuine decode
 /// errors otherwise.
-#[allow(clippy::too_many_arguments)]
 fn process_response(
     blocks: Vec<Vec<simple_types::Block>>,
     transactions: Vec<Vec<simple_types::Transaction>>,
@@ -913,10 +912,11 @@ mod tests {
     #[test]
     fn missing_block_field_named_path() {
         // block is present but timestamp is not.
-        let mut block = simple_types::Block::default();
-        block.number = Some(1);
-        block.hash = Some(Default::default());
-        // timestamp left None
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            ..Default::default()
+        };
         let err = process_response(
             vec![vec![block]],
             vec![],
@@ -946,10 +946,11 @@ mod tests {
         // forced set, so number/timestamp/hash are guaranteed present even when
         // the user's config selected no block fields. Here the user requested
         // nothing yet a missing timestamp is still reported.
-        let mut block = simple_types::Block::default();
-        block.number = Some(1);
-        block.hash = Some(Default::default());
-        // timestamp left None
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            ..Default::default()
+        };
         let err = process_response(
             vec![vec![block]],
             vec![],
@@ -977,11 +978,13 @@ mod tests {
     fn nullable_block_field_not_reported() {
         // BaseFeePerGas is inherently nullable — server omitting it must not
         // trigger MissingFields, regardless of whether the user requested it.
-        let mut block = simple_types::Block::default();
-        block.number = Some(1);
-        block.hash = Some(Default::default());
-        block.timestamp = Some(Default::default());
         // base_fee_per_gas left None
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
         let items = process_response(
             vec![vec![block]],
             vec![],
@@ -1005,15 +1008,19 @@ mod tests {
 
     #[test]
     fn missing_transaction_field_with_transaction_present() {
-        let mut block = simple_types::Block::default();
-        block.number = Some(1);
-        block.hash = Some(Default::default());
-        block.timestamp = Some(Default::default());
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
         // The transaction is keyed to the log by (blockNumber, txIndex) but is
         // missing the requested hash, so transaction.hash is reported missing.
-        let mut tx = simple_types::Transaction::default();
-        tx.block_number = Some(1u64.into());
-        tx.transaction_index = Some(0u64.into());
+        let tx = simple_types::Transaction {
+            block_number: Some(1u64.into()),
+            transaction_index: Some(0u64.into()),
+            ..Default::default()
+        };
         let err = process_response(
             vec![vec![block]],
             vec![vec![tx]],
@@ -1041,10 +1048,12 @@ mod tests {
     fn missing_transaction_when_not_returned() {
         // Transaction fields requested but the source returned no transaction for
         // the log's (blockNumber, txIndex).
-        let mut block = simple_types::Block::default();
-        block.number = Some(1);
-        block.hash = Some(Default::default());
-        block.timestamp = Some(Default::default());
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
         let err = process_response(
             vec![vec![block]],
             vec![],
@@ -1073,14 +1082,18 @@ mod tests {
         // Block and transaction live in separate response arrays; the log is
         // matched to its block by number and the transaction lands in the store
         // keyed by (blockNumber, txIndex). The page carries one deduplicated block.
-        let mut block = simple_types::Block::default();
-        block.number = Some(7);
-        block.hash = Some(Default::default());
-        block.timestamp = Some(Default::default());
+        let block = simple_types::Block {
+            number: Some(7),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
 
-        let mut tx = simple_types::Transaction::default();
-        tx.block_number = Some(7u64.into());
-        tx.transaction_index = Some(0u64.into());
+        let tx = simple_types::Transaction {
+            block_number: Some(7u64.into()),
+            transaction_index: Some(0u64.into()),
+            ..Default::default()
+        };
 
         let store = TransactionStore::new_evm(false);
         let items = process_response(
@@ -1235,13 +1248,17 @@ mod tests {
         // The source returned a transaction with no (blockNumber, txIndex), so
         // it joins to nothing; its absent `hash` must not fail a page whose
         // routed item got the transaction it asked for.
-        let mut block = simple_types::Block::default();
-        block.number = Some(1);
-        block.hash = Some(Default::default());
-        block.timestamp = Some(Default::default());
+        let block = simple_types::Block {
+            number: Some(1),
+            hash: Some(Default::default()),
+            timestamp: Some(Default::default()),
+            ..Default::default()
+        };
 
-        let mut keyless = simple_types::Transaction::default();
-        keyless.hash = None;
+        let keyless = simple_types::Transaction {
+            hash: None,
+            ..Default::default()
+        };
 
         let items = process_response(
             vec![vec![block]],
@@ -1278,7 +1295,7 @@ mod tests {
         // The reason field carries the JSON payload that the ReScript side
         // parses with JSON.parse.
         let parsed: serde_json::Value =
-            serde_json::from_str(&format!("{}", napi_err.reason)).expect("payload must be JSON");
+            serde_json::from_str(&napi_err.reason.to_string()).expect("payload must be JSON");
         assert_eq!(parsed["kind"], "MissingFields");
         assert_eq!(parsed["fields"][0], "block.timestamp");
         assert_eq!(parsed["fields"][1], "transaction.hash");

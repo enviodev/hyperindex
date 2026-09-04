@@ -30,6 +30,9 @@ importers:
       envio:
         specifier: file:../../packages/envio
         version: link:../envio
+      postgres:
+        specifier: 3.4.8
+        version: 3.4.8
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
@@ -42,9 +45,6 @@ importers:
 
   packages/envio:
     dependencies:
-      '@clickhouse/client':
-        specifier: 1.17.0
-        version: 1.17.0
       '@elastic/ecs-pino-format':
         specifier: 1.4.0
         version: 1.4.0
@@ -143,6 +143,9 @@ importers:
       '@types/node':
         specifier: 24.12.2
         version: 24.12.2
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
       rescript:
         specifier: 12.2.0
         version: 12.2.0
@@ -158,6 +161,9 @@ importers:
       vitest:
         specifier: 4.1.0
         version: 4.1.0(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@16.7.0)(vite@7.3.1(@types/node@24.12.2)(tsx@4.21.0))
+      ws:
+        specifier: 8.21.3
+        version: 8.21.3
 
   scenarios/cross_chain_test:
     dependencies:
@@ -461,13 +467,6 @@ packages:
 
   '@bcoe/v8-coverage@0.2.3':
     resolution: {integrity: sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==}
-
-  '@clickhouse/client-common@1.17.0':
-    resolution: {integrity: sha512-MiwwgXViFAQA2YZkN4ymF1ynzG0K49KeSX9/iOcmJetWkxqSekDdpyp1GjwATWa9R215uQ+hGzJtJujeQVZZIw==}
-
-  '@clickhouse/client@1.17.0':
-    resolution: {integrity: sha512-Y3DQoamKZ/Iyosoq7Lj7lqpDkQDK4R/5mI52yJs4ZLPIO+d6/CYDqTbFBIb4No3C/AlXUYE4TKhj/kXDpe6rOA==}
-    engines: {node: '>=16'}
 
   '@elastic/ecs-helpers@1.1.0':
     resolution: {integrity: sha512-MDLb2aFeGjg46O5mLpdCzT5yOUDnXToJSrco2ShqGIXxNJaM8uJjX+4nd+hRYV4Vex8YJyDtOFEVBldQct6ndg==}
@@ -1009,6 +1008,9 @@ packages:
 
   '@types/stack-utils@2.0.3':
     resolution: {integrity: sha512-9aEbYZ3TbYMznPdcdr3SmIrLXwC/AKZXQeCf9Pgao5CKb8CyHuEX5jzWPTkvregvhRJHcpRO6BFoGW9ycaOkYw==}
+
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@types/yargs-parser@21.0.3':
     resolution: {integrity: sha512-I4q9QU9MQv4oEOz4tAHJtNz1cwuLxn2F3xcc2iV5WdqLPpUnj30aUuxt1mAxYTG+oe8CZMV/+6rU4S4gRDzqtQ==}
@@ -2889,6 +2891,18 @@ packages:
       utf-8-validate:
         optional: true
 
+  ws@8.21.3:
+    resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   xml-name-validator@3.0.0:
     resolution: {integrity: sha512-A5CUptxDsvxKJEU3yO6DuWBSJz/qizqzJKOMIfUJHETbBw/sFaDxgd6fxm1ewUaM0jZ444Fc5vC5ROYurg/4Pw==}
 
@@ -3113,12 +3127,6 @@ snapshots:
       '@babel/helper-validator-identifier': 7.28.5
 
   '@bcoe/v8-coverage@0.2.3': {}
-
-  '@clickhouse/client-common@1.17.0': {}
-
-  '@clickhouse/client@1.17.0':
-    dependencies:
-      '@clickhouse/client-common': 1.17.0
 
   '@elastic/ecs-helpers@1.1.0':
     dependencies:
@@ -3627,6 +3635,10 @@ snapshots:
   '@types/prettier@2.7.3': {}
 
   '@types/stack-utils@2.0.3': {}
+
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 24.12.2
 
   '@types/yargs-parser@21.0.3': {}
 
@@ -5692,6 +5704,8 @@ snapshots:
   ws@8.19.0: {}
 
   ws@8.20.1: {}
+
+  ws@8.21.3: {}
 
   xml-name-validator@3.0.0: {}
 

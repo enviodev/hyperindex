@@ -204,7 +204,7 @@ let make = (
 
   let createHeightSubscription =
     ws->Option.map(wsUrl =>
-      (~onHeight) => RpcWebSocketHeightStream.subscribe(~wsUrl, ~chainId, ~onHeight)
+      (~onHeight, ~onStatus) => EvmRpcWs.subscribe(~wsUrl, ~onHeight, ~onStatus)
     )
 
   {

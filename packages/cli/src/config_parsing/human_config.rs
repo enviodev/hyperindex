@@ -149,6 +149,17 @@ pub enum ColumnNameFormat {
     SnakeCase,
 }
 
+/// How the schema.graphql `Bytes` scalar reaches handlers and storage.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Default, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum BytesType {
+    /// `0x`-prefixed hex strings, stored as text.
+    #[default]
+    Hex,
+    /// `Uint8Array` values, stored as raw bytes (`BYTEA` in Postgres, `String` in ClickHouse).
+    Uint8Array,
+}
+
 // Hand-rolled instead of #[serde(untagged)]: the untagged derive swallows
 // errors from inside the variants, so a typo like `{defautl: true}` would
 // surface as "data did not match any variant" instead of the precise
@@ -406,6 +417,17 @@ impl HumanConfig {
             HumanConfig::Svm(human_config) => &human_config.base,
         }
     }
+
+    /// Only EVM and Fuel can pick: their existing projects predate raw bytes and
+    /// keep hex strings unless they opt in. SVM shipped with `Uint8Array` and has
+    /// nothing to keep compatible with.
+    pub fn bytes_type(&self) -> BytesType {
+        match &self {
+            HumanConfig::Evm(human_config) => human_config.bytes_type.unwrap_or_default(),
+            HumanConfig::Fuel(human_config) => human_config.bytes_type.unwrap_or_default(),
+            HumanConfig::Svm(_) => BytesType::Uint8Array,
+        }
+    }
 }
 
 impl Display for HumanConfig {
@@ -424,7 +446,7 @@ impl Display for HumanConfig {
 
 pub mod evm {
     use super::{ChainContract, ChainId, GlobalContract};
-    use crate::config_parsing::human_config::BaseConfig;
+    use crate::config_parsing::human_config::{BaseConfig, BytesType};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -486,6 +508,14 @@ pub mod evm {
         #[schemars(description = "Address format for Ethereum addresses: 'checksum' or \
                                   'lowercase' (default: checksum)")]
         pub address_format: Option<AddressFormat>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How the `Bytes` scalar in schema.graphql is represented. `hex` keeps \
+                           0x-prefixed hex strings stored as text, `uint8array` exposes \
+                           `Uint8Array` values in handlers and stores raw bytes (BYTEA in \
+                           Postgres, String in ClickHouse). (default: hex)"
+        )]
+        pub bytes_type: Option<BytesType>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
@@ -817,7 +847,7 @@ pub mod evm {
 pub mod fuel {
     use std::fmt::Display;
 
-    use crate::config_parsing::human_config::BaseConfig;
+    use crate::config_parsing::human_config::{BaseConfig, BytesType};
 
     use super::{ChainContract, ChainId, GlobalContract};
     use schemars::JsonSchema;
@@ -854,6 +884,14 @@ pub mod fuel {
                            false)"
         )]
         pub raw_events: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "How the `Bytes` scalar in schema.graphql is represented. `hex` keeps \
+                           0x-prefixed hex strings stored as text, `uint8array` exposes \
+                           `Uint8Array` values in handlers and stores raw bytes (BYTEA in \
+                           Postgres, String in ClickHouse). (default: hex)"
+        )]
+        pub bytes_type: Option<BytesType>,
     }
 
     impl Display for HumanConfig {
@@ -1123,24 +1161,15 @@ pub mod svm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" \
-                           optional). Must be 1, 2, 4, or 8 bytes after decoding. An 8-byte value \
-                           matches the standard Anchor discriminator."
+                           optional), of any whole number of bytes; an 8-byte value matches the \
+                           standard Anchor discriminator. Omit it to match every instruction of \
+                           the program. Every instruction whose prefix an on-chain call carries \
+                           receives it, so a program-wide entry fires alongside a keyed one, and \
+                           two entries may share a prefix (say, the layouts before and after a \
+                           program upgrade): each decodes with its own `args`, and one whose \
+                           layout rejects the data is skipped for that call."
         )]
         pub discriminator: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Filter on inner-vs-outer instructions. None / absent matches both."
-        )]
-        pub is_inner: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
-            description = "Optional positional account filters. Two shapes are accepted: a flat \
-                           list of `{position, values}` entries (AND across positions, OR within \
-                           `values`); or `{any_of: [[...]] }`, a list of AND-groups that are \
-                           OR-ed together. Positions must be in 0..=5; positions 6..=9 are \
-                           reserved for a future extension."
-        )]
-        pub account_filters: Option<AccountFilters>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Optional positional account names. The Nth entry names account slot N \
@@ -1247,45 +1276,6 @@ pub mod svm {
         pub fields: Option<Vec<ArgDef>>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct AccountFilter {
-        #[schemars(description = "Account position within the instruction (0..=5).")]
-        pub position: u8,
-        #[schemars(description = "Allowed base58 pubkeys for this account position.")]
-        pub values: Vec<String>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct AnyOfAccountFilters {
-        #[schemars(
-            description = "A non-empty list of AND-groups. Each group is itself a non-empty list \
-                           of `{position, values}` entries that must all match the same \
-                           instruction. An instruction matches `any_of` when any one group \
-                           matches."
-        )]
-        pub any_of: Vec<Vec<AccountFilter>>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(untagged)]
-    pub enum AccountFilters {
-        Flat(Vec<AccountFilter>),
-        AnyOf(AnyOfAccountFilters),
-    }
-
-    impl AccountFilters {
-        pub fn groups(&self) -> Vec<&[AccountFilter]> {
-            match self {
-                AccountFilters::Flat(entries) => vec![entries.as_slice()],
-                AccountFilters::AnyOf(any_of) => {
-                    any_of.any_of.iter().map(|g| g.as_slice()).collect()
-                }
-            }
-        }
-    }
-
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[schemars(
         title = "Envio Svm Config Schema",
@@ -1377,6 +1367,60 @@ mod tests {
         assert_eq!(
             npm_schema, actual_schema,
             "Please run 'make update-generated-docs'"
+        );
+    }
+
+    #[test]
+    fn bytes_type_is_hex_unless_evm_or_fuel_opt_in_and_always_raw_on_svm() {
+        let evm = |extra: &str| {
+            super::HumanConfig::Evm(
+                serde_yaml::from_str::<HumanConfig>(&format!("name: t\nchains: []\n{extra}"))
+                    .unwrap(),
+            )
+        };
+        let fuel = |extra: &str| {
+            super::HumanConfig::Fuel(
+                serde_yaml::from_str::<fuel::HumanConfig>(&format!(
+                    "name: t\necosystem: fuel\nchains: []\n{extra}"
+                ))
+                .unwrap(),
+            )
+        };
+        let svm = |extra: &str| {
+            serde_yaml::from_str::<super::svm::HumanConfig>(&format!(
+                "name: t\necosystem: svm\nchains: []\n{extra}"
+            ))
+            .map(super::HumanConfig::Svm)
+            .map(|config: super::HumanConfig| config.bytes_type())
+            .map_err(|error: serde_yaml::Error| error.to_string())
+        };
+        assert_eq!(
+            (
+                evm("").bytes_type(),
+                evm("bytes_type: hex").bytes_type(),
+                evm("bytes_type: uint8array").bytes_type(),
+                fuel("").bytes_type(),
+                fuel("bytes_type: uint8array").bytes_type(),
+                svm(""),
+                svm("bytes_type: hex"),
+                serde_yaml::from_str::<HumanConfig>("name: t\nchains: []\nbytes_type: raw")
+                    .map(|_| ())
+                    .map_err(|error: serde_yaml::Error| error.to_string()),
+            ),
+            (
+                super::BytesType::Hex,
+                super::BytesType::Hex,
+                super::BytesType::Uint8Array,
+                super::BytesType::Hex,
+                super::BytesType::Uint8Array,
+                Ok(super::BytesType::Uint8Array),
+                Err("unknown field `bytes_type`".to_string()),
+                Err(
+                    "bytes_type: unknown variant `raw`, expected `hex` or `uint8array` at line 3 \
+                     column 13"
+                        .to_string()
+                ),
+            )
         );
     }
 
@@ -1571,6 +1615,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
+            bytes_type: None,
             chains: vec![fuel::Chain {
                 id: 0,
                 skip: None,
@@ -1624,6 +1669,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             ecosystem: fuel::EcosystemTag::Fuel,
             contracts: None,
             raw_events: None,
+            bytes_type: None,
             chains: vec![],
         };
 
@@ -1654,9 +1700,6 @@ chains:
               discriminator: "0x21"
             - name: UpdateMetadataAccountV2
               discriminator: "0x0f"
-              account_filters:
-                - position: 0
-                  values: ["metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"]
 "#;
 
         #[test]
@@ -1722,21 +1765,12 @@ chains:
                         Instruction {
                             name: "CreateMetadataAccountV3".to_string(),
                             discriminator: Some("0x21".to_string()),
-                            is_inner: None,
-                            account_filters: None,
                             accounts: None,
                             args: None,
                         },
                         Instruction {
                             name: "UpdateMetadataAccountV2".to_string(),
                             discriminator: Some("0x0f".to_string()),
-                            is_inner: None,
-                            account_filters: Some(AccountFilters::Flat(vec![AccountFilter {
-                                position: 0,
-                                values: vec![
-                                    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
-                                ],
-                            }])),
                             accounts: None,
                             args: None,
                         },

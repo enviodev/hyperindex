@@ -118,6 +118,13 @@ const flowFields = {
   accountActivity: ["address", "token.mint", "token.owner", "token.preAmount", "token.postAmount"],
 } as const;
 
+// Orca and Meteora `swap` are matched on discriminator alone, so they declare
+// no args to select.
+const bareFlowFields = {
+  ...flowFields,
+  instruction: ["accounts", "programId", "path", "isInner"],
+} as const;
+
 const tokenBalancesOf = (tx: { accountActivities: readonly { address: string; token: { mint: string; owner: string; preAmount: bigint | undefined; postAmount: bigint | undefined } | undefined }[] }) =>
   tx.accountActivities.flatMap(a => {
     const t = a.token;
@@ -379,7 +386,7 @@ indexer.onInstruction({ fields: flowFields, program: "Raydium", instruction: "sw
 
 // Orca + Meteora swap: discriminator-filtered (not program-wide), so the CPI
 // tree gets the protocol nodes Jupiter routes through.
-indexer.onInstruction({ fields: flowFields, program: "Orca", instruction: "swap" }, async ({ instruction, context }) => {
+indexer.onInstruction({ fields: bareFlowFields, program: "Orca", instruction: "swap" }, async ({ instruction, context }) => {
   const tx = instruction.transaction;
   await record(context, {
     program: "Orca",
@@ -397,7 +404,7 @@ indexer.onInstruction({ fields: flowFields, program: "Orca", instruction: "swap"
   });
 });
 
-indexer.onInstruction({ fields: flowFields, program: "Meteora", instruction: "swap" }, async ({ instruction, context }) => {
+indexer.onInstruction({ fields: bareFlowFields, program: "Meteora", instruction: "swap" }, async ({ instruction, context }) => {
   const tx = instruction.transaction;
   await record(context, {
     program: "Meteora",

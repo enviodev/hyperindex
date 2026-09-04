@@ -189,6 +189,15 @@ let addReorgCheckpoints = (
   }
 }
 
+// Checkpoint ids are handed out in ascending order as each chain's items are
+// walked in block order, so within a chain a higher id always means a later
+// block. Rollback preserves that: it deletes the chain's ids above its target
+// before any higher one is allocated, so the ids the re-indexed blocks get are
+// above everything the chain still holds. An isolated rollback leans on the
+// invariant — it deletes by `chain_id = c AND id > target`, which is only the
+// chain's stale suffix if ids and blocks agree on order within the chain. Ids
+// interleave freely *across* chains, which is exactly why that predicate can't
+// be the id bound alone.
 let prepareBatch = (
   ~checkpointIdBeforeBatch,
   ~chainsBeforeBatch: dict<chainBeforeBatch>,

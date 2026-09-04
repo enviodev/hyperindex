@@ -52,6 +52,8 @@ let make = (~logger: Pino.t): Ecosystem.t => {
   blockTimestampName: "time",
   blockHashName: "hash",
   onBlockMethodName: "onSlot",
+  contractNoun: "program",
+  eventNoun: "instruction",
   // SVM filter shape: `{slot: {_gte?, _lte?, _every?}}`.
   // Inner range chunk parsed by `blockRangeSchema` in `Main.res`.
   onBlockFilterSchema: S.object(s => s.field("slot", S.option(S.unknown))),

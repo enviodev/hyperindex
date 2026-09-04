@@ -77,13 +77,21 @@ describe("SVM handler fields registration", () => {
     t.expect({
       "instruction": fs.instructionFields->Utils.Set.toArray->Array.toSorted(String.compare),
       "transaction": fs.transactionFields->Utils.Set.toArray->Array.toSorted(String.compare),
-      "accountActivity": fs.accountActivityFields->Utils.Set.toArray->Array.toSorted(
-        String.compare,
-      ),
+      "accountActivity": fs.accountActivityFields
+      ->Utils.Set.toArray
+      ->Array.toSorted(String.compare),
       "block": fs.blockFields->Utils.Set.toArray->Array.toSorted(String.compare),
       "log": fs.logFields->Utils.Set.toArray->Array.toSorted(String.compare),
     }).toEqual({
-      "instruction": ["accountArguments", "accounts", "args", "data", "isInner", "path", "programId"],
+      "instruction": [
+        "accountArguments",
+        "accounts",
+        "args",
+        "data",
+        "isInner",
+        "path",
+        "programId",
+      ],
       "transaction": ["accountActivities", "accountKeys", "signature"],
       "accountActivity": [
         "lamports.post",
@@ -102,6 +110,37 @@ describe("SVM handler fields registration", () => {
 })
 
 describe("SVM instruction payload assembly", () => {
+  it("hex-encodes the whole data as the discriminator of a program-wide registration", t => {
+    let reg = registrations()->Array.getUnsafe(0)
+    let eventConfig = {
+      ...reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig),
+      discriminator: None,
+    }
+    let item: SvmHyperSyncClient.EventItems.item = {
+      onEventRegistrationIndex: 0,
+      slot: 10,
+      transactionIndex: 1,
+      path: [0],
+      programId: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+      accounts: [],
+      data: Uint8Array.fromArray([0x09, 0xab, 0x00]),
+      isInner: false,
+      args: %raw(`{}`),
+      logs: Null.null,
+    }
+    let instruction = SvmHyperSyncSource.toSvmInstruction(
+      item,
+      ~programName="Swapper",
+      ~instructionName="swap",
+      ~eventConfig,
+      ~fieldSelection=reg.fieldSelection,
+    )
+    t.expect({"discriminator": instruction.discriminator, "data": instruction.data}).toEqual({
+      "discriminator": "0x09ab00",
+      "data": Some(Uint8Array.fromArray([0x09, 0xab, 0x00])),
+    })
+  })
+
   it("zips IDL names onto account arguments without an activity row", t => {
     let reg = registrations()->Array.getUnsafe(0)
     let eventConfig =
@@ -112,10 +151,13 @@ describe("SVM instruction payload assembly", () => {
       transactionIndex: 1,
       path: [0],
       programId: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
-      accounts: ["Src111111111111111111111111111111111111111", "Dst111111111111111111111111111111111111111"],
-      data: "0x09",
+      accounts: [
+        "Src111111111111111111111111111111111111111",
+        "Dst111111111111111111111111111111111111111",
+      ],
+      data: Uint8Array.fromArray([0x09]),
       isInner: false,
-      argsJson: "{}",
+      args: %raw(`{}`),
       logs: Null.null,
     }
     let instruction = SvmHyperSyncSource.toSvmInstruction(
@@ -157,41 +199,44 @@ describe("SVM instruction payload assembly", () => {
     })
   })
 
-  it("parses args from the decoded JSON, and reads an undecoded item as empty args", t => {
-    let reg = registrations()->Array.getUnsafe(0)
-    let eventConfig =
-      reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-    let base: SvmHyperSyncClient.EventItems.item = {
-      onEventRegistrationIndex: 0,
-      slot: 10,
-      transactionIndex: 1,
-      path: [0],
-      programId: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
-      accounts: [],
-      data: "0x09",
-      isInner: false,
-      argsJson: "{}",
-      logs: Null.null,
-    }
-    let decoded = SvmHyperSyncSource.toSvmInstruction(
-      {...base, argsJson: `{"amountIn":"1"}`},
-      ~programName="Swapper",
-      ~instructionName="swap",
-      ~eventConfig,
-      ~fieldSelection=reg.fieldSelection,
-    )
-    let undecoded = SvmHyperSyncSource.toSvmInstruction(
-      base,
-      ~programName="Swapper",
-      ~instructionName="swap",
-      ~eventConfig,
-      ~fieldSelection=reg.fieldSelection,
-    )
-    t.expect((decoded.args, undecoded.args)).toEqual((
-      Some(%raw(`{"amountIn":"1"}`)),
-      Some(%raw(`{}`)),
-    ))
-  })
+  it(
+    "passes decoded args through with bigints intact, and reads an undecoded item as empty args",
+    t => {
+      let reg = registrations()->Array.getUnsafe(0)
+      let eventConfig =
+        reg.eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+      let base: SvmHyperSyncClient.EventItems.item = {
+        onEventRegistrationIndex: 0,
+        slot: 10,
+        transactionIndex: 1,
+        path: [0],
+        programId: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+        accounts: [],
+        data: Uint8Array.fromArray([0x09]),
+        isInner: false,
+        args: %raw(`{}`),
+        logs: Null.null,
+      }
+      let decoded = SvmHyperSyncSource.toSvmInstruction(
+        {...base, args: %raw(`{amountIn: 18446744073709551615n}`)},
+        ~programName="Swapper",
+        ~instructionName="swap",
+        ~eventConfig,
+        ~fieldSelection=reg.fieldSelection,
+      )
+      let undecoded = SvmHyperSyncSource.toSvmInstruction(
+        base,
+        ~programName="Swapper",
+        ~instructionName="swap",
+        ~eventConfig,
+        ~fieldSelection=reg.fieldSelection,
+      )
+      t.expect((decoded.args, undecoded.args)).toEqual((
+        Some(%raw(`{amountIn: 18446744073709551615n}`)),
+        Some(%raw(`{}`)),
+      ))
+    },
+  )
 
   // NAPI sends Rust `None` as `null`: an instruction whose logs didn't attach
   // arrives with `logs: null`, not with the key missing.
@@ -207,9 +252,9 @@ describe("SVM instruction payload assembly", () => {
         path: [0],
         programId: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
         accounts: [],
-        data: "0x09",
+        data: Uint8Array.fromArray([0x09]),
         isInner: false,
-        argsJson: "{}",
+        args: %raw(`{}`),
         logs: Null.null,
       },
       ~programName="Swapper",
@@ -232,9 +277,9 @@ describe("SVM instruction payload assembly", () => {
         path: [0],
         programId: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
         accounts: [],
-        data: "0x09",
+        data: Uint8Array.fromArray([0x09]),
         isInner: false,
-        argsJson: "{}",
+        args: %raw(`{}`),
         logs: Null.make([
           {SvmHyperSyncClient.EventItems.kind: Null.make("data"), message: Null.null},
         ]),
@@ -262,4 +307,3 @@ describe("SVM instruction payload assembly", () => {
     })
   })
 })
-

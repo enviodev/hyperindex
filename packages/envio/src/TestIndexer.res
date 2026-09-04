@@ -589,7 +589,7 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
     JsError.throwWithMessage(
       "TestIndexer: initialize should not be called; the initial state is derived from config.",
     ),
-  resumeInitialState: async () =>
+  resumeInitialState: async (~entities as _, ~throwIfIncompatible as _) =>
     JsError.throwWithMessage(
       "TestIndexer: resumeInitialState should not be called; the initial state is derived from config.",
     ),
@@ -625,22 +625,22 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   dumpEffectCache: async () => (),
   reset: async () => (),
   setChainMeta: async _ => Obj.magic(),
-  pruneStaleCheckpoints: async (~safeCheckpointId as _) => (),
+  pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
   pruneStaleEntityHistory: async (
     ~entityName as _,
     ~entityIndex as _,
     ~chainIdColumn as _,
-    ~safeCheckpointId as _,
+    ~safeCheckpoints as _,
   ) => (),
   getRollbackTargetCheckpoint: async (~reorgChainId as _, ~lastKnownValidBlockNumber as _) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),
-  getRollbackProgressDiff: async (~rollbackTargetCheckpointId as _) =>
+  getRollbackProgressDiff: async (~floors as _) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),
-  getRollbackData: async (~entityConfig as _, ~rollbackTargetCheckpointId as _) =>
+  getRollbackData: async (~entityConfig as _, ~floors as _) =>
     JsError.throwWithMessage(
       "TestIndexer: Rollback is not supported. The runner forces rollbackOnReorg off, so this should be unreachable.",
     ),

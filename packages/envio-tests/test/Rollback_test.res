@@ -1440,7 +1440,12 @@ describe("E2E rollback tests", () => {
         ~message="Progress block number after rollback",
       ).toEqual([
         {value: "105", labels: Dict.fromArray([("chainId", "100")])},
-        {value: "105", labels: Dict.fromArray([("chainId", "1337")])},
+        // Chain 1337 forked at 103. Blocks 104-105 held no events on the
+        // orphaned chain, so no checkpoint of its own survives between the two —
+        // but the chain replacing them can have events there, so the rollback
+        // leaves it at the fork rather than at the block below its next
+        // checkpoint.
+        {value: "103", labels: Dict.fromArray([("chainId", "1337")])},
       ])
       t.expect(
         await indexer.metric("envio_rollback_events"),
@@ -1459,26 +1464,21 @@ describe("E2E rollback tests", () => {
         ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
       ).toEqual((
         // Chain 100: partition KEPT (lfb <= target), chunk history preserved.
-        // chunkRange=3 -> chunkSize=ceil(3*1.8)=6, tiled uniformly from 106 up to
-        // the per-partition cap of 12 chunks.
+        // chunkRange=3 -> chunkSize=ceil(3*1.8)=6, tiled uniformly from 106 and
+        // stopping at the alignment cap, which chain 1337 anchors from its fork
+        // block.
         [
           {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
           {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
           {"fromBlock": 118, "toBlock": Some(123), "retry": 0, "p": "0"},
           {"fromBlock": 124, "toBlock": Some(129), "retry": 0, "p": "0"},
-          {"fromBlock": 130, "toBlock": Some(135), "retry": 0, "p": "0"},
-          {"fromBlock": 136, "toBlock": Some(141), "retry": 0, "p": "0"},
-          {"fromBlock": 142, "toBlock": Some(147), "retry": 0, "p": "0"},
-          {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
-          {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
-          {"fromBlock": 160, "toBlock": Some(165), "retry": 0, "p": "0"},
-          {"fromBlock": 166, "toBlock": Some(171), "retry": 0, "p": "0"},
-          {"fromBlock": 172, "toBlock": Some(177), "retry": 0, "p": "0"},
+          {"fromBlock": 130, "toBlock": Some(133), "retry": 0, "p": "0"},
         ],
-        // Chain 1337: partition DELETED (lfb > target), recreated fresh
+        // Chain 1337: partition DELETED (lfb > target), recreated fresh from
+        // just above the fork block.
         [
           {
-            "fromBlock": 106,
+            "fromBlock": 104,
             "toBlock": None,
             "retry": 0,
             "p": "0",
@@ -1870,9 +1870,10 @@ describe("E2E rollback tests", () => {
         ),
         ~message="Should rollback fetch state and re-request items for both chains (since chain 100 was touching the same entity as chain 1337)",
       ).toEqual((
-        // Chain 1337: partition DELETED, recreated fresh (no chunking)
+        // Chain 1337: partition DELETED, recreated fresh (no chunking) from
+        // just above the fork block at 103.
         Some({
-          "fromBlock": 106,
+          "fromBlock": 104,
           "toBlock": None,
           "retry": 0,
           "p": "0",
@@ -2697,9 +2698,11 @@ describe("E2E rollback tests", () => {
         sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload),
         ~message="Should NOT have duplicate queries - only partition 0, no partition 1",
       ).toEqual([
-        // Partition recreated fresh (no chunk history), single unchunked query
+        // Partition recreated fresh (no chunk history), single unchunked query.
+        // Block 112 is the deepest hash the search confirmed, so 113-115 are
+        // re-fetched with it even though only 115 had a checkpoint.
         {
-          "fromBlock": 115,
+          "fromBlock": 113,
           "toBlock": None,
           "retry": 0,
           "p": "0",
@@ -2813,16 +2816,18 @@ describe("E2E rollback tests", () => {
 
       await indexer.getRollbackReadyPromise()
 
-      // The reorg is at block 118, so the rollback lands just below it and the
-      // partition refetches only from 118 onward — never re-fetching 107-117.
+      // Block 115 is the deepest hash the search confirmed — 116 and 117 were
+      // fetched inside the reorged range but never hashed, so the rollback can't
+      // vouch for them either. The partition refetches from 116 onward and never
+      // re-fetches the confirmed 107-115.
       let queries = sourceMock.getItemsOrThrowCalls->Array.map(c => c.payload)
 
       t.expect(
         queries,
-        ~message="Should efficiently refetch only blocks after the rollback target (from 118), not the whole range",
+        ~message="Should efficiently refetch only the blocks the depth search couldn't confirm (from 116), not the whole range",
       ).toEqual([
         {
-          "fromBlock": 118,
+          "fromBlock": 116,
           "p": "0",
           "retry": 0,
           "toBlock": None,
@@ -2985,11 +2990,11 @@ describe("E2E rollback tests", () => {
         }
         storage.getRollbackTargetCheckpoint(~reorgChainId, ~lastKnownValidBlockNumber)
       },
-      getRollbackProgressDiff: (~rollbackTargetCheckpointId) => {
+      getRollbackProgressDiff: (~floors) => {
         if stallWriteBatch.contents->Option.isSome {
           rollbackReadBeforeFlush := true
         }
-        storage.getRollbackProgressDiff(~rollbackTargetCheckpointId)
+        storage.getRollbackProgressDiff(~floors)
       },
       writeBatch: (
         ~batch,
@@ -3166,27 +3171,21 @@ describe("E2E rollback tests", () => {
           sourceMock100.getItemsOrThrowCalls->Array.map(c => c.payload),
           sourceMock1337.getItemsOrThrowCalls->Array.map(c => c.payload),
         ),
-        ~message="Both chains should refetch from block 106 after rollback (chain 100's in-flight checkpoint was flushed and included in the progress diff)",
+        ~message="Chain 100 should refetch from block 106 after rollback (its in-flight checkpoint was flushed and included in the progress diff)",
       ).toEqual((
         // Chain 100: partition kept (lfb <= target), chunk history preserved.
-        // chunkRange=3 -> chunkSize=6, tiled uniformly from 106 up to the
-        // per-partition cap of 12 chunks.
+        // chunkRange=3 -> chunkSize=6, tiled uniformly from 106 and stopping at
+        // the alignment cap, which chain 1337 anchors from its fork block.
         [
           {"fromBlock": 106, "toBlock": Some(111), "retry": 0, "p": "0"},
           {"fromBlock": 112, "toBlock": Some(117), "retry": 0, "p": "0"},
           {"fromBlock": 118, "toBlock": Some(123), "retry": 0, "p": "0"},
           {"fromBlock": 124, "toBlock": Some(129), "retry": 0, "p": "0"},
-          {"fromBlock": 130, "toBlock": Some(135), "retry": 0, "p": "0"},
-          {"fromBlock": 136, "toBlock": Some(141), "retry": 0, "p": "0"},
-          {"fromBlock": 142, "toBlock": Some(147), "retry": 0, "p": "0"},
-          {"fromBlock": 148, "toBlock": Some(153), "retry": 0, "p": "0"},
-          {"fromBlock": 154, "toBlock": Some(159), "retry": 0, "p": "0"},
-          {"fromBlock": 160, "toBlock": Some(165), "retry": 0, "p": "0"},
-          {"fromBlock": 166, "toBlock": Some(171), "retry": 0, "p": "0"},
-          {"fromBlock": 172, "toBlock": Some(177), "retry": 0, "p": "0"},
+          {"fromBlock": 130, "toBlock": Some(133), "retry": 0, "p": "0"},
         ],
-        // Chain 1337: partition deleted (lfb > target), recreated fresh
-        [{"fromBlock": 106, "toBlock": None, "retry": 0, "p": "0"}],
+        // Chain 1337: partition deleted (lfb > target), recreated fresh from
+        // just above the fork block at 103.
+        [{"fromBlock": 104, "toBlock": None, "retry": 0, "p": "0"}],
       ))
 
       sourceMock100.resolveGetItemsOrThrow(

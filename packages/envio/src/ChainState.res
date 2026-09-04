@@ -322,7 +322,11 @@ let makeInternal = (
           chainId,
           endpointUrl: hypersyncUrl,
           apiToken,
-          onEventRegistrations,
+          onEventRegistrations: onEventRegistrations->(
+            Utils.magic: array<Internal.onEventRegistration> => array<
+              Internal.svmOnEventRegistration,
+            >
+          ),
           clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
           addressStore,
         }),
@@ -1199,21 +1203,17 @@ let markReady = (cs: t, ~readyAt) =>
     cs.timestampCaughtUpToHeadOrEndblock = Some(readyAt)
   }
 
-// Roll a chain back to a reorg target. With a progress diff, restore fetch/
-// safe-checkpoint/progress state to `newProgressBlockNumber`. A reorg chain
-// with no diff entry still rewinds fetch state + stores to the target -
-// otherwise the stale block hash stays in the store and re-triggers the same
-// reorg.
-// Returns the address registrations the storage has to delete along with it —
-// the store is what decides which ones died, so the two halves of a rollback
-// can't disagree.
-let rollback = (
-  cs: t,
-  ~newProgressBlockNumber,
-  ~eventsProcessedDiff,
-  ~rollbackTargetBlockNumber,
-  ~isReorgChain,
-): array<AddressRows.key> => {
+type progressDiff = {blockNumber: int, eventsProcessed: float}
+
+type rolledBackTo =
+  | RecomputedProgress(progressDiff)
+  | ForkBlock(int)
+  | Untouched
+
+// Returns the address registrations the storage has to delete along with the
+// chain — the store is what decides which ones died, so the two halves of a
+// rollback can't disagree.
+let rollback = (cs: t, ~rolledBackTo: rolledBackTo): array<AddressRows.key> => {
   let rollbackTo = targetBlockNumber => {
     let {fetchState, rolledBackAddresses} =
       cs.fetchState->FetchState.rollback(
@@ -1228,15 +1228,15 @@ let rollback = (
     })
   }
 
-  switch newProgressBlockNumber {
-  | Some(newProgressBlockNumber) =>
-    let newTotalEventsProcessed =
-      cs.numEventsProcessed -.
-      // Both dicts are populated together per progress-diff row, so a chain with
-      // a progress diff always has an events-processed diff too.
-      eventsProcessedDiff->Option.getOrThrow(
-        ~message="Missing events-processed diff for rolled-back chain",
-      )
+  switch rolledBackTo {
+  | RecomputedProgress({blockNumber, eventsProcessed}) =>
+    // A rollback only ever takes a chain back. The diff recomputes progress from
+    // the checkpoints still in the database, so a chain that an unwritten
+    // rollback already took below them — to a fork block only that rollback
+    // knew — would be handed their MIN back and moved forward onto blocks it
+    // never re-indexed.
+    let newProgressBlockNumber = Pervasives.min(blockNumber, cs.committedProgressBlockNumber)
+    let newTotalEventsProcessed = cs.numEventsProcessed -. eventsProcessed
 
     switch cs.safeCheckpointTracking {
     | Some(safeCheckpointTracking) =>
@@ -1254,19 +1254,15 @@ let rollback = (
     cs.processingBlockNumber = newProgressBlockNumber
     cs.numEventsProcessed = newTotalEventsProcessed
     rolledBackAddresses
-  | None =>
-    if isReorgChain {
-      let rolledBackAddresses = rollbackTo(rollbackTargetBlockNumber)
-      cs.transactionStore->TransactionStore.rollback(rollbackTargetBlockNumber)
-      cs.blockStore->BlockStore.rollback(rollbackTargetBlockNumber)
-      cs.committedProgressBlockNumber = Pervasives.min(
-        cs.committedProgressBlockNumber,
-        rollbackTargetBlockNumber,
-      )
-      cs.processingBlockNumber = Pervasives.min(cs.processingBlockNumber, rollbackTargetBlockNumber)
-      rolledBackAddresses
-    } else {
-      []
-    }
+  | ForkBlock(forkBlock) =>
+    // Rewinds the stores too, not just progress: otherwise the stale block hash
+    // survives and re-triggers the same reorg.
+    let rolledBackAddresses = rollbackTo(forkBlock)
+    cs.transactionStore->TransactionStore.rollback(forkBlock)
+    cs.blockStore->BlockStore.rollback(forkBlock)
+    cs.committedProgressBlockNumber = Pervasives.min(cs.committedProgressBlockNumber, forkBlock)
+    cs.processingBlockNumber = Pervasives.min(cs.processingBlockNumber, forkBlock)
+    rolledBackAddresses
+  | Untouched => []
   }
 }

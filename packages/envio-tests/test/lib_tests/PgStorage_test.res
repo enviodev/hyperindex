@@ -562,6 +562,65 @@ FROM "public"."envio_chains";`
       ],
     )
 
+    // A bytea column binds as the Uint8Array postgres.js serializes, and a
+    // bytea[] one as the array literal Postgres parses itself — postgres.js
+    // types an array parameter after its first element, so an array of
+    // Uint8Arrays would bind as a single bytea. An `in` over a list column
+    // nests one dimension deeper, and Postgres arrays are rectangular, so its
+    // candidates all have the same length.
+    let bytesTable = Table.mkTable(
+      "blobs",
+      ~fields=[
+        Table.mkField("id", String, ~isPrimaryKey=true, ~fieldSchema=S.string),
+        Table.mkField("tag", Bytea, ~fieldSchema=Utils.Schema.bytes),
+        Table.mkField("chunks", Bytea, ~isArray=true, ~fieldSchema=Utils.Schema.bytesArray),
+      ],
+    )
+
+    Async.it("Binds bytea values as bytes and bytea arrays as array literals", async t => {
+      let params = []
+      let condition = PgStorage.makeFilterCondition(
+        ~filter=And({
+          filters: [
+            Eq({
+              fieldName: "tag",
+              fieldValue: Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
+            }),
+            In({
+              fieldName: "tag",
+              fieldValue: [Uint8Array.fromArray([1, 2]), Uint8Array.fromLength(0)]->(
+                Utils.magic: array<Uint8Array.t> => array<unknown>
+              ),
+            }),
+            Eq({
+              fieldName: "chunks",
+              fieldValue: [Uint8Array.fromArray([3])]->(
+                Utils.magic: array<Uint8Array.t> => unknown
+              ),
+            }),
+            In({
+              fieldName: "chunks",
+              fieldValue: [[Uint8Array.fromArray([4])], [Uint8Array.fromArray([5])]]->(
+                Utils.magic: array<array<Uint8Array.t>> => array<unknown>
+              ),
+            }),
+          ],
+        }),
+        ~table=bytesTable,
+        ~params,
+      )
+
+      t.expect((condition, params)).toEqual((
+        `("tag" = $1 AND "tag" = ANY($2) AND "chunks" = $3 AND "chunks" = ANY($4))`,
+        [
+          Uint8Array.fromArray([0xaa])->(Utils.magic: Uint8Array.t => unknown),
+          `{"\\\\x0102","\\\\x"}`->(Utils.magic: string => unknown),
+          `{"\\\\x03"}`->(Utils.magic: string => unknown),
+          `{{"\\\\x04"},{"\\\\x05"}}`->(Utils.magic: string => unknown),
+        ],
+      ))
+    })
+
     Async.it(
       "Should create condition and params for loading multiple records by IDs",
       async t => {
@@ -577,7 +636,7 @@ FROM "public"."envio_chains";`
 
         t.expect((condition, params)).toEqual((
           `"id" = ANY($1)`,
-          [["1", "2"]->(Utils.magic: array<string> => JSON.t)],
+          [["1", "2"]->(Utils.magic: array<string> => unknown)],
         ))
       },
     )
@@ -592,7 +651,7 @@ FROM "public"."envio_chains";`
           ~params,
         )
 
-        t.expect((condition, params)).toEqual((`"score" > $1`, [5->(Utils.magic: int => JSON.t)]))
+        t.expect((condition, params)).toEqual((`"score" > $1`, [5->(Utils.magic: int => unknown)]))
       },
     )
 
@@ -619,9 +678,9 @@ FROM "public"."envio_chains";`
         t.expect((condition, params)).toEqual((
           `("id" = $1 AND ("score" > $2 AND "score" < $3))`,
           [
-            "1"->(Utils.magic: string => JSON.t),
-            5->(Utils.magic: int => JSON.t),
-            10->(Utils.magic: int => JSON.t),
+            "1"->(Utils.magic: string => unknown),
+            5->(Utils.magic: int => unknown),
+            10->(Utils.magic: int => unknown),
           ],
         ))
       },
@@ -788,7 +847,8 @@ FROM "test_schema"."envio_checkpoints" cp
 INNER JOIN reorg_chains rc 
   ON cp."chain_id" = rc.id
 WHERE cp."block_hash" IS NOT NULL
-  AND cp."block_number" >= rc.safe_block;`
+  AND cp."block_number" >= rc.safe_block
+ORDER BY cp."id";`
 
         t.expect(
           query,
@@ -987,12 +1047,20 @@ SELECT * FROM unnest($1::BIGINT[],$2::INTEGER[],$3::INTEGER[],$4::TEXT[],$5::INT
       async t => {
         let query = InternalTable.Checkpoints.makePruneStaleCheckpointsQuery(
           ~pgSchema="test_schema",
+          ~safeCheckpoints=CheckpointBounds.EveryChain(10n),
+        )
+        let narrowed = InternalTable.Checkpoints.makePruneStaleCheckpointsQuery(
+          ~pgSchema="test_schema",
+          ~safeCheckpoints=CheckpointBounds.PerChain([(137->ChainId.fromInt, 20n)]),
         )
 
         t.expect(
-          query,
+          (query, narrowed),
           ~message="Prune stale checkpoints SQL should match exactly",
-        ).toBe(`DELETE FROM "test_schema"."envio_checkpoints" WHERE "id" < $1;`)
+        ).toEqual((
+          `DELETE FROM "test_schema"."envio_checkpoints" WHERE "id" < $1;`,
+          `DELETE FROM "test_schema"."envio_checkpoints" USING unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, checkpoint_id) WHERE "id" < envio_bounds.checkpoint_id AND envio_bounds.chain_id = "test_schema"."envio_checkpoints"."chain_id";`,
+        ))
       },
     )
   })
@@ -1023,31 +1091,80 @@ LIMIT 1;`
     Async.it(
       "Should create correct SQL for rollback progress diff",
       async t => {
-        let query = InternalTable.Checkpoints.makeGetRollbackProgressDiffQuery(
-          ~pgSchema="test_schema",
+        let makeQuery = floors =>
+          InternalTable.Checkpoints.makeGetRollbackProgressDiffQuery(
+            ~pgSchema="test_schema",
+            ~floors,
+          )
+        let query = makeQuery(
+          RollbackFloors.global(
+            ~floorCheckpointId=10n,
+            ~reorgChainId=137->ChainId.fromInt,
+            ~forkBlockNumber=100,
+          ),
+        )
+        let narrowed = makeQuery(
+          RollbackFloors.isolated(
+            ~chainId=137->ChainId.fromInt,
+            ~floorCheckpointId=10n,
+            ~forkBlockNumber=100,
+          ),
         )
 
-        let expectedQuery = `SELECT 
-  "chain_id"::float8 as "chain_id",
-  SUM("events_processed") as events_processed_diff,
-  MIN("block_number") - 1 as new_progress_block_number
-FROM "test_schema"."envio_checkpoints"
-WHERE "id" > $1
-GROUP BY "chain_id";`
-
-        t.expect(query, ~message="Rollback progress diff SQL should match exactly").toBe(
-          expectedQuery,
-        )
+        t.expect(
+          (query, narrowed),
+          ~message="Rollback progress diff SQL should match exactly",
+        ).toEqual((
+          `SELECT 
+  t."chain_id"::float8 as "chain_id",
+  SUM(t."events_processed") as events_processed_diff,
+  MIN(t."block_number") - 1 as new_progress_block_number
+FROM "test_schema"."envio_checkpoints" t
+WHERE t."id" > $1
+GROUP BY t."chain_id";`,
+          `SELECT 
+  t."chain_id"::float8 as "chain_id",
+  SUM(t."events_processed") as events_processed_diff,
+  MIN(t."block_number") - 1 as new_progress_block_number
+FROM "test_schema"."envio_checkpoints" t JOIN unnest($1::BIGINT[],$2::BIGINT[]) AS envio_bounds(chain_id, checkpoint_id) ON envio_bounds.chain_id = t."chain_id"
+WHERE t."id" > envio_bounds.checkpoint_id
+GROUP BY t."chain_id";`,
+        ))
       },
     )
   })
 })
 
+// Runs the validation path in makeStorageFromEnv taken only when
+// `storage.clickhouse: true` in config.yaml. The vars are cleared around the
+// call rather than assumed absent: the scenario's own ClickHouse tests need them
+// set, so an ambient value would leave nothing missing to report.
+let withoutClickHouseEnv = fn => {
+  let names = [
+    "ENVIO_CLICKHOUSE_HOST",
+    "ENVIO_CLICKHOUSE_USERNAME",
+    "ENVIO_CLICKHOUSE_PASSWORD",
+    "ENVIO_CLICKHOUSE_DATABASE",
+  ]
+  let env = NodeJs.Process.process.env
+  let saved = names->Array.map(name => (name, env->Utils.Dict.dangerouslyGetNonOption(name)))
+  names->Array.forEach(name => env->Dict.delete(name))
+  let result = try Ok(fn()) catch {
+  | exn => Error(exn)
+  }
+  saved->Array.forEach(((name, value)) =>
+    switch value {
+    | Some(value) => env->Dict.set(name, value)
+    | None => ()
+    }
+  )
+  switch result {
+  | Ok(value) => value
+  | Error(exn) => throw(exn)
+  }
+}
+
 describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
-  // Exercises the validation path in makeStorageFromEnv that's only taken
-  // when `storage.clickhouse: true` in config.yaml. The test suite does not
-  // set any ENVIO_CLICKHOUSE_* vars, so this should throw a user-friendly
-  // error listing every missing required env var in a single message.
   Async.it(
     "Throws listing all missing ENVIO_CLICKHOUSE_* env vars when storage.clickhouse=true",
     async t => {
@@ -1062,16 +1179,19 @@ describe("PgStorage.makeStorageFromEnv ClickHouse env var validation", () => {
           }: Config.storage
         ),
       }
-      let message = switch try {
-        let _ = PgStorage.makeStorageFromEnv(~config)
-        None
-      } catch {
-      | JsExn(e) => Some(e->JsExn.message->Option.getOr(""))
-      | _ => None
-      } {
-      | Some(m) => m
-      | None => ""
-      }
+      let message = withoutClickHouseEnv(
+        () =>
+          switch try {
+            let _ = PgStorage.makeStorageFromEnv(~config)
+            None
+          } catch {
+          | JsExn(e) => Some(e->JsExn.message->Option.getOr(""))
+          | _ => None
+          } {
+          | Some(m) => m
+          | None => ""
+          },
+      )
       t.expect(
         message,
         ~message="Should throw a helpful error naming every missing env var at once",

@@ -109,6 +109,9 @@ describe("Multichain: chain with height subscription stuck at head", () => {
         subscriptionOpened(),
         ~message="realtime transition should open the height subscription",
       ).toBe(true)
+      // The stream connects, so the wait relies on the staleness backstop
+      // rather than the immediate fallback a never-connected stream gets.
+      stuckChain.setHeightSubscriptionStatus(Live)
       // Release any pre-realtime wait still REST-polling at the same height so
       // it exits and gets discarded as stale.
       try stuckChain.resolveGetHeightOrThrow(101) catch {
