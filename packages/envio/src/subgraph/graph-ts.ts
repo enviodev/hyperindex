@@ -365,6 +365,11 @@ class BigInt_ extends Uint8Array {
 
 export { BigInt_ as BigInt };
 
+/** Significant digits graph-node keeps in a `BigDecimal`. */
+const BIG_DECIMAL_DIGITS = 34;
+
+const DivisionBigNumber = BigNumber.clone({ DECIMAL_PLACES: BIG_DECIMAL_DIGITS * 3 });
+
 export class BigDecimal {
   readonly value: BigNumber;
 
@@ -404,7 +409,13 @@ export class BigDecimal {
     return new BigDecimal(this.value.times(other.value));
   }
   div(other: BigDecimal): BigDecimal {
-    return new BigDecimal(this.value.div(other.value));
+    // graph-node carries a BigDecimal at 34 significant digits. bignumber.js
+    // divides to 20 *decimal places* by default, which is a different rule and
+    // a lossy one: 1 / 1e30 comes out as 0. Divide with room to spare, then
+    // round the way graph-node does.
+    return new BigDecimal(
+      new DivisionBigNumber(this.value).div(other.value).precision(BIG_DECIMAL_DIGITS),
+    );
   }
   equals(other: BigDecimal): boolean {
     return this.value.isEqualTo(other.value);
@@ -777,9 +788,9 @@ export class Entity extends TypedMap<string, Value> {
     this.set(key, Value.fromNull());
   }
   merge(sources: Entity[]): this {
-    // graph-ts assigns right to left, so the leftmost source wins a key.
-    for (let index = sources.length - 1; index >= 0; index--) {
-      for (const entry of sources[index].entries) {
+    // graph-ts assigns each source in turn, so the last one wins a shared key.
+    for (const source of sources) {
+      for (const entry of source.entries) {
         this.set(entry.key, entry.value);
       }
     }
@@ -1536,6 +1547,21 @@ const cryptoImpl = {
 
 export const crypto = strictNamespace("crypto", cryptoImpl);
 
+const ethereumUtilsImpl = {
+  getCreate2Address(from: Bytes, salt: Bytes, initCodeHash: Bytes): Bytes {
+    const preimage =
+      "0xff" +
+      from.toHexString().slice(2) +
+      salt.toHexString().slice(2) +
+      initCodeHash.toHexString().slice(2);
+    return Bytes.fromHexString(
+      "0x" + viemKeccak256(hexToBytes(preimage as `0x${string}`)).slice(26),
+    );
+  },
+};
+
+export const EthereumUtils = strictNamespace("EthereumUtils", ethereumUtilsImpl);
+
 export enum JSONValueKind {
   NULL = 0,
   BOOL = 1,
@@ -1818,11 +1844,20 @@ export const assemblyScriptPrimitives: Record<string, unknown> = {
 // unsupported one refuses by name like everything else.
 // ---------------------------------------------------------------------------
 
+/** graph-ts' BigInt, whether the caller passed one or the bytes of one. */
+function asGraphBigInt(value: Uint8Array): BigInt_ {
+  return value instanceof BigInt_ ? value : new BigInt_(fromLittleEndian(value, true));
+}
+
 const typeConversionImpl = {
   bytesToString: (bytes: Uint8Array) => new TextDecoder().decode(bytes),
   bytesToHex: (bytes: Uint8Array) => new ByteArray(bytes).toHexString(),
-  bigIntToString: (value: Uint8Array) => new BigInt_(fromLittleEndian(value, true)).toString(),
-  bigIntToHex: (value: Uint8Array) => new BigInt_(fromLittleEndian(value, true)).toHexString(),
+  // graph-ts types the argument as the byte array a BigInt is in
+  // AssemblyScript. This one carries its value instead of laying those bytes
+  // out (see `BigInt_`), so reading it as bytes would answer zero for every
+  // input.
+  bigIntToString: (value: Uint8Array) => asGraphBigInt(value).toString(),
+  bigIntToHex: (value: Uint8Array) => asGraphBigInt(value).toHexString(),
   stringToH160: (value: string) => Address.fromString(value) as Bytes,
   bytesToBase58: (_: Uint8Array): string => {
     throw unsupported("typeConversion.bytesToBase58", "a mapping handler");

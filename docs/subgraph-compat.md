@@ -45,7 +45,7 @@ by name. Newer than 0.0.9 is a §7 error.
 | Block handler `polling every: N` / `once` (0.0.8) | `onBlock` `_every: N` / `_gte = _lte = startBlock` | ✅ |
 | Block handler, unfiltered | `onBlock` `_every: 1` | ✅ |
 | Block handler's `ethereum.Block` arg | `block.number` direct; `block.timestamp` via an internal batched HyperSync effect (§4); other fields (`hash`, `parentHash`, …) → §7 error on access — a post-hoc fetch can't be made reorg-consistent | ⚠️ |
-| A template sharing a data source's name | graph-node keeps the two namespaces apart; envio has one, and one contract with a static address plus dynamically registered ones is the same thing — folded together, events unioned |
+| A template sharing a data source's name | graph-node keeps the two namespaces apart; envio has one, and one contract with a static address plus dynamically registered ones is the same thing — folded together, events unioned | ✅ |
 | Templates + `dataSource.create()` | address-less contract + `contractRegister` register pass, which resolves host ops by suspend-and-replay of its own (§5) so a mapping can read a contract before deciding what to create | ✅ |
 | File data sources (0.0.7) | `createEffect(cache: true)` against IPFS/Arweave gateway | ⚠️ emulated |
 | Declared `eth_calls` (1.2.0) | effects already batch/dedupe in preload; also makes the RPC requirement statically known → missing `ENVIO_SUBGRAPH_RPC` becomes a startup error (§6b) | ✅ |

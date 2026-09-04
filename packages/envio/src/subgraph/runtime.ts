@@ -554,6 +554,19 @@ async function runRegisterHost(effect: Effect, input: unknown): Promise<unknown>
  * replayed once it lands. Same shape as the handler pass, with the results
  * memoised here instead of in envio's effect tables.
  */
+/**
+ * A host op that failed, not a mapping that threw. The two are told apart
+ * because the register pass forgives a mapping error — see `runRegisterRounds`
+ * — and forgiving this one would silently drop the `dataSource.create()` calls
+ * the pass exists to collect.
+ */
+class RegisterHostFailure extends Error {
+  constructor(op: string, readonly reason: unknown) {
+    super(`Envio Subgraph could not resolve ${op} while registering contracts: ${String(reason)}`);
+    this.cause = reason;
+  }
+}
+
 function registerHostSync(scope: Scope, effect: Effect, input: unknown) {
   const key = `${effect.name} ${typeof input === "string" ? input : JSON.stringify(input)}`;
   const resolved = scope.resolved ?? new Map();
@@ -561,7 +574,7 @@ function registerHostSync(scope: Scope, effect: Effect, input: unknown) {
 
   const hit = resolved.get(key) ?? registerCache.get(key);
   if (hit) {
-    if ("error" in hit) throw hit.error;
+    if ("error" in hit) throw new RegisterHostFailure(effect.name, hit.error);
     return hit.value;
   }
 
@@ -592,6 +605,11 @@ async function runRegisterRounds(scope: Scope, fn: () => void): Promise<void> {
       runInScope(scope, fn);
     } catch (error) {
       if (error !== REGISTER_SUSPEND) {
+        // A host op that failed is never forgiven: the mapping was about to
+        // decide what to create from its answer, and the handler pass cannot
+        // repair a missed registration — addresses are registered at fetch
+        // time. Fail the batch and let the retry get a real answer.
+        if (error instanceof RegisterHostFailure) throw error;
         // This pass exists to collect `dataSource.create()` calls, and it runs
         // against a context that reads null for everything — so a handler that
         // assumes its entities exist throws here even though it is perfectly

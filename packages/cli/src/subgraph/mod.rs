@@ -403,15 +403,29 @@ pub fn translate(
             None => template_chain_ids.clone(),
         };
         for chain_id in ids {
-            if let Some(chain) = chains.get_mut(&chain_id) {
-                if let Some(chain_contracts) = chain.contracts.as_mut() {
-                    chain_contracts.push(ChainContract {
-                        name: source.name.clone(),
-                        address: NormalizedList::from(Vec::<String>::new()),
-                        start_block: None,
-                        config: None,
-                    });
-                }
+            // A template's network has to be one a data source already put on
+            // the config: only `dataSources` open a chain. Naming any other
+            // leaves the template attached to nothing, so nothing it creates is
+            // ever indexed — silently, since the translation otherwise
+            // succeeds.
+            let Some(chain) = chains.get_mut(&chain_id) else {
+                report.unsupported(
+                    format!(
+                        "the template \"{}\" on network \"{}\", which no data source indexes",
+                        source.name,
+                        source.network.as_deref().unwrap_or("")
+                    ),
+                    format!("subgraph.yaml → templates → {}", source.name),
+                );
+                continue;
+            };
+            if let Some(chain_contracts) = chain.contracts.as_mut() {
+                chain_contracts.push(ChainContract {
+                    name: source.name.clone(),
+                    address: NormalizedList::from(Vec::<String>::new()),
+                    start_block: None,
+                    config: None,
+                });
             }
         }
     }
@@ -422,6 +436,24 @@ pub fn translate(
         return Err(anyhow!(
             "subgraph.yaml declares no indexable data source. Add at least one `dataSources` \
              entry with a `network` and a contract address."
+        ));
+    }
+
+    // One endpoint, and nothing in it says which chain it serves. Over several
+    // chains the runtime would send every eth_call, getBalance and block
+    // lookup to it and answer the mapping with another chain's state — so this
+    // is refused here rather than answered wrongly at runtime.
+    if !rpc_urls.is_empty() && chains.len() > 1 {
+        let networks = chains
+            .keys()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(anyhow!(
+            "{RPC_ENV_VAR} names one endpoint, but this subgraph indexes {} chains ({networks}). \
+             An RPC call from a mapping has no way to pick between them. Index one network per \
+             project, or drop {RPC_ENV_VAR} and let HyperSync serve every chain.",
+            chains.len()
         ));
     }
 
@@ -827,6 +859,66 @@ type Gravatar @entity {
         };
 
         assert_eq!(selection(&over_rpc), selection(&over_hypersync));
+    }
+
+    // ENVIO_SUBGRAPH_RPC is one endpoint and says nothing about which chain it
+    // serves, so over several chains the runtime would answer an eth_call with
+    // another chain's state.
+    #[test]
+    fn refuses_an_rpc_endpoint_across_several_chains() {
+        // Gravity twice, on two networks, and no templates — so the only thing
+        // under test is the endpoint.
+        let one_source = MANIFEST.split("templates:").next().unwrap();
+        let second = one_source
+            .split("dataSources:")
+            .nth(1)
+            .unwrap()
+            .replace("network: mainnet", "network: matic")
+            .replace("name: Gravity", "name: GravityOnPolygon");
+        let two_chains = format!("{one_source}{second}");
+
+        let err = translate(
+            &two_chains,
+            SCHEMA,
+            "gravatar",
+            Some("https://rpc.example.test"),
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .expect_err("expected one endpoint over two chains to be refused");
+
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("names one endpoint, but this subgraph indexes 2 chains"),
+            "unexpected error: {message}"
+        );
+    }
+
+    // Only `dataSources` open a chain, so a template on any other network is
+    // attached to nothing and never fires.
+    #[test]
+    fn refuses_a_template_on_a_network_no_data_source_indexes() {
+        let yaml = MANIFEST.replace(
+            "    name: Wallet\n    network: mainnet",
+            "    name: Wallet\n    network: matic",
+        );
+        let err = translate(
+            &yaml,
+            SCHEMA,
+            "gravatar",
+            None,
+            ".",
+            &HashMap::new(),
+            &ambiguous(),
+        )
+        .expect_err("expected an unindexed template network to be refused");
+
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("the template \"Wallet\" on network \"matic\""),
+            "unexpected error: {message}"
+        );
     }
 
     #[test]

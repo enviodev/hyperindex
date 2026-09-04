@@ -1,5 +1,3 @@
-// A real subgraph project — manifest, schema and AssemblyScript mapping, all
-// unmodified — running on HyperIndex.
 let _ = InternalTestIndexer.fromSubgraph(
   ~manifest=`
 specVersion: 0.0.5

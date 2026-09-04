@@ -152,6 +152,9 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # This job runs graph-cli over the pull request's own files, and does
+          # no authenticated git operation of its own.
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v5
         with:

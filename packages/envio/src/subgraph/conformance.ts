@@ -60,6 +60,8 @@ const _log: typeof GraphTs.log = Shim.log;
 
 const _crypto: typeof GraphTs.crypto = Shim.crypto;
 
+const _EthereumUtils: typeof GraphTs.EthereumUtils = Shim.EthereumUtils;
+
 // @ts-expect-error `json.toBigInt` returns a BigInt (see above).
 const _json: typeof GraphTs.json = Shim.json;
 
@@ -91,6 +93,7 @@ void [
   _DataSourceContext,
   _log,
   _crypto,
+  _EthereumUtils,
   _json,
   _JSONValue,
   _JSONValueKind,

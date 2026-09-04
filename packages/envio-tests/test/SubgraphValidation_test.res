@@ -2,10 +2,27 @@ open Vitest
 
 // One case per §7 row that translation can reach. Runtime-access refusals live
 // in SubgraphRuntimeRefusal_test.res, where a mapping actually runs.
+// What `translate` answers when nothing was refused. A case that expects the
+// schema to be accepted asserts this, so an unrelated failure can't pass for
+// acceptance by merely not mentioning the word under test.
+let accepted = "the translation to fail, but it succeeded"
+
+let transferAbi = `[{"type":"event","name":"Transfer","anonymous":false,"inputs":[{"name":"from","type":"address","indexed":true},{"name":"to","type":"address","indexed":true},{"name":"value","type":"uint256","indexed":false}]}]`
+
+// The ABI travels with every case: without it translation fails on the ABI
+// rather than on what the case is about, and a case expecting acceptance would
+// never see it.
 let translate = (~manifest, ~schema) =>
   try {
-    InternalTestIndexer.fromSubgraph(~manifest, ~schema)->ignore
-    "the translation to fail, but it succeeded"
+    InternalTestIndexer.fromSubgraph(
+      ~manifest=manifest->String.replace(
+        "      abis: []",
+        "      abis:\n        - name: Token\n          file: ./abis/Token.json",
+      ),
+      ~schema,
+      ~files=Dict.fromArray([("./abis/Token.json", transferAbi)]),
+    )->ignore
+    accepted
   } catch {
   | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
   }
@@ -17,7 +34,6 @@ type Token @entity {
 }
 `
 
-let transferAbi = `[{"type":"event","name":"Transfer","anonymous":false,"inputs":[{"name":"from","type":"address","indexed":true},{"name":"to","type":"address","indexed":true},{"name":"value","type":"uint256","indexed":false}]}]`
 
 let manifestWith = mapping => `
 specVersion: 0.0.5
@@ -161,7 +177,7 @@ type Token implements Named @entity {
 }
 `,
     )
-    t.expect(message->String.includes("interface"), ~message).toEqual(false)
+    t.expect(message).toEqual(accepted)
   })
 
   it("refuses timeseries entities", t => {
@@ -294,7 +310,7 @@ type Token @entity {
 }
 `,
     )
-    t.expect(message->String.includes("@secretIndex"), ~message).toEqual(false)
+    t.expect(message).toEqual(accepted)
   })
 
   it("refuses an unknown @entity argument", t => {

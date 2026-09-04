@@ -107,9 +107,14 @@ pub fn from_user_api(
 
 /// Parses a subgraph project the same way `from_user_api` parses an envio one:
 /// subgraph.yaml and its schema in memory, ABI bodies supplied through `files`,
-/// no filesystem or process environment. The returned config carries the
-/// translated manifest under `subgraph`, which is what activates the subgraph
-/// runtime inside the `envio` package.
+/// no process environment. The returned config carries the translated manifest
+/// under `subgraph`, which is what activates the subgraph runtime inside the
+/// `envio` package.
+///
+/// The one thing read from disk is the mappings, and only when `root` names
+/// where they are: the field selection follows what they touch. Without
+/// `root` nothing is scanned — walking the process working directory would
+/// make the config depend on where node happened to start.
 #[napi_derive::napi]
 pub fn from_subgraph(
     manifest: String,
@@ -121,8 +126,11 @@ pub fn from_subgraph(
     let files = options.files.unwrap_or_default();
     let name = options.name.unwrap_or_else(|| "subgraph".to_string());
 
+    let mapping_sources = match &options.root {
+        Some(root) => crate::subgraph::usage::gather(std::path::Path::new(root)),
+        None => Vec::new(),
+    };
     let root = options.root.unwrap_or_else(|| ".".to_string());
-    let mapping_sources = crate::subgraph::usage::gather(std::path::Path::new(&root));
     let config = SystemConfig::parse_subgraph(
         &manifest,
         &schema,

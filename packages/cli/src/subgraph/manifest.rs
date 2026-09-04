@@ -86,6 +86,12 @@ struct Obj<'a> {
     map: &'a serde_yaml::Mapping,
     path: String,
     seen: HashSet<String>,
+    /// Keys that are present but hold another YAML type, with what was
+    /// expected. Reading one answers `None`, and the key counts as consumed —
+    /// so without this the field would be neither applied nor reported.
+    /// `address: 0x1` unquoted is the case that bites: serde_yaml reads an
+    /// integer, and the contract silently loses its address.
+    mistyped: Vec<(String, &'static str)>,
 }
 
 impl<'a> Obj<'a> {
@@ -95,6 +101,7 @@ impl<'a> Obj<'a> {
                 map,
                 path: path.to_string(),
                 seen: HashSet::new(),
+                mistyped: Vec::new(),
             }),
             None => {
                 report.unknown(format!("the value at \"{path}\""), path.to_string());
@@ -116,21 +123,37 @@ impl<'a> Obj<'a> {
         self.map.get(Value::String(key.to_string()))
     }
 
+    /// Reads `key` as one YAML type, noting a mismatch for `finish` to report.
+    fn typed<T>(
+        &mut self,
+        key: &str,
+        expected: &'static str,
+        read: impl Fn(&'a Value) -> Option<T>,
+    ) -> Option<T> {
+        let value = self.get(key)?;
+        match read(value) {
+            Some(read) => Some(read),
+            None => {
+                self.mistyped.push((key.to_string(), expected));
+                None
+            }
+        }
+    }
+
     fn string(&mut self, key: &str) -> Option<String> {
-        self.get(key)
-            .and_then(|v| v.as_str().map(|s| s.to_string()))
+        self.typed(key, "a string", |v| v.as_str().map(|s| s.to_string()))
     }
 
     fn u64(&mut self, key: &str) -> Option<u64> {
-        self.get(key).and_then(|v| v.as_u64())
+        self.typed(key, "a number", Value::as_u64)
     }
 
     fn bool(&mut self, key: &str) -> Option<bool> {
-        self.get(key).and_then(|v| v.as_bool())
+        self.typed(key, "a boolean", Value::as_bool)
     }
 
     fn seq(&mut self, key: &str) -> Vec<&'a Value> {
-        match self.get(key).and_then(|v| v.as_sequence()) {
+        match self.typed(key, "a list", Value::as_sequence) {
             Some(items) => items.iter().collect(),
             None => vec![],
         }
@@ -145,6 +168,12 @@ impl<'a> Obj<'a> {
 
     /// Reports every key that wasn't read. Call once per mapping, last.
     fn finish(self, report: &mut Report) {
+        for (key, expected) in &self.mistyped {
+            report.unknown(
+                format!("the value of \"{key}\", which has to be {expected}"),
+                self.child_path(key),
+            );
+        }
         for (key, _) in self.map.iter() {
             let Some(key) = key.as_str() else { continue };
             if !self.seen.contains(key) {

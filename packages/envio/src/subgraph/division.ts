@@ -78,6 +78,11 @@ export function rewriteDivision(source: string): string {
     return source;
   }
 
+  const isSimpleTarget = (node: any): boolean =>
+    node.kind === ts.SyntaxKind.Identifier ||
+    (node.kind === ts.SyntaxKind.PropertyAccessExpression && isSimpleTarget(node.expression)) ||
+    node.kind === ts.SyntaxKind.ThisKeyword;
+
   const edits: Edit[] = [];
   const visit = (node: any) => {
     if (
@@ -88,6 +93,24 @@ export function rewriteDivision(source: string): string {
       const operator = ts.skipTrivia(source, node.operatorToken.pos);
       edits.push({ at: left, length: 0, text: `${DIVIDE_HELPER}(` });
       edits.push({ at: operator, length: node.operatorToken.end - operator, text: "," });
+      edits.push({ at: node.right.end, length: 0, text: ")" });
+    }
+    // `x /= y` divides too. Rewriting it needs the target twice, so it is only
+    // safe when reading the target has no effect of its own — an identifier or
+    // a dotted path. `a[i++] /= y` is left alone rather than evaluated twice.
+    if (
+      node.kind === ts.SyntaxKind.BinaryExpression &&
+      node.operatorToken?.kind === ts.SyntaxKind.SlashEqualsToken &&
+      isSimpleTarget(node.left)
+    ) {
+      const left = ts.skipTrivia(source, node.left.pos);
+      const target = source.slice(left, node.left.end);
+      const operator = ts.skipTrivia(source, node.operatorToken.pos);
+      edits.push({
+        at: operator,
+        length: node.operatorToken.end - operator,
+        text: `= ${DIVIDE_HELPER}(${target},`,
+      });
       edits.push({ at: node.right.end, length: 0, text: ")" });
     }
     ts.forEachChild(node, visit);
