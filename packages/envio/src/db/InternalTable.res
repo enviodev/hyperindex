@@ -220,7 +220,9 @@ module Chains = {
   type t = {
     @as("id") id: ChainId.t,
     @as("ecosystem") ecosystem: string,
-    @as("start_block") startBlock: int,
+    // Null until a `start_block: latest` chain reads its head - see
+    // `ChainState.resolveStartBlock`. Every other chain has it from config.
+    @as("start_block") startBlock: Null.t<int>,
     @as("end_block") endBlock: Null.t<int>,
     @as("max_reorg_depth") maxReorgDepth: int,
     @as("source_block") blockHeight: int,
@@ -238,7 +240,7 @@ module Chains = {
       // so consumers should treat (ecosystem, id) as the chain's identity.
       mkField((#ecosystem: field :> string), String, ~fieldSchema=S.string),
       // Values populated from config
-      mkField((#start_block: field :> string), Int32, ~fieldSchema=S.int),
+      mkField((#start_block: field :> string), Int32, ~fieldSchema=S.null(S.int), ~isNullable),
       mkField((#end_block: field :> string), Int32, ~fieldSchema=S.null(S.int), ~isNullable),
       mkField((#max_reorg_depth: field :> string), Int32, ~fieldSchema=S.int),
       // Block number of the latest block that was fetched from the source
@@ -272,7 +274,7 @@ module Chains = {
     {
       id: chainConfig.id,
       ecosystem: (chainConfig.ecosystem: Ecosystem.name :> string),
-      startBlock: chainConfig.startBlock,
+      startBlock: chainConfig.startBlock->Null.fromOption,
       endBlock: chainConfig.endBlock->Null.fromOption,
       maxReorgDepth: chainConfig.maxReorgDepth,
       blockHeight: 0,
@@ -342,6 +344,16 @@ WHERE "${(#id: field :> string)}" = $1;`
   // sticky in-memory `ChainState.markReady`. Without it a partial recovery (eg a
   // chain added to an already-synced indexer) would restamp the ready chains in
   // the database while their in-memory copies kept the old value — and the next
+  // Written once, by the chain that just read its head, and never again: a
+  // resolved `latest` start block is what keeps downtime backfilled instead of
+  // skipped, so a second resolution against a newer head would be a silent gap.
+  // The IS NULL guard makes that structural rather than a matter of call order.
+  let makeSetStartBlockQuery = (~pgSchema) =>
+    `UPDATE "${pgSchema}"."${table.tableName}"
+SET "${(#start_block: field :> string)}" = $1
+WHERE "${(#id: field :> string)}" = $2
+  AND "${(#start_block: field :> string)}" IS NULL;`
+
   // chain-metadata write would push the stale value back over the committed one.
   let makeSetReadyAtQuery = (~pgSchema) =>
     `UPDATE "${pgSchema}"."${table.tableName}"
@@ -351,7 +363,7 @@ WHERE "${(#id: field :> string)}" = $2
 
   type rawInitialState = {
     id: ChainId.t,
-    startBlock: int,
+    startBlock: Null.t<int>,
     endBlock: Null.t<int>,
     maxReorgDepth: int,
     firstEventBlockNumber: Null.t<int>,

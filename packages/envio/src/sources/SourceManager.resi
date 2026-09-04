@@ -21,10 +21,6 @@ let make: (
 
 let getActiveSource: t => Source.t
 
-// Releases everything this SourceManager holds: height streams closed, waiters
-// dropped, poll loops ended. For a manager built for a single job, once that job
-// is over. Not for one still driving a chain.
-let dispose: t => unit
 
 type requestStatSample = {
   sourceName: string,

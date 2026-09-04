@@ -40,7 +40,7 @@ let makeResumedChainState = (
   ~firstEventBlockNumber,
 ): Persistence.initialChainState => {
   id: chainId,
-  startBlock: 0,
+  startBlock: Some(0),
   endBlock: None,
   maxReorgDepth: 200,
   progressBlockNumber,
@@ -50,6 +50,10 @@ let makeResumedChainState = (
   addressRows: AddressRows.emptySeedRows(),
   sourceBlockNumber: 1000,
 }
+
+// These chains all carry a resolved start block, so nothing here reaches the
+// storage - it only has to exist.
+let persistence = MockStorage.make([])->MockStorage.toPersistence(~config=TestConfig.default)
 
 let makeChainState = (resumedChainState, ~reorgCheckpoints=[]) =>
   ChainState.makeFromDbState(
@@ -61,11 +65,73 @@ let makeChainState = (resumedChainState, ~reorgCheckpoints=[]) =>
     ~config=TestConfig.default,
     ~contractMapping=TestConfig.default.contractMapping,
     ~registrationsByChainId,
+    ~persistence,
   )
 
+describe("ChainState onBlock start block validation", () => {
+  // Checked here rather than at registration because `start_block: latest` has
+  // no start block to compare against until the chain reads its head, which
+  // happens long after handler modules load.
+  Async.it("rejects an onBlock handler that starts before the chain does", async t => {
+    let registrations: HandlerRegister.registrationsByChainId = Dict.fromArray([
+      (
+        chainId->ChainId.toString,
+        (
+          {
+            onEventRegistrations: [],
+            onBlockRegistrations: [
+              {
+                Internal.index: 0,
+                name: "tooEarly",
+                chainId,
+                startBlock: Some(0),
+                endBlock: None,
+                interval: 1,
+                handler: "mock onBlock handler"->(
+                  Utils.magic: string => Internal.onBlockArgs => promise<unit>
+                ),
+              },
+            ],
+          }: HandlerRegister.chainRegistrations
+        ),
+      ),
+    ])
+
+    let error = try {
+      let _ = await ChainState.makeFromDbState(
+        baseChainConfig,
+        ~resumedChainState={
+          ...makeResumedChainState(
+            ~progressBlockNumber=-1,
+            ~numEventsProcessed=0.,
+            ~firstEventBlockNumber=None,
+          ),
+          startBlock: Some(1),
+        },
+        ~reorgCheckpoints=[],
+        ~isInReorgThreshold=false,
+        ~isRealtime=false,
+        ~config=TestConfig.default,
+        ~contractMapping=TestConfig.default.contractMapping,
+        ~registrationsByChainId=registrations,
+        ~persistence,
+      )
+      None
+    } catch {
+    | JsExn(e) => e->JsExn.message
+    }
+
+    t.expect(error).toEqual(
+      Some(
+        `The start block for onBlock handler "tooEarly" is less than the chain start block (1). This is not supported yet.`,
+      ),
+    )
+  })
+})
+
 describe("ChainState chain density seed (on resume)", () => {
-  it("seeds from cumulative resumed progress when there's a first event block", t => {
-    let cs = makeChainState(
+  Async.it("seeds from cumulative resumed progress when there's a first event block", async t => {
+    let cs = await makeChainState(
       makeResumedChainState(
         ~progressBlockNumber=110,
         ~numEventsProcessed=500.,
@@ -76,8 +142,8 @@ describe("ChainState chain density seed (on resume)", () => {
     t.expect(cs->ChainState.chainDensity).toEqual(Some(5.))
   })
 
-  it("is None on a fresh chain with no resumed progress", t => {
-    let cs = makeChainState(
+  Async.it("is None on a fresh chain with no resumed progress", async t => {
+    let cs = await makeChainState(
       makeResumedChainState(
         ~progressBlockNumber=-1,
         ~numEventsProcessed=0.,
@@ -87,8 +153,8 @@ describe("ChainState chain density seed (on resume)", () => {
     t.expect(cs->ChainState.chainDensity).toEqual(None)
   })
 
-  it("is None when no event has been found yet, even with resumed progress", t => {
-    let cs = makeChainState(
+  Async.it("is None when no event has been found yet, even with resumed progress", async t => {
+    let cs = await makeChainState(
       makeResumedChainState(
         ~progressBlockNumber=110,
         ~numEventsProcessed=0.,
@@ -156,8 +222,8 @@ describe("ChainState chain density EMA (per batch)", () => {
     registeredAddresses: [],
   }
 
-  it("seeds density from the first batch's own events/block (no prior density to blend)", t => {
-    let cs = makeChainState(
+  Async.it("seeds density from the first batch's own events/block (no prior density to blend)", async t => {
+    let cs = await makeChainState(
       makeResumedChainState(
         ~progressBlockNumber=0,
         ~numEventsProcessed=0.,
@@ -173,8 +239,8 @@ describe("ChainState chain density EMA (per batch)", () => {
     t.expect(cs->ChainState.chainDensity).toEqual(Some(10.))
   })
 
-  it("stays None after a progress-only batch with no events", t => {
-    let cs = makeChainState(
+  Async.it("stays None after a progress-only batch with no events", async t => {
+    let cs = await makeChainState(
       makeResumedChainState(
         ~progressBlockNumber=0,
         ~numEventsProcessed=0.,
@@ -190,8 +256,8 @@ describe("ChainState chain density EMA (per batch)", () => {
     t.expect(cs->ChainState.chainDensity).toEqual(None)
   })
 
-  it("blends with the previous density weighted by the batch's block span", t => {
-    let cs = makeChainState(
+  Async.it("blends with the previous density weighted by the batch's block span", async t => {
+    let cs = await makeChainState(
       makeResumedChainState(
         ~progressBlockNumber=0,
         ~numEventsProcessed=0.,

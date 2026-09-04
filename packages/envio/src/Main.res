@@ -125,8 +125,13 @@ let buildChainsObject = (~config: Config.t) => {
         enumerable: true,
         get: () => {
           switch getInitialChainState(~chainId=chainConfig.id) {
-          | Some(chainState) => chainState.startBlock
-          | None => chainConfig.startBlock
+          | Some({startBlock: Some(startBlock)}) => startBlock
+          | _ =>
+            // A `start_block: latest` chain has no start block until it reads
+            // its head, and that happens after handler modules load. The public
+            // type is `number`, so that one window - a top-level read on a first
+            // deploy - reports 0 rather than undefined.
+            chainConfig.startBlock->Option.getOr(0)
           }
         },
       },
@@ -589,7 +594,6 @@ let migrate = async (~reset) => {
     ~envioInfo=getEnvioInfo(),
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
-    ~lowercaseAddresses=config.lowercaseAddresses,
   )
   await persistence.storage.close()
 }
@@ -642,27 +646,7 @@ let start = async (
     ~envioInfo=getEnvioInfo(),
     ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
     ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
-    ~lowercaseAddresses=config.lowercaseAddresses,
   )
-
-  // From here on every chain's start block is the concrete, DB-durable value:
-  // freshly resolved on first deploy (see StartBlockResolver), reused as-is on
-  // resume. This only rebinds this in-memory copy of `config` - `Config.load()`
-  // itself (and the raw JSON snapshotted into `envio_info`) still say "latest",
-  // which is what keeps the config-compat check stable across normal resumes
-  // (a `-r`/`--restart` deploy is a fresh one, and resolves "latest" again).
-  let config = {
-    ...config,
-    chainMap: config.chainMap->ChainMap.mapWithKey((chainId, chainConfig) =>
-      switch getInitialChainState(~chainId) {
-      | Some({startBlock}) => {...chainConfig, startBlock}
-      // Not in persisted state: a chain added to config.yaml after the schema
-      // was initialized. Dynamic chain addition isn't supported (that's a
-      // resync from scratch), so it's left as-is.
-      | None => chainConfig
-      }
-    ),
-  }
 
   // Loads user handler files, which register handler/contractRegister/where
   // state into the global `HandlerRegister` registry as a side effect; this
@@ -715,7 +699,7 @@ let start = async (
     )
   }
 
-  let state = IndexerState.makeFromDbState(
+  let state = await IndexerState.makeFromDbState(
     ~config,
     ~persistence,
     ~initialState=persistence->Persistence.getInitializedState,

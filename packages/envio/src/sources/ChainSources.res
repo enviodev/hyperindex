@@ -1,6 +1,5 @@
-// Sits below `ChainState`/`Persistence` in the module graph so that
-// `StartBlockResolver` (called from `Persistence.init`) can build a chain's
-// sources without a dependency cycle.
+// One chain's sources, from its config. Split out of `ChainState` only to keep
+// the per-ecosystem switch out of the way of what that module is about.
 let make = (
   ~chainConfig: Config.chain,
   ~onEventRegistrations: array<Internal.onEventRegistration>,

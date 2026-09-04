@@ -6,11 +6,12 @@ open Vitest
 // the chain's head has moved on, so any downtime gets backfilled rather than
 // skipped.
 //
-// The resolution call happens inside `Persistence.init`, which `IndexerRunner`
-// fully awaits before a test body ever runs - so, unlike every other height
-// call in this suite, it can't be answered via `source.setAutoHeight` from
-// inside the test. It's pre-configured via `~autoHeight` on the mock instead
-// (see MockSource.make / Scenario.sourceMock).
+// The resolution happens while the chain is being built, from the very sources
+// it then indexes with. `IndexerRunner` fully awaits that before a test body
+// ever runs - so, unlike every other height call in this suite, it can't be
+// answered via `source.setAutoHeight` from inside the test. It's pre-configured
+// via `~autoHeight` on the mock instead (see MockSource.make /
+// Scenario.sourceMock).
 
 let schema = `
 type A {

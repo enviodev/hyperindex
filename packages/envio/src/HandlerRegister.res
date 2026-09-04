@@ -794,11 +794,9 @@ let registerOnBlock = (
 
       if shouldRegister {
         matchedAny := true
-        if range._gte->Option.getOr(chainConfig.startBlock) < chainConfig.startBlock {
-          JsError.throwWithMessage(
-            `The start block for onBlock handler "${name}" is less than the chain start block (${chainConfig.startBlock->Int.toString}). This is not supported yet.`,
-          )
-        }
+        // The matching start-block check lives in `ChainState`, against the
+        // chain's resolved start block: `start_block: latest` has none until the
+        // chain reads its head, which happens after handlers are loaded.
         switch chainConfig.endBlock {
         | Some(chainEndBlock) =>
           if range._lte->Option.getOr(chainEndBlock) > chainEndBlock {

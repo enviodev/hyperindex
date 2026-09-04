@@ -137,10 +137,9 @@ let run = async (
       ~resetCommand="envio dev -r",
       ~runCommand=Some("envio dev"),
       ~reset,
-      ~lowercaseAddresses=config.lowercaseAddresses,
     )
 
-    let state = IndexerState.makeFromDbState(
+    let state = await IndexerState.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~persistence,

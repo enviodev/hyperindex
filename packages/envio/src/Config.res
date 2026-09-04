@@ -46,11 +46,11 @@ type chain = {
   name: string,
   id: ChainId.t,
   ecosystem: Ecosystem.name,
-  // For `start_block: latest` this holds 0 until `StartBlockResolver` swaps in
-  // the chain's head on first deploy; `isLatestStartBlock` marks which chains
-  // still need that. Paths that never resolve (the test indexer) keep the 0.
-  startBlock: int,
-  isLatestStartBlock: bool,
+  // `None` is `start_block: latest`, which has no value until the chain's head
+  // is read on first deploy. What config.yaml says, never rewritten: once
+  // resolved, the block lives in the database (`envio_chains.start_block`) and
+  // that is what every consumer past startup reads.
+  startBlock: option<int>,
   endBlock?: int,
   maxReorgDepth: int,
   blockLag: int,
@@ -161,7 +161,8 @@ let chainContractSchema = S.schema(s =>
   }
 )
 
-// `None` is `start_block: latest`, resolved at runtime by StartBlockResolver.
+// `None` is `start_block: latest`, resolved against the chain's head on first
+// deploy.
 let startBlockSchema = S.union([
   S.int->S.shape(n => Some(n)),
   S.literal("latest")->S.shape(_ => None),
@@ -938,8 +939,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         name: chainName,
         id: chainId,
         ecosystem: ecosystemName,
-        startBlock: publicChainConfig["startBlock"]->Option.getOr(0),
-        isLatestStartBlock: publicChainConfig["startBlock"]->Option.isNone,
+        startBlock: publicChainConfig["startBlock"],
         endBlock: ?publicChainConfig["endBlock"],
         maxReorgDepth: switch ecosystemName {
         | Ecosystem.Evm => publicChainConfig["maxReorgDepth"]->Option.getOr(200)
