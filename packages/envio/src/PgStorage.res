@@ -277,6 +277,10 @@ let makeInitializeTransaction = (
   ~pgSchema,
   ~pgUser,
   ~isHasuraEnabled,
+  // The whole schema's sequence, not one derived from `entities`: those are the
+  // entities Postgres stores, and an entity kept only in a sink still decides
+  // how the run counts its checkpoints.
+  ~checkpointSequence: CheckpointSequence.t,
   ~chainConfigs=[],
   ~entities=[],
   ~enums=[],
@@ -292,7 +296,7 @@ let makeInitializeTransaction = (
     InternalTable.EnvioInfo.table,
     InternalTable.EnvioContracts.table,
     InternalTable.EnvioAddresses.table,
-    InternalTable.Checkpoints.tableFor(CheckpointSequence.fromEntities(entities)),
+    InternalTable.Checkpoints.tableFor(checkpointSequence),
     InternalTable.RawEvents.table,
   ]
 
@@ -1856,6 +1860,7 @@ let make = (
     let queries = makeInitializeTransaction(
       ~pgSchema,
       ~pgUser,
+      ~checkpointSequence=CheckpointSequence.fromEntities(entities),
       ~entities=pgEntities,
       ~enums,
       ~chainConfigs,

@@ -188,6 +188,7 @@ describe("Test PgStorage SQL generation functions", () => {
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
           ~pgUser="postgres",
+          ~checkpointSequence=Global,
           ~entities,
           ~enums,
           ~chainConfigs=[
@@ -294,6 +295,7 @@ VALUES (1, 'evm', 100, 200, 10, 0, NULL, -1, -1, NULL, 0, false),
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="test_schema",
           ~pgUser="postgres",
+          ~checkpointSequence=PerChain,
           ~enums=[],
           ~isHasuraEnabled=false,
         )
@@ -359,6 +361,7 @@ FROM "test_schema"."envio_chains";`
         let queries = PgStorage.makeInitializeTransaction(
           ~pgSchema="public",
           ~pgUser="postgres",
+          ~checkpointSequence=Global,
           ~entities,
           ~enums=[],
           ~isHasuraEnabled=false,
@@ -432,6 +435,7 @@ FROM "public"."envio_chains";`
           PgStorage.makeInitializeTransaction(
             ~pgSchema="test_schema",
             ~pgUser="postgres",
+            ~checkpointSequence=Global,
             ~entities,
             ~enums=[],
             ~isHasuraEnabled=false,

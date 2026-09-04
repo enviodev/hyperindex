@@ -302,19 +302,22 @@ let globalFloors = RollbackFloors.make(
 // rollback or a prune applies is an id range the chain would only get in the way
 // of.
 describe("Checkpoints primary key", () => {
-  let checkpointsDdl = (~schema) =>
+  let checkpointsDdl = (~schema) => {
+    let config = InternalTestIndexer.fromUserApi(
+      ~configYaml=configYaml(~disableDefaultCrossChain=true),
+      ~schema,
+    ).config
     PgStorage.makeInitializeTransaction(
       ~pgSchema="public",
       ~pgUser="postgres",
       ~isHasuraEnabled=false,
-      ~entities=InternalTestIndexer.fromUserApi(
-        ~configYaml=configYaml(~disableDefaultCrossChain=true),
-        ~schema,
-      ).config.userEntities,
+      ~checkpointSequence=config.checkpointSequence,
+      ~entities=config.userEntities,
     )
     ->Array.flatMap(query => query->String.split("\n"))
     ->Array.find(query => query->String.includes(`"envio_checkpoints"`))
     ->Option.getOrThrow
+  }
 
   it("Keys on the chain and the id when each chain counts its own", t => {
     t.expect(
