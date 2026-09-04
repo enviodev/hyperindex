@@ -69,6 +69,7 @@ type serverOptions = {
   port?: int,
   exposeErrors?: bool,
   actionSecret?: string,
+  privateKeys?: array<string>,
   // `null` means ready. A string is the reason it is not, and reaches the
   // probe's body, so an operator reads it wherever the failed probe surfaces
   // rather than by correlating logs.
@@ -420,6 +421,7 @@ let serve = async (
     ?port,
     exposeErrors,
     actionSecret: ?Env.Resolvers.actionSecret(),
+    privateKeys: Env.Resolvers.privateKeys(),
     checkCompatible: compatibilityOf(~pool, ~pgSchema, ~envioInfo),
   }) catch {
   | exn =>

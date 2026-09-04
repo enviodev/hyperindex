@@ -2444,9 +2444,17 @@ export function createResolver<
   readonly args?: AS;
   /** The result schema. Determines the field's GraphQL type. */
   readonly output: OS;
-  /** Register the field on the admin schema only: it stays out of public
-   *  introspection and is unexecutable without the admin secret. */
+  /** Keep the field off the public schema: it is published so Hasura will
+   *  route to it, but the service refuses any caller that does not present a
+   *  key from `ENVIO_RESOLVERS_PRIVATE_KEYS` in the `x-envio-private-key`
+   *  header. With no keys configured it refuses everyone. */
+  readonly private?: boolean;
+  /** @deprecated The former spelling of `private`, and identical to it. */
   readonly admin?: boolean;
+  /** Refuse to answer when the furthest-behind chain is more than this many
+   *  blocks from head, with a 503. Omitted, the resolver answers whatever the
+   *  index currently holds. */
+  readonly maxBlocksBehind?: number;
   /** The `statement_timeout` every query this resolver runs is bounded by.
    *  Required: it is the only thing bounding a runaway query. */
   readonly timeoutMs: number;

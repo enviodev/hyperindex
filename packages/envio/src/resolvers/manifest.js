@@ -320,7 +320,13 @@ export function buildManifest(resolvers) {
         };
       }),
       type: toGraphQLType(resolver.output, types, `${name} result`),
-      admin: resolver.admin === true,
+      // `admin` stays in the manifest under its old name so a serve build that
+      // predates `private` keeps reading the flag it knows.
+      admin: resolver.private === true,
+      ...(resolver.private === true ? { private: true } : {}),
+      ...(resolver.maxBlocksBehind === undefined
+        ? {}
+        : { maxBlocksBehind: resolver.maxBlocksBehind }),
       timeoutMs: resolver.timeoutMs,
     });
   }

@@ -46,6 +46,16 @@ export function createResolver(options) {
   if (typeof handler !== "function") {
     throw new Error(`Resolver '${name}' requires a \`handler\` function`);
   }
+  if (
+    options.maxBlocksBehind !== undefined &&
+    (typeof options.maxBlocksBehind !== "number" ||
+      !Number.isSafeInteger(options.maxBlocksBehind) ||
+      options.maxBlocksBehind < 0)
+  ) {
+    throw new Error(
+      `Resolver '${name}' has an invalid \`maxBlocksBehind\`. It is how far behind head this resolver will still answer, in blocks, so it must be a whole number of blocks and not negative.`
+    );
+  }
   if (typeof timeoutMs !== "number" || timeoutMs <= 0) {
     throw new Error(
       `Resolver '${name}' requires a positive \`timeoutMs\`. It becomes the statement_timeout on every query the resolver makes, which is the only thing bounding a runaway one.`
@@ -63,7 +73,11 @@ export function createResolver(options) {
     description: options.description,
     args: options.args ?? {},
     output,
-    admin: options.admin === true,
+    // `admin` is the old spelling. It named a Hasura role that is no longer how
+    // these are reached, so `private` is the name now; both mean the same
+    // thing -- off the public schema unless the caller presents a key.
+    private: options.private === true || options.admin === true,
+    maxBlocksBehind: options.maxBlocksBehind,
     timeoutMs,
     handler,
   };
