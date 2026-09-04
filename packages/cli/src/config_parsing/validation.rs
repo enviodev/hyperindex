@@ -200,7 +200,7 @@ pub fn is_valid_solana_pubkey(s: &str) -> bool {
 }
 
 pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
-    let hex = s.strip_prefix("0x").unwrap_or(s);
+    let hex = crate::hex::strip_prefix(s).unwrap_or(s);
     if hex.is_empty() || !hex.len().is_multiple_of(2) {
         return Err(anyhow!(
             "discriminator {:?} must be a whole number of bytes (an even, non-zero count of hex \
