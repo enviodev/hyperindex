@@ -820,7 +820,12 @@ impl ClickHouseSink {
         // counter, so the highest committed id is where the whole resume trims.
         let committed = chain_progress
             .iter()
-            .map(|chain| chain.committed_checkpoint_id.parse::<u64>().unwrap_or_default())
+            .map(|chain| {
+                chain
+                    .committed_checkpoint_id
+                    .parse::<u64>()
+                    .unwrap_or_default()
+            })
             .max()
             .unwrap_or_default();
         let bounds = self
@@ -1446,9 +1451,7 @@ mod tests {
         sink.resume(ResumeInput {
             per_chain: true,
             chain_progress: vec![committed("1", 100, "5"), committed("137", 200, "9")],
-            ..resume_input(Vec::new(),
-                vec!["envio_history_a".to_string()],
-            )
+            ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
         })
         .await
         .unwrap();
@@ -1485,9 +1488,7 @@ mod tests {
         sink.resume(ResumeInput {
             per_chain: true,
             chain_progress: vec![committed("1", 100, "5"), committed("137", 200, "3")],
-            ..resume_input(Vec::new(),
-                vec!["envio_history_a".to_string()],
-            )
+            ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
         })
         .await
         .unwrap();
@@ -1764,7 +1765,8 @@ mod tests {
         .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(resume_input(vec![committed("1", 100, "5"), committed("137", 200, "42")],
+        sink.resume(resume_input(
+            vec![committed("1", 100, "5"), committed("137", 200, "42")],
             vec!["envio_history_a".to_string()],
         ))
         .await
@@ -1789,7 +1791,8 @@ mod tests {
         .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(resume_input(Vec::new(),
+        sink.resume(resume_input(
+            Vec::new(),
             vec!["envio_history_a".to_string()],
         ))
         .await
@@ -1849,7 +1852,8 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume(resume_input(Vec::new(),
+            .resume(resume_input(
+                Vec::new(),
                 vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
             ))
             .await
@@ -1919,7 +1923,8 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         // What Postgres commits during backfill: no checkpoint at all.
-        sink.resume(resume_input(vec![progress("1", 10), progress("137", -1)],
+        sink.resume(resume_input(
+            vec![progress("1", 10), progress("137", -1)],
             vec!["envio_history_a".to_string()],
         ))
         .await
@@ -1964,7 +1969,8 @@ mod tests {
         .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(resume_input(vec![progress("1", 10)],
+        sink.resume(resume_input(
+            vec![progress("1", 10)],
             vec!["envio_history_a".to_string()],
         ))
         .await
@@ -1993,7 +1999,8 @@ mod tests {
         .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(resume_input(vec![progress("1", 500)],
+        sink.resume(resume_input(
+            vec![progress("1", 500)],
             vec!["envio_history_a".to_string()],
         ))
         .await
