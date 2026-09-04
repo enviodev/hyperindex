@@ -128,25 +128,26 @@ and executeRollback = async (
   }
 
   // The diff computed here replaces a pending one rather than merging with it,
-  // so its deletes have to cover everything that one would have deleted. A lower
-  // target covers a higher one within the same scope, but two scopes naming
-  // different chains only meet at Global. The flush above leaves a diff pending
-  // only when no batch has come along to carry it.
-  let (scope, rollbackTargetCheckpointId) = {
-    let scope: RollbackScope.t =
-      state->IndexerState.config->Config.isIsolatedMultichain ? Isolated(reorgChain) : Global
+  // so its deletes have to cover everything that one would have deleted. The
+  // flush above leaves a diff pending only when no batch has come along to
+  // carry it.
+  let floors = {
+    let next = if state->IndexerState.config->Config.isIsolatedMultichain {
+      RollbackFloors.isolated(
+        ~chainId=reorgChain,
+        ~floorCheckpointId=rollbackTargetCheckpointId,
+        ~forkBlockNumber=rollbackTargetBlockNumber,
+      )
+    } else {
+      RollbackFloors.global(
+        ~floorCheckpointId=rollbackTargetCheckpointId,
+        ~reorgChainId=reorgChain,
+        ~forkBlockNumber=rollbackTargetBlockNumber,
+      )
+    }
     switch state->IndexerState.pendingRollback {
-    | None => (scope, rollbackTargetCheckpointId)
-    | Some({scope: pendingScope, targetCheckpointId: pendingTarget}) =>
-      let target = Pervasives.min(rollbackTargetCheckpointId, pendingTarget)
-      if scope == pendingScope {
-        (scope, target)
-      } else {
-        logger->Logging.childInfo(
-          "Widening the rollback to every chain: another chain's rollback is still unwritten",
-        )
-        (Global, target)
-      }
+    | None => next
+    | Some({floors: pending}) => RollbackFloors.merge(pending, next)
     }
   }
 
@@ -156,19 +157,16 @@ and executeRollback = async (
   {
     let rollbackProgressDiff = await (
       state->IndexerState.persistence
-    ).storage.getRollbackProgressDiff(~scope, ~rollbackTargetCheckpointId)
+    ).storage.getRollbackProgressDiff(~floors)
     for idx in 0 to rollbackProgressDiff->Array.length - 1 {
       let diff = rollbackProgressDiff->Array.getUnsafe(idx)
+      let chainId = diff["chain_id"]
       let eventsProcessed = Float.fromString(diff["events_processed_diff"])->Option.getOrThrow
       rollbackedProcessedEvents := rollbackedProcessedEvents.contents +. eventsProcessed
       progressDiffByChain->ChainId.Dict.set(
-        diff["chain_id"],
+        chainId,
         {
-          blockNumber: if rollbackTargetCheckpointId === 0n && diff["chain_id"] === reorgChain {
-            Pervasives.min(diff["new_progress_block_number"], rollbackTargetBlockNumber)
-          } else {
-            diff["new_progress_block_number"]
-          },
+          blockNumber: diff["new_progress_block_number"],
           eventsProcessed,
         },
       )
@@ -186,9 +184,18 @@ and executeRollback = async (
     let fromBlock = cs->ChainState.committedProgressBlockNumber
     let progressDiff = progressDiffByChain->ChainId.Dict.dangerouslyGetNonOption(chainId)
     let killedAddresses = cs->ChainState.rollback(
-      ~rolledBackTo=switch progressDiff {
-      | Some(progressDiff) => RecomputedProgress(progressDiff)
-      | None => chainId === reorgChain ? ForkBlock(rollbackTargetBlockNumber) : Untouched
+      ~rolledBackTo=switch (progressDiff, floors->RollbackFloors.forkBlockNumber(chainId)) {
+      | (Some(progressDiff), forkBlockNumber) =>
+        RecomputedProgress({
+          ...progressDiff,
+          blockNumber: forkBlockNumber->Option.mapOr(progressDiff.blockNumber, forkBlockNumber =>
+            Pervasives.min(progressDiff.blockNumber, forkBlockNumber)
+          ),
+        })
+      // Nothing of this chain's is above its floor, so there are no checkpoints
+      // to recompute from.
+      | (None, Some(forkBlockNumber)) => ForkBlock(forkBlockNumber)
+      | (None, None) => Untouched
       },
     )
     rolledBackAddresses->Array.pushMany(killedAddresses)->ignore
@@ -213,8 +220,7 @@ and executeRollback = async (
   })
 
   let diff = await state->InMemoryStore.prepareRollbackDiff(
-    ~rollbackScope=scope,
-    ~rollbackTargetCheckpointId,
+    ~floors,
     ~rollbackDiffCheckpointId=state->IndexerState.committedCheckpointId->BigInt.add(1n),
     ~progressedChains=rolledBackChains,
     ~rolledBackAddresses,
