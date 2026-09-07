@@ -54,6 +54,35 @@ fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<Re
     })
 }
 
+/// What a row on a name the IDL declares still has to spell out, as the error
+/// the caller reports. `None` when the row is not an overwrite, or is complete.
+fn overwrite_missing_fields(
+    instr: &human_config::svm::Instruction,
+    idl: &ProgramIdl,
+) -> Option<anyhow::Error> {
+    let set_aside = idl.unusable.get(&instr.name);
+    if set_aside.is_none() && !idl.instructions.contains_key(&instr.name) {
+        return None;
+    }
+    let missing = missing_fields(instr);
+    if missing.is_empty() {
+        return None;
+    }
+    let declared = match set_aside {
+        Some(reason) => format!(
+            "the IDL declares this instruction too, but it cannot be indexed as declared: {reason}"
+        ),
+        None => "the IDL declares this instruction too, so this row replaces it rather than \
+                 adding to the catalog"
+            .to_string(),
+    };
+    Some(anyhow!(
+        "{declared}. Spell out {}: an overwrite takes nothing from the IDL, so a field left out \
+         here is absent, not inherited.",
+        and_list(&missing)
+    ))
+}
+
 fn missing_fields(instr: &human_config::svm::Instruction) -> Vec<&'static str> {
     [
         ("discriminator", instr.discriminator.is_none()),
@@ -81,33 +110,21 @@ pub fn instruction_catalog(
 ) -> Result<Vec<(String, ResolvedInstruction)>> {
     let mut catalog: Vec<(String, ResolvedInstruction)> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
-    let has_idl = program.idl.is_some();
 
-    if has_idl {
-        for (name, ix) in &idl.instructions {
-            index.insert(name.clone(), catalog.len());
-            catalog.push((name.clone(), ResolvedInstruction::from_idl(ix)));
-        }
+    for (name, ix) in &idl.instructions {
+        index.insert(name.clone(), catalog.len());
+        catalog.push((name.clone(), ResolvedInstruction::from_idl(ix)));
     }
     for instr in &program.instructions {
         let at_instruction = || format!("Program '{}', instruction '{}'", program.name, instr.name);
-        // A row the IDL has no name for adds an instruction, and reads like an
-        // inline one: every field is the row's own business. A row that lands
-        // on a declared name replaces it whole, and the fields it leaves out
-        // would read as absent rather than as the IDL's — so it has to say all
-        // three, and the reader can see it is an overwrite without opening the
-        // IDL to check.
-        if idl.instructions.contains_key(&instr.name) {
-            let missing = missing_fields(instr);
-            if !missing.is_empty() {
-                return Err(anyhow!(
-                    "the IDL declares this instruction too, so this row replaces it rather than \
-                     adding to the catalog. Spell out {}: an overwrite takes nothing from the \
-                     IDL, so a field left out here is absent, not inherited.",
-                    and_list(&missing)
-                ))
-                .with_context(at_instruction);
-            }
+        // A row on a name the IDL declares replaces that instruction whole, so
+        // the fields it leaves out would read as absent rather than as the
+        // IDL's. A name the IDL was seen to declare but this runtime set aside
+        // counts the same: the row is answering that reason, not adding a
+        // program-wide catch-all under a name that looks like it selects one
+        // instruction.
+        if let Some(missing) = overwrite_missing_fields(instr, idl) {
+            return Err(missing).with_context(at_instruction);
         }
         let resolved = resolve_yaml_instruction(instr).with_context(at_instruction)?;
         if let Some(&i) = index.get(&instr.name) {

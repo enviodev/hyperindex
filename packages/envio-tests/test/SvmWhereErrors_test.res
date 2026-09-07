@@ -173,7 +173,7 @@ describe("SVM onInstruction where", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid where configuration for the "bare" instruction on program "Swapper". The instruction has no named accounts to filter on. Add \\\`accounts\\\` and \\\`args\\\` to it in config.yaml, or attach an IDL.\`,
+      \`Invalid where configuration for the "bare" instruction on program "Swapper". The instruction has no named accounts to filter on. Add \\\`accounts\\\` to it in config.yaml, or attach an IDL.\`,
     );
   });
 

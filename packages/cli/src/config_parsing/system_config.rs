@@ -3796,6 +3796,19 @@ type Foo {
                 .collect()
         }
 
+        /// The error a row on an IDL-declared name gets when it leaves fields
+        /// out, as one string so a wording change is one edit.
+        fn overwrite_error(instruction: &str, why: &str, spell_out: &str) -> String {
+            format!(
+                "Program 'Pool', instruction '{instruction}': {why}. Spell out {spell_out}: an \
+                 overwrite takes nothing from the IDL, so a field left out here is absent, not \
+                 inherited."
+            )
+        }
+
+        const DECLARED: &str = "the IDL declares this instruction too, so this row replaces it \
+                                rather than adding to the catalog";
+
         const LEGACY_ANCHOR_IDL: &str = r#"{
           "version": "0.1.0",
           "name": "pool",
@@ -3904,7 +3917,7 @@ type Foo {
 
             assert_eq!(
                 format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'discriminator', 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited."
+                overwrite_error("swap", DECLARED, "'discriminator', 'accounts' and 'args'")
             );
         }
 
@@ -3919,7 +3932,7 @@ type Foo {
 
             assert_eq!(
                 format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'discriminator': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited."
+                overwrite_error("swap", DECLARED, "'discriminator'")
             );
         }
 
@@ -4076,7 +4089,7 @@ type Foo {
 
             assert_eq!(
                 format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited."
+                overwrite_error("swap", DECLARED, "'accounts' and 'args'")
             );
         }
 
@@ -4100,6 +4113,33 @@ type Foo {
                     ("swap".to_string(), Some("0xf8c69e91e17587c8".to_string())),
                     ("anyCall".to_string(), None),
                 ]
+            );
+        }
+
+        /// A row on a name the IDL declares but could not use is still an
+        /// overwrite: the IDL has a definition for it, and the reason it was
+        /// set aside is what the row has to answer.
+        #[test]
+        fn rejects_a_name_only_row_on_an_unusable_idl_instruction() {
+            let err = program_reading_idl(
+                r#"{ "instructions": [
+                     { "name": "swap", "discriminator": [1],
+                       "accounts": [], "args": [{ "name": "amount", "type": { "coption": "u64" } }] },
+                     { "name": "deposit", "discriminator": [4],
+                       "accounts": [], "args": [] }] }"#,
+                "            - name: swap\n",
+            )
+            .expect_err("a row on a set-aside name");
+
+            assert_eq!(
+                format!("{err:#}"),
+                overwrite_error(
+                    "swap",
+                    "the IDL declares this instruction too, but it cannot be indexed as declared: \
+                     idls/pool.json:2:22: args.amount: `coption` is not Borsh-compatible and \
+                     cannot be decoded",
+                    "'discriminator', 'accounts' and 'args'"
+                )
             );
         }
 

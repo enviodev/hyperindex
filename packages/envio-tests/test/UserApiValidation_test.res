@@ -2306,6 +2306,33 @@ indexer.onInstruction(
     )
   })
 
+  // The IDL declares this name, so the row is an overwrite even though the
+  // catalog has no entry for it. Read as an addition, a bare name would turn
+  // into a program-wide catch-all, and the warning naming the reason is
+  // suppressed for exactly the names a row mentions.
+  it("rejects a name-only YAML row on an instruction the IDL could not use", t => {
+    expectParseError(
+      t,
+      ~files=Dict.fromArray([
+        (
+          "idls/program.json",
+          `{
+            "instructions": [{
+              "name": "swap",
+              "discriminator": [1],
+              "accounts": [],
+              "args": [{"name": "amount", "type": {"coption": "u64"}}]
+            }]
+          }`,
+        ),
+      ]),
+      yaml(`          instructions:
+            - name: swap
+`),
+      "Program 'Program', instruction 'swap': the IDL declares this instruction too, but it cannot be indexed as declared: idls/program.json:2:30: args.amount: `coption` is not Borsh-compatible and cannot be decoded. Spell out 'discriminator', 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
+    )
+  })
+
   // Nothing in the catalog carries this name, so the row adds an instruction
   // and is read like any inline one: no discriminator matches every call the
   // program receives.
