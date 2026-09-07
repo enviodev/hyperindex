@@ -24,7 +24,7 @@ chains:
           program_id: MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr
           instructions:
             - name: memo
-              discriminator: ""
+              discriminator: "0x"
               accounts: []
               args:
                 - { name: text, type: string }
@@ -55,9 +55,9 @@ chains:
                 - { name: amountIn, type: u64 }
                 - { name: minAmountOut, type: u64 }
             - name: any
-              discriminator: ""
+              discriminator: "0x"
             - name: anyAgain
-              discriminator: ""
+              discriminator: "0x"
 `,
   ~handlers=`
 import { indexer } from "envio";

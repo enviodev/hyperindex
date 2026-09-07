@@ -1206,11 +1206,13 @@ pub mod svm {
         )]
         pub name: String,
         #[schemars(
-            description = "Hex-encoded instruction-data prefix to dispatch on (\"0x\" optional), \
-                           of any whole number of bytes; an 8-byte value matches the standard \
-                           Anchor discriminator. The empty prefix, written \"\", is carried by \
-                           every call, so it is how a row matches every instruction of the \
-                           program. Every instruction whose prefix an on-chain call carries \
+            description = "0x-prefixed hex instruction-data prefix to dispatch on, of any whole \
+                           number of bytes; an 8-byte value matches the standard Anchor \
+                           discriminator. The empty prefix, written \"0x\", is carried by every \
+                           call, so it is how a row matches every instruction of the program. \
+                           This is the form `instruction.discriminator` reads back, so a config \
+                           value and a handler comparison are the same string. Every instruction \
+                           whose prefix an on-chain call carries \
                            receives it, so a program-wide entry fires alongside a keyed one, and \
                            two entries may share a prefix (say, the layouts before and after a \
                            program upgrade): each decodes with its own `args`, and one whose \

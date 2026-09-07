@@ -57,8 +57,7 @@ fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<Re
     // The empty prefix is carried by every call, which is how a row asks for
     // every instruction of the program — the same reading `from_idl` gives an
     // IDL that declares no discriminator.
-    let discriminator =
-        crate::hex::decode_optionally_prefixed(&instr.discriminator, "discriminator")?;
+    let discriminator = crate::hex::decode_prefixed(&instr.discriminator, "discriminator")?;
     let discriminator = (!discriminator.is_empty()).then_some(discriminator);
     let accounts = instr.accounts.clone().unwrap_or_default();
     validate_account_slots(&accounts)?;

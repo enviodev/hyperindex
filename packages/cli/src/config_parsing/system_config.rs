@@ -4027,7 +4027,7 @@ type Foo {
         fn rejects_an_overwrite_that_leaves_out_the_whole_layout() {
             let err = program_reading_idl(
                 LEGACY_ANCHOR_IDL,
-                "            - name: swap\n              discriminator: \"\"\n",
+                "            - name: swap\n              discriminator: \"0x\"\n",
             )
             .expect_err("missing the layout");
 
@@ -4044,7 +4044,7 @@ type Foo {
         fn an_overwrite_on_the_empty_prefix_is_program_wide() {
             let config = program_reading_idl(
                 LEGACY_ANCHOR_IDL,
-                "            - name: swap\n              discriminator: \"\"\n              \
+                "            - name: swap\n              discriminator: \"0x\"\n              \
                  accounts:\n                - source\n              args: []\n",
             )
             .expect("the empty prefix");
@@ -4232,7 +4232,7 @@ type Foo {
         fn a_row_the_idl_does_not_declare_needs_no_layout() {
             let config = program_reading_idl(
                 LEGACY_ANCHOR_IDL,
-                "            - name: anyCall\n              discriminator: \"\"\n",
+                "            - name: anyCall\n              discriminator: \"0x\"\n",
             )
             .expect("a row adding a name");
 
@@ -4263,7 +4263,7 @@ type Foo {
                        "accounts": [], "args": [{ "name": "amount", "type": { "coption": "u64" } }] },
                      { "name": "deposit", "discriminator": [4],
                        "accounts": [], "args": [] }] }"#,
-                "            - name: swap\n              discriminator: \"\"\n",
+                "            - name: swap\n              discriminator: \"0x\"\n",
             )
             .expect_err("a row on a set-aside name");
 

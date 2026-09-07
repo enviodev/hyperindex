@@ -40,7 +40,7 @@ chains:
           program_id: ${memoId}
           instructions:
             - name: anyCall
-              discriminator: ""
+              discriminator: "0x"
         - name: NamesOnly
           program_id: ${namesId}
           instructions:

@@ -201,12 +201,19 @@ pub fn is_valid_solana_pubkey(s: &str) -> bool {
 }
 
 pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
-    let hex = crate::hex::strip_prefix(s).unwrap_or(s);
+    // The prefix is what a handler reads back, so a config that carries it too
+    // compares equal to `instruction.discriminator` rather than off by "0x".
+    let Some(hex) = crate::hex::strip_prefix(s) else {
+        return Err(anyhow!(
+            "discriminator {s:?} must be written as 0x-prefixed hex. Write \"0x\" to match every \
+             instruction of the program"
+        ));
+    };
     if !hex.len().is_multiple_of(2) {
         return Err(anyhow!(
             "discriminator {:?} must be a whole number of bytes (an even count of hex digits \
-             after stripping a `0x` prefix), got {} digits. Write \"\" to match every \
-             instruction of the program.",
+             after the `0x` prefix), got {} digits. Write \"0x\" to match every instruction of \
+             the program.",
             s,
             hex.len()
         ));
@@ -650,13 +657,13 @@ mod tests {
                     "expected {s:?} to be valid"
                 );
             }
-            // Prefix is optional.
-            assert!(validate_svm_discriminator("0f").is_ok());
+            // Either spelling of the prefix, read the same way.
+            assert!(validate_svm_discriminator("0X0f").is_ok());
         }
 
         #[test]
-        fn discriminator_rejects_partial_bytes_and_non_hex() {
-            for s in ["0x0", "0x012", "0xgggggggg"] {
+        fn discriminator_rejects_anything_but_prefixed_whole_bytes() {
+            for s in ["", "21", "0x0", "0x012", "0xgggggggg"] {
                 assert!(
                     validate_svm_discriminator(s).is_err(),
                     "expected {s:?} to be rejected"
@@ -665,10 +672,12 @@ mod tests {
         }
 
         /// The empty prefix is what every call carries, so it is the value a
-        /// row gives to match every instruction of the program.
+        /// row gives to match every instruction of the program. It is spelled
+        /// the way every other value is, so there is one spelling and it is
+        /// the one a handler reads back for a zero-byte key.
         #[test]
         fn discriminator_accepts_the_empty_prefix() {
-            for s in ["", "0x"] {
+            for s in ["0x", "0X"] {
                 assert!(
                     validate_svm_discriminator(s).is_ok(),
                     "expected {s:?} to be accepted"

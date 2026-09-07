@@ -1300,6 +1300,16 @@ chains:
       "Program \"Program\" declares the instruction \"Transfer\" more than once",
     ),
     (
+      "rejects a discriminator that does not carry the 0x prefix",
+      prefix ++ `
+        - name: Program
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - {name: Transfer, discriminator: "21"}
+`,
+      "instruction \"Transfer\" in program \"Program\": discriminator \"21\" must be written as 0x-prefixed hex. Write \"0x\" to match every instruction of the program",
+    ),
+    (
       "rejects a discriminator with a partial byte",
       prefix ++ `
         - name: Program
@@ -1307,7 +1317,7 @@ chains:
           instructions:
             - {name: Transfer, discriminator: "0x012"}
 `,
-      "instruction \"Transfer\" in program \"Program\": discriminator \"0x012\" must be a whole number of bytes (an even count of hex digits after stripping a \`0x\` prefix), got 3 digits. Write \"\" to match every instruction of the program.",
+      "instruction \"Transfer\" in program \"Program\": discriminator \"0x012\" must be a whole number of bytes (an even count of hex digits after the \`0x\` prefix), got 3 digits. Write \"0x\" to match every instruction of the program.",
     ),
     (
       "rejects a program name that is not an identifier",
@@ -2298,7 +2308,7 @@ indexer.onInstruction(
       ~files,
       yaml(`          instructions:
             - name: swap
-              discriminator: ""
+              discriminator: "0x"
 `),
       "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
@@ -2326,7 +2336,7 @@ indexer.onInstruction(
       ]),
       yaml(`          instructions:
             - name: swap
-              discriminator: ""
+              discriminator: "0x"
 `),
       "Program 'Program', instruction 'swap': the IDL declares this instruction too, but it cannot be indexed as declared: idls/program.json:2:30: args.amount: `coption` is not Borsh-compatible and cannot be decoded. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
@@ -2353,7 +2363,7 @@ indexer.onInstruction(
       ~files,
       ~configYaml=yaml(`          instructions:
             - name: anyCall
-              discriminator: ""
+              discriminator: "0x"
 `),
     )
     t.expect(catalog(config)).toEqual([
@@ -2422,7 +2432,7 @@ indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => 
       ~files,
       ~configYaml=yaml(`          instructions:
             - name: swap
-              discriminator: ""
+              discriminator: "0x"
               accounts: [source]
               args: []
 `),
