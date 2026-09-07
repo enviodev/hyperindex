@@ -9,6 +9,7 @@ type historySchema = {
   checkpointsTable: string,
   checkpointChainIdColumn: string,
   checkpointBlockNumberColumn: string,
+  frontierTable: string,
 }
 
 type chainProgressInput = {
@@ -125,6 +126,7 @@ let historySchema = (): historySchema => {
   checkpointsTable: InternalTable.Checkpoints.table.tableName,
   checkpointChainIdColumn: (#chain_id: InternalTable.Checkpoints.field :> string),
   checkpointBlockNumberColumn: (#block_number: InternalTable.Checkpoints.field :> string),
+  frontierTable: "envio_frontier",
 }
 
 let make = (~url, ~username, ~password, ~database, ~chainIdMode: ChainId.mode, ~onWarning) =>

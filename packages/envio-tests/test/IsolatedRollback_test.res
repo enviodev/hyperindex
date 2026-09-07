@@ -977,11 +977,11 @@ describe("Isolated multichain rollback", () => {
       ))
     },
   )
-  // The sink is append-only, so an isolated rollback leaves the reorg chain's
-  // orphaned rows in it, above the checkpoint Postgres took that chain back to
-  // — and above nothing at all on its sibling, which never moved. A resume
-  // therefore has to trim with a bound per chain: the highest of them would
-  // leave the orphans readable, and the lowest would take the sibling's rows.
+  // A resume trims each chain back to its own frontier. After an isolated
+  // rollback the two frontiers differ: the rollback's diff moved chain 1337 to
+  // an id of its own, while chain 100 kept indexing past it. A row of chain
+  // 1337's that reached the sink but never Postgres sits at an id chain 100 has
+  // committed — and only chain 1337's copy goes.
   clickHouseScenario->Scenario.it(
     "Trims the sink to each chain's own frontier on a resume after an isolated rollback",
     ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
@@ -993,43 +993,64 @@ describe("Isolated multichain rollback", () => {
       await driveBothChainsToBlock102(~t, ~indexer, ~source100, ~source1337, ~item=setCounter)
       await reorgAtBlock102(~indexer, ~source=source1337, ~sibling=source100)
 
-      // Only chain 100 progresses, so its batch is what commits the rollback —
-      // and it leaves chain 100's frontier above the one chain 1337 went back to.
+      // Only chain 100 progresses, so its batch is what commits the rollback,
+      // and it carries on past the id the diff gave chain 1337.
       source100.resolveGetItemsOrThrow(
         [],
         ~filter=MockSource.coveringBlock(103),
         ~latestFetchedBlockNumber=104,
       )
       await indexer.getBatchWritePromise()
+      source100.resolveGetItemsOrThrow(
+        [setCounter(~block=105, ~count=1005n)],
+        ~filter=MockSource.coveringBlock(105),
+        ~latestFetchedBlockNumber=105,
+      )
+      await indexer.getBatchWritePromise()
       await indexer.waitUntilIdle()
+
+      let highestCommitted = chainId =>
+        indexer.queryCheckpoints()->Promise.thenResolve(
+          checkpoints =>
+            checkpoints->Array.reduce(
+              0n,
+              (highest, checkpoint) =>
+                checkpoint.chainId->ChainId.toInt === chainId && checkpoint.id > highest
+                  ? checkpoint.id
+                  : highest,
+            ),
+        )
+      let chain100Highest = await highestCommitted(100)
+      let chain1337Highest = await highestCommitted(1337)
+
+      // The history table rather than the view: what the resume removes is the
+      // point, and the view only shows what survived the dedup.
+      let database = TestClickHouse.currentDatabase()
+      let queryHistory = () =>
+        TestClickHouse.query(
+          `SELECT chainId, count, envio_checkpoint_id FROM \`${database}\`.\`envio_history_Counter\` ORDER BY chainId, envio_checkpoint_id FORMAT JSONEachRow`,
+        )->Promise.thenResolve(String.trim)
+      let committed = await queryHistory()
+
+      // A batch of chain 1337's that the sink took and Postgres never did, at
+      // an id chain 100 holds a committed row for.
+      let torn = chain100Highest->BigInt.toString
+      let _ = await TestClickHouse.query(
+        `INSERT INTO \`${database}\`.\`envio_history_Counter\` (id, chainId, count, envio_checkpoint_id, envio_change) VALUES ('total', 1337, 999, ${torn}, 'SET')`,
+      )
+      let _ = await TestClickHouse.query(
+        `INSERT INTO \`${database}\`.\`envio_checkpoints\` (chain_id, id, block_number, block_hash, events_processed) VALUES (1337, ${torn}, 150, NULL, 1)`,
+      )
 
       source100.setAutoHeight(300)
       source1337.setAutoHeight(300)
       let restarted = await indexer.restart()
       await restarted.waitUntilIdle()
 
-      let database = TestClickHouse.currentDatabase()
       t.expect(
-        (
-          (await restarted.queryCheckpoints())
-          ->Array.map(({id, chainId}) => (id, chainId->ChainId.toInt))
-          ->Array.toSorted(((_, a), (_, b)) => Int.compare(a, b)),
-          // The history table rather than the view: what the resume removed is
-          // the point, and the view only shows what survived the dedup.
-
-          (
-            await TestClickHouse.query(
-              `SELECT chainId, count, envio_checkpoint_id FROM \`${database}\`.\`envio_history_Counter\` ORDER BY chainId, envio_checkpoint_id FORMAT JSONEachRow`,
-            )
-          )->String.trim,
-        ),
-        ~message="Chain 1337 lost everything above the checkpoint it went back to, chain 100 nothing",
-      ).toEqual((
-        [(2n, 100), (3n, 100), (4n, 100), (2n, 1337)],
-        `{"chainId":100,"count":"100","envio_checkpoint_id":2}
-{"chainId":100,"count":"1002","envio_checkpoint_id":3}
-{"chainId":1337,"count":"1337","envio_checkpoint_id":2}`,
-      ))
+        (chain100Highest > chain1337Highest, await queryHistory()),
+        ~message="Chain 1337 lost the row above its own frontier, chain 100 kept its row at the same id",
+      ).toEqual((true, committed))
     },
   )
 
@@ -1158,7 +1179,11 @@ describe("Isolated multichain rollback", () => {
       await reindexBlock102(~indexer, ~source=source100, ~count=999n)
 
       t.expect(
-        await Promise.all3((indexer.queryCheckpoints(), counters(indexer), counterHistory(indexer))),
+        await Promise.all3((
+          indexer.queryCheckpoints(),
+          counters(indexer),
+          counterHistory(indexer),
+        )),
         ~message="The lone chain rolled back and re-indexed on its own sequence",
       ).toEqual((
         [

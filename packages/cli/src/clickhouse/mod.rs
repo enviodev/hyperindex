@@ -641,6 +641,29 @@ impl ClickHouseSink {
             topology,
         ))
         .await?;
+        let chain_id_type = checkpoint_columns
+            .iter()
+            .find(|(name, _)| name == &self.history.checkpoint_chain_id_column)
+            .map(|(_, ch_type)| ch_type)
+            .with_context(|| {
+                format!(
+                    "ClickHouse table `{}` has no `{}` column",
+                    self.history.checkpoints_table, self.history.checkpoint_chain_id_column
+                )
+            })?;
+        self.post_statement(ddl::create_frontier_table(
+            chain_id_type,
+            &self.database,
+            &self.history,
+            topology,
+        ))
+        .await?;
+        self.post_statement(ddl::create_frontier_materialized_view(
+            &self.database,
+            &self.history,
+            topology,
+        ))
+        .await?;
 
         // The client pools HTTP connections, so consecutive statements may reach
         // different replicas, while a Replicated database applies DDL from its
@@ -822,6 +845,22 @@ impl ClickHouseSink {
             return Ok(());
         }
         let bounds = self.resume_bounds(per_chain, &chain_progress).await?;
+
+        // Before any trim: from here nothing above the id is readable, whether
+        // or not the trims below get to run.
+        let frontier_rows: Vec<(String, String)> = match &bounds {
+            ddl::ResumeBounds::Shared(checkpoint_id) => chain_progress
+                .iter()
+                .map(|chain| (chain.chain_id.clone(), checkpoint_id.clone()))
+                .collect(),
+            ddl::ResumeBounds::PerChain(bounds) => bounds.clone(),
+        };
+        self.post_statement(ddl::set_frontier(
+            &self.database,
+            &self.history,
+            &frontier_rows,
+        ))
+        .await?;
 
         let above_by_table = history_tables
             .iter()
@@ -1463,6 +1502,46 @@ mod tests {
                  (`chain_id` = 137 AND `id` > 9) SETTINGS lightweight_deletes_sync = 2"
                     .to_string(),
             ]
+        );
+    }
+
+    // Readers hold every chain to the frontier table, so the resume lowers it to
+    // the id it trims back to before a single row goes: nothing above the id is
+    // readable while the trims run, or if they never finish.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_sets_each_chains_frontier_before_it_trims() {
+        let server = mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(
+            &[("1", "6", "8"), ("137", "0", "9")],
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(ResumeInput {
+            per_chain: true,
+            chain_progress: vec![committed("1", 100, "5"), committed("137", 200, "9")],
+            ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
+        })
+        .await
+        .unwrap();
+
+        let statements = server.statements_seen();
+        let frontier = statements
+            .iter()
+            .position(|statement| statement.starts_with("INSERT INTO `mock`.`envio_frontier`"));
+        let first_trim = statements.iter().position(|statement| {
+            statement.starts_with("ALTER") || statement.starts_with("DELETE")
+        });
+        assert_eq!(
+            (frontier.map(|index| statements[index].clone()), frontier < first_trim),
+            (
+                Some(
+                    "INSERT INTO `mock`.`envio_frontier` (`chain_id`, `id`) VALUES (1, 5), (137, 9)"
+                        .to_string()
+                ),
+                true
+            ),
+            "got: {statements:?}"
         );
     }
 
