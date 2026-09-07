@@ -1,0 +1,51 @@
+specVersion: 0.0.5
+description: A subgraph project run unchanged on HyperIndex.
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: Factory
+    network: mainnet
+    source:
+      address: "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+      abi: Factory
+      startBlock: 100
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Pair
+        - Swap
+        - Tick
+      abis:
+        - name: Factory
+          file: ./abis/Factory.json
+      eventHandlers:
+        - event: PairCreated(address,address,address)
+          handler: handlePairCreated
+      blockHandlers:
+        - handler: handleBlock
+          filter:
+            kind: polling
+            every: 5
+      file: ./src/factory.ts
+templates:
+  - kind: ethereum/contract
+    name: Pair
+    network: mainnet
+    source:
+      abi: Pair
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Swap
+      abis:
+        - name: Pair
+          file: ./abis/Pair.json
+      eventHandlers:
+        - event: Swap(indexed address,uint256)
+          handler: handleSwap
+      file: ./src/pair.ts

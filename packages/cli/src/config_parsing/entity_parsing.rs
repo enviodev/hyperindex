@@ -12,8 +12,8 @@ use crate::{
 use alloy_dyn_abi::DynSolType;
 use anyhow::{anyhow, Context};
 use graphql_parser::schema::{
-    Definition, Directive, Document, EnumType, Field as ObjField, ObjectType, Type as ObjType,
-    TypeDefinition, Value,
+    Definition, Directive, Document, EnumType, Field as ObjField, InterfaceType, ObjectType,
+    Type as ObjType, TypeDefinition, Value,
 };
 use graphql_parser::Pos;
 use serde::{Serialize, Serializer};
@@ -84,6 +84,17 @@ impl Schema {
         bytes_type: BytesType,
         source: &str,
     ) -> anyhow::Result<Self> {
+        let interfaces: HashMap<&str, &InterfaceType<'_, String>> = document
+            .definitions
+            .iter()
+            .filter_map(|d| match d {
+                Definition::TypeDefinition(TypeDefinition::Interface(interface)) => {
+                    Some((interface.name.as_str(), interface))
+                }
+                _ => None,
+            })
+            .collect();
+
         let entities = document
             .definitions
             .iter()
@@ -95,7 +106,13 @@ impl Schema {
                 TypeDefinition::Object(obj) => Some(obj),
                 _ => None,
             })
-            .map(|obj| Entity::from_object(obj, default_scope, source))
+            .map(|obj| {
+                Entity::from_object(
+                    &resolve_interfaces(obj, &interfaces)?,
+                    default_scope,
+                    source,
+                )
+            })
             .collect::<anyhow::Result<Vec<Entity>>>()?;
 
         let enums = document
@@ -1237,6 +1254,77 @@ const STORAGE_DIRECTIVE_HINT: &str =
      boolean or a table options object, e.g. @storage(postgres: true, clickhouse: true) or \
      @storage(clickhouse: {partitionBy: \"toYYYYMM(timestamp)\", orderBy: [\"timestamp\"], ttl: \
      \"timestamp + INTERVAL 2 YEAR\"}).";
+
+/// The innermost named type, whatever it is wrapped in.
+fn named_type<'a>(ty: &'a ObjType<'_, String>) -> &'a str {
+    match ty {
+        ObjType::NamedType(name) => name.as_str(),
+        ObjType::NonNullType(inner) | ObjType::ListType(inner) => named_type(inner),
+    }
+}
+
+/// Folds an interface into the entities that implement it.
+///
+/// An interface describes a shape shared by several entities, and each one gets
+/// a table of its own — so its fields belong to every implementor, and the
+/// interface itself stores nothing. A field *typed* as an interface points at
+/// several tables at once: as a derived field that is only a query, and there is
+/// no column to write, so it is dropped; as a stored field there is a column and
+/// nothing to put in it, so it is refused.
+fn resolve_interfaces<'a>(
+    obj: &ObjectType<'a, String>,
+    interfaces: &HashMap<&str, &InterfaceType<'a, String>>,
+) -> anyhow::Result<ObjectType<'a, String>> {
+    if obj.implements_interfaces.is_empty()
+        && !obj
+            .fields
+            .iter()
+            .any(|field| interfaces.contains_key(named_type(&field.field_type)))
+    {
+        return Ok(obj.clone());
+    }
+
+    let mut resolved = obj.clone();
+    for name in &obj.implements_interfaces {
+        let interface = interfaces.get(name.as_str()).ok_or_else(|| {
+            anyhow!(
+                "Entity '{}' implements '{name}', which is not defined in the schema.",
+                obj.name
+            )
+        })?;
+        for field in &interface.fields {
+            if !resolved.fields.iter().any(|f| f.name == field.name) {
+                resolved.fields.push(field.clone());
+            }
+        }
+    }
+
+    let mut kept = Vec::with_capacity(resolved.fields.len());
+    for field in resolved.fields {
+        match interfaces.get(named_type(&field.field_type)) {
+            None => kept.push(field),
+            Some(interface) => {
+                if !field
+                    .directives
+                    .iter()
+                    .any(|directive| directive.name == "derivedFrom")
+                {
+                    return Err(anyhow!(
+                        "Field '{}' on entity '{}' is typed as the interface '{}', which has no \
+                         table of its own. Give it one of the entity types that implement {}.",
+                        field.name,
+                        obj.name,
+                        interface.name,
+                        interface.name
+                    ));
+                }
+            }
+        }
+    }
+    resolved.fields = kept;
+
+    Ok(resolved)
+}
 
 /// Parse an optional argument-free entity directive (`@crossChain`,
 /// `@internal`): present at most once, with no arguments. Their semantics are
@@ -3099,6 +3187,95 @@ type NumericChild {
         let schema =
             Schema::from_string(schema_str, DefaultChainScope::CrossChain, BytesType::Hex).unwrap();
         assert_eq!(schema.entities.len(), 2);
+    }
+
+    // An interface is a shape, not a table: what it declares becomes fields on
+    // every entity that implements it, and the interface itself stores nothing.
+    #[test]
+    fn derives_entity_fields_from_an_implemented_interface() {
+        let schema_str = r#"
+interface DomainEvent {
+  id: ID!
+  domain: Domain!
+  blockNumber: Int!
+}
+type Domain {
+  id: ID!
+  events: [DomainEvent!]! @derivedFrom(field: "domain")
+}
+type Transfer implements DomainEvent {
+  id: ID!
+  domain: Domain!
+  blockNumber: Int!
+  owner: String!
+}
+type NewOwner implements DomainEvent {
+  id: ID!
+  owner: String!
+}
+        "#;
+        let schema =
+            Schema::from_string(schema_str, DefaultChainScope::CrossChain, BytesType::Hex).unwrap();
+        let fields = |name: &str| {
+            schema
+                .entities
+                .get(name)
+                .unwrap()
+                .get_fields()
+                .iter()
+                .map(|field| field.name.clone())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            (
+                schema.entities.len(),
+                fields("Domain"),
+                fields("Transfer"),
+                fields("NewOwner"),
+            ),
+            (
+                3,
+                // Query-only and polymorphic: nothing to store, nothing a
+                // handler can read.
+                vec!["id".to_string()],
+                vec![
+                    "id".to_string(),
+                    "domain".to_string(),
+                    "blockNumber".to_string(),
+                    "owner".to_string()
+                ],
+                vec![
+                    "id".to_string(),
+                    "owner".to_string(),
+                    "domain".to_string(),
+                    "blockNumber".to_string()
+                ],
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_a_stored_field_typed_as_an_interface() {
+        let schema_str = r#"
+interface DomainEvent {
+  id: ID!
+}
+type Domain {
+  id: ID!
+  latest: DomainEvent!
+}
+type Transfer implements DomainEvent {
+  id: ID!
+}
+        "#;
+        let err = Schema::from_string(schema_str, DefaultChainScope::CrossChain, BytesType::Hex)
+            .expect_err("expected an interface-typed stored field to be refused");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("Field 'latest' on entity 'Domain' is typed as the interface"),
+            "unexpected error: {message}"
+        );
     }
 
     #[test]
