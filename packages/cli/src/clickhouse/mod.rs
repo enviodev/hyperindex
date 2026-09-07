@@ -1207,13 +1207,6 @@ fn retry_for(status: reqwest::StatusCode, body: &str) -> Retry {
     }
 }
 
-/// The code out of a ClickHouse error body. A proxy in front of the server can
-/// quote a `Code:` of its own, so the marker ClickHouse puts in every exception
-/// it writes is what makes the number the server's own verdict rather than
-/// someone else's.
-/// A Replicated database engine only replicates data when its tables use the
-/// ReplicatedMergeTree engine, so it implies replicated mode even when
-/// ENVIO_CLICKHOUSE_REPLICATED is unset.
 /// `minIf, max` off a TabSeparated answer. Both aggregates answer 0 over no
 /// rows, and an unreadable column reads as 0 — which `safe_of` treats as "every
 /// checkpoint is covered".
@@ -1240,10 +1233,17 @@ fn safe_of(first_uncovered: u64, highest: u64, committed: u64) -> u64 {
     .max(committed)
 }
 
+/// A Replicated database engine only replicates data when its tables use the
+/// ReplicatedMergeTree engine, so it implies replicated mode even when
+/// ENVIO_CLICKHOUSE_REPLICATED is unset.
 fn has_replicated_engine(database_engine: Option<&str>) -> bool {
     database_engine.map(ddl::database_engine_name) == Some("Replicated")
 }
 
+/// The code out of a ClickHouse error body. A proxy in front of the server can
+/// quote a `Code:` of its own, so the marker ClickHouse puts in every exception
+/// it writes is what makes the number the server's own verdict rather than
+/// someone else's.
 fn clickhouse_error_code(body: &str) -> Option<u32> {
     if !body.contains("DB::Exception") {
         return None;
