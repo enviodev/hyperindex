@@ -175,7 +175,7 @@ let publicConfigChainSchema = S.schema(s =>
 )
 
 // One positional account slot. No `name` is a slot that holds a position
-// without surfacing anything; see `Internal.svmAccountSlot`.
+// without surfacing anything.
 let svmAccountSlotSchema = S.schema(s =>
   {
     "name": s.matches(S.option(S.string)),
