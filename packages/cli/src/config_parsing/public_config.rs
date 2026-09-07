@@ -1,7 +1,6 @@
 use super::{
     entity_parsing, field_types,
-    human_config::{self, evm::For, ColumnNameFormat},
-    svm_catalog::SvmAccountSlot,
+    human_config::{self, evm::For, svm::AccountSlot, ColumnNameFormat},
     system_config::{
         self, field_type_to_arg_type, named_field_to_arg_def, Abi, ChainIdMode, Ecosystem,
         EventKind, FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
@@ -439,8 +438,8 @@ struct SvmAccountSlotItem {
     optional: bool,
 }
 
-impl From<&SvmAccountSlot> for SvmAccountSlotItem {
-    fn from(slot: &SvmAccountSlot) -> Self {
+impl From<&AccountSlot> for SvmAccountSlotItem {
+    fn from(slot: &AccountSlot) -> Self {
         Self {
             name: slot.name().map(str::to_string),
             optional: slot.is_optional(),

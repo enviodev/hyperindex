@@ -10,10 +10,6 @@ type options = {
   addressStore: AddressStore.t,
 }
 
-// Nothing on chain marks an account absent: a call either carries fewer
-// accounts than the layout declares, or fills the slot with the id of the
-// program it invokes — the convention Anchor and Codama both use. So an
-// optional slot holding that id is read as absent, and a required one is not.
 let namedAccounts = (
   ~slots: array<Internal.svmAccountSlot>,
   ~accountArguments: array<string>,

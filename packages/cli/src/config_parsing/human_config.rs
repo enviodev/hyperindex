@@ -1239,16 +1239,75 @@ pub mod svm {
         pub args: Option<Vec<ArgDef>>,
     }
 
-    /// One account slot as written in YAML: `payer`, `?authority` for an
-    /// optional slot, or `_` for one that holds a position without a name. The
-    /// text is kept verbatim; the grammar is read where the instruction is
-    /// resolved, so a defect is reported against the instruction that carries it.
+    /// One positional account slot of an instruction.
     #[derive(Debug, Clone, PartialEq)]
-    pub struct AccountSlot(pub String);
+    pub enum AccountSlot {
+        /// Holds a position without naming it: never surfaced to a handler,
+        /// never filterable. The slots after it keep their positions.
+        Unnamed,
+        Required(String),
+        /// Absent when the call carries no such slot, or fills it with the id
+        /// of the program being invoked — the convention Anchor and Codama
+        /// both use.
+        Optional(String),
+    }
+
+    impl AccountSlot {
+        pub fn name(&self) -> Option<&str> {
+            match self {
+                Self::Unnamed => None,
+                Self::Required(name) | Self::Optional(name) => Some(name),
+            }
+        }
+
+        pub fn is_optional(&self) -> bool {
+            matches!(self, Self::Optional(_))
+        }
+
+        /// The YAML slot grammar: `payer`, `?authority`, `_`.
+        fn parse(token: &str) -> Result<Self, String> {
+            let name = |name: &str| {
+                let readable = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && name.chars().any(|c| c.is_ascii_alphabetic());
+                if readable {
+                    Ok(name.to_string())
+                } else {
+                    Err(format!(
+                        "account slot '{token}' is not a name: expected letters, digits and \
+                         underscores, at least one of them a letter. Prefix a name with '?' to \
+                         mark the slot optional, or write '_' to hold a position without naming \
+                         it."
+                    ))
+                }
+            };
+            match token {
+                "_" => Ok(Self::Unnamed),
+                "?_" => Err(
+                    "account slot '?_' marks an unnamed slot optional, which nothing can \
+                     observe. Write '_' to hold the position, or name the slot."
+                        .to_string(),
+                ),
+                _ => match token.strip_prefix('?') {
+                    Some(optional) => Ok(Self::Optional(name(optional)?)),
+                    None => Ok(Self::Required(name(token)?)),
+                },
+            }
+        }
+    }
+
+    impl Display for AccountSlot {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            match self {
+                Self::Unnamed => f.write_str("_"),
+                Self::Required(name) => f.write_str(name),
+                Self::Optional(name) => write!(f, "?{name}"),
+            }
+        }
+    }
 
     impl Serialize for AccountSlot {
         fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-            serializer.serialize_str(&self.0)
+            serializer.collect_str(self)
         }
     }
 
@@ -1264,7 +1323,7 @@ pub mod svm {
                 }
 
                 fn visit_str<E: de::Error>(self, value: &str) -> Result<AccountSlot, E> {
-                    Ok(AccountSlot(value.to_string()))
+                    AccountSlot::parse(value).map_err(de::Error::custom)
                 }
 
                 /// `- ? authority` and the flow-style `[?authority]` are YAML's
@@ -1286,7 +1345,7 @@ pub mod svm {
                              write \"?{name}\"."
                         )));
                     }
-                    Ok(AccountSlot(format!("?{name}")))
+                    AccountSlot::parse(&format!("?{name}")).map_err(de::Error::custom)
                 }
             }
 
@@ -1477,9 +1536,9 @@ mod tests {
         use super::svm::AccountSlot;
 
         let slots = vec![
-            AccountSlot("payer".to_string()),
-            AccountSlot("?authority".to_string()),
-            AccountSlot("_".to_string()),
+            AccountSlot::Required("payer".to_string()),
+            AccountSlot::Optional("authority".to_string()),
+            AccountSlot::Unnamed,
         ];
         let yaml = serde_yaml::to_string(&slots).unwrap();
 

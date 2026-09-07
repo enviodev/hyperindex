@@ -2308,25 +2308,23 @@ type testIndexer = {{
                                 .join("; ");
                             format!("{{ {fields} }}")
                         };
-                        // An optional slot is absent from the payload when the
-                        // call leaves it out, so it is optional on the type too.
-                        // Unnamed slots hold a position and surface nothing.
-                        let named = svm_kind
-                            .accounts
-                            .iter()
-                            .filter_map(|slot| {
-                                let name = slot.name()?;
-                                let optional = if slot.is_optional() { "?" } else { "" };
-                                Some(format!(
-                                    "readonly {}{optional}: string",
-                                    ts_safe_property_name(name)
-                                ))
-                            })
-                            .collect::<Vec<_>>();
-                        let accounts_ts = if named.is_empty() {
+                        let accounts_ts = if svm_kind.accounts.is_empty() {
                             "Readonly<Record<string, string>>".to_string()
                         } else {
-                            format!("{{ {} }}", named.join("; "))
+                            let fields = svm_kind
+                                .accounts
+                                .iter()
+                                .filter_map(|slot| {
+                                    let name = slot.name()?;
+                                    let optional = if slot.is_optional() { "?" } else { "" };
+                                    Some(format!(
+                                        "readonly {}{optional}: string",
+                                        ts_safe_property_name(name)
+                                    ))
+                                })
+                                .collect::<Vec<_>>()
+                                .join("; ");
+                            format!("{{ {fields} }}")
                         };
                         instruction_entries.push(format!(
                             "          \"{instr}\": {{ readonly args: {args}; readonly accounts: \

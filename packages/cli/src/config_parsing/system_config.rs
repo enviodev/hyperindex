@@ -44,9 +44,7 @@ use hypersync_client_solana::decode::{
     EnumVariant as SvmEnumVariant, FieldType as SvmFieldType, NamedField as SvmNamedField,
 };
 
-use super::svm_catalog::{
-    instruction_catalog, warn_about_unindexable, ResolvedInstruction, SvmAccountSlot,
-};
+use super::svm_catalog::{instruction_catalog, warn_about_unindexable, ResolvedInstruction};
 use super::svm_idl::{self, ProgramIdl};
 
 type ContractNameKey = String;
@@ -2170,7 +2168,7 @@ pub struct SvmEventKind {
     pub discriminator: Option<String>,
     /// Positional account slots in declared order. Empty when the user supplied
     /// no schema and no IDL applies; in that case `decoded.accounts` is `{}`.
-    pub accounts: Vec<SvmAccountSlot>,
+    pub accounts: Vec<human_config::svm::AccountSlot>,
     /// Borsh argument layout in declared order. Empty for unknown
     /// instructions; the raw `instruction.data` is still available.
     pub args: Vec<SvmNamedField>,
@@ -3973,21 +3971,28 @@ type Foo {
                     ))
                     .collect::<Vec<_>>(),
                 vec![
-                    "optional and unnamed: Program 'Pool', instruction 'swap': account slot '?_' \
-                     marks an unnamed slot optional, which nothing can observe. Write '_' to hold \
-                     the position, or name the slot.",
+                    "optional and unnamed: Failed to deserialize config. Visit the docs for more \
+                     information https://docs.envio.dev/docs/configuration-file: \
+                     chains[0].experimental.programs[0].instructions[0].accounts[1]: account slot \
+                     '?_' marks an unnamed slot optional, which nothing can observe. Write '_' to \
+                     hold the position, or name the slot. at line 16 column 33",
                     "trailing unnamed: Program 'Pool', instruction 'swap': the account list ends \
                      with '_', a position nothing follows. Drop it.",
                     "duplicate name: Program 'Pool', instruction 'swap': account 'payer' is \
                      declared more than once.",
-                    "no letter in the name: Program 'Pool', instruction 'swap': account slot '_1' \
-                     is not a name: expected letters, digits and underscores, at least one of \
-                     them a letter. Prefix a name with '?' to mark the slot optional, or write \
-                     '_' to hold a position without naming it.",
-                    "punctuation in the name: Program 'Pool', instruction 'swap': account slot \
+                    "no letter in the name: Failed to deserialize config. Visit the docs for more \
+                     information https://docs.envio.dev/docs/configuration-file: \
+                     chains[0].experimental.programs[0].instructions[0].accounts[1]: account slot \
+                     '_1' is not a name: expected letters, digits and underscores, at least one \
+                     of them a letter. Prefix a name with '?' to mark the slot optional, or write \
+                     '_' to hold a position without naming it. at line 16 column 33",
+                    "punctuation in the name: Failed to deserialize config. Visit the docs for \
+                     more information https://docs.envio.dev/docs/configuration-file: \
+                     chains[0].experimental.programs[0].instructions[0].accounts[1]: account slot \
                      'mint-authority' is not a name: expected letters, digits and underscores, at \
                      least one of them a letter. Prefix a name with '?' to mark the slot \
-                     optional, or write '_' to hold a position without naming it.",
+                     optional, or write '_' to hold a position without naming it. at line 16 \
+                     column 33",
                     "a mapping carrying a value: Failed to deserialize config. Visit the docs \
                      for more information https://docs.envio.dev/docs/configuration-file: \
                      chains[0].experimental.programs[0].instructions[0].accounts[1]: expected an \
