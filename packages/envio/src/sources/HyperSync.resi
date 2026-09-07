@@ -10,6 +10,11 @@ type logsQueryPage = {
 // one. Every ecosystem's client talks to the same service, so they wait alike.
 let pollingInterval: int
 
+// Every HyperSync-backed source needs a token to reach the service, so a
+// missing one fails at construction with the message that says how to get one,
+// rather than as a 401 per request.
+let requireApiToken: option<string> => string
+
 // Map a native client's `PREFIX:<int>` failure marker onto the exception
 // SourceManager retries on (`RateLimited` / `SourceBehindHead`), falling back to
 // the original cause.
