@@ -359,26 +359,20 @@ let parse = (
       let programId =
         item.programId->Option.getOr(svmEventConfig.programId->SvmTypes.Pubkey.toString)
       // Named accounts are placed back onto their declared positions, since
-      // that is what the runtime reads. A slot with nothing to place carries
-      // the program id — how an absent account reaches an indexer from chain.
+      // that is what the runtime reads. A slot the item says nothing about
+      // carries the program id, the stand-in chain itself uses for an account
+      // a call leaves out — so an optional slot reads back as absent, and a
+      // required one as the program, rather than an item having to name every
+      // account to say something about one.
       let accountArguments = switch item.accountArguments {
       | Some(args) => args
       | None =>
         switch item.accounts {
         | Some(named) =>
           svmEventConfig.accounts->Array.map(slot =>
-            switch slot {
-            | Unnamed => programId
-            | Optional(name) =>
-              named->Dict.get(name)->Option.mapOr(programId, ({address}) => address)
-            | Required(name) =>
-              switch named->Dict.get(name) {
-              | Some({address}) => address
-              | None =>
-                JsError.throwWithMessage(
-                  `simulate: instruction "${instructionName}" on program "${programName}" declares the account "${name}", and the simulated item leaves it out. Add it to "accounts", or mark the slot optional with "?${name}" in config.yaml.`,
-                )
-              }
+            switch slot->Internal.svmAccountSlotName {
+            | None => programId
+            | Some(name) => named->Dict.get(name)->Option.mapOr(programId, ({address}) => address)
             }
           )
         | None => []

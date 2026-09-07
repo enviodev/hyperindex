@@ -125,28 +125,30 @@ describe("SVM optional accounts through simulate", () => {
     ]);
   });
 
-  it("refuses a simulated item that leaves out a required account", async (t) => {
+  // An item names the accounts it has something to say about, not every slot
+  // the layout declares.
+  it("stands the program id in for a slot the item does not name", async (t) => {
     const indexer = createTestIndexer();
-    await t
-      .expect(
-        indexer.process({
-          chains: {
-            7565164: {
-              simulate: [
-                {
-                  program: "Swapper",
-                  instruction: "swap",
-                  slot: 1,
-                  accounts: { mint: { address: "${mintPk}" } },
-                },
-              ],
+    await indexer.process({
+      chains: {
+        7565164: {
+          simulate: [
+            {
+              program: "Swapper",
+              instruction: "swap",
+              slot: 1,
+              accounts: { mint: { address: "${mintPk}" } },
             },
-          },
-        }),
-      )
-      .rejects.toThrow(
-        'simulate: instruction "swap" on program "Swapper" declares the account "payer", and the simulated item leaves it out. Add it to "accounts", or mark the slot optional with "?payer" in config.yaml.',
-      );
+          ],
+        },
+      },
+    });
+    t.expect(await indexer.Swap.getOrThrow("1")).toEqual({
+      id: "1",
+      payer: "${programId}",
+      authority: "absent",
+      mint: "${mintPk}",
+    });
   });
 });
 `,
