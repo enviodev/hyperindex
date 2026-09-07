@@ -116,7 +116,11 @@ let mockClient = makeMockClient()
 // The source captures its client at construction, so the mock addon only
 // needs to be in place for the `make` call; restore the previous addon right
 // after to avoid leaking the mock into other tests.
-let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
+let makeSource = (
+  ~onEventRegistrations=[makeReg()],
+  ~client=mockClient,
+  ~endpointUrl="https://solana.hypersync.xyz",
+) => {
   let prevAddon = Core.addonRef.contents
   Core.addonRef :=
     Some(
@@ -136,7 +140,7 @@ let makeSource = (~onEventRegistrations=[makeReg()], ~client=mockClient) => {
     )
   let source = try SvmHyperSyncSource.make({
     chainId,
-    endpointUrl: "https://solana.hypersync.xyz",
+    endpointUrl,
     apiToken: None,
     onEventRegistrations,
     clientTimeoutMillis: 10_000,
@@ -331,5 +335,54 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
       "argsJson": Some(`[{"name":"amount","type":"u64"}]`),
       "definedTypesJson": None,
     })
+  })
+})
+
+describe("SvmHyperSyncSource height subscription", () => {
+  Async.it("Streams heights over HyperSync SSE the same way the EVM source does", async t => {
+    let (server, url) = await Promise.make((resolve, _reject) => {
+      let server = MockRpcServer.createServer((_req, res) => {
+        res->MockRpcServer.writeHead(
+          200,
+          Dict.fromArray([("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache")]),
+        )
+        res->MockRpcServer.write("event: height\ndata: 445073332\n\n")
+        res->MockRpcServer.write("event: ping\ndata: \n\n")
+        res->MockRpcServer.write("event: height\ndata: 445073335\n\n")
+      })
+      server->MockRpcServer.listenOnHost(0, "127.0.0.1", () =>
+        resolve((
+          server,
+          `http://127.0.0.1:${(server->MockRpcServer.address).port->Int.toString}`,
+        ))
+      )
+    })
+
+    let source = makeSource(~endpointUrl=url)
+    let statuses = []
+    let heights = []
+    let unsubscribe =
+      (source.createHeightSubscription->Option.getOrThrow)(
+        ~onHeight=height => heights->Array.push(height)->ignore,
+        ~onStatus=status =>
+          statuses
+          ->Array.push(
+            switch status {
+            | Live => "live"
+            | Down({reason}) => `down:${reason->Source.downReasonLabel}`
+            },
+          )
+          ->ignore,
+      )
+
+    await Scenario.waitUntil(
+      () => heights->Array.length === 2,
+      ~message="the SVM height stream",
+    )
+    unsubscribe()
+    server->MockRpcServer.closeAllConnections
+    await Promise.make((resolve, _reject) => server->MockRpcServer.close(() => resolve()))
+
+    t.expect((statuses, heights)).toStrictEqual((["live"], [445073332, 445073335]))
   })
 })

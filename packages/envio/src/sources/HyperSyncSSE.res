@@ -14,19 +14,19 @@ let failure = (error: EventSource.errorEvent): (
   | (None, None) => (Closed, None)
   }
 
-let subscribe = (~hyperSyncUrl, ~apiToken, ~onHeight, ~onStatus) =>
+let subscribe = (~hyperSyncUrl, ~apiToken: option<string>=?, ~onHeight, ~onStatus) =>
   HeightStream.subscribe(~staleTimeout, ~onHeight, ~onStatus, ~connect=driver => {
     let userAgent = `hyperindex/${Utils.EnvioPackage.value.version}`
     let es = EventSource.create(
       ~url=`${hyperSyncUrl}/height/sse`,
       ~options={
         fetch: (url, ~args) => {
-          let headers =
-            args.headers
-            ->Option.getOr(Dict.make())
-            ->Utils.Dict.merge(
-              Dict.fromArray([("Authorization", `Bearer ${apiToken}`), ("User-Agent", userAgent)]),
-            )
+          let extra = Dict.fromArray([("User-Agent", userAgent)])
+          switch apiToken {
+          | Some(apiToken) => extra->Dict.set("Authorization", `Bearer ${apiToken}`)
+          | None => ()
+          }
+          let headers = args.headers->Option.getOr(Dict.make())->Utils.Dict.merge(extra)
           EventSource.Fetch.fetch(url, ~args={...args, headers: headers})
         },
       },

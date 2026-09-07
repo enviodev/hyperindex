@@ -257,5 +257,7 @@ let make = (
       {height, requestStats: [{method: "getHeight", seconds}]}
     },
     getItemsOrThrow,
+    createHeightSubscription: (~onHeight, ~onStatus) =>
+      HyperSyncSSE.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken?, ~onHeight, ~onStatus),
   }
 }
