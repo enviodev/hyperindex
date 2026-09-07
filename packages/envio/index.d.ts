@@ -1377,7 +1377,7 @@ type SvmNamedAccounts<
   Acc extends Readonly<Record<string, unknown>>,
   Fields extends SvmFieldsSelection,
 > = {
-  readonly [K in keyof Acc & string]: SvmInstructionAccount<Fields, K>;
+  readonly [K in keyof Acc]: SvmInstructionAccount<Fields, K & string>;
 };
 
 /** The parent transaction of a {@link SvmInstruction}, narrowed to the

@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::NamedField as SvmNamedField;
 
-use super::human_config;
+use super::human_config::{self, svm::AccountSlot};
 use super::svm_idl::{IxIdl, ProgramIdl, Unusable};
 use super::system_config::yaml_arg_to_named_field;
 
@@ -11,7 +11,7 @@ use super::system_config::yaml_arg_to_named_field;
 pub struct ResolvedInstruction {
     /// `None` matches every instruction of the program.
     pub discriminator: Option<Vec<u8>>,
-    pub accounts: Vec<String>,
+    pub accounts: Vec<AccountSlot>,
     pub args: Vec<SvmNamedField>,
 }
 
@@ -23,10 +23,33 @@ impl ResolvedInstruction {
             } else {
                 Some(ix.discriminator.clone())
             },
-            accounts: ix.accounts.iter().map(|a| a.name.clone()).collect(),
+            accounts: ix
+                .accounts
+                .iter()
+                .map(|a| {
+                    if a.optional {
+                        AccountSlot::Optional(a.name.clone())
+                    } else {
+                        AccountSlot::Required(a.name.clone())
+                    }
+                })
+                .collect(),
             args: ix.args.clone(),
         }
     }
+}
+
+fn validate_account_slots(slots: &[AccountSlot]) -> Result<()> {
+    if slots.last() == Some(&AccountSlot::Unnamed) {
+        bail!("the account list ends with '_', a position nothing follows. Drop it.");
+    }
+    let mut seen = HashSet::new();
+    for name in slots.iter().filter_map(AccountSlot::name) {
+        if !seen.insert(name) {
+            bail!("account '{name}' is declared more than once.");
+        }
+    }
+    Ok(())
 }
 
 fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<ResolvedInstruction> {
@@ -36,6 +59,7 @@ fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<Re
         .map(|d| crate::hex::decode_optionally_prefixed(d, "discriminator"))
         .transpose()?;
     let accounts = instr.accounts.clone().unwrap_or_default();
+    validate_account_slots(&accounts)?;
     let args = match &instr.args {
         Some(args) => args
             .iter()
