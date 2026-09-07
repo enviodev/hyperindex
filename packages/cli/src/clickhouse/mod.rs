@@ -714,13 +714,6 @@ impl ClickHouseSink {
             .map(|(_, committed)| *committed)
             .max()
             .unwrap_or_default();
-        if chain_progress.is_empty() {
-            return Ok(if per_chain {
-                ResumeBounds::PerChain(Vec::new())
-            } else {
-                ResumeBounds::Shared(committed.to_string())
-            });
-        }
         let covered = chain_progress
             .iter()
             .map(|chain| {
@@ -822,13 +815,13 @@ impl ClickHouseSink {
             replicated,
             database_engine,
         } = input;
-        let bounds = self.resume_bounds(per_chain, &chain_progress).await?;
-        // Every trim below is an `ALTER ... DELETE`, and on replicated storage
-        // it is run unconditionally and waited on across replicas. A bound
-        // nothing can be above is not worth one per table.
-        if bounds.bounds_nothing() {
+        // No chain, no rows to hold to anything. Every trim below is an
+        // `ALTER ... DELETE`, and on replicated storage it is run unconditionally
+        // and waited on across replicas — not worth one per table here.
+        if chain_progress.is_empty() {
             return Ok(());
         }
+        let bounds = self.resume_bounds(per_chain, &chain_progress).await?;
 
         let above_by_table = history_tables
             .iter()
@@ -1502,19 +1495,21 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_per_chain_resume_with_no_chains_trims_nothing() {
+    async fn a_resume_with_no_chains_trims_nothing_under_either_sequence() {
         let server =
             mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(&[], &[]))
                 .await;
         let sink = sink_for(&server, 4);
 
-        sink.resume(ResumeInput {
-            per_chain: true,
-            chain_progress: Vec::new(),
-            ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
-        })
-        .await
-        .unwrap();
+        for per_chain in [true, false] {
+            sink.resume(ResumeInput {
+                per_chain,
+                chain_progress: Vec::new(),
+                ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
+            })
+            .await
+            .unwrap();
+        }
 
         assert_eq!(
             server.statements_seen(),
@@ -1570,7 +1565,7 @@ mod tests {
         .unwrap();
 
         let err = unreachable
-            .resume(resume_input(Vec::new(), Vec::new()))
+            .resume(resume_input(vec![committed("1", 100, "0")], Vec::new()))
             .await
             .unwrap_err();
 
@@ -1594,7 +1589,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume(resume_input(Vec::new(), Vec::new()))
+            .resume(resume_input(vec![committed("1", 100, "0")], Vec::new()))
             .await
             .unwrap_err();
 
@@ -1622,7 +1617,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume(resume_input(Vec::new(), Vec::new()))
+            .resume(resume_input(vec![committed("1", 100, "0")], Vec::new()))
             .await
             .unwrap_err();
 
@@ -1652,7 +1647,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume(resume_input(Vec::new(), Vec::new()))
+            .resume(resume_input(vec![committed("1", 100, "0")], Vec::new()))
             .await
             .unwrap_err();
 
@@ -1873,7 +1868,7 @@ mod tests {
 
         let err = sink
             .resume(resume_input(
-                Vec::new(),
+                vec![committed("1", 100, "0")],
                 vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
             ))
             .await

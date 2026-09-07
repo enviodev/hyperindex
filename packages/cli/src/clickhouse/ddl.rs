@@ -64,13 +64,6 @@ pub enum ResumeBounds {
 }
 
 impl ResumeBounds {
-    /// Nothing for a resume to hold rows to: a per-chain sequence naming no
-    /// chain, which is a run that has committed nothing anywhere. Its `above`
-    /// matches no row, so the trim it would drive has nothing to remove.
-    pub fn bounds_nothing(&self) -> bool {
-        matches!(self, ResumeBounds::PerChain(bounds) if bounds.is_empty())
-    }
-
     /// The predicate matching the rows above the bound in a table whose chain
     /// column is `chain_column`. Per-chain bounds need that column: without it
     /// a row can't be attributed to the sequence its id came from.
@@ -78,8 +71,6 @@ impl ResumeBounds {
         let checkpoint = quoted(checkpoint_column);
         match self {
             ResumeBounds::Shared(checkpoint_id) => Ok(format!("{checkpoint} > {checkpoint_id}")),
-            // No chain has anything above its bound, which no row can satisfy.
-            ResumeBounds::PerChain(bounds) if bounds.is_empty() => Ok("0".to_string()),
             ResumeBounds::PerChain(bounds) => {
                 let Some(chain_column) = chain_column else {
                     bail!(

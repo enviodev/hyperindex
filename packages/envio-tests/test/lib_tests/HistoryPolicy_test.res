@@ -67,27 +67,25 @@ describe("HistoryPolicy", () => {
   // nothing can reach keeps nothing.
   it("Decides per chain when each chain counts its own checkpoints", t => {
     let config = config(~schema)
-    t.expect((
-      config.checkpointSequence,
-      config->decisions(~keepsHistory=onlyChain1),
-    )).toEqual((PerChain, (Keep, Skip)))
+    t.expect((config.checkpointSequence, config->decisions(~keepsHistory=onlyChain1))).toEqual((
+      PerChain,
+      (Keep, Skip),
+    ))
   })
 
   // One cross-chain entity makes any chain's rollback reach every chain's rows,
   // so the whole run keeps history as soon as one chain can be rolled back.
   it("Keeps every chain's rows once one chain's are reachable under a shared sequence", t => {
     let config = config(~schema=crossChainSchema)
-    t.expect((
-      config.checkpointSequence,
-      config->decisions(~keepsHistory=onlyChain1),
-    )).toEqual((Global, (Keep, Keep)))
+    t.expect((config.checkpointSequence, config->decisions(~keepsHistory=onlyChain1))).toEqual((
+      Global,
+      (Keep, Keep),
+    ))
   })
 
   it("Keeps nothing when no chain's rows are reachable", t => {
     t.expect((
-      config(~schema)->decisions(
-        ~keepsHistory=keepsHistory([(chain1, false), (chain137, false)]),
-      ),
+      config(~schema)->decisions(~keepsHistory=keepsHistory([(chain1, false), (chain137, false)])),
       config(~schema=crossChainSchema)->decisions(
         ~keepsHistory=keepsHistory([(chain1, false), (chain137, false)]),
       ),
@@ -109,6 +107,16 @@ describe("HistoryPolicy", () => {
     t->toThrowErrorEqual(
       () => policy->HistoryPolicy.forScope(~scope=CrossChain),
       "Internal error: a cross-chain flush group can't exist under per-chain checkpoint sequences. A cross-chain entity is what makes the sequence shared.",
+    )
+  })
+
+  // The policy is decided for every chain the run indexes, so a chain it
+  // doesn't name is a bug — not a chain that quietly keeps nothing.
+  it("Refuses a chain it was never decided for", t => {
+    let policy = config(~schema)->HistoryPolicy.decide(~keepsHistory=onlyChain1)
+    t->toThrowErrorEqual(
+      () => policy->HistoryPolicy.forChain(999->ChainId.fromInt),
+      "Internal error: no history decision for chain 999. The policy is decided for every chain the run indexes.",
     )
   })
 

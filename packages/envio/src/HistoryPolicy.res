@@ -13,8 +13,10 @@ type t =
   | Shared(keep)
   | ByChain(dict<keep>)
 
-%%private(let anyChainKeeps = (keepsHistory: dict<bool>) =>
-  keepsHistory->Dict.valuesToArray->Array.some(keeps => keeps))
+%%private(
+  let anyChainKeeps = (keepsHistory: dict<bool>) =>
+    keepsHistory->Dict.valuesToArray->Array.some(keeps => keeps)
+)
 
 // `save_full_history` keeps everything regardless. Everything else follows
 // `keepsHistory` per chain — whether a rollback can still reach what that chain
@@ -29,11 +31,20 @@ let decide = (config: Config.t, ~keepsHistory: dict<bool>): t =>
     }
   }
 
-// The decision for one chain: its checkpoints, and its flush group.
+// The decision for one chain: its checkpoints, and its flush group. Every
+// chain the run indexes was decided for, so an absent one is a bug — answering
+// `Skip` for it would silently leave the chain with nothing to roll back to.
 let forChain = (t: t, chainId: ChainId.t): keep =>
   switch t {
   | Shared(keep) => keep
-  | ByChain(byChain) => byChain->ChainId.Dict.dangerouslyGetNonOption(chainId)->Option.getOr(Skip)
+  | ByChain(byChain) =>
+    switch byChain->ChainId.Dict.dangerouslyGetNonOption(chainId) {
+    | Some(keep) => keep
+    | None =>
+      JsError.throwWithMessage(
+        `Internal error: no history decision for chain ${chainId->ChainId.toString}. The policy is decided for every chain the run indexes.`,
+      )
+    }
   }
 
 let forScope = (t: t, ~scope: Internal.chainScope): keep =>
