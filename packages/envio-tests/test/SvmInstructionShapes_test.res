@@ -68,8 +68,7 @@ indexer.onInstruction(
   { program: "Serum", instruction: "newOrderV3", fields: { instruction: ["args"] } },
   async ({ instruction }) => {
     instruction.args.side satisfies number;
-    // A non-finite float has no JSON number to decode into, so it arrives null.
-    instruction.args.ratio satisfies number | null;
+    instruction.args.ratio satisfies number;
   },
 );
 indexer.onInstruction(

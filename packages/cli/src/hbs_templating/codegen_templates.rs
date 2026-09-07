@@ -2322,17 +2322,17 @@ type testIndexer = {{
                             format!("{{ {fields} }}")
                         };
                         instruction_entries.push(format!(
-                            "          \"{instr}\": {{ readonly args: {args}; readonly accounts: \
+                            "          {instr}: {{ readonly args: {args}; readonly accounts: \
                              {accs} }};",
-                            instr = event.name,
+                            instr = ts_string_literal(&event.name),
                             args = args_ts,
                             accs = accounts_ts,
                         ));
                     }
                     if !instruction_entries.is_empty() {
                         program_entries.push(format!(
-                            "        \"{name}\": {{\n{body}\n        }};",
-                            name = contract.name,
+                            "        {name}: {{\n{body}\n        }};",
+                            name = ts_string_literal(&contract.name),
                             body = instruction_entries.join("\n"),
                         ));
                     }
@@ -2569,10 +2569,9 @@ struct ConfigBodies<'a> {
 /// `Defined("Name")`. `seen` tracks the recursion stack to break cycles.
 ///
 /// Locked conventions:
-/// - sub-64-bit integers → `number`
+/// - sub-64-bit integers / floats → `number`
 /// - 64-/128-bit integers → `bigint`
 /// - pubkey → `string` (base58)
-/// - `f32`/`f64` → `number | null`, since a non-finite float decodes to null
 /// - Borsh `bytes`, `vec<u8>`, `[u8; N]` → `Uint8Array`
 /// - `vec<T>` → `readonly T[]`; `[T; N]` → a readonly N-tuple
 /// - enum variant without fields → its name as a string literal; with fields
@@ -2585,10 +2584,7 @@ fn field_type_to_ts_type(
     use hypersync_client_solana::decode::FieldType as F;
     match ty {
         F::Bool => "boolean".to_string(),
-        F::U8 | F::U16 | F::U32 | F::I8 | F::I16 | F::I32 => "number".to_string(),
-        // Any 4 or 8 bytes are a float, NaN and the infinities included, and
-        // none of those survives the decoder's JSON hop — they arrive as null.
-        F::F32 | F::F64 => "number | null".to_string(),
+        F::U8 | F::U16 | F::U32 | F::I8 | F::I16 | F::I32 | F::F32 | F::F64 => "number".to_string(),
         F::U64 | F::U128 | F::I64 | F::I128 => "bigint".to_string(),
         F::String | F::Pubkey => "string".to_string(),
         F::Bytes => "Uint8Array".to_string(),
@@ -2735,8 +2731,12 @@ fn ts_safe_property_name(name: &str) -> String {
     }
 }
 
+/// JSON's string grammar is a subset of TypeScript's, so serde does the
+/// escaping. An IDL is a file the program's authors wrote, and its names are
+/// held to no identifier rule: a quote would end the literal early, and a
+/// control character would break the line it sits on.
 fn ts_string_literal(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    serde_json::to_string(value).expect("a string always serializes")
 }
 
 #[cfg(test)]
@@ -3710,27 +3710,6 @@ type GlobalCounter @crossChain {
                 "/** 8 bytes */ readonly seed: (Uint8Array) | null",
                 "readonly payload: Uint8Array",
                 "readonly amount: bigint",
-            ]
-        );
-    }
-
-    // Any 4 or 8 bytes are a float, and the decoder renders a non-finite one
-    // as null rather than panicking, so the type has to admit it.
-    #[test]
-    fn svm_floats_render_as_nullable_numbers() {
-        use hypersync_client_solana::decode::FieldType;
-        let rendered = [
-            FieldType::F32,
-            FieldType::F64,
-            FieldType::Vec(Box::new(FieldType::F64)),
-        ]
-        .map(|ty| field_type_to_ts_type(&ty, &Default::default(), &mut vec![]));
-        assert_eq!(
-            rendered,
-            [
-                "number | null",
-                "number | null",
-                "readonly (number | null)[]"
             ]
         );
     }

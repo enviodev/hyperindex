@@ -2241,6 +2241,47 @@ ${instructions}
       (svm.name, svm.discriminator, svm.accounts, svm.args)
     })
 
+  // An IDL is a file the program's authors wrote, and nothing holds its names
+  // to the identifier rule config.yaml names are held to. They reach the
+  // generated types as string literals, where an unescaped quote would end the
+  // literal early and leave the rest of the file as syntax.
+  it("escapes an IDL instruction name that carries a quote", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files=Dict.fromArray([
+        (
+          "idls/program.json",
+          `{
+            "instructions": [{
+              "name": "say\\"hi",
+              "discriminator": [7],
+              "accounts": [{"name": "payer"}],
+              "args": [{"name": "amount", "type": "u64"}]
+            }]
+          }`,
+        ),
+      ]),
+      ~configYaml=yaml("          instructions: []\n"),
+      ~handlers=`
+import { indexer } from "envio";
+indexer.onInstruction(
+  { program: "Program", instruction: "say\\"hi", fields: { instruction: ["args", "accounts"] } },
+  async ({ instruction }) => {
+    instruction.args.amount satisfies bigint;
+    instruction.accounts.payer.toString();
+  },
+);
+`,
+    )
+    t.expect(catalog(config)).toEqual([
+      (
+        `say\"hi`,
+        Some("0x07"),
+        ["payer"],
+        JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`),
+      ),
+    ])
+  })
+
   it("rejects a name-only YAML row next to idl", t => {
     expectParseError(
       t,
