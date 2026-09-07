@@ -3895,22 +3895,21 @@ type Foo {
             );
         }
 
-        /// A YAML row next to `idl:` without `discriminator` is not an
-        /// allowlist and is not a program-wide overwrite.
+        /// A row on a name the IDL declares replaces it, so it says every
+        /// field. A name-only row leaves out all three.
         #[test]
-        fn rejects_a_yaml_row_next_to_idl_without_a_discriminator() {
+        fn rejects_a_name_only_row_shadowing_an_idl_instruction() {
             let err = program_reading_idl(LEGACY_ANCHOR_IDL, "            - name: swap\n")
-                .expect_err("missing discriminator");
+                .expect_err("missing every field");
 
             assert_eq!(
                 format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': a YAML row next to 'idl' must set \
-                 'discriminator' to overwrite the IDL definition, or omit this row."
+                "Program 'Pool', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'discriminator', 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited."
             );
         }
 
         #[test]
-        fn rejects_an_idl_overwrite_that_sets_layout_without_a_discriminator() {
+        fn names_only_the_field_an_idl_overwrite_left_out() {
             let err = program_reading_idl(
                 LEGACY_ANCHOR_IDL,
                 "            - name: swap\n              accounts:\n                - source\n              \
@@ -3920,8 +3919,7 @@ type Foo {
 
             assert_eq!(
                 format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': a YAML row next to 'idl' must set \
-                 'discriminator' to overwrite the IDL definition, or omit this row."
+                "Program 'Pool', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'discriminator': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited."
             );
         }
 
@@ -4078,8 +4076,30 @@ type Foo {
 
             assert_eq!(
                 format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': set both 'accounts' and 'args' to \
-                 overwrite the IDL layout."
+                "Program 'Pool', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited."
+            );
+        }
+
+        /// The IDL has no name for this row, so it adds an instruction and is
+        /// read like an inline one: no discriminator matches every call.
+        #[test]
+        fn a_row_the_idl_does_not_declare_needs_no_fields() {
+            let config = program_reading_idl(LEGACY_ANCHOR_IDL, "            - name: anyCall\n")
+                .expect("a row adding a name");
+
+            assert_eq!(
+                svm_events(&config)
+                    .into_iter()
+                    .map(|(name, discriminator, _, _)| (name, discriminator))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0xf223c68952e1f2b6".to_string())
+                    ),
+                    ("swap".to_string(), Some("0xf8c69e91e17587c8".to_string())),
+                    ("anyCall".to_string(), None),
+                ]
             );
         }
 

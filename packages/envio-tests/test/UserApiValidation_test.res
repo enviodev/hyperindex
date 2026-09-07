@@ -2176,11 +2176,14 @@ chains:
     )
   })
 
-  it("requires SVM inline accounts and args together", t => {
-    expectParseError(
-      t,
-      `
-name: incomplete-svm-layout
+  // `accounts` names the slots the raw `accountArguments` array already
+  // carries, and `args` attaches a decoder. Neither implies the other, and an
+  // empty list means the same as an absent one, so a row asks for whichever it
+  // wants.
+  it("takes SVM inline accounts and args independently", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: independent-svm-layout
 ecosystem: svm
 chains:
   - id: solana
@@ -2192,11 +2195,21 @@ chains:
         - name: Program
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           instructions:
-            - name: Transfer
-              accounts: []
+            - {name: namesOnly, discriminator: "0x01", accounts: [source]}
+            - {name: argsOnly, discriminator: "0x02", args: [{name: amount, type: u64}]}
+            - {name: neither, discriminator: "0x03"}
 `,
-      "Program 'Program', instruction 'Transfer': set both 'accounts' and 'args', or omit both.",
     )
+    t.expect(
+      firstContract(config).events->Array.map(event => {
+        let svm = event->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+        (svm.name, svm.accounts, svm.args)
+      }),
+    ).toEqual([
+      ("namesOnly", ["source"], JSON.Null),
+      ("argsOnly", [], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
+      ("neither", [], JSON.Null),
+    ])
   })
 })
 
@@ -2282,15 +2295,32 @@ indexer.onInstruction(
     ])
   })
 
-  it("rejects a name-only YAML row next to idl", t => {
+  it("rejects a name-only YAML row that shadows an IDL instruction", t => {
     expectParseError(
       t,
       ~files,
       yaml(`          instructions:
             - name: swap
 `),
-      "Program 'Program', instruction 'swap': a YAML row next to 'idl' must set 'discriminator' to overwrite the IDL definition, or omit this row.",
+      "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'discriminator', 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
+  })
+
+  // Nothing in the catalog carries this name, so the row adds an instruction
+  // and is read like any inline one: no discriminator matches every call the
+  // program receives.
+  it("adds a program-wide instruction next to an IDL", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files,
+      ~configYaml=yaml(`          instructions:
+            - name: anyCall
+`),
+    )
+    t.expect(catalog(config)).toEqual([
+      ("deposit", Some("0x02"), ["vault"], JSON.Null),
+      ("swap", Some("0x01"), ["payer", "pool"], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
+      ("anyCall", None, [], JSON.Null),
+    ])
   })
 
   it("keeps the full IDL catalog when YAML overwrites one instruction and adds another", t => {
@@ -2353,11 +2383,11 @@ indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => 
               accounts: [source]
               args: []
 `),
-      "Program 'Program', instruction 'swap': a YAML row next to 'idl' must set 'discriminator' to overwrite the IDL definition, or omit this row.",
+      "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'discriminator': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
   })
 
-  it("rejects a discriminator-only YAML row next to idl", t => {
+  it("rejects a discriminator-only YAML row that shadows an IDL instruction", t => {
     expectParseError(
       t,
       ~files,
@@ -2365,11 +2395,11 @@ indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => 
             - name: swap
               discriminator: "0x09"
 `),
-      "Program 'Program', instruction 'swap': set both 'accounts' and 'args' to overwrite the IDL layout.",
+      "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
   })
 
-  it("requires accounts and args together when overwriting an IDL instruction", t => {
+  it("names only the field an overwrite left out", t => {
     expectParseError(
       t,
       ~files,
@@ -2378,7 +2408,7 @@ indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => 
               discriminator: "0x09"
               accounts: [source]
 `),
-      "Program 'Program', instruction 'swap': set both 'accounts' and 'args' to overwrite the IDL layout.",
+      "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
   })
 })

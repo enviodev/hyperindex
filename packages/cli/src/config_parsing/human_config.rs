@@ -1188,12 +1188,11 @@ pub mod svm {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         #[schemars(
             description = "Instructions to index. With `idl:`, omit this list to take the full \
-                           usable IDL catalog. A YAML row overwrites the IDL instruction of the \
-                           same name, or adds a new name to the catalog, and must set \
-                           `discriminator` plus both `accounts` and `args`. Without `idl:`, \
-                           omit `discriminator` to match every \
-                           instruction of the program; set both `accounts` and `args`, or omit \
-                           both."
+                           usable IDL catalog. A row whose name the IDL declares replaces that \
+                           instruction, and must spell out `discriminator`, `accounts` and \
+                           `args`. Every other row adds an instruction: omit `discriminator` to \
+                           match every instruction of the program, and give `accounts` or `args` \
+                           only where you want the names or the decoded payload."
         )]
         pub instructions: Vec<Instruction>,
     }
@@ -1210,8 +1209,8 @@ pub mod svm {
         #[schemars(
             description = "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" \
                            optional), of any whole number of bytes; an 8-byte value matches the \
-                           standard Anchor discriminator. With `idl:` on the program, this field \
-                           is required on every YAML row. Without `idl:`, omit it to match every \
+                           standard Anchor discriminator. Required on a row that replaces an \
+                           instruction the IDL declares; otherwise omit it to match every \
                            instruction of the program. Every instruction whose prefix an \
                            on-chain call carries receives it, so a program-wide entry fires \
                            alongside a keyed one, and two entries may share a prefix (say, the \
@@ -1225,15 +1224,18 @@ pub mod svm {
             description = "Optional positional account names. The Nth entry names account slot N \
                            on the dispatched instruction; surfaces as \
                            `instruction.accounts.<name>` when `fields.instruction` includes \
-                           `accounts`."
+                           `accounts`. The raw slots are available either way, so this only adds \
+                           the names. Required on a row that replaces an instruction the IDL \
+                           declares."
         )]
         pub accounts: Option<Vec<String>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Optional Borsh argument schema. Each entry names one arg and gives its \
                            type; the decoder walks the instruction data after the discriminator \
-                           in declared order. Must be set together with `accounts` when either is \
-                           present."
+                           in declared order. Omit it to leave the payload undecoded, reachable \
+                           as raw `instruction.data`. Required on a row that replaces an \
+                           instruction the IDL declares."
         )]
         pub args: Option<Vec<ArgDef>>,
     }

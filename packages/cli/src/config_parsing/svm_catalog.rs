@@ -54,6 +54,27 @@ fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<Re
     })
 }
 
+fn missing_fields(instr: &human_config::svm::Instruction) -> Vec<&'static str> {
+    [
+        ("discriminator", instr.discriminator.is_none()),
+        ("accounts", instr.accounts.is_none()),
+        ("args", instr.args.is_none()),
+    ]
+    .into_iter()
+    .filter_map(|(field, absent)| absent.then_some(field))
+    .collect()
+}
+
+/// `'a'`, `'a' and 'b'`, `'a', 'b' and 'c'`.
+fn and_list(fields: &[&str]) -> String {
+    let quoted: Vec<String> = fields.iter().map(|field| format!("'{field}'")).collect();
+    match quoted.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
 pub fn instruction_catalog(
     program: &human_config::svm::Program,
     idl: &ProgramIdl,
@@ -70,22 +91,23 @@ pub fn instruction_catalog(
     }
     for instr in &program.instructions {
         let at_instruction = || format!("Program '{}', instruction '{}'", program.name, instr.name);
-        if has_idl && instr.discriminator.is_none() {
-            return Err(anyhow!(
-                "a YAML row next to 'idl' must set 'discriminator' to overwrite the IDL \
-                 definition, or omit this row."
-            ))
-            .with_context(at_instruction);
-        }
-        if has_idl && (instr.accounts.is_none() || instr.args.is_none()) {
-            return Err(anyhow!(
-                "set both 'accounts' and 'args' to overwrite the IDL layout."
-            ))
-            .with_context(at_instruction);
-        }
-        if !has_idl && instr.accounts.is_some() != instr.args.is_some() {
-            return Err(anyhow!("set both 'accounts' and 'args', or omit both."))
+        // A row the IDL has no name for adds an instruction, and reads like an
+        // inline one: every field is the row's own business. A row that lands
+        // on a declared name replaces it whole, and the fields it leaves out
+        // would read as absent rather than as the IDL's — so it has to say all
+        // three, and the reader can see it is an overwrite without opening the
+        // IDL to check.
+        if idl.instructions.contains_key(&instr.name) {
+            let missing = missing_fields(instr);
+            if !missing.is_empty() {
+                return Err(anyhow!(
+                    "the IDL declares this instruction too, so this row replaces it rather than \
+                     adding to the catalog. Spell out {}: an overwrite takes nothing from the \
+                     IDL, so a field left out here is absent, not inherited.",
+                    and_list(&missing)
+                ))
                 .with_context(at_instruction);
+            }
         }
         let resolved = resolve_yaml_instruction(instr).with_context(at_instruction)?;
         if let Some(&i) = index.get(&instr.name) {
