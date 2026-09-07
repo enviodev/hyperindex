@@ -223,7 +223,7 @@ let isProgressInReorgThreshold = (~progressBlockNumber, ~sourceBlockNumber, ~max
   progressBlockNumber > sourceBlockNumber - maxReorgDepth
 }
 
-let makeFromDbState = async (
+let makeFromDbState = (
   ~config: Config.t,
   ~persistence: Persistence.t,
   ~initialState: Persistence.initialState,
@@ -255,17 +255,13 @@ let makeFromDbState = async (
     initialState.chains->Array.length > 0 &&
       initialState.chains->Array.every(c => c.timestampCaughtUpToHeadOrEndblock->Option.isSome)
 
-  // Sequential, because building a chain can read its head over the network
-  // (`start_block: latest`) and a chain that fails validation must not leave the
-  // ones behind it half-built.
   let chainStates = Dict.make()
-  for idx in 0 to initialState.chains->Array.length - 1 {
-    let resumedChainState = initialState.chains->Array.getUnsafe(idx)
+  initialState.chains->Array.forEach((resumedChainState: Persistence.initialChainState) => {
     let chainId = Config.getChain(config, ~chainId=resumedChainState.id)
     let chainConfig = config.chainMap->ChainMap.get(chainId)
     chainStates->ChainId.Dict.set(
       resumedChainState.id,
-      await chainConfig->ChainState.makeFromDbState(
+      chainConfig->ChainState.makeFromDbState(
         ~resumedChainState,
         ~reorgCheckpoints=initialState.reorgCheckpoints,
         ~isInReorgThreshold,
@@ -273,11 +269,10 @@ let makeFromDbState = async (
         ~config,
         ~contractMapping=initialState.contractMapping,
         ~registrationsByChainId,
-        ~persistence,
         ~reducedPollingInterval?,
       ),
     )
-  }
+  })
 
   let state = make(
     ~config,

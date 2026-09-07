@@ -1,7 +1,5 @@
 open Source
 
-let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
-
 type options = {
   chainId: ChainId.t,
   endpointUrl: string,
@@ -14,6 +12,10 @@ type options = {
 
 let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}: options): t => {
   let name = "HyperFuel"
+
+  // Per source, so one rejected token is reported once rather than on every
+  // height retry for the life of the process.
+  let unauthorizedWarned = ref(false)
 
   let apiToken = switch apiToken {
   | Some(token) => token
@@ -213,15 +215,11 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
     getHeightOrThrow: async () => {
       let timerRef = Performance.now()
       let height = try await client->FuelHyperSyncClient.getHeight catch {
-      | JsExn(e) =>
-        switch e->JsExn.message {
-        | Some(message) if message->isUnauthorizedError =>
-          Logging.error(`Your ENVIO_API_TOKEN was rejected by HyperFuel (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
-          // Retrying an unauthorized request can never succeed, so block forever
-          let _ = await Promise.make((_, _) => ())
-          0
-        | _ => throw(JsExn(e))
-        }
+      | exn =>
+        exn->HyperSyncAuth.rethrowLoggingUnauthorized(
+          ~warned=unauthorizedWarned,
+          ~product="HyperFuel",
+        )
       }
       let seconds = timerRef->Performance.secondsSince
       {height, requestStats: [{method: "getHeight", seconds}]}

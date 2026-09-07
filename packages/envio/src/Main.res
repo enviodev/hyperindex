@@ -125,13 +125,10 @@ let buildChainsObject = (~config: Config.t) => {
         enumerable: true,
         get: () => {
           switch getInitialChainState(~chainId=chainConfig.id) {
-          | Some({startBlock: Some(startBlock)}) => startBlock
-          | _ =>
-            // A `start_block: latest` chain has no start block until it reads
-            // its head, and that happens after handler modules load. The public
-            // type is `number`, so that one window - a top-level read on a first
-            // deploy - reports 0 rather than undefined.
-            chainConfig.startBlock->Option.getOr(0)
+          | Some(chainState) => chainState.startBlock
+          // Only before persistence is ready, which in a real run is before any
+          // handler module has loaded. The test indexer sits here for good.
+          | None => chainConfig->Config.startBlockOrZero
           }
         },
       },
@@ -594,6 +591,7 @@ let migrate = async (~reset) => {
     ~envioInfo=getEnvioInfo(),
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
+    ~lowercaseAddresses=config.lowercaseAddresses,
   )
   await persistence.storage.close()
 }
@@ -646,6 +644,7 @@ let start = async (
     ~envioInfo=getEnvioInfo(),
     ~resetCommand=isDevelopmentMode ? "envio dev -r" : "envio start -r",
     ~runCommand=Some(isDevelopmentMode ? "envio dev" : "envio start"),
+    ~lowercaseAddresses=config.lowercaseAddresses,
   )
 
   // Loads user handler files, which register handler/contractRegister/where
@@ -699,7 +698,7 @@ let start = async (
     )
   }
 
-  let state = await IndexerState.makeFromDbState(
+  let state = IndexerState.makeFromDbState(
     ~config,
     ~persistence,
     ~initialState=persistence->Persistence.getInitializedState,

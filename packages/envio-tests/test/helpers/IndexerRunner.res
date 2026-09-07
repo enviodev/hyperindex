@@ -105,9 +105,6 @@ let run = async (
     | Some(_) => ()
     }
 
-    let registrationsByChainId = await resolveRegistrations()
-    MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
-
     switch clickHouseDatabase {
     | Some(database) => TestClickHouse.use(~database)
     | None => ()
@@ -119,6 +116,10 @@ let run = async (
       PgStorage.makeStorageFromEnv(~config, ~sql, ~pgSchema, ~isHasuraEnabled=false),
     )
     let persistence = PgStorage.makePersistenceFromConfig(~config, ~storage)
+    // `Main.start` does this before handler modules load, so the exported
+    // indexer can expose persisted state. Without it every `indexer.chains[N]`
+    // getter silently falls back to static config.
+    Main.setGlobalPersistence(persistence)
     let pg = {sql, pgSchema}
 
     let onError = switch onError {
@@ -137,9 +138,16 @@ let run = async (
       ~resetCommand="envio dev -r",
       ~runCommand=Some("envio dev"),
       ~reset,
+      ~lowercaseAddresses=config.lowercaseAddresses,
     )
 
-    let state = await IndexerState.makeFromDbState(
+    // Same order as `Main.start`: storage is initialized - which is where a
+    // `start_block: latest` chain reads its head - before handler modules load,
+    // so a registration-time `chain.startBlock` sees the resolved block.
+    let registrationsByChainId = await resolveRegistrations()
+    MockSource.installMockSourceRegistrations(~config, ~registrationsByChainId)
+
+    let state = IndexerState.makeFromDbState(
       ~initialState=persistence->Persistence.getInitializedState,
       ~config,
       ~persistence,

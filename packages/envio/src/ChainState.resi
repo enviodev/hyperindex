@@ -46,10 +46,8 @@ let makeFromDbState: (
   ~config: Config.t,
   ~contractMapping: ContractMapping.t,
   ~registrationsByChainId: HandlerRegister.registrationsByChainId,
-  // Written to only when a `start_block: latest` chain resolves its head here.
-  ~persistence: Persistence.t,
   ~reducedPollingInterval: int=?,
-) => promise<t>
+) => t
 
 // Accessors.
 let logger: t => Pino.t

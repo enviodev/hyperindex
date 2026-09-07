@@ -21,7 +21,6 @@ let make: (
 
 let getActiveSource: t => Source.t
 
-
 type requestStatSample = {
   sourceName: string,
   chainId: ChainId.t,

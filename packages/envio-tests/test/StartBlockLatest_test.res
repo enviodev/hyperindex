@@ -55,6 +55,38 @@ name: start-block-latest-mixed${contractsYaml}chains:${chainYaml(
   ~schema,
 )
 
+// A `where` predicate runs while handlers register. On a first `latest` deploy
+// that has to be the resolved head - a predicate computing a range from it
+// (`_gte: chain.startBlock + n`) is silently wrong otherwise.
+let registrationScenario = Scenario.make(
+  ~configYaml=`
+name: start-block-latest-registration${contractsYaml}chains:${chainYaml(
+      ~chainId=1337,
+      ~startBlock="latest",
+    )}`,
+  ~schema=`
+type Seen {
+  id: ID!
+  seenStartBlock: Int!
+}
+`,
+  ~handlers=`
+import { indexer } from "envio";
+
+let seenAtRegistration = -1;
+
+indexer.onBlock({
+  name: "blocks",
+  where: ({ chain }) => {
+    if (chain.id === 1337) { seenAtRegistration = chain.startBlock; }
+    return chain.id === 1337;
+  },
+}, async ({ context }) => {
+  context.Seen.set({ id: "only", seenStartBlock: seenAtRegistration });
+});
+`,
+)
+
 let methods: array<MockSource.method> = [#getHeightOrThrow, #getItemsOrThrow, #getBlockHashes]
 
 let persistedStartBlocks = async (~sql, ~pgSchema) => {
@@ -98,6 +130,23 @@ describe("start_block: latest", () => {
         await persistedStartBlocks(~sql, ~pgSchema),
         ~message="start_block is reused from the first deploy, not re-resolved to the new head",
       ).toEqual([(1337, 1000)])
+    },
+  )
+
+  registrationScenario->Scenario.it(
+    "is the resolved head by the time handlers register",
+    ~sources=[{chain: 1337, methods, autoHeight: 1000}],
+    async (~t, ~indexer, ~source) => {
+      let source = source(1337)
+      source.resolveGetItemsOrThrow([], ~latestFetchedBlockNumber=1000)
+      await indexer.getBatchWritePromise()
+
+      let {sql, pgSchema} = indexer.pg
+      let rows: array<{"seenStartBlock": int}> = await sql->Postgres.unsafe(
+        `SELECT "seenStartBlock" FROM "${pgSchema}"."Seen";`,
+      )
+
+      t.expect(rows->Array.map(row => row["seenStartBlock"])).toEqual([1000])
     },
   )
 

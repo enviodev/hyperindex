@@ -261,7 +261,7 @@ let makeInitialState = (
       ->Option.getOr(AddressRows.emptySeedRows())
     {
       Persistence.id: chain,
-      startBlock: Some(processChainConfig.startBlock),
+      startBlock: processChainConfig.startBlock,
       endBlock: processChainConfig.endBlock,
       sourceBlockNumber: processChainConfig.endBlock->Option.getOr(0),
       maxReorgDepth: 0, // No reorg support in test indexer
@@ -355,9 +355,7 @@ let parseBlockRange = (
     JsError.throwWithMessage(`Chain ${chainIdStr} is not configured in config.yaml`)
   }
   let configChain = config.chainMap->ChainMap.get(chain)
-  // The test indexer has no chain to read a head from, so an unresolved
-  // `start_block: latest` behaves as 0: every block a test simulates is in range.
-  let configStartBlock = configChain.startBlock->Option.getOr(0)
+  let configStartBlock = configChain->Config.startBlockOrZero
 
   let startBlock = switch rawChainConfig.startBlock {
   | Some(sb) => sb
@@ -628,7 +626,6 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   dumpEffectCache: async () => (),
   reset: async () => (),
   setChainMeta: async _ => Obj.magic(),
-  setChainStartBlock: async (~chainId as _, ~startBlock as _) => (),
   pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
   pruneStaleEntityHistory: async (
     ~entityName as _,
@@ -758,7 +755,7 @@ let createTestIndexer = (): t<'processConfig> => {
     ->Utils.Object.definePropertyWithValue("id", {enumerable: true, value: chainConfig.id})
     ->Utils.Object.definePropertyWithValue(
       "startBlock",
-      {enumerable: true, value: chainConfig.startBlock->Option.getOr(0)},
+      {enumerable: true, value: chainConfig->Config.startBlockOrZero},
     )
     ->Utils.Object.definePropertyWithValue(
       "endBlock",
@@ -958,31 +955,23 @@ let createTestIndexer = (): t<'processConfig> => {
             }
           }
           try {
-            // Building the state is async now, so the run promise is created
-            // first and its settlers held: `onError`/`onExit` have to be in hand
-            // before the state that will call them exists.
-            let settlers = ref(None)
-            let runUntilExit = Promise.make(
-              (resolve, reject) => settlers := Some((resolve, reject)),
-            )
-            // `Promise.make` runs its executor synchronously, so this is filled.
-            let (resolve, reject) = settlers.contents->Option.getUnsafe
-            let indexerState = await IndexerState.makeFromDbState(
-              ~config=runConfig,
-              ~persistence,
-              ~initialState,
-              ~registrationsByChainId,
-              ~exitAfterFirstEventBlock,
-              ~onError=errHandler => {
-                errHandler->ErrorHandling.log
-                reject(errHandler.exn->Utils.prettifyExn)
-              },
-              // Caught up: resolve the run instead of exiting the process.
-              ~onExit=() => resolve(),
-            )
-            indexerStateRef := Some(indexerState)
-            indexerState->IndexerLoop.start
-            await runUntilExit
+            await Promise.make((resolve, reject) => {
+              let indexerState = IndexerState.makeFromDbState(
+                ~config=runConfig,
+                ~persistence,
+                ~initialState,
+                ~registrationsByChainId,
+                ~exitAfterFirstEventBlock,
+                ~onError=errHandler => {
+                  errHandler->ErrorHandling.log
+                  reject(errHandler.exn->Utils.prettifyExn)
+                },
+                // Caught up: resolve the run instead of exiting the process.
+                ~onExit=() => resolve(),
+              )
+              indexerStateRef := Some(indexerState)
+              indexerState->IndexerLoop.start
+            })
             await cleanup()
           } catch {
           | exn =>

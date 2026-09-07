@@ -1,22 +1,19 @@
 open Vitest
 
-let chainId = 1->ChainId.fromInt
-
-// Short enough that a test asserting the give-up path doesn't sit out a real
-// backoff, long enough that the retry tests can observe an attempt in flight.
-let fastOptions: StartBlockResolver.options = {
-  attemptTimeoutMs: 1000,
-  retryIntervalMs: 1,
-  deadlineMs: 1000,
+let makeChain = (~startBlock, ~endBlock=?, ~sources): Config.chain => {
+  name: "Chain1",
+  id: 1->ChainId.fromInt,
+  ecosystem: Ecosystem.Evm,
+  startBlock,
+  ?endBlock,
+  maxReorgDepth: 10,
+  blockLag: 0,
+  contracts: [],
+  sourceConfig: Config.CustomSources(sources),
 }
 
-let resolve = (sources, ~options=fastOptions) =>
-  StartBlockResolver.resolveOrThrow(
-    ~chainId,
-    ~sources,
-    ~logger=Logging.createChild(~params={"test": true}),
-    ~options,
-  )
+let resolveAll = (chains, ~getHeightRetryInterval=(~retry as _) => 1) =>
+  chains->StartBlockResolver.resolveAllOrThrow(~lowercaseAddresses=false, ~getHeightRetryInterval)
 
 let errorMessageOf = async (resolving: promise<'a>) =>
   try {
@@ -27,12 +24,29 @@ let errorMessageOf = async (resolving: promise<'a>) =>
   }
 
 describe("StartBlockResolver", () => {
-  Async.it("answers with the head the source reports, from one request", async t => {
+  Async.it("leaves a fixed start block alone, even one past its end_block", async t => {
+    let mockSource = MockSource.make([], ~chainId=1)
+    let chain = makeChain(
+      ~startBlock=Config.Block(100),
+      ~endBlock=50,
+      ~sources=[mockSource.source],
+    )
+
+    let resolved = await [chain]->resolveAll
+
+    t.expect((resolved, mockSource.getHeightOrThrowCalls->Array.length)).toEqual(([chain], 0))
+  })
+
+  Async.it("resolves latest to the source's current height", async t => {
     let mockSource = MockSource.make([#getHeightOrThrow], ~chainId=1, ~autoHeight=12345)
+    let chain = makeChain(~startBlock=Config.Latest, ~sources=[mockSource.source])
 
-    let head = await [mockSource.source]->resolve
+    let resolved = await [chain]->resolveAll
 
-    t.expect((head, mockSource.getHeightOrThrowCalls->Array.length)).toEqual((12345, 1))
+    t.expect((
+      resolved->Array.map(c => c.startBlock),
+      mockSource.getHeightOrThrowCalls->Array.length,
+    )).toEqual(([Config.Block(12345)], 1))
   })
 
   Async.it("never subscribes to a height stream", async t => {
@@ -41,18 +55,23 @@ describe("StartBlockResolver", () => {
       ~chainId=1,
       ~autoHeight=500,
     )
+    let chain = makeChain(~startBlock=Config.Latest, ~sources=[mockSource.source])
 
-    let head = await [mockSource.source]->resolve
+    let resolved = await [chain]->resolveAll
 
-    // Resolving a start block is one question with one answer. A stream is for
-    // a height that keeps moving, which is the indexer loop's business.
-    t.expect((head, mockSource.heightSubscriptionCalls->Array.length)).toEqual((500, 0))
+    // Reading a start block is one question with one answer. A stream is for a
+    // height that keeps moving, which is the indexer loop's business.
+    t.expect((
+      resolved->Array.map(c => c.startBlock),
+      mockSource.heightSubscriptionCalls->Array.length,
+    )).toEqual(([Config.Block(500)], 0))
   })
 
-  Async.it("retries the same source until it answers", async t => {
+  Async.it("keeps retrying a failing source instead of giving up", async t => {
     let mockSource = MockSource.make([#getHeightOrThrow], ~chainId=1)
+    let chain = makeChain(~startBlock=Config.Latest, ~sources=[mockSource.source])
 
-    let resolving = [mockSource.source]->resolve
+    let resolving = [chain]->resolveAll
     await Scenario.waitUntil(
       () => mockSource.getHeightOrThrowCalls->Array.length === 1,
       ~message="the first height request",
@@ -62,12 +81,18 @@ describe("StartBlockResolver", () => {
       () => mockSource.getHeightOrThrowCalls->Array.length === 2,
       ~message="the retried height request",
     )
+    mockSource.rejectGetHeightOrThrow("another blip")
+    await Scenario.waitUntil(
+      () => mockSource.getHeightOrThrowCalls->Array.length === 3,
+      ~message="a second retry, so failures never exhaust the resolver",
+    )
     mockSource.resolveGetHeightOrThrow(777)
 
-    t.expect((await resolving, mockSource.getHeightOrThrowCalls->Array.length)).toEqual((777, 2))
+    let resolved = await resolving
+    t.expect(resolved->Array.map(c => c.startBlock)).toEqual([Config.Block(777)])
   })
 
-  Async.it("falls over to a fallback source when the primary won't answer", async t => {
+  Async.it("fails over to a fallback source when the primary stalls", async t => {
     let primary = MockSource.make([#getHeightOrThrow], ~chainId=1)
     let fallback = MockSource.make(
       [#getHeightOrThrow],
@@ -75,51 +100,67 @@ describe("StartBlockResolver", () => {
       ~sourceFor=Source.Fallback,
       ~autoHeight=999,
     )
-
-    let resolving = [primary.source, fallback.source]->resolve
-    await Scenario.waitUntil(
-      () => primary.getHeightOrThrowCalls->Array.length === 1,
-      ~message="the primary's height request",
+    let chain = makeChain(
+      ~startBlock=Config.Latest,
+      ~sources=[primary.source, fallback.source],
     )
-    primary.rejectGetHeightOrThrow("primary is down")
 
-    t.expect((await resolving, fallback.getHeightOrThrowCalls->Array.length)).toEqual((999, 1))
+    let resolved =
+      await [chain]->StartBlockResolver.resolveAllOrThrow(
+        ~lowercaseAddresses=false,
+        ~getHeightRetryInterval=(~retry as _) => 1,
+        // The window the primary gets to itself before a fallback is recruited.
+        ~newBlockStallTimeout=1,
+      )
+
+    t.expect((
+      resolved->Array.map(c => c.startBlock),
+      fallback.getHeightOrThrowCalls->Array.length,
+    )).toEqual(([Config.Block(999)], 1))
   })
 
-  Async.it("gives up with a clear error once the deadline passes", async t => {
-    // Answers nothing, ever.
-    let mockSource = MockSource.make([#getHeightOrThrow], ~chainId=1)
+  Async.it("throws a clear error when latest resolves past end_block", async t => {
+    let mockSource = MockSource.make([#getHeightOrThrow], ~chainId=1, ~autoHeight=100)
+    let chain = makeChain(~startBlock=Config.Latest, ~endBlock=50, ~sources=[mockSource.source])
 
-    let error =
-      await [mockSource.source]
-      ->resolve(~options={attemptTimeoutMs: 20, retryIntervalMs: 1, deadlineMs: 2000})
-      ->errorMessageOf
+    let error = await [chain]->resolveAll->errorMessageOf
 
     t.expect(error).toEqual(
-      Some(`Chain 1: couldn't resolve the "latest" start block - no source answered a height request within 2s. Check the chain's RPC/HyperSync endpoints and ENVIO_API_TOKEN, then start again.`),
+      Some(`Chain 1: the "latest" start block resolved to 100, which is past the configured end_block (50). There is nothing to index - remove end_block, raise it above the chain's current head, or pin start_block to a fixed value instead of "latest".`),
     )
   })
 
-  Async.it("stops asking the source once it has given up", async t => {
-    let mockSource = MockSource.make([#getHeightOrThrow], ~chainId=1)
+  Async.it(
+    "throws before anything is persisted when a contract start block predates the resolved head",
+    async t => {
+      let {config} = InternalTestIndexer.fromUserApi(
+        ~configYaml=`
+name: latest-contract-start-block
+contracts:
+  - name: Gravatar
+    events:
+      - event: "TestEvent()"
+chains:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Gravatar
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        start_block: 100
+`,
+      )
+      let mockSource = MockSource.make([#getHeightOrThrow], ~chainId=1, ~autoHeight=500)
+      let chain = {
+        ...config.chainMap->ChainMap.values->Array.getUnsafe(0),
+        startBlock: Config.Latest,
+        sourceConfig: Config.CustomSources([mockSource.source]),
+      }
 
-    let _ =
-      await [mockSource.source]
-      ->resolve(~options={attemptTimeoutMs: 20, retryIntervalMs: 1, deadlineMs: 2000})
-      ->errorMessageOf
-    let callsAtGiveUp = mockSource.getHeightOrThrowCalls->Array.length
-    await Utils.delay(100)
+      let error = await [chain]->resolveAll->errorMessageOf
 
-    t.expect(mockSource.getHeightOrThrowCalls->Array.length - callsAtGiveUp).toEqual(0)
-  })
-
-  Async.it("says so when the chain has no source that can serve a height", async t => {
-    let realtimeOnly = MockSource.make([#getHeightOrThrow], ~chainId=1, ~sourceFor=Source.Realtime)
-
-    let error = await [realtimeOnly.source]->resolve->errorMessageOf
-
-    t.expect(error).toEqual(
-      Some(`Chain 1: can't resolve the "latest" start block because the chain has no source to read a height from.`),
-    )
-  })
+      t.expect(error).toEqual(
+        Some(`Chain 1: contract "Gravatar" has start_block 100, but the chain's "latest" start block resolved to 500. A contract can't start before its chain does - remove the contract's start_block, or pin the chain's start_block to a fixed value instead of "latest".`),
+      )
+    },
+  )
 })

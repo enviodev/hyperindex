@@ -161,7 +161,6 @@ let make = (methods: array<method>, ~dbEntities=[]) => {
       },
       reset: () => JsError.throwWithMessage("Not implemented"),
       setChainMeta: _ => JsError.throwWithMessage("Not implemented"),
-      setChainStartBlock: async (~chainId as _, ~startBlock as _) => (),
       pruneStaleCheckpoints: async (~safeCheckpoints as _) => (),
       pruneStaleEntityHistory: async (
         ~entityName as _,
