@@ -15,13 +15,7 @@ type options = {
 let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}: options): t => {
   let name = "HyperFuel"
 
-  let apiToken = switch apiToken {
-  | Some(token) => token
-  | None =>
-    JsError.throwWithMessage(`An Envio API token is required for using HyperFuel as a data-source.
-Set the ENVIO_API_TOKEN environment variable in your .env file.
-Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
-  }
+  let apiToken = apiToken->HyperSync.requireApiToken(~service=name)
 
   let client = switch FuelHyperSyncClient.make(
     {url: endpointUrl, apiToken},
