@@ -79,7 +79,7 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
     })
   })
 
-  it("Throws with the HyperFuel token instructions when no token is configured", t => {
+  it("Throws with the token instructions when no token is configured", t => {
     t->toThrowErrorEqual(
       () =>
         FuelHyperSyncSource.make({
@@ -89,7 +89,7 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
           onEventRegistrations: [],
           addressStore,
         })->ignore,
-      `An Envio API token is required for using HyperFuel as a data-source.
+      `An Envio API token is required for using HyperSync as a data-source.
 Set the ENVIO_API_TOKEN environment variable in your .env file.
 Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`,
     )

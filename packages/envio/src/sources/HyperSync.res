@@ -9,11 +9,11 @@ let pollingInterval = 400
 let rateLimitedPrefix = "RATE_LIMITED:"
 let behindHeadPrefix = "SOURCE_BEHIND_HEAD:"
 
-let requireApiToken = (apiToken, ~service="HyperSync") =>
+let requireApiToken = apiToken =>
   switch apiToken {
   | Some(token) => token
   | None =>
-    JsError.throwWithMessage(`An Envio API token is required for using ${service} as a data-source.
+    JsError.throwWithMessage(`An Envio API token is required for using HyperSync as a data-source.
 Set the ENVIO_API_TOKEN environment variable in your .env file.
 Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
   }

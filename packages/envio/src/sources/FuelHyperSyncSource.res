@@ -15,7 +15,7 @@ type options = {
 let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}: options): t => {
   let name = "HyperFuel"
 
-  let apiToken = apiToken->HyperSync.requireApiToken(~service=name)
+  let apiToken = apiToken->HyperSync.requireApiToken
 
   let client = switch FuelHyperSyncClient.make(
     {url: endpointUrl, apiToken},
