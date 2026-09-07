@@ -1041,11 +1041,12 @@ pub mod fuel {
 }
 
 pub mod svm {
+    use std::borrow::Cow;
     use std::fmt::Display;
 
     use super::BaseConfig;
-    use schemars::JsonSchema;
-    use serde::{Deserialize, Serialize};
+    use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
+    use serde::{de, Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
@@ -1189,10 +1190,10 @@ pub mod svm {
         #[schemars(
             description = "Instructions to index. With `idl:`, omit this list to take the full \
                            usable IDL catalog. A row whose name the IDL declares replaces that \
-                           instruction, and must spell out `discriminator`, `accounts` and \
-                           `args`. Every other row adds an instruction: omit `discriminator` to \
-                           match every instruction of the program, and give `accounts` or `args` \
-                           only where you want the names or the decoded payload."
+                           instruction, and must spell out `accounts` and `args`; every other row \
+                           adds one. Either way, omit `discriminator` to match every instruction \
+                           of the program, and give `accounts` or `args` only where you want the \
+                           names or the decoded payload."
         )]
         pub instructions: Vec<Instruction>,
     }
@@ -1209,9 +1210,8 @@ pub mod svm {
         #[schemars(
             description = "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" \
                            optional), of any whole number of bytes; an 8-byte value matches the \
-                           standard Anchor discriminator. Required on a row that replaces an \
-                           instruction the IDL declares; otherwise omit it to match every \
-                           instruction of the program. Every instruction whose prefix an \
+                           standard Anchor discriminator. Omit it to match every instruction of \
+                           the program, whether or not the row replaces one the IDL declares. Every instruction whose prefix an \
                            on-chain call carries receives it, so a program-wide entry fires \
                            alongside a keyed one, and two entries may share a prefix (say, the \
                            layouts before and after a program upgrade): each decodes with its \
@@ -1221,14 +1221,14 @@ pub mod svm {
         pub discriminator: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional positional account names. The Nth entry names account slot N \
-                           on the dispatched instruction; surfaces as \
-                           `instruction.accounts.<name>` when `fields.instruction` includes \
-                           `accounts`. The raw slots are available either way, so this only adds \
-                           the names. Required on a row that replaces an instruction the IDL \
-                           declares."
+            description = "Optional positional account slots, in the order the program expects \
+                           them. The Nth entry names account slot N on the dispatched \
+                           instruction; named slots surface as `instruction.accounts.<name>` \
+                           when `fields.instruction` includes `accounts`. The raw slots are \
+                           available either way, so this only adds the names. Required on a row \
+                           that replaces an instruction the IDL declares."
         )]
-        pub accounts: Option<Vec<String>>,
+        pub accounts: Option<Vec<AccountSlot>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Optional Borsh argument schema. Each entry names one arg and gives its \
@@ -1238,6 +1238,144 @@ pub mod svm {
                            instruction the IDL declares."
         )]
         pub args: Option<Vec<ArgDef>>,
+    }
+
+    /// One positional account slot of an instruction.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum AccountSlot {
+        /// Holds a position without naming it: never surfaced to a handler,
+        /// never filterable. The slots after it keep their positions.
+        Unnamed,
+        Required(String),
+        /// Absent when the call carries no such slot, or fills it with the id
+        /// of the program being invoked — the convention Anchor and Codama
+        /// both use.
+        Optional(String),
+    }
+
+    impl AccountSlot {
+        pub fn name(&self) -> Option<&str> {
+            match self {
+                Self::Unnamed => None,
+                Self::Required(name) | Self::Optional(name) => Some(name),
+            }
+        }
+
+        pub fn is_optional(&self) -> bool {
+            matches!(self, Self::Optional(_))
+        }
+
+        /// The YAML slot grammar: `payer`, `?authority`, `_`.
+        fn parse(token: &str) -> Result<Self, String> {
+            let name = |name: &str| {
+                let readable = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && name.chars().any(|c| c.is_ascii_alphabetic());
+                if readable {
+                    Ok(name.to_string())
+                } else {
+                    Err(format!(
+                        "account slot '{token}' is not a name: expected letters, digits and \
+                         underscores, at least one of them a letter. Prefix a name with '?' to \
+                         mark the slot optional, or write '_' to hold a position without naming \
+                         it."
+                    ))
+                }
+            };
+            match token {
+                "_" => Ok(Self::Unnamed),
+                "?_" => Err(
+                    "account slot '?_' marks an unnamed slot optional, which nothing can \
+                     observe. Write '_' to hold the position, or name the slot."
+                        .to_string(),
+                ),
+                _ => match token.strip_prefix('?') {
+                    Some(optional) => Ok(Self::Optional(name(optional)?)),
+                    None => Ok(Self::Required(name(token)?)),
+                },
+            }
+        }
+    }
+
+    impl Display for AccountSlot {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            match self {
+                Self::Unnamed => f.write_str("_"),
+                Self::Required(name) => f.write_str(name),
+                Self::Optional(name) => write!(f, "?{name}"),
+            }
+        }
+    }
+
+    impl Serialize for AccountSlot {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.collect_str(self)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for AccountSlot {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct SlotVisitor;
+
+            impl<'de> de::Visitor<'de> for SlotVisitor {
+                type Value = AccountSlot;
+
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("an account name, `?name` for an optional slot, or `_`")
+                }
+
+                fn visit_str<E: de::Error>(self, value: &str) -> Result<AccountSlot, E> {
+                    AccountSlot::parse(value).map_err(de::Error::custom)
+                }
+
+                /// `- ? authority` and the flow-style `[?authority]` are YAML's
+                /// explicit-key syntax, which parses as a one-entry mapping with
+                /// no value rather than as the string a reader sees.
+                fn visit_map<A: de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<AccountSlot, A::Error> {
+                    let Some((name, value)) = map.next_entry::<String, Option<de::IgnoredAny>>()?
+                    else {
+                        return Err(de::Error::custom(
+                            "expected an account name, got an empty mapping",
+                        ));
+                    };
+                    if value.is_some() || map.next_key::<de::IgnoredAny>()?.is_some() {
+                        return Err(de::Error::custom(format!(
+                            "expected an account name, got a mapping. To mark '{name}' optional, \
+                             write \"?{name}\"."
+                        )));
+                    }
+                    AccountSlot::parse(&format!("?{name}")).map_err(de::Error::custom)
+                }
+            }
+
+            deserializer.deserialize_any(SlotVisitor)
+        }
+    }
+
+    impl JsonSchema for AccountSlot {
+        fn schema_name() -> Cow<'static, str> {
+            "SvmAccountSlot".into()
+        }
+
+        fn json_schema(_: &mut SchemaGenerator) -> Schema {
+            json_schema!({
+                "title": "Account slot",
+                "description": "One positional account slot of the instruction.\n\
+                    - `payer` names a slot the call always carries; it surfaces as \
+                    `instruction.accounts.payer`.\n\
+                    - `?authority` names an optional slot: the key is absent from \
+                    `instruction.accounts` when the call leaves the slot out or fills it with \
+                    the program id.\n\
+                    - `_` holds a position without naming it, so the slots after it keep \
+                    theirs. It is never surfaced and never filterable, and the list may not \
+                    end with one.",
+                "type": "string",
+                "pattern": "^(?:_|\\??[A-Za-z0-9_]*[A-Za-z][A-Za-z0-9_]*)$",
+                "examples": ["payer", "?authority", "_"],
+            })
+        }
     }
 
     /// One named argument of an instruction. Mirrors
@@ -1476,6 +1614,28 @@ mod tests {
         assert_eq!(
             npm_schema, actual_schema,
             "Please run 'make update-generated-docs'"
+        );
+    }
+
+    /// The slot text is the config's own surface, so what a writer emits has
+    /// to read back as the same slots.
+    #[test]
+    fn svm_account_slots_round_trip_through_yaml() {
+        use super::svm::AccountSlot;
+
+        let slots = vec![
+            AccountSlot::Required("payer".to_string()),
+            AccountSlot::Optional("authority".to_string()),
+            AccountSlot::Unnamed,
+        ];
+        let yaml = serde_yaml::to_string(&slots).unwrap();
+
+        assert_eq!(
+            (
+                yaml.as_str(),
+                serde_yaml::from_str::<Vec<AccountSlot>>(&yaml).unwrap()
+            ),
+            ("- payer\n- ?authority\n- _\n", slots)
         );
     }
 

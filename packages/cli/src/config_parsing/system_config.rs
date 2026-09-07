@@ -2171,9 +2171,9 @@ pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
     /// instruction in the program.
     pub discriminator: Option<String>,
-    /// Positional account names. Empty when the user supplied no schema and
-    /// no IDL applies; in that case `decoded.accounts` is `{}`.
-    pub accounts: Vec<String>,
+    /// Positional account slots in declared order. Empty when the user supplied
+    /// no schema and no IDL applies; in that case `decoded.accounts` is `{}`.
+    pub accounts: Vec<human_config::svm::AccountSlot>,
     /// Borsh argument layout in declared order. Empty for unknown
     /// instructions; the raw `instruction.data` is still available.
     pub args: Vec<SvmNamedField>,
@@ -3776,7 +3776,7 @@ type Foo {
             )
         }
 
-        /// Name, discriminator, account names, arg names.
+        /// Name, discriminator, account slots as YAML tokens, arg names.
         type SvmEvent = (String, Option<String>, Vec<String>, Vec<String>);
 
         fn svm_events(config: &SystemConfig) -> Vec<SvmEvent> {
@@ -3788,7 +3788,7 @@ type Foo {
                     EventKind::Svm(k) => (
                         e.name.clone(),
                         k.discriminator.clone(),
-                        k.accounts.clone(),
+                        k.accounts.iter().map(ToString::to_string).collect(),
                         k.args.iter().map(|a| a.name.clone()).collect(),
                     ),
                     other => panic!("expected an Svm event kind, got {other:?}"),
@@ -3908,8 +3908,121 @@ type Foo {
             );
         }
 
-        /// A row on a name the IDL declares replaces it, so it says every
-        /// field. A name-only row leaves out all three.
+        /// A YAML-only program whose one instruction declares `accounts` as
+        /// the given YAML, read back as the canonical slot tokens.
+        fn account_slots(accounts: &str) -> anyhow::Result<Vec<String>> {
+            let yaml = format!(
+                "name: svm-slots\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+                 0\n    experimental:\n      hypersync_config:\n        url: \
+                 https://solana.hypersync.xyz\n      programs:\n        - name: Pool\n          \
+                 program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n          \
+                 instructions:\n            - name: swap\n              discriminator: \
+                 \"0x01\"\n              args: []\n              accounts: {accounts}\n"
+            );
+            let config = SystemConfig::parse_yaml(
+                &yaml,
+                Some("type Foo @entity { id: ID! }"),
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+            )?;
+            Ok(svm_events(&config).remove(0).2)
+        }
+
+        /// The same slots as a block sequence under `accounts:`.
+        fn block_list(slots: &[&str]) -> String {
+            slots
+                .iter()
+                .map(|slot| format!("\n                - {slot}"))
+                .collect()
+        }
+
+        /// `?name` marks a slot optional and `_` holds a position without a
+        /// name. YAML reads a leading `?` as a plain scalar in a block
+        /// sequence, but as its explicit-key indicator in a flow one — where
+        /// the slot arrives as a one-entry mapping with no value instead.
+        #[test]
+        fn reads_optional_and_unnamed_slots_in_either_yaml_style() {
+            let expected = vec![
+                "payer".to_string(),
+                "?authority".to_string(),
+                "_".to_string(),
+                "mint".to_string(),
+            ];
+
+            assert_eq!(
+                vec![
+                    account_slots(&block_list(&["payer", "?authority", "_", "mint"]))
+                        .expect("block"),
+                    account_slots(&block_list(&["payer", "\"?authority\"", "_", "mint"]))
+                        .expect("quoted"),
+                    account_slots(&block_list(&["payer", "? authority", "_", "mint"]))
+                        .expect("explicit key"),
+                    account_slots("[payer, ?authority, _, mint]").expect("flow"),
+                ],
+                vec![
+                    expected.clone(),
+                    expected.clone(),
+                    expected.clone(),
+                    expected
+                ]
+            );
+        }
+
+        #[test]
+        fn rejects_a_slot_the_grammar_has_no_reading_for() {
+            let cases = [
+                ("optional and unnamed", "[payer, ?_, mint]"),
+                ("trailing unnamed", "[payer, _]"),
+                ("duplicate name", "[payer, mint, payer]"),
+                ("no letter in the name", "[payer, _1]"),
+                ("punctuation in the name", "[payer, mint-authority]"),
+                ("a mapping carrying a value", "[payer, ?mint: yes]"),
+            ];
+
+            assert_eq!(
+                cases
+                    .iter()
+                    .map(|(case, accounts)| format!(
+                        "{case}: {:#}",
+                        account_slots(accounts).expect_err(case)
+                    ))
+                    .collect::<Vec<_>>(),
+                vec![
+                    "optional and unnamed: Failed to deserialize config. Visit the docs for more \
+                     information https://docs.envio.dev/docs/configuration-file: \
+                     chains[0].experimental.programs[0].instructions[0].accounts[1]: account slot \
+                     '?_' marks an unnamed slot optional, which nothing can observe. Write '_' to \
+                     hold the position, or name the slot. at line 16 column 33",
+                    "trailing unnamed: Program 'Pool', instruction 'swap': the account list ends \
+                     with '_', a position nothing follows. Drop it.",
+                    "duplicate name: Program 'Pool', instruction 'swap': account 'payer' is \
+                     declared more than once.",
+                    "no letter in the name: Failed to deserialize config. Visit the docs for more \
+                     information https://docs.envio.dev/docs/configuration-file: \
+                     chains[0].experimental.programs[0].instructions[0].accounts[1]: account slot \
+                     '_1' is not a name: expected letters, digits and underscores, at least one \
+                     of them a letter. Prefix a name with '?' to mark the slot optional, or write \
+                     '_' to hold a position without naming it. at line 16 column 33",
+                    "punctuation in the name: Failed to deserialize config. Visit the docs for \
+                     more information https://docs.envio.dev/docs/configuration-file: \
+                     chains[0].experimental.programs[0].instructions[0].accounts[1]: account slot \
+                     'mint-authority' is not a name: expected letters, digits and underscores, at \
+                     least one of them a letter. Prefix a name with '?' to mark the slot \
+                     optional, or write '_' to hold a position without naming it. at line 16 \
+                     column 33",
+                    "a mapping carrying a value: Failed to deserialize config. Visit the docs \
+                     for more information https://docs.envio.dev/docs/configuration-file: \
+                     chains[0].experimental.programs[0].instructions[0].accounts[1]: expected an \
+                     account name, got a mapping. To mark 'mint' optional, write \"?mint\". at \
+                     line 16 column 33",
+                ]
+            );
+        }
+
+        /// A row on a name the IDL declares replaces it, so it says the
+        /// fields that would otherwise read as absent. A name-only row leaves
+        /// out both.
         #[test]
         fn rejects_a_name_only_row_shadowing_an_idl_instruction() {
             let err = program_reading_idl(LEGACY_ANCHOR_IDL, "            - name: swap\n")
@@ -3917,22 +4030,38 @@ type Foo {
 
             assert_eq!(
                 format!("{err:#}"),
-                overwrite_error("swap", DECLARED, "'discriminator', 'accounts' and 'args'")
+                overwrite_error("swap", DECLARED, "'accounts' and 'args'")
             );
         }
 
+        /// An overwrite says what a row on any other name says: a missing
+        /// `discriminator` is a program-wide match, here replacing the prefix
+        /// the IDL declared for the name.
         #[test]
-        fn names_only_the_field_an_idl_overwrite_left_out() {
-            let err = program_reading_idl(
+        fn an_overwrite_without_a_discriminator_is_program_wide() {
+            let config = program_reading_idl(
                 LEGACY_ANCHOR_IDL,
                 "            - name: swap\n              accounts:\n                - source\n              \
                  args: []\n",
             )
-            .expect_err("layout without discriminator");
+            .expect("layout without discriminator");
 
             assert_eq!(
-                format!("{err:#}"),
-                overwrite_error("swap", DECLARED, "'discriminator'")
+                svm_events(&config),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0xf223c68952e1f2b6".to_string()),
+                        vec!["vault".to_string()],
+                        Vec::new(),
+                    ),
+                    (
+                        "swap".to_string(),
+                        None,
+                        vec!["source".to_string()],
+                        Vec::new(),
+                    ),
+                ]
             );
         }
 
@@ -4138,7 +4267,7 @@ type Foo {
                     "the IDL declares this instruction too, but it cannot be indexed as declared: \
                      idls/pool.json:2:22: args.amount: `coption` is not Borsh-compatible and \
                      cannot be decoded",
-                    "'discriminator', 'accounts' and 'args'"
+                    "'accounts' and 'args'"
                 )
             );
         }

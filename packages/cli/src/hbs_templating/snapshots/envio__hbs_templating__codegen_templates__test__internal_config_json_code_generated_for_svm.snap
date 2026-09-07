@@ -34,13 +34,27 @@ expression: json
             "svm": {
               "discriminator": "0x21",
               "accounts": [
-                "metadata",
-                "mint",
-                "mint_authority",
-                "payer",
-                "update_authority",
-                "system_program",
-                "rent"
+                {
+                  "name": "metadata"
+                },
+                {
+                  "name": "mint"
+                },
+                {
+                  "name": "mint_authority"
+                },
+                {
+                  "name": "payer"
+                },
+                {
+                  "name": "update_authority"
+                },
+                {
+                  "name": "system_program"
+                },
+                {
+                  "name": "rent"
+                }
               ]
             }
           },
@@ -51,8 +65,12 @@ expression: json
             "svm": {
               "discriminator": "0x0f",
               "accounts": [
-                "metadata",
-                "update_authority"
+                {
+                  "name": "metadata"
+                },
+                {
+                  "name": "update_authority"
+                }
               ]
             }
           }

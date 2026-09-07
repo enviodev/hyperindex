@@ -1,18 +1,18 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::NamedField as SvmNamedField;
 
-use super::human_config;
+use super::human_config::{self, svm::AccountSlot};
 use super::svm_idl::{IxIdl, ProgramIdl, Unusable};
 use super::system_config::yaml_arg_to_named_field;
-use super::validation::{validate_svm_accounts, validate_svm_args};
+use super::validation::validate_svm_args;
 
 /// What one configured instruction dispatches on and decodes into.
 pub struct ResolvedInstruction {
     /// `None` matches every instruction of the program.
     pub discriminator: Option<Vec<u8>>,
-    pub accounts: Vec<String>,
+    pub accounts: Vec<AccountSlot>,
     pub args: Vec<SvmNamedField>,
 }
 
@@ -24,10 +24,33 @@ impl ResolvedInstruction {
             } else {
                 Some(ix.discriminator.clone())
             },
-            accounts: ix.accounts.iter().map(|a| a.name.clone()).collect(),
+            accounts: ix
+                .accounts
+                .iter()
+                .map(|a| {
+                    if a.optional {
+                        AccountSlot::Optional(a.name.clone())
+                    } else {
+                        AccountSlot::Required(a.name.clone())
+                    }
+                })
+                .collect(),
             args: ix.args.clone(),
         }
     }
+}
+
+fn validate_account_slots(slots: &[AccountSlot]) -> Result<()> {
+    if slots.last() == Some(&AccountSlot::Unnamed) {
+        bail!("the account list ends with '_', a position nothing follows. Drop it.");
+    }
+    let mut seen = HashSet::new();
+    for name in slots.iter().filter_map(AccountSlot::name) {
+        if !seen.insert(name) {
+            bail!("account '{name}' is declared more than once.");
+        }
+    }
+    Ok(())
 }
 
 fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<ResolvedInstruction> {
@@ -37,7 +60,7 @@ fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<Re
         .map(|d| crate::hex::decode_optionally_prefixed(d, "discriminator"))
         .transpose()?;
     let accounts = instr.accounts.clone().unwrap_or_default();
-    validate_svm_accounts(&accounts)?;
+    validate_account_slots(&accounts)?;
     let args = match &instr.args {
         Some(args) => {
             validate_svm_args(args)?;
@@ -56,6 +79,8 @@ fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<Re
 
 /// What a row on a name the IDL declares still has to spell out, as the error
 /// the caller reports. `None` when the row is not an overwrite, or is complete.
+/// `discriminator` is not among them: absent, it means what it means anywhere
+/// else, a match on every instruction of the program.
 fn overwrite_missing_fields(
     instr: &human_config::svm::Instruction,
     idl: &ProgramIdl,
@@ -64,10 +89,12 @@ fn overwrite_missing_fields(
     if set_aside.is_none() && !idl.instructions.contains_key(&instr.name) {
         return None;
     }
-    let missing = missing_fields(instr);
-    if missing.is_empty() {
-        return None;
-    }
+    let missing = match (instr.accounts.is_none(), instr.args.is_none()) {
+        (false, false) => return None,
+        (true, false) => "'accounts'",
+        (false, true) => "'args'",
+        (true, true) => "'accounts' and 'args'",
+    };
     let declared = match set_aside {
         Some(reason) => format!(
             "the IDL declares this instruction too, but it cannot be indexed as declared: {reason}"
@@ -77,31 +104,9 @@ fn overwrite_missing_fields(
             .to_string(),
     };
     Some(anyhow!(
-        "{declared}. Spell out {}: an overwrite takes nothing from the IDL, so a field left out \
-         here is absent, not inherited.",
-        and_list(&missing)
+        "{declared}. Spell out {missing}: an overwrite takes nothing from the IDL, so a field \
+         left out here is absent, not inherited."
     ))
-}
-
-fn missing_fields(instr: &human_config::svm::Instruction) -> Vec<&'static str> {
-    [
-        ("discriminator", instr.discriminator.is_none()),
-        ("accounts", instr.accounts.is_none()),
-        ("args", instr.args.is_none()),
-    ]
-    .into_iter()
-    .filter_map(|(field, absent)| absent.then_some(field))
-    .collect()
-}
-
-/// `'a'`, `'a' and 'b'`, `'a', 'b' and 'c'`.
-fn and_list(fields: &[&str]) -> String {
-    let quoted: Vec<String> = fields.iter().map(|field| format!("'{field}'")).collect();
-    match quoted.split_last() {
-        None => String::new(),
-        Some((last, [])) => last.clone(),
-        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
-    }
 }
 
 pub fn instruction_catalog(

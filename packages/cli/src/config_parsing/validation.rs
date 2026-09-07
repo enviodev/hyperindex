@@ -216,8 +216,9 @@ pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Every name a config.yaml gives an Svm program, instruction, account or arg
-/// becomes a property of the generated types, so they are held to one rule.
+/// Every name a config.yaml gives an Svm program, instruction or arg becomes a
+/// property of the generated types, so they are held to one rule. Account
+/// slots carry their own grammar, read where the config is deserialized.
 /// Unlike EVM and Fuel, none of them reaches generated ReScript, so the
 /// reserved-word list does not apply.
 fn validate_svm_name(name: &str, what: &str) -> anyhow::Result<()> {
@@ -228,18 +229,6 @@ fn validate_svm_name(name: &str, what: &str) -> anyhow::Result<()> {
         "{what} must be an identifier: letters, digits and underscores only, not starting with a \
          digit, got '{name}'"
     ))
-}
-
-/// One instruction's positional account names, as a config.yaml row wrote them.
-pub fn validate_svm_accounts(accounts: &[String]) -> anyhow::Result<()> {
-    let mut seen = std::collections::HashSet::new();
-    for name in accounts {
-        validate_svm_name(name, "an account name").context("accounts")?;
-        if !seen.insert(name.as_str()) {
-            return Err(anyhow!("accounts: '{name}' is declared more than once"));
-        }
-    }
-    Ok(())
 }
 
 /// One instruction's Borsh args, as a config.yaml row wrote them. Every defect

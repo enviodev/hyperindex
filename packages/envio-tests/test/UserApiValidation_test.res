@@ -1386,20 +1386,6 @@ chains:
       "Program 'Program', instruction 'swap': args: an arg name must be an identifier: letters, digits and underscores only, not starting with a digit, got ''",
     ),
     (
-      "rejects an account name that is not an identifier",
-      instruction(`
-              accounts: ["source pool"]
-              args: []`),
-      "Program 'Program', instruction 'swap': accounts: an account name must be an identifier: letters, digits and underscores only, not starting with a digit, got 'source pool'",
-    ),
-    (
-      "rejects duplicate account names",
-      instruction(`
-              accounts: [source, source]
-              args: []`),
-      "Program 'Program', instruction 'swap': accounts: 'source' is declared more than once",
-    ),
-    (
       "rejects an empty enum, which no tag can select",
       instruction(`
               accounts: []
@@ -2206,7 +2192,7 @@ chains:
         (svm.name, svm.accounts, svm.args)
       }),
     ).toEqual([
-      ("namesOnly", ["source"], JSON.Null),
+      ("namesOnly", [Internal.Required("source")], JSON.Null),
       ("argsOnly", [], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
       ("neither", [], JSON.Null),
     ])
@@ -2248,10 +2234,21 @@ chains:
 ${instructions}
 `
 
+  // Account slots read back as the YAML tokens that declare them, so an
+  // expectation shows optionality and unnamed positions.
+  let slotTokens = (slots: array<Internal.svmAccountSlot>) =>
+    slots->Array.map(slot =>
+      switch slot {
+      | Unnamed => "_"
+      | Required(name) => name
+      | Optional(name) => "?" ++ name
+      }
+    )
+
   let catalog = (config: Config.t) =>
     firstContract(config).events->Array.map(event => {
       let svm = event->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-      (svm.name, svm.discriminator, svm.accounts, svm.args)
+      (svm.name, svm.discriminator, svm.accounts->slotTokens, svm.args)
     })
 
   // An IDL is a file the program's authors wrote, and nothing holds its names
@@ -2302,7 +2299,7 @@ indexer.onInstruction(
       yaml(`          instructions:
             - name: swap
 `),
-      "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'discriminator', 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
+      "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
   })
 
@@ -2329,7 +2326,7 @@ indexer.onInstruction(
       yaml(`          instructions:
             - name: swap
 `),
-      "Program 'Program', instruction 'swap': the IDL declares this instruction too, but it cannot be indexed as declared: idls/program.json:2:30: args.amount: `coption` is not Borsh-compatible and cannot be decoded. Spell out 'discriminator', 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
+      "Program 'Program', instruction 'swap': the IDL declares this instruction too, but it cannot be indexed as declared: idls/program.json:2:30: args.amount: `coption` is not Borsh-compatible and cannot be decoded. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
   })
 
@@ -2401,17 +2398,22 @@ indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => 
     ])
   })
 
-  it("requires a discriminator on a YAML row next to idl even when layout is set", t => {
-    expectParseError(
-      t,
+  // An overwrite says what a row on any other name says: a missing
+  // `discriminator` matches every instruction of the program, here in place of
+  // the prefix the IDL declared for the name.
+  it("makes an overwrite without a discriminator program-wide", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
       ~files,
-      yaml(`          instructions:
+      ~configYaml=yaml(`          instructions:
             - name: swap
               accounts: [source]
               args: []
 `),
-      "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'discriminator': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
+    t.expect(catalog(config)).toEqual([
+      ("deposit", Some("0x02"), ["vault"], JSON.Null),
+      ("swap", None, ["source"], JSON.Null),
+    ])
   })
 
   it("rejects a discriminator-only YAML row that shadows an IDL instruction", t => {

@@ -2314,8 +2314,13 @@ type testIndexer = {{
                             let fields = svm_kind
                                 .accounts
                                 .iter()
-                                .map(|name| {
-                                    format!("readonly {}: string", ts_safe_property_name(name))
+                                .filter_map(|slot| {
+                                    let name = slot.name()?;
+                                    let optional = if slot.is_optional() { "?" } else { "" };
+                                    Some(format!(
+                                        "readonly {}{optional}: string",
+                                        ts_safe_property_name(name)
+                                    ))
                                 })
                                 .collect::<Vec<_>>()
                                 .join("; ");
