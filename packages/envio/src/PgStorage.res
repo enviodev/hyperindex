@@ -1046,6 +1046,16 @@ let executeSet = (
   }
 }
 
+// The checkpoints a write inserts: every one the batch made, or those of the
+// chains whose history it keeps.
+type pickedCheckpoints = AllCheckpoints | CheckpointIndexes(array<int>)
+
+let pickCheckpoints = (column, picked) =>
+  switch picked {
+  | AllCheckpoints => column
+  | CheckpointIndexes(indexes) => indexes->Array.map(index => column->Array.getUnsafe(index))
+  }
+
 let rec writeBatch = async (
   sql,
   ~batch: Batch.t,
@@ -1067,12 +1077,22 @@ let rec writeBatch = async (
     // A checkpoint anchors the history its chain keeps, so the batch's
     // decision picks the checkpoints chain by chain. Under one shared sequence
     // that is all of them or none.
-    let checkpointIndexes =
-      batch.checkpointChainIds->Array.filterMapWithIndex((chainId, index) =>
-        batch.history->HistoryPolicy.forChain(chainId) === Keep ? Some(index) : None
-      )
-    let pickCheckpoints = column =>
-      checkpointIndexes->Array.map(index => column->Array.getUnsafe(index))
+    let pickedCheckpoints = switch batch.history {
+    | Shared(Keep) => batch.checkpointIds->Utils.Array.notEmpty ? Some(AllCheckpoints) : None
+    | Shared(Skip) => None
+    | ByChain(_) =>
+      let indexes =
+        batch.checkpointChainIds->Array.filterMapWithIndex((chainId, index) =>
+          batch.history->HistoryPolicy.forChain(chainId) === Keep ? Some(index) : None
+        )
+      indexes->Utils.Array.notEmpty ? Some(CheckpointIndexes(indexes)) : None
+    }
+    // Where the write leaves every chain's sequence. A rollback's diff ids sit
+    // on chains the batch may not have progressed at all.
+    let checkpointFrontier = switch rollback {
+    | Some({diffFrontier}) => Frontier.mergeMax(batch.checkpointFrontier, diffFrontier)
+    | None => batch.checkpointFrontier
+    }
 
     let specificError = ref(None)
 
@@ -1424,18 +1444,28 @@ let rec writeBatch = async (
             )
           }
 
-          if checkpointIndexes->Utils.Array.notEmpty {
+          setOperations->Array.push(sql =>
+            sql->InternalTable.Chains.setCheckpointFrontier(
+              ~pgSchema,
+              ~frontier=checkpointFrontier,
+              ~chainIdMode,
+            )
+          )
+
+          switch pickedCheckpoints {
+          | Some(picked) =>
             setOperations->Array.push(sql =>
               sql->InternalTable.Checkpoints.insert(
                 ~pgSchema,
-                ~checkpointIds=batch.checkpointIds->pickCheckpoints,
-                ~checkpointChainIds=batch.checkpointChainIds->pickCheckpoints,
-                ~checkpointBlockNumbers=batch.checkpointBlockNumbers->pickCheckpoints,
-                ~checkpointBlockHashes=batch.checkpointBlockHashes->pickCheckpoints,
-                ~checkpointEventsProcessed=batch.checkpointEventsProcessed->pickCheckpoints,
+                ~checkpointIds=batch.checkpointIds->pickCheckpoints(picked),
+                ~checkpointChainIds=batch.checkpointChainIds->pickCheckpoints(picked),
+                ~checkpointBlockNumbers=batch.checkpointBlockNumbers->pickCheckpoints(picked),
+                ~checkpointBlockHashes=batch.checkpointBlockHashes->pickCheckpoints(picked),
+                ~checkpointEventsProcessed=batch.checkpointEventsProcessed->pickCheckpoints(picked),
                 ~chainIdMode,
               )
             )
+          | None => ()
           }
 
           await setOperations
@@ -2329,34 +2359,36 @@ let make = (
   let resumeInitialState = async (~entities, ~throwIfIncompatible): Persistence.initialState => {
     let (
       cache,
-      chains,
-      checkpointIdResult,
+      (chains, checkpointFrontier),
       reorgCheckpoints,
       (storedEnvioInfo, storedContractMapping),
-    ) = await Promise.all5((
+    ) = await Promise.all4((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
         ~pgSchema,
       )->Promise.thenResolve(rawInitialStates => {
-        rawInitialStates->Array.map((rawInitialState): Persistence.initialChainState => {
-          id: rawInitialState.id,
-          startBlock: rawInitialState.startBlock,
-          endBlock: rawInitialState.endBlock->Null.toOption,
-          maxReorgDepth: rawInitialState.maxReorgDepth,
-          firstEventBlockNumber: rawInitialState.firstEventBlockNumber->Null.toOption,
-          timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Null.toOption,
-          numEventsProcessed: rawInitialState.numEventsProcessed,
-          progressBlockNumber: rawInitialState.progressBlockNumber,
-          addressRows: rawInitialState.addressRows,
-          sourceBlockNumber: rawInitialState.sourceBlockNumber,
-        })
+        (
+          rawInitialStates->Array.map((rawInitialState): Persistence.initialChainState => {
+            id: rawInitialState.id,
+            startBlock: rawInitialState.startBlock,
+            endBlock: rawInitialState.endBlock->Null.toOption,
+            maxReorgDepth: rawInitialState.maxReorgDepth,
+            firstEventBlockNumber: rawInitialState.firstEventBlockNumber->Null.toOption,
+            timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Null.toOption,
+            numEventsProcessed: rawInitialState.numEventsProcessed,
+            progressBlockNumber: rawInitialState.progressBlockNumber,
+            addressRows: rawInitialState.addressRows,
+            sourceBlockNumber: rawInitialState.sourceBlockNumber,
+          }),
+          Frontier.fromEntries(
+            rawInitialStates->Array.map(rawInitialState => (
+              rawInitialState.id,
+              rawInitialState.checkpointId->BigInt.fromStringOrThrow,
+            )),
+          ),
+        )
       }),
-      sql
-      ->Postgres.unsafe(InternalTable.Checkpoints.makeCommitedCheckpointFrontierQuery(~pgSchema))
-      ->(
-        Utils.magic: promise<array<unknown>> => promise<array<{"chain_id": string, "id": string}>>
-      ),
       sql
       ->Postgres.unsafe(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
       ->(
@@ -2386,13 +2418,6 @@ let make = (
     throwIfIncompatible(~storedEnvioInfo, ~storedContractMapping)
 
     await reloadIndexCatalog()
-
-    let checkpointFrontier = Frontier.fromEntries(
-      checkpointIdResult->Array.map(row => (
-        row["chain_id"]->ChainId.normalizeOrThrow,
-        row["id"]->BigInt.fromStringOrThrow,
-      )),
-    )
 
     // Convert string checkpoint IDs from DB to bigint
     let reorgCheckpoints = Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {

@@ -186,6 +186,7 @@ module Chains = {
     | #buffer_block
     | #ready_at
     | #_is_hyper_sync
+    | #checkpoint_id
   ]
 
   let fields: array<field> = [
@@ -201,6 +202,7 @@ module Chains = {
     #ready_at,
     #events_processed,
     #_is_hyper_sync,
+    #checkpoint_id,
   ]
 
   type metaFields = {
@@ -226,6 +228,7 @@ module Chains = {
     @as("source_block") blockHeight: int,
     @as("progress_block") progressBlockNumber: int,
     @as("events_processed") numEventsProcessed: float,
+    @as("checkpoint_id") checkpointId: Internal.checkpointId,
     ...metaFields,
   }
 
@@ -265,6 +268,13 @@ module Chains = {
       mkField((#_is_hyper_sync: field :> string), Boolean, ~fieldSchema=S.bool),
       // Fully processed block number
       mkField((#progress_block: field :> string), Int32, ~fieldSchema=S.int),
+      // The last checkpoint id the chain has committed. Kept here rather than
+      // read off the checkpoints table: checkpoint rows are only written while
+      // a rollback could reach them, but an append-only sink holds a row for
+      // every id ever handed out and resolves current state through them, so a
+      // resume has to continue the sequence even where no checkpoint row backs
+      // it.
+      mkField((#checkpoint_id: field :> string), UInt64, ~fieldSchema=S.bigint),
     ],
   )
 
@@ -282,6 +292,7 @@ module Chains = {
       progressBlockNumber: -1,
       isHyperSync: false,
       numEventsProcessed: 0.,
+      checkpointId: Internal.initialCheckpointId,
     }
   }
 
@@ -360,6 +371,8 @@ WHERE "${(#id: field :> string)}" = $2
     progressBlockNumber: int,
     addressRows: AddressRows.seedRows,
     sourceBlockNumber: int,
+    // BIGINT, which the driver hands back as a string.
+    checkpointId: string,
   }
 
   let makeGetInitialStateQuery = (~pgSchema) => {
@@ -371,7 +384,8 @@ WHERE "${(#id: field :> string)}" = $2
 "${(#ready_at: field :> string)}" as "timestampCaughtUpToHeadOrEndblock",
 "${(#events_processed: field :> string)}"::float8 as "numEventsProcessed",
 "${(#progress_block: field :> string)}" as "progressBlockNumber",
-"${(#source_block: field :> string)}" as "sourceBlockNumber"
+"${(#source_block: field :> string)}" as "sourceBlockNumber",
+"${(#checkpoint_id: field :> string)}"::TEXT as "checkpointId"
 FROM "${pgSchema}"."${table.tableName}";`
   }
 
@@ -474,6 +488,35 @@ WHERE "id" = $1;`
     })
 
     Promise.all(promises)->Utils.Promise.ignoreValue
+  }
+
+  let makeSetCheckpointFrontierQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
+    let chainIdArrayType = chainIdArrayType(~pgSchema, ~chainIdMode)
+    `UPDATE "${pgSchema}"."${table.tableName}"
+SET "${(#checkpoint_id: field :> string)}" = envio_frontier.checkpoint_id
+FROM unnest($1::${chainIdArrayType},$2::${(BigInt: Postgres.columnType :> string)}[]) AS envio_frontier(chain_id, checkpoint_id)
+WHERE "${table.tableName}"."${(#id: field :> string)}" = envio_frontier.chain_id;`
+  }
+
+  // Every chain the frontier names, in one statement and in the batch's own
+  // transaction — so a chain's stored id can never outlive the rows it covers,
+  // nor lag behind them.
+  let setCheckpointFrontier = (
+    sql,
+    ~pgSchema,
+    ~frontier: Frontier.t,
+    ~chainIdMode: ChainId.mode=Int32,
+  ) => {
+    let entries = frontier->Frontier.entries
+    sql
+    ->Postgres.preparedUnsafe(
+      makeSetCheckpointFrontierQuery(~pgSchema, ~chainIdMode),
+      (
+        entries->Array.map(((chainId, _)) => chainId),
+        entries->Array.map(((_, checkpointId)) => checkpointId->BigInt.toString),
+      )->(Utils.magic: ((array<ChainId.t>, array<string>)) => unknown),
+    )
+    ->Utils.Promise.ignoreValue
   }
 }
 
@@ -691,12 +734,6 @@ INNER JOIN reorg_chains rc
 WHERE cp."${(#block_hash: field :> string)}" IS NOT NULL
   AND cp."${(#block_number: field :> string)}" >= rc.safe_block
 ORDER BY cp."${(#id: field :> string)}";`
-  }
-
-  // Where each chain's sequence stands. A chain with no checkpoint left (never
-  // written, or all pruned) answers no row and resumes from the initial id.
-  let makeCommitedCheckpointFrontierQuery = (~pgSchema) => {
-    `SELECT "${(#chain_id: field :> string)}"::TEXT AS chain_id, MAX("${(#id: field :> string)}")::TEXT AS id FROM "${pgSchema}"."${table.tableName}" GROUP BY "${(#chain_id: field :> string)}";`
   }
 
   let makeInsertCheckpointQuery = (~pgSchema, ~chainIdMode: ChainId.mode=Int32) => {
