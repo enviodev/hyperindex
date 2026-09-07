@@ -1,4 +1,5 @@
 // use super::chain_helpers;
+use super::human_config::svm::{ArgDef, ArgType};
 use super::human_config::{self, evm::HumanConfig};
 use crate::constants::reserved_keywords::RESERVED_NAMES;
 use anyhow::{anyhow, Context};
@@ -215,6 +216,127 @@ pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Every name a config.yaml gives an Svm program, instruction, account or arg
+/// becomes a property of the generated types, so they are held to one rule.
+/// Unlike EVM and Fuel, none of them reaches generated ReScript, so the
+/// reserved-word list does not apply.
+fn validate_svm_name(name: &str, what: &str) -> anyhow::Result<()> {
+    if is_valid_identifier(name) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "{what} must be an identifier: letters, digits and underscores only, not starting with a \
+         digit, got '{name}'"
+    ))
+}
+
+/// One instruction's positional account names, as a config.yaml row wrote them.
+pub fn validate_svm_accounts(accounts: &[String]) -> anyhow::Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for name in accounts {
+        validate_svm_name(name, "an account name").context("accounts")?;
+        if !seen.insert(name.as_str()) {
+            return Err(anyhow!("accounts: '{name}' is declared more than once"));
+        }
+    }
+    Ok(())
+}
+
+/// One instruction's Borsh args, as a config.yaml row wrote them. Every defect
+/// here would otherwise reach the decoder, which answers a layout it cannot
+/// walk by dropping the instruction — so a config that can never decode must
+/// not get past parsing. IDL-declared args come with their own checks in
+/// `svm_idl`, which set the instruction aside with a reason instead.
+pub fn validate_svm_args(args: &[ArgDef]) -> anyhow::Result<()> {
+    validate_svm_named_fields(args, "an arg name", "args")
+}
+
+fn validate_svm_named_fields(fields: &[ArgDef], what: &str, path: &str) -> anyhow::Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for field in fields {
+        validate_svm_name(&field.name, what).with_context(|| path.to_string())?;
+        if !seen.insert(field.name.as_str()) {
+            return Err(anyhow!(
+                "{path}: '{}' is declared more than once",
+                field.name
+            ));
+        }
+    }
+    for field in fields {
+        validate_svm_arg_type(&field.ty, &format!("{path}.{}", field.name))?;
+    }
+    Ok(())
+}
+
+fn validate_svm_arg_type(ty: &ArgType, path: &str) -> anyhow::Result<()> {
+    use super::human_config::svm::{ArgComposite as C, MAX_ARRAY_LEN, MAX_ENUM_VARIANTS};
+    let ArgType::Composite(composite) = ty else {
+        return Ok(());
+    };
+    match composite {
+        C::Defined(_) => Err(anyhow!(
+            "{path}: 'defined' is not supported in config.yaml: declare the type inline with \
+             'struct' or 'enum', or take the instruction from an 'idl'"
+        )),
+        C::Option(inner) => {
+            let path = format!("{path}.option");
+            if matches!(**inner, ArgType::Composite(C::Option(_))) {
+                return Err(anyhow!(
+                    "{path}: a nested 'option' is not supported: Borsh tags each level with one \
+                     byte, so Some(None) and None would decode the same"
+                ));
+            }
+            validate_svm_arg_type(inner, &path)
+        }
+        C::Vec(inner) => validate_svm_arg_type(inner, &format!("{path}.vec")),
+        C::Array(inner, len) => {
+            let path = format!("{path}.array");
+            if *len > MAX_ARRAY_LEN {
+                return Err(anyhow!(
+                    "{path}: {len} elements is more than the {MAX_ARRAY_LEN} an array may declare"
+                ));
+            }
+            validate_svm_arg_type(inner, &path)
+        }
+        C::Struct(fields) => {
+            validate_svm_named_fields(fields, "a field name", &format!("{path}.struct"))
+        }
+        C::Enum(variants) => {
+            let path = format!("{path}.enum");
+            if variants.is_empty() {
+                return Err(anyhow!("{path}: an enum needs at least one variant"));
+            }
+            if variants.len() > MAX_ENUM_VARIANTS {
+                return Err(anyhow!(
+                    "{path}: {} variants is more than the {MAX_ENUM_VARIANTS} a one-byte Borsh \
+                     tag can address",
+                    variants.len()
+                ));
+            }
+            let mut seen = std::collections::HashSet::new();
+            for variant in variants {
+                validate_svm_name(&variant.name, "a variant name").with_context(|| path.clone())?;
+                if !seen.insert(variant.name.as_str()) {
+                    return Err(anyhow!(
+                        "{path}: '{}' is declared more than once",
+                        variant.name
+                    ));
+                }
+            }
+            for variant in variants {
+                if let Some(fields) = &variant.fields {
+                    validate_svm_named_fields(
+                        fields,
+                        "a field name",
+                        &format!("{path}.{}", variant.name),
+                    )?;
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
 pub fn validate_deserialized_svm_config_yaml(
     svm_config: &super::human_config::svm::HumanConfig,
 ) -> anyhow::Result<()> {
@@ -234,6 +356,7 @@ pub fn validate_deserialized_svm_config_yaml(
             .map(|e| e.programs.as_slice())
             .unwrap_or(&[]);
         for program in programs {
+            validate_svm_name(&program.name, "a program name")?;
             if !is_valid_solana_pubkey(&program.program_id) {
                 return Err(anyhow!(
                     "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
@@ -246,6 +369,8 @@ pub fn validate_deserialized_svm_config_yaml(
 
             let mut instruction_names = std::collections::HashSet::new();
             for instr in &program.instructions {
+                validate_svm_name(&instr.name, "an instruction name")
+                    .with_context(|| format!("Program '{}'", program.name))?;
                 if !instruction_names.insert(instr.name.clone()) {
                     return Err(anyhow!(
                         "Program {:?} declares the instruction {:?} more than once",
@@ -268,7 +393,6 @@ pub fn validate_deserialized_svm_config_yaml(
              and are case-insensitive."
         ));
     }
-    validate_names_valid_rescript(&all_program_names, "program".to_string())?;
 
     Ok(())
 }

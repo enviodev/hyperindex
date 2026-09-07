@@ -6,6 +6,7 @@ use hypersync_client_solana::decode::NamedField as SvmNamedField;
 use super::human_config;
 use super::svm_idl::{IxIdl, ProgramIdl, Unusable};
 use super::system_config::yaml_arg_to_named_field;
+use super::validation::{validate_svm_accounts, validate_svm_args};
 
 /// What one configured instruction dispatches on and decodes into.
 pub struct ResolvedInstruction {
@@ -36,11 +37,14 @@ fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<Re
         .map(|d| crate::hex::decode_optionally_prefixed(d, "discriminator"))
         .transpose()?;
     let accounts = instr.accounts.clone().unwrap_or_default();
+    validate_svm_accounts(&accounts)?;
     let args = match &instr.args {
-        Some(args) => args
-            .iter()
-            .map(yaml_arg_to_named_field)
-            .collect::<Result<Vec<_>>>()?,
+        Some(args) => {
+            validate_svm_args(args)?;
+            args.iter()
+                .map(yaml_arg_to_named_field)
+                .collect::<Result<Vec<_>>>()?
+        }
         None => Vec::new(),
     };
     Ok(ResolvedInstruction {

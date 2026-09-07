@@ -2063,12 +2063,17 @@ impl Contract {
         abi: Abi,
     ) -> Result<Self> {
         // Every ecosystem builds its contracts through here, unlike
-        // `validate_deserialized_config_yaml`, which only sees EVM configs.
-        validate_names_valid_rescript(std::slice::from_ref(&name), "contract".to_string())?;
-        validate_names_valid_rescript(
-            &events.iter().map(|e| e.name.clone()).collect::<Vec<_>>(),
-            "event".to_string(),
-        )?;
+        // `validate_deserialized_config_yaml`, which only sees EVM configs. Svm
+        // is the exception: it generates no ReScript, and its program and
+        // instruction names are held to the identifier rule in
+        // `validation::validate_deserialized_svm_config_yaml` instead.
+        if !matches!(abi, Abi::Svm(_)) {
+            validate_names_valid_rescript(std::slice::from_ref(&name), "contract".to_string())?;
+            validate_names_valid_rescript(
+                &events.iter().map(|e| e.name.clone()).collect::<Vec<_>>(),
+                "event".to_string(),
+            )?;
+        }
 
         // Codegen keys the generated event modules by name and routing looks
         // events up by name, so two events on one contract can't share a name.

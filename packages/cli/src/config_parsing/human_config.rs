@@ -1250,21 +1250,103 @@ pub mod svm {
         pub ty: ArgType,
     }
 
+    /// Elements an `array` may declare. The decoder preallocates from this
+    /// length rather than from the bytes on the wire, so an unbounded one is an
+    /// out-of-memory abort on every matched instruction, not a decode failure.
+    pub const MAX_ARRAY_LEN: usize = 65_536;
+
+    /// Borsh selects an enum variant with a one-byte tag, so a variant past
+    /// this many is unreachable.
+    pub const MAX_ENUM_VARIANTS: usize = 256;
+
+    /// The names a bare string may take, in the order they are offered back
+    /// when one is misspelled.
+    const PRIMITIVE_NAMES: &str = "bool, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, \
+                                   f64, string, bytes, pubkey, publicKey";
+    /// The keys a one-key mapping may take. `defined` is deliberately absent:
+    /// it carries an IDL's nominal types through `internal_config.json`, and a
+    /// config.yaml naming one is answered by `validation::validate_svm_args`.
+    const COMPOSITE_NAMES: &str = "option, vec, array, struct, enum";
+
     /// User-facing Borsh type grammar. Mirrors
     /// `hypersync_client_solana::decode::FieldType`. The YAML accepts either:
-    /// - A bare string for primitives (`"u64"`, `"pubkey"`, `"bool"`, ...).
-    /// - A tagged object for composites (`{ vec: u8 }`, `{ option: pubkey }`,
-    ///   `{ array: [u8, 32] }`, `{ defined: "DataV2" }`).
-    /// - An object with `kind: struct` or `kind: enum` for nominal types
-    ///   declared inline on this field. Most users will use `defined` and
-    ///   declare the nominal types under the program's `types:` block (Anchor
-    ///   IDL shape) once that lands; for now inline `struct` / `enum` is the
-    ///   only way to express nominal shapes ad-hoc.
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    /// - A bare string for a primitive (`u64`, `pubkey`, `bool`, ...).
+    /// - A one-key mapping for a composite (`{ vec: u8 }`, `{ option: pubkey }`,
+    ///   `{ array: [u8, 32] }`, `{ struct: [...] }`, `{ enum: [...] }`).
+    ///
+    /// A nominal type is declared inline with `struct` / `enum` at the field
+    /// that uses it. There is no way to name one and refer to it: attach an
+    /// `idl` to the program when its types are shared between instructions.
+    #[derive(Debug, Serialize, Clone, PartialEq, JsonSchema)]
     #[serde(untagged)]
     pub enum ArgType {
         Primitive(ArgPrimitive),
         Composite(ArgComposite),
+    }
+
+    /// Hand-written so a misspelled type is answered with the names it could
+    /// have been. `#[serde(untagged)]` would report only that the value
+    /// matched no variant, naming neither the type nor the alternatives.
+    impl<'de> Deserialize<'de> for ArgType {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            deserializer.deserialize_any(ArgTypeVisitor)
+        }
+    }
+
+    struct ArgTypeVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for ArgTypeVisitor {
+        type Value = ArgType;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "a Borsh type")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, name: &str) -> Result<ArgType, E> {
+            let as_primitive: serde::de::value::StrDeserializer<E> =
+                serde::de::IntoDeserializer::into_deserializer(name);
+            ArgPrimitive::deserialize(as_primitive)
+                .map(ArgType::Primitive)
+                .map_err(|_: E| {
+                    E::custom(format!(
+                        "unknown type '{name}', expected one of {PRIMITIVE_NAMES}, or a composite \
+                         such as {{vec: u8}}, {{option: pubkey}}, {{array: [u8, 32]}}, {{struct: \
+                         [...]}}, {{enum: [...]}}"
+                    ))
+                })
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<ArgType, A::Error> {
+            use serde::de::Error;
+            let Some(key) = map.next_key::<String>()? else {
+                return Err(A::Error::custom(format!(
+                    "a composite type needs exactly one of {COMPOSITE_NAMES}"
+                )));
+            };
+            let composite = match key.as_str() {
+                "option" => ArgComposite::Option(map.next_value()?),
+                "vec" => ArgComposite::Vec(map.next_value()?),
+                "array" => {
+                    let (ty, len) = map.next_value::<(Box<ArgType>, usize)>()?;
+                    ArgComposite::Array(ty, len)
+                }
+                "struct" => ArgComposite::Struct(map.next_value()?),
+                "enum" => ArgComposite::Enum(map.next_value()?),
+                "defined" => ArgComposite::Defined(map.next_value()?),
+                other => {
+                    return Err(A::Error::custom(format!(
+                        "unknown composite type '{other}', expected one of {COMPOSITE_NAMES}"
+                    )))
+                }
+            };
+            if let Some(extra) = map.next_key::<String>()? {
+                return Err(A::Error::custom(format!(
+                    "a composite type takes exactly one of {COMPOSITE_NAMES}, got both '{key}' \
+                     and '{extra}'"
+                )));
+            }
+            Ok(ArgType::Composite(composite))
+        }
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -1290,8 +1372,9 @@ pub mod svm {
         PublicKey,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
+    // Deserialized through `ArgTypeVisitor` rather than by serde, so the
+    // variant names here only drive serialization and the JSON schema.
+    #[derive(Debug, Serialize, Clone, PartialEq, JsonSchema)]
     pub enum ArgComposite {
         #[serde(rename = "option")]
         Option(Box<ArgType>),
@@ -1300,17 +1383,21 @@ pub mod svm {
         /// `[ <element type>, <length> ]` — same shape Anchor IDLs use.
         #[serde(rename = "array")]
         Array(Box<ArgType>, usize),
-        /// Reference to a nominal type defined in the program-level
-        /// `defined_types` registry (populated from an Anchor IDL `types:`
-        /// block).
+        /// Reference into the program-level `defined_types` registry, which is
+        /// only ever populated from an IDL's `types` block. Not part of the
+        /// config.yaml grammar — it exists to carry an IDL's nominal types
+        /// through `internal_config.json` — so it is kept out of the published
+        /// JSON schema and rejected by `validation::validate_svm_args`.
         #[serde(rename = "defined")]
+        #[schemars(skip)]
         Defined(String),
-        /// Inline-or-registry struct. Used as a nominal type definition in
-        /// the `defined_types` registry; rarely seen at the field level.
+        /// A struct, declared inline at the field that uses it or held in the
+        /// `defined_types` registry.
         #[serde(rename = "struct")]
         Struct(Vec<ArgDef>),
-        /// Inline-or-registry enum. Same role as `Struct`: a nominal type
-        /// definition in the `defined_types` registry.
+        /// An enum, declared inline at the field that uses it or held in the
+        /// `defined_types` registry. Borsh selects a variant by its position
+        /// here, with a one-byte tag.
         #[serde(rename = "enum")]
         Enum(Vec<ArgEnumVariant>),
     }

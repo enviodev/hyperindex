@@ -35,6 +35,7 @@ chains:
                 - market
               args:
                 - { name: side, type: u32 }
+                - { name: ratio, type: f64 }
         - name: Swapper
           program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
           instructions:
@@ -67,6 +68,8 @@ indexer.onInstruction(
   { program: "Serum", instruction: "newOrderV3", fields: { instruction: ["args"] } },
   async ({ instruction }) => {
     instruction.args.side satisfies number;
+    // A non-finite float has no JSON number to decode into, so it arrives null.
+    instruction.args.ratio satisfies number | null;
   },
 );
 indexer.onInstruction(
