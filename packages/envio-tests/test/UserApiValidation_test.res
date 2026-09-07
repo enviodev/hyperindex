@@ -2058,10 +2058,21 @@ chains:
 ${instructions}
 `
 
+  // Account slots read back as the YAML tokens that declare them, so an
+  // expectation shows optionality and unnamed positions.
+  let slotTokens = (slots: array<Internal.svmAccountSlot>) =>
+    slots->Array.map(slot =>
+      switch slot {
+      | Unnamed => "_"
+      | Required(name) => name
+      | Optional(name) => "?" ++ name
+      }
+    )
+
   let catalog = (config: Config.t) =>
     firstContract(config).events->Array.map(event => {
       let svm = event->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
-      (svm.name, svm.discriminator, svm.accounts, svm.args)
+      (svm.name, svm.discriminator, svm.accounts->slotTokens, svm.args)
     })
 
   it("rejects a name-only YAML row next to idl", t => {

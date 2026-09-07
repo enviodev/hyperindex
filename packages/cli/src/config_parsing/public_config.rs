@@ -1,6 +1,7 @@
 use super::{
     entity_parsing, field_types,
     human_config::{self, evm::For, ColumnNameFormat},
+    svm_catalog::SvmAccountSlot,
     system_config::{
         self, field_type_to_arg_type, named_field_to_arg_def, Abi, ChainIdMode, Ecosystem,
         EventKind, FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
@@ -417,15 +418,34 @@ struct ContractEventItem {
 struct SvmEventItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     discriminator: Option<String>,
-    /// Positional account names, in the order the on-chain program expects.
+    /// Positional account slots, in the order the on-chain program expects.
     /// `[]` means the runtime won't expose `decoded.accounts.<name>`; the
     /// raw `instruction.accounts[i]` array is still available.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    accounts: Vec<String>,
+    accounts: Vec<SvmAccountSlotItem>,
     /// Borsh args layout. `[]` means the runtime won't expose
     /// `decoded.args`; the raw `instruction.data` hex is still available.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     args: Vec<human_config::svm::ArgDef>,
+}
+
+/// One account slot. An unnamed slot carries neither key, so it reaches the
+/// runtime as `{}` — a position to skip over.
+#[derive(Serialize, Debug)]
+struct SvmAccountSlotItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    optional: bool,
+}
+
+impl From<&SvmAccountSlot> for SvmAccountSlotItem {
+    fn from(slot: &SvmAccountSlot) -> Self {
+        Self {
+            name: slot.name().map(str::to_string),
+            optional: slot.is_optional(),
+        }
+    }
 }
 
 /// Program-level Borsh schema metadata. Emitted onto `ContractConfig.svm_abi`
@@ -615,7 +635,11 @@ impl SystemConfig {
                                 EventKind::Svm(svm_kind) => {
                                     let svm_item = SvmEventItem {
                                         discriminator: svm_kind.discriminator.clone(),
-                                        accounts: svm_kind.accounts.clone(),
+                                        accounts: svm_kind
+                                            .accounts
+                                            .iter()
+                                            .map(SvmAccountSlotItem::from)
+                                            .collect(),
                                         args: svm_kind
                                             .args
                                             .iter()

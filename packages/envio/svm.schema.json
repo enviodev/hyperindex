@@ -387,13 +387,13 @@
           ]
         },
         "accounts": {
-          "description": "Optional positional account names. The Nth entry names account slot N on the dispatched instruction; surfaces as `instruction.accounts.<name>` when `fields.instruction` includes `accounts`.",
+          "description": "Optional positional account slots, in the order the program expects them. The Nth entry names account slot N on the dispatched instruction; named slots surface as `instruction.accounts.<name>` when `fields.instruction` includes `accounts`.",
           "type": [
             "array",
             "null"
           ],
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/SvmAccountSlot"
           }
         },
         "args": {
@@ -410,6 +410,17 @@
       "additionalProperties": false,
       "required": [
         "name"
+      ]
+    },
+    "SvmAccountSlot": {
+      "title": "Account slot",
+      "description": "One positional account slot of the instruction.\n- `payer` names a slot the call always carries; it surfaces as `instruction.accounts.payer`.\n- `?authority` names an optional slot: the key is absent from `instruction.accounts` when the call leaves the slot out or fills it with the program id.\n- `_` holds a position without naming it, so the slots after it keep theirs. It is never surfaced and never filterable, and the list may not end with one.",
+      "type": "string",
+      "pattern": "^(?:_|\\??[A-Za-z0-9_]*[A-Za-z][A-Za-z0-9_]*)$",
+      "examples": [
+        "payer",
+        "?authority",
+        "_"
       ]
     },
     "ArgDef": {

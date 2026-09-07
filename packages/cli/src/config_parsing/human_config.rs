@@ -1041,11 +1041,12 @@ pub mod fuel {
 }
 
 pub mod svm {
+    use std::borrow::Cow;
     use std::fmt::Display;
 
     use super::BaseConfig;
-    use schemars::JsonSchema;
-    use serde::{Deserialize, Serialize};
+    use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
+    use serde::{de, Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
@@ -1222,12 +1223,12 @@ pub mod svm {
         pub discriminator: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional positional account names. The Nth entry names account slot N \
-                           on the dispatched instruction; surfaces as \
-                           `instruction.accounts.<name>` when `fields.instruction` includes \
-                           `accounts`."
+            description = "Optional positional account slots, in the order the program expects \
+                           them. The Nth entry names account slot N on the dispatched \
+                           instruction; named slots surface as `instruction.accounts.<name>` \
+                           when `fields.instruction` includes `accounts`."
         )]
-        pub accounts: Option<Vec<String>>,
+        pub accounts: Option<Vec<AccountSlot>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Optional Borsh argument schema. Each entry names one arg and gives its \
@@ -1236,6 +1237,85 @@ pub mod svm {
                            present."
         )]
         pub args: Option<Vec<ArgDef>>,
+    }
+
+    /// One account slot as written in YAML: `payer`, `?authority` for an
+    /// optional slot, or `_` for one that holds a position without a name. The
+    /// text is kept verbatim; the grammar is read where the instruction is
+    /// resolved, so a defect is reported against the instruction that carries it.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct AccountSlot(pub String);
+
+    impl Serialize for AccountSlot {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.serialize_str(&self.0)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for AccountSlot {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct SlotVisitor;
+
+            impl<'de> de::Visitor<'de> for SlotVisitor {
+                type Value = AccountSlot;
+
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("an account name, `?name` for an optional slot, or `_`")
+                }
+
+                fn visit_str<E: de::Error>(self, value: &str) -> Result<AccountSlot, E> {
+                    Ok(AccountSlot(value.to_string()))
+                }
+
+                /// `- ? authority` and the flow-style `[?authority]` are YAML's
+                /// explicit-key syntax, which parses as a one-entry mapping with
+                /// no value rather than as the string a reader sees.
+                fn visit_map<A: de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<AccountSlot, A::Error> {
+                    let Some((name, value)) = map.next_entry::<String, Option<de::IgnoredAny>>()?
+                    else {
+                        return Err(de::Error::custom(
+                            "expected an account name, got an empty mapping",
+                        ));
+                    };
+                    if value.is_some() || map.next_key::<de::IgnoredAny>()?.is_some() {
+                        return Err(de::Error::custom(format!(
+                            "expected an account name, got a mapping. To mark '{name}' optional, \
+                             write \"?{name}\"."
+                        )));
+                    }
+                    Ok(AccountSlot(format!("?{name}")))
+                }
+            }
+
+            deserializer.deserialize_any(SlotVisitor)
+        }
+    }
+
+    impl JsonSchema for AccountSlot {
+        fn schema_name() -> Cow<'static, str> {
+            "SvmAccountSlot".into()
+        }
+
+        fn json_schema(_: &mut SchemaGenerator) -> Schema {
+            json_schema!({
+                "title": "Account slot",
+                "description": "One positional account slot of the instruction.\n\
+                    - `payer` names a slot the call always carries; it surfaces as \
+                    `instruction.accounts.payer`.\n\
+                    - `?authority` names an optional slot: the key is absent from \
+                    `instruction.accounts` when the call leaves the slot out or fills it with \
+                    the program id.\n\
+                    - `_` holds a position without naming it, so the slots after it keep \
+                    theirs. It is never surfaced and never filterable, and the list may not \
+                    end with one.",
+                "type": "string",
+                "pattern": "^(?:_|\\??[A-Za-z0-9_]*[A-Za-z][A-Za-z0-9_]*)$",
+                "examples": ["payer", "?authority", "_"],
+            })
+        }
     }
 
     /// One named argument of an instruction. Mirrors
@@ -1387,6 +1467,28 @@ mod tests {
         assert_eq!(
             npm_schema, actual_schema,
             "Please run 'make update-generated-docs'"
+        );
+    }
+
+    /// The slot text is the config's own surface, so what a writer emits has
+    /// to read back as the same slots.
+    #[test]
+    fn svm_account_slots_round_trip_through_yaml() {
+        use super::svm::AccountSlot;
+
+        let slots = vec![
+            AccountSlot("payer".to_string()),
+            AccountSlot("?authority".to_string()),
+            AccountSlot("_".to_string()),
+        ];
+        let yaml = serde_yaml::to_string(&slots).unwrap();
+
+        assert_eq!(
+            (
+                yaml.as_str(),
+                serde_yaml::from_str::<Vec<AccountSlot>>(&yaml).unwrap()
+            ),
+            ("- payer\n- ?authority\n- _\n", slots)
         );
     }
 

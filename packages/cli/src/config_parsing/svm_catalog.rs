@@ -1,17 +1,53 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use hypersync_client_solana::decode::NamedField as SvmNamedField;
 
 use super::human_config;
 use super::svm_idl::{IxIdl, ProgramIdl, Unusable};
 use super::system_config::yaml_arg_to_named_field;
 
+/// One positional account slot of a configured instruction.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SvmAccountSlot {
+    /// Holds a position without naming it: never surfaced to a handler, never
+    /// filterable. The slots after it keep their positions.
+    Unnamed,
+    Required(String),
+    /// Absent when the call carries no such slot, or fills it with the id of
+    /// the program being invoked — the convention Anchor and Codama both use.
+    Optional(String),
+}
+
+impl SvmAccountSlot {
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Unnamed => None,
+            Self::Required(name) | Self::Optional(name) => Some(name),
+        }
+    }
+
+    pub fn is_optional(&self) -> bool {
+        matches!(self, Self::Optional(_))
+    }
+}
+
+/// The canonical YAML token for a slot — the inverse of `parse_account_slots`.
+impl std::fmt::Display for SvmAccountSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Unnamed => f.write_str("_"),
+            Self::Required(name) => f.write_str(name),
+            Self::Optional(name) => write!(f, "?{name}"),
+        }
+    }
+}
+
 /// What one configured instruction dispatches on and decodes into.
 pub struct ResolvedInstruction {
     /// `None` matches every instruction of the program.
     pub discriminator: Option<Vec<u8>>,
-    pub accounts: Vec<String>,
+    pub accounts: Vec<SvmAccountSlot>,
     pub args: Vec<SvmNamedField>,
 }
 
@@ -23,10 +59,64 @@ impl ResolvedInstruction {
             } else {
                 Some(ix.discriminator.clone())
             },
-            accounts: ix.accounts.iter().map(|a| a.name.clone()).collect(),
+            accounts: ix
+                .accounts
+                .iter()
+                .map(|a| {
+                    if a.optional {
+                        SvmAccountSlot::Optional(a.name.clone())
+                    } else {
+                        SvmAccountSlot::Required(a.name.clone())
+                    }
+                })
+                .collect(),
             args: ix.args.clone(),
         }
     }
+}
+
+/// The YAML slot grammar: `payer`, `?authority`, `_`.
+fn parse_account_slots(tokens: &[human_config::svm::AccountSlot]) -> Result<Vec<SvmAccountSlot>> {
+    let mut slots = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        let text = token.0.as_str();
+        slots.push(if text == "_" {
+            SvmAccountSlot::Unnamed
+        } else if let Some(name) = text.strip_prefix('?') {
+            if name == "_" {
+                bail!(
+                    "account slot '?_' marks an unnamed slot optional, which nothing can \
+                     observe. Write '_' to hold the position, or name the slot."
+                );
+            }
+            SvmAccountSlot::Optional(account_name(name, text)?)
+        } else {
+            SvmAccountSlot::Required(account_name(text, text)?)
+        });
+    }
+    if slots.last() == Some(&SvmAccountSlot::Unnamed) {
+        bail!("the account list ends with '_', a position nothing follows. Drop it.");
+    }
+    let mut seen = HashSet::new();
+    for name in slots.iter().filter_map(SvmAccountSlot::name) {
+        if !seen.insert(name) {
+            bail!("account '{name}' is declared more than once.");
+        }
+    }
+    Ok(slots)
+}
+
+fn account_name(name: &str, token: &str) -> Result<String> {
+    let readable = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && name.chars().any(|c| c.is_ascii_alphabetic());
+    if !readable {
+        bail!(
+            "account slot '{token}' is not a name: expected letters, digits and underscores, at \
+             least one of them a letter. Prefix a name with '?' to mark the slot optional, or \
+             write '_' to hold a position without naming it."
+        );
+    }
+    Ok(name.to_string())
 }
 
 fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<ResolvedInstruction> {
@@ -35,7 +125,10 @@ fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<Re
         .as_deref()
         .map(|d| crate::hex::decode_optionally_prefixed(d, "discriminator"))
         .transpose()?;
-    let accounts = instr.accounts.clone().unwrap_or_default();
+    let accounts = match &instr.accounts {
+        Some(tokens) => parse_account_slots(tokens)?,
+        None => Vec::new(),
+    };
     let args = match &instr.args {
         Some(args) => args
             .iter()

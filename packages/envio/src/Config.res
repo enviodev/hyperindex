@@ -174,10 +174,19 @@ let publicConfigChainSchema = S.schema(s =>
   }
 )
 
+// One positional account slot. No `name` is a slot that holds a position
+// without surfacing anything; see `Internal.svmAccountSlot`.
+let svmAccountSlotSchema = S.schema(s =>
+  {
+    "name": s.matches(S.option(S.string)),
+    "optional": s.matches(S.option(S.bool)),
+  }
+)
+
 let svmEventDescriptorSchema = S.schema(s =>
   {
     "discriminator": s.matches(S.option(S.string)),
-    "accounts": s.matches(S.option(S.array(S.string))),
+    "accounts": s.matches(S.option(S.array(svmAccountSlotSchema))),
     "args": s.matches(S.option(S.json(~validate=false))),
   }
 )
@@ -736,7 +745,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               Utils.magic: _ => {
                 "svm": option<{
                   "discriminator": option<string>,
-                  "accounts": option<array<string>>,
+                  "accounts": option<array<{"name": option<string>, "optional": option<bool>}>>,
                   "args": option<JSON.t>,
                 }>,
               }
@@ -753,7 +762,15 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~instructionName=eventName,
             ~programId,
             ~discriminator=svm["discriminator"],
-            ~accounts=svm["accounts"]->Option.getOr([]),
+            ~accounts=svm["accounts"]
+            ->Option.getOr([])
+            ->Array.map(slot =>
+              switch (slot["name"], slot["optional"]) {
+              | (None, _) => Internal.Unnamed
+              | (Some(name), Some(true)) => Optional(name)
+              | (Some(name), _) => Required(name)
+              }
+            ),
             ~args=svm["args"]->Option.getOr(JSON.Null),
             ~definedTypes=svmDefinedTypes,
           ) :> Internal.eventConfig)

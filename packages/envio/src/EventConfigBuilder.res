@@ -635,7 +635,7 @@ let buildSvmInstructionEventConfig = (
   ~instructionName: string,
   ~programId: SvmTypes.Pubkey.t,
   ~discriminator: option<string>,
-  ~accounts: array<string>=[],
+  ~accounts: array<Internal.svmAccountSlot>=[],
   ~args: JSON.t=JSON.Null,
   ~definedTypes: JSON.t=JSON.Null,
 ): Internal.svmInstructionEventConfig => {
@@ -699,7 +699,7 @@ let resolveSvmWhereOrThrow = (
   where: JSON.t,
   ~contractName: string,
   ~eventName: string,
-  ~accountNames: array<string>,
+  ~accounts: array<Internal.svmAccountSlot>,
 ): parsedSvmWhere => {
   let invalid = message =>
     JsError.throwWithMessage(
@@ -722,26 +722,30 @@ let resolveSvmWhereOrThrow = (
   | Some(_) => invalid(`The "isInner" filter must be a boolean.`)
   }
 
+  let namedAccounts = accounts->Array.filterMap(Internal.svmAccountSlotName)
+
   let parseGroup = (group: dict<JSON.t>): Internal.svmAccountFilterGroup =>
     group
     ->Dict.toArray
     ->Array.map(((name, value)) => {
-      let position = switch accountNames->Array.indexOf(name) {
-      | -1 if accountNames->Utils.Array.isEmpty =>
+      let position = switch accounts->Array.findIndexOpt(slot =>
+        slot->Internal.svmAccountSlotName == Some(name)
+      ) {
+      | None if namedAccounts->Utils.Array.isEmpty =>
         invalid(
           "The instruction has no named accounts to filter on. Add `accounts` and `args` to it in config.yaml, or attach an IDL.",
         )
-      | -1 =>
+      | None =>
         invalid(
           `The instruction has no account named "${name}" to filter on. Named accounts: ${Utils.Array.quotedJoin(
-              accountNames,
+              namedAccounts,
             )}.`,
         )
-      | position if position >= filterableAccountCount =>
+      | Some(position) if position >= filterableAccountCount =>
         invalid(
           `Account "${name}" is at position ${position->Int.toString}, and only the first ${filterableAccountCount->Int.toString} accounts of an instruction can be filtered.`,
         )
-      | position => position
+      | Some(position) => position
       }
       let values = value->normalizeOrThrow
       if values->Utils.Array.isEmpty {
@@ -817,7 +821,7 @@ let buildSvmOnEventRegistration = (
     where->resolveSvmWhereOrThrow(
       ~contractName=eventConfig.contractName,
       ~eventName=eventConfig.name,
-      ~accountNames=eventConfig.accounts,
+      ~accounts=eventConfig.accounts,
     )
   }
 

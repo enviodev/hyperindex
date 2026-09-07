@@ -292,7 +292,7 @@ describe("SvmHyperSyncSource.getItemsOrThrow (mocked client)", () => {
     )
     let eventConfig = {
       ...eventConfig,
-      accounts: ["metadata", "mint"],
+      accounts: [Required("metadata"), Required("mint")],
       args: %raw(`[{"name": "amount", "type": "u64"}]`),
       fieldSelection: Internal.makeFieldSelection(
         ~blockFields=eventConfig.fieldSelection.blockFields,

@@ -10,13 +10,21 @@ type options = {
   addressStore: AddressStore.t,
 }
 
-let namedAccounts = (~idlNames: array<string>, ~accountArguments: array<string>): dict<
-  Envio.svmInstructionAccount,
-> => {
+// Nothing on chain marks an account absent: a call either carries fewer
+// accounts than the layout declares, or fills the slot with the id of the
+// program it invokes — the convention Anchor and Codama both use. So an
+// optional slot holding that id is read as absent, and a required one is not.
+let namedAccounts = (
+  ~slots: array<Internal.svmAccountSlot>,
+  ~accountArguments: array<string>,
+  ~programId: string,
+): dict<Envio.svmInstructionAccount> => {
   let out = Dict.make()
-  idlNames->Array.forEachWithIndex((name, i) =>
-    switch accountArguments->Array.get(i) {
-    | Some(address) =>
+  slots->Array.forEachWithIndex((slot, i) =>
+    switch (slot, accountArguments->Array.get(i)) {
+    | (Unnamed, _) | (_, None) => ()
+    | (Optional(_), Some(address)) if address === programId => ()
+    | (Required(name), Some(address)) | (Optional(name), Some(address)) =>
       out->Dict.set(
         name,
         {
@@ -25,7 +33,6 @@ let namedAccounts = (~idlNames: array<string>, ~accountArguments: array<string>)
           instructionAccountIndex: i,
         },
       )
-    | None => ()
     }
   )
   out
@@ -94,7 +101,11 @@ let toSvmInstruction = (
   if hasSelection("accounts") {
     out->setField(
       "accounts",
-      namedAccounts(~idlNames=eventConfig.accounts, ~accountArguments=item.accounts),
+      namedAccounts(
+        ~slots=eventConfig.accounts,
+        ~accountArguments=item.accounts,
+        ~programId=item.programId,
+      ),
     )
   }
   if hasSelection("accountArguments") {
