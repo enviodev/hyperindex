@@ -202,10 +202,11 @@ pub fn is_valid_solana_pubkey(s: &str) -> bool {
 
 pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
     let hex = crate::hex::strip_prefix(s).unwrap_or(s);
-    if hex.is_empty() || !hex.len().is_multiple_of(2) {
+    if !hex.len().is_multiple_of(2) {
         return Err(anyhow!(
-            "discriminator {:?} must be a whole number of bytes (an even, non-zero count of hex \
-             digits after stripping a `0x` prefix), got {} digits",
+            "discriminator {:?} must be a whole number of bytes (an even count of hex digits \
+             after stripping a `0x` prefix), got {} digits. Write \"\" to match every \
+             instruction of the program.",
             s,
             hex.len()
         ));
@@ -367,11 +368,9 @@ pub fn validate_deserialized_svm_config_yaml(
                         instr.name
                     ));
                 }
-                if let Some(discriminator) = &instr.discriminator {
-                    validate_svm_discriminator(discriminator).with_context(|| {
-                        format!("instruction {:?} in program {:?}", instr.name, program.name)
-                    })?;
-                }
+                validate_svm_discriminator(&instr.discriminator).with_context(|| {
+                    format!("instruction {:?} in program {:?}", instr.name, program.name)
+                })?;
             }
         }
     }
@@ -657,10 +656,22 @@ mod tests {
 
         #[test]
         fn discriminator_rejects_partial_bytes_and_non_hex() {
-            for s in ["0x", "0x0", "0x012", "0xgggggggg"] {
+            for s in ["0x0", "0x012", "0xgggggggg"] {
                 assert!(
                     validate_svm_discriminator(s).is_err(),
                     "expected {s:?} to be rejected"
+                );
+            }
+        }
+
+        /// The empty prefix is what every call carries, so it is the value a
+        /// row gives to match every instruction of the program.
+        #[test]
+        fn discriminator_accepts_the_empty_prefix() {
+            for s in ["", "0x"] {
+                assert!(
+                    validate_svm_discriminator(s).is_ok(),
+                    "expected {s:?} to be accepted"
                 );
             }
         }

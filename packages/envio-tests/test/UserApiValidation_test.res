@@ -1307,7 +1307,7 @@ chains:
           instructions:
             - {name: Transfer, discriminator: "0x012"}
 `,
-      "instruction \"Transfer\" in program \"Program\": discriminator \"0x012\" must be a whole number of bytes (an even, non-zero count of hex digits after stripping a \`0x\` prefix), got 3 digits",
+      "instruction \"Transfer\" in program \"Program\": discriminator \"0x012\" must be a whole number of bytes (an even count of hex digits after stripping a \`0x\` prefix), got 3 digits. Write \"\" to match every instruction of the program.",
     ),
     (
       "rejects a program name that is not an identifier",
@@ -2292,22 +2292,23 @@ indexer.onInstruction(
     ])
   })
 
-  it("rejects a name-only YAML row that shadows an IDL instruction", t => {
+  it("rejects an overwrite that leaves out the whole layout", t => {
     expectParseError(
       t,
       ~files,
       yaml(`          instructions:
             - name: swap
+              discriminator: ""
 `),
       "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
   })
 
   // The IDL declares this name, so the row is an overwrite even though the
-  // catalog has no entry for it. Read as an addition, a bare name would turn
-  // into a program-wide catch-all, and the warning naming the reason is
-  // suppressed for exactly the names a row mentions.
-  it("rejects a name-only YAML row on an instruction the IDL could not use", t => {
+  // catalog has no entry for it. Read as an addition, it would take the empty
+  // prefix and index every call the program receives, and the warning naming
+  // the reason is suppressed for exactly the names a row mentions.
+  it("rejects an overwrite of an instruction the IDL could not use", t => {
     expectParseError(
       t,
       ~files=Dict.fromArray([
@@ -2325,19 +2326,34 @@ indexer.onInstruction(
       ]),
       yaml(`          instructions:
             - name: swap
+              discriminator: ""
 `),
       "Program 'Program', instruction 'swap': the IDL declares this instruction too, but it cannot be indexed as declared: idls/program.json:2:30: args.amount: `coption` is not Borsh-compatible and cannot be decoded. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
   })
 
+  // Absence used to mean "every instruction of the program", so a misspelled
+  // name next to an IDL silently became a firehose instead of an error.
+  it("requires a discriminator on every instruction row", t => {
+    expectParseError(
+      t,
+      ~files,
+      yaml(`          instructions:
+            - name: anyCall
+`),
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0].instructions[0]: missing field `discriminator` at line 15 column 15",
+    )
+  })
+
   // Nothing in the catalog carries this name, so the row adds an instruction
-  // and is read like any inline one: no discriminator matches every call the
+  // and is read like any inline one: the empty prefix matches every call the
   // program receives.
   it("adds a program-wide instruction next to an IDL", t => {
     let {config} = InternalTestIndexer.fromUserApi(
       ~files,
       ~configYaml=yaml(`          instructions:
             - name: anyCall
+              discriminator: ""
 `),
     )
     t.expect(catalog(config)).toEqual([
@@ -2398,14 +2414,15 @@ indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => 
     ])
   })
 
-  // An overwrite says what a row on any other name says: a missing
-  // `discriminator` matches every instruction of the program, here in place of
-  // the prefix the IDL declared for the name.
-  it("makes an overwrite without a discriminator program-wide", t => {
+  // An overwrite says what a row on any other name says: the empty prefix
+  // matches every instruction of the program, here in place of the prefix the
+  // IDL declared for the name.
+  it("makes an overwrite on the empty prefix program-wide", t => {
     let {config} = InternalTestIndexer.fromUserApi(
       ~files,
       ~configYaml=yaml(`          instructions:
             - name: swap
+              discriminator: ""
               accounts: [source]
               args: []
 `),

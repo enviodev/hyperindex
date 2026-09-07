@@ -4021,12 +4021,15 @@ type Foo {
         }
 
         /// A row on a name the IDL declares replaces it, so it says the
-        /// fields that would otherwise read as absent. A name-only row leaves
-        /// out both.
+        /// fields that would otherwise read as absent rather than as the
+        /// IDL's. This one leaves out both.
         #[test]
-        fn rejects_a_name_only_row_shadowing_an_idl_instruction() {
-            let err = program_reading_idl(LEGACY_ANCHOR_IDL, "            - name: swap\n")
-                .expect_err("missing every field");
+        fn rejects_an_overwrite_that_leaves_out_the_whole_layout() {
+            let err = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: swap\n              discriminator: \"\"\n",
+            )
+            .expect_err("missing the layout");
 
             assert_eq!(
                 format!("{err:#}"),
@@ -4034,17 +4037,17 @@ type Foo {
             );
         }
 
-        /// An overwrite says what a row on any other name says: a missing
-        /// `discriminator` is a program-wide match, here replacing the prefix
-        /// the IDL declared for the name.
+        /// An overwrite says what a row on any other name says: the empty
+        /// prefix is a program-wide match, here replacing the prefix the IDL
+        /// declared for the name.
         #[test]
-        fn an_overwrite_without_a_discriminator_is_program_wide() {
+        fn an_overwrite_on_the_empty_prefix_is_program_wide() {
             let config = program_reading_idl(
                 LEGACY_ANCHOR_IDL,
-                "            - name: swap\n              accounts:\n                - source\n              \
-                 args: []\n",
+                "            - name: swap\n              discriminator: \"\"\n              \
+                 accounts:\n                - source\n              args: []\n",
             )
-            .expect("layout without discriminator");
+            .expect("the empty prefix");
 
             assert_eq!(
                 svm_events(&config),
@@ -4223,11 +4226,15 @@ type Foo {
         }
 
         /// The IDL has no name for this row, so it adds an instruction and is
-        /// read like an inline one: no discriminator matches every call.
+        /// read like an inline one: the empty prefix matches every call, and
+        /// the layout is the row's own business.
         #[test]
-        fn a_row_the_idl_does_not_declare_needs_no_fields() {
-            let config = program_reading_idl(LEGACY_ANCHOR_IDL, "            - name: anyCall\n")
-                .expect("a row adding a name");
+        fn a_row_the_idl_does_not_declare_needs_no_layout() {
+            let config = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: anyCall\n              discriminator: \"\"\n",
+            )
+            .expect("a row adding a name");
 
             assert_eq!(
                 svm_events(&config)
@@ -4249,14 +4256,14 @@ type Foo {
         /// overwrite: the IDL has a definition for it, and the reason it was
         /// set aside is what the row has to answer.
         #[test]
-        fn rejects_a_name_only_row_on_an_unusable_idl_instruction() {
+        fn rejects_an_overwrite_of_an_unusable_idl_instruction() {
             let err = program_reading_idl(
                 r#"{ "instructions": [
                      { "name": "swap", "discriminator": [1],
                        "accounts": [], "args": [{ "name": "amount", "type": { "coption": "u64" } }] },
                      { "name": "deposit", "discriminator": [4],
                        "accounts": [], "args": [] }] }"#,
-                "            - name: swap\n",
+                "            - name: swap\n              discriminator: \"\"\n",
             )
             .expect_err("a row on a set-aside name");
 

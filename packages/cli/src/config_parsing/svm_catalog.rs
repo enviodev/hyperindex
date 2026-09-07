@@ -54,11 +54,12 @@ fn validate_account_slots(slots: &[AccountSlot]) -> Result<()> {
 }
 
 fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<ResolvedInstruction> {
-    let discriminator = instr
-        .discriminator
-        .as_deref()
-        .map(|d| crate::hex::decode_optionally_prefixed(d, "discriminator"))
-        .transpose()?;
+    // The empty prefix is carried by every call, which is how a row asks for
+    // every instruction of the program — the same reading `from_idl` gives an
+    // IDL that declares no discriminator.
+    let discriminator =
+        crate::hex::decode_optionally_prefixed(&instr.discriminator, "discriminator")?;
+    let discriminator = (!discriminator.is_empty()).then_some(discriminator);
     let accounts = instr.accounts.clone().unwrap_or_default();
     validate_account_slots(&accounts)?;
     let args = match &instr.args {
@@ -79,8 +80,8 @@ fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<Re
 
 /// What a row on a name the IDL declares still has to spell out, as the error
 /// the caller reports. `None` when the row is not an overwrite, or is complete.
-/// `discriminator` is not among them: absent, it means what it means anywhere
-/// else, a match on every instruction of the program.
+/// `discriminator` is not among them: every row carries one, and what it says
+/// about dispatch is the row's own business either way.
 fn overwrite_missing_fields(
     instr: &human_config::svm::Instruction,
     idl: &ProgramIdl,

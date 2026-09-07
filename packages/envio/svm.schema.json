@@ -359,7 +359,7 @@
           ]
         },
         "instructions": {
-          "description": "Instructions to index. With `idl:`, omit this list to take the full usable IDL catalog. A row whose name the IDL declares replaces that instruction, and must spell out `accounts` and `args`; every other row adds one. Either way, omit `discriminator` to match every instruction of the program, and give `accounts` or `args` only where you want the names or the decoded payload.",
+          "description": "Instructions to index. With `idl:`, omit this list to take the full usable IDL catalog. A row whose name the IDL declares replaces that instruction, and must spell out `accounts` and `args`; every other row adds one. Give `accounts` or `args` only where you want the names or the decoded payload.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Instruction"
@@ -380,11 +380,8 @@
           "type": "string"
         },
         "discriminator": {
-          "description": "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" optional), of any whole number of bytes; an 8-byte value matches the standard Anchor discriminator. Omit it to match every instruction of the program, whether or not the row replaces one the IDL declares. Every instruction whose prefix an on-chain call carries receives it, so a program-wide entry fires alongside a keyed one, and two entries may share a prefix (say, the layouts before and after a program upgrade): each decodes with its own `args`, and one whose layout rejects the data is skipped for that call.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "description": "Hex-encoded instruction-data prefix to dispatch on (\"0x\" optional), of any whole number of bytes; an 8-byte value matches the standard Anchor discriminator. The empty prefix, written \"\", is carried by every call, so it is how a row matches every instruction of the program. Every instruction whose prefix an on-chain call carries receives it, so a program-wide entry fires alongside a keyed one, and two entries may share a prefix (say, the layouts before and after a program upgrade): each decodes with its own `args`, and one whose layout rejects the data is skipped for that call.",
+          "type": "string"
         },
         "accounts": {
           "description": "Optional positional account slots, in the order the program expects them. The Nth entry names account slot N on the dispatched instruction; named slots surface as `instruction.accounts.<name>` when `fields.instruction` includes `accounts`. The raw slots are available either way, so this only adds the names. Required on a row that replaces an instruction the IDL declares.",
@@ -409,7 +406,8 @@
       },
       "additionalProperties": false,
       "required": [
-        "name"
+        "name",
+        "discriminator"
       ]
     },
     "SvmAccountSlot": {

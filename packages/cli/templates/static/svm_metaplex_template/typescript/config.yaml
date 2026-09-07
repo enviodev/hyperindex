@@ -20,10 +20,8 @@ chains:
                 - update_authority
                 - system_program
                 - rent
-              args: []
             - name: UpdateMetadataAccountV2
               discriminator: "0x0f"
               accounts:
                 - metadata
                 - update_authority
-              args: []

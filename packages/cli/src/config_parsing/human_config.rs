@@ -1191,9 +1191,8 @@ pub mod svm {
             description = "Instructions to index. With `idl:`, omit this list to take the full \
                            usable IDL catalog. A row whose name the IDL declares replaces that \
                            instruction, and must spell out `accounts` and `args`; every other row \
-                           adds one. Either way, omit `discriminator` to match every instruction \
-                           of the program, and give `accounts` or `args` only where you want the \
-                           names or the decoded payload."
+                           adds one. Give `accounts` or `args` only where you want the names or \
+                           the decoded payload."
         )]
         pub instructions: Vec<Instruction>,
     }
@@ -1206,19 +1205,18 @@ pub mod svm {
                            unique per program."
         )]
         pub name: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" \
-                           optional), of any whole number of bytes; an 8-byte value matches the \
-                           standard Anchor discriminator. Omit it to match every instruction of \
-                           the program, whether or not the row replaces one the IDL declares. Every instruction whose prefix an \
-                           on-chain call carries receives it, so a program-wide entry fires \
-                           alongside a keyed one, and two entries may share a prefix (say, the \
-                           layouts before and after a program upgrade): each decodes with its \
-                           own `args`, and one whose layout rejects the data is skipped for that \
-                           call."
+            description = "Hex-encoded instruction-data prefix to dispatch on (\"0x\" optional), \
+                           of any whole number of bytes; an 8-byte value matches the standard \
+                           Anchor discriminator. The empty prefix, written \"\", is carried by \
+                           every call, so it is how a row matches every instruction of the \
+                           program. Every instruction whose prefix an on-chain call carries \
+                           receives it, so a program-wide entry fires alongside a keyed one, and \
+                           two entries may share a prefix (say, the layouts before and after a \
+                           program upgrade): each decodes with its own `args`, and one whose \
+                           layout rejects the data is skipped for that call."
         )]
-        pub discriminator: Option<String>,
+        pub discriminator: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "Optional positional account slots, in the order the program expects \
@@ -1403,9 +1401,8 @@ pub mod svm {
     /// when one is misspelled.
     const PRIMITIVE_NAMES: &str = "bool, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, \
                                    f64, string, bytes, pubkey, publicKey";
-    /// The keys a one-key mapping may take. `defined` is deliberately absent:
-    /// it carries an IDL's nominal types through `internal_config.json`, and a
-    /// config.yaml naming one is answered by `validation::validate_svm_args`.
+    /// The keys a one-key mapping may take. `defined` is deliberately absent;
+    /// see `ArgComposite::Defined`.
     const COMPOSITE_NAMES: &str = "option, vec, array, struct, enum";
 
     /// User-facing Borsh type grammar. Mirrors
@@ -1523,11 +1520,11 @@ pub mod svm {
         /// `[ <element type>, <length> ]` — same shape Anchor IDLs use.
         #[serde(rename = "array")]
         Array(Box<ArgType>, usize),
-        /// Reference into the program-level `defined_types` registry, which is
-        /// only ever populated from an IDL's `types` block. Not part of the
-        /// config.yaml grammar — it exists to carry an IDL's nominal types
-        /// through `internal_config.json` — so it is kept out of the published
-        /// JSON schema and rejected by `validation::validate_svm_args`.
+        /// Reference into the program-level `defined_types` registry, which
+        /// only an IDL's `types` block ever populates. It exists to carry an
+        /// IDL's nominal types through `internal_config.json`, not as part of
+        /// the config.yaml grammar, so it stays out of the published JSON
+        /// schema and a config naming one is refused.
         #[serde(rename = "defined")]
         #[schemars(skip)]
         Defined(String),
@@ -2063,13 +2060,13 @@ chains:
                     instructions: vec![
                         Instruction {
                             name: "CreateMetadataAccountV3".to_string(),
-                            discriminator: Some("0x21".to_string()),
+                            discriminator: "0x21".to_string(),
                             accounts: None,
                             args: None,
                         },
                         Instruction {
                             name: "UpdateMetadataAccountV2".to_string(),
-                            discriminator: Some("0x0f".to_string()),
+                            discriminator: "0x0f".to_string(),
                             accounts: None,
                             args: None,
                         },
