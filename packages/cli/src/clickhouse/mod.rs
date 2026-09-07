@@ -651,14 +651,8 @@ impl ClickHouseSink {
                     self.history.checkpoints_table, self.history.checkpoint_chain_id_column
                 )
             })?;
-        self.post_statement(ddl::create_frontier_table(
+        self.post_statement(ddl::create_chains_table(
             chain_id_type,
-            &self.database,
-            &self.history,
-            topology,
-        ))
-        .await?;
-        self.post_statement(ddl::create_frontier_materialized_view(
             &self.database,
             &self.history,
             topology,
@@ -678,6 +672,15 @@ impl ClickHouseSink {
             ))
             .await?;
         }
+
+        // A view like the entity views below: analyzed against local metadata,
+        // so it too has to wait for every replica to hold the tables it names.
+        self.post_statement(ddl::create_chains_materialized_view(
+            &self.database,
+            &self.history,
+            topology,
+        ))
+        .await?;
 
         futures_util::future::try_join_all(entities.iter().map(|entity| {
             self.post_statement(ddl::create_view(
@@ -855,7 +858,7 @@ impl ClickHouseSink {
                 .collect(),
             ddl::ResumeBounds::PerChain(bounds) => bounds.clone(),
         };
-        self.post_statement(ddl::set_frontier(
+        self.post_statement(ddl::set_chains_frontier(
             &self.database,
             &self.history,
             &frontier_rows,
@@ -1528,7 +1531,7 @@ mod tests {
         let statements = server.statements_seen();
         let frontier = statements
             .iter()
-            .position(|statement| statement.starts_with("INSERT INTO `mock`.`envio_frontier`"));
+            .position(|statement| statement.starts_with("INSERT INTO `mock`.`envio_chains`"));
         let first_trim = statements.iter().position(|statement| {
             statement.starts_with("ALTER") || statement.starts_with("DELETE")
         });
@@ -1536,7 +1539,8 @@ mod tests {
             (frontier.map(|index| statements[index].clone()), frontier < first_trim),
             (
                 Some(
-                    "INSERT INTO `mock`.`envio_frontier` (`chain_id`, `id`) VALUES (1, 5), (137, 9)"
+                    "INSERT INTO `mock`.`envio_chains` (`chain_id`, `checkpoint_id`) VALUES (1, 5), \
+                     (137, 9)"
                         .to_string()
                 ),
                 true

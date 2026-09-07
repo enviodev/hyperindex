@@ -51,10 +51,12 @@ pub struct HistorySchema {
     /// checkpoints each chain's recorded progress already covers.
     pub checkpoint_chain_id_column: String,
     pub checkpoint_block_number_column: String,
-    /// One row per chain with the highest checkpoint id it has landed, kept by
-    /// a materialized view over the checkpoints table. The entity views read
-    /// it as their commit marker.
-    pub frontier_table: String,
+    /// One row per chain, mirroring the Postgres table of the same name: the
+    /// highest checkpoint id the chain has landed, kept by a materialized view
+    /// over the checkpoints table. The entity views read it as their commit
+    /// marker.
+    pub chains_table: String,
+    pub chains_checkpoint_id_column: String,
 }
 
 /// The rows a resume has to remove: everything written past the checkpoint it
@@ -351,16 +353,17 @@ pub fn create_checkpoints_table(
     )
 }
 
-/// One row per chain, replaced on every write: a batch's checkpoints raise it
-/// through the materialized view, a resume lowers it by inserting the id it
-/// trims back to. The row a chain settles on is the last one written, so the
-/// table has no version column and is read with FINAL.
+/// One row per chain, replaced on every write: a batch's checkpoints raise its
+/// checkpoint id through the materialized view, a resume lowers it by inserting
+/// the id it trims back to. The row a chain settles on is the last one written,
+/// so the table has no version column and is read with FINAL — which also means
+/// every writer has to write the whole row once it grows past this column.
 ///
 /// The dedup window is off for the same reason as on the other tables: a chain
 /// lowered by a resume and later raised to an id it once held would insert a
 /// block identical to one already seen, and a dropped insert would leave the
 /// chain's rows unreadable.
-pub fn create_frontier_table(
+pub fn create_chains_table(
     chain_id_type: &ChType,
     database: &str,
     history: &HistorySchema,
@@ -369,43 +372,48 @@ pub fn create_frontier_table(
     format!(
         "CREATE TABLE IF NOT EXISTS {}.{}{} (\n  {} {chain_id_type},\n  {} UInt64\n)\nENGINE = {}\nORDER BY ({}){}",
         quoted(database),
-        quoted(&history.frontier_table),
+        quoted(&history.chains_table),
         topology.on_cluster(),
         quoted(&history.checkpoint_chain_id_column),
-        quoted(&history.id_column),
+        quoted(&history.chains_checkpoint_id_column),
         topology.replacing_engine(),
         quoted(&history.checkpoint_chain_id_column),
         topology.settings(),
     )
 }
 
-/// Feeds the frontier from every checkpoint insert. It runs as part of that
+/// Feeds the chains table from every checkpoint insert. It runs as part of that
 /// insert, after the entity rows the checkpoints cover, so a chain's marker can
 /// never get ahead of the rows it makes readable.
-pub fn create_frontier_materialized_view(
+pub fn create_chains_materialized_view(
     database: &str,
     history: &HistorySchema,
     topology: Topology,
 ) -> String {
     format!(
-        "CREATE MATERIALIZED VIEW IF NOT EXISTS {db}.{}{} TO {db}.{} AS\nSELECT {chain}, max({id}) AS {id}\nFROM {db}.{}\nGROUP BY {chain}",
-        quoted(&frontier_view_name(history)),
+        "CREATE MATERIALIZED VIEW IF NOT EXISTS {db}.{}{} TO {db}.{} AS\nSELECT {chain}, max({id}) AS {checkpoint_id}\nFROM {db}.{}\nGROUP BY {chain}",
+        quoted(&chains_view_name(history)),
         topology.on_cluster(),
-        quoted(&history.frontier_table),
+        quoted(&history.chains_table),
         quoted(&history.checkpoints_table),
         db = quoted(database),
         chain = quoted(&history.checkpoint_chain_id_column),
         id = quoted(&history.id_column),
+        checkpoint_id = quoted(&history.chains_checkpoint_id_column),
     )
 }
 
-fn frontier_view_name(history: &HistorySchema) -> String {
-    format!("{}_mv", history.frontier_table)
+fn chains_view_name(history: &HistorySchema) -> String {
+    format!("{}_mv", history.chains_table)
 }
 
 /// Sets each chain's frontier to the id a resume trims it back to. Inserted
 /// before the trims so nothing above the id is readable while they run.
-pub fn set_frontier(database: &str, history: &HistorySchema, rows: &[(String, String)]) -> String {
+pub fn set_chains_frontier(
+    database: &str,
+    history: &HistorySchema,
+    rows: &[(String, String)],
+) -> String {
     let values: Vec<String> = rows
         .iter()
         .map(|(chain_id, checkpoint_id)| format!("({chain_id}, {checkpoint_id})"))
@@ -413,9 +421,9 @@ pub fn set_frontier(database: &str, history: &HistorySchema, rows: &[(String, St
     format!(
         "INSERT INTO {}.{} ({}, {}) VALUES {}",
         quoted(database),
-        quoted(&history.frontier_table),
+        quoted(&history.chains_table),
         quoted(&history.checkpoint_chain_id_column),
-        quoted(&history.id_column),
+        quoted(&history.chains_checkpoint_id_column),
         values.join(", "),
     )
 }
@@ -449,23 +457,23 @@ pub fn create_view(
         .collect();
     let entity_fields = entity_fields.join(", ");
 
-    let frontier = format!(
+    let chains = format!(
         "{}.{} FINAL",
         quoted(database),
-        quoted(&history.frontier_table)
+        quoted(&history.chains_table)
     );
+    let checkpoint_id = quoted(&history.chains_checkpoint_id_column);
     let (with, marker) = match &entity.chain_id_column {
         Some(chain_id_column) => (
             format!(
-                "WITH (SELECT mapFromArrays(groupArray({chain}), groupArray({id})) FROM {frontier}) AS envio_frontier\n",
+                "WITH (SELECT mapFromArrays(groupArray({chain}), groupArray({checkpoint_id})) FROM {chains}) AS envio_frontier\n",
                 chain = quoted(&history.checkpoint_chain_id_column),
-                id = quoted(&history.id_column),
             ),
             format!("envio_frontier[{}]", quoted(chain_id_column)),
         ),
         None => (
             String::new(),
-            format!("(SELECT max({}) FROM {frontier})", quoted(&history.id_column)),
+            format!("(SELECT max({checkpoint_id}) FROM {chains})"),
         ),
     };
 
@@ -574,7 +582,8 @@ pub(crate) mod test_support {
             checkpoints_table: "envio_checkpoints".to_string(),
             checkpoint_chain_id_column: "chain_id".to_string(),
             checkpoint_block_number_column: "block_number".to_string(),
-            frontier_table: "envio_frontier".to_string(),
+            chains_table: "envio_chains".to_string(),
+            chains_checkpoint_id_column: "checkpoint_id".to_string(),
         }
     }
 
@@ -827,23 +836,23 @@ mod tests {
     }
 
     #[test]
-    fn creates_the_frontier_table_and_the_view_that_feeds_it() {
+    fn creates_the_chains_table_and_the_view_that_feeds_it() {
         assert_eq!(
             (
-                create_frontier_table(&ChType::Int32, "test_db", &history_schema(), plain()),
-                create_frontier_materialized_view("test_db", &history_schema(), plain()),
+                create_chains_table(&ChType::Int32, "test_db", &history_schema(), plain()),
+                create_chains_materialized_view("test_db", &history_schema(), plain()),
             ),
             (
-                "CREATE TABLE IF NOT EXISTS `test_db`.`envio_frontier` (\n  \
+                "CREATE TABLE IF NOT EXISTS `test_db`.`envio_chains` (\n  \
                  `chain_id` Int32,\n  \
-                 `id` UInt64\n\
+                 `checkpoint_id` UInt64\n\
                  )\n\
                  ENGINE = ReplacingMergeTree()\n\
                  ORDER BY (`chain_id`)"
                     .to_string(),
-                "CREATE MATERIALIZED VIEW IF NOT EXISTS `test_db`.`envio_frontier_mv` TO \
-                 `test_db`.`envio_frontier` AS\n\
-                 SELECT `chain_id`, max(`id`) AS `id`\n\
+                "CREATE MATERIALIZED VIEW IF NOT EXISTS `test_db`.`envio_chains_mv` TO \
+                 `test_db`.`envio_chains` AS\n\
+                 SELECT `chain_id`, max(`id`) AS `checkpoint_id`\n\
                  FROM `test_db`.`envio_checkpoints`\n\
                  GROUP BY `chain_id`"
                     .to_string(),
@@ -852,12 +861,12 @@ mod tests {
     }
 
     #[test]
-    fn a_replicated_frontier_table_carries_the_engine_cluster_and_dedup_settings() {
+    fn a_replicated_chains_table_carries_the_engine_cluster_and_dedup_settings() {
         assert_eq!(
-            create_frontier_table(&ChType::Int64, "test_db", &history_schema(), replicated()),
-            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_frontier` ON CLUSTER '{cluster}' (\n  \
+            create_chains_table(&ChType::Int64, "test_db", &history_schema(), replicated()),
+            "CREATE TABLE IF NOT EXISTS `test_db`.`envio_chains` ON CLUSTER '{cluster}' (\n  \
              `chain_id` Int64,\n  \
-             `id` UInt64\n\
+             `checkpoint_id` UInt64\n\
              )\n\
              ENGINE = ReplicatedReplacingMergeTree\n\
              ORDER BY (`chain_id`)\n\
@@ -868,7 +877,7 @@ mod tests {
     #[test]
     fn sets_every_chains_frontier_in_one_insert() {
         assert_eq!(
-            set_frontier(
+            set_chains_frontier(
                 "test_db",
                 &history_schema(),
                 &[
@@ -876,7 +885,7 @@ mod tests {
                     ("137".to_string(), "9".to_string())
                 ]
             ),
-            "INSERT INTO `test_db`.`envio_frontier` (`chain_id`, `id`) VALUES (1, 5), (137, 9)"
+            "INSERT INTO `test_db`.`envio_chains` (`chain_id`, `checkpoint_id`) VALUES (1, 5), (137, 9)"
         );
     }
 
@@ -907,7 +916,7 @@ mod tests {
              FROM (\n  \
              SELECT `id`, `balance`, `envio_change`\n  \
              FROM `test_db`.`envio_history_Account`\n  \
-             WHERE `envio_checkpoint_id` <= (SELECT max(`id`) FROM `test_db`.`envio_frontier` FINAL)\n  \
+             WHERE `envio_checkpoint_id` <= (SELECT max(`checkpoint_id`) FROM `test_db`.`envio_chains` FINAL)\n  \
              ORDER BY `envio_checkpoint_id` DESC\n  \
              LIMIT 1 BY `id`\n\
              )\n\
@@ -933,8 +942,8 @@ mod tests {
         assert_eq!(
             create_view(&entity, "test_db", &history_schema(), plain()),
             "CREATE VIEW IF NOT EXISTS `test_db`.`Account` AS\n\
-             WITH (SELECT mapFromArrays(groupArray(`chain_id`), groupArray(`id`)) FROM \
-             `test_db`.`envio_frontier` FINAL) AS envio_frontier\n\
+             WITH (SELECT mapFromArrays(groupArray(`chain_id`), groupArray(`checkpoint_id`)) FROM \
+             `test_db`.`envio_chains` FINAL) AS envio_frontier\n\
              SELECT `id`, `chainId`, `balance`\n\
              FROM (\n  \
              SELECT `id`, `chainId`, `balance`, `envio_change`\n  \
