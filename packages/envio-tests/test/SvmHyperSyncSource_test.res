@@ -120,6 +120,7 @@ let makeSource = (
   ~onEventRegistrations=[makeReg()],
   ~client=mockClient,
   ~endpointUrl="https://solana.hypersync.xyz",
+  ~apiToken=Some("test-token"),
 ) => {
   let prevAddon = Core.addonRef.contents
   Core.addonRef :=
@@ -141,7 +142,7 @@ let makeSource = (
   let source = try SvmHyperSyncSource.make({
     chainId,
     endpointUrl,
-    apiToken: None,
+    apiToken,
     onEventRegistrations,
     clientTimeoutMillis: 10_000,
     addressStore,
@@ -384,5 +385,16 @@ describe("SvmHyperSyncSource height subscription", () => {
     await Promise.make((resolve, _reject) => server->MockRpcServer.close(() => resolve()))
 
     t.expect((statuses, heights)).toStrictEqual((["live"], [445073332, 445073335]))
+  })
+})
+
+describe("SvmHyperSyncSource api token", () => {
+  it("Throws the same actionable error as the EVM source when the token is missing", t => {
+    t->toThrowErrorEqual(
+      () => makeSource(~apiToken=None)->ignore,
+      `An Envio API token is required for using HyperSync as a data-source.
+Set the ENVIO_API_TOKEN environment variable in your .env file.
+Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`,
+    )
   })
 })
