@@ -1,6 +1,7 @@
 let programId = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
 let payerPk = "So11111111111111111111111111111111111111112"
 let authorityPk = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+let skippedPk = "Sysvar1nstructions1111111111111111111111111"
 let mintPk = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 
 let _ = InternalTestIndexer.fromUserApi(
@@ -82,6 +83,37 @@ describe("SVM optional accounts through simulate", () => {
                 authority: { address: "${authorityPk}" },
                 mint: { address: "${mintPk}" },
               },
+            },
+          ],
+        },
+      },
+    });
+    t.expect([await indexer.Swap.getOrThrow("1"), await indexer.Swap.getOrThrow("2")]).toEqual([
+      { id: "1", payer: "${payerPk}", authority: "absent", mint: "${mintPk}" },
+      { id: "2", payer: "${payerPk}", authority: "${authorityPk}", mint: "${mintPk}" },
+    ]);
+  });
+
+  // Positional accounts are what a call actually carries, so an item written
+  // that way has to spell an absent optional the way chain does: the id of the
+  // program being invoked, sitting in the slot.
+  it("reads the program id in an optional slot of a positional item as absent", async (t) => {
+    const indexer = createTestIndexer();
+    await indexer.process({
+      chains: {
+        7565164: {
+          simulate: [
+            {
+              program: "Swapper",
+              instruction: "swap",
+              slot: 1,
+              accountArguments: ["${payerPk}", "${programId}", "${skippedPk}", "${mintPk}"],
+            },
+            {
+              program: "Swapper",
+              instruction: "swap",
+              slot: 2,
+              accountArguments: ["${payerPk}", "${authorityPk}", "${skippedPk}", "${mintPk}"],
             },
           ],
         },
