@@ -498,7 +498,7 @@ FROM unnest($1::${chainIdArrayType},$2::${(BigInt: Postgres.columnType :> string
 WHERE "${table.tableName}"."${(#id: field :> string)}" = envio_frontier.chain_id;`
   }
 
-  // Every chain the frontier names, in one statement and in the batch's own
+  // The chains the write moved, in one statement and in the batch's own
   // transaction — so a chain's stored id can never outlive the rows it covers,
   // nor lag behind them.
   let setCheckpointFrontier = (

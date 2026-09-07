@@ -1087,11 +1087,18 @@ let rec writeBatch = async (
         )
       indexes->Utils.Array.notEmpty ? Some(CheckpointIndexes(indexes)) : None
     }
-    // Where the write leaves every chain's sequence. A rollback's diff ids sit
-    // on chains the batch may not have progressed at all.
-    let checkpointFrontier = switch rollback {
-    | Some({diffFrontier}) => Frontier.mergeMax(batch.checkpointFrontier, diffFrontier)
-    | None => batch.checkpointFrontier
+    // Where the write moves each chain's sequence: only the chains the batch
+    // handed ids to, and those a rollback's diff ids sit on — which the batch
+    // may not have progressed at all.
+    let movedFrontier = {
+      let moved = Frontier.empty()
+      batch.checkpointChainIds->Array.forEach(chainId =>
+        moved->Frontier.set(chainId, batch.checkpointFrontier->Frontier.get(chainId))
+      )
+      switch rollback {
+      | Some({diffFrontier}) => Frontier.mergeMax(moved, diffFrontier)
+      | None => moved
+      }
     }
 
     let specificError = ref(None)
@@ -1444,13 +1451,15 @@ let rec writeBatch = async (
             )
           }
 
-          setOperations->Array.push(sql =>
-            sql->InternalTable.Chains.setCheckpointFrontier(
-              ~pgSchema,
-              ~frontier=checkpointFrontier,
-              ~chainIdMode,
+          if movedFrontier->Frontier.entries->Utils.Array.notEmpty {
+            setOperations->Array.push(sql =>
+              sql->InternalTable.Chains.setCheckpointFrontier(
+                ~pgSchema,
+                ~frontier=movedFrontier,
+                ~chainIdMode,
+              )
             )
-          )
+          }
 
           switch pickedCheckpoints {
           | Some(picked) =>
