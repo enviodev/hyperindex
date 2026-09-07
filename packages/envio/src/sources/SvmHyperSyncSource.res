@@ -123,12 +123,14 @@ let make = (
 ): t => {
   let name = "SvmHyperSync"
 
+  let apiToken = apiToken->HyperSync.requireApiToken
+
   // The whole per-(instruction, chain) registration set crosses the boundary
   // once at construction; the client derives instruction selections, field
   // selections, Borsh decoders, and the routing index from it.
   let client = SvmHyperSyncClient.make(
     ~url=endpointUrl,
-    ~apiToken?,
+    ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~programs=SvmHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~addressStore,
@@ -257,5 +259,7 @@ let make = (
       {height, requestStats: [{method: "getHeight", seconds}]}
     },
     getItemsOrThrow,
+    createHeightSubscription: (~onHeight, ~onStatus) =>
+      HyperSyncSSE.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight, ~onStatus),
   }
 }

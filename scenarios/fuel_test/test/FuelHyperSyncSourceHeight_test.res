@@ -79,6 +79,22 @@ describe("FuelHyperSyncSource - getHeightOrThrow", () => {
     })
   })
 
+  it("Throws with the token instructions when no token is configured", t => {
+    t->toThrowErrorEqual(
+      () =>
+        FuelHyperSyncSource.make({
+          chainId,
+          endpointUrl: "http://127.0.0.1:1",
+          apiToken: None,
+          onEventRegistrations: [],
+          addressStore,
+        })->ignore,
+      `An Envio API token is required for using HyperSync as a data-source.
+Set the ENVIO_API_TOKEN environment variable in your .env file.
+Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`,
+    )
+  })
+
   Async.it("Blocks forever on 401 instead of throwing for a retry", async t => {
     await withServer((_req, res) => {
       res->writeHead(401)
