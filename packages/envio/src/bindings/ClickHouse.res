@@ -445,8 +445,6 @@ let resume = async (
       let spec = entitySpec(~entityConfig)
       {ClickHouseSink.name: spec.historyTable, chainIdColumn: ?spec.chainIdColumn}
     }),
-    replicated: Env.ClickHouse.replicated(),
-    databaseEngine: ?Env.ClickHouse.databaseEngine(),
   }) catch {
   | exn => {
       Logging.errorWithExn(exn, "Failed to resume ClickHouse storage")

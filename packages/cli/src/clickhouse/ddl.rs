@@ -540,12 +540,13 @@ pub fn holds_rows_above_checkpoint(database: &str, above_by_table: &[(String, St
 ///
 /// `ALTER ... DELETE` schedules a mutation rather than running one, so without
 /// `mutations_sync` the statement returns while the rows are still there and
-/// resume would report a rewind it has only asked for. Waiting for every
-/// replica (`2`) is what makes the storage actually be at the checkpoint by the
-/// time the indexer starts writing again.
+/// resume would report a rewind it has only asked for. Waiting for this node
+/// (`1`) is what makes the storage actually be at the checkpoint by the time
+/// the indexer starts writing again; the indexer reads and writes this node
+/// alone, and the replicas behind it catch up on their own.
 pub fn trim_history_table(database: &str, table: &str, above: &str) -> String {
     format!(
-        "ALTER TABLE {}.{} DELETE WHERE {above} SETTINGS mutations_sync = 2",
+        "ALTER TABLE {}.{} DELETE WHERE {above} SETTINGS mutations_sync = 1",
         quoted(database),
         quoted(table),
     )
@@ -561,7 +562,7 @@ pub fn trim_history_table(database: &str, table: &str, above: &str) -> String {
 /// become readable through a checkpoint that no longer covers them.
 pub fn trim_checkpoints(database: &str, history: &HistorySchema, above: &str) -> String {
     format!(
-        "DELETE FROM {}.{} WHERE {above} SETTINGS lightweight_deletes_sync = 2",
+        "DELETE FROM {}.{} WHERE {above} SETTINGS lightweight_deletes_sync = 1",
         quoted(database),
         quoted(&history.checkpoints_table),
     )
@@ -1020,10 +1021,10 @@ mod tests {
             ),
             (
                 "ALTER TABLE `db`.`envio_history_Account` DELETE WHERE \
-                 `envio_checkpoint_id` > 42 SETTINGS mutations_sync = 2"
+                 `envio_checkpoint_id` > 42 SETTINGS mutations_sync = 1"
                     .to_string(),
                 "DELETE FROM `db`.`envio_checkpoints` WHERE `id` > 42 \
-                 SETTINGS lightweight_deletes_sync = 2"
+                 SETTINGS lightweight_deletes_sync = 1"
                     .to_string()
             )
         );

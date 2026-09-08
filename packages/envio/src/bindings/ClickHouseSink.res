@@ -77,8 +77,6 @@ type resumeInput = {
   perChain: bool,
   chainProgress: array<chainProgressInput>,
   historyTables: array<historyTableInput>,
-  replicated: bool,
-  databaseEngine?: string,
 }
 
 type registeredTable = {

@@ -205,8 +205,6 @@ pub struct ResumeInput {
     /// The history tables this schema owns. A table no entity claims is one an
     /// older schema left behind, and a schema change means a resync anyway.
     pub history_tables: Vec<HistoryTableInput>,
-    pub replicated: bool,
-    pub database_engine: Option<String>,
 }
 
 #[napi(object)]
@@ -256,6 +254,11 @@ pub struct ClickHouseSink {
     warn: WarningSink,
     chain_id_mode: ChainIdMode,
     history: ddl::HistorySchema,
+    /// The node that answered the first request. Every later answer has to come
+    /// from it: the write order is only the read order on the node that took
+    /// the writes, so an address that starts balancing across replicas is an
+    /// error, not a slower path.
+    served_by: Mutex<Option<String>>,
 }
 
 type WarningSink = Arc<dyn Fn(&str) + Send + Sync>;
@@ -354,6 +357,7 @@ impl ClickHouseSink {
             warn,
             chain_id_mode,
             history: options.history,
+            served_by: Mutex::new(None),
         })
     }
 
@@ -659,22 +663,6 @@ impl ClickHouseSink {
         ))
         .await?;
 
-        // The client pools HTTP connections, so consecutive statements may reach
-        // different replicas, while a Replicated database applies DDL from its
-        // Keeper log asynchronously. A CREATE VIEW is analyzed against the
-        // node's local metadata and can land on a replica that hasn't applied
-        // the table creates yet, failing with UNKNOWN_TABLE. Block until every
-        // replica has caught up first. ON CLUSTER must precede the database name
-        // in this command's grammar.
-        if has_replicated_engine {
-            self.post_statement(format!(
-                "SYSTEM SYNC DATABASE REPLICA ON CLUSTER '{{cluster}}' {database_ident}"
-            ))
-            .await?;
-        }
-
-        // A view like the entity views below: analyzed against local metadata,
-        // so it too has to wait for every replica to hold the tables it names.
         self.post_statement(ddl::create_chains_materialized_view(
             &self.database,
             &self.history,
@@ -838,8 +826,6 @@ impl ClickHouseSink {
             per_chain,
             chain_progress,
             history_tables,
-            replicated,
-            database_engine,
         } = input;
         // No chain, no rows to hold to anything. Every trim below is an
         // `ALTER ... DELETE`, and on replicated storage it is run unconditionally
@@ -885,20 +871,7 @@ impl ClickHouseSink {
             ))))
             .collect::<Result<Vec<_>>>()?;
 
-        // A read answers for the replica it lands on, and the client's pool
-        // spreads consecutive statements across replicas. A replica still
-        // fetching the parts the last run wrote would answer "nothing above the
-        // checkpoint" for rows that are there, so replicated storage trims
-        // every table regardless: `mutations_sync = 2` waits on all replicas.
-        let holding: HashSet<String> =
-            if replicated || has_replicated_engine(database_engine.as_deref()) {
-                above_by_table
-                    .iter()
-                    .map(|(table, _)| table.clone())
-                    .collect()
-            } else {
-                self.tables_holding_rows_above(&above_by_table).await?
-            };
+        let holding = self.tables_holding_rows_above(&above_by_table).await?;
 
         let (checkpoints, histories): (Vec<_>, Vec<_>) = above_by_table
             .iter()
@@ -1011,12 +984,41 @@ impl ClickHouseSink {
             .send()
             .await
             .context("ClickHouse request failed")?;
+        self.check_served_by(&response)?;
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         if !status.is_success() {
             bail!("ClickHouse returned {status}: {text}");
         }
         Ok(text)
+    }
+
+    /// ClickHouse names the node that answered in every response. The first
+    /// one is the node this run is pinned to; an answer from any other means
+    /// the address in front is balancing, and the next read could land on a
+    /// replica still fetching what was just written. A response without the
+    /// header (a proxy that strips it) leaves the pin unchecked.
+    fn check_served_by(&self, response: &reqwest::Response) -> Result<()> {
+        let Some(node) = response
+            .headers()
+            .get("X-ClickHouse-Server-Display-Name")
+            .and_then(|value| value.to_str().ok())
+        else {
+            return Ok(());
+        };
+        let mut served_by = self.served_by.lock().unwrap();
+        match served_by.as_deref() {
+            None => {
+                *served_by = Some(node.to_string());
+                Ok(())
+            }
+            Some(pinned) if pinned == node => Ok(()),
+            Some(pinned) => bail!(
+                "ClickHouse answered from node \"{node}\" after earlier answers came from \
+                 \"{pinned}\". The indexer has to read and write one replica: point \
+                 ENVIO_CLICKHOUSE_HOST at a single node rather than a load balancer."
+            ),
+        }
     }
 
     async fn insert_staged(&self, staged: Staged) -> Result<()> {
@@ -1129,6 +1131,12 @@ impl ClickHouseSink {
                 });
             }
         };
+        if let Err(error) = self.check_served_by(&response) {
+            return Err(InsertFailure {
+                retry: Retry::Never,
+                error,
+            });
+        }
         let status = response.status();
         if status.is_success() {
             return Ok(());
@@ -1422,8 +1430,6 @@ mod tests {
                     chain_id_column: Some("chain_id".to_string()),
                 })
                 .collect(),
-            replicated: false,
-            database_engine: None,
         }
     }
 
@@ -1499,10 +1505,10 @@ mod tests {
             vec![
                 "ALTER TABLE `mock`.`envio_history_a` DELETE WHERE (`chain_id` = 1 AND \
                  `envio_checkpoint_id` > 5) OR (`chain_id` = 137 AND `envio_checkpoint_id` > 9) \
-                 SETTINGS mutations_sync = 2"
+                 SETTINGS mutations_sync = 1"
                     .to_string(),
                 "DELETE FROM `mock`.`envio_checkpoints` WHERE (`chain_id` = 1 AND `id` > 5) OR \
-                 (`chain_id` = 137 AND `id` > 9) SETTINGS lightweight_deletes_sync = 2"
+                 (`chain_id` = 137 AND `id` > 9) SETTINGS lightweight_deletes_sync = 1"
                     .to_string(),
             ]
         );
@@ -1546,6 +1552,54 @@ mod tests {
                 true
             ),
             "got: {statements:?}"
+        );
+    }
+
+    // The write order is only the read order on the node that took the writes.
+    // A second node answering means the address balances across replicas, and
+    // the run stops rather than read a replica that may be behind.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_answer_from_a_second_node_fails_the_statement() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0",
+            &[("envio_history_a", 0), ("envio_checkpoints", 0)],
+        ))
+        .await;
+        server.serve_as("node-a");
+        let sink = sink_for(&server, 4);
+        let input = || {
+            resume_input(
+                vec![committed("1", 100, "42")],
+                vec!["envio_history_a".to_string()],
+            )
+        };
+
+        sink.resume(input()).await.unwrap();
+        server.serve_as("node-b");
+        let err = sink.resume(input()).await.unwrap_err();
+
+        assert!(
+            err.reason.contains("node \"node-b\"") && err.reason.contains("\"node-a\""),
+            "got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_insert_answered_by_a_second_node_fails_without_retrying() {
+        let server = mock_server::MockClickHouse::start(0).await;
+        server.serve_as("node-a");
+        let sink = sink_for(&server, 4);
+        write(&sink, stage_ids(&sink, &["a"])).await.unwrap();
+
+        server.serve_as("node-b");
+        let err = write(&sink, stage_ids(&sink, &["b"])).await.unwrap_err();
+
+        assert_eq!(
+            (server.inserts_seen(), err.reason.contains("\"node-b\"")),
+            (2, true),
+            "got: {}",
+            err.reason
         );
     }
 
@@ -1749,61 +1803,6 @@ mod tests {
     /// The read that spares a clean restart its mutations answers for one
     /// replica; another may still be fetching what the last run wrote.
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_replicated_resume_trims_every_table_without_asking_which_hold_rows() {
-        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
-            "0",
-            &[
-                ("envio_history_a", 0),
-                ("envio_history_b", 0),
-                ("envio_checkpoints", 0),
-            ],
-        ))
-        .await;
-        let sink = sink_for(&server, 4);
-
-        sink.resume(ResumeInput {
-            database_engine: Some("Replicated('/clickhouse/{shard}', '{replica}')".to_string()),
-            ..resume_input(
-                vec![committed("1", 100, "42")],
-                vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
-            )
-        })
-        .await
-        .unwrap();
-
-        let statements = server.statements_seen();
-        let mut mutations: Vec<&String> = statements
-            .iter()
-            .filter(|statement| statement.starts_with("ALTER") || statement.starts_with("DELETE"))
-            .collect();
-        mutations.sort();
-        assert_eq!(
-            (
-                statements
-                    .iter()
-                    .filter(|statement| statement.contains("_envio_holds"))
-                    .count(),
-                mutations,
-            ),
-            (
-                0,
-                vec![
-                    &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 42 \
-                      SETTINGS mutations_sync = 2"
-                        .to_string(),
-                    &"ALTER TABLE `mock`.`envio_history_b` DELETE WHERE `envio_checkpoint_id` > 42 \
-                      SETTINGS mutations_sync = 2"
-                        .to_string(),
-                    &"DELETE FROM `mock`.`envio_checkpoints` WHERE `id` > 42 \
-                      SETTINGS lightweight_deletes_sync = 2"
-                        .to_string(),
-                ]
-            ),
-            "replicated storage should trim blind, got: {statements:?}"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_trims_every_history_table_and_then_the_checkpoints() {
         let server = mock_server::MockClickHouse::answering_statements(resume_answers(
             "0",
@@ -1835,15 +1834,15 @@ mod tests {
             (
                 vec![
                     "ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 42 \
-                     SETTINGS mutations_sync = 2"
+                     SETTINGS mutations_sync = 1"
                         .to_string(),
                     "ALTER TABLE `mock`.`envio_history_b` DELETE WHERE `envio_checkpoint_id` > 42 \
-                     SETTINGS mutations_sync = 2"
+                     SETTINGS mutations_sync = 1"
                         .to_string(),
                 ],
                 Some(
                     "DELETE FROM `mock`.`envio_checkpoints` WHERE `id` > 42 \
-                     SETTINGS lightweight_deletes_sync = 2"
+                     SETTINGS lightweight_deletes_sync = 1"
                         .to_string()
                 )
             )
@@ -2004,7 +2003,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 42 \
-                  SETTINGS mutations_sync = 2"
+                  SETTINGS mutations_sync = 1"
                     .to_string()
             ],
             "only the table holding rows should be trimmed, got: {statements:?}"
@@ -2047,7 +2046,7 @@ mod tests {
                 ),
                 Some(
                     &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 6 \
-                      SETTINGS mutations_sync = 2"
+                      SETTINGS mutations_sync = 1"
                         .to_string()
                 ),
             ),
@@ -2081,7 +2080,7 @@ mod tests {
                 .find(|statement| statement.starts_with("ALTER")),
             Some(
                 &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 98 \
-                  SETTINGS mutations_sync = 2"
+                  SETTINGS mutations_sync = 1"
                     .to_string()
             )
         );
@@ -2111,7 +2110,7 @@ mod tests {
                 .find(|statement| statement.starts_with("ALTER")),
             Some(
                 &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 12 \
-                  SETTINGS mutations_sync = 2"
+                  SETTINGS mutations_sync = 1"
                     .to_string()
             )
         );
