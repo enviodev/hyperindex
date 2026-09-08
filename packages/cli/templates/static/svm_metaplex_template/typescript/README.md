@@ -9,7 +9,7 @@ Solana mainnet via HyperSync, and writes one row per metadata PDA.
 ```bash
 pnpm install
 
-# Adjust config.yaml `start_block` to ~30k slots below current head:
+# Adjust config.yaml `start_slot` to ~30k slots below current head:
 curl -s https://solana.hypersync.xyz/height
 
 pnpm envio local docker up    # Postgres + Hasura

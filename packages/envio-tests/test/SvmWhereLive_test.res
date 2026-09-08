@@ -24,8 +24,8 @@ name: svm-where-live
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 420650000
-    end_block: 420650200
+    start_slot: 420650000
+    end_slot: 420650200
     hypersync_config:
       url: https://solana.hypersync.xyz
 programs:

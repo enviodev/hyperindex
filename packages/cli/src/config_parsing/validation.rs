@@ -697,7 +697,7 @@ name: x
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
     hypersync_config:
       url: https://solana.hypersync.xyz
 programs:
@@ -720,7 +720,7 @@ ecosystem: svm
 chains:
   - id: solana
     rpc: https://api.mainnet-beta.solana.com
-    start_block: 0
+    start_slot: 0
 "#,
             );
             validate_deserialized_svm_config_yaml(&cfg).unwrap();

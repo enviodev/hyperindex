@@ -8,7 +8,7 @@ name: svm-where
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
     hypersync_config:
       url: https://solana.hypersync.xyz
 programs:

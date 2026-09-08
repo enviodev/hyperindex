@@ -553,7 +553,7 @@ name: unknown-svm-field
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 1
+    start_slot: 1
     hypersync_config:
       url: https://solana.hypersync.xyz
 programs:
@@ -1020,7 +1020,7 @@ ecosystem: svm
 chains:
   - id: solana
     rpc: https://solana.example.test
-    start_block: 8
+    start_slot: 8
 `,
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
@@ -1251,7 +1251,7 @@ name: svm-validation
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
     hypersync_config:
       url: https://solana.hypersync.xyz
 programs:
@@ -1482,11 +1482,11 @@ name: duplicate-programs
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
     hypersync_config:
       url: https://solana.hypersync.xyz
   - id: solana-devnet
-    start_block: 0
+    start_slot: 0
     hypersync_config:
       url: https://solana.hypersync.xyz
 programs:
@@ -1512,9 +1512,9 @@ name: derived-svm-endpoint
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
   - id: solana-devnet
-    start_block: 0
+    start_slot: 0
 programs:
   - name: Mainnet
     program_id:
@@ -1553,7 +1553,7 @@ name: explicit-svm-endpoint
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
     hypersync_config:
       url: https://custom.hypersync.test
 programs:
@@ -1578,7 +1578,7 @@ name: unknown-svm-cluster
 ecosystem: svm
 chains:
   - id: 42
-    start_block: 0
+    start_slot: 0
 programs:
   - name: Program
     program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -2142,7 +2142,7 @@ name: missing-idl
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
     hypersync_config:
       url: https://solana.hypersync.xyz
 programs:
@@ -2166,7 +2166,7 @@ name: independent-svm-layout
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
     hypersync_config:
       url: https://solana.hypersync.xyz
 programs:
@@ -2217,7 +2217,7 @@ name: svm-idl-catalog
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
     hypersync_config:
       url: https://solana.hypersync.xyz
 programs:

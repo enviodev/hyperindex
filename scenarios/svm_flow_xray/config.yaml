@@ -13,7 +13,7 @@ chains:
     # ~220k slots behind head (~24h of chain time) — empirically the widest
     # window that backfills cleanly with Orca + Meteora swap added. Widen
     # further once HOS-1304 lands.
-    start_block: 422100000
+    start_slot: 422100000
     hypersync_config:
       url: https://solana.hypersync.xyz
 programs:

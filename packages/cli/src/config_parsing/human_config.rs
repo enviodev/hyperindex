@@ -1146,12 +1146,12 @@ pub mod svm {
         )]
         pub rpc: Option<String>,
         #[schemars(
-            description = "The slot number at which the indexer should start ingesting data"
+            description = "The slot at which the indexer should start ingesting data"
         )]
-        pub start_block: u64,
+        pub start_slot: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "The slot number at which the indexer should terminate.")]
-        pub end_block: Option<u64>,
+        #[schemars(description = "The slot at which the indexer should terminate.")]
+        pub end_slot: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "The number of blocks behind the chain head that the indexer should \
@@ -2149,7 +2149,7 @@ name: metaplex-token-metadata
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 200000000
+    start_slot: 200000000
     hypersync_config:
       url: https://solana.hypersync.xyz
 programs:
@@ -2166,7 +2166,7 @@ programs:
         fn chain_id_accepts_labels_and_numbers_and_round_trips() {
             let parse_chain = |id_yaml: &str| -> Chain {
                 let yaml = format!(
-                    "name: x\necosystem: svm\nchains:\n  - id: {id_yaml}\n    start_block: 0\n"
+                    "name: x\necosystem: svm\nchains:\n  - id: {id_yaml}\n    start_slot: 0\n"
                 );
                 let mut cfg: HumanConfig = serde_yaml::from_str(&yaml).unwrap();
                 cfg.chains.remove(0)
@@ -2197,7 +2197,7 @@ programs:
 
             // `id` is required: omitting it is a parse error.
             let missing: Result<HumanConfig, _> =
-                serde_yaml::from_str("name: x\necosystem: svm\nchains:\n  - start_block: 0\n");
+                serde_yaml::from_str("name: x\necosystem: svm\nchains:\n  - start_slot: 0\n");
             assert!(missing.is_err(), "config without chain id must be rejected");
         }
 

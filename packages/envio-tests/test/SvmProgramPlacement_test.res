@@ -30,7 +30,7 @@ name: one-chain
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
 programs:
   - name: TokenMetadata
     program_id: ${mainnetPk}
@@ -49,9 +49,9 @@ name: two-chains
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
   - id: solana-devnet
-    start_block: 0
+    start_slot: 0
 programs:
   - name: Everywhere
     program_id:
@@ -82,7 +82,7 @@ name: numeric-chain
 ecosystem: svm
 chains:
   - id: 42
-    start_block: 0
+    start_slot: 0
     hypersync_config:
       url: https://custom.hypersync.test
 programs:
@@ -105,9 +105,9 @@ name: two-chains
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
   - id: solana-devnet
-    start_block: 0
+    start_slot: 0
 programs:
   - name: TokenMetadata
     program_id: ${mainnetPk}
@@ -131,9 +131,9 @@ name: two-chains
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
   - id: solana-devnet
-    start_block: 0
+    start_slot: 0
 programs:
   - name: TokenMetadata
     program_id:
@@ -151,7 +151,7 @@ name: numeric-alias
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
 programs:
   - name: TokenMetadata
     program_id:
@@ -172,7 +172,7 @@ name: one-chain
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
 programs:
   - name: TokenMetadata
     program_id:
@@ -191,7 +191,7 @@ name: one-chain
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
 programs:
   - name: TokenMetadata
     program_id:
@@ -211,7 +211,7 @@ name: two-chains
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
 programs:
   - name: TokenMetadata
     program_id:
@@ -231,7 +231,7 @@ name: one-chain
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
 programs:
   - name: TokenMetadata
     program_id:
@@ -250,7 +250,7 @@ name: one-chain
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
 programs:
   - name: TokenMetadata
     program_id: _
@@ -267,7 +267,7 @@ name: rpc-ignored
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
+    start_slot: 0
     rpc: https://api.mainnet-beta.solana.com
 programs:
   - name: TokenMetadata
@@ -279,5 +279,46 @@ programs:
     t.expect(chain.sourceConfig).toEqual(
       Config.SvmSourceConfig({hypersync: "https://solana.hypersync.xyz"}),
     )
+  })
+})
+
+// `start_block` was the key before slots got their own name. `deny_unknown_fields`
+// rejects it, so the error has to point at the key that replaced it.
+describe("SVM slot bounds", () => {
+  it("rejects the old `start_block` key by naming the fields a chain takes", t => {
+    expectParseError(
+      t,
+      `
+name: old-key
+ecosystem: svm
+chains:
+  - id: solana
+    start_block: 0
+programs:
+  - name: TokenMetadata
+    program_id: ${mainnetPk}
+    instructions: []
+`,
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0]: unknown field \`start_block\`, expected one of \`id\`, \`skip\`, \`rpc\`, \`start_slot\`, \`end_slot\`, \`block_lag\`, \`hypersync_config\` at line 6 column 5",
+    )
+  })
+
+  it("reads start_slot and end_slot as the chain's bounds", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: slot-bounds
+ecosystem: svm
+chains:
+  - id: solana
+    start_slot: 100
+    end_slot: 200
+programs:
+  - name: TokenMetadata
+    program_id: ${mainnetPk}
+    instructions: []
+`,
+    )
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    t.expect((chain.startBlock, chain.endBlock)).toEqual((100, Some(200)))
   })
 })

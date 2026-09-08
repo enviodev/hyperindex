@@ -4,7 +4,7 @@ description: Indexes Metaplex Token Metadata creates and updates on Solana mainn
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 417920000
+    start_slot: 417920000
 programs:
   - name: TokenMetadata
     program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s

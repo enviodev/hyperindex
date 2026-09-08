@@ -8,8 +8,8 @@ description: Test variant of Flow X-Ray with a finite slot window.
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 420650000
-    end_block: 420650008
+    start_slot: 420650000
+    end_slot: 420650008
     hypersync_config:
       url: https://solana.hypersync.xyz
 programs:

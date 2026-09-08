@@ -24,7 +24,7 @@ name: svm-simulate-transaction
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 100
+    start_slot: 100
     hypersync_config:
       url: https://solana.hypersync.xyz
 programs:

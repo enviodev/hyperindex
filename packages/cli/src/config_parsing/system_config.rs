@@ -1431,8 +1431,8 @@ impl SystemConfig {
                     let chain = Chain {
                         id: chain_id,
                         skip: network.skip.unwrap_or(false),
-                        start_block: network.start_block,
-                        end_block: network.end_block,
+                        start_block: network.start_slot,
+                        end_block: network.end_slot,
                         max_reorg_depth: None,
                         block_lag: network.block_lag,
                         sync_source: DataSource::Svm {
@@ -2935,9 +2935,9 @@ mod test {
         // Labels resolve to the HOS-1682 ids, and two SVM chains coexist in
         // one config: the old hardcoded 0 made the second insert collide.
         let yaml = format!(
-            "\nname: svm-chain-id\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+            "\nname: svm-chain-id\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
              0\n    hypersync_config:\n      url: https://solana.hypersync.xyz\n  - id: \
-             solana-devnet\n    start_block: 0\n    hypersync_config:\n      url: \
+             solana-devnet\n    start_slot: 0\n    hypersync_config:\n      url: \
              https://solana.hypersync.xyz\nprograms:\n{}{}",
             program_block(
                 "TokenMetadata",
@@ -3867,7 +3867,7 @@ type Foo {
                 format!("    instructions:\n{instructions}")
             };
             let yaml = format!(
-                "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+                "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
                  0\n    hypersync_config:\n      url: \
                  https://solana.hypersync.xyz\nprograms:\n  - name: Pool\n    program_id: \
                  TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n    idl: \
@@ -3970,7 +3970,7 @@ type Foo {
         /// to `onInstruction`.
         #[test]
         fn omits_yaml_instructions_to_expose_the_idl_catalog() {
-            let yaml = "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+            let yaml = "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
                  0\n    hypersync_config:\n      url: \
                  https://solana.hypersync.xyz\nprograms:\n  - name: Pool\n    program_id: \
                  TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n    idl: idls/pool.json\n";
@@ -4020,7 +4020,7 @@ type Foo {
         /// the given YAML, read back as the canonical slot tokens.
         fn account_slots(accounts: &str) -> anyhow::Result<Vec<String>> {
             let yaml = format!(
-                "name: svm-slots\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+                "name: svm-slots\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
                  0\n    hypersync_config:\n      url: \
                  https://solana.hypersync.xyz\nprograms:\n  - name: Pool\n    program_id: \
                  TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n    instructions:\n      - name: \
@@ -4604,7 +4604,7 @@ type Foo {
 
         #[test]
         fn does_not_attach_a_schema_to_metaplex_by_program_id() {
-            let yaml = "name: metaplex\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+            let yaml = "name: metaplex\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
                  0\n    hypersync_config:\n      url: \
                  https://solana.hypersync.xyz\nprograms:\n  - name: TokenMetadata\n    \
                  program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n";
