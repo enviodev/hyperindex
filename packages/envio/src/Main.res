@@ -592,6 +592,9 @@ let migrate = async (~reset) => {
     ~resetCommand="envio local db-migrate setup",
     ~runCommand=None,
     ~lowercaseAddresses=config.lowercaseAddresses,
+    // A migration command runs once and exits, with nobody watching it recover:
+    // an unreachable chain should say so now rather than hold the command open.
+    ~startBlockRetry=StartBlockResolver.Once,
   )
   await persistence.storage.close()
 }

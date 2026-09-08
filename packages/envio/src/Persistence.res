@@ -242,6 +242,7 @@ let init = {
     ~runCommand,
     ~reset=false,
     ~lowercaseAddresses=false,
+    ~startBlockRetry=StartBlockResolver.UntilItAnswers,
   ) => {
     try {
       let shouldRun = switch persistence.storageStatus {
@@ -266,6 +267,7 @@ let init = {
           // verbatim instead of re-running this.
           let chainConfigs = await chainConfigs->StartBlockResolver.resolveAllOrThrow(
             ~lowercaseAddresses,
+            ~retry=startBlockRetry,
           )
           let initialState = await persistence.storage.initialize(
             ~entities=persistence.allEntities,

@@ -119,6 +119,68 @@ describe("StartBlockResolver", () => {
     )).toEqual(([Config.Block(999)], 1))
   })
 
+  Async.it("with `Once`, gives up after one attempt per source and says why", async t => {
+    let primary = MockSource.make([#getHeightOrThrow], ~chainId=1)
+    let fallback = MockSource.make([#getHeightOrThrow], ~chainId=1, ~sourceFor=Source.Fallback)
+    let chain = makeChain(~startBlock=Config.Latest, ~sources=[primary.source, fallback.source])
+
+    let resolving =
+      [chain]
+      ->StartBlockResolver.resolveAllOrThrow(
+        ~lowercaseAddresses=false,
+        ~retry=StartBlockResolver.Once,
+      )
+      ->errorMessageOf
+    await Scenario.waitUntil(
+      () => primary.getHeightOrThrowCalls->Array.length === 1,
+      ~message="the primary's one attempt",
+    )
+    primary.rejectGetHeightOrThrow(JsError.make("primary is down"))
+    await Scenario.waitUntil(
+      () => fallback.getHeightOrThrowCalls->Array.length === 1,
+      ~message="the fallback's one attempt",
+    )
+    fallback.rejectGetHeightOrThrow(JsError.make("fallback is down too"))
+
+    let error = await resolving
+    t.expect((
+      error,
+      primary.getHeightOrThrowCalls->Array.length,
+      fallback.getHeightOrThrowCalls->Array.length,
+    )).toEqual((
+      Some(`Chain 1: couldn't resolve the "latest" start block - no source answered a height request.
+  MockSource: primary is down
+  MockSource: fallback is down too`),
+      1,
+      1,
+    ))
+  })
+
+  Async.it("with `Once`, takes the first source that answers", async t => {
+    let primary = MockSource.make([#getHeightOrThrow], ~chainId=1)
+    let fallback = MockSource.make(
+      [#getHeightOrThrow],
+      ~chainId=1,
+      ~sourceFor=Source.Fallback,
+      ~autoHeight=4242,
+    )
+    let chain = makeChain(~startBlock=Config.Latest, ~sources=[primary.source, fallback.source])
+
+    let resolving =
+      [chain]->StartBlockResolver.resolveAllOrThrow(
+        ~lowercaseAddresses=false,
+        ~retry=StartBlockResolver.Once,
+      )
+    await Scenario.waitUntil(
+      () => primary.getHeightOrThrowCalls->Array.length === 1,
+      ~message="the primary's one attempt",
+    )
+    primary.rejectGetHeightOrThrow(JsError.make("primary is down"))
+
+    let resolved = await resolving
+    t.expect(resolved->Array.map(c => c.startBlock)).toEqual([Config.Block(4242)])
+  })
+
   Async.it("throws a clear error when latest resolves past end_block", async t => {
     let mockSource = MockSource.make([#getHeightOrThrow], ~chainId=1, ~autoHeight=100)
     let chain = makeChain(~startBlock=Config.Latest, ~endBlock=50, ~sources=[mockSource.source])

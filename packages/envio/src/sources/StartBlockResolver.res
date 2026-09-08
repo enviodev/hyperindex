@@ -22,6 +22,64 @@ let makeProbeSources = (chainConfig: Config.chain, ~lowercaseAddresses): array<S
   ChainSources.make(~chainConfig, ~onEventRegistrations=[], ~addressStore, ~lowercaseAddresses)
 }
 
+// How long to keep asking a chain that won't answer.
+type retry =
+  // The indexer. A chain it can't reach is the operator's to fix, and the
+  // process staying up is what gives them the chance to - the same thing it
+  // does for a chain that goes unreachable while it runs.
+  | UntilItAnswers
+  // `envio local db-migrate up/setup`. A one-shot command has nobody waiting to
+  // watch it recover, so every source gets one attempt and then it reports what
+  // each of them said.
+  | Once
+
+// Sources that can serve historical sync, primaries first - the same ordering a
+// backfill would use. A realtime-only source is left out: it isn't what this
+// chain reads its history from.
+let candidateSources = (sources: array<Source.t>) => {
+  let hasRealtime = sources->Array.some(source => source.sourceFor === Realtime)
+  let roleOf = (source: Source.t) =>
+    SourceManager.getSourceRole(~sourceFor=source.sourceFor, ~isRealtime=false, ~hasRealtime)
+  sources
+  ->Array.filter(source => roleOf(source)->Option.isSome)
+  ->Array.toSorted((a, b) =>
+    switch (roleOf(a), roleOf(b)) {
+    | (Some(Primary), Some(Secondary)) => Ordering.less
+    | (Some(Secondary), Some(Primary)) => Ordering.greater
+    | _ => Ordering.equal
+    }
+  )
+}
+
+// One attempt per source. Trying the next source is not a retry - it's the
+// failover the config asked for - but no source is asked twice.
+let readHeadOnceOrThrow = async (chainConfig: Config.chain, ~sources): int => {
+  let failures = []
+  let head = ref(None)
+  let candidates = candidateSources(sources)
+  for i in 0 to candidates->Array.length - 1 {
+    if head.contents->Option.isNone {
+      let source = candidates->Array.getUnsafe(i)
+      switch await source.getHeightOrThrow() {
+      | {height} => head := Some(height)
+      | exception exn =>
+        failures
+        ->Array.push(`${source.name}: ${exn->Utils.exnMessage->Option.getOr("unknown error")}`)
+        ->ignore
+      }
+    }
+  }
+  switch head.contents {
+  | Some(head) => head
+  | None =>
+    JsError.throwWithMessage(
+      `Chain ${chainConfig.id->ChainId.toString}: couldn't resolve the "latest" start block - no source answered a height request.${failures
+        ->Array.map(failure => `\n  ${failure}`)
+        ->Array.join("")}`,
+    )
+  }
+}
+
 // Waiting for a height above 0 is the same question as "what is the head", and
 // it comes with the runtime's own answer to a source that won't say: retry with
 // backoff, a bound on how long any one request is waited for, and failover to
@@ -33,20 +91,26 @@ let makeProbeSources = (chainConfig: Config.chain, ~lowercaseAddresses): array<S
 let resolveHeadOrThrow = async (
   chainConfig: Config.chain,
   ~lowercaseAddresses,
+  ~retry,
   ~getHeightRetryInterval=?,
   ~newBlockStallTimeout=?,
 ): int => {
-  let sourceManager = SourceManager.make(
-    ~sources=chainConfig->makeProbeSources(~lowercaseAddresses),
-    ~isRealtime=false,
-    ~getHeightRetryInterval?,
-    ~newBlockStallTimeout?,
-  )
-  await sourceManager->SourceManager.waitForNewBlock(
-    ~knownHeight=0,
-    ~isRealtime=false,
-    ~reducedPolling=false,
-  )
+  let sources = chainConfig->makeProbeSources(~lowercaseAddresses)
+  switch retry {
+  | Once => await chainConfig->readHeadOnceOrThrow(~sources)
+  | UntilItAnswers =>
+    let sourceManager = SourceManager.make(
+      ~sources,
+      ~isRealtime=false,
+      ~getHeightRetryInterval?,
+      ~newBlockStallTimeout?,
+    )
+    await sourceManager->SourceManager.waitForNewBlock(
+      ~knownHeight=0,
+      ~isRealtime=false,
+      ~reducedPolling=false,
+    )
+  }
 }
 
 // Sequential rather than `Promise.all`: a chain that fails validation must not
@@ -54,6 +118,7 @@ let resolveHeadOrThrow = async (
 let resolveAllOrThrow = async (
   chainConfigs: array<Config.chain>,
   ~lowercaseAddresses,
+  ~retry=UntilItAnswers,
   ~getHeightRetryInterval=?,
   ~newBlockStallTimeout=?,
 ): array<Config.chain> => {
@@ -65,6 +130,7 @@ let resolveAllOrThrow = async (
     | Config.Latest =>
       let head = await chainConfig->resolveHeadOrThrow(
         ~lowercaseAddresses,
+        ~retry,
         ~getHeightRetryInterval?,
         ~newBlockStallTimeout?,
       )
