@@ -1,6 +1,5 @@
 /*
- * Metaplex Token Metadata demo handler.
- * See https://docs.envio.dev for a thorough guide on indexer features.
+ * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
 import { indexer, type ProgramStats } from "envio";
 

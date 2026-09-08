@@ -1,4 +1,5 @@
 // use super::chain_helpers;
+use super::human_config::svm::{ArgDef, ArgType};
 use super::human_config::{self, evm::HumanConfig, StartBlock};
 use crate::constants::reserved_keywords::RESERVED_NAMES;
 use anyhow::{anyhow, Context};
@@ -255,11 +256,19 @@ pub fn is_valid_solana_pubkey(s: &str) -> bool {
 }
 
 pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
-    let hex = s.strip_prefix("0x").unwrap_or(s);
-    if hex.is_empty() || !hex.len().is_multiple_of(2) {
+    // The prefix is what a handler reads back, so a config that carries it too
+    // compares equal to `instruction.discriminator` rather than off by "0x".
+    let Some(hex) = crate::hex::strip_prefix(s) else {
         return Err(anyhow!(
-            "discriminator {:?} must be a whole number of bytes (an even, non-zero count of hex \
-             digits after stripping a `0x` prefix), got {} digits",
+            "discriminator {s:?} must be written as 0x-prefixed hex. Write \"0x\" to match every \
+             instruction of the program"
+        ));
+    };
+    if !hex.len().is_multiple_of(2) {
+        return Err(anyhow!(
+            "discriminator {:?} must be a whole number of bytes (an even count of hex digits \
+             after the `0x` prefix), got {} digits. Write \"0x\" to match every instruction of \
+             the program.",
             s,
             hex.len()
         ));
@@ -270,60 +279,181 @@ pub fn validate_svm_discriminator(s: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Every name a config.yaml gives an Svm program, instruction or arg becomes a
+/// property of the generated types, so they are held to one rule. Account
+/// slots carry their own grammar, read where the config is deserialized.
+/// Unlike EVM and Fuel, none of them reaches generated ReScript, so the
+/// reserved-word list does not apply.
+fn validate_svm_name(name: &str, what: &str) -> anyhow::Result<()> {
+    if is_valid_identifier(name) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "{what} must be an identifier: letters, digits and underscores only, not starting with a \
+         digit, got '{name}'"
+    ))
+}
+
+/// One instruction's Borsh args, as a config.yaml row wrote them. Every defect
+/// here would otherwise reach the decoder, which answers a layout it cannot
+/// walk by dropping the instruction — so a config that can never decode must
+/// not get past parsing. IDL-declared args come with their own checks in
+/// `svm_idl`, which set the instruction aside with a reason instead.
+pub fn validate_svm_args(args: &[ArgDef]) -> anyhow::Result<()> {
+    validate_svm_named_fields(args, "an arg name", "args")
+}
+
+fn validate_svm_named_fields(fields: &[ArgDef], what: &str, path: &str) -> anyhow::Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for field in fields {
+        validate_svm_name(&field.name, what).with_context(|| path.to_string())?;
+        if !seen.insert(field.name.as_str()) {
+            return Err(anyhow!(
+                "{path}: '{}' is declared more than once",
+                field.name
+            ));
+        }
+    }
+    for field in fields {
+        validate_svm_arg_type(&field.ty, &format!("{path}.{}", field.name))?;
+    }
+    Ok(())
+}
+
+fn validate_svm_arg_type(ty: &ArgType, path: &str) -> anyhow::Result<()> {
+    use super::human_config::svm::{ArgComposite as C, MAX_ARRAY_LEN, MAX_ENUM_VARIANTS};
+    let ArgType::Composite(composite) = ty else {
+        return Ok(());
+    };
+    match composite {
+        C::Defined(_) => Err(anyhow!(
+            "{path}: 'defined' is not supported in config.yaml: declare the type inline with \
+             'struct' or 'enum', or take the instruction from an 'idl'"
+        )),
+        C::Option(inner) => {
+            let path = format!("{path}.option");
+            if matches!(**inner, ArgType::Composite(C::Option(_))) {
+                return Err(anyhow!(
+                    "{path}: a nested 'option' is not supported: Borsh tags each level with one \
+                     byte, so Some(None) and None would decode the same"
+                ));
+            }
+            validate_svm_arg_type(inner, &path)
+        }
+        C::Vec(inner) => validate_svm_arg_type(inner, &format!("{path}.vec")),
+        C::Array(inner, len) => {
+            let path = format!("{path}.array");
+            if *len > MAX_ARRAY_LEN {
+                return Err(anyhow!(
+                    "{path}: {len} elements is more than the {MAX_ARRAY_LEN} an array may declare"
+                ));
+            }
+            validate_svm_arg_type(inner, &path)
+        }
+        C::Struct(fields) => {
+            validate_svm_named_fields(fields, "a field name", &format!("{path}.struct"))
+        }
+        C::Enum(variants) => {
+            let path = format!("{path}.enum");
+            if variants.is_empty() {
+                return Err(anyhow!("{path}: an enum needs at least one variant"));
+            }
+            if variants.len() > MAX_ENUM_VARIANTS {
+                return Err(anyhow!(
+                    "{path}: {} variants is more than the {MAX_ENUM_VARIANTS} a one-byte Borsh \
+                     tag can address",
+                    variants.len()
+                ));
+            }
+            let mut seen = std::collections::HashSet::new();
+            for variant in variants {
+                validate_svm_name(&variant.name, "a variant name").with_context(|| path.clone())?;
+                if !seen.insert(variant.name.as_str()) {
+                    return Err(anyhow!(
+                        "{path}: '{}' is declared more than once",
+                        variant.name
+                    ));
+                }
+            }
+            for variant in variants {
+                if let Some(fields) = &variant.fields {
+                    validate_svm_named_fields(
+                        fields,
+                        "a field name",
+                        &format!("{path}.{}", variant.name),
+                    )?;
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
 pub fn validate_deserialized_svm_config_yaml(
     svm_config: &super::human_config::svm::HumanConfig,
 ) -> anyhow::Result<()> {
+    use super::human_config::svm::{ChainProgramId, ProgramId};
+
     let mut all_program_names: Vec<String> = Vec::new();
 
-    for chain in &svm_config.chains {
-        if chain.experimental.is_none() && chain.rpc.is_none() {
-            return Err(anyhow!(
-                "A chain must define a data source: either an `rpc` endpoint or an `experimental` \
-                 HyperSync config. Both are missing."
-            ));
+    for program in &svm_config.programs {
+        validate_svm_name(&program.name, "a program name")?;
+        // A per-chain mapping has one address per chain, so the chain key is
+        // what tells the user which entry to go fix.
+        let addresses: Vec<(Option<&str>, &String)> = match &program.program_id {
+            ProgramId::Single(address) => vec![(None, address)],
+            ProgramId::PerChain(by_chain) => by_chain
+                .iter()
+                .filter_map(|(chain, id)| match id {
+                    ChainProgramId::Address(address) => Some((Some(chain.as_str()), address)),
+                    ChainProgramId::NotDeployed => None,
+                })
+                .collect(),
+        };
+        for (chain, address) in addresses {
+            if !is_valid_solana_pubkey(address) {
+                return Err(match chain {
+                    Some(chain) => anyhow!(
+                        "Program {:?} has an invalid program_id {:?} for chain {:?}: must be a \
+                         base58-encoded 32-byte Solana pubkey",
+                        program.name,
+                        address,
+                        chain
+                    ),
+                    None => anyhow!(
+                        "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
+                         32-byte Solana pubkey",
+                        program.name,
+                        address
+                    ),
+                });
+            }
         }
+        all_program_names.push(program.name.clone());
 
-        let programs = chain
-            .experimental
-            .as_ref()
-            .map(|e| e.programs.as_slice())
-            .unwrap_or(&[]);
-        for program in programs {
-            if !is_valid_solana_pubkey(&program.program_id) {
+        let mut instruction_names = std::collections::HashSet::new();
+        for instr in &program.instructions {
+            validate_svm_name(&instr.name, "an instruction name")
+                .with_context(|| format!("Program '{}'", program.name))?;
+            if !instruction_names.insert(instr.name.clone()) {
                 return Err(anyhow!(
-                    "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
-                     32-byte Solana pubkey",
+                    "Program {:?} declares the instruction {:?} more than once",
                     program.name,
-                    program.program_id
+                    instr.name
                 ));
             }
-            all_program_names.push(program.name.clone());
-
-            let mut instruction_names = std::collections::HashSet::new();
-            for instr in &program.instructions {
-                if !instruction_names.insert(instr.name.clone()) {
-                    return Err(anyhow!(
-                        "Program {:?} declares the instruction {:?} more than once",
-                        program.name,
-                        instr.name
-                    ));
-                }
-                if let Some(discriminator) = &instr.discriminator {
-                    validate_svm_discriminator(discriminator).with_context(|| {
-                        format!("instruction {:?} in program {:?}", instr.name, program.name)
-                    })?;
-                }
-            }
+            validate_svm_discriminator(&instr.discriminator).with_context(|| {
+                format!("instruction {:?} in program {:?}", instr.name, program.name)
+            })?;
         }
     }
 
     if !are_contract_names_unique(&all_program_names) {
         return Err(anyhow!(
-            "Duplicate program names detected. All program names must be unique across all chains \
-             and are case-insensitive."
+            "Duplicate program names detected. All program names must be unique and are \
+             case-insensitive."
         ));
     }
-    validate_names_valid_rescript(&all_program_names, "program".to_string())?;
 
     Ok(())
 }
@@ -703,16 +833,30 @@ mod tests {
                     "expected {s:?} to be valid"
                 );
             }
-            // Prefix is optional.
-            assert!(validate_svm_discriminator("0f").is_ok());
+            // Either spelling of the prefix, read the same way.
+            assert!(validate_svm_discriminator("0X0f").is_ok());
         }
 
         #[test]
-        fn discriminator_rejects_partial_bytes_and_non_hex() {
-            for s in ["0x", "0x0", "0x012", "0xgggggggg"] {
+        fn discriminator_rejects_anything_but_prefixed_whole_bytes() {
+            for s in ["", "21", "0x0", "0x012", "0xgggggggg"] {
                 assert!(
                     validate_svm_discriminator(s).is_err(),
                     "expected {s:?} to be rejected"
+                );
+            }
+        }
+
+        /// The empty prefix is what every call carries, so it is the value a
+        /// row gives to match every instruction of the program. It is spelled
+        /// the way every other value is, so there is one spelling and it is
+        /// the one a handler reads back for a zero-byte key.
+        #[test]
+        fn discriminator_accepts_the_empty_prefix() {
+            for s in ["0x", "0X"] {
+                assert!(
+                    validate_svm_discriminator(s).is_ok(),
+                    "expected {s:?} to be accepted"
                 );
             }
         }
@@ -729,23 +873,20 @@ name: x
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: TokenMetadata
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: UpdateMetadataAccountV2
-              discriminator: "0x0f"
+    start_slot: 0
+programs:
+  - name: TokenMetadata
+    program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    instructions:
+      - name: UpdateMetadataAccountV2
+        discriminator: "0x0f"
 "#,
             );
             validate_deserialized_svm_config_yaml(&cfg).unwrap();
         }
 
         #[test]
-        fn validation_accepts_rpc_only_chain() {
+        fn validation_accepts_a_chain_without_programs() {
             let cfg = parse(
                 r#"
 name: x
@@ -753,7 +894,7 @@ ecosystem: svm
 chains:
   - id: solana
     rpc: https://api.mainnet-beta.solana.com
-    start_block: 0
+    start_slot: 0
 "#,
             );
             validate_deserialized_svm_config_yaml(&cfg).unwrap();

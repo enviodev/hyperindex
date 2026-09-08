@@ -10,7 +10,7 @@ ecosystem: svm
 chains:
   - id: solana
     rpc: https://api.mainnet-beta.solana.com
-    start_block: 0
+    start_slot: 0
 `,
   ~schema=`
 type SlotPing {

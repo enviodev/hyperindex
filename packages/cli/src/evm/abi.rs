@@ -108,34 +108,6 @@ fn raw_entries(text: &str) -> Option<Vec<&RawValue>> {
         })
 }
 
-fn line_and_column(text: &str, offset: usize) -> (usize, usize) {
-    let before = &text[..offset];
-    let line = before.matches('\n').count() + 1;
-    let start_of_line = before.rfind('\n').map_or(0, |newline| newline + 1);
-    // Columns count characters, the way an editor does, not bytes.
-    let column = before[start_of_line..].chars().count() + 1;
-    (line, column)
-}
-
-/// Where each entry begins. The entries are searched for in order, so two
-/// written identically resolve to their own positions instead of both to the
-/// first. Positions line up with `entries`, which adds and removes nothing.
-fn positions(text: &str) -> Vec<(usize, usize)> {
-    let Some(entries) = raw_entries(text) else {
-        return Vec::new();
-    };
-    let mut cursor = 0;
-    let mut found = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let offset = text[cursor..]
-            .find(entry.get())
-            .map_or(cursor, |index| cursor + index);
-        cursor = offset + entry.get().len();
-        found.push(line_and_column(text, offset));
-    }
-    found
-}
-
 /// The parameter alloy could not read. Checking one at a time is what lets the
 /// message name it, rather than repeating serde's account of the whole entry.
 /// A parameter reads as one of two shapes, and only an event's may be indexed,
@@ -209,7 +181,9 @@ fn explain(source: Option<&str>, text: &str, err: &serde_json::Error) -> anyhow:
              holding one.{hint}"
         );
     };
-    let positions = positions(text);
+    let positions = raw_entries(text).map_or_else(Vec::new, |entries| {
+        crate::text_position::locate(text, entries.iter().map(|entry| entry.get()))
+    });
     let at = |index: usize| match (source, positions.get(index)) {
         (Some(source), Some((line, column))) => format!("{source}:{line}:{column}: "),
         (Some(source), None) => format!("{source}: "),

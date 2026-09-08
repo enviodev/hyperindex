@@ -11,22 +11,19 @@ name: svm-e2e
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Swapper
-          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
-              args:
-                - { name: amountIn, type: u64 }
-                - { name: minAmountOut, type: u64 }
-              accounts:
-                - source
-                - destination
+    start_slot: 0
+programs:
+  - name: Swapper
+    program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+    instructions:
+      - name: swap
+        discriminator: "0x09"
+        args:
+          - { name: amountIn, type: u64 }
+          - { name: minAmountOut, type: u64 }
+        accounts:
+          - source
+          - destination
 `,
   ~handlers=`
 import { indexer } from "envio";

@@ -37,7 +37,7 @@ type startBlock =
 type sourceConfig =
   | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
   | FuelSourceConfig({hypersync: string})
-  | SvmSourceConfig({hypersync: option<string>, rpc: option<string>})
+  | SvmSourceConfig({hypersync: string})
   // A `simulate` run: the items the test fed in, parsed against the chain's
   // registrations. The source itself is built with the chain's address store,
   // like every other source, so it can apply the same gates.
@@ -206,23 +206,37 @@ let publicConfigChainSchema = S.schema(s =>
     "hypersync": s.matches(S.option(S.string)),
     "rpcs": s.matches(S.option(S.array(rpcConfigSchema))),
     // SVM source config
-    "rpc": s.matches(S.option(S.string)),
     // Per-chain contract data (addresses and optional start block)
     "contracts": s.matches(S.option(S.dict(chainContractSchema))),
   }
 )
 
+type svmAccountSlotItem = {"name": option<string>, "optional": option<bool>}
+
+let svmAccountSlotSchema: S.t<svmAccountSlotItem> = S.schema(s =>
+  {
+    "name": s.matches(S.option(S.string)),
+    "optional": s.matches(S.option(S.bool)),
+  }
+)
+
+let svmAccountSlotFromItem = (slot: svmAccountSlotItem): Internal.svmAccountSlot =>
+  switch (slot["name"], slot["optional"]) {
+  | (None, _) => Unnamed
+  | (Some(name), Some(true)) => Optional(name)
+  | (Some(name), _) => Required(name)
+  }
+
 let svmEventDescriptorSchema = S.schema(s =>
   {
     "discriminator": s.matches(S.option(S.string)),
-    "accounts": s.matches(S.option(S.array(S.string))),
+    "accounts": s.matches(S.option(S.array(svmAccountSlotSchema))),
     "args": s.matches(S.option(S.json(~validate=false))),
   }
 )
 
 let svmAbiSchema = S.schema(s =>
   {
-    "programId": s.matches(S.string),
     "definedTypes": s.matches(S.json(~validate=false)),
     "source": s.matches(S.string),
   }
@@ -678,7 +692,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
     "eventSignatures": array<string>,
     "events": option<array<_>>,
     "svmAbi": option<{
-      "programId": string,
       "definedTypes": JSON.t,
       "source": string,
     }>,
@@ -698,7 +711,6 @@ let fromPublic = (publicConfigJson: JSON.t) => {
         contractConfig->(
           Utils.magic: _ => {
             "svmAbi": option<{
-              "programId": string,
               "definedTypes": JSON.t,
               "source": string,
             }>,
@@ -774,7 +786,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               Utils.magic: _ => {
                 "svm": option<{
                   "discriminator": option<string>,
-                  "accounts": option<array<string>>,
+                  "accounts": option<array<svmAccountSlotItem>>,
                   "args": option<JSON.t>,
                 }>,
               }
@@ -791,7 +803,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~instructionName=eventName,
             ~programId,
             ~discriminator=svm["discriminator"],
-            ~accounts=svm["accounts"]->Option.getOr([]),
+            ~accounts=svm["accounts"]->Option.getOr([])->Array.map(svmAccountSlotFromItem),
             ~args=svm["args"]->Option.getOr(JSON.Null),
             ~definedTypes=svmDefinedTypes,
           ) :> Internal.eventConfig)
@@ -845,6 +857,15 @@ let fromPublic = (publicConfigJson: JSON.t) => {
       let contracts =
         contractDataByName
         ->Dict.toArray
+        // Svm programs are defined once for the project and placed per chain by
+        // `program_id`. A program the config left off this chain has nothing to
+        // index here, and no dynamic registration can add it later.
+        ->Array.filter(((capitalizedName, _)) =>
+          switch ecosystemName {
+          | Ecosystem.Svm => chainContracts->Dict.get(capitalizedName)->Option.isSome
+          | _ => true
+          }
+        )
         ->Array.map(((capitalizedName, contractData)) => {
           let chainContract = chainContracts->Dict.get(capitalizedName)
           let rawAddresses =
@@ -952,14 +973,11 @@ let fromPublic = (publicConfigJson: JSON.t) => {
           JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
         }
       | Ecosystem.Svm =>
-        let hypersync = publicChainConfig["hypersync"]
-        let rpc = publicChainConfig["rpc"]
-        if hypersync->Option.isNone && rpc->Option.isNone {
-          JsError.throwWithMessage(
-            `Chain ${chainName} is missing a data source: provide either an rpc endpoint or an experimental hypersync config`,
-          )
+        switch publicChainConfig["hypersync"] {
+        | Some(hypersync) => SvmSourceConfig({hypersync: hypersync})
+        | None =>
+          JsError.throwWithMessage(`Chain ${chainName} is missing hypersync endpoint in config`)
         }
-        SvmSourceConfig({hypersync, rpc})
       }
 
       {
@@ -1206,7 +1224,6 @@ let stripSensitiveData = (json: JSON.t): JSON.t => {
           switch chainJson {
           | Object(chain) => {
               chain->Utils.Dict.deleteInPlace("rpcs")
-              chain->Utils.Dict.deleteInPlace("rpc")
               chain->Utils.Dict.deleteInPlace("hypersync")
             }
           | _ => ()

@@ -12,13 +12,13 @@ let somethingElse = () => raised("connection reset")
 
 let rethrown = (exn, ~warned) =>
   try {
-    let _ = exn->HyperSyncAuth.rethrowLoggingUnauthorized(~warned, ~product="HyperSync")
+    let _ = exn->HyperSync.rethrowLoggingUnauthorized(~warned, ~product="HyperSync")
     None
   } catch {
   | JsExn(e) => e->JsExn.message
   }
 
-describe("HyperSyncAuth.rethrowLoggingUnauthorized", () => {
+describe("HyperSync.rethrowLoggingUnauthorized", () => {
   it("rethrows a 401 rather than swallowing it, and only reports it once", t => {
     let warned = ref(false)
 

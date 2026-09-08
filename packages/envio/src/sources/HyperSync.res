@@ -9,6 +9,37 @@ let pollingInterval = 400
 let rateLimitedPrefix = "RATE_LIMITED:"
 let behindHeadPrefix = "SOURCE_BEHIND_HEAD:"
 
+let requireApiToken = apiToken =>
+  switch apiToken {
+  | Some(token) => token
+  | None =>
+    JsError.throwWithMessage(`An Envio API token is required for using HyperSync as a data-source.
+Set the ENVIO_API_TOKEN environment variable in your .env file.
+Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
+  }
+
+let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
+
+// Never swallows the failure: the caller's retry ramp has to keep asking,
+// because a token can be replaced without restarting the indexer. All this adds
+// is one loud line the first time a source sees a 401 - saying it on every retry
+// would bury everything else in the log.
+let rethrowLoggingUnauthorized = (exn: exn, ~warned: ref<bool>, ~product: string): 'a => {
+  switch exn {
+  | JsExn(jsExn) =>
+    switch jsExn->JsExn.message {
+    | Some(message) if message->isUnauthorizedError =>
+      if !warned.contents {
+        warned := true
+        Logging.error(`Your ENVIO_API_TOKEN was rejected by ${product} (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
+      }
+    | _ => ()
+    }
+  | _ => ()
+  }
+  throw(exn)
+}
+
 let markerValue = (msg, ~prefix) =>
   msg->String.slice(~start=prefix->String.length, ~end=msg->String.length)->Int.fromString
 

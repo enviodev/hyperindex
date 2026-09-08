@@ -66,6 +66,13 @@
       "items": {
         "$ref": "#/$defs/Chain"
       }
+    },
+    "programs": {
+      "description": "Solana programs to index. Programs are defined once for the whole project; `program_id` says where each one lives on every chain.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Program"
+      }
     }
   },
   "additionalProperties": false,
@@ -224,18 +231,18 @@
           ]
         },
         "rpc": {
-          "description": "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain data. Required unless `experimental` is set, in which case it is ignored in favour of the experimental HyperSync source.",
+          "description": "RPC endpoint URL for the Svm cluster. Accepted but unused: instruction sync is served by HyperSync.",
           "type": [
             "string",
             "null"
           ]
         },
-        "start_block": {
-          "description": "The slot number at which the indexer should start ingesting data, or \"latest\" to start from the chain's current slot when the indexer is first deployed. Once resolved, the concrete slot is persisted and reused every time the indexer resumes normally (for example recovering from a crash), so downtime is backfilled instead of skipped. Running `envio start`/`dev` with -r (--restart) resets this like any other config change: \"latest\" resolves again, against the head at that time.",
+        "start_slot": {
+          "description": "The slot at which the indexer should start ingesting data, or \"latest\" to start from the chain's current slot when the indexer is first deployed. Once resolved, the concrete slot is persisted and reused every time the indexer resumes normally (for example recovering from a crash), so downtime is backfilled instead of skipped. Running `envio start`/`dev` with -r (--restart) resets this like any other config change: \"latest\" resolves again, against the head at that time.",
           "$ref": "#/$defs/StartBlock"
         },
-        "end_block": {
-          "description": "The slot number at which the indexer should terminate.",
+        "end_slot": {
+          "description": "The slot at which the indexer should terminate.",
           "type": [
             "integer",
             "null"
@@ -252,11 +259,11 @@
           "format": "uint32",
           "minimum": 0
         },
-        "experimental": {
-          "description": "Experimental HyperSync-backed instruction indexing. This config shape Veil change in future releases.",
+        "hypersync_config": {
+          "description": "HyperSync Config for fetching historical instructions on this chain. Optional for the `solana` and `solana-devnet` chain ids, which default to their public HyperSync endpoints; required for any other chain id.",
           "anyOf": [
             {
-              "$ref": "#/$defs/Experimental"
+              "$ref": "#/$defs/HypersyncConfig"
             },
             {
               "type": "null"
@@ -267,7 +274,7 @@
       "additionalProperties": false,
       "required": [
         "id",
-        "start_block"
+        "start_slot"
       ]
     },
     "ChainId": {
@@ -310,33 +317,6 @@
         "latest"
       ]
     },
-    "Experimental": {
-      "type": "object",
-      "properties": {
-        "hypersync_config": {
-          "description": "HyperSync Config for fetching historical instructions on this chain. Optional for the `solana` and `solana-devnet` chain ids, which default to their public HyperSync endpoints; required for any other chain id.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/HypersyncConfig"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "programs": {
-          "description": "Solana programs to index on this chain.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Program"
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "programs"
-      ]
-    },
     "HypersyncConfig": {
       "type": "object",
       "properties": {
@@ -358,8 +338,8 @@
           "type": "string"
         },
         "program_id": {
-          "description": "Base58-encoded program id (32 bytes).",
-          "type": "string"
+          "description": "Base58-encoded program id (32 bytes). A single value is allowed only when the config defines one chain; with several, give a mapping keyed by chain id that names every one of them, writing `_` for a chain the program is not deployed on.",
+          "$ref": "#/$defs/SvmProgramId"
         },
         "handler": {
           "description": "Optional relative path to a file where handlers are registered for the given program. If not provided, handlers can be auto-loaded from the src directory.",
@@ -369,14 +349,14 @@
           ]
         },
         "idl": {
-          "description": "Optional path (relative to config.yaml) to an Anchor IDL JSON file. When present, codegen parses the IDL and derives `accounts`/`args` for every named instruction. Mutually exclusive with per-instruction `accounts`/`args` overrides.",
+          "description": "Optional path (relative to config.yaml) to an IDL JSON file (Anchor 0.30+, legacy Anchor, Shank, or Codama). When present, every usable instruction is in the catalog and `onInstruction` selects by name. Omit YAML `instructions` to take that catalog as-is. A YAML row overwrites the IDL instruction of the same name, or adds a name the IDL did not declare.",
           "type": [
             "string",
             "null"
           ]
         },
         "instructions": {
-          "description": "A list of instructions that should be indexed on this program.",
+          "description": "Instructions to index. With `idl:`, omit this list to take the full usable IDL catalog. A row whose name the IDL declares replaces that instruction, and must spell out `accounts` and `args`; every other row adds one. Give `accounts` where you want the slots named — an empty list names none, the same as leaving it out. `args` is not the same shape: setting it attaches a decoder that also filters, so leaving it out and setting it to `[]` are different asks.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Instruction"
@@ -386,8 +366,29 @@
       "additionalProperties": false,
       "required": [
         "name",
-        "program_id",
-        "instructions"
+        "program_id"
+      ]
+    },
+    "SvmProgramId": {
+      "title": "Program id",
+      "description": "Base58-encoded program id (32 bytes).\nA single value is allowed only when the config defines one chain.\nWith several chains, give a mapping keyed by chain id that names every one of them; write `_` for a chain the program is not deployed on.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      ],
+      "examples": [
+        "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+        {
+          "solana": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+          "solana-devnet": "_"
+        }
       ]
     },
     "Instruction": {
@@ -398,24 +399,21 @@
           "type": "string"
         },
         "discriminator": {
-          "description": "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" optional), of any whole number of bytes; an 8-byte value matches the standard Anchor discriminator. Omit it to match every instruction of the program. Every instruction whose prefix an on-chain call carries receives it, so a program-wide entry fires alongside a keyed one, and two entries may share a prefix (say, the layouts before and after a program upgrade): each decodes with its own `args`, and one whose layout rejects the data is skipped for that call.",
-          "type": [
-            "string",
-            "null"
-          ]
+          "description": "0x-prefixed hex instruction-data prefix to dispatch on, of any whole number of bytes; an 8-byte value matches the standard Anchor discriminator. The empty prefix, written \"0x\", is carried by every call, so it is how a row matches every instruction of the program. This is the form `instruction.discriminator` reads back, so a config value and a handler comparison are the same string. Every instruction whose prefix an on-chain call carries receives it, so a program-wide entry fires alongside a keyed one, and two entries may share a prefix (say, the layouts before and after a program upgrade): each decodes with its own `args`, and one whose layout rejects the data is skipped for that call.",
+          "type": "string"
         },
         "accounts": {
-          "description": "Optional positional account names. The Nth entry names account slot N on the dispatched instruction; surfaces as `instruction.accounts.<name>` when `fields.instruction` includes `accounts`.",
+          "description": "Optional positional account slots, in the order the program expects them. The Nth entry names account slot N on the dispatched instruction; named slots surface as `instruction.accounts.<name>` when `fields.instruction` includes `accounts`. The raw slots are available either way, so this only adds the names. Required on a row that replaces an instruction the IDL declares.",
           "type": [
             "array",
             "null"
           ],
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/SvmAccountSlot"
           }
         },
         "args": {
-          "description": "Optional Borsh argument schema. Each entry names one arg and gives its type; the decoder walks the instruction data after the discriminator in declared order. Mutually exclusive with the program-level `idl` field.",
+          "description": "Borsh argument schema. Each entry names one arg and gives its type; the decoder walks the instruction data after the discriminator in declared order, and a call whose data the layout rejects is skipped. Setting it is therefore also a filter: `[]` says the instruction takes no arguments, so only calls carrying nothing past the discriminator are indexed. Omit it instead to attach no decoder at all — every matched call is indexed and the payload stays raw, reachable as `instruction.data`. An `idl` always declares the layout of the instructions it names, empty included. Required on a row that replaces an instruction the IDL declares.",
           "type": [
             "array",
             "null"
@@ -427,7 +425,19 @@
       },
       "additionalProperties": false,
       "required": [
-        "name"
+        "name",
+        "discriminator"
+      ]
+    },
+    "SvmAccountSlot": {
+      "title": "Account slot",
+      "description": "One positional account slot of the instruction.\n- `payer` names a slot the call always carries; it surfaces as `instruction.accounts.payer`.\n- `?authority` names an optional slot: the key is absent from `instruction.accounts` when the call leaves the slot out or fills it with the program id.\n- `_` holds a position without naming it, so the slots after it keep theirs. It is never surfaced and never filterable, and the list may not end with one.",
+      "type": "string",
+      "pattern": "^(?:_|\\??[A-Za-z0-9_]*[A-Za-z][A-Za-z0-9_]*)$",
+      "examples": [
+        "payer",
+        "?authority",
+        "_"
       ]
     },
     "ArgDef": {
@@ -450,7 +460,7 @@
       ]
     },
     "ArgType": {
-      "description": "User-facing Borsh type grammar. Mirrors\n`hypersync_client_solana::decode::FieldType`. The YAML accepts either:\n- A bare string for primitives (`\"u64\"`, `\"pubkey\"`, `\"bool\"`, ...).\n- A tagged object for composites (`{ vec: u8 }`, `{ option: pubkey }`,\n  `{ array: [u8, 32] }`, `{ defined: \"DataV2\" }`).\n- An object with `kind: struct` or `kind: enum` for nominal types\n  declared inline on this field. Most users will use `defined` and\n  declare the nominal types under the program's `types:` block (Anchor\n  IDL shape) once that lands; for now inline `struct` / `enum` is the\n  only way to express nominal shapes ad-hoc.",
+      "description": "User-facing Borsh type grammar. Mirrors\n`hypersync_client_solana::decode::FieldType`. The YAML accepts either:\n- A bare string for a primitive (`u64`, `pubkey`, `bool`, ...).\n- A one-key mapping for a composite (`{ vec: u8 }`, `{ option: pubkey }`,\n  `{ array: [u8, 32] }`, `{ struct: [...] }`, `{ enum: [...] }`).\n\nA nominal type is declared inline with `struct` / `enum` at the field\nthat uses it. There is no way to name one and refer to it: attach an\n`idl` to the program when its types are shared between instructions.",
       "anyOf": [
         {
           "$ref": "#/$defs/ArgPrimitive"
@@ -534,20 +544,7 @@
           "additionalProperties": false
         },
         {
-          "description": "Reference to a nominal type defined in the program-level\n`defined_types` registry (populated from an Anchor IDL `types:`\nblock or the bundled-Metaplex registry).",
-          "type": "object",
-          "properties": {
-            "defined": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "defined"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "description": "Inline-or-registry struct. Used as a nominal type definition in\nthe `defined_types` registry; rarely seen at the field level.",
+          "description": "A struct, declared inline at the field that uses it or held in the\n`defined_types` registry.",
           "type": "object",
           "properties": {
             "struct": {
@@ -563,7 +560,7 @@
           "additionalProperties": false
         },
         {
-          "description": "Inline-or-registry enum. Same role as `Struct`: a nominal type\ndefinition in the `defined_types` registry.",
+          "description": "An enum, declared inline at the field that uses it or held in the\n`defined_types` registry. Borsh selects a variant by its position\nhere, with a one-byte tag.",
           "type": "object",
           "properties": {
             "enum": {

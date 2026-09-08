@@ -224,7 +224,7 @@ name: svm-latest
 ecosystem: svm
 chains:
   - id: solana
-    start_block: latest
+    start_slot: latest
     rpc: https://api.mainnet-beta.solana.com
 `,
     ),

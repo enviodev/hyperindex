@@ -35,13 +35,7 @@ let make = (
   // height retry for the life of the process.
   let unauthorizedWarned = ref(false)
 
-  let apiToken = switch apiToken {
-  | Some(token) => token
-  | None =>
-    JsError.throwWithMessage(`An Envio API token is required for using HyperSync as a data-source.
-Set the ENVIO_API_TOKEN environment variable in your .env file.
-Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
-  }
+  let apiToken = apiToken->HyperSync.requireApiToken
 
   let client = switch HyperSyncClient.make(
     ~url=endpointUrl,
@@ -212,7 +206,7 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`)
         await client.getHeight()
       } catch {
       | exn =>
-        exn->HyperSyncAuth.rethrowLoggingUnauthorized(
+        exn->HyperSync.rethrowLoggingUnauthorized(
           ~warned=unauthorizedWarned,
           ~product="HyperSync",
         )

@@ -41,30 +41,20 @@ let make = (
         addressStore,
       }),
     ]
-  | Config.SvmSourceConfig({hypersync, rpc}) =>
-    switch (hypersync, rpc) {
-    | (None, None) =>
-      JsError.throwWithMessage(`Chain ${chainId->ChainId.toString} has no SVM data source`)
-    | (None, Some(rpc)) => [Svm.makeRPCSource(~chainId, ~rpc)]
-    | (Some(hypersyncUrl), _) =>
-      // HyperSync drives instruction sync. A configured RPC is ignored for now
-      // (RPC fallback isn't wired up yet).
-      let apiToken = Env.envioApiToken
-      [
-        SvmHyperSyncSource.make({
-          chainId,
-          endpointUrl: hypersyncUrl,
-          apiToken,
-          onEventRegistrations: onEventRegistrations->(
-            Utils.magic: array<Internal.onEventRegistration> => array<
-              Internal.svmOnEventRegistration,
-            >
-          ),
-          clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
-          addressStore,
-        }),
-      ]
-    }
+  | Config.SvmSourceConfig({hypersync}) => [
+      SvmHyperSyncSource.make({
+        chainId,
+        endpointUrl: hypersync,
+        apiToken: Env.envioApiToken,
+        onEventRegistrations: onEventRegistrations->(
+          Utils.magic: array<Internal.onEventRegistration> => array<
+            Internal.svmOnEventRegistration,
+          >
+        ),
+        clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
+        addressStore,
+      }),
+    ]
   | Config.SimulateSourceConfig({items, endBlock, ?transactionStore, ?blockStore}) => [
       SimulateSource.make(
         ~items,

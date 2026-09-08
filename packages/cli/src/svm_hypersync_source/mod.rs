@@ -1130,6 +1130,58 @@ mod tests {
         );
     }
 
+    // An empty layout is the assertion that the instruction takes no
+    // arguments, which is what separates the bare form of a call from the one
+    // carrying a payload under the same prefix. Declaring no layout takes both.
+    #[test]
+    fn an_empty_layout_takes_only_the_calls_that_carry_no_payload() {
+        let (store, set) = fixture(&["TokenMetadata"]);
+        let built = build(
+            &store,
+            &[program(
+                "TokenMetadata",
+                vec![
+                    instruction(
+                        "Bare",
+                        Some("0x09"),
+                        Some("[]"),
+                        vec![registration(0, false)],
+                    ),
+                    instruction(
+                        "WithAmount",
+                        Some("0x09"),
+                        Some(AMOUNT),
+                        vec![reads_args(registration(1, false))],
+                    ),
+                    instruction("Every", Some("0x09"), None, vec![registration(2, false)]),
+                ],
+            )],
+            &[0, 1, 2],
+        );
+        let mut with_amount = vec![0x09];
+        with_amount.extend_from_slice(&7u64.to_le_bytes());
+        let mut payload_call = committed_instruction(&with_amount);
+        payload_call.transaction_index = Some(8);
+        let items = route(
+            &store,
+            &set,
+            &[committed_instruction(&[0x09]), payload_call],
+            vec![],
+            &built,
+        )
+        .unwrap();
+
+        // The bare call reaches `Bare` and `Every`; the payload call reaches
+        // `WithAmount` and `Every`, never `Bare`.
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| (item.transaction_index, item.on_event_registration_index))
+                .collect::<Vec<_>>(),
+            vec![(7, 0), (7, 2), (8, 1), (8, 2)]
+        );
+    }
+
     // An Anchor upgrade keeps the discriminator (a hash of the name) while
     // changing the args, so two layouts share one prefix. Each call decodes
     // under exactly the layout that fits it.

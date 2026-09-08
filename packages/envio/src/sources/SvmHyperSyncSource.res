@@ -10,13 +10,17 @@ type options = {
   addressStore: AddressStore.t,
 }
 
-let namedAccounts = (~idlNames: array<string>, ~accountArguments: array<string>): dict<
-  Envio.svmInstructionAccount,
-> => {
+let namedAccounts = (
+  ~slots: array<Internal.svmAccountSlot>,
+  ~accountArguments: array<string>,
+  ~programId: string,
+): dict<Envio.svmInstructionAccount> => {
   let out = Dict.make()
-  idlNames->Array.forEachWithIndex((name, i) =>
-    switch accountArguments->Array.get(i) {
-    | Some(address) =>
+  slots->Array.forEachWithIndex((slot, i) =>
+    switch (slot, accountArguments->Array.get(i)) {
+    | (Unnamed, _) | (_, None) => ()
+    | (Optional(_), Some(address)) if address === programId => ()
+    | (Required(name), Some(address)) | (Optional(name), Some(address)) =>
       out->Dict.set(
         name,
         {
@@ -25,7 +29,6 @@ let namedAccounts = (~idlNames: array<string>, ~accountArguments: array<string>)
           instructionAccountIndex: i,
         },
       )
-    | None => ()
     }
   )
   out
@@ -94,7 +97,11 @@ let toSvmInstruction = (
   if hasSelection("accounts") {
     out->setField(
       "accounts",
-      namedAccounts(~idlNames=eventConfig.accounts, ~accountArguments=item.accounts),
+      namedAccounts(
+        ~slots=eventConfig.accounts,
+        ~accountArguments=item.accounts,
+        ~programId=item.programId,
+      ),
     )
   }
   if hasSelection("accountArguments") {
@@ -123,12 +130,14 @@ let make = (
 ): t => {
   let name = "SvmHyperSync"
 
+  let apiToken = apiToken->HyperSync.requireApiToken
+
   // The whole per-(instruction, chain) registration set crosses the boundary
   // once at construction; the client derives instruction selections, field
   // selections, Borsh decoders, and the routing index from it.
   let client = SvmHyperSyncClient.make(
     ~url=endpointUrl,
-    ~apiToken?,
+    ~apiToken,
     ~httpReqTimeoutMillis=clientTimeoutMillis,
     ~programs=SvmHyperSyncClient.Registration.fromOnEventRegistrations(onEventRegistrations),
     ~addressStore,
@@ -257,5 +266,7 @@ let make = (
       {height, requestStats: [{method: "getHeight", seconds}]}
     },
     getItemsOrThrow,
+    createHeightSubscription: (~onHeight, ~onStatus) =>
+      HyperSyncSSE.subscribe(~hyperSyncUrl=endpointUrl, ~apiToken, ~onHeight, ~onStatus),
   }
 }

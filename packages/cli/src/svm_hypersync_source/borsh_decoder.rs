@@ -11,11 +11,11 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use hypersync_client_solana::decode::{
-    decode_field, EnumVariant as UpstreamEnumVariant, FieldType as SvmFieldType,
-    NamedField as UpstreamNamedField,
+    decode_field, FieldType as SvmFieldType, NamedField as UpstreamNamedField,
 };
 
-use crate::config_parsing::human_config::svm::{ArgComposite, ArgDef, ArgPrimitive, ArgType};
+use crate::config_parsing::human_config::svm::{ArgDef, ArgType};
+use crate::config_parsing::system_config::arg_type_to_field_type;
 use crate::param_value::ParamValue;
 
 /// A program's nominal types, shared by every instruction of the program.
@@ -131,12 +131,16 @@ fn value_to_param(
         | SvmFieldType::U32
         | SvmFieldType::I8
         | SvmFieldType::I16
-        | SvmFieldType::I32 => ParamValue::Num(value.as_f64()?),
-        // The upstream decoder renders a non-finite float as `Null`.
-        SvmFieldType::F32 | SvmFieldType::F64 => match value {
-            Value::Null => ParamValue::Null,
-            value => ParamValue::Num(value.as_f64()?),
-        },
+        | SvmFieldType::I32
+        // Borsh refuses to serialize a NaN, so one on the wire says the bytes
+        // are not the float this layout claims and the instruction is dropped
+        // like any other layout mismatch. The upstream decoder renders every
+        // non-finite float as `Null`, which `as_f64` rejects; that takes a
+        // legitimate infinity with it, which no Solana program is known to
+        // send. Behind an `option` the ambiguity is unreachable: `None` is
+        // `Null` too, and there a non-finite float reads as absent.
+        | SvmFieldType::F32
+        | SvmFieldType::F64 => ParamValue::Num(value.as_f64()?),
         SvmFieldType::U64 | SvmFieldType::U128 => {
             ParamValue::from_u128(value.as_str()?.parse().ok()?)
         }
@@ -209,79 +213,6 @@ fn value_to_param(
         SvmFieldType::Defined(name) => {
             value_to_param(value, defined_types.get(name)?, defined_types)?
         }
-    })
-}
-
-fn arg_type_to_field_type(ty: &ArgType) -> Result<SvmFieldType> {
-    Ok(match ty {
-        ArgType::Primitive(p) => match p {
-            ArgPrimitive::Bool => SvmFieldType::Bool,
-            ArgPrimitive::U8 => SvmFieldType::U8,
-            ArgPrimitive::U16 => SvmFieldType::U16,
-            ArgPrimitive::U32 => SvmFieldType::U32,
-            ArgPrimitive::U64 => SvmFieldType::U64,
-            ArgPrimitive::U128 => SvmFieldType::U128,
-            ArgPrimitive::I8 => SvmFieldType::I8,
-            ArgPrimitive::I16 => SvmFieldType::I16,
-            ArgPrimitive::I32 => SvmFieldType::I32,
-            ArgPrimitive::I64 => SvmFieldType::I64,
-            ArgPrimitive::I128 => SvmFieldType::I128,
-            ArgPrimitive::F32 => SvmFieldType::F32,
-            ArgPrimitive::F64 => SvmFieldType::F64,
-            ArgPrimitive::String => SvmFieldType::String,
-            ArgPrimitive::Bytes => SvmFieldType::Bytes,
-            ArgPrimitive::Pubkey | ArgPrimitive::PublicKey => SvmFieldType::Pubkey,
-        },
-        ArgType::Composite(c) => match c {
-            ArgComposite::Option(inner) => {
-                SvmFieldType::Option(Box::new(arg_type_to_field_type(inner)?))
-            }
-            ArgComposite::Vec(inner) => SvmFieldType::Vec(Box::new(arg_type_to_field_type(inner)?)),
-            ArgComposite::Array(inner, len) => SvmFieldType::Array {
-                ty: Box::new(arg_type_to_field_type(inner)?),
-                len: *len,
-            },
-            ArgComposite::Defined(name) => SvmFieldType::Defined(name.clone()),
-            ArgComposite::Struct(fields) => SvmFieldType::Struct(
-                fields
-                    .iter()
-                    .map(|f| {
-                        Ok(UpstreamNamedField {
-                            name: f.name.clone(),
-                            ty: arg_type_to_field_type(&f.ty)
-                                .with_context(|| format!("struct field '{}'", f.name))?,
-                        })
-                    })
-                    .collect::<Result<_>>()?,
-            ),
-            ArgComposite::Enum(variants) => SvmFieldType::Enum(
-                variants
-                    .iter()
-                    .map(|v| {
-                        let fields = v
-                            .fields
-                            .as_ref()
-                            .map(|fs| {
-                                fs.iter()
-                                    .map(|f| {
-                                        Ok(UpstreamNamedField {
-                                            name: f.name.clone(),
-                                            ty: arg_type_to_field_type(&f.ty).with_context(
-                                                || format!("enum field '{}'", f.name),
-                                            )?,
-                                        })
-                                    })
-                                    .collect::<Result<_>>()
-                            })
-                            .transpose()?;
-                        Ok(UpstreamEnumVariant {
-                            name: v.name.clone(),
-                            fields,
-                        })
-                    })
-                    .collect::<Result<_>>()?,
-            ),
-        },
     })
 }
 
@@ -477,6 +408,40 @@ mod tests {
         assert_eq!(
             schema.decode(&data),
             Some(obj(vec![("text", ParamValue::Str("hello".to_string()))]))
+        );
+    }
+
+    #[test]
+    fn a_non_finite_float_is_rejected() {
+        let schema = schema_of(r#"[{"name":"ratio","type":"f64"}]"#, "{}");
+        let payload = |bits: f64| {
+            let mut data = vec![0x01];
+            data.extend_from_slice(&bits.to_le_bytes());
+            data
+        };
+        assert_eq!(
+            (
+                schema.decode(&payload(f64::NAN)),
+                schema.decode(&payload(f64::INFINITY)),
+                schema.decode(&payload(1.5)),
+            ),
+            (None, None, Some(obj(vec![("ratio", ParamValue::Num(1.5))])))
+        );
+    }
+
+    /// A declared-but-empty layout is the assertion that the instruction takes
+    /// no arguments, so it accepts exactly the calls that carry nothing past
+    /// the discriminator. Attaching no layout at all is what takes every call.
+    #[test]
+    fn an_empty_layout_accepts_only_a_bare_discriminator() {
+        let schema = schema_of("[]", "{}");
+        assert_eq!(
+            (
+                schema.decode(&[0x01]),
+                schema.decode(&[0x01, 0x00]),
+                schema.decode(&[0x01, 0xde, 0xad])
+            ),
+            (Some(obj(vec![])), None, None)
         );
     }
 

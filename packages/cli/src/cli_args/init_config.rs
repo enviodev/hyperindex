@@ -341,7 +341,7 @@ pub mod svm {
 
     #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
     pub enum Template {
-        #[strum(serialize = "Metaplex Token Metadata (instructions) (Experimental)")]
+        #[strum(serialize = "Metaplex Token Metadata (instructions)")]
         MetaplexTokenMetadata,
         #[strum(serialize = "Feature: Block Handler (onSlot)")]
         FeatureBlockHandler,
@@ -364,7 +364,7 @@ impl Ecosystem {
     pub fn uses_hypersync(&self) -> bool {
         match self {
             Self::Evm { init_flow } => init_flow.uses_hypersync(),
-            Self::Svm { .. } => false,
+            Self::Svm { .. } => true,
             Self::Fuel { .. } => true,
         }
     }

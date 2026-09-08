@@ -1,6 +1,6 @@
 use super::{
     entity_parsing, field_types,
-    human_config::{self, evm::For, ColumnNameFormat},
+    human_config::{self, evm::For, svm::AccountSlot, ColumnNameFormat},
     system_config::{
         self, field_type_to_arg_type, named_field_to_arg_def, Abi, ChainIdMode, Ecosystem,
         EventKind, FuelEventKind, SvmAbi, SvmSchemaSource, SystemConfig,
@@ -324,8 +324,6 @@ struct ChainConfig {
     hypersync: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     rpcs: Vec<RpcConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    rpc: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     contracts: BTreeMap<String, ChainContractConfig>,
 }
@@ -417,15 +415,36 @@ struct ContractEventItem {
 struct SvmEventItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     discriminator: Option<String>,
-    /// Positional account names, in the order the on-chain program expects.
+    /// Positional account slots, in the order the on-chain program expects.
     /// `[]` means the runtime won't expose `decoded.accounts.<name>`; the
     /// raw `instruction.accounts[i]` array is still available.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    accounts: Vec<String>,
-    /// Borsh args layout. `[]` means the runtime won't expose
-    /// `decoded.args`; the raw `instruction.data` hex is still available.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    args: Vec<human_config::svm::ArgDef>,
+    accounts: Vec<SvmAccountSlotItem>,
+    /// Borsh args layout. Absent means no decoder is attached, so the runtime
+    /// won't expose `decoded.args` and every matched call is delivered with
+    /// the raw `instruction.data` hex. Present attaches one, `[]` included:
+    /// a call whose data the layout rejects never reaches a handler.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    args: Option<Vec<human_config::svm::ArgDef>>,
+}
+
+/// One account slot. An unnamed slot carries neither key, so it reaches the
+/// runtime as `{}` — a position to skip over.
+#[derive(Serialize, Debug)]
+struct SvmAccountSlotItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    optional: bool,
+}
+
+impl From<&AccountSlot> for SvmAccountSlotItem {
+    fn from(slot: &AccountSlot) -> Self {
+        Self {
+            name: slot.name().map(str::to_string),
+            optional: slot.is_optional(),
+        }
+    }
 }
 
 /// Program-level Borsh schema metadata. Emitted onto `ContractConfig.svm_abi`
@@ -433,13 +452,12 @@ struct SvmEventItem {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct SvmAbiJson {
-    program_id: String,
     /// Nominal-type registry referenced by `ArgComposite::Defined`. The
     /// runtime resolves these once per program at startup.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     defined_types: std::collections::BTreeMap<String, human_config::svm::ArgType>,
-    /// `"anchorIdl"`, `"bundled"`, or `"inline"`. Carried for diagnostics; the
-    /// runtime treats all three identically.
+    /// `"anchorIdl"` or `"inline"`. Carried for diagnostics; the runtime treats
+    /// both identically.
     source: &'static str,
 }
 
@@ -483,7 +501,7 @@ impl SystemConfig {
             .map(|network| {
                 let chain_name = chain_id_to_name(network.id, &cfg.get_ecosystem());
 
-                let (hypersync, rpcs, rpc) = match &network.sync_source {
+                let (hypersync, rpcs) = match &network.sync_source {
                     system_config::DataSource::Evm { main, rpcs } => {
                         let hypersync_url = match main {
                             system_config::MainEvmDataSource::HyperSync {
@@ -515,15 +533,14 @@ impl SystemConfig {
                                 polling_interval: rpc.polling_interval,
                             })
                             .collect();
-                        (hypersync_url, rpc_configs, None)
+                        (hypersync_url, rpc_configs)
                     }
                     system_config::DataSource::Fuel {
                         hypersync_endpoint_url,
-                    } => (Some(hypersync_endpoint_url.clone()), vec![], None),
+                    } => (Some(hypersync_endpoint_url.clone()), vec![]),
                     system_config::DataSource::Svm {
-                        rpc,
                         hypersync_endpoint_url,
-                    } => (hypersync_endpoint_url.clone(), vec![], rpc.clone()),
+                    } => (Some(hypersync_endpoint_url.clone()), vec![]),
                 };
 
                 let chain_contracts: BTreeMap<String, ChainContractConfig> = network
@@ -550,7 +567,6 @@ impl SystemConfig {
                         block_lag: network.block_lag,
                         hypersync,
                         rpcs,
-                        rpc,
                         contracts: chain_contracts,
                     },
                 )
@@ -615,12 +631,14 @@ impl SystemConfig {
                                 EventKind::Svm(svm_kind) => {
                                     let svm_item = SvmEventItem {
                                         discriminator: svm_kind.discriminator.clone(),
-                                        accounts: svm_kind.accounts.clone(),
-                                        args: svm_kind
-                                            .args
+                                        accounts: svm_kind
+                                            .accounts
                                             .iter()
-                                            .map(named_field_to_arg_def)
+                                            .map(SvmAccountSlotItem::from)
                                             .collect(),
+                                        args: svm_kind.args.as_ref().map(|args| {
+                                            args.iter().map(named_field_to_arg_def).collect()
+                                        }),
                                     };
                                     (vec![], Some("svmInstruction".to_string()), Some(svm_item))
                                 }
@@ -644,20 +662,14 @@ impl SystemConfig {
                         })
                         .collect();
                     let svm_abi = match &contract.abi {
-                        Abi::Svm(SvmAbi {
-                            program_id,
-                            instructions: _,
-                            defined_types,
-                            source,
-                        }) => Some(SvmAbiJson {
-                            program_id: program_id.clone(),
-                            defined_types: defined_types
+                        Abi::Svm(SvmAbi { idl, source }) => Some(SvmAbiJson {
+                            defined_types: idl
+                                .defined_types
                                 .iter()
                                 .map(|(name, ty)| (name.clone(), field_type_to_arg_type(ty)))
                                 .collect(),
                             source: match source {
                                 SvmSchemaSource::AnchorIdl { .. } => "anchorIdl",
-                                SvmSchemaSource::Bundled { .. } => "bundled",
                                 SvmSchemaSource::Inline => "inline",
                             },
                         }),
