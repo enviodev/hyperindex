@@ -16,8 +16,6 @@ ecosystem: svm
 chains:
   - id: solana
     start_slot: 0
-    hypersync_config:
-      url: https://solana.hypersync.xyz
 programs:
   - name: Memo
     program_id: MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr

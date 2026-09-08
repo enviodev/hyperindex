@@ -1145,9 +1145,7 @@ pub mod svm {
                            sync is served by HyperSync."
         )]
         pub rpc: Option<String>,
-        #[schemars(
-            description = "The slot at which the indexer should start ingesting data"
-        )]
+        #[schemars(description = "The slot at which the indexer should start ingesting data")]
         pub start_slot: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "The slot at which the indexer should terminate.")]
@@ -1261,7 +1259,10 @@ pub mod svm {
                     self.visit_str(&value.to_string())
                 }
 
-                fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<ProgramId, A::Error> {
+                fn visit_map<A: de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<ProgramId, A::Error> {
                     let mut entries = std::collections::BTreeMap::new();
                     while let Some((chain, program_id)) =
                         map.next_entry::<String, ChainProgramId>()?

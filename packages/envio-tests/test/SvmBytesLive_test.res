@@ -16,8 +16,6 @@ chains:
   - id: solana
     start_slot: 420650000
     end_slot: 420650200
-    hypersync_config:
-      url: https://solana.hypersync.xyz
 programs:
   - name: Wormhole
     program_id: worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth

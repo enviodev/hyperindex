@@ -14,8 +14,6 @@ chains:
     # window that backfills cleanly with Orca + Meteora swap added. Widen
     # further once HOS-1304 lands.
     start_slot: 422100000
-    hypersync_config:
-      url: https://solana.hypersync.xyz
 programs:
   # --- IDL-decoded protocols ---
   - name: Jupiter

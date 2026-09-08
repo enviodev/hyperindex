@@ -698,8 +698,6 @@ ecosystem: svm
 chains:
   - id: solana
     start_slot: 0
-    hypersync_config:
-      url: https://solana.hypersync.xyz
 programs:
   - name: TokenMetadata
     program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s

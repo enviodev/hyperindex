@@ -12,8 +12,6 @@ ecosystem: svm
 chains:
   - id: solana
     start_slot: 0
-    hypersync_config:
-      url: https://solana.hypersync.xyz
 programs:
   - name: Swapper
     program_id: ${programId}

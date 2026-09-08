@@ -554,15 +554,13 @@ ecosystem: svm
 chains:
   - id: solana
     start_slot: 1
-    hypersync_config:
-      url: https://solana.hypersync.xyz
 programs:
   - name: Program
     program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
     bogus_extra: true
     instructions: []
 `,
-      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0]: unknown field \`bogus_extra\`, expected one of \`name\`, \`program_id\`, \`handler\`, \`idl\`, \`instructions\` at line 12 column 5",
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0]: unknown field \`bogus_extra\`, expected one of \`name\`, \`program_id\`, \`handler\`, \`idl\`, \`instructions\` at line 10 column 5",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
@@ -1252,8 +1250,6 @@ ecosystem: svm
 chains:
   - id: solana
     start_slot: 0
-    hypersync_config:
-      url: https://solana.hypersync.xyz
 programs:
 `
 
@@ -1444,7 +1440,7 @@ programs:
               accounts: []
               args:
                 - {name: amount, type: u46}`),
-      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0].instructions[0].args[0].type: unknown type 'u46', expected one of bool, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64, string, bytes, pubkey, publicKey, or a composite such as {vec: u8}, {option: pubkey}, {array: [u8, 32]}, {struct: [...]}, {enum: [...]} at line 17 column 40",
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0].instructions[0].args[0].type: unknown type 'u46', expected one of bool, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64, string, bytes, pubkey, publicKey, or a composite such as {vec: u8}, {option: pubkey}, {array: [u8, 32]}, {struct: [...]}, {enum: [...]} at line 15 column 40",
     ),
     (
       "names the composite it could not read",
@@ -1452,7 +1448,7 @@ programs:
               accounts: []
               args:
                 - {name: amount, type: {set: u64}}`),
-      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0].instructions[0].args[0].type: unknown composite type 'set', expected one of option, vec, array, struct, enum at line 17 column 40",
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0].instructions[0].args[0].type: unknown composite type 'set', expected one of option, vec, array, struct, enum at line 15 column 40",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
@@ -1483,12 +1479,8 @@ ecosystem: svm
 chains:
   - id: solana
     start_slot: 0
-    hypersync_config:
-      url: https://solana.hypersync.xyz
   - id: solana-devnet
     start_slot: 0
-    hypersync_config:
-      url: https://solana.hypersync.xyz
 programs:
   - name: Shared
     program_id:
@@ -2143,8 +2135,6 @@ ecosystem: svm
 chains:
   - id: solana
     start_slot: 0
-    hypersync_config:
-      url: https://solana.hypersync.xyz
 programs:
   - name: Program
     program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -2167,8 +2157,6 @@ ecosystem: svm
 chains:
   - id: solana
     start_slot: 0
-    hypersync_config:
-      url: https://solana.hypersync.xyz
 programs:
   - name: Program
     program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -2218,8 +2206,6 @@ ecosystem: svm
 chains:
   - id: solana
     start_slot: 0
-    hypersync_config:
-      url: https://solana.hypersync.xyz
 programs:
   - name: Program
     program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
@@ -2333,7 +2319,7 @@ indexer.onInstruction(
       yaml(`    instructions:
       - name: anyCall
 `),
-      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0].instructions[0]: missing field `discriminator` at line 14 column 9",
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0].instructions[0]: missing field `discriminator` at line 12 column 9",
     )
   })
 

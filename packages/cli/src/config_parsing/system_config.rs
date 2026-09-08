@@ -2936,9 +2936,7 @@ mod test {
         // one config: the old hardcoded 0 made the second insert collide.
         let yaml = format!(
             "\nname: svm-chain-id\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
-             0\n    hypersync_config:\n      url: https://solana.hypersync.xyz\n  - id: \
-             solana-devnet\n    start_slot: 0\n    hypersync_config:\n      url: \
-             https://solana.hypersync.xyz\nprograms:\n{}{}",
+             0\n  - id: solana-devnet\n    start_slot: 0\nprograms:\n{}{}",
             program_block(
                 "TokenMetadata",
                 "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
@@ -3868,8 +3866,7 @@ type Foo {
             };
             let yaml = format!(
                 "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
-                 0\n    hypersync_config:\n      url: \
-                 https://solana.hypersync.xyz\nprograms:\n  - name: Pool\n    program_id: \
+                 0\nprograms:\n  - name: Pool\n    program_id: \
                  TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n    idl: \
                  idls/pool.json\n{instructions_yaml}"
             );
@@ -3971,8 +3968,7 @@ type Foo {
         #[test]
         fn omits_yaml_instructions_to_expose_the_idl_catalog() {
             let yaml = "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
-                 0\n    hypersync_config:\n      url: \
-                 https://solana.hypersync.xyz\nprograms:\n  - name: Pool\n    program_id: \
+                 0\nprograms:\n  - name: Pool\n    program_id: \
                  TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n    idl: idls/pool.json\n";
             let config = SystemConfig::parse_yaml(
                 yaml,
@@ -4021,8 +4017,7 @@ type Foo {
         fn account_slots(accounts: &str) -> anyhow::Result<Vec<String>> {
             let yaml = format!(
                 "name: svm-slots\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
-                 0\n    hypersync_config:\n      url: \
-                 https://solana.hypersync.xyz\nprograms:\n  - name: Pool\n    program_id: \
+                 0\nprograms:\n  - name: Pool\n    program_id: \
                  TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n    instructions:\n      - name: \
                  swap\n        discriminator: \"0x01\"\n        args: []\n        accounts: \
                  {accounts}\n"
@@ -4101,7 +4096,7 @@ type Foo {
                      information https://docs.envio.dev/docs/configuration-file: \
                      programs[0].instructions[0].accounts[1]: account slot \
                      '?_' marks an unnamed slot optional, which nothing can observe. Write '_' to \
-                     hold the position, or name the slot. at line 15 column 27",
+                     hold the position, or name the slot. at line 13 column 27",
                     "trailing unnamed: Program 'Pool', instruction 'swap': the account list ends \
                      with '_', a position nothing follows. Drop it.",
                     "duplicate name: Program 'Pool', instruction 'swap': account 'payer' is \
@@ -4111,19 +4106,19 @@ type Foo {
                      programs[0].instructions[0].accounts[1]: account slot \
                      '_1' is not a name: expected letters, digits and underscores, at least one \
                      of them a letter. Prefix a name with '?' to mark the slot optional, or write \
-                     '_' to hold a position without naming it. at line 15 column 27",
+                     '_' to hold a position without naming it. at line 13 column 27",
                     "punctuation in the name: Failed to deserialize config. Visit the docs for \
                      more information https://docs.envio.dev/docs/configuration-file: \
                      programs[0].instructions[0].accounts[1]: account slot \
                      'mint-authority' is not a name: expected letters, digits and underscores, at \
                      least one of them a letter. Prefix a name with '?' to mark the slot \
-                     optional, or write '_' to hold a position without naming it. at line 15 \
+                     optional, or write '_' to hold a position without naming it. at line 13 \
                      column 27",
                     "a mapping carrying a value: Failed to deserialize config. Visit the docs \
                      for more information https://docs.envio.dev/docs/configuration-file: \
                      programs[0].instructions[0].accounts[1]: expected an \
                      account name, got a mapping. To mark 'mint' optional, write \"?mint\". at \
-                     line 15 column 27",
+                     line 13 column 27",
                 ]
             );
         }
@@ -4605,8 +4600,7 @@ type Foo {
         #[test]
         fn does_not_attach_a_schema_to_metaplex_by_program_id() {
             let yaml = "name: metaplex\necosystem: svm\nchains:\n  - id: solana\n    start_slot: \
-                 0\n    hypersync_config:\n      url: \
-                 https://solana.hypersync.xyz\nprograms:\n  - name: TokenMetadata\n    \
+                 0\nprograms:\n  - name: TokenMetadata\n    \
                  program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n";
             let config = SystemConfig::parse_yaml(
                 yaml,
