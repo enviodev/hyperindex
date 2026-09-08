@@ -2445,10 +2445,14 @@ export function createResolver<
   readonly args?: AS;
   /** The result schema. Determines the field's GraphQL type. */
   readonly output: OS;
-  /** Keep the field off the public schema: it is published so Hasura will
-   *  route to it, but the service refuses any caller that does not present a
-   *  key from `ENVIO_RESOLVERS_PRIVATE_KEYS` in the `x-envio-private-key`
-   *  header. With no keys configured it refuses everyone. */
+  /** Refuse the field to callers who cannot present a key from
+   *  `ENVIO_RESOLVERS_PRIVATE_KEYS` in the `x-envio-private-key` header. With
+   *  no keys configured it refuses everyone.
+   *
+   *  This hides the answers, not the field: Hasura will not route to an action
+   *  it does not publish, so a private resolver is on the public schema and its
+   *  name, arguments and result type stay visible to anonymous introspection.
+   *  A name that would itself disclose something does not belong here. */
   readonly private?: boolean;
   /** @deprecated The former spelling of `private`, and identical to it. */
   readonly admin?: boolean;
