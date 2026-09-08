@@ -74,9 +74,33 @@ pub enum CommandType {
     #[command(subcommand)]
     Config(ConfigSubcommand),
 
+    ///Run the custom GraphQL resolvers declared by `resolvers:` in config.yaml.
+    ///With no subcommand, serves them for Hasura to dispatch to.
+    Resolvers(ResolversArgs),
+
     #[clap(hide = true)]
     #[command(subcommand)]
     Script(Script),
+}
+
+#[derive(Args, Debug)]
+pub struct ResolversArgs {
+    #[clap(subcommand)]
+    pub subcommand: Option<ResolversSubcommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ResolversSubcommand {
+    ///Write `.envio/resolvers.json` and `.envio/resolvers.graphql`, then exit
+    Manifest,
+    ///Print the Hasura metadata these resolvers become, then exit. Needs
+    ///ENVIO_RESOLVERS_PUBLIC_URL, which is baked into every action.
+    Metadata,
+    ///Update a running indexer's Hasura metadata to match these resolvers,
+    ///then exit. Does not start a server and does not touch the database.
+    Migrate,
+    ///Answer Hasura's actions over HTTP until stopped (the default)
+    Serve,
 }
 
 #[derive(Debug, Subcommand)]

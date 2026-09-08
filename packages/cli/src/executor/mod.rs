@@ -1,5 +1,8 @@
 use crate::{
-    clap_definitions::{ConfigSubcommand, JsonSchema, MetricsSubcommand, Script, SkillsSubcommand},
+    clap_definitions::{
+        ConfigSubcommand, JsonSchema, MetricsSubcommand, ResolversArgs, ResolversSubcommand,
+        Script, SkillsSubcommand,
+    },
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
@@ -44,6 +47,25 @@ pub enum Command {
     DropSchema {
         config: serde_json::Value,
     },
+    /// The resolver process. `manifest` writes the artefacts the image carries,
+    /// `metadata` prints the Hasura metadata, `migrate` applies it to a running
+    /// Hasura -- all three exit -- and `serve` answers Hasura's actions until
+    /// stopped.
+    Resolvers {
+        mode: ResolversMode,
+        cwd: String,
+        env: serde_json::Map<String, serde_json::Value>,
+        config: serde_json::Value,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResolversMode {
+    Serve,
+    Manifest,
+    Metadata,
+    Migrate,
 }
 
 /// `envio_package_dir` is only consumed by `get_envio_version` on dev builds
@@ -68,10 +90,7 @@ pub async fn execute(
             Ok(None)
         }
 
-        CommandType::Codegen => {
-            codegen::run_codegen(&parsed_project_paths).await?;
-            Ok(None)
-        }
+        CommandType::Codegen => Ok(Some(codegen::run_codegen(&parsed_project_paths).await?)),
 
         CommandType::Dev(dev_args) => Ok(Some(
             dev::run_dev(parsed_project_paths, dev_args.restart).await?,
@@ -122,6 +141,19 @@ pub async fn execute(
                 start_args.restart,
                 false,
                 &[],
+            )?))
+        }
+
+        CommandType::Resolvers(resolvers_args) => {
+            let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
+                .context("Failed parsing config")?;
+
+            // No codegen here, unlike `start`. The resolver process runs
+            // from a build that already happened, on its own, with no business
+            // regenerating the project.
+            Ok(Some(build_resolvers_command(
+                &config,
+                resolvers_mode(&resolvers_args),
             )?))
         }
 
@@ -206,9 +238,96 @@ pub fn build_start_command(
     })
 }
 
+/// Bare `envio resolvers` serves, because that is the command the resolver
+/// service runs.
+pub fn resolvers_mode(args: &ResolversArgs) -> ResolversMode {
+    match args.subcommand {
+        Some(ResolversSubcommand::Manifest) => ResolversMode::Manifest,
+        Some(ResolversSubcommand::Metadata) => ResolversMode::Metadata,
+        Some(ResolversSubcommand::Migrate) => ResolversMode::Migrate,
+        None | Some(ResolversSubcommand::Serve) => ResolversMode::Serve,
+    }
+}
+
+pub fn build_resolvers_command(config: &SystemConfig, mode: ResolversMode) -> Result<Command> {
+    let config_path = config
+        .parsed_project_paths
+        .config_relative_to_root()
+        .to_string_lossy()
+        .into_owned();
+
+    Ok(Command::Resolvers {
+        mode,
+        cwd: config
+            .parsed_project_paths
+            .project_root
+            .to_string_lossy()
+            .into_owned(),
+        env: std::iter::once(("ENVIO_CONFIG".to_string(), config_path.into())).collect(),
+        config: public_config_value(config, false)?,
+    })
+}
+
 /// Returns a `Value` (not a string) so the serde payload embeds the config
 /// as a nested JSON object — the JS side then skips the extra `JSON.parse`.
 pub fn public_config_value(config: &SystemConfig, is_dev: bool) -> Result<serde_json::Value> {
     serde_json::from_str(&config.to_public_config_json(is_dev)?)
         .context("Failed parsing public config JSON")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn mode_of(args: &[&str]) -> ResolversMode {
+        match CommandLineArgs::parse_from(args).command {
+            CommandType::Resolvers(resolvers_args) => resolvers_mode(&resolvers_args),
+            other => panic!("expected a resolvers command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bare_resolvers_serves() {
+        // `envio resolvers --config $CONFIG_FILE` is the service's command,
+        // so the form without a subcommand has to be the serving one.
+        assert_eq!(
+            (
+                mode_of(&["envio", "resolvers"]),
+                mode_of(&["envio", "resolvers", "serve"]),
+                mode_of(&["envio", "resolvers", "manifest"]),
+                mode_of(&["envio", "resolvers", "metadata"]),
+                mode_of(&["envio", "resolvers", "migrate"]),
+            ),
+            (
+                ResolversMode::Serve,
+                ResolversMode::Serve,
+                ResolversMode::Manifest,
+                ResolversMode::Metadata,
+                ResolversMode::Migrate
+            )
+        );
+    }
+
+    #[test]
+    fn resolvers_payload_matches_what_bin_decodes() {
+        // The wire format `Bin.res` reads. `kind` discriminates the command and
+        // `mode` the three things this one does.
+        assert_eq!(
+            serde_json::to_value(Command::Resolvers {
+                mode: ResolversMode::Metadata,
+                cwd: "/project".to_string(),
+                env: std::iter::once(("ENVIO_CONFIG".to_string(), "config.yaml".into())).collect(),
+                config: serde_json::json!({ "name": "my-indexer" }),
+            })
+            .unwrap(),
+            serde_json::json!({
+                "kind": "resolvers",
+                "mode": "metadata",
+                "cwd": "/project",
+                "env": { "ENVIO_CONFIG": "config.yaml" },
+                "config": { "name": "my-indexer" },
+            })
+        );
+    }
 }

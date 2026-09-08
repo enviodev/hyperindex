@@ -358,6 +358,11 @@ impl EnvConfig {
 
     fn hasura_config_hash(&self) -> String {
         let mut h = Sha256::new();
+        // Bump when the container's HostConfig changes. `ensure_container`
+        // applies HostConfig only when it creates a container, so without this
+        // an existing Hasura is reused and never gains the host-gateway mapping
+        // custom resolvers need to be reachable from inside it.
+        h.update(b"host-gateway-v1");
         h.update(&self.pg_password);
         h.update(&self.pg_user);
         h.update(&self.pg_database);
@@ -1083,6 +1088,11 @@ pub async fn up(opts: UpOptions<'_>) -> anyhow::Result<UpResult> {
                     name: Some(RestartPolicyNameEnum::ALWAYS),
                     ..Default::default()
                 }),
+                // Custom resolvers run on the host, and Hasura has to POST to
+                // them. Docker Desktop resolves host.docker.internal on its
+                // own; Linux only does with this mapping, where it would
+                // otherwise be a name that does not resolve.
+                extra_hosts: Some(vec!["host.docker.internal:host-gateway".to_string()]),
                 ..Default::default()
             }),
             networking_config: Some(make_networking_config(NETWORK)),

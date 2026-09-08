@@ -29,6 +29,13 @@
         "null"
       ]
     },
+    "resolvers": {
+      "description": "Optional relative path to the custom GraphQL resolvers, either a single module (e.g. 'src/Resolvers.ts') or a directory (e.g. 'src/resolvers'), in which case every .js/.mjs/.ts file beneath it is loaded, tests excluded. The resolvers they export are served as additional root fields on the indexer's GraphQL endpoint.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "full_batch_size": {
       "description": "Target number of events to be processed per batch. Set it to smaller number if you have many Effect API calls which are slow to resolve and can't be batched. (Default: 5000)",
       "type": [
