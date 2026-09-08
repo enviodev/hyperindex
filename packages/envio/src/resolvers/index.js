@@ -88,7 +88,8 @@ export function createResolver(options) {
     output,
     // `admin` is the old spelling. It named a Hasura role that is no longer how
     // these are reached, so `private` is the name now; both mean the same
-    // thing -- off the public schema unless the caller presents a key.
+    // thing -- published so Hasura will route to it, and refused at the service
+    // unless the caller presents a key.
     private: options.private === true || options.admin === true,
     maxBlocksBehind: options.maxBlocksBehind,
     timeoutMs,
