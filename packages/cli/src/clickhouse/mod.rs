@@ -1672,7 +1672,6 @@ mod tests {
                     name: "envio_history_a".to_string(),
                     chain_id_column: None,
                 }],
-                ..resume_input(Vec::new(), Vec::new())
             })
             .await
             .unwrap_err();
