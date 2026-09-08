@@ -11,22 +11,19 @@ name: svm-optional-accounts
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Swapper
-          program_id: ${programId}
-          instructions:
-            - name: swap
-              discriminator: "0x09"
-              args: []
-              accounts:
-                - payer
-                - ?authority
-                - _
-                - mint
+    start_slot: 0
+programs:
+  - name: Swapper
+    program_id: ${programId}
+    instructions:
+      - name: swap
+        discriminator: "0x09"
+        args: []
+        accounts:
+          - payer
+          - ?authority
+          - _
+          - mint
 `
 
 let parsed = InternalTestIndexer.fromUserApi(

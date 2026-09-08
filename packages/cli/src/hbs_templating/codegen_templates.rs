@@ -3755,16 +3755,13 @@ name: svm-no-rescript
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Swapper
-          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
+    start_slot: 0
+programs:
+  - name: Swapper
+    program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+    instructions:
+      - name: swap
+        discriminator: "0x09"
 "#;
         let schema = r#"
 type Swap {

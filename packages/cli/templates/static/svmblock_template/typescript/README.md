@@ -2,7 +2,7 @@
 
 _Please refer to the [documentation website](https://docs.envio.dev) for a thorough guide on all [Envio](https://envio.dev) indexer features_
 
-This example demonstrates how to index **Solana blocks** using a block handler. The handler fetches block data from a Solana RPC endpoint and stores block information.
+This example demonstrates how to index **Solana blocks** using a block handler. Slots are streamed from HyperSync; the handler then fetches each block's data from a Solana RPC endpoint and stores it.
 
 For more information, see the [block handlers documentation](https://docs.envio.dev/docs/HyperIndex/block-handlers).
 
@@ -30,11 +30,16 @@ Before running the indexer locally, make sure you have the following installed:
 
 ## Configuration
 
-Add your Svm RPC URL to the `.env` file:
+Add your Envio API token and a Solana RPC URL to the `.env` file:
 
 ```
+ENVIO_API_TOKEN=<YOUR-API-TOKEN>
 ENVIO_MAINNET_RPC_URL=https://your-svm-rpc-endpoint
 ```
+
+The token authenticates the HyperSync source that streams slots; create one at
+[envio.dev/app/api-tokens](https://envio.dev/app/api-tokens). The RPC URL is
+read by the `getBlock` effect above, not by the data source.
 
 ## Running the Indexer
 

@@ -1084,6 +1084,26 @@ pub mod svm {
     }
 
     impl ChainId {
+        /// Reads the token a `program_id` mapping key carries. Mirrors the
+        /// `id` grammar: a cluster label, or a plain number.
+        pub fn parse(token: &str) -> Option<Self> {
+            match token {
+                "solana" => Some(Self::Label(ChainLabel::Solana)),
+                "solana-devnet" => Some(Self::Label(ChainLabel::SolanaDevnet)),
+                _ => token.parse::<u64>().ok().map(Self::Id),
+            }
+        }
+
+        /// How this chain is named back to the user: the label they can write,
+        /// or the number.
+        pub fn token(&self) -> String {
+            match self {
+                Self::Label(ChainLabel::Solana) => "solana".to_string(),
+                Self::Label(ChainLabel::SolanaDevnet) => "solana-devnet".to_string(),
+                Self::Id(id) => id.to_string(),
+            }
+        }
+
         pub fn to_u64(&self) -> u64 {
             match self {
                 ChainId::Label(ChainLabel::Solana) => SOLANA_MAINNET_CHAIN_ID,
@@ -1121,18 +1141,15 @@ pub mod svm {
         pub skip: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "RPC endpoint URL for connecting to the Svm cluster to fetch blockchain \
-                           data. Required unless `experimental` is set, in which case it is \
-                           ignored in favour of the experimental HyperSync source."
+            description = "RPC endpoint URL for the Svm cluster. Accepted but unused: instruction \
+                           sync is served by HyperSync."
         )]
         pub rpc: Option<String>,
-        #[schemars(
-            description = "The slot number at which the indexer should start ingesting data"
-        )]
-        pub start_block: u64,
+        #[schemars(description = "The slot at which the indexer should start ingesting data")]
+        pub start_slot: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "The slot number at which the indexer should terminate.")]
-        pub end_block: Option<u64>,
+        #[schemars(description = "The slot at which the indexer should terminate.")]
+        pub end_slot: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "The number of blocks behind the chain head that the indexer should \
@@ -1142,24 +1159,153 @@ pub mod svm {
         pub block_lag: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Experimental HyperSync-backed instruction indexing. This config shape \
-                           Veil change in future releases."
-        )]
-        pub experimental: Option<Experimental>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
-    pub struct Experimental {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(
             description = "HyperSync Config for fetching historical instructions on this chain. \
                            Optional for the `solana` and `solana-devnet` chain ids, which default \
                            to their public HyperSync endpoints; required for any other chain id."
         )]
         pub hypersync_config: Option<HypersyncConfig>,
-        #[schemars(description = "Solana programs to index on this chain.")]
-        pub programs: Vec<Program>,
+    }
+
+    /// The program id of one chain: a base58 pubkey, or `_` for a chain the
+    /// program is not deployed on.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum ChainProgramId {
+        NotDeployed,
+        Address(String),
+    }
+
+    impl Display for ChainProgramId {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            match self {
+                Self::NotDeployed => f.write_str("_"),
+                Self::Address(address) => f.write_str(address),
+            }
+        }
+    }
+
+    impl Serialize for ChainProgramId {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.collect_str(self)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for ChainProgramId {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            let value = String::deserialize(deserializer)?;
+            Ok(match value.as_str() {
+                "_" => Self::NotDeployed,
+                _ => Self::Address(value),
+            })
+        }
+    }
+
+    /// A program id as written in YAML: one pubkey shared by the only chain, or
+    /// one entry per chain. `BTreeMap` orders the entries by chain id token,
+    /// which is not the `chains` order — resolution walks `chains` instead, so
+    /// diagnostics keep the order the user wrote their chains in.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum ProgramId {
+        Single(String),
+        PerChain(std::collections::BTreeMap<String, ChainProgramId>),
+    }
+
+    impl Serialize for ProgramId {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            match self {
+                Self::Single(address) => serializer.serialize_str(address),
+                Self::PerChain(map) => map.serialize(serializer),
+            }
+        }
+    }
+
+    impl<'de> Deserialize<'de> for ProgramId {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct ProgramIdVisitor;
+
+            impl<'de> de::Visitor<'de> for ProgramIdVisitor {
+                type Value = ProgramId;
+
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("a base58 program id, or a mapping of chain id to program id")
+                }
+
+                fn visit_str<E: de::Error>(self, value: &str) -> Result<ProgramId, E> {
+                    if value == "_" {
+                        return Err(de::Error::custom(
+                            "`_` marks a chain the program is not deployed on, so it is only \
+                             meaningful inside a per-chain `program_id` mapping",
+                        ));
+                    }
+                    Ok(ProgramId::Single(value.to_string()))
+                }
+
+                /// A pubkey of nothing but digits is a YAML integer, and one
+                /// of nothing but `0`/`1` past a leading digit still has to
+                /// reach the base58 check that names it rather than dying as a
+                /// type error.
+                fn visit_u64<E: de::Error>(self, value: u64) -> Result<ProgramId, E> {
+                    self.visit_str(&value.to_string())
+                }
+
+                fn visit_i64<E: de::Error>(self, value: i64) -> Result<ProgramId, E> {
+                    self.visit_str(&value.to_string())
+                }
+
+                fn visit_u128<E: de::Error>(self, value: u128) -> Result<ProgramId, E> {
+                    self.visit_str(&value.to_string())
+                }
+
+                fn visit_i128<E: de::Error>(self, value: i128) -> Result<ProgramId, E> {
+                    self.visit_str(&value.to_string())
+                }
+
+                fn visit_map<A: de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<ProgramId, A::Error> {
+                    let mut entries = std::collections::BTreeMap::new();
+                    while let Some((chain, program_id)) =
+                        map.next_entry::<String, ChainProgramId>()?
+                    {
+                        if entries.insert(chain.clone(), program_id).is_some() {
+                            return Err(de::Error::custom(format!(
+                                "chain {chain:?} is listed more than once"
+                            )));
+                        }
+                    }
+                    Ok(ProgramId::PerChain(entries))
+                }
+            }
+
+            deserializer.deserialize_any(ProgramIdVisitor)
+        }
+    }
+
+    impl JsonSchema for ProgramId {
+        fn schema_name() -> Cow<'static, str> {
+            "SvmProgramId".into()
+        }
+
+        fn json_schema(_: &mut SchemaGenerator) -> Schema {
+            json_schema!({
+                "title": "Program id",
+                "description": "Base58-encoded program id (32 bytes).\n\
+                    A single value is allowed only when the config defines one chain.\n\
+                    With several chains, give a mapping keyed by chain id that names every \
+                    one of them; write `_` for a chain the program is not deployed on.",
+                "anyOf": [
+                    { "type": "string" },
+                    {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" },
+                    },
+                ],
+                "examples": [
+                    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+                    { "solana": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s", "solana-devnet": "_" },
+                ],
+            })
+        }
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -1169,8 +1315,13 @@ pub mod svm {
             description = "A unique project-wide name for this program (used in generated code)."
         )]
         pub name: String,
-        #[schemars(description = "Base58-encoded program id (32 bytes).")]
-        pub program_id: String,
+        #[schemars(
+            description = "Base58-encoded program id (32 bytes). A single value is allowed only \
+                           when the config defines one chain; with several, give a mapping keyed \
+                           by chain id that names every one of them, writing `_` for a chain the \
+                           program is not deployed on."
+        )]
+        pub program_id: ProgramId,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Optional relative path to a file where handlers are \
                                   registered for the given program. If not provided, handlers \
@@ -1574,6 +1725,12 @@ pub mod svm {
             description = "Configuration of the blockchain chains that the project is deployed on."
         )]
         pub chains: Vec<Chain>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schemars(
+            description = "Solana programs to index. Programs are defined once for the whole \
+                           project; `program_id` says where each one lives on every chain."
+        )]
+        pub programs: Vec<Program>,
     }
 
     impl Display for HumanConfig {
@@ -1993,25 +2150,24 @@ name: metaplex-token-metadata
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 200000000
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: TokenMetadata
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: CreateMetadataAccountV3
-              discriminator: "0x21"
-            - name: UpdateMetadataAccountV2
-              discriminator: "0x0f"
+    start_slot: 200000000
+    hypersync_config:
+      url: https://solana.hypersync.xyz
+programs:
+  - name: TokenMetadata
+    program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    instructions:
+      - name: CreateMetadataAccountV3
+        discriminator: "0x21"
+      - name: UpdateMetadataAccountV2
+        discriminator: "0x0f"
 "#;
 
         #[test]
         fn chain_id_accepts_labels_and_numbers_and_round_trips() {
             let parse_chain = |id_yaml: &str| -> Chain {
                 let yaml = format!(
-                    "name: x\necosystem: svm\nchains:\n  - id: {id_yaml}\n    start_block: 0\n"
+                    "name: x\necosystem: svm\nchains:\n  - id: {id_yaml}\n    start_slot: 0\n"
                 );
                 let mut cfg: HumanConfig = serde_yaml::from_str(&yaml).unwrap();
                 cfg.chains.remove(0)
@@ -2042,7 +2198,7 @@ chains:
 
             // `id` is required: omitting it is a parse error.
             let missing: Result<HumanConfig, _> =
-                serde_yaml::from_str("name: x\necosystem: svm\nchains:\n  - start_block: 0\n");
+                serde_yaml::from_str("name: x\necosystem: svm\nchains:\n  - start_slot: 0\n");
             assert!(missing.is_err(), "config without chain id must be rejected");
         }
 
@@ -2051,19 +2207,19 @@ chains:
             let cfg: HumanConfig = serde_yaml::from_str(METAPLEX_YAML).unwrap();
             assert_eq!(cfg.chains.len(), 1);
             let chain = &cfg.chains[0];
-            let experimental = chain.experimental.as_ref().unwrap();
             assert_eq!(
-                experimental.hypersync_config.as_ref().unwrap().url.as_str(),
+                chain.hypersync_config.as_ref().unwrap().url.as_str(),
                 "https://solana.hypersync.xyz"
             );
-            let programs = &experimental.programs;
-            assert_eq!(programs.len(), 1);
-            let program = &programs[0];
+            assert_eq!(cfg.programs.len(), 1);
+            let program = &cfg.programs[0];
             assert_eq!(
                 program,
                 &Program {
                     name: "TokenMetadata".to_string(),
-                    program_id: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string(),
+                    program_id: ProgramId::Single(
+                        "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s".to_string()
+                    ),
                     handler: None,
                     idl: None,
                     instructions: vec![

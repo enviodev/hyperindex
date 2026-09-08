@@ -553,17 +553,14 @@ name: unknown-svm-field
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 1
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          bogus_extra: true
-          instructions: []
+    start_slot: 1
+programs:
+  - name: Program
+    program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    bogus_extra: true
+    instructions: []
 `,
-      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0]: unknown field \`bogus_extra\`, expected one of \`name\`, \`program_id\`, \`handler\`, \`idl\`, \`instructions\` at line 13 column 11",
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0]: unknown field \`bogus_extra\`, expected one of \`name\`, \`program_id\`, \`handler\`, \`idl\`, \`instructions\` at line 10 column 5",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
@@ -1021,7 +1018,7 @@ ecosystem: svm
 chains:
   - id: solana
     rpc: https://solana.example.test
-    start_block: 8
+    start_slot: 8
 `,
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
@@ -1252,11 +1249,8 @@ name: svm-validation
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
+    start_slot: 0
+programs:
 `
 
   // One `swap` instruction of one program, with the body under test.
@@ -1446,7 +1440,7 @@ chains:
               accounts: []
               args:
                 - {name: amount, type: u46}`),
-      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0].instructions[0].args[0].type: unknown type 'u46', expected one of bool, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64, string, bytes, pubkey, publicKey, or a composite such as {vec: u8}, {option: pubkey}, {array: [u8, 32]}, {struct: [...]}, {enum: [...]} at line 18 column 40",
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0].instructions[0].args[0].type: unknown type 'u46', expected one of bool, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64, string, bytes, pubkey, publicKey, or a composite such as {vec: u8}, {option: pubkey}, {array: [u8, 32]}, {struct: [...]}, {enum: [...]} at line 15 column 40",
     ),
     (
       "names the composite it could not read",
@@ -1454,7 +1448,7 @@ chains:
               accounts: []
               args:
                 - {name: amount, type: {set: u64}}`),
-      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0].instructions[0].args[0].type: unknown composite type 'set', expected one of option, vec, array, struct, enum at line 18 column 40",
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0].instructions[0].args[0].type: unknown composite type 'set', expected one of option, vec, array, struct, enum at line 15 column 40",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
@@ -1476,7 +1470,7 @@ chains:
     t.expect((contract.name, contract.events->Array.map(e => e.name))).toEqual(("Type", ["switch"]))
   })
 
-  it("rejects duplicate program names across chains", t => {
+  it("rejects duplicate program names", t => {
     expectParseError(
       t,
       `
@@ -1484,39 +1478,22 @@ name: duplicate-programs
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Shared
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions: []
+    start_slot: 0
   - id: solana-devnet
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: shared
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions: []
+    start_slot: 0
+programs:
+  - name: Shared
+    program_id:
+      solana: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+      solana-devnet: _
+    instructions: []
+  - name: shared
+    program_id:
+      solana: _
+      solana-devnet: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    instructions: []
 `,
-      "Duplicate program names detected. All program names must be unique across all chains and are case-insensitive.",
-    )
-  })
-
-  it("rejects chains without an RPC or HyperSync source", t => {
-    expectParseError(
-      t,
-      `
-name: missing-svm-source
-ecosystem: svm
-chains:
-  - id: solana
-    start_block: 0
-`,
-      "A chain must define a data source: either an \`rpc\` endpoint or an \`experimental\` HyperSync config. Both are missing.",
+      "Duplicate program names detected. All program names must be unique and are case-insensitive.",
     )
   })
 
@@ -1527,19 +1504,20 @@ name: derived-svm-endpoint
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      programs:
-        - name: Mainnet
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions: []
+    start_slot: 0
   - id: solana-devnet
-    start_block: 0
-    experimental:
-      programs:
-        - name: Devnet
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions: []
+    start_slot: 0
+programs:
+  - name: Mainnet
+    program_id:
+      solana: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+      solana-devnet: _
+    instructions: []
+  - name: Devnet
+    program_id:
+      solana: _
+      solana-devnet: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    instructions: []
 `,
     )
     t.expect(
@@ -1549,7 +1527,7 @@ chains:
         chain => (
           chain.id->ChainId.toString,
           switch chain.sourceConfig {
-          | Config.SvmSourceConfig({hypersync}) => hypersync->Option.getOr("missing")
+          | Config.SvmSourceConfig({hypersync}) => hypersync
           | _ => "unexpected source"
           },
         ),
@@ -1567,19 +1545,18 @@ name: explicit-svm-endpoint
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://custom.hypersync.test
-      programs:
-        - name: Mainnet
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions: []
+    start_slot: 0
+    hypersync_config:
+      url: https://custom.hypersync.test
+programs:
+  - name: Mainnet
+    program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    instructions: []
 `,
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     switch chain.sourceConfig {
-    | Config.SvmSourceConfig({hypersync: Some(url)}) =>
+    | Config.SvmSourceConfig({hypersync: url}) =>
       t.expect(url).toBe("https://custom.hypersync.test")
     | _ => t.expect("unexpected source").toBe("SVM HyperSync source")
     }
@@ -1593,14 +1570,13 @@ name: unknown-svm-cluster
 ecosystem: svm
 chains:
   - id: 42
-    start_block: 0
-    experimental:
-      programs:
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions: []
+    start_slot: 0
+programs:
+  - name: Program
+    program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    instructions: []
 `,
-      "Chain 42 has no default HyperSync endpoint. Set \`experimental.hypersync_config.url\` explicitly, or use the \`solana\` / \`solana-devnet\` chain id.",
+      "Chain 42 has no default HyperSync endpoint. Set \`hypersync_config.url\` explicitly, or use the \`solana\` / \`solana-devnet\` chain id.",
     )
   })
 })
@@ -2158,15 +2134,12 @@ name: missing-idl
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          idl: idls/program.json
-          instructions: []
+    start_slot: 0
+programs:
+  - name: Program
+    program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    idl: idls/program.json
+    instructions: []
 `,
       "Program 'Program': reading IDL at 'idls/program.json': Virtual config file \"idls/program.json\" was not provided",
     )
@@ -2183,18 +2156,15 @@ name: independent-svm-layout
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - {name: namesOnly, discriminator: "0x01", accounts: [source]}
-            - {name: argsOnly, discriminator: "0x02", args: [{name: amount, type: u64}]}
-            - {name: neither, discriminator: "0x03"}
-            - {name: emptyArgs, discriminator: "0x04", args: []}
+    start_slot: 0
+programs:
+  - name: Program
+    program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    instructions:
+      - {name: namesOnly, discriminator: "0x01", accounts: [source]}
+      - {name: argsOnly, discriminator: "0x02", args: [{name: amount, type: u64}]}
+      - {name: neither, discriminator: "0x03"}
+      - {name: emptyArgs, discriminator: "0x04", args: []}
 `,
     )
     t.expect(
@@ -2235,16 +2205,12 @@ name: svm-idl-catalog
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          idl: idls/program.json
-${instructions}
-`
+    start_slot: 0
+programs:
+  - name: Program
+    program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    idl: idls/program.json
+${instructions}`
 
   // Account slots read back as the YAML tokens that declare them, so an
   // expectation shows optionality and unnamed positions.
@@ -2282,7 +2248,7 @@ ${instructions}
           }`,
         ),
       ]),
-      ~configYaml=yaml("          instructions: []\n"),
+      ~configYaml=yaml("    instructions: []\n"),
       ~handlers=`
 import { indexer } from "envio";
 indexer.onInstruction(
@@ -2308,9 +2274,9 @@ indexer.onInstruction(
     expectParseError(
       t,
       ~files,
-      yaml(`          instructions:
-            - name: swap
-              discriminator: "0x"
+      yaml(`    instructions:
+      - name: swap
+        discriminator: "0x"
 `),
       "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
@@ -2336,9 +2302,9 @@ indexer.onInstruction(
           }`,
         ),
       ]),
-      yaml(`          instructions:
-            - name: swap
-              discriminator: "0x"
+      yaml(`    instructions:
+      - name: swap
+        discriminator: "0x"
 `),
       "Program 'Program', instruction 'swap': the IDL declares this instruction too, but it cannot be indexed as declared: idls/program.json:2:30: args.amount: `coption` is not Borsh-compatible and cannot be decoded. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
@@ -2350,10 +2316,10 @@ indexer.onInstruction(
     expectParseError(
       t,
       ~files,
-      yaml(`          instructions:
-            - name: anyCall
+      yaml(`    instructions:
+      - name: anyCall
 `),
-      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0].instructions[0]: missing field `discriminator` at line 15 column 15",
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: programs[0].instructions[0]: missing field `discriminator` at line 12 column 9",
     )
   })
 
@@ -2363,9 +2329,9 @@ indexer.onInstruction(
   it("adds a program-wide instruction next to an IDL", t => {
     let {config} = InternalTestIndexer.fromUserApi(
       ~files,
-      ~configYaml=yaml(`          instructions:
-            - name: anyCall
-              discriminator: "0x"
+      ~configYaml=yaml(`    instructions:
+      - name: anyCall
+        discriminator: "0x"
 `),
     )
     t.expect(catalog(config)).toEqual([
@@ -2379,17 +2345,17 @@ indexer.onInstruction(
     let {config} = InternalTestIndexer.fromUserApi(
       ~files,
       ~schema=ApiTypesFixtures.schema,
-      ~configYaml=yaml(`          instructions:
-            - name: swap
-              discriminator: "0x09"
-              accounts: [source, dest]
-              args:
-                - { name: amountIn, type: u64 }
-            - name: extra
-              discriminator: "0xab"
-              accounts: [payer]
-              args:
-                - { name: tag, type: u8 }
+      ~configYaml=yaml(`    instructions:
+      - name: swap
+        discriminator: "0x09"
+        accounts: [source, dest]
+        args:
+          - { name: amountIn, type: u64 }
+      - name: extra
+        discriminator: "0xab"
+        accounts: [payer]
+        args:
+          - { name: tag, type: u8 }
 `),
       ~handlers=`
 import { indexer } from "envio";
@@ -2413,11 +2379,11 @@ indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => 
   it("overwrites an IDL instruction from YAML without merging accounts or args", t => {
     let {config} = InternalTestIndexer.fromUserApi(
       ~files,
-      ~configYaml=yaml(`          instructions:
-            - name: swap
-              discriminator: "0x09"
-              accounts: [source]
-              args: []
+      ~configYaml=yaml(`    instructions:
+      - name: swap
+        discriminator: "0x09"
+        accounts: [source]
+        args: []
 `),
     )
     t.expect(catalog(config)).toEqual([
@@ -2432,11 +2398,11 @@ indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => 
   it("makes an overwrite on the empty prefix program-wide", t => {
     let {config} = InternalTestIndexer.fromUserApi(
       ~files,
-      ~configYaml=yaml(`          instructions:
-            - name: swap
-              discriminator: "0x"
-              accounts: [source]
-              args: []
+      ~configYaml=yaml(`    instructions:
+      - name: swap
+        discriminator: "0x"
+        accounts: [source]
+        args: []
 `),
     )
     t.expect(catalog(config)).toEqual([
@@ -2449,9 +2415,9 @@ indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => 
     expectParseError(
       t,
       ~files,
-      yaml(`          instructions:
-            - name: swap
-              discriminator: "0x09"
+      yaml(`    instructions:
+      - name: swap
+        discriminator: "0x09"
 `),
       "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
@@ -2461,10 +2427,10 @@ indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => 
     expectParseError(
       t,
       ~files,
-      yaml(`          instructions:
-            - name: swap
-              discriminator: "0x09"
-              accounts: [source]
+      yaml(`    instructions:
+      - name: swap
+        discriminator: "0x09"
+        accounts: [source]
 `),
       "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )

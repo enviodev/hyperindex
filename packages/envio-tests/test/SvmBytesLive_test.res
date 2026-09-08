@@ -14,31 +14,28 @@ name: svm-bytes-live
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 420650000
-    end_block: 420650200
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Wormhole
-          program_id: worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth
-          instructions:
-            - name: postMessage
-              discriminator: "0x01"
-              args:
-                - { name: nonce, type: u32 }
-                - { name: payload, type: bytes }
-                - { name: consistencyLevel, type: u8 }
-              accounts:
-                - bridge
-                - message
-                - emitter
-                - sequence
-                - payer
-                - feeCollector
-                - clock
-                - systemProgram
-                - rent
+    start_slot: 420650000
+    end_slot: 420650200
+programs:
+  - name: Wormhole
+    program_id: worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth
+    instructions:
+      - name: postMessage
+        discriminator: "0x01"
+        args:
+          - { name: nonce, type: u32 }
+          - { name: payload, type: bytes }
+          - { name: consistencyLevel, type: u8 }
+        accounts:
+          - bridge
+          - message
+          - emitter
+          - sequence
+          - payer
+          - feeCollector
+          - clock
+          - systemProgram
+          - rent
 `,
   ~schema=`
 type Message {

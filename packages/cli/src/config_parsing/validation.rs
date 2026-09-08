@@ -337,55 +337,66 @@ fn validate_svm_arg_type(ty: &ArgType, path: &str) -> anyhow::Result<()> {
 pub fn validate_deserialized_svm_config_yaml(
     svm_config: &super::human_config::svm::HumanConfig,
 ) -> anyhow::Result<()> {
+    use super::human_config::svm::{ChainProgramId, ProgramId};
+
     let mut all_program_names: Vec<String> = Vec::new();
 
-    for chain in &svm_config.chains {
-        if chain.experimental.is_none() && chain.rpc.is_none() {
-            return Err(anyhow!(
-                "A chain must define a data source: either an `rpc` endpoint or an `experimental` \
-                 HyperSync config. Both are missing."
-            ));
+    for program in &svm_config.programs {
+        validate_svm_name(&program.name, "a program name")?;
+        // A per-chain mapping has one address per chain, so the chain key is
+        // what tells the user which entry to go fix.
+        let addresses: Vec<(Option<&str>, &String)> = match &program.program_id {
+            ProgramId::Single(address) => vec![(None, address)],
+            ProgramId::PerChain(by_chain) => by_chain
+                .iter()
+                .filter_map(|(chain, id)| match id {
+                    ChainProgramId::Address(address) => Some((Some(chain.as_str()), address)),
+                    ChainProgramId::NotDeployed => None,
+                })
+                .collect(),
+        };
+        for (chain, address) in addresses {
+            if !is_valid_solana_pubkey(address) {
+                return Err(match chain {
+                    Some(chain) => anyhow!(
+                        "Program {:?} has an invalid program_id {:?} for chain {:?}: must be a \
+                         base58-encoded 32-byte Solana pubkey",
+                        program.name,
+                        address,
+                        chain
+                    ),
+                    None => anyhow!(
+                        "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
+                         32-byte Solana pubkey",
+                        program.name,
+                        address
+                    ),
+                });
+            }
         }
+        all_program_names.push(program.name.clone());
 
-        let programs = chain
-            .experimental
-            .as_ref()
-            .map(|e| e.programs.as_slice())
-            .unwrap_or(&[]);
-        for program in programs {
-            validate_svm_name(&program.name, "a program name")?;
-            if !is_valid_solana_pubkey(&program.program_id) {
+        let mut instruction_names = std::collections::HashSet::new();
+        for instr in &program.instructions {
+            validate_svm_name(&instr.name, "an instruction name")
+                .with_context(|| format!("Program '{}'", program.name))?;
+            if !instruction_names.insert(instr.name.clone()) {
                 return Err(anyhow!(
-                    "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
-                     32-byte Solana pubkey",
+                    "Program {:?} declares the instruction {:?} more than once",
                     program.name,
-                    program.program_id
+                    instr.name
                 ));
             }
-            all_program_names.push(program.name.clone());
-
-            let mut instruction_names = std::collections::HashSet::new();
-            for instr in &program.instructions {
-                validate_svm_name(&instr.name, "an instruction name")
-                    .with_context(|| format!("Program '{}'", program.name))?;
-                if !instruction_names.insert(instr.name.clone()) {
-                    return Err(anyhow!(
-                        "Program {:?} declares the instruction {:?} more than once",
-                        program.name,
-                        instr.name
-                    ));
-                }
-                validate_svm_discriminator(&instr.discriminator).with_context(|| {
-                    format!("instruction {:?} in program {:?}", instr.name, program.name)
-                })?;
-            }
+            validate_svm_discriminator(&instr.discriminator).with_context(|| {
+                format!("instruction {:?} in program {:?}", instr.name, program.name)
+            })?;
         }
     }
 
     if !are_contract_names_unique(&all_program_names) {
         return Err(anyhow!(
-            "Duplicate program names detected. All program names must be unique across all chains \
-             and are case-insensitive."
+            "Duplicate program names detected. All program names must be unique and are \
+             case-insensitive."
         ));
     }
 
@@ -697,23 +708,20 @@ name: x
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: TokenMetadata
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: UpdateMetadataAccountV2
-              discriminator: "0x0f"
+    start_slot: 0
+programs:
+  - name: TokenMetadata
+    program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+    instructions:
+      - name: UpdateMetadataAccountV2
+        discriminator: "0x0f"
 "#,
             );
             validate_deserialized_svm_config_yaml(&cfg).unwrap();
         }
 
         #[test]
-        fn validation_accepts_rpc_only_chain() {
+        fn validation_accepts_a_chain_without_programs() {
             let cfg = parse(
                 r#"
 name: x
@@ -721,7 +729,7 @@ ecosystem: svm
 chains:
   - id: solana
     rpc: https://api.mainnet-beta.solana.com
-    start_block: 0
+    start_slot: 0
 "#,
             );
             validate_deserialized_svm_config_yaml(&cfg).unwrap();

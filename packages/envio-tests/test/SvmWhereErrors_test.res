@@ -5,39 +5,36 @@ name: svm-where-errors
 ecosystem: svm
 chains:
   - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Swapper
-          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
-              args:
-                - { name: amountIn, type: u64 }
-              accounts:
-                - source
-                - destination
-            - name: bare
-              discriminator: "0x0a"
-            - name: wide
-              discriminator: "0x0b"
-              args:
-                - { name: amountIn, type: u64 }
-              accounts:
-                - a0
-                - a1
-                - a2
-                - a3
-                - a4
-                - a5
-                - a6
-                - a7
-                - a8
-                - a9
-                - a10
+    start_slot: 0
+programs:
+  - name: Swapper
+    program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+    instructions:
+      - name: swap
+        discriminator: "0x09"
+        args:
+          - { name: amountIn, type: u64 }
+        accounts:
+          - source
+          - destination
+      - name: bare
+        discriminator: "0x0a"
+      - name: wide
+        discriminator: "0x0b"
+        args:
+          - { name: amountIn, type: u64 }
+        accounts:
+          - a0
+          - a1
+          - a2
+          - a3
+          - a4
+          - a5
+          - a6
+          - a7
+          - a8
+          - a9
+          - a10
 `
 
 let typeErrorOf = handlers =>
