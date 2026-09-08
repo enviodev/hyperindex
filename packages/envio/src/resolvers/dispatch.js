@@ -96,32 +96,50 @@ export function createDispatcher({ resolvers, pool, exposeErrors = false, onErro
     byName.set(resolver.name, resolver);
   }
 
-  let cachedHeights = { at: 0, chains: null };
+  let cachedAt = 0;
+  let cachedChains = null;
+  let inFlight = null;
+
+  const readChainsBehindHead = async () => {
+    try {
+      const heights = await pool
+        .forResolver({ name: "staleness", timeoutMs: 2_000 })
+        .chainHeights();
+      return Object.values(heights).map((chain) => ({
+        chainId: chain.chainId,
+        behind: Math.max(0, chain.sourceBlock - chain.progressBlock),
+      }));
+    } catch {
+      return null;
+    }
+  };
 
   /**
    * Every chain's distance from head, or null when that cannot be read. Null
    * means "do not know", and a gate that cannot read the answer lets the
    * request through: refusing everything because the freshness probe itself
    * failed would turn one broken query into a total outage.
+   *
+   * A burst that arrives on a cold cache shares one read rather than each
+   * taking a connection to learn the same answer -- the probes alone can
+   * saturate the pool, and then every request pays the pool wait and the gate
+   * fails open, under exactly the load that makes staleness worth checking.
+   * A failed read is remembered for the same window and for the same reason:
+   * repeating it per request costs each one the probe's full timeout while the
+   * gate is open regardless.
    */
-  const chainsBehindHead = async () => {
-    const now = Date.now();
-    if (cachedHeights.chains !== null && now - cachedHeights.at < STALENESS_CACHE_MS) {
-      return cachedHeights.chains;
+  const chainsBehindHead = () => {
+    if (cachedAt !== 0 && Date.now() - cachedAt < STALENESS_CACHE_MS) {
+      return Promise.resolve(cachedChains);
     }
-    try {
-      const heights = await pool
-        .forResolver({ name: "staleness", timeoutMs: 2_000 })
-        .chainHeights();
-      const chains = Object.values(heights).map((chain) => ({
-        chainId: chain.chainId,
-        behind: Math.max(0, chain.sourceBlock - chain.progressBlock),
-      }));
-      cachedHeights = { at: now, chains };
+    if (inFlight !== null) return inFlight;
+    inFlight = readChainsBehindHead().then((chains) => {
+      cachedAt = Date.now();
+      cachedChains = chains;
+      inFlight = null;
       return chains;
-    } catch {
-      return null;
-    }
+    });
+    return inFlight;
   };
 
   /**
@@ -187,7 +205,11 @@ export function createDispatcher({ resolvers, pool, exposeErrors = false, onErro
       if (stale !== null) {
         return errorBody(
           `Chain ${stale.chainId} is ${stale.behind} blocks behind head, past this resolver's limit of ${stale.cap}; refusing to answer from a stale index`,
-          "SERVICE_UNAVAILABLE"
+          "SERVICE_UNAVAILABLE",
+          // Without this the action path answers 400, which a client cannot
+          // tell from a malformed request -- and backing off and retrying is
+          // the only useful response to an index that is merely behind.
+          { http: { status: 503 } }
         );
       }
     }
