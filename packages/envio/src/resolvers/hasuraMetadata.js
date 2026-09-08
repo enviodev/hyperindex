@@ -20,6 +20,35 @@ export const RESOLVER_SECRET_HEADER = "x-envio-resolver-secret";
 /** Where a caller presents the key that unlocks a `private` resolver. */
 export const PRIVATE_KEY_HEADER = "x-envio-private-key";
 
+// Hasura's own default ignore list, which supplying the field replaces rather
+// than extends: leaving `Content-Length` off it forwards the client's, and the
+// handler rejects the request before reading a byte of it.
+export const HASURA_DEFAULT_IGNORED_CLIENT_HEADERS = [
+  "Content-Length",
+  "Content-MD5",
+  "User-Agent",
+  "Host",
+  "Origin",
+  "Referer",
+  "Accept",
+  "Accept-Encoding",
+  "Accept-Language",
+  "Accept-Datetime",
+  "Cache-Control",
+  "Connection",
+  "DNT",
+  "Content-Type",
+];
+
+// A forwarded client header of the same name does not merge with the action's
+// static one -- it takes its place, and the static value is never sent. Without
+// this the shared secret is the caller's to set, so anyone could send a wrong
+// one and have the service refuse every private resolver to its key holders.
+const IGNORED_CLIENT_HEADERS = [
+  ...HASURA_DEFAULT_IGNORED_CLIENT_HEADERS,
+  RESOLVER_SECRET_HEADER,
+];
+
 /**
  * @param manifest the parsed `.envio/resolvers.json`
  * @param handlerUrl the URL *Hasura* posts to -- reachable from Hasura, which
@@ -101,10 +130,14 @@ export function buildHasuraMetadata(manifest, { handlerUrl, publicRole = "public
         ? { headers: [{ name: RESOLVER_SECRET_HEADER, value: actionSecret }] }
         : {}),
       // A private resolver authenticates its caller here, not at Hasura, so
-      // the caller's own headers have to survive the hop. Hasura's static
-      // `headers` above still win on a name clash, so this cannot be used to
-      // spoof the shared secret.
-      ...(resolver.private ? { forward_client_headers: true } : {}),
+      // the caller's own headers have to survive the hop -- all but the shared
+      // secret's, which a caller must not be able to speak for.
+      ...(resolver.private
+        ? {
+            forward_client_headers: true,
+            ignored_client_headers: IGNORED_CLIENT_HEADERS,
+          }
+        : {}),
     };
     const action = { name: resolver.name, definition };
     if (resolver.description) {
