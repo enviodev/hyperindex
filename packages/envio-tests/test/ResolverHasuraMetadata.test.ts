@@ -103,26 +103,9 @@ describe("manifest -> Hasura metadata", () => {
             output_type: "String",
             timeout: 6,
             // Private, so the caller's own headers have to reach the service:
-            // the key is checked there, not at Hasura. All but the shared
-            // secret's, which a forwarded header would otherwise displace.
+            // the key is checked there, not at Hasura. Hasura's own ignore list
+            // is left untouched -- naming anything would replace it wholesale.
             forward_client_headers: true,
-            ignored_client_headers: [
-              "Content-Length",
-              "Content-MD5",
-              "User-Agent",
-              "Host",
-              "Origin",
-              "Referer",
-              "Accept",
-              "Accept-Encoding",
-              "Accept-Language",
-              "Accept-Datetime",
-              "Cache-Control",
-              "Connection",
-              "DNT",
-              "Content-Type",
-              "x-envio-resolver-secret",
-            ],
           },
         },
       ],
@@ -146,8 +129,8 @@ describe("manifest -> Hasura metadata", () => {
       actionSecret: "s3cr3t",
     });
     expect(withSecret.actions.map((a: any) => a.definition.headers)).toEqual([
-      [{ name: "x-envio-resolver-secret", value: "s3cr3t" }],
-      [{ name: "x-envio-resolver-secret", value: "s3cr3t" }],
+      [{ name: "x-hasura-envio-resolver-secret", value: "s3cr3t" }],
+      [{ name: "x-hasura-envio-resolver-secret", value: "s3cr3t" }],
     ]);
   });
 
@@ -172,47 +155,40 @@ describe("manifest -> Hasura metadata", () => {
     ]);
   });
 
-  // Verified against Hasura v2.43.0: with `forward_client_headers` on, a client
-  // header of the same name does not merge with the action's static header --
-  // it replaces it, and the static value is never sent. So any caller could
-  // send `x-envio-resolver-secret` and make the service reject the request as
-  // unauthenticated, denying the six private resolvers to their key holders.
-  // Ignoring the name is what makes the static value win. The rest of the list
-  // is Hasura's own default, restated because supplying the field replaces that
-  // default wholesale rather than adding to it -- dropping `Content-Length`
-  // alone forwards the client's, and every request fails to parse.
-  it("keeps a client from displacing the shared secret on a private action", () => {
+  // A client header displaces an action's static header of the same name rather
+  // than merging with it, so the secret that vouches for Hasura must sit under a
+  // name a caller cannot speak for. Hasura takes every client `x-hasura-*`
+  // header as a session variable and strips it before forwarding, which is why
+  // this name holds: a caller's copy never reaches the handler as a header.
+  //
+  // Naming it so is what lets the metadata stay free of `ignored_client_headers`.
+  // That field replaces Hasura's default list rather than extending it, so
+  // setting it pins whatever the defaults were on the version we looked at --
+  // and a later Hasura that defaults to ignoring one more header would forward
+  // the client's copy of it instead, breaking every private resolver on an
+  // upgrade nobody here was party to.
+  it("puts the shared secret beyond a caller's reach without pinning Hasura's defaults", () => {
     const actions = buildHasuraMetadata(manifest, {
       handlerUrl: "http://resolvers:9900/hasura-action",
       actionSecret: "s3cr3t",
     }).actions;
     expect(
-      actions.map((action: any) => [
-        action.name,
-        action.definition.ignored_client_headers,
-      ])
+      actions.map((action: any) => ({
+        name: action.name,
+        headers: action.definition.headers,
+        ignored: action.definition.ignored_client_headers,
+      }))
     ).toEqual([
-      ["accountPnl", undefined],
-      [
-        "referralCodeUpdates",
-        [
-          "Content-Length",
-          "Content-MD5",
-          "User-Agent",
-          "Host",
-          "Origin",
-          "Referer",
-          "Accept",
-          "Accept-Encoding",
-          "Accept-Language",
-          "Accept-Datetime",
-          "Cache-Control",
-          "Connection",
-          "DNT",
-          "Content-Type",
-          "x-envio-resolver-secret",
-        ],
-      ],
+      {
+        name: "accountPnl",
+        headers: [{ name: "x-hasura-envio-resolver-secret", value: "s3cr3t" }],
+        ignored: undefined,
+      },
+      {
+        name: "referralCodeUpdates",
+        headers: [{ name: "x-hasura-envio-resolver-secret", value: "s3cr3t" }],
+        ignored: undefined,
+      },
     ]);
   });
 

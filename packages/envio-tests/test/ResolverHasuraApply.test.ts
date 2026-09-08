@@ -101,7 +101,7 @@ const APPLIED_EXPORT = {
       definition: {
         handler: HANDLER,
         output_type: "String",
-        ignored_client_headers: [...IGNORED_CLIENT_HEADERS, "x-envio-resolver-secret"],
+        ignored_client_headers: IGNORED_CLIENT_HEADERS,
         type: "query",
         timeout: 6,
         forward_client_headers: true,
@@ -280,36 +280,38 @@ describe("applying resolver metadata", () => {
     });
   });
 
-  // The header that proves a request came from Hasura is only safe on a private
-  // action while Hasura is told to ignore the caller's copy of it. An action
-  // already registered by a build that did not know that keeps forwarding the
-  // caller's, so the difference has to be drift rather than something the
-  // reconcile reads past -- otherwise the upgrade lands and changes nothing.
-  it("re-applies a private action Hasura would let a client speak the secret for", async () => {
+  // The upgrade path off the build that named this header without the
+  // `x-hasura-` prefix: under the old name a caller could set it and have the
+  // service refuse them, so an action still carrying it has to read as drift
+  // and be rewritten, or the upgrade lands and leaves the hole open.
+  it("re-applies an action still naming the secret header a caller could set", async () => {
     exported = {
       ...APPLIED_EXPORT,
-      actions: [
-        APPLIED_EXPORT.actions[0],
-        {
-          ...APPLIED_EXPORT.actions[1],
-          definition: {
-            ...APPLIED_EXPORT.actions[1].definition,
-            ignored_client_headers: IGNORED_CLIENT_HEADERS,
-          },
+      actions: APPLIED_EXPORT.actions.map((action) => ({
+        ...action,
+        definition: {
+          ...action.definition,
+          headers: [{ name: "x-envio-resolver-secret", value: "s3cr3t" }],
         },
-      ],
+      })),
     };
-    const result = await apply();
-    expect({ reasons: result.reasons, args: bulkSent()[0]!.args }).toEqual({
-      reasons: ["action 'secretStats' differs"],
-      args: [
-        {
-          type: "update_action",
-          args: {
-            name: "secretStats",
-            definition: metadata.actions[1].definition,
-          },
-        },
+    const rotated = buildHasuraMetadata(buildRegisteredManifest().manifest, {
+      handlerUrl: HANDLER,
+      actionSecret: "s3cr3t",
+    });
+    const result = await applyResolverMetadata({
+      endpoint,
+      adminSecret: "testing",
+      metadata: rotated,
+    });
+    expect({
+      reasons: result.reasons,
+      headers: bulkSent()[0]!.args.map((a: any) => a.args.definition?.headers),
+    }).toEqual({
+      reasons: ["action 'marketsAprByPeriod' differs", "action 'secretStats' differs"],
+      headers: [
+        [{ name: "x-hasura-envio-resolver-secret", value: "s3cr3t" }],
+        [{ name: "x-hasura-envio-resolver-secret", value: "s3cr3t" }],
       ],
     });
   });
@@ -329,7 +331,7 @@ describe("applying resolver metadata", () => {
         ...action,
         definition: {
           ...action.definition,
-          headers: [{ name: "x-envio-resolver-secret", value: "old-secret" }],
+          headers: [{ name: "x-hasura-envio-resolver-secret", value: "old-secret" }],
         },
       })),
     };
@@ -344,8 +346,8 @@ describe("applying resolver metadata", () => {
     }).toEqual({
       reasons: ["action 'marketsAprByPeriod' differs", "action 'secretStats' differs"],
       headers: [
-        [{ name: "x-envio-resolver-secret", value: "new-secret" }],
-        [{ name: "x-envio-resolver-secret", value: "new-secret" }],
+        [{ name: "x-hasura-envio-resolver-secret", value: "new-secret" }],
+        [{ name: "x-hasura-envio-resolver-secret", value: "new-secret" }],
       ],
     });
   });

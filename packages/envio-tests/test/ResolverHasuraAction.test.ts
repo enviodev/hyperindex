@@ -222,7 +222,7 @@ describe("resolver /hasura-action", () => {
     try {
       const response = await fetch(`http://127.0.0.1:${guarded.port}/hasura-action`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-envio-resolver-secret": "s3cr3t" },
+        headers: { "content-type": "application/json", "x-hasura-envio-resolver-secret": "s3cr3t" },
         body: JSON.stringify({
           action: { name: "adminOnly" },
           input: {},
@@ -454,8 +454,8 @@ describe("resolver /hasura-action", () => {
     try {
       const [missing, wrong, right] = await Promise.all([
         call({}),
-        call({ "x-envio-resolver-secret": "guess" }),
-        call({ "x-envio-resolver-secret": "s3cr3t" }),
+        call({ "x-hasura-envio-resolver-secret": "guess" }),
+        call({ "x-hasura-envio-resolver-secret": "s3cr3t" }),
       ]);
       // `/resolve` takes the role as a plain body field, so it is the same
       // bypass through a different door and has to be shut with it.
