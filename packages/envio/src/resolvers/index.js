@@ -56,7 +56,13 @@ export function createResolver(options) {
         limit !== null &&
         !Array.isArray(limit) &&
         Object.keys(limit).length > 0 &&
-        Object.entries(limit).every(([chainId, value]) => whole(Number(chainId)) && whole(value)));
+        // Looked up as `limit[chain.chainId]`, so only the canonical decimal
+        // spelling ever matches: " 1" and "1e3" are numbers to `Number` but
+        // name no chain, and would leave the resolver silently ungated.
+        Object.entries(limit).every(
+          ([chainId, value]) =>
+            whole(Number(chainId)) && String(Number(chainId)) === chainId && whole(value)
+        ));
     if (!ok) {
       throw new Error(
         `Resolver '${name}' has an invalid \`maxBlocksBehind\`. It is how far behind head this resolver will still answer, so it is either a whole number of blocks applying to every chain, or an object of chainId to blocks naming the chains it cares about.`
