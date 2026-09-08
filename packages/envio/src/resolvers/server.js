@@ -63,8 +63,10 @@ function presentedSecret(request, expected) {
 
 /**
  * Whether the caller presented one of the configured private keys. Compared
- * against every key so a rotation can run two at once, and timing-safe against
- * each: a length or byte difference must not be readable from the clock.
+ * against every key so a rotation can run two at once, and byte-comparison is
+ * timing-safe. The length check short-circuits ahead of it and `some` stops at
+ * the first match, so a key's length and which key matched are both readable
+ * from the clock; only the bytes of a same-length key are not.
  */
 function presentedPrivateKey(request, keys) {
   const presented = request.headers[PRIVATE_KEY_HEADER];
@@ -114,24 +116,23 @@ export async function startResolverServer(options) {
   const port = options.port ?? ResolversEnv.port();
   const host = options.host ?? "0.0.0.0";
 
-  // Otherwise the resolver is simply absent and nothing says why: the
-  // declaration asked for admin-only, and admin-only is unreachable until
-  // something can tell an admin caller from any other.
-  const unreachable = (resolvers ?? []).filter((resolver) => resolver?.private === true);
-  if (privateKeys.length === 0 && unreachable.length > 0) {
+  // Otherwise the resolver is simply absent and nothing says why.
+  const privateResolvers = (resolvers ?? []).filter((resolver) => resolver?.private === true);
+  const named = () => privateResolvers.map((resolver) => `'${resolver.name}'`).join(", ");
+  const plural = privateResolvers.length > 1;
+  if (privateKeys.length === 0 && privateResolvers.length > 0) {
     logWarn(
-      `ENVIO_RESOLVERS_PRIVATE_KEYS is not set, so ${unreachable
-        .map((resolver) => `'${resolver.name}'`)
-        .join(", ")} cannot be reached: a private resolver with no key configured refuses every caller rather than serving anyone.`
+      `ENVIO_RESOLVERS_PRIVATE_KEYS is not set, so ${named()} cannot be reached: a private resolver with no key configured refuses every caller rather than serving anyone.`
     );
   }
-  if (actionSecret === undefined && unreachable.length > 0) {
+  // Not a claim that anything is unreachable: with keys configured a private
+  // resolver is reached with one, and this secret is only what makes an
+  // `admin` role believable.
+  if (actionSecret === undefined && privateResolvers.length > 0) {
     logWarn(
-      `ENVIO_RESOLVERS_ACTION_SECRET is not set, so an 'admin' role in a request is only the caller's own claim and is not believed. ${unreachable
-        .map((resolver) => `'${resolver.name}'`)
-        .join(", ")} declared admin, so nothing can reach ${
-        unreachable.length > 1 ? "them" : "it"
-      } until the secret is set.`
+      `ENVIO_RESOLVERS_ACTION_SECRET is not set, so an 'admin' role in a request is only the caller's own claim and is not believed. ${named()} ${
+        plural ? "are" : "is"
+      } private, so ${plural ? "they" : "it"} can only be reached with a key from ENVIO_RESOLVERS_PRIVATE_KEYS.`
     );
   }
 
@@ -215,10 +216,10 @@ export async function startResolverServer(options) {
     // ahead of reading the body at all.
     //
     // With no secret configured there is no gate, and then an `admin` claim is
-    // self-certified: `admin: true` keeps a resolver off the public schema, so
-    // honouring the claim would leave it reachable by anything that can dial
-    // this process. Unauthenticated callers are therefore public, whatever they
-    // say they are -- the resolver is unreachable rather than unguarded.
+    // self-certified: honouring it would let anything that can dial this
+    // process past a private resolver's key check. Unauthenticated callers are
+    // therefore public, whatever they say they are -- the resolver refuses them
+    // rather than being left unguarded.
     if (actionSecret !== undefined && !presentedSecret(request, actionSecret)) {
       const refusal = "This resolver service requires its shared secret on every request.";
       send(
