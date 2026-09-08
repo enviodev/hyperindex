@@ -4,29 +4,28 @@ ecosystem: svm
 chains:
   - id: solana
     start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Swapper
-          program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-          instructions:
-            - name: swap
-              discriminator: "0x09"
-              args:
-                - name: side
-                  type:
-                    enum:
-                      - { name: Bid }
-                      - { name: Ask }
-                - name: mode
-                  type:
-                    enum:
-                      - { name: ExactIn }
-                      - { name: Limit, fields: [{ name: price, type: u64 }] }
-                      - { name: Empty, fields: [] }
-              accounts:
-                - source
+    hypersync_config:
+      url: https://solana.hypersync.xyz
+programs:
+  - name: Swapper
+    program_id: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
+    instructions:
+      - name: swap
+        discriminator: "0x09"
+        args:
+          - name: side
+            type:
+              enum:
+                - { name: Bid }
+                - { name: Ask }
+          - name: mode
+            type:
+              enum:
+                - { name: ExactIn }
+                - { name: Limit, fields: [{ name: price, type: u64 }] }
+                - { name: Empty, fields: [] }
+        accounts:
+          - source
 `
 
 let _ = InternalTestIndexer.fromUserApi(

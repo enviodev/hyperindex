@@ -324,8 +324,6 @@ struct ChainConfig {
     hypersync: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     rpcs: Vec<RpcConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    rpc: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     contracts: BTreeMap<String, ChainContractConfig>,
 }
@@ -454,7 +452,6 @@ impl From<&AccountSlot> for SvmAccountSlotItem {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct SvmAbiJson {
-    program_id: String,
     /// Nominal-type registry referenced by `ArgComposite::Defined`. The
     /// runtime resolves these once per program at startup.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -504,7 +501,7 @@ impl SystemConfig {
             .map(|network| {
                 let chain_name = chain_id_to_name(network.id, &cfg.get_ecosystem());
 
-                let (hypersync, rpcs, rpc) = match &network.sync_source {
+                let (hypersync, rpcs) = match &network.sync_source {
                     system_config::DataSource::Evm { main, rpcs } => {
                         let hypersync_url = match main {
                             system_config::MainEvmDataSource::HyperSync {
@@ -536,15 +533,14 @@ impl SystemConfig {
                                 polling_interval: rpc.polling_interval,
                             })
                             .collect();
-                        (hypersync_url, rpc_configs, None)
+                        (hypersync_url, rpc_configs)
                     }
                     system_config::DataSource::Fuel {
                         hypersync_endpoint_url,
-                    } => (Some(hypersync_endpoint_url.clone()), vec![], None),
+                    } => (Some(hypersync_endpoint_url.clone()), vec![]),
                     system_config::DataSource::Svm {
-                        rpc,
                         hypersync_endpoint_url,
-                    } => (hypersync_endpoint_url.clone(), vec![], rpc.clone()),
+                    } => (Some(hypersync_endpoint_url.clone()), vec![]),
                 };
 
                 let chain_contracts: BTreeMap<String, ChainContractConfig> = network
@@ -571,7 +567,6 @@ impl SystemConfig {
                         block_lag: network.block_lag,
                         hypersync,
                         rpcs,
-                        rpc,
                         contracts: chain_contracts,
                     },
                 )
@@ -667,12 +662,7 @@ impl SystemConfig {
                         })
                         .collect();
                     let svm_abi = match &contract.abi {
-                        Abi::Svm(SvmAbi {
-                            program_id,
-                            idl,
-                            source,
-                        }) => Some(SvmAbiJson {
-                            program_id: program_id.clone(),
+                        Abi::Svm(SvmAbi { idl, source }) => Some(SvmAbiJson {
                             defined_types: idl
                                 .defined_types
                                 .iter()

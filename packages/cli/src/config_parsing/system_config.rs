@@ -1363,74 +1363,70 @@ impl SystemConfig {
             }
             HumanConfig::Svm(ref svm_config) => {
                 validation::validate_deserialized_svm_config_yaml(svm_config)?;
-                for network in &svm_config.chains {
-                    let chain_id = network.id.to_u64();
-                    let hypersync_endpoint_url = network
-                        .experimental
-                        .as_ref()
-                        .map(|e| match &e.hypersync_config {
-                            Some(hypersync_config) => Ok(hypersync_config.url.clone()),
-                            None => svm::default_hypersync_endpoint(chain_id).ok_or_else(|| {
-                                anyhow!(
-                                    "Chain {chain_id} has no default HyperSync endpoint. Set \
-                                     `experimental.hypersync_config.url` explicitly, or use the \
-                                     `solana` / `solana-devnet` chain id."
-                                )
-                            }),
-                        })
-                        .transpose()?;
-                    let sync_source = DataSource::Svm {
-                        rpc: network.rpc.clone(),
-                        hypersync_endpoint_url,
-                    };
 
-                    let programs = network
-                        .experimental
-                        .as_ref()
-                        .map(|e| e.programs.as_slice())
-                        .unwrap_or(&[]);
-                    let mut chain_contracts = Vec::new();
-                    for program in programs {
-                        let svm_abi = resolve_program_schema(program, source)
-                            .with_context(|| format!("Program '{}'", program.name))?;
-                        let events = instruction_catalog(program, &svm_abi.idl)?
-                            .into_iter()
-                            .map(|(name, resolved)| {
-                                let ResolvedInstruction {
-                                    discriminator,
+                let program_addresses = resolve_svm_program_addresses(svm_config)?;
+
+                let mut chain_contracts: HashMap<u64, Vec<ChainContract>> = HashMap::new();
+                for program in &svm_config.programs {
+                    let svm_abi = resolve_program_schema(program, source)
+                        .with_context(|| format!("Program '{}'", program.name))?;
+                    let events = instruction_catalog(program, &svm_abi.idl)?
+                        .into_iter()
+                        .map(|(name, resolved)| {
+                            let ResolvedInstruction {
+                                discriminator,
+                                accounts,
+                                args,
+                            } = resolved;
+                            let normalized_discriminator =
+                                discriminator.map(|d| format!("0x{}", crate::hex::encode(&d)));
+                            Event {
+                                name,
+                                kind: EventKind::Svm(SvmEventKind {
+                                    discriminator: normalized_discriminator.clone(),
                                     accounts,
                                     args,
-                                } = resolved;
-                                let normalized_discriminator =
-                                    discriminator.map(|d| format!("0x{}", crate::hex::encode(&d)));
-                                Event {
-                                    name,
-                                    kind: EventKind::Svm(SvmEventKind {
-                                        discriminator: normalized_discriminator.clone(),
-                                        accounts,
-                                        args,
-                                    }),
-                                    sighash: normalized_discriminator.unwrap_or_default(),
-                                    event_signature: String::new(),
-                                    field_selection: None,
-                                }
-                            })
-                            .collect();
-                        warn_about_unindexable(program, &svm_abi.idl.unusable);
+                                }),
+                                sighash: normalized_discriminator.unwrap_or_default(),
+                                event_signature: String::new(),
+                                field_selection: None,
+                            }
+                        })
+                        .collect();
+                    warn_about_unindexable(program, &svm_abi.idl.unusable);
 
-                        let contract = Contract::new(
-                            program.name.clone(),
-                            program.handler.clone(),
-                            events,
-                            Abi::Svm(svm_abi),
-                        )?;
-                        contracts.insert(contract.name.clone(), contract.clone());
-                        chain_contracts.push(ChainContract {
-                            name: program.name.clone(),
-                            addresses: vec![program.program_id.clone()],
-                            start_block: None,
-                        });
+                    let contract = Contract::new(
+                        program.name.clone(),
+                        program.handler.clone(),
+                        events,
+                        Abi::Svm(svm_abi),
+                    )?;
+                    contracts.insert(contract.name.clone(), contract);
+
+                    for (chain_id, address) in &program_addresses[&program.name] {
+                        chain_contracts
+                            .entry(*chain_id)
+                            .or_default()
+                            .push(ChainContract {
+                                name: program.name.clone(),
+                                addresses: vec![address.clone()],
+                                start_block: None,
+                            });
                     }
+                }
+
+                for network in &svm_config.chains {
+                    let chain_id = network.id.to_u64();
+                    let hypersync_endpoint_url = match &network.hypersync_config {
+                        Some(hypersync_config) => hypersync_config.url.clone(),
+                        None => svm::default_hypersync_endpoint(chain_id).ok_or_else(|| {
+                            anyhow!(
+                                "Chain {chain_id} has no default HyperSync endpoint. Set \
+                                 `hypersync_config.url` explicitly, or use the `solana` / \
+                                 `solana-devnet` chain id."
+                            )
+                        })?,
+                    };
 
                     let chain = Chain {
                         id: chain_id,
@@ -1439,18 +1435,15 @@ impl SystemConfig {
                         end_block: network.end_block,
                         max_reorg_depth: None,
                         block_lag: network.block_lag,
-                        sync_source,
-                        contracts: chain_contracts,
+                        sync_source: DataSource::Svm {
+                            hypersync_endpoint_url,
+                        },
+                        contracts: chain_contracts.remove(&chain_id).unwrap_or_default(),
                     };
 
                     unique_hashmap::try_insert(&mut chains, chain.id, chain)
                         .context("Failed inserting chain at chains map")?;
                 }
-
-                // Reorg rollback is only meaningful for the experimental
-                // HyperSync source (it surfaces block hashes); RPC-only chains
-                // keep it off for now.
-                let uses_hypersync = svm_config.chains.iter().any(|n| n.experimental.is_some());
 
                 let chain_id_mode = ChainIdMode::resolve(&chains)?;
 
@@ -1465,7 +1458,7 @@ impl SystemConfig {
                     chains,
                     chain_id_mode,
                     contracts,
-                    rollback_on_reorg: uses_hypersync,
+                    rollback_on_reorg: true,
                     save_full_history: false,
                     default_chain_scope: default_scope,
                     schema,
@@ -1594,8 +1587,7 @@ pub enum DataSource {
         hypersync_endpoint_url: ServerUrl,
     },
     Svm {
-        rpc: Option<ServerUrl>,
-        hypersync_endpoint_url: Option<ServerUrl>,
+        hypersync_endpoint_url: ServerUrl,
     },
 }
 
@@ -1844,6 +1836,113 @@ impl EvmAbi {
     }
 }
 
+/// Places every program on the chains it is deployed to, in `chains` order.
+/// A program's `program_id` must name every chain the config declares — the
+/// mapping is the single place that says where a program lives, so a chain it
+/// forgets is a config the user cannot read off the page.
+fn resolve_svm_program_addresses(
+    svm_config: &human_config::svm::HumanConfig,
+) -> Result<HashMap<String, Vec<(u64, String)>>> {
+    use human_config::svm::{ChainProgramId, ProgramId};
+
+    let chain_tokens: Vec<String> = svm_config.chains.iter().map(|c| c.id.token()).collect();
+
+    let mut resolved = HashMap::new();
+    for program in &svm_config.programs {
+        let placements: Vec<(u64, String)> = match &program.program_id {
+            ProgramId::Single(address) => {
+                let [chain] = svm_config.chains.as_slice() else {
+                    let suggestion = chain_tokens
+                        .iter()
+                        .enumerate()
+                        .map(|(i, token)| {
+                            let value = if i == 0 { address.as_str() } else { "_" };
+                            format!("    {token}: {value}")
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    return Err(anyhow!(
+                        "Program '{name}' gives a single `program_id`, but the config defines \
+                         {count} chains. Name every chain instead:\n\n  program_id:\n{suggestion}\n\n\
+                         Write `_` for a chain the program is not deployed on.",
+                        name = program.name,
+                        count = svm_config.chains.len(),
+                    ));
+                };
+                vec![(chain.id.to_u64(), address.clone())]
+            }
+            ProgramId::PerChain(by_chain) => {
+                // A cluster answers to its label and to its number, so keys are
+                // matched on the id they resolve to rather than on spelling.
+                let mut by_id: HashMap<u64, &ChainProgramId> = HashMap::new();
+                for (token, program_id) in by_chain {
+                    let Some(chain_id) = human_config::svm::ChainId::parse(token) else {
+                        return Err(anyhow!(
+                            "Program '{name}' keys a `program_id` on '{token}', which is not a \
+                             chain id: expected a cluster label or a number. Declared chains: \
+                             {chains}.",
+                            name = program.name,
+                            chains = chain_tokens.join(", "),
+                        ));
+                    };
+                    let chain_id = chain_id.to_u64();
+                    if !svm_config.chains.iter().any(|c| c.id.to_u64() == chain_id) {
+                        return Err(anyhow!(
+                            "Program '{name}' gives a `program_id` for chain '{token}', which the \
+                             config does not define. Declared chains: {chains}.",
+                            name = program.name,
+                            chains = chain_tokens.join(", "),
+                        ));
+                    }
+                    if by_id.insert(chain_id, program_id).is_some() {
+                        return Err(anyhow!(
+                            "Program '{name}' gives a `program_id` for chain '{token}' twice, \
+                             once by label and once by number.",
+                            name = program.name,
+                        ));
+                    }
+                }
+
+                let missing: Vec<String> = svm_config
+                    .chains
+                    .iter()
+                    .filter(|chain| !by_id.contains_key(&chain.id.to_u64()))
+                    .map(|chain| format!("chain '{}'", chain.id.token()))
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(anyhow!(
+                        "Program '{name}' gives no `program_id` for {missing}. Every chain the \
+                         config defines must be named; write `_` for a chain the program is not \
+                         deployed on.",
+                        name = program.name,
+                        missing = missing.join(", "),
+                    ));
+                }
+
+                svm_config
+                    .chains
+                    .iter()
+                    .filter_map(|chain| match by_id.get(&chain.id.to_u64()) {
+                        Some(ChainProgramId::Address(address)) => {
+                            Some((chain.id.to_u64(), address.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            }
+        };
+
+        if placements.is_empty() {
+            return Err(anyhow!(
+                "Program '{}' is not deployed on any chain: every `program_id` entry is `_`.",
+                program.name
+            ));
+        }
+        resolved.insert(program.name.clone(), placements);
+    }
+    Ok(resolved)
+}
+
 fn resolve_program_schema(
     program: &human_config::svm::Program,
     source: &dyn ConfigSource,
@@ -1859,14 +1958,12 @@ fn resolve_program_schema(
             .to_string();
         let idl = svm_idl::parse_idl(&path, &resolved.raw)?;
         return Ok(SvmAbi {
-            program_id: program.program_id.clone(),
             idl,
             source: SvmSchemaSource::AnchorIdl { path },
         });
     }
 
     Ok(SvmAbi {
-        program_id: program.program_id.clone(),
         idl: ProgramIdl::default(),
         source: SvmSchemaSource::Inline,
     })
@@ -2015,8 +2112,6 @@ pub enum Abi {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SvmAbi {
-    /// Base58 program id this schema describes.
-    pub program_id: String,
     /// Every instruction the program declares, by name, with the reason for
     /// each one this runtime cannot dispatch or decode. Read from the user's
     /// `idl:` file, and empty for a program whose instructions carry their
@@ -2825,17 +2920,15 @@ mod test {
         };
 
         let schema = "type Foo @entity { id: ID! }";
-        let program_block = |name: &str| {
+        let program_block = |name: &str, mainnet: &str, devnet: &str| {
             format!(
-                r#"    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: {name}
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: UpdateMetadataAccountV2
-              discriminator: "0x0f"
+                r#"  - name: {name}
+    program_id:
+      solana: {mainnet}
+      solana-devnet: {devnet}
+    instructions:
+      - name: UpdateMetadataAccountV2
+        discriminator: "0x0f"
 "#
             )
         };
@@ -2843,9 +2936,19 @@ mod test {
         // one config: the old hardcoded 0 made the second insert collide.
         let yaml = format!(
             "\nname: svm-chain-id\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
-             0\n{}  - id: solana-devnet\n    start_block: 0\n{}",
-            program_block("TokenMetadata"),
-            program_block("TokenMetadataDevnet"),
+             0\n    hypersync_config:\n      url: https://solana.hypersync.xyz\n  - id: \
+             solana-devnet\n    start_block: 0\n    hypersync_config:\n      url: \
+             https://solana.hypersync.xyz\nprograms:\n{}{}",
+            program_block(
+                "TokenMetadata",
+                "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+                "_"
+            ),
+            program_block(
+                "TokenMetadataDevnet",
+                "_",
+                "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+            ),
         );
         let config =
             SystemConfig::parse_yaml(&yaml, Some(schema), &HashMap::new(), &HashMap::new(), false)
@@ -3761,13 +3864,13 @@ type Foo {
             let instructions_yaml = if instructions.is_empty() {
                 String::new()
             } else {
-                format!("          instructions:\n{instructions}")
+                format!("    instructions:\n{instructions}")
             };
             let yaml = format!(
                 "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
-                 0\n    experimental:\n      hypersync_config:\n        url: \
-                 https://solana.hypersync.xyz\n      programs:\n        - name: Pool\n          \
-                 program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n          idl: \
+                 0\n    hypersync_config:\n      url: \
+                 https://solana.hypersync.xyz\nprograms:\n  - name: Pool\n    program_id: \
+                 TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n    idl: \
                  idls/pool.json\n{instructions_yaml}"
             );
             SystemConfig::parse_yaml(
@@ -3868,10 +3971,9 @@ type Foo {
         #[test]
         fn omits_yaml_instructions_to_expose_the_idl_catalog() {
             let yaml = "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
-                 0\n    experimental:\n      hypersync_config:\n        url: \
-                 https://solana.hypersync.xyz\n      programs:\n        - name: Pool\n          \
-                 program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n          idl: \
-                 idls/pool.json\n";
+                 0\n    hypersync_config:\n      url: \
+                 https://solana.hypersync.xyz\nprograms:\n  - name: Pool\n    program_id: \
+                 TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n    idl: idls/pool.json\n";
             let config = SystemConfig::parse_yaml(
                 yaml,
                 Some("type Foo @entity { id: ID! }"),
@@ -3919,11 +4021,11 @@ type Foo {
         fn account_slots(accounts: &str) -> anyhow::Result<Vec<String>> {
             let yaml = format!(
                 "name: svm-slots\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
-                 0\n    experimental:\n      hypersync_config:\n        url: \
-                 https://solana.hypersync.xyz\n      programs:\n        - name: Pool\n          \
-                 program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n          \
-                 instructions:\n            - name: swap\n              discriminator: \
-                 \"0x01\"\n              args: []\n              accounts: {accounts}\n"
+                 0\n    hypersync_config:\n      url: \
+                 https://solana.hypersync.xyz\nprograms:\n  - name: Pool\n    program_id: \
+                 TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n    instructions:\n      - name: \
+                 swap\n        discriminator: \"0x01\"\n        args: []\n        accounts: \
+                 {accounts}\n"
             );
             let config = SystemConfig::parse_yaml(
                 &yaml,
@@ -3997,31 +4099,31 @@ type Foo {
                 vec![
                     "optional and unnamed: Failed to deserialize config. Visit the docs for more \
                      information https://docs.envio.dev/docs/configuration-file: \
-                     chains[0].experimental.programs[0].instructions[0].accounts[1]: account slot \
+                     programs[0].instructions[0].accounts[1]: account slot \
                      '?_' marks an unnamed slot optional, which nothing can observe. Write '_' to \
-                     hold the position, or name the slot. at line 16 column 33",
+                     hold the position, or name the slot. at line 15 column 27",
                     "trailing unnamed: Program 'Pool', instruction 'swap': the account list ends \
                      with '_', a position nothing follows. Drop it.",
                     "duplicate name: Program 'Pool', instruction 'swap': account 'payer' is \
                      declared more than once.",
                     "no letter in the name: Failed to deserialize config. Visit the docs for more \
                      information https://docs.envio.dev/docs/configuration-file: \
-                     chains[0].experimental.programs[0].instructions[0].accounts[1]: account slot \
+                     programs[0].instructions[0].accounts[1]: account slot \
                      '_1' is not a name: expected letters, digits and underscores, at least one \
                      of them a letter. Prefix a name with '?' to mark the slot optional, or write \
-                     '_' to hold a position without naming it. at line 16 column 33",
+                     '_' to hold a position without naming it. at line 15 column 27",
                     "punctuation in the name: Failed to deserialize config. Visit the docs for \
                      more information https://docs.envio.dev/docs/configuration-file: \
-                     chains[0].experimental.programs[0].instructions[0].accounts[1]: account slot \
+                     programs[0].instructions[0].accounts[1]: account slot \
                      'mint-authority' is not a name: expected letters, digits and underscores, at \
                      least one of them a letter. Prefix a name with '?' to mark the slot \
-                     optional, or write '_' to hold a position without naming it. at line 16 \
-                     column 33",
+                     optional, or write '_' to hold a position without naming it. at line 15 \
+                     column 27",
                     "a mapping carrying a value: Failed to deserialize config. Visit the docs \
                      for more information https://docs.envio.dev/docs/configuration-file: \
-                     chains[0].experimental.programs[0].instructions[0].accounts[1]: expected an \
+                     programs[0].instructions[0].accounts[1]: expected an \
                      account name, got a mapping. To mark 'mint' optional, write \"?mint\". at \
-                     line 16 column 33",
+                     line 15 column 27",
                 ]
             );
         }
@@ -4503,8 +4605,8 @@ type Foo {
         #[test]
         fn does_not_attach_a_schema_to_metaplex_by_program_id() {
             let yaml = "name: metaplex\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
-                 0\n    experimental:\n      hypersync_config:\n        url: \
-                 https://solana.hypersync.xyz\n      programs:\n        - name: TokenMetadata\n          \
+                 0\n    hypersync_config:\n      url: \
+                 https://solana.hypersync.xyz\nprograms:\n  - name: TokenMetadata\n    \
                  program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n";
             let config = SystemConfig::parse_yaml(
                 yaml,
@@ -4578,7 +4680,7 @@ type Foo {
             assert!(matches!(
                 &chain.sync_source,
                 DataSource::Svm {
-                    hypersync_endpoint_url: Some(url),
+                    hypersync_endpoint_url: url,
                     ..
                 } if url == "https://solana.hypersync.xyz"
             ));

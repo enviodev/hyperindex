@@ -1,8 +1,8 @@
-# Inline experimental.programs fragments (Stream B) - 2026-05-28
+# Inline programs fragments (Stream B) - 2026-05-28
 #
 # Ready-to-paste config.yaml entries for the NON-IDL (inline-decoded) programs.
 # Paste these as siblings of the Jupiter/Drift/Kamino (idl:) entries under
-#   chains[0].experimental.programs
+#   programs
 # Schema verified against packages/envio/svm.schema.json:
 #   instruction keys = { name, discriminator, args:[{name,type}], accounts:[str] }
 #   args .type accepts bare-string primitives ("u64","u8",...).

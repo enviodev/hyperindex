@@ -31,7 +31,7 @@ Open the GraphQL playground at `http://localhost:8080` and query:
 ## What this teaches
 
 - Declaring a Solana program + its instructions in `config.yaml`
-  (`ecosystem: svm`, `experimental.programs[].instructions[]`).
+  (`ecosystem: svm`, `programs[].instructions[]`).
 - Using `indexer.onInstruction({program, instruction}, handler)` to receive
   an instruction's accounts under the names `config.yaml` gives its slots.
 - Persisting per-instruction state to a typed entity (`TokenMetadataAccount`)

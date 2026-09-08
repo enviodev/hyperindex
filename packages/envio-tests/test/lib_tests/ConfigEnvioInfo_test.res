@@ -3,13 +3,13 @@ open Vitest
 let json = (s: string): JSON.t => s->JSON.parseOrThrow
 
 describe("Config.stripSensitiveData", () => {
-  it("removes rpcs, rpc, and hypersync from chains across evm/fuel/svm", t => {
+  it("removes rpcs and hypersync from chains across evm/fuel/svm", t => {
     let input = json(`{
       "name": "demo",
       "evm": {
         "chains": {
           "1": {"id": 1, "rpcs": [{"url": "https://secret"}], "hypersync": "https://eth.hypersync.xyz"},
-          "10": {"id": 10, "rpc": "https://other-secret"}
+          "10": {"id": 10, "rpcs": [{"url": "https://other-secret"}]}
         }
       },
       "fuel": {
@@ -19,7 +19,7 @@ describe("Config.stripSensitiveData", () => {
       },
       "svm": {
         "chains": {
-          "mainnet": {"id": 101, "rpc": "https://svm-secret"}
+          "mainnet": {"id": 101, "hypersync": "https://solana.hypersync.xyz"}
         }
       }
     }`)
@@ -46,7 +46,7 @@ describe("Config.stripSensitiveData", () => {
 
     t.expect(
       Config.stripSensitiveData(input),
-      ~message="strips rpcs, rpc, and hypersync",
+      ~message="strips rpcs and hypersync",
     ).toEqual(expected)
   })
 

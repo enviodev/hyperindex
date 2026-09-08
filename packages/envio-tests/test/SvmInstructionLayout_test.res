@@ -38,35 +38,34 @@ ecosystem: svm
 chains:
   - id: solana
     start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Memo
-          program_id: ${memoId}
-          instructions:
-            - name: anyCall
-              discriminator: "0x"
-        - name: NamesOnly
-          program_id: ${namesId}
-          instructions:
-            - name: transfer
-              discriminator: "0x01"
-              accounts:
-                - source
-        - name: ArgsOnly
-          program_id: ${argsId}
-          instructions:
-            - name: transfer
-              discriminator: "0x02"
-              args:
-                - { name: amount, type: u64 }
-        - name: NoArgs
-          program_id: ${bareId}
-          instructions:
-            - name: tick
-              discriminator: "0x03"
-              args: []
+    hypersync_config:
+      url: https://solana.hypersync.xyz
+programs:
+  - name: Memo
+    program_id: ${memoId}
+    instructions:
+      - name: anyCall
+        discriminator: "0x"
+  - name: NamesOnly
+    program_id: ${namesId}
+    instructions:
+      - name: transfer
+        discriminator: "0x01"
+        accounts:
+          - source
+  - name: ArgsOnly
+    program_id: ${argsId}
+    instructions:
+      - name: transfer
+        discriminator: "0x02"
+        args:
+          - { name: amount, type: u64 }
+  - name: NoArgs
+    program_id: ${bareId}
+    instructions:
+      - name: tick
+        discriminator: "0x03"
+        args: []
 `,
   ~handlers=`
 import { indexer } from "envio";
