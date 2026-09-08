@@ -10,6 +10,9 @@ chains:
         - name: TokenMetadata
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           instructions:
+            # No `args`, so nothing decodes the payload and every call with
+            # this discriminator is indexed. `args: []` would say the opposite
+            # — that the instruction takes none — and skip these calls.
             - name: CreateMetadataAccountV3
               discriminator: "0x21"
               accounts:
