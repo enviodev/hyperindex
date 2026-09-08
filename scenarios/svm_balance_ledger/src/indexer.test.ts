@@ -1,13 +1,14 @@
 // Live E2E test against solana.hypersync.xyz. Drives the SVM stack end-to-end:
 // SvmHyperSyncSource -> Rust-side routing -> indexer.onInstruction dispatch ->
-// entity writes. The slot window is pinned in config.test.yaml.
-process.env.ENVIO_CONFIG = "config.test.yaml";
+// entity writes. START_SLOT and END_SLOT pin the window config.yaml leaves open.
+process.env.START_SLOT = "420650000";
+process.env.END_SLOT = "420650029";
 
 import { describe, it, expect } from "vitest";
 import { createTestIndexer } from "envio";
 
-const START_SLOT = 420_650_000;
-const END_SLOT = 420_650_029;
+const START_SLOT = Number(process.env.START_SLOT);
+const END_SLOT = Number(process.env.END_SLOT);
 
 // Last write wins, so the collected rows are the state the window ended in.
 const collect = (changes: readonly unknown[], entity: string): Map<string, any> => {
@@ -45,7 +46,15 @@ describe("Balance ledger indexer (live)", () => {
         }
       }
 
-      const conserving = flows.filter((f) => f.conserving);
+      // The fold the handler no longer does: a transaction conserves only if
+      // every token instruction it carried conserves. This is the same
+      // derivation sql/clickhouse.sql expresses as a join.
+      const nonConservingTxs = new Set(
+        [...collect(result.changes, "TxTokenInstruction").values()]
+          .filter((i) => !i.conserves)
+          .map((i) => i.txSig),
+      );
+      const conserving = flows.filter((f) => !nonConservingTxs.has(f.txSig));
 
       expect({
         startSlot: START_SLOT,

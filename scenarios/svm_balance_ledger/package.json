@@ -8,7 +8,8 @@
     "start": "envio start",
     "test": "vitest run",
     "docker-up": "envio local docker up",
-    "docker-down": "envio local docker down"
+    "docker-down": "envio local docker down",
+    "ui": "python3 -m http.server 5173 --directory ui"
   },
   "devDependencies": {
     "@types/node": "24.12.2",

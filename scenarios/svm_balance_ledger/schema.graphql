@@ -1,13 +1,17 @@
 # Every row is derived from the pre/post token amounts the chain reports on the
 # transaction itself. Nothing here is read back from account state.
 
-type BalanceChange {
+# Append-only and always read as an aggregate over a slot range, so it lives in
+# ClickHouse alone. The sort key is the point-in-time query: finding an account's
+# balance at a slot is a primary-key range scan, not a search.
+type BalanceChange
+  @storage(clickhouse: { orderBy: ["account", "slot", "txIndex"] }) {
   id: ID! # "${slot}:${txIndex}:${account}"
-  account: String! @index
-  mint: String! @index
+  account: String!
+  mint: String!
   owner: String!
   decimals: Int!
-  slot: Int! @index
+  slot: Int!
   txIndex: Int!
   txSig: String!
   preAmount: BigInt!
@@ -20,7 +24,10 @@ type BalanceChange {
   isOpening: Boolean!
 }
 
-type TokenAccount {
+# The one mutable entity: a running balance updated in place, which the handler
+# reads back to check continuity. That read needs Postgres — ClickHouse storage
+# is write-only from handlers — and ClickHouse serves it to the UI.
+type TokenAccount @storage(postgres: true, clickhouse: true) {
   id: ID! # token account pubkey
   mint: String! @index
   owner: String!
@@ -34,19 +41,30 @@ type TokenAccount {
   gapCount: Int!
 }
 
-# Per (transaction, mint) sum of every token account delta. `conserving` marks a
-# transaction whose matched instructions were all classic SPL Token transfers,
-# which move tokens between accounts without changing how many exist, so the sum
-# is zero. It folds over the whole transaction rather than per mint, so a mixed
-# transaction marks every mint in it non-conserving.
-type TxMintFlow {
+# Per (transaction, mint) sum of every token account delta. Whether that sum is
+# expected to be zero depends on which instructions the transaction carried,
+# which is a join away in TxTokenInstruction rather than folded in here — every
+# write of this row carries the same values, so it needs no read back.
+type TxMintFlow @storage(clickhouse: { orderBy: ["mint", "slot"] }) {
   id: ID! # "${txSig}:${mint}"
-  txSig: String! @index
-  mint: String! @index
+  txSig: String!
+  mint: String!
   slot: Int!
   sumDelta: BigInt!
   accountsTouched: Int!
-  conserving: Boolean!
+}
+
+# One row per distinct token instruction a transaction carried. `conserves`
+# marks a classic SPL Token transfer, which moves tokens between accounts
+# without changing how many exist. A transaction whose instructions all conserve
+# must have a zero TxMintFlow.sumDelta for every mint it touched.
+type TxTokenInstruction @storage(clickhouse: { orderBy: ["slot"] }) {
+  id: ID! # "${txSig}:${program}:${instructionName}"
+  txSig: String!
+  slot: Int!
+  program: String!
+  instructionName: String!
+  conserves: Boolean!
 }
 
 type LedgerStats {

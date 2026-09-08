@@ -1,0 +1,731 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solana Balance Ledger</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-0: #f4f4f2;
+    --surface-1: #fcfcfb;
+    --surface-2: #eceae5;
+    --border: #dcdad4;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #7d7b74;
+    --series-1: #2a78d6;
+    --series-1-soft: #cde2fb;
+    --negative: #e34948;
+    --good: #008300;
+    --good-soft: #dbf0db;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-0: #121211;
+      --surface-1: #1a1a19;
+      --surface-2: #262624;
+      --border: #383835;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #918f85;
+      --series-1: #3987e5;
+      --series-1-soft: #184f95;
+      --negative: #e66767;
+      --good: #4caf50;
+      --good-soft: #1e3a1e;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --surface-2: #262624;
+    --border: #383835;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #918f85;
+    --series-1: #3987e5;
+    --series-1-soft: #184f95;
+    --negative: #e66767;
+    --good: #4caf50;
+    --good-soft: #1e3a1e;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--surface-0);
+    color: var(--text-primary);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 64px; }
+
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 4px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  .lede { color: var(--text-secondary); max-width: 62ch; margin: 8px 0 28px; }
+  .spacer { flex: 1; }
+
+  button, select, input {
+    font: inherit;
+    color: var(--text-primary);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 10px;
+  }
+  button { cursor: pointer; }
+  button:hover { background: var(--surface-2); }
+  input:focus-visible, select:focus-visible, button:focus-visible {
+    outline: 2px solid var(--series-1);
+    outline-offset: 1px;
+  }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 4px; letter-spacing: -0.005em; }
+  .card p.note { color: var(--text-secondary); margin: 0 0 18px; max-width: 70ch; }
+
+  .controls { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-bottom: 20px; }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label { font-size: 12px; color: var(--text-muted); }
+  .field.grow { flex: 1; min-width: 260px; }
+  .field.grow input { width: 100%; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .tile .value { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .tile .label { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .tile.verdict { background: var(--good-soft); border-color: var(--good); }
+  .tile.verdict .value { color: var(--good); }
+
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .grid line { stroke: var(--border); stroke-width: 1; }
+  .axis text { fill: var(--text-muted); font-size: 11px; }
+  .axis-title { fill: var(--text-secondary); font-size: 11px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th { text-align: left; font-weight: 600; color: var(--text-secondary); padding: 6px 10px 6px 0; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 6px 10px 6px 0; border-bottom: 1px solid var(--surface-2); font-variant-numeric: tabular-nums; }
+  td.num, th.num { text-align: right; }
+  .scroll { overflow-x: auto; }
+  .neg { color: var(--negative); }
+
+  details.sql { margin-top: 16px; }
+  details.sql summary { cursor: pointer; color: var(--text-muted); font-size: 12px; }
+  details.sql pre {
+    background: var(--surface-2); border-radius: 8px; padding: 12px;
+    overflow-x: auto; font-size: 12px; margin: 8px 0 0; color: var(--text-secondary);
+  }
+
+  .status { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-secondary); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex: none; }
+  .dot.ok { background: var(--good); }
+  .dot.bad { background: var(--negative); }
+
+  .check { display: flex; align-items: baseline; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--surface-2); }
+  .check:last-of-type { border-bottom: 0; }
+  .check .mark { font-weight: 600; color: var(--good); flex: none; width: 5.5em; }
+  .check .mark.bad { color: var(--negative); }
+  .check .what { flex: 1; }
+  .check .detail { color: var(--text-muted); font-size: 12px; }
+
+  .empty { color: var(--text-muted); padding: 28px 0; text-align: center; }
+  .truncate { max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }
+  .linklike { background: none; border: 0; padding: 0; color: var(--series-1); text-decoration: underline; cursor: pointer; font: inherit; }
+
+  #tooltip {
+    position: fixed; pointer-events: none; z-index: 10;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.14);
+    max-width: 320px;
+  }
+  #tooltip[hidden] { display: none; }
+  #tooltip .t-title { font-weight: 600; margin-bottom: 3px; }
+  #tooltip .t-row { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Solana Balance Ledger</h1>
+  <span class="spacer"></span>
+  <span class="status"><span class="dot" id="conn-dot"></span><span id="conn-text">not connected</span></span>
+  <button id="theme">Theme</button>
+</header>
+<p class="lede">
+  Every balance here was reconstructed from the pre/post token amounts Solana reports on each
+  transaction — no account state was ever read. The page queries ClickHouse directly; each panel
+  shows the SQL it ran.
+</p>
+
+<div class="card">
+  <h2>Connection</h2>
+  <p class="note">
+    The indexer's ClickHouse, reached over its HTTP interface from your browser. Settings are kept in
+    this browser only.
+  </p>
+  <div class="controls">
+    <div class="field"><label for="ch-url">URL</label><input id="ch-url" size="24" value="http://localhost:8123"></div>
+    <div class="field"><label for="ch-db">Database</label><input id="ch-db" size="10" value="default"></div>
+    <div class="field"><label for="ch-user">User</label><input id="ch-user" size="10" value="default"></div>
+    <div class="field"><label for="ch-pass">Password</label><input id="ch-pass" type="password" size="10" value=""></div>
+    <button id="connect">Connect</button>
+  </div>
+  <div id="conn-error" class="neg" hidden></div>
+</div>
+
+<div class="tiles" id="tiles"></div>
+
+<div class="card" style="margin-top:20px">
+  <h2>Time machine</h2>
+  <p class="note">
+    Holders of one mint as of one slot, largest first. Drag the slot back and the balances are the
+    ones that stood at that moment — the question <code>getTokenAccountBalance</code> cannot answer
+    and <code>getProgramAccounts</code> can only answer for right now.
+  </p>
+  <div class="controls">
+    <div class="field grow">
+      <label for="mint">Mint</label>
+      <select id="mint"></select>
+    </div>
+    <div class="field grow">
+      <label for="slot">Slot <span class="mono" id="slot-readout"></span></label>
+      <input id="slot" type="range" min="0" max="0" value="0">
+    </div>
+  </div>
+  <div id="holders"></div>
+  <details class="sql"><summary>SQL</summary><pre id="sql-holders"></pre></details>
+</div>
+
+<div class="card">
+  <h2>Account ledger</h2>
+  <p class="note">
+    One token account's whole balance timeline. It is a step function — the balance holds between
+    changes — so it is drawn as one. Pick a holder above, or paste any token account address.
+  </p>
+  <div class="controls">
+    <div class="field grow">
+      <label for="account">Token account</label>
+      <input id="account" class="mono" placeholder="token account address" spellcheck="false">
+    </div>
+    <button id="load-account">Load</button>
+  </div>
+  <div id="history"></div>
+  <div class="scroll" id="history-table"></div>
+  <details class="sql"><summary>SQL</summary><pre id="sql-history"></pre></details>
+</div>
+
+<div class="card">
+  <h2>Audit</h2>
+  <p class="note">
+    The ledger checks itself against the chain. Every change carries the balance the ledger carried
+    forward; the chain reports the balance that actually stood there. These have to agree.
+  </p>
+  <div id="audit"></div>
+  <details class="sql"><summary>SQL</summary><pre id="sql-audit"></pre></details>
+</div>
+
+<div class="card">
+  <h2>Supply movement</h2>
+  <p class="note">
+    Net change in each mint's circulating amount, summed from account deltas alone. Transfers cancel
+    across their two sides, so what is left is minting, burning, and wrapped-SOL syncing — derived
+    without reading a single mint account.
+  </p>
+  <div class="scroll" id="supply"></div>
+  <details class="sql"><summary>SQL</summary><pre id="sql-supply"></pre></details>
+</div>
+
+</div>
+<div id="tooltip" hidden></div>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const SVG = "http://www.w3.org/2000/svg";
+
+// ---------------------------------------------------------------- connection
+
+const SETTINGS_KEY = "svm-balance-ledger:clickhouse";
+const settingFields = { url: $("ch-url"), db: $("ch-db"), user: $("ch-user"), pass: $("ch-pass") };
+
+function loadSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "null");
+    if (!saved) return false;
+    for (const [key, field] of Object.entries(settingFields)) field.value = saved[key] ?? field.value;
+    return true;
+  } catch {
+    // A blocked or corrupt store just means the defaults stand.
+    return false;
+  }
+}
+function saveSettings() {
+  const saved = Object.fromEntries(Object.entries(settingFields).map(([key, field]) => [key, field.value]));
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(saved));
+  } catch {
+    // Not being able to remember the connection is not worth failing over.
+  }
+}
+
+// ClickHouse binds {name:Type} placeholders from `param_<name>`, so a value
+// never reaches the query text — including inside a parameterised view call.
+async function query(sql, params = {}) {
+  const url = new URL(settingFields.url.value.replace(/\/$/, "") + "/");
+  url.searchParams.set("database", settingFields.db.value);
+  url.searchParams.set("user", settingFields.user.value);
+  url.searchParams.set("password", settingFields.pass.value);
+  url.searchParams.set("default_format", "JSON");
+  url.searchParams.set("add_http_cors_header", "1");
+  for (const [name, value] of Object.entries(params)) url.searchParams.set(`param_${name}`, String(value));
+
+  let response;
+  try {
+    response = await fetch(url, { method: "POST", headers: { "Content-Type": "text/plain" }, body: sql });
+  } catch {
+    throw new Error(
+      `Could not reach ClickHouse at ${url.origin}. Check that it is running and that the user and ` +
+        `password are right — a rejected login reaches the browser as a CORS failure, not a 401.`,
+    );
+  }
+  const text = await response.text();
+  if (!response.ok) throw new Error(text.split("\n")[0]);
+  return JSON.parse(text).data;
+}
+
+function showQuery(target, sql, params) {
+  const bound = Object.entries(params ?? {})
+    .map(([name, value]) => `-- param_${name} = ${value}`)
+    .join("\n");
+  $(target).textContent = (bound ? bound + "\n" : "") + sql.trim();
+}
+
+// -------------------------------------------------------------- number format
+
+const formatCount = (n) => Number(n).toLocaleString("en-US");
+// Axis ticks only need the magnitude; a 15-digit token amount would push the
+// plot off the left edge.
+const formatCompact = (n) =>
+  Number(n).toLocaleString("en-US", { notation: "compact", maximumFractionDigits: 2 });
+
+// Token amounts arrive as decimal strings of arbitrary width, so they are scaled
+// as strings rather than through Number, which would round away the low digits.
+function formatAmount(raw, decimals) {
+  const negative = String(raw).startsWith("-");
+  const digits = String(raw).replace("-", "").padStart(decimals + 1, "0");
+  const whole = digits.slice(0, digits.length - decimals) || "0";
+  const fraction = decimals ? digits.slice(digits.length - decimals).replace(/0+$/, "") : "";
+  const grouped = BigInt(whole).toLocaleString("en-US");
+  return `${negative ? "-" : ""}${grouped}${fraction ? "." + fraction : ""}`;
+}
+const toNumber = (raw, decimals) => Number(raw) / 10 ** decimals;
+const short = (address) => `${address.slice(0, 4)}…${address.slice(-4)}`;
+
+// ------------------------------------------------------------------- tooltip
+
+const tooltip = $("tooltip");
+function showTooltip(event, title, rows) {
+  tooltip.innerHTML = "";
+  const heading = document.createElement("div");
+  heading.className = "t-title mono";
+  heading.textContent = title;
+  tooltip.append(heading);
+  for (const row of rows) {
+    const line = document.createElement("div");
+    line.className = "t-row";
+    line.textContent = row;
+    tooltip.append(line);
+  }
+  tooltip.hidden = false;
+  const box = tooltip.getBoundingClientRect();
+  const left = Math.min(event.clientX + 14, window.innerWidth - box.width - 8);
+  const top = Math.min(event.clientY + 14, window.innerHeight - box.height - 8);
+  tooltip.style.left = `${Math.max(8, left)}px`;
+  tooltip.style.top = `${Math.max(8, top)}px`;
+}
+const hideTooltip = () => { tooltip.hidden = true; };
+document.addEventListener("scroll", hideTooltip, true);
+
+// --------------------------------------------------------------------- charts
+
+function svgEl(name, attrs = {}) {
+  const node = document.createElementNS(SVG, name);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  return node;
+}
+
+// Ranked magnitude, so: horizontal bars, one series, no legend, every bar
+// directly labelled. Rounded outer end, square against the baseline.
+function renderHolders(container, rows, mint) {
+  container.innerHTML = "";
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty">No holder of this mint had a balance at this slot.</div>`;
+    return;
+  }
+  const rowHeight = 30;
+  const gap = 8;
+  const labelWidth = 110;
+  const valueWidth = 150;
+  const width = 900;
+  const plotWidth = width - labelWidth - valueWidth;
+  const height = rows.length * (rowHeight + gap);
+  const decimals = rows[0].decimals;
+  const max = Math.max(...rows.map((row) => toNumber(row.amount, row.decimals)));
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img" });
+  svg.setAttribute("aria-label", `Top holders of ${mint} at the selected slot`);
+
+  rows.forEach((row, index) => {
+    const y = index * (rowHeight + gap);
+    const value = toNumber(row.amount, row.decimals);
+    const barWidth = Math.max(2, (value / max) * plotWidth);
+
+    const label = svgEl("text", { x: 0, y: y + rowHeight / 2 + 4, class: "mono" });
+    label.setAttribute("fill", "var(--text-secondary)");
+    label.setAttribute("font-size", "12");
+    label.textContent = short(row.account);
+    svg.append(label);
+
+    // 4px rounded data-end only: the bar grows from a flat baseline.
+    const bar = svgEl("path", {
+      d: roundedRightEnd(labelWidth, y + 4, barWidth, rowHeight - 8, 4),
+      fill: "var(--series-1)",
+    });
+    bar.addEventListener("pointerenter", (event) =>
+      showTooltip(event, short(row.account), [
+        `balance ${formatAmount(row.amount, row.decimals)}`,
+        `owner ${short(row.owner)}`,
+        `${formatCount(row.changes)} change${Number(row.changes) === 1 ? "" : "s"} in window`,
+        `last change at slot ${formatCount(row.lastSlot)}`,
+      ]),
+    );
+    bar.addEventListener("pointerleave", hideTooltip);
+    bar.style.cursor = "pointer";
+    bar.addEventListener("click", () => {
+      $("account").value = row.account;
+      loadAccount();
+    });
+    svg.append(bar);
+
+    const amount = svgEl("text", { x: labelWidth + barWidth + 8, y: y + rowHeight / 2 + 4 });
+    amount.setAttribute("fill", "var(--text-primary)");
+    amount.setAttribute("font-size", "12");
+    amount.textContent = formatAmount(row.amount, decimals);
+    svg.append(amount);
+  });
+
+  container.append(svg);
+}
+
+function roundedRightEnd(x, y, width, height, radius) {
+  const r = Math.min(radius, width);
+  return `M${x},${y} H${x + width - r} A${r},${r} 0 0 1 ${x + width},${y + r} V${y + height - r} A${r},${r} 0 0 1 ${x + width - r},${y + height} H${x} Z`;
+}
+
+// A balance holds constant between changes, so the line is a step, not an
+// interpolation. x is slot + txIndex/2^16 so several changes inside one slot
+// keep their true order instead of stacking on a single vertical.
+function renderHistory(container, rows, account) {
+  container.innerHTML = "";
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty">No change recorded for this account in the indexed window.</div>`;
+    return;
+  }
+  const width = 900;
+  const height = 260;
+  const padding = { top: 16, right: 16, bottom: 32, left: 64 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+
+  const at = (row) => row.slot + row.txIndex / 65536;
+  const xs = rows.map(at);
+  const ys = rows.map((row) => toNumber(row.postAmount, row.decimals));
+  const xMin = Math.min(...xs);
+  const xMax = Math.max(...xs);
+  // A balance line reads its own range, not a zero baseline — a vault moving
+  // between 19,862 and 20,068 is a flat line against zero. Bars elsewhere on
+  // the page still start at zero, where the baseline carries the comparison.
+  const low = Math.min(...ys);
+  const high = Math.max(...ys);
+  const margin = (high - low) * 0.08 || Math.max(Math.abs(high) * 0.08, 1);
+  const yMin = Math.max(0, low - margin);
+  const yMax = high + margin;
+  const spanX = xMax - xMin || 1;
+  const spanY = yMax - yMin || 1;
+  const px = (x) => padding.left + ((x - xMin) / spanX) * plotWidth;
+  const py = (y) => padding.top + plotHeight - ((y - yMin) / spanY) * plotHeight;
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, role: "img" });
+  svg.setAttribute("aria-label", `Balance history of ${account}`);
+
+  const grid = svgEl("g", { class: "grid" });
+  const axis = svgEl("g", { class: "axis" });
+  for (let tick = 0; tick <= 4; tick++) {
+    const value = yMin + (spanY * tick) / 4;
+    const y = py(value);
+    grid.append(svgEl("line", { x1: padding.left, x2: width - padding.right, y1: y, y2: y }));
+    const text = svgEl("text", { x: padding.left - 8, y: y + 4, "text-anchor": "end" });
+    text.textContent = formatCompact(value);
+    axis.append(text);
+  }
+  for (const x of [xMin, xMax]) {
+    const text = svgEl("text", { x: px(x), y: height - 10, "text-anchor": x === xMin ? "start" : "end" });
+    text.textContent = `slot ${formatCount(Math.floor(x))}`;
+    axis.append(text);
+  }
+  svg.append(grid, axis);
+
+  let path = `M${px(xs[0])},${py(ys[0])}`;
+  for (let index = 1; index < rows.length; index++) {
+    path += ` H${px(xs[index])} V${py(ys[index])}`;
+  }
+  path += ` H${px(xMax)}`;
+  svg.append(svgEl("path", { d: path, fill: "none", stroke: "var(--series-1)", "stroke-width": 2, "stroke-linejoin": "round" }));
+
+  // Markers only while they can stay >= 8px apart; past that the step line and
+  // the crosshair carry it.
+  if (rows.length <= 40) {
+    rows.forEach((row, index) => {
+      svg.append(svgEl("circle", {
+        cx: px(xs[index]), cy: py(ys[index]), r: 4,
+        fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2,
+      }));
+    });
+  }
+
+  const crosshair = svgEl("line", {
+    y1: padding.top, y2: padding.top + plotHeight,
+    stroke: "var(--text-muted)", "stroke-width": 1, "stroke-dasharray": "3 3", opacity: 0,
+  });
+  svg.append(crosshair);
+
+  const surface = svgEl("rect", {
+    x: padding.left, y: padding.top, width: plotWidth, height: plotHeight, fill: "transparent",
+  });
+  surface.addEventListener("pointermove", (event) => {
+    const box = svg.getBoundingClientRect();
+    const local = ((event.clientX - box.left) / box.width) * width;
+    let nearest = 0;
+    for (let index = 1; index < rows.length; index++) {
+      if (Math.abs(px(xs[index]) - local) < Math.abs(px(xs[nearest]) - local)) nearest = index;
+    }
+    const row = rows[nearest];
+    crosshair.setAttribute("x1", px(xs[nearest]));
+    crosshair.setAttribute("x2", px(xs[nearest]));
+    crosshair.setAttribute("opacity", "1");
+    showTooltip(event, `slot ${formatCount(row.slot)}`, [
+      `balance ${formatAmount(row.postAmount, row.decimals)}`,
+      `change ${formatAmount(row.delta, row.decimals)}`,
+      row.isOpening ? "opening balance for this window" : `expected in ${formatAmount(row.preAmount, row.decimals)}`,
+    ]);
+  });
+  surface.addEventListener("pointerleave", () => {
+    crosshair.setAttribute("opacity", "0");
+    hideTooltip();
+  });
+  svg.append(surface);
+
+  container.append(svg);
+}
+
+function renderTable(container, columns, rows) {
+  container.innerHTML = "";
+  const table = document.createElement("table");
+  const head = document.createElement("tr");
+  for (const column of columns) {
+    const cell = document.createElement("th");
+    cell.textContent = column.label;
+    if (column.numeric) cell.className = "num";
+    head.append(cell);
+  }
+  table.append(head);
+  for (const row of rows) {
+    const line = document.createElement("tr");
+    for (const column of columns) {
+      const cell = document.createElement("td");
+      const value = column.render(row);
+      if (value instanceof Node) cell.append(value); else cell.textContent = value;
+      cell.className = [column.numeric ? "num" : "", column.className?.(row) ?? ""].join(" ").trim();
+      line.append(cell);
+    }
+    table.append(line);
+  }
+  container.append(table);
+}
+
+// --------------------------------------------------------------------- panels
+
+const SQL = {
+  summary: `SELECT * FROM v_ledger_summary`,
+  mints: `
+    SELECT mint, count() AS changes, uniqExact(account) AS accounts, any(decimals) AS decimals
+    FROM BalanceChange
+    GROUP BY mint
+    ORDER BY changes DESC
+    LIMIT 60`,
+  holders: `
+    SELECT account, owner, amount, decimals, lastSlot, changes
+    FROM holders_at(mint = {mint:String}, at_slot = {at_slot:Int32})
+    LIMIT 15`,
+  history: `SELECT * FROM account_history(account = {account:String})`,
+  gaps: `SELECT count() AS gaps FROM v_ledger_gap`,
+  conservation: `SELECT count() AS checked, countIf(sumDelta != 0) AS violations FROM v_conservation_check`,
+  supply: `
+    SELECT mint, transactions, netSupplyChange, accountsTouched, decimals
+    FROM v_mint_supply_change
+    WHERE netSupplyChange != 0
+    LIMIT 12`,
+};
+
+let summary = null;
+
+async function loadSummary() {
+  [summary] = await query(SQL.summary);
+  const tiles = [
+    { value: formatCount(summary.changes), label: "balance changes" },
+    { value: formatCount(summary.accounts), label: "token accounts" },
+    { value: formatCount(summary.mints), label: "mints" },
+    { value: formatCount(summary.transactions), label: "transactions" },
+    {
+      value: formatCount(Number(summary.lastSlot) - Number(summary.firstSlot) + 1),
+      label: `slots (${formatCount(summary.firstSlot)}–${formatCount(summary.lastSlot)})`,
+    },
+    { value: formatCount(summary.gaps), label: "unexplained gaps", verdict: Number(summary.gaps) === 0 },
+  ];
+  $("tiles").innerHTML = tiles
+    .map((tile) => `<div class="tile${tile.verdict ? " verdict" : ""}">
+        <div class="value">${tile.value}</div><div class="label">${tile.label}</div>
+      </div>`)
+    .join("");
+}
+
+async function loadMints() {
+  const mints = await query(SQL.mints);
+  $("mint").innerHTML = mints
+    .map((row) => `<option value="${row.mint}">${short(row.mint)} — ${formatCount(row.changes)} changes, ${formatCount(row.accounts)} accounts</option>`)
+    .join("");
+  const slot = $("slot");
+  slot.min = summary.firstSlot;
+  slot.max = summary.lastSlot;
+  slot.value = summary.lastSlot;
+  $("slot-readout").textContent = formatCount(summary.lastSlot);
+}
+
+async function loadHolders() {
+  const params = { mint: $("mint").value, at_slot: Number($("slot").value) };
+  if (!params.mint) return;
+  showQuery("sql-holders", SQL.holders, params);
+  const rows = await query(SQL.holders, params);
+  renderHolders($("holders"), rows, params.mint);
+  // Open on a holder with a timeline worth plotting rather than the largest,
+  // which is often a vault touched once in the window.
+  if (!$("account").value && rows.length) {
+    $("account").value = rows.reduce((a, b) => (Number(b.changes) > Number(a.changes) ? b : a)).account;
+    await loadAccount();
+  }
+}
+
+async function loadAccount() {
+  const params = { account: $("account").value.trim() };
+  if (!params.account) return;
+  showQuery("sql-history", SQL.history, params);
+  const rows = await query(SQL.history, params);
+  renderHistory($("history"), rows, params.account);
+  renderTable($("history-table"), [
+    { label: "slot", numeric: true, render: (row) => formatCount(row.slot) },
+    { label: "tx", render: (row) => Object.assign(document.createElement("span"), { className: "mono truncate", textContent: row.txSig }) },
+    { label: "in", numeric: true, render: (row) => formatAmount(row.preAmount, row.decimals) },
+    { label: "change", numeric: true, className: (row) => (String(row.delta).startsWith("-") ? "neg" : ""), render: (row) => formatAmount(row.delta, row.decimals) },
+    { label: "out", numeric: true, render: (row) => formatAmount(row.postAmount, row.decimals) },
+    { label: "continuous", render: (row) => (row.continuous ? "yes" : "NO") },
+  ], rows.slice(-25));
+}
+
+async function loadAudit() {
+  showQuery("sql-audit", `${SQL.gaps};\n\n${SQL.conservation};`);
+  const [[gaps], [conservation]] = await Promise.all([query(SQL.gaps), query(SQL.conservation)]);
+  const checks = [
+    {
+      ok: Number(gaps.gaps) === 0,
+      what: "Every change's incoming balance matched what the ledger carried forward.",
+      detail: `${formatCount(summary.changes)} changes checked, ${formatCount(gaps.gaps)} unexplained. A gap would mean some way of moving a token amount is missing from config.yaml.`,
+    },
+    {
+      ok: Number(conservation.violations) === 0,
+      what: "Transfer-only transactions moved tokens without creating any.",
+      detail: `${formatCount(conservation.checked)} (transaction, mint) pairs summed to zero, ${formatCount(conservation.violations)} did not. Token-2022 transfers are excluded: a transfer fee is withheld outside the destination's amount.`,
+    },
+  ];
+  $("audit").innerHTML = checks
+    .map((check) => `<div class="check">
+        <span class="mark${check.ok ? "" : " bad"}">${check.ok ? "verified" : "FAILED"}</span>
+        <span class="what">${check.what}<div class="detail">${check.detail}</div></span>
+      </div>`)
+    .join("");
+}
+
+async function loadSupply() {
+  showQuery("sql-supply", SQL.supply);
+  const rows = await query(SQL.supply);
+  renderTable($("supply"), [
+    { label: "mint", render: (row) => Object.assign(document.createElement("span"), { className: "mono", textContent: short(row.mint) }) },
+    { label: "net supply change", numeric: true, className: (row) => (String(row.netSupplyChange).startsWith("-") ? "neg" : ""), render: (row) => formatAmount(row.netSupplyChange, row.decimals) },
+    { label: "transactions", numeric: true, render: (row) => formatCount(row.transactions) },
+    { label: "accounts touched", numeric: true, render: (row) => formatCount(row.accountsTouched) },
+  ], rows);
+}
+
+// ---------------------------------------------------------------------- wiring
+
+async function connect() {
+  const dot = $("conn-dot");
+  const error = $("conn-error");
+  error.hidden = true;
+  dot.className = "dot";
+  $("conn-text").textContent = "connecting…";
+  try {
+    saveSettings();
+    await loadSummary();
+    await loadMints();
+    await Promise.all([loadHolders(), loadAudit(), loadSupply()]);
+    dot.className = "dot ok";
+    $("conn-text").textContent = `${formatCount(summary.changes)} changes indexed`;
+  } catch (failure) {
+    dot.className = "dot bad";
+    $("conn-text").textContent = "not connected";
+    error.hidden = false;
+    error.textContent = failure.message;
+  }
+}
+
+$("connect").addEventListener("click", connect);
+$("mint").addEventListener("change", loadHolders);
+$("slot").addEventListener("input", () => {
+  $("slot-readout").textContent = formatCount($("slot").value);
+});
+$("slot").addEventListener("change", loadHolders);
+$("load-account").addEventListener("click", loadAccount);
+$("account").addEventListener("keydown", (event) => { if (event.key === "Enter") loadAccount(); });
+$("theme").addEventListener("click", () => {
+  const dark = document.documentElement.dataset.theme === "dark"
+    || (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "light" : "dark";
+});
+
+if (loadSettings()) {
+  connect();
+} else {
+  $("conn-text").textContent = "enter connection details";
+}
+</script>
+</body>
+</html>

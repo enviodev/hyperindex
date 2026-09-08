@@ -48,7 +48,7 @@ type LedgerTx = {
 // A transaction reaches this once per matched instruction it carries, and every
 // one of those carries the same whole-transaction activities. Account rows are
 // therefore written from the first instruction and skipped afterwards, keyed on
-// (slot, txIndex); `conserving` is the only value that folds across them.
+// (slot, txIndex); every other write is keyed so that repeats are identical.
 async function applyTransaction(
   context: SvmOnSlotContext,
   slot: number,
@@ -60,7 +60,6 @@ async function applyTransaction(
   // it carries no balance change to record.
   if (!tx.success) return;
 
-  const conserving = conservesAmount(programName, instructionName);
   const perMint = new Map<string, { sumDelta: bigint; accountsTouched: number }>();
   let changes = 0n;
   let newAccounts = 0n;
@@ -125,18 +124,23 @@ async function applyTransaction(
   }
 
   for (const [mint, flow] of perMint) {
-    const id = `${tx.signature}:${mint}`;
-    const previous = await context.TxMintFlow.get(id);
     context.TxMintFlow.set({
-      id,
+      id: `${tx.signature}:${mint}`,
       txSig: tx.signature,
       mint,
       slot,
       sumDelta: flow.sumDelta,
       accountsTouched: flow.accountsTouched,
-      conserving: (previous?.conserving ?? true) && conserving,
     });
   }
+  context.TxTokenInstruction.set({
+    id: `${tx.signature}:${programName}:${instructionName}`,
+    txSig: tx.signature,
+    slot,
+    program: programName,
+    instructionName,
+    conserves: conservesAmount(programName, instructionName),
+  });
 
   const stats = await context.LedgerStats.get(STATS_ID);
   context.LedgerStats.set({

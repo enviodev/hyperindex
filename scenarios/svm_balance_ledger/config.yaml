@@ -8,12 +8,24 @@ description: |
   each change carries the balance the ledger expected coming in, and a mismatch
   is recorded as a gap rather than silently absorbed.
 ecosystem: svm
+storage:
+  # The ledger is append-only and read with aggregates over a slot range, which
+  # is what ClickHouse is for. `TokenAccount` is the one mutable entity here —
+  # a running balance updated in place — so it stays in Postgres. See the
+  # @storage directives in schema.graphql.
+  postgres:
+    default: true
+  clickhouse: true
 chains:
   - id: solana
     # Token movement is the highest-volume traffic on Solana, so a backfill here
     # is deliberately short. Widen the window only against a HyperSync endpoint
     # you control.
-    start_block: 422300000
+    #
+    # START_SLOT and END_SLOT override the window without a second config file;
+    # an unset END_SLOT leaves `end_block` null, which indexes to the chain head.
+    start_block: ${START_SLOT:-422300000}
+    end_block: ${END_SLOT:-}
     experimental:
       hypersync_config:
         url: https://solana.hypersync.xyz

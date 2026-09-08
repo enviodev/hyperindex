@@ -67,41 +67,95 @@ withheld field rather than its `amount` — the test window contains a mint with
 the sender's. The two sides of that transfer do not sum to zero, and no bug is
 involved.
 
+## Where the data lives
+
+The ledger is append-only and always read as an aggregate over a slot range, so
+`BalanceChange`, `TxMintFlow` and `TxTokenInstruction` are stored in ClickHouse
+alone. `TokenAccount` — the one mutable entity, a running balance updated in
+place — is in Postgres, because the handler reads it back to check continuity and
+ClickHouse storage is write-only from handlers; it is mirrored to ClickHouse for
+the UI.
+
+`BalanceChange` declares its ClickHouse sort key as `(account, slot, txIndex)`,
+which is the point-in-time query itself: finding a balance at a slot is a
+primary-key range scan rather than a search.
+
+The handler does no aggregation. It writes flat, idempotent rows and leaves every
+fold to the query layer — including whether a transaction conserved its tokens,
+which `v_conservation_check` derives by joining `TxMintFlow` against the
+instructions the transaction carried.
+
+## The query layer
+
+`sql/clickhouse.sql` holds it, as parameterised views:
+
+| View | Answers |
+| --- | --- |
+| `balance_at(account, at_slot)` | What did this account hold at that slot? |
+| `holders_at(mint, at_slot)` | Who held this mint then, largest first? |
+| `account_history(account)` | The whole timeline for one account. |
+| `v_ledger_gap` | Which changes the ledger could not account for. Empty is the claim. |
+| `v_conservation_check` | Transfer-only transactions, which must sum to zero. |
+| `v_mint_supply_change` | Net supply movement per mint, with no mint account read. |
+| `v_ledger_summary` | Headline counts. |
+
+A GraphQL `BigInt` is stored as a ClickHouse `String`, which is why the views cast
+before summing or ordering — lexicographic order on a decimal string is not
+numeric order.
+
+## The UI
+
+`ui/index.html` is a single file with no build step and no dependencies. It talks
+to ClickHouse's HTTP interface straight from the browser, and every panel shows
+the SQL it ran. Values are bound as ClickHouse query parameters, so a pasted
+address never reaches the query text.
+
+- **Time machine** — holders of a mint as of a slot, with the slot on a slider.
+  Drag it back and the balances are the ones that stood at that moment. Click a
+  bar to open that account.
+- **Account ledger** — one account's balance as a step function, because a
+  balance holds between changes.
+- **Audit** — the gap and conservation checks, run live.
+- **Supply movement** — net supply change per mint, derived from deltas alone.
+
 ## Run it
 
 ```bash
 pnpm install
 pnpm codegen
-pnpm test          # live E2E against solana.hypersync.xyz, pinned slot window
+pnpm test          # live E2E against solana.hypersync.xyz over a pinned window
 ```
 
-To index for real:
+To index for real and open the UI:
 
 ```bash
-pnpm docker-up
-pnpm dev
-psql -h localhost -p 5433 -U postgres -d envio-dev -f sql/views.sql
+pnpm dev                        # brings up Postgres + ClickHouse, then indexes
+./apply-views.sh                # creates the views in ClickHouse
+pnpm ui                         # serves ui/ at http://localhost:5173
 ```
 
-Then the time-machine queries:
+`apply-views.sh` reads the same `ENVIO_CLICKHOUSE_*` variables the indexer does,
+and has to be re-run after any `pnpm codegen` that changes the entity tables.
 
-```sql
--- what this account held at slot 422,300,500
-SELECT balance_at('4ct7br2vTPzfdmY3S5HLtTxcGSBfn6pnw98hsS6v359A', 422300500);
-
--- every USDC holder in the window, as of that slot, largest first
-SELECT * FROM holders_at('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 422300500)
-LIMIT 20;
-```
-
-`sql/views.sql` has to be re-applied after each `pnpm codegen`, which recreates
-the entity tables and drops the views that depend on them.
+The browser needs ClickHouse to send CORS headers, which the UI requests per
+query with `add_http_cors_header=1`; nothing has to be configured server-side.
 
 ## Scope
 
-The slot window in `config.yaml` is deliberately short. Token movement is the
-highest-volume traffic on Solana and this config matches all of it — widen the
-window only against a HyperSync endpoint you control.
+`config.yaml` is the only config. `START_SLOT` and `END_SLOT` override the window
+through the `${VAR:-default}` interpolation the config loader already supports, so
+a pinned window needs an environment variable rather than a second file — that is
+how the test fixes its 30 slots:
+
+```bash
+START_SLOT=420650000 END_SLOT=420650029 pnpm start
+```
+
+An unset `END_SLOT` leaves `end_block` null, which indexes to the chain head.
+
+The default window is deliberately short. Token movement is the highest-volume
+traffic on Solana and this config matches all of it — widen it only against a
+HyperSync endpoint you control.
 
 Balances are reconstructed for accounts the window actually saw. An account's
 first change in the window opens its ledger at whatever `preAmount` the chain
