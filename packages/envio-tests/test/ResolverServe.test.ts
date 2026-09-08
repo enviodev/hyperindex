@@ -318,7 +318,7 @@ describe("resolver /resolve", () => {
     try {
       const response = await fetch(`http://127.0.0.1:${guarded.port}/resolve`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-envio-resolver-secret": "s3cr3t" },
+        headers: { "content-type": "application/json", "x-hasura-envio-resolver-secret": "s3cr3t" },
         body: JSON.stringify({
           field: "adminOnly",
           args: {},
