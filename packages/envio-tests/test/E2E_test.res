@@ -718,6 +718,7 @@ describe("E2E tests", () => {
         call.reject(
           Source.GetItemsError(
             FailedGettingItems({
+              requestStats: [],
               exn: %raw(`null`),
               attemptedToBlock: 100,
               retry: ImpossibleForTheQuery({

@@ -243,9 +243,19 @@ describe("HyperSync source contract", () => {
       let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
       server->MockHyperSyncServer.pushResponse(page)
       let page = await source->fetch(~addressSet)
+      // The chain's stores are what materialisation reads; a response's pages
+      // reach them by merging, as the indexer does once the reorg guard passes.
+      let transactionStore = TransactionStore.make(
+        ~ecosystem=Ecosystem.Evm,
+        ~shouldChecksum=false,
+      )
+      switch page.transactionStore {
+      | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
+      | None => ()
+      }
       await ChainState.materializePageItems(
         ~items=page.parsedQueueItems,
-        ~transactionStore=page.transactionStore,
+        ~transactionStore,
         ~blockStore=page.blockStore,
       )
       page.parsedQueueItems
@@ -519,9 +529,17 @@ describe("HyperSync source responses", () => {
       )
       server->MockHyperSyncServer.pushResponse(page)
       let response = await source->fetch(~addressSet)
+      let transactionStore = TransactionStore.make(
+        ~ecosystem=Ecosystem.Evm,
+        ~shouldChecksum=true,
+      )
+      switch response.transactionStore {
+      | Some(txPage) => transactionStore->TransactionStore.merge(txPage)
+      | None => ()
+      }
       await ChainState.materializePageItems(
         ~items=response.parsedQueueItems,
-        ~transactionStore=response.transactionStore,
+        ~transactionStore,
         ~blockStore=response.blockStore,
       )
       let summary = response.parsedQueueItems->Array.map(eventSummary)->Array.getUnsafe(0)
@@ -605,5 +623,25 @@ describe("HyperSync source responses", () => {
     t.expect(result).toBe(
       "impossible:Source returned invalid data with missing required fields: block.miner",
     )
+  })
+})
+
+describe("EvmHyperSyncSource - request accounting", () => {
+  // A page that ends in a failure still made its request, and the source's
+  // metrics count it — otherwise a source that is erroring reports no traffic
+  // at all while it hammers the endpoint.
+  Async.it("Counts the request a failed page made", async t => {
+    let methods = await MockHyperSyncServer.withServer(~height=100, async server => {
+      let (source, addressSet) = makeSource(~url=server->MockHyperSyncServer.url)
+      server->MockHyperSyncServer.pushRawReply({status: 500, body: "upstream exploded"})
+      try {
+        let _ = await source->fetch(~addressSet)
+        []
+      } catch {
+      | Source.GetItemsError(error) =>
+        error->Source.getItemsErrorRequestStats->Array.map(({Source.method: method}) => method)
+      }
+    })
+    t.expect(methods).toEqual(["getLogs"])
   })
 })

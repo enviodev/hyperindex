@@ -3,28 +3,38 @@ use napi_derive::napi;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 mod classify;
 mod client;
+mod enrich;
+mod fields;
+mod inflight;
 mod interval;
+mod responses;
 
 use crate::address_store::{AddressSet, AddressStore, Emitter, SetCache};
+use crate::block_store::BlockStore;
 use crate::evm_hypersync_source::decode::{Decoder, SelectionDecoder};
 use crate::evm_hypersync_source::selection::{BuiltLogSelection, SelectionBuilder};
 use crate::evm_hypersync_source::types::{
     encode_address, Log as DecoderLog, OnEventRegistrationInput, ParamValue,
 };
-use crate::request_stats::RequestStat;
+use crate::evm_hypersync_source::EventItem;
+use crate::request_stats::{RequestStat, Stats};
+use crate::transaction_store::TransactionStore;
 use classify::{is_response_too_large_message, suggested_block_interval_from_message};
 use client::{parse_hex_u64, JsonRpcClient, RpcError};
-use hypersync_client::format::Hex;
+use enrich::{EnrichError, EnrichRequest, Fetches, ItemFields, PageRefs};
+use hypersync_client::format::{self, Hex};
 use interval::{IntervalState, SyncConfig};
 
 #[napi(object)]
 pub struct EvmRpcClientConfig {
     pub url: String,
-    pub http_req_timeout_millis: Option<i64>,
+    pub max_concurrent_requests: Option<i64>,
     pub headers: Option<HashMap<String, String>>,
     // Sync-tuning knobs for the paging AIMD state (see `interval::SyncConfig`).
     // Resolved (defaulted, env-overridden) by ReScript's `EvmChain.getSyncConfig`
@@ -37,35 +47,8 @@ pub struct EvmRpcClientConfig {
     pub query_timeout_millis: i64,
 }
 
-/// A log returned from `eth_getLogs`, with hex quantities decoded to integers.
-/// Field names cross the napi boundary as camelCase, matching the ReScript
-/// `Rpc.GetLogs.log` record.
-// Only the fields the ReScript side reads cross the boundary. `data` is consumed
-// by the decoder on the Rust side (see `to_decoder_log`) and `removed` is unused,
-// so neither is carried here.
-#[napi(object)]
-#[derive(Clone)]
-pub struct RpcLog {
-    pub address: String,
-    pub topics: Vec<String>,
-    pub block_number: i64,
-    pub transaction_hash: String,
-    pub transaction_index: i64,
-    pub block_hash: String,
-    pub log_index: i64,
-}
-
-#[napi(object)]
-pub struct RpcEventItem {
-    pub log: RpcLog,
-    /// The registration this log routed to, as passed to the client
-    /// constructor. Logs that route nowhere are dropped before the boundary.
-    pub on_event_registration_index: i64,
-    pub params: ParamValue,
-}
-
 /// Raw `eth_getLogs` entry as the provider serialises it: integer fields are
-/// 0x-prefixed hex quantities that `RpcLog` later decodes.
+/// 0x-prefixed hex quantities that decoding later converts.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawLog {
@@ -79,23 +62,37 @@ struct RawLog {
     log_index: String,
 }
 
+/// A routed log, alongside the two hashes the page needs from it: the block
+/// hash is a reorg observation, and the transaction hash is what the enrichment
+/// requests are keyed by. Neither crosses the napi boundary — the item the JS
+/// side receives is the same shape the HyperSync path returns.
+struct DecodedItem {
+    item: EventItem,
+    block_hash: format::Hash,
+    transaction_hash: format::Hash,
+}
+
 impl RawLog {
     /// `address` is normalized (lowercase or checksummed per the client config)
     /// so it matches the JS-side address type.
-    fn into_rpc_log(self, address: String) -> anyhow::Result<RpcLog> {
+    fn borrowed_event_item(
+        &self,
+        src_address: String,
+        on_event_registration_index: i64,
+        params: ParamValue,
+    ) -> anyhow::Result<EventItem> {
         let to_i64 = |hex: &str| -> anyhow::Result<i64> {
             parse_hex_u64(hex)?
                 .try_into()
                 .context("hex quantity exceeds i64::MAX")
         };
-        Ok(RpcLog {
+        Ok(EventItem {
             block_number: to_i64(&self.block_number).context("log.blockNumber")?,
             transaction_index: to_i64(&self.transaction_index).context("log.transactionIndex")?,
             log_index: to_i64(&self.log_index).context("log.logIndex")?,
-            address,
-            topics: self.topics,
-            transaction_hash: self.transaction_hash,
-            block_hash: self.block_hash,
+            src_address,
+            on_event_registration_index,
+            params,
         })
     }
 
@@ -135,22 +132,144 @@ pub struct NextPageParams {
     /// depend on addresses (client-side filtering). Absent or empty
     /// means every address-dependent contract is filtered server-side.
     pub client_filtered_contracts: Option<Vec<String>>,
+    /// How many times this query has already been retried, which sets how long
+    /// a transient miss waits before the next attempt.
+    pub retry: i64,
 }
 
+/// The outcome of a page read.
 #[napi(object)]
-pub struct NextPageResponse {
-    pub items: Vec<RpcEventItem>,
+pub struct NextPageResult {
+    /// Which outcome this is, and so which of the fields below are set.
+    pub kind: String,
+    /// The requests this call issued. A call that joined another's in-flight
+    /// request contributes nothing, so per-source totals stay exact.
+    pub request_stats: Vec<RequestStat>,
+    /// The block this attempt targeted: the page's own `toBlock` when it
+    /// succeeded, the block it got as far as otherwise.
     pub to_block: i64,
+    pub items: Vec<EventItem>,
+    /// What to say about a failure: on "backoff" the line the retry logs, on
+    /// "fieldSelection" why the selection cannot be served.
+    pub message: Option<String>,
+    /// The cause logged beside `message`: the provider's own words where it
+    /// gave any, ours where it did not.
+    pub provider_message: Option<String>,
+    /// "fieldSelection" only: the block it happened on, which is the one thing
+    /// that makes an unservable selection diagnosable.
+    pub block_number: Option<i64>,
+    /// "suggestedToBlock" only: the narrower end to ask for instead.
+    pub retry_to_block: Option<i64>,
+    /// "backoff" only: how long to wait first.
+    pub backoff_millis: Option<i64>,
+}
+
+/// What a page read can come back as. Napi has no enum to send this as, so it
+/// crosses as a string, written only from here. The two retryable outcomes are
+/// their own kinds rather than a nested decision object: one discriminator
+/// means one place for the ReScript side to reject a value it cannot read.
+#[derive(Clone, Copy)]
+enum Kind {
+    Ok,
+    /// Ask again for a narrower range, with no wait.
+    SuggestedToBlock,
+    /// Wait, then ask for the same range again.
+    Backoff,
+    /// The provider cannot serve the selected fields.
+    FieldSelection,
+}
+
+impl Kind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Kind::Ok => "ok",
+            Kind::SuggestedToBlock => "suggestedToBlock",
+            Kind::Backoff => "backoff",
+            Kind::FieldSelection => "fieldSelection",
+        }
+    }
+}
+
+impl NextPageResult {
+    /// The shape every outcome shares: no items, nothing to say, nothing to
+    /// retry. Each arm fills in what its own kind means.
+    fn new(kind: Kind, to_block: u64, request_stats: Vec<RequestStat>) -> Self {
+        NextPageResult {
+            kind: kind.as_str().to_string(),
+            request_stats,
+            to_block: to_block as i64,
+            items: Vec::new(),
+            message: None,
+            provider_message: None,
+            block_number: None,
+            retry_to_block: None,
+            backoff_millis: None,
+        }
+    }
+
+    fn backoff(
+        message: String,
+        backoff_millis: i64,
+        to_block: u64,
+        request_stats: Vec<RequestStat>,
+    ) -> Self {
+        NextPageResult {
+            message: Some(message),
+            backoff_millis: Some(backoff_millis),
+            ..NextPageResult::new(Kind::Backoff, to_block, request_stats)
+        }
+    }
+
+    fn suggested_to_block(
+        retry_to_block: u64,
+        to_block: u64,
+        request_stats: Vec<RequestStat>,
+    ) -> Self {
+        NextPageResult {
+            retry_to_block: Some(retry_to_block as i64),
+            ..NextPageResult::new(Kind::SuggestedToBlock, to_block, request_stats)
+        }
+    }
+}
+
+/// Outcome of a rollback-depth block-hash read. `message` is set when the read
+/// failed, in which case the page returned alongside it is empty.
+#[napi(object)]
+pub struct BlockHashResult {
+    pub message: Option<String>,
     pub request_stats: Vec<RequestStat>,
 }
 
 #[napi]
 pub struct EvmRpcClient {
-    inner: JsonRpcClient,
+    inner: Arc<JsonRpcClient>,
     decoder: Decoder,
     selection_builder: SelectionBuilder,
     sync_config: SyncConfig,
     intervals: IntervalState,
+    /// Coalesces block, transaction and receipt reads that overlap in time,
+    /// including across the partitions of one chain, which scan the same blocks
+    /// at the head.
+    fetches: Fetches,
+    /// The fields each registration selected, as store masks. An item's block
+    /// and transaction are fetched for the union of the masks of the items that
+    /// reference them, so an event selecting nothing costs no request.
+    registration_fields: HashMap<i64, ItemFields>,
+    should_checksum: bool,
+}
+
+/// Everything one page read works from: the range it covers, the queries to run
+/// over it, the stores whose contents decide what still has to be fetched, and
+/// what a retry decision about it would need.
+struct PageQuery<'a> {
+    partition_id: &'a str,
+    from_block: u64,
+    to_block: u64,
+    selections: &'a [BuiltLogSelection],
+    set_cache: &'a Arc<SetCache>,
+    decoder: &'a Arc<SelectionDecoder>,
+    known_blocks: &'a BlockStore,
+    known_transactions: &'a TransactionStore,
 }
 
 #[napi]
@@ -162,14 +281,32 @@ impl EvmRpcClient {
         checksum_addresses: bool,
         address_store: &AddressStore,
     ) -> napi::Result<EvmRpcClient> {
-        let http_req_timeout_millis = cfg
-            .http_req_timeout_millis
+        let max_concurrent_requests = cfg
+            .max_concurrent_requests
             .filter(|v| *v > 0)
-            .map_or(JsonRpcClient::default_http_req_timeout_millis(), |v| {
-                v as u64
+            .map_or(JsonRpcClient::default_max_concurrent_requests(), |v| {
+                (v as usize).min(Semaphore::MAX_PERMITS)
             });
-        let inner =
-            JsonRpcClient::new(cfg.url, http_req_timeout_millis, cfg.headers).map_err(map_err)?;
+        // A zero value would make `fromBlock + interval - 1` underflow, and a
+        // zero timeout would cancel every request before it left.
+        let positive_u64 = |value: i64, name: &str| {
+            u64::try_from(value)
+                .ok()
+                .filter(|v| *v > 0)
+                .ok_or_else(|| map_err(anyhow::anyhow!("{name} must be positive, got {value}")))
+        };
+        // `queryTimeoutMillis` is documented as how long to wait before
+        // cancelling an RPC request, so it bounds each one. Bounding the page
+        // instead would cancel reads the provider was answering fine, over a
+        // total the caller's only lever — the block range — does not decide.
+        let request_timeout_millis = positive_u64(cfg.query_timeout_millis, "queryTimeoutMillis")?;
+        let inner = JsonRpcClient::new(
+            cfg.url,
+            request_timeout_millis,
+            max_concurrent_requests,
+            cfg.headers,
+        )
+        .map_err(map_err)?;
         let decoder =
             Decoder::from_registrations(&event_registrations, checksum_addresses, address_store)
                 .context("build decoder")
@@ -185,13 +322,6 @@ impl EvmRpcClient {
                 cfg.backoff_multiplicative,
             )));
         }
-        // A zero interval would make `fromBlock + interval - 1` underflow.
-        let positive_u64 = |value: i64, name: &str| {
-            u64::try_from(value)
-                .ok()
-                .filter(|v| *v > 0)
-                .ok_or_else(|| map_err(anyhow::anyhow!("{name} must be positive, got {value}")))
-        };
         let sync_config = SyncConfig {
             initial_block_interval: positive_u64(
                 cfg.initial_block_interval,
@@ -205,41 +335,127 @@ impl EvmRpcClient {
             backoff_millis: u64::try_from(cfg.backoff_millis)
                 .context("backoffMillis must be non-negative")
                 .map_err(map_err)?,
-            query_timeout_millis: u64::try_from(cfg.query_timeout_millis)
-                .context("queryTimeoutMillis must be non-negative")
-                .map_err(map_err)?,
         };
+        let registration_fields = event_registrations
+            .iter()
+            .map(|reg| {
+                (
+                    reg.index,
+                    ItemFields {
+                        block_mask: fields::block_mask(&reg.block_fields),
+                        tx_mask: fields::tx_mask(&reg.transaction_fields),
+                    },
+                )
+            })
+            .collect();
         Ok(EvmRpcClient {
-            inner,
+            inner: Arc::new(inner),
             decoder,
             selection_builder,
             sync_config,
             intervals: IntervalState::new(),
+            fetches: Fetches::default(),
+            registration_fields,
+            should_checksum: checksum_addresses,
         })
     }
 
+    /// Forget every in-flight block, transaction and receipt read. After a
+    /// reorg an in-flight response may describe the orphaned fork, so a read
+    /// issued afterwards must observe the chain again rather than join one.
+    /// The stores are rolled back separately, which is what retires the data
+    /// already merged from that fork.
     #[napi]
-    pub async fn get_height(&self) -> napi::Result<i64> {
-        let height = self.inner.get_height().await.map_err(rpc_error_to_napi)?;
-        height
-            .try_into()
-            .context("block height exceeds i64::MAX")
-            .map_err(map_err)
+    pub fn on_reorg(&self) {
+        self.fetches.clear();
     }
 
-    /// Decides the actual `toBlock` from this partition's AIMD-suggested
-    /// interval, fans out one `eth_getLogs` per selection, dedups the merged
-    /// results by `(blockNumber, logIndex)`, and races the whole thing against
-    /// `queryTimeoutMillis`. On success, grows the partition's interval when
-    /// the full suggested range was applied. On failure (timeout, RPC error,
-    /// or a "too many logs" style response), shrinks/backs off and throws a
-    /// structured retry decision (see `retry_decision_to_napi`).
+    /// Re-read the given blocks and return them as a page of hash-only
+    /// observations, for the rollback-depth search. Never served from the
+    /// store: the whole question being asked is whether the stored hashes still
+    /// match the chain.
+    #[napi]
+    pub async fn get_block_hashes(
+        &self,
+        block_numbers: Vec<i64>,
+    ) -> napi::Result<(BlockHashResult, BlockStore)> {
+        let should_checksum = self.should_checksum;
+        let stats = Stats::default();
+        let numbers: Vec<u64> = block_numbers
+            .into_iter()
+            .map(u64::try_from)
+            .collect::<Result<_, _>>()
+            .context("block number is negative")
+            .map_err(map_err)?;
+        match enrich::fetch_block_hashes(
+            &self.inner,
+            &self.fetches,
+            &stats,
+            &numbers,
+            should_checksum,
+        )
+        .await
+        {
+            Ok(blocks) => Ok((
+                BlockHashResult {
+                    message: None,
+                    request_stats: stats.take(),
+                },
+                blocks,
+            )),
+            // The page is empty on failure and the caller reads `message`
+            // instead; a store is cheap enough not to be worth an optional.
+            Err(err) => Ok((
+                BlockHashResult {
+                    message: Some(err.to_string()),
+                    request_stats: stats.take(),
+                },
+                BlockStore::new_evm(should_checksum),
+            )),
+        }
+    }
+
+    /// The chain's height, with the timing of the one request it took —
+    /// measured here, like every other method's, rather than around the call.
+    #[napi]
+    pub async fn get_height(&self) -> napi::Result<(i64, Vec<RequestStat>)> {
+        let stats = Stats::default();
+        let permit = self.inner.acquire().await;
+        let started = Instant::now();
+        let result = self.inner.get_height(permit).await;
+        stats.record("eth_blockNumber", started.elapsed().as_secs_f64());
+        let request_stats = stats.take();
+        // A poll that failed still cost a request; carry its timing out with
+        // the error so the source's metrics count it.
+        let height = result.map_err(|err| {
+            crate::request_stats::error_with_request_stats(
+                napi::Error::from_reason(err.to_string()),
+                &request_stats,
+            )
+        })?;
+        let height: i64 = height
+            .try_into()
+            .context("block height exceeds i64::MAX")
+            .map_err(map_err)?;
+        Ok((height, request_stats))
+    }
+
+    /// Reads one page: decides the actual `toBlock` from this partition's
+    /// AIMD-suggested interval, fans out one `eth_getLogs` per selection, then
+    /// fills the page's block and transaction stores for the fields the routed
+    /// items selected. On success, grows the partition's interval when the full
+    /// suggested range was applied. Everything a caller is expected to handle
+    /// — a narrower range to retry, a backoff, a selection the provider cannot
+    /// serve — comes back as a value; the stores returned alongside a non-"ok"
+    /// result are empty.
     #[napi]
     pub async fn get_next_page(
         &self,
         params: NextPageParams,
         address_set: &AddressSet,
-    ) -> napi::Result<NextPageResponse> {
+        known_blocks: &BlockStore,
+        known_transactions: &TransactionStore,
+    ) -> napi::Result<(NextPageResult, BlockStore, TransactionStore)> {
         if params.from_block < 0 || params.to_block_ceiling < 0 {
             return Err(map_err(anyhow::anyhow!(
                 "block bounds must be non-negative, got from_block={}, to_block_ceiling={}",
@@ -254,14 +470,12 @@ impl EvmRpcClient {
                 "to_block_ceiling ({to_block_ceiling}) must be >= from_block ({from_block})",
             )));
         }
+        let should_checksum = self.should_checksum;
 
         let (suggested_interval, source_max) = self
             .intervals
             .suggested_interval(&params.partition_id, &self.sync_config);
-        // Defensively ensure we never query a target block below fromBlock.
-        let to_block = (from_block + suggested_interval - 1)
-            .min(to_block_ceiling)
-            .max(from_block);
+        let to_block = (from_block + suggested_interval - 1).min(to_block_ceiling);
 
         let client_filtered = crate::client_filtered_contracts::ClientFilteredContracts::from_vec(
             params.client_filtered_contracts.unwrap_or_default(),
@@ -270,9 +484,8 @@ impl EvmRpcClient {
             .selection_builder
             .build(&params.registration_indexes, address_set, &client_filtered)
             .map_err(map_err)?;
-        let log_selections = built.log_selections;
         let set_cache = address_set.cache().clone();
-        let selection_decoder = std::sync::Arc::new(
+        let selection_decoder = Arc::new(
             self.decoder
                 .selection(
                     &params.registration_indexes,
@@ -281,21 +494,24 @@ impl EvmRpcClient {
                 )
                 .map_err(map_err)?,
         );
-        let timeout = Duration::from_millis(self.sync_config.query_timeout_millis);
-        let page_result = tokio::time::timeout(
-            timeout,
-            self.fetch_page(
-                from_block,
-                to_block,
-                &log_selections,
-                &set_cache,
-                &selection_decoder,
-            ),
-        )
-        .await;
 
-        match page_result {
-            Ok(Ok((items, request_stats))) => {
+        let query = PageQuery {
+            partition_id: &params.partition_id,
+            from_block,
+            to_block,
+            selections: &built.log_selections,
+            set_cache: &set_cache,
+            decoder: &selection_decoder,
+            known_blocks,
+            known_transactions,
+        };
+        let stats = Stats::default();
+        let outcome = self.read_page(&query, &stats).await;
+
+        // Only a page that was read has stores; every other outcome returns
+        // empty ones, so the match decides the result and the stores follow.
+        let (result, page) = match outcome {
+            Ok((items, page)) => {
                 let executed_interval = to_block - from_block + 1;
                 // Grow this partition's interval only when the full suggested range
                 // was actually applied (not clamped by a hard toBlock ceiling). The
@@ -309,152 +525,249 @@ impl EvmRpcClient {
                         source_max,
                     );
                 }
-                Ok(NextPageResponse {
-                    items,
-                    to_block: to_block as i64,
-                    request_stats,
-                })
+                (
+                    NextPageResult {
+                        items,
+                        ..NextPageResult::new(Kind::Ok, to_block, stats.take())
+                    },
+                    Some(page),
+                )
             }
-            Ok(Err((rpc_err, request_stats))) => {
-                let message = match &rpc_err {
-                    RpcError::JsonRpc { message, .. } => Some(message.as_str()),
+            Err(EnrichError::FieldSelection {
+                block_number,
+                error,
+            }) => (
+                NextPageResult {
+                    message: Some(format!("{error:#}")),
+                    block_number: Some(block_number as i64),
+                    ..NextPageResult::new(Kind::FieldSelection, to_block, stats.take())
+                },
+                None,
+            ),
+            // The answer was unusable but the next one may not be. The range is
+            // fine, so the interval is left alone and only the wait grows with
+            // the attempt.
+            Err(EnrichError::Transient(message)) => (
+                NextPageResult {
+                    // The symptom is its own explanation here, so it is both
+                    // what the retry logs and the cause logged beside it.
+                    provider_message: Some(message.clone()),
+                    // A drifting node catches up in its own time, so the wait
+                    // ramps with the attempt instead of using the configured
+                    // backoff, which is tuned for a provider erroring outright.
+                    ..NextPageResult::backoff(
+                        message,
+                        params.retry.saturating_mul(500).max(100),
+                        to_block,
+                        stats.take(),
+                    )
+                },
+                None,
+            ),
+            Err(EnrichError::Rpc(err)) => {
+                let provider_message = match &*err {
+                    RpcError::JsonRpc { message, .. } => Some(message.clone()),
                     RpcError::Other(_) => None,
                 };
-                Err(self.retry_error(
-                    &params.partition_id,
-                    from_block,
-                    to_block,
-                    source_max,
-                    message,
-                    request_stats,
-                ))
+                let message = provider_message.clone().unwrap_or_else(|| err.to_string());
+                (
+                    self.retry_result(&query, provider_message.as_deref(), message, stats.take()),
+                    None,
+                )
             }
-            // Dropping the timed-out future cancels the in-flight requests.
-            Err(_elapsed) => Err(self.retry_error(
-                &params.partition_id,
-                from_block,
-                to_block,
-                source_max,
-                Some(&format!(
-                    "Query took longer than {}ms",
-                    self.sync_config.query_timeout_millis
-                )),
-                Vec::new(),
-            )),
-        }
+        };
+
+        let (blocks, transactions) = match page {
+            Some(page) => (page.blocks, page.transactions),
+            None => (
+                BlockStore::new_evm(should_checksum),
+                TransactionStore::new_evm(should_checksum),
+            ),
+        };
+        Ok((result, blocks, transactions))
     }
 
-    /// Builds the structured retry decision for a failed page fetch, updating
-    /// the AIMD state as a side effect.
-    fn retry_error(
+    /// Reads the logs, then everything the routed items need to be materialised.
+    async fn read_page(
         &self,
-        partition_id: &str,
-        from_block: u64,
-        to_block: u64,
-        source_max: u64,
-        message: Option<&str>,
+        query: &PageQuery<'_>,
+        stats: &Stats,
+    ) -> Result<(Vec<EventItem>, enrich::EnrichedPage), EnrichError> {
+        let decoded = self
+            .fetch_page(query, stats)
+            .await
+            .map_err(|err| EnrichError::Rpc(Arc::new(err)))?;
+
+        let mut refs = PageRefs::default();
+        let mut items = Vec::with_capacity(decoded.len());
+        // A log can satisfy more than one selection — an event's `where`
+        // OR-groups, or several registrations sharing a signature — and routing
+        // fans one log out to several registrations, so only exact repeats are
+        // dropped. The repeat's hashes are still recorded: the two `eth_getLogs`
+        // calls ran concurrently and can straddle a fork, and it is the
+        // disagreement between their block hashes that catches it.
+        let mut seen: HashSet<(i64, i64, i64)> = HashSet::new();
+        for entry in decoded {
+            // A registration the client was not constructed with cannot be
+            // routed to, so this is a missing entry rather than an empty
+            // selection; treating it as "wants nothing" would silently drop the
+            // event's fields.
+            let fields = *self
+                .registration_fields
+                .get(&entry.item.on_event_registration_index)
+                .ok_or_else(|| EnrichError::FieldSelection {
+                    block_number: entry.item.block_number as u64,
+                    error: anyhow::anyhow!(
+                        "no field selection for registration {}",
+                        entry.item.on_event_registration_index
+                    ),
+                })?;
+            let transaction_index = u32::try_from(entry.item.transaction_index).map_err(|_| {
+                EnrichError::Transient(format!(
+                    "the RPC reported transaction index {} in block {}, which no block can \
+                         hold",
+                    entry.item.transaction_index, entry.item.block_number,
+                ))
+            })?;
+            refs.add(
+                entry.item.block_number as u64,
+                transaction_index,
+                &entry.block_hash,
+                &entry.transaction_hash,
+                fields,
+            );
+            if seen.insert((
+                entry.item.block_number,
+                entry.item.log_index,
+                entry.item.on_event_registration_index,
+            )) {
+                items.push(entry.item);
+            }
+        }
+
+        let page = enrich::page(
+            &self.inner,
+            &self.fetches,
+            stats,
+            EnrichRequest {
+                from_block: query.from_block,
+                to_block: query.to_block,
+                refs,
+                known_blocks: query.known_blocks,
+                known_transactions: query.known_transactions,
+                should_checksum: self.should_checksum,
+            },
+        )
+        .await?;
+        Ok((items, page))
+    }
+
+    /// Builds the retry decision for a page that could not be read, updating
+    /// the AIMD state as a side effect.
+    fn retry_result(
+        &self,
+        query: &PageQuery<'_>,
+        provider_message: Option<&str>,
+        logged_message: String,
         request_stats: Vec<RequestStat>,
-    ) -> napi::Error {
+    ) -> NextPageResult {
+        let PageQuery {
+            partition_id,
+            from_block,
+            to_block,
+            ..
+        } = *query;
         let executed_interval = to_block - from_block + 1;
         let shrunk_interval =
             interval::shrink(executed_interval, self.sync_config.backoff_multiplicative);
 
-        let retry = match message.and_then(suggested_block_interval_from_message) {
+        let result = match provider_message.and_then(suggested_block_interval_from_message) {
             // "limited to N blocks" — a structural cap on the whole source; only tighten.
             Some((suggested, true)) => {
-                let capped = self.intervals.tighten_source_max(source_max, suggested);
-                RetryDecision::WithSuggestedToBlock {
-                    to_block: from_block + capped - 1,
-                }
+                let capped = self
+                    .intervals
+                    .tighten_source_max(self.sync_config.interval_ceiling, suggested);
+                NextPageResult::suggested_to_block(from_block + capped - 1, to_block, request_stats)
             }
             // A one-off suggested range ("retry with the range X-Y") — apply to this partition.
             Some((suggested, false)) => {
                 self.intervals.set_partition(partition_id, suggested);
-                RetryDecision::WithSuggestedToBlock {
-                    to_block: from_block + suggested - 1,
-                }
+                NextPageResult::suggested_to_block(
+                    from_block + suggested - 1,
+                    to_block,
+                    request_stats,
+                )
             }
             // Density cap with no suggested number (too many logs / response too large):
             // shrink THIS partition and retry immediately (no wait); acceleration
             // re-adapts on the next successful query. The interval>1 guard avoids a
             // no-progress tight loop on a single over-cap block.
-            None if executed_interval > 1 && message.is_some_and(is_response_too_large_message) => {
+            None if executed_interval > 1
+                && provider_message.is_some_and(is_response_too_large_message) =>
+            {
                 self.intervals.set_partition(partition_id, shrunk_interval);
-                RetryDecision::WithSuggestedToBlock {
-                    to_block: from_block + shrunk_interval - 1,
-                }
+                NextPageResult::suggested_to_block(
+                    from_block + shrunk_interval - 1,
+                    to_block,
+                    request_stats,
+                )
             }
             // Transient/unknown (including a timeout) — shrink this partition and back off.
             None => {
                 self.intervals.set_partition(partition_id, shrunk_interval);
-                RetryDecision::WithBackoff {
-                    message: "Failed getting data for the block range. Will try smaller block \
-                              range for the next attempt."
+                NextPageResult::backoff(
+                    "Failed getting data for the block range. Will try smaller block range \
+                     for the next attempt."
                         .to_string(),
-                    backoff_millis: self.sync_config.backoff_millis,
-                }
+                    self.sync_config.backoff_millis as i64,
+                    to_block,
+                    request_stats,
+                )
             }
         };
 
-        retry_decision_to_napi(to_block, message, retry, request_stats)
+        NextPageResult {
+            provider_message: Some(logged_message),
+            ..result
+        }
     }
 
-    /// Fans out one `eth_getLogs` per selection concurrently, deduping the
-    /// merged results by `(blockNumber, logIndex, registrationIndex)` — a log
-    /// can satisfy more than one selection (an event's `where` OR-groups, or
-    /// several registrations sharing a signature) and routing fans one log out
-    /// to several registrations, so only exact repeats are dropped. Waits for
-    /// every selection to settle (unlike `Promise.all`'s fail-fast) so every
-    /// request's timing is still captured for `requestStats` even when one of
-    /// them errors.
+    /// Fans out one `eth_getLogs` per selection concurrently. Every selection
+    /// is awaited even once one has failed, so each request's timing still
+    /// reaches `requestStats`; the first failure then decides the page.
     async fn fetch_page(
         &self,
-        from_block: u64,
-        to_block: u64,
-        selections: &[BuiltLogSelection],
-        set_cache: &std::sync::Arc<SetCache>,
-        selection_decoder: &std::sync::Arc<SelectionDecoder>,
-    ) -> Result<(Vec<RpcEventItem>, Vec<RequestStat>), (RpcError, Vec<RequestStat>)> {
-        if selections.is_empty() {
-            return Ok((Vec::new(), Vec::new()));
+        query: &PageQuery<'_>,
+        stats: &Stats,
+    ) -> Result<Vec<DecodedItem>, RpcError> {
+        if query.selections.is_empty() {
+            return Ok(Vec::new());
         }
 
-        let results = futures_util::future::join_all(selections.iter().map(|selection| async {
-            let started = Instant::now();
-            let result = self
-                .fetch_logs_raw(
-                    from_block as i64,
-                    to_block as i64,
-                    selection,
-                    set_cache.clone(),
-                    selection_decoder.clone(),
-                )
-                .await;
-            (result, started.elapsed().as_secs_f64())
-        }))
-        .await;
+        let results =
+            futures_util::future::join_all(query.selections.iter().map(|selection| async {
+                let permit = self.inner.acquire().await;
+                let started = Instant::now();
+                let result = self
+                    .fetch_logs_raw(
+                        permit,
+                        query.from_block as i64,
+                        query.to_block as i64,
+                        selection,
+                        query.set_cache.clone(),
+                        query.decoder.clone(),
+                    )
+                    .await;
+                stats.record("eth_getLogs", started.elapsed().as_secs_f64());
+                result
+            }))
+            .await;
 
         let mut items = Vec::new();
-        let mut stats = Vec::with_capacity(results.len());
-        let mut seen: HashSet<(i64, i64, i64)> = HashSet::new();
         let mut first_err = None;
-        for (result, seconds) in results {
-            stats.push(RequestStat {
-                method: "eth_getLogs".to_string(),
-                seconds,
-            });
+        for result in results {
             match result {
-                Ok(page_items) => {
-                    for item in page_items {
-                        if seen.insert((
-                            item.log.block_number,
-                            item.log.log_index,
-                            item.on_event_registration_index,
-                        )) {
-                            items.push(item);
-                        }
-                    }
-                }
+                Ok(page_items) => items.extend(page_items),
                 Err(e) => {
                     if first_err.is_none() {
                         first_err = Some(e);
@@ -463,19 +776,20 @@ impl EvmRpcClient {
             }
         }
         match first_err {
-            Some(e) => Err((e, stats)),
-            None => Ok((items, stats)),
+            Some(e) => Err(e),
+            None => Ok(items),
         }
     }
 
     async fn fetch_logs_raw(
         &self,
+        permit: SemaphorePermit<'_>,
         from_block: i64,
         to_block: i64,
         selection: &BuiltLogSelection,
-        set_cache: std::sync::Arc<SetCache>,
-        decoder: std::sync::Arc<SelectionDecoder>,
-    ) -> Result<Vec<RpcEventItem>, RpcError> {
+        set_cache: Arc<SetCache>,
+        decoder: Arc<SelectionDecoder>,
+    ) -> Result<Vec<DecodedItem>, RpcError> {
         // eth_getLogs topic filters: `null` matches any value at a position;
         // trailing match-any positions are trimmed entirely.
         let mut topics: Vec<Option<&Vec<String>>> = selection
@@ -501,7 +815,10 @@ impl EvmRpcClient {
             filter["address"] = json!(selection.addresses);
         }
 
-        let raw_logs: Vec<RawLog> = self.inner.request("eth_getLogs", json!([filter])).await?;
+        let raw_logs: Vec<RawLog> = self
+            .inner
+            .request(permit, "eth_getLogs", json!([filter]))
+            .await?;
 
         // Decoding is CPU-bound ABI work; keep it off the libuv async thread.
         tokio::task::spawn_blocking(move || {
@@ -530,12 +847,19 @@ impl EvmRpcClient {
                 if routed.is_empty() {
                     continue;
                 }
-                let log = raw.into_rpc_log(address)?;
+                let block_hash = format::Hash::decode_hex(&raw.block_hash)
+                    .map_err(|e| anyhow::anyhow!("log.blockHash: {e}"))?;
+                let transaction_hash = format::Hash::decode_hex(&raw.transaction_hash)
+                    .map_err(|e| anyhow::anyhow!("log.transactionHash: {e}"))?;
                 for routed in routed {
-                    items.push(RpcEventItem {
-                        log: log.clone(),
-                        on_event_registration_index: routed.index,
-                        params: routed.params,
+                    items.push(DecodedItem {
+                        item: raw.borrowed_event_item(
+                            address.clone(),
+                            routed.index,
+                            routed.params,
+                        )?,
+                        block_hash: block_hash.clone(),
+                        transaction_hash: transaction_hash.clone(),
                     });
                 }
             }
@@ -548,72 +872,6 @@ impl EvmRpcClient {
             ))
         })?
         .map_err(RpcError::Other)
-    }
-}
-
-enum RetryDecision {
-    WithSuggestedToBlock {
-        to_block: u64,
-    },
-    WithBackoff {
-        message: String,
-        backoff_millis: u64,
-    },
-}
-
-/// Encodes the paging retry decision as a JSON payload in the napi error's
-/// message: `{"kind":"Retry","attemptedToBlock":...,"errorMessage":...,
-/// "requestStats":[...],"retry":{"tag":...}}`.
-fn retry_decision_to_napi(
-    attempted_to_block: u64,
-    error_message: Option<&str>,
-    decision: RetryDecision,
-    request_stats: Vec<RequestStat>,
-) -> napi::Error {
-    let retry_json = match decision {
-        RetryDecision::WithSuggestedToBlock { to_block } => json!({
-            "tag": "WithSuggestedToBlock",
-            "toBlock": to_block,
-        }),
-        RetryDecision::WithBackoff {
-            message,
-            backoff_millis,
-        } => json!({
-            "tag": "WithBackoff",
-            "message": message,
-            "backoffMillis": backoff_millis,
-        }),
-    };
-    let request_stats_json: Vec<_> = request_stats
-        .into_iter()
-        .map(|s| json!({"method": s.method, "seconds": s.seconds}))
-        .collect();
-    let payload = json!({
-        "kind": "Retry",
-        "attemptedToBlock": attempted_to_block,
-        "errorMessage": error_message,
-        "requestStats": request_stats_json,
-        "retry": retry_json,
-    })
-    .to_string();
-    napi::Error::new(napi::Status::GenericFailure, payload)
-}
-
-/// Encodes JSON-RPC errors as a JSON payload in the napi error's message.
-/// The ReScript side parses it back into a structured exception, keeping
-/// the provider's code and message intact across the boundary.
-fn rpc_error_to_napi(e: RpcError) -> napi::Error {
-    match e {
-        RpcError::JsonRpc { code, message } => {
-            let payload = serde_json::json!({
-                "kind": "JsonRpcError",
-                "code": code,
-                "message": message,
-            })
-            .to_string();
-            napi::Error::from_reason(payload)
-        }
-        RpcError::Other(e) => map_err(e),
     }
 }
 

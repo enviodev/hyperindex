@@ -29,7 +29,7 @@ use crate::field_table::{
     access_lists_cells, access_lists_from, auth_lists_cells, auth_lists_from, bool_cells,
     bool_from, bytes_cells, f64_cells, f64_from, fixed_from, hash_list_cells, hash_list_from,
     hex_full, hex_quantity, str_list_cells, str_list_from, u64_cells, u64_from, utf8, var_from,
-    AnyCol, Table,
+    AnyCol, Coverage, Table,
 };
 use crate::svm_hypersync_source::types::bigint_u64;
 
@@ -568,18 +568,26 @@ impl TransactionStore {
     /// Move every row from `page` into this store (merging a fetch-response
     /// page into the persistent per-chain store).
     #[napi]
-    pub fn merge(&self, page: &TransactionStore) {
+    pub fn merge(&self, page: &TransactionStore) -> napi::Result<()> {
         // Merging a store into itself would lock the same Mutex twice (deadlock).
         if std::ptr::eq(self, page) {
-            return;
+            return Ok(());
         }
-        // A page and its persistent store are the same per-chain ecosystem (both
-        // derive it from the one chain config), so the decoder is unaffected by the merge.
-        debug_assert_eq!(self.ecosystem, page.ecosystem);
+        // Field codes are per-ecosystem, so merging across one would read a
+        // column as a different field. A page and its persistent store always
+        // share the chain's ecosystem, but `merge` is public over N-API, so
+        // reject it in every build rather than panicking inside a callback,
+        // where an abort would take the process down.
+        if std::mem::discriminant(&self.ecosystem) != std::mem::discriminant(&page.ecosystem) {
+            return Err(napi::Error::from_reason(
+                "TransactionStore.merge: cannot merge a page from a different ecosystem",
+            ));
+        }
         let mut dst = self.inner.lock().unwrap();
         let mut src = page.inner.lock().unwrap();
         dst.txs.append_from(&mut src.txs);
         dst.account_activity.append_from(&mut src.account_activity);
+        Ok(())
     }
 
     /// Bulk-materialise transactions in columnar form, one row per
@@ -784,7 +792,24 @@ impl TransactionStore {
     /// Merge one response's EVM transactions into the table (called by the
     /// HyperSync source while building a page). Rows without a (block, index)
     /// key are dropped. Not exposed to JS.
-    pub(crate) fn insert_evm_txs(&self, mut txs: Vec<simple_types::Transaction>) {
+    pub(crate) fn insert_evm_txs(&self, txs: Vec<simple_types::Transaction>) {
+        self.insert_evm_txs_covering(txs, 0);
+    }
+
+    /// Whether this transaction was already fetched for every field in `mask`.
+    pub(crate) fn covers(&self, key: (u64, u32), mask: u64) -> bool {
+        self.inner.lock().unwrap().txs.covers(&key, mask)
+    }
+
+    /// Merge transactions fetched for a known field selection. `covering` marks
+    /// every field the fetch asked for, so one the transaction genuinely has no
+    /// value for (a null `to` on a contract creation) still reads as fetched
+    /// and is not requested again.
+    pub(crate) fn insert_evm_txs_covering(
+        &self,
+        mut txs: Vec<simple_types::Transaction>,
+        covering: u64,
+    ) {
         txs.retain(|t| t.block_number.is_some() && t.transaction_index.is_some());
         if txs.is_empty() {
             return;
@@ -800,7 +825,11 @@ impl TransactionStore {
             .iter()
             .map(|&f| evm_tx_col(f, &txs))
             .collect();
-        self.inner.lock().unwrap().txs.merge_batch(keys, cols);
+        self.inner
+            .lock()
+            .unwrap()
+            .txs
+            .merge_batch_covering(keys, cols, Coverage::All(covering));
     }
 
     /// Merge one response's SVM transactions into the table, keyed by
@@ -1327,7 +1356,7 @@ mod tests {
             vec![0xaa].into_boxed_slice(),
         ));
         page1.insert_evm_txs(vec![first]);
-        persistent.merge(&page1);
+        persistent.merge(&page1).unwrap();
 
         let page2 = TransactionStore::new_evm(false);
         let mut second = raw_tx(1, 0);
@@ -1335,7 +1364,7 @@ mod tests {
             vec![0xbb].into_boxed_slice(),
         ));
         page2.insert_evm_txs(vec![second]);
-        persistent.merge(&page2);
+        persistent.merge(&page2).unwrap();
 
         let mask = bit(EvmTxField::Input) as f64;
         let cols = persistent

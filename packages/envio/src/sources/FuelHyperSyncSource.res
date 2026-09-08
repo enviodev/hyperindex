@@ -44,6 +44,12 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
 
     let startFetchingBatchTimeRef = Performance.now()
 
+    // Every way out of the fetch carries its timing: the request was made,
+    // and is billed, whether or not it answered.
+    let fetchStats = () => [
+      {Source.method: "getLogs", seconds: startFetchingBatchTimeRef->Performance.secondsSince},
+    ]
+
     //fetch batch
     let pageUnsafe = try await FuelHyperSync.GetLogs.query(
       ~client,
@@ -54,11 +60,12 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
       ~clientFilteredContracts=selection.clientFilteredContracts,
     ) catch {
     | FuelHyperSync.GetLogs.Error(WrongInstance) =>
-      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: []}))
+      throw(Source.SourceBehindHead({blockNumber: fromBlock, requestStats: fetchStats()}))
     | FuelHyperSync.GetLogs.Error(UnexpectedMissingParams({missingParams})) =>
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
+            requestStats: fetchStats(),
             exn: %raw(`null`),
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: ImpossibleForTheQuery({
@@ -73,6 +80,7 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
       throw(
         Source.GetItemsError(
           Source.FailedGettingItems({
+            requestStats: fetchStats(),
             exn,
             attemptedToBlock: toBlock->Option.getOr(knownHeight),
             retry: WithBackoff({
@@ -88,7 +96,7 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
     }
 
     let pageFetchTime = startFetchingBatchTimeRef->Performance.secondsSince
-    let requestStats = [{Source.method: "getLogs", seconds: pageFetchTime}]
+    let requestStats = fetchStats()
 
     //set height and next from block
     let knownHeight = pageUnsafe.archiveHeight
@@ -189,7 +197,6 @@ let make = ({chainId, endpointUrl, apiToken, onEventRegistrations, addressStore}
       latestFetchedBlockNumber: heighestBlockQueried,
       stats,
       knownHeight,
-      fromBlockQueried: fromBlock,
       requestStats,
     }
   }

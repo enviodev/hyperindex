@@ -88,7 +88,7 @@ pub struct FieldSelection {
 
 /// Available fields for block data
 #[napi(string_enum)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, strum::VariantArray)]
 pub enum BlockField {
     Number,
     Hash,
@@ -122,7 +122,7 @@ pub enum BlockField {
 
 /// Available fields for transaction data
 #[napi(string_enum)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, strum::VariantArray)]
 pub enum TransactionField {
     BlockHash,
     BlockNumber,

@@ -289,19 +289,16 @@ describe("EVM inline field selection", () => {
     ])
   })
 
-  it("rejects a field an RPC source can't deliver, whatever the RPC syncs for", t => {
-    let message = try {
-      register(
-        ~config=rpcConfig,
-        () => setHandler(~fields={transaction: ["accessList"]}, ()),
-      )->ignore
-      "the registration to fail, but it succeeded"
-    } catch {
-    | JsExn(e) => e->JsExn.message->Option.getOr("an error with a message")
-    }
-    t.expect(
-      message,
-    ).toBe(`The "accessList" transaction field selected for the "Transfer" event on contract "Token" is unavailable for indexing via RPC. Remove it from the field selection, or remove chain 1's RPC source — even an RPC the chain only falls back to has to deliver the selection.`)
+  // The RPC source reads every transaction field the store holds, so an RPC on
+  // the chain no longer narrows what a selection may ask for.
+  it("accepts the array-shaped transaction fields on a chain with an RPC", t => {
+    let registrations = register(
+      ~config=rpcConfig,
+      () => setHandler(~fields={transaction: ["accessList", "authorizationList"]}, ()),
+    )
+    t.expect(registrations->selections).toEqual([
+      (["number"], ["accessList", "authorizationList"]),
+    ])
   })
 
   // A registration resolves for every chain that configures the event, so one
@@ -345,9 +342,7 @@ describe("EVM inline field selection", () => {
     ))
   })
 
-  // The registration is dropped for this chain before it reaches the source, so
-  // the chain's RPC limits never apply to it.
-  it("skips the RPC check for a registration whose where opts out of the chain", t => {
+  it("keeps no selection for a registration whose where opts out of the chain", t => {
     let registrations = register(
       ~config=rpcConfig,
       () => setHandler(~fields={transaction: ["accessList"]}, ~where=%raw(`() => false`), ()),

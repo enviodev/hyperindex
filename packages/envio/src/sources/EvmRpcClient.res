@@ -1,6 +1,6 @@
 type cfg = {
   url: string,
-  httpReqTimeoutMillis?: int,
+  maxConcurrentRequests?: int,
   headers?: dict<string>,
   initialBlockInterval: int,
   backoffMultiplicative: float,
@@ -10,38 +10,49 @@ type cfg = {
   queryTimeoutMillis: int,
 }
 
-// Only logs that resolved to a registration cross the boundary, each carrying
-// its registration's chain-scoped index.
-type rpcEventItem = {
-  log: Rpc.GetLogs.log,
-  onEventRegistrationIndex: int,
-  params: Internal.eventParams,
-}
-
 type nextPageParams = {
   fromBlock: int,
   toBlockCeiling: int,
   partitionId: string,
-  // The partition's registration selection, by chain-scoped index. Log
-  // selections and the routing index are derived on the Rust side from the
-  // registrations passed at construction.
   registrationIndexes: array<int>,
-  // Contract names to fetch address-free even though their registrations
-  // depend on addresses (client-side filtering). None/empty means
-  // every address-dependent contract is filtered server-side.
   clientFilteredContracts: option<array<string>>,
+  retry: int,
 }
 
-type nextPageResponse = {
-  items: array<rpcEventItem>,
+// Rust reports what to do about a page it could not read rather than throwing
+// it; see `NextPageResult` in `evm_rpc_source/mod.rs` for which fields each
+// `kind` populates. A thrown error from `getNextPage` is a genuine bug, not an
+// outcome to recover from.
+type nextPageResult = {
+  kind: string,
+  requestStats: array<Source.requestStat>,
   toBlock: int,
+  items: array<EvmEventItem.t>,
+  message: option<string>,
+  providerMessage: option<string>,
+  blockNumber: option<int>,
+  retryToBlock: option<int>,
+  backoffMillis: option<int>,
+}
+
+// `message` is set when the read failed, in which case the page returned
+// alongside it is empty.
+type blockHashResult = {
+  message: option<string>,
   requestStats: array<Source.requestStat>,
 }
 
-// The caller provides a range; Rust decides the actual `toBlock` and returns it.
 type t = {
-  getHeight: unit => promise<int>,
-  getNextPage: (nextPageParams, AddressSet.t) => promise<nextPageResponse>,
+  getHeight: unit => promise<(int, array<Source.requestStat>)>,
+  // The stores it returns are this page's own, for the caller to merge.
+  getNextPage: (
+    nextPageParams,
+    AddressSet.t,
+    BlockStore.t,
+    TransactionStore.t,
+  ) => promise<(nextPageResult, BlockStore.t, TransactionStore.t)>,
+  getBlockHashes: array<int> => promise<(blockHashResult, BlockStore.t)>,
+  onReorg: unit => unit,
 }
 
 @send
@@ -53,48 +64,19 @@ external classNew: (
   ~addressStore: AddressStore.t,
 ) => t = "new"
 
-// Rust encodes JSON-RPC errors as a JSON payload in the napi error's
-// message: `{"kind":"JsonRpcError","code":-32005,"message":"..."}`.
-// Parse it back so callers keep matching on Rpc.JsonRpcError.
-let getJsonRpcError = (exn: exn): option<Rpc.rpcError> =>
-  switch exn {
-  | JsExn(e) =>
-    switch e->JsExn.message {
-    | Some(msg) =>
-      switch msg->JSON.parseOrThrow->JSON.Decode.object {
-      | exception _ => None
-      | None => None
-      | Some(obj) =>
-        switch (obj->Dict.get("kind"), obj->Dict.get("code"), obj->Dict.get("message")) {
-        | (Some(String("JsonRpcError")), Some(Number(code)), Some(String(message))) =>
-          Some({code: code->Float.toInt, message})
-        | _ => None
-        }
-      }
-    | None => None
-    }
-  | _ => None
-  }
-
-let coerceErrorOrThrow = exn =>
-  switch exn->getJsonRpcError {
-  | Some(rpcError) => throw(Rpc.JsonRpcError(rpcError))
-  | None => exn->throw
-  }
-
 let make = (
   ~url,
   ~checksumAddresses,
   ~syncConfig: Config.sourceSync,
-  ~httpReqTimeoutMillis=?,
+  ~maxConcurrentRequests=?,
   ~headers=?,
   ~eventRegistrations=[],
   ~addressStore,
-) => {
-  let client = Core.getAddon().evmRpcClient->classNew(
+) =>
+  Core.getAddon().evmRpcClient->classNew(
     {
       url,
-      ?httpReqTimeoutMillis,
+      ?maxConcurrentRequests,
       ?headers,
       initialBlockInterval: syncConfig.initialBlockInterval,
       backoffMultiplicative: syncConfig.backoffMultiplicative,
@@ -107,9 +89,3 @@ let make = (
     ~checksumAddresses,
     ~addressStore,
   )
-  {
-    getHeight: () => client.getHeight()->Promise.catch(coerceErrorOrThrow),
-    getNextPage: (params, addressSet) =>
-      client.getNextPage(params, addressSet)->Promise.catch(coerceErrorOrThrow),
-  }
-}
