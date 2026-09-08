@@ -54,9 +54,15 @@ let candidateSources = (sources: array<Source.t>) => {
 // One attempt per source. Trying the next source is not a retry - it's the
 // failover the config asked for - but no source is asked twice.
 let readHeadOnceOrThrow = async (chainConfig: Config.chain, ~sources): int => {
+  let candidates = candidateSources(sources)
+  if candidates->Utils.Array.isEmpty {
+    // The condition `SourceManager.make` rejects on the retrying path. Sharing
+    // its wording keeps one misconfiguration from having two explanations - and
+    // "no source answered" would be untrue here, since none was asked.
+    JsError.throwWithMessage("Invalid configuration, no data-source for historical sync provided")
+  }
   let failures = []
   let head = ref(None)
-  let candidates = candidateSources(sources)
   for i in 0 to candidates->Array.length - 1 {
     if head.contents->Option.isNone {
       let source = candidates->Array.getUnsafe(i)

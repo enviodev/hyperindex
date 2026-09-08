@@ -156,6 +156,27 @@ describe("StartBlockResolver", () => {
     ))
   })
 
+  Async.it("says what's wrong when no source can serve historical sync", async t => {
+    // Every candidate filtered out leaves nothing to ask, which is a config
+    // error rather than an unanswered request - and it has to read as the same
+    // config error on both retry policies.
+    let realtimeOnly = MockSource.make([#getHeightOrThrow], ~chainId=1, ~sourceFor=Source.Realtime)
+    let chain = makeChain(~startBlock=Config.Latest, ~sources=[realtimeOnly.source])
+
+    let error =
+      await [chain]
+      ->StartBlockResolver.resolveAllOrThrow(
+        ~lowercaseAddresses=false,
+        ~retry=StartBlockResolver.Once,
+      )
+      ->errorMessageOf
+
+    t.expect((error, realtimeOnly.getHeightOrThrowCalls->Array.length)).toEqual((
+      Some("Invalid configuration, no data-source for historical sync provided"),
+      0,
+    ))
+  })
+
   Async.it("with `Once`, takes the first source that answers", async t => {
     let primary = MockSource.make([#getHeightOrThrow], ~chainId=1)
     let fallback = MockSource.make(
@@ -179,6 +200,55 @@ describe("StartBlockResolver", () => {
 
     let resolved = await resolving
     t.expect(resolved->Array.map(c => c.startBlock)).toEqual([Config.Block(4242)])
+  })
+
+  // `start_block: latest` is offered on every ecosystem, and each one builds its
+  // own address store and sources on the way to a height request. Driving the
+  // real per-ecosystem chain config through the resolver is what keeps the
+  // feature from being quietly EVM-only.
+  [
+    (
+      "Fuel",
+      `
+name: fuel-latest
+ecosystem: fuel
+chains:
+  - id: 0
+    start_block: latest
+`,
+    ),
+    (
+      "SVM",
+      `
+name: svm-latest
+ecosystem: svm
+chains:
+  - id: solana
+    start_block: latest
+    rpc: https://api.mainnet-beta.solana.com
+`,
+    ),
+  ]->Array.forEach(((ecosystem, configYaml)) => {
+    Async.it(`resolves latest on ${ecosystem}`, async t => {
+      let {config} = InternalTestIndexer.fromUserApi(~configYaml)
+      let configChain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+      let mockSource = MockSource.make(
+        [#getHeightOrThrow],
+        ~chainId=configChain.id->ChainId.toInt,
+        ~autoHeight=8888,
+      )
+      let chain = {
+        ...configChain,
+        sourceConfig: Config.CustomSources([mockSource.source]),
+      }
+
+      let resolved = await [chain]->resolveAll
+
+      t.expect((
+        configChain.startBlock,
+        resolved->Array.map(c => c.startBlock),
+      )).toEqual((Config.Latest, [Config.Block(8888)]))
+    })
   })
 
   Async.it("throws a clear error when latest resolves past end_block", async t => {

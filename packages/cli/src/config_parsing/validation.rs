@@ -108,6 +108,47 @@ pub fn validate_names_valid_rescript(
     Ok(())
 }
 
+// A contract can't start before its chain, and a `latest` chain start block is
+// only known once the indexer first runs - so any contract-level start_block is
+// guaranteed to be in the past relative to it. Shared by the ecosystems whose
+// chains carry contracts; svm programs have no start_block of their own.
+pub fn validate_no_contract_start_block_with_latest<T>(
+    chain_id: u64,
+    start_block: StartBlock,
+    contracts: Option<&Vec<human_config::ChainContract<T>>>,
+) -> anyhow::Result<()> {
+    if let StartBlock::Tag(_) = start_block {
+        if let Some(contract) = contracts
+            .into_iter()
+            .flatten()
+            .find(|contract| contract.start_block.is_some())
+        {
+            return Err(anyhow!(
+                "Contract {:?} on chain {} sets start_block, but the chain's start_block is \
+                 \"latest\". A contract can't start before its chain does, and \"latest\" \
+                 isn't known until the indexer first runs. Remove the contract's start_block, \
+                 or pin the chain's start_block to a fixed value.",
+                contract.name,
+                chain_id
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_deserialized_fuel_config_yaml(
+    fuel_config: &human_config::fuel::HumanConfig,
+) -> anyhow::Result<()> {
+    for chain in &fuel_config.chains {
+        validate_no_contract_start_block_with_latest(
+            chain.id,
+            chain.start_block,
+            chain.contracts.as_ref(),
+        )?;
+    }
+    Ok(())
+}
+
 impl human_config::evm::Chain {
     pub fn validate_finite_endblock_networks(&self) -> anyhow::Result<()> {
         Ok(())
@@ -131,28 +172,12 @@ impl human_config::evm::Chain {
         Ok(())
     }
 
-    // A contract can't start before its chain, and a `latest` chain start block
-    // is only known once the indexer first runs - so any contract-level
-    // start_block is guaranteed to be in the past relative to it.
     pub fn validate_no_contract_start_block_with_latest(&self) -> anyhow::Result<()> {
-        if let StartBlock::Tag(_) = self.start_block {
-            if let Some(contract) = self
-                .contracts
-                .iter()
-                .flatten()
-                .find(|contract| contract.start_block.is_some())
-            {
-                return Err(anyhow!(
-                    "Contract {:?} on chain {} sets start_block, but the chain's start_block is \
-                     \"latest\". A contract can't start before its chain does, and \"latest\" \
-                     isn't known until the indexer first runs. Remove the contract's \
-                     start_block, or pin the chain's start_block to a fixed value.",
-                    contract.name,
-                    self.id
-                ));
-            }
-        }
-        Ok(())
+        validate_no_contract_start_block_with_latest(
+            self.id,
+            self.start_block,
+            self.contracts.as_ref(),
+        )
     }
 }
 
@@ -397,6 +422,35 @@ mod tests {
                 numeric
                     .validate_no_contract_start_block_with_latest()
                     .is_ok(),
+            ),
+            (true, true)
+        );
+    }
+
+    #[test]
+    fn fuel_latest_start_block_rejects_a_contract_level_start_block() {
+        // Parsed rather than constructed, so this also pins that a fuel config
+        // accepts `start_block: latest` in the first place.
+        let config = |start_block: &str| -> super::human_config::fuel::HumanConfig {
+            let yaml = [
+                "name: x",
+                "ecosystem: fuel",
+                "chains:",
+                "  - id: 0",
+                &format!("    start_block: {start_block}"),
+                "    contracts:",
+                "      - name: C",
+                "        address: \"0x1234\"",
+                "        start_block: 100",
+            ]
+            .join("\n");
+            serde_yaml::from_str(&yaml).unwrap()
+        };
+
+        assert_eq!(
+            (
+                super::validate_deserialized_fuel_config_yaml(&config("latest")).is_err(),
+                super::validate_deserialized_fuel_config_yaml(&config("0")).is_ok(),
             ),
             (true, true)
         );
