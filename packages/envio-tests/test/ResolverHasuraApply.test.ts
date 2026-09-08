@@ -280,6 +280,76 @@ describe("applying resolver metadata", () => {
     });
   });
 
+  // The header that proves a request came from Hasura is only safe on a private
+  // action while Hasura is told to ignore the caller's copy of it. An action
+  // already registered by a build that did not know that keeps forwarding the
+  // caller's, so the difference has to be drift rather than something the
+  // reconcile reads past -- otherwise the upgrade lands and changes nothing.
+  it("re-applies a private action Hasura would let a client speak the secret for", async () => {
+    exported = {
+      ...APPLIED_EXPORT,
+      actions: [
+        APPLIED_EXPORT.actions[0],
+        {
+          ...APPLIED_EXPORT.actions[1],
+          definition: {
+            ...APPLIED_EXPORT.actions[1].definition,
+            ignored_client_headers: IGNORED_CLIENT_HEADERS,
+          },
+        },
+      ],
+    };
+    const result = await apply();
+    expect({ reasons: result.reasons, args: bulkSent()[0]!.args }).toEqual({
+      reasons: ["action 'secretStats' differs"],
+      args: [
+        {
+          type: "update_action",
+          args: {
+            name: "secretStats",
+            definition: metadata.actions[1].definition,
+          },
+        },
+      ],
+    });
+  });
+
+  // Rotating the secret changes only what the service expects; Hasura keeps
+  // presenting the old value until the action is rewritten. Every resolver
+  // answers FORBIDDEN in the meantime, so a reconcile that reads past the
+  // difference reports nothing to do while nothing works.
+  it("re-applies an action still carrying a superseded shared secret", async () => {
+    const rotated = buildHasuraMetadata(buildRegisteredManifest().manifest, {
+      handlerUrl: HANDLER,
+      actionSecret: "new-secret",
+    });
+    exported = {
+      ...APPLIED_EXPORT,
+      actions: APPLIED_EXPORT.actions.map((action) => ({
+        ...action,
+        definition: {
+          ...action.definition,
+          headers: [{ name: "x-envio-resolver-secret", value: "old-secret" }],
+        },
+      })),
+    };
+    const result = await applyResolverMetadata({
+      endpoint,
+      adminSecret: "testing",
+      metadata: rotated,
+    });
+    expect({
+      reasons: result.reasons,
+      headers: bulkSent()[0]!.args.map((a: any) => a.args.definition?.headers),
+    }).toEqual({
+      reasons: ["action 'marketsAprByPeriod' differs", "action 'secretStats' differs"],
+      headers: [
+        [{ name: "x-envio-resolver-secret", value: "new-secret" }],
+        [{ name: "x-envio-resolver-secret", value: "new-secret" }],
+      ],
+    });
+  });
+
   it("drops an action the manifest no longer declares", async () => {
     exported = {
       ...APPLIED_EXPORT,
