@@ -13,41 +13,21 @@
 // Hasura's own; anything else a resolver names has to be declared.
 const BUILTIN_SCALARS = new Set(["String", "Int", "Float", "Boolean", "ID"]);
 
-/** The header Hasura presents so the handler can tell it apart from anyone
- *  else who can reach the socket. */
-export const RESOLVER_SECRET_HEADER = "x-envio-resolver-secret";
+/** The header Hasura presents so the handler can tell it apart from anyone else
+ *  who can reach the socket.
+ *
+ *  `x-hasura-` prefixed on purpose. A private action forwards the caller's
+ *  headers, and a forwarded header replaces the action's static one of the same
+ *  name rather than merging with it -- so under any other name a caller could
+ *  set this and the handler would refuse every request. Hasura takes a client
+ *  `x-hasura-*` header as a session variable and strips it before forwarding,
+ *  so under this one the caller's copy never arrives as a header at all. It
+ *  does arrive in `session_variables`, which is why the secret is only ever
+ *  read from the header. */
+export const RESOLVER_SECRET_HEADER = "x-hasura-envio-resolver-secret";
 
 /** Where a caller presents the key that unlocks a `private` resolver. */
 export const PRIVATE_KEY_HEADER = "x-envio-private-key";
-
-// Hasura's own default ignore list, which supplying the field replaces rather
-// than extends: leaving `Content-Length` off it forwards the client's, and the
-// handler rejects the request before reading a byte of it.
-export const HASURA_DEFAULT_IGNORED_CLIENT_HEADERS = [
-  "Content-Length",
-  "Content-MD5",
-  "User-Agent",
-  "Host",
-  "Origin",
-  "Referer",
-  "Accept",
-  "Accept-Encoding",
-  "Accept-Language",
-  "Accept-Datetime",
-  "Cache-Control",
-  "Connection",
-  "DNT",
-  "Content-Type",
-];
-
-// A forwarded client header of the same name does not merge with the action's
-// static one -- it takes its place, and the static value is never sent. Without
-// this the shared secret is the caller's to set, so anyone could send a wrong
-// one and have the service refuse every private resolver to its key holders.
-const IGNORED_CLIENT_HEADERS = [
-  ...HASURA_DEFAULT_IGNORED_CLIENT_HEADERS,
-  RESOLVER_SECRET_HEADER,
-];
 
 /**
  * @param manifest the parsed `.envio/resolvers.json`
@@ -129,15 +109,11 @@ export function buildHasuraMetadata(manifest, { handlerUrl, publicRole = "public
       ...(actionSecret
         ? { headers: [{ name: RESOLVER_SECRET_HEADER, value: actionSecret }] }
         : {}),
-      // A private resolver authenticates its caller here, not at Hasura, so
-      // the caller's own headers have to survive the hop -- all but the shared
-      // secret's, which a caller must not be able to speak for.
-      ...(resolver.private
-        ? {
-            forward_client_headers: true,
-            ignored_client_headers: IGNORED_CLIENT_HEADERS,
-          }
-        : {}),
+      // A private resolver authenticates its caller here, not at Hasura, so the
+      // caller's own headers have to survive the hop. Hasura's own default
+      // ignore list is left alone: naming any header here would replace that
+      // default wholesale and pin it to whatever this version happens to ignore.
+      ...(resolver.private ? { forward_client_headers: true } : {}),
     };
     const action = { name: resolver.name, definition };
     if (resolver.description) {
