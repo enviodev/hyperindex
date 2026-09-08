@@ -340,8 +340,11 @@ let addOnEventRegistration = (
         | (Svm, Some(fieldSelection)) if fieldSelection.instructionFields->Utils.Set.has("args") =>
           let svmEventConfig =
             eventConfig->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+          // An empty layout is still a layout: it decodes to `{}` and filters
+          // out the calls that carry a payload. Only an absent one has nothing
+          // to decode.
           let declaresArgs = switch svmEventConfig.args {
-          | JSON.Array(args) => args->Array.length > 0
+          | JSON.Array(_) => true
           | _ => false
           }
           if !declaresArgs {

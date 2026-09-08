@@ -13,7 +13,11 @@ pub struct ResolvedInstruction {
     /// `None` matches every instruction of the program.
     pub discriminator: Option<Vec<u8>>,
     pub accounts: Vec<AccountSlot>,
-    pub args: Vec<SvmNamedField>,
+    /// `None` attaches no decoder, so every matched call is delivered with its
+    /// payload raw. `Some` attaches one, and a call whose data the layout
+    /// rejects is skipped — an empty layout therefore takes only the calls
+    /// that carry nothing past the discriminator.
+    pub args: Option<Vec<SvmNamedField>>,
 }
 
 impl ResolvedInstruction {
@@ -35,7 +39,9 @@ impl ResolvedInstruction {
                     }
                 })
                 .collect(),
-            args: ix.args.clone(),
+            // An IDL declares the layout of every instruction it names, and
+            // one that takes no arguments declares an empty one.
+            args: Some(ix.args.clone()),
         }
     }
 }
@@ -64,11 +70,13 @@ fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<Re
     let args = match &instr.args {
         Some(args) => {
             validate_svm_args(args)?;
-            args.iter()
-                .map(yaml_arg_to_named_field)
-                .collect::<Result<Vec<_>>>()?
+            Some(
+                args.iter()
+                    .map(yaml_arg_to_named_field)
+                    .collect::<Result<Vec<_>>>()?,
+            )
         }
-        None => Vec::new(),
+        None => None,
     };
     Ok(ResolvedInstruction {
         discriminator,

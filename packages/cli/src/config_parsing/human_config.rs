@@ -1231,11 +1231,16 @@ pub mod svm {
         pub accounts: Option<Vec<AccountSlot>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional Borsh argument schema. Each entry names one arg and gives its \
-                           type; the decoder walks the instruction data after the discriminator \
-                           in declared order. Omit it to leave the payload undecoded, reachable \
-                           as raw `instruction.data`. Required on a row that replaces an \
-                           instruction the IDL declares."
+            description = "Borsh argument schema. Each entry names one arg and gives its type; \
+                           the decoder walks the instruction data after the discriminator in \
+                           declared order, and a call whose data the layout rejects is skipped. \
+                           Setting it is therefore also a filter: `[]` says the instruction takes \
+                           no arguments, so only calls carrying nothing past the discriminator \
+                           are indexed. Omit it instead to attach no decoder at all — every \
+                           matched call is indexed and the payload stays raw, reachable as \
+                           `instruction.data`. An `idl` always declares the layout of the \
+                           instructions it names, empty included. Required on a row that replaces \
+                           an instruction the IDL declares."
         )]
         pub args: Option<Vec<ArgDef>>,
     }

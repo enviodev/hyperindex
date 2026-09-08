@@ -2292,21 +2292,22 @@ type testIndexer = {{
                             EventKind::Svm(k) => k,
                             _ => continue,
                         };
-                        // No declared args means nothing to decode; registration
+                        // No declared layout means nothing to decode; registration
                         // rejects selecting the field, and `never` keeps a
-                        // handler from reading it as an object.
-                        let args_ts = if svm_kind.args.is_empty() {
-                            "never".to_string()
-                        } else {
-                            let fields = svm_kind
-                                .args
-                                .iter()
-                                .map(|f| {
-                                    ts_svm_field(f, &svm_abi.idl.defined_types, &mut Vec::new())
-                                })
-                                .collect::<Vec<_>>()
-                                .join("; ");
-                            format!("{{ {fields} }}")
+                        // handler from reading it as an object. A declared but
+                        // empty one decodes to `{}`, which is selectable.
+                        let args_ts = match &svm_kind.args {
+                            None => "never".to_string(),
+                            Some(args) => {
+                                let fields = args
+                                    .iter()
+                                    .map(|f| {
+                                        ts_svm_field(f, &svm_abi.idl.defined_types, &mut Vec::new())
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("; ");
+                                format!("{{ {fields} }}")
+                            }
                         };
                         let accounts_ts = if svm_kind.accounts.is_empty() {
                             "Readonly<Record<string, string>>".to_string()

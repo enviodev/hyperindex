@@ -2194,6 +2194,7 @@ chains:
             - {name: namesOnly, discriminator: "0x01", accounts: [source]}
             - {name: argsOnly, discriminator: "0x02", args: [{name: amount, type: u64}]}
             - {name: neither, discriminator: "0x03"}
+            - {name: emptyArgs, discriminator: "0x04", args: []}
 `,
     )
     t.expect(
@@ -2205,6 +2206,7 @@ chains:
       ("namesOnly", [Internal.Required("source")], JSON.Null),
       ("argsOnly", [], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
       ("neither", [], JSON.Null),
+      ("emptyArgs", [], JSON.parseOrThrow("[]")),
     ])
   })
 })
@@ -2367,7 +2369,7 @@ indexer.onInstruction(
 `),
     )
     t.expect(catalog(config)).toEqual([
-      ("deposit", Some("0x02"), ["vault"], JSON.Null),
+      ("deposit", Some("0x02"), ["vault"], JSON.parseOrThrow("[]")),
       ("swap", Some("0x01"), ["payer", "pool"], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
       ("anyCall", None, [], JSON.Null),
     ])
@@ -2397,7 +2399,7 @@ indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => 
 `,
     )
     t.expect(catalog(config)).toEqual([
-      ("deposit", Some("0x02"), ["vault"], JSON.Null),
+      ("deposit", Some("0x02"), ["vault"], JSON.parseOrThrow("[]")),
       (
         "swap",
         Some("0x09"),
@@ -2419,8 +2421,8 @@ indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => 
 `),
     )
     t.expect(catalog(config)).toEqual([
-      ("deposit", Some("0x02"), ["vault"], JSON.Null),
-      ("swap", Some("0x09"), ["source"], JSON.Null),
+      ("deposit", Some("0x02"), ["vault"], JSON.parseOrThrow("[]")),
+      ("swap", Some("0x09"), ["source"], JSON.parseOrThrow("[]")),
     ])
   })
 
@@ -2438,8 +2440,8 @@ indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => 
 `),
     )
     t.expect(catalog(config)).toEqual([
-      ("deposit", Some("0x02"), ["vault"], JSON.Null),
-      ("swap", None, ["source"], JSON.Null),
+      ("deposit", Some("0x02"), ["vault"], JSON.parseOrThrow("[]")),
+      ("swap", None, ["source"], JSON.parseOrThrow("[]")),
     ])
   })
 

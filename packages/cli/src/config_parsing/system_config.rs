@@ -2174,9 +2174,12 @@ pub struct SvmEventKind {
     /// Positional account slots in declared order. Empty when the user supplied
     /// no schema and no IDL applies; in that case `decoded.accounts` is `{}`.
     pub accounts: Vec<human_config::svm::AccountSlot>,
-    /// Borsh argument layout in declared order. Empty for unknown
-    /// instructions; the raw `instruction.data` is still available.
-    pub args: Vec<SvmNamedField>,
+    /// Borsh argument layout in declared order. `None` when no layout is
+    /// attached, so nothing is decoded and every matched call is delivered
+    /// with `instruction.data` raw. `Some` filters: a call whose data the
+    /// layout rejects is skipped, and an empty layout takes only the calls
+    /// carrying nothing past the discriminator.
+    pub args: Option<Vec<SvmNamedField>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -3776,8 +3779,9 @@ type Foo {
             )
         }
 
-        /// Name, discriminator, account slots as YAML tokens, arg names.
-        type SvmEvent = (String, Option<String>, Vec<String>, Vec<String>);
+        /// Name, discriminator, account slots as YAML tokens, and the arg
+        /// names of the attached layout — `None` where none is attached.
+        type SvmEvent = (String, Option<String>, Vec<String>, Option<Vec<String>>);
 
         fn svm_events(config: &SystemConfig) -> Vec<SvmEvent> {
             config
@@ -3789,7 +3793,9 @@ type Foo {
                         e.name.clone(),
                         k.discriminator.clone(),
                         k.accounts.iter().map(ToString::to_string).collect(),
-                        k.args.iter().map(|a| a.name.clone()).collect(),
+                        k.args
+                            .as_ref()
+                            .map(|args| args.iter().map(|a| a.name.clone()).collect()),
                     ),
                     other => panic!("expected an Svm event kind, got {other:?}"),
                 })
@@ -3882,13 +3888,13 @@ type Foo {
                         "deposit".to_string(),
                         Some("0xf223c68952e1f2b6".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0xf8c69e91e17587c8".to_string()),
                         vec!["payer".to_string(), "pool".to_string()],
-                        vec!["amount".to_string()],
+                        Some(vec!["amount".to_string()]),
                     ),
                 ]
             );
@@ -3904,7 +3910,7 @@ type Foo {
 
             assert_eq!(
                 svm_events(&config),
-                vec![("swap".to_string(), None, Vec::new(), Vec::new(),)]
+                vec![("swap".to_string(), None, Vec::new(), Some(Vec::new()),)]
             );
         }
 
@@ -4056,13 +4062,13 @@ type Foo {
                         "deposit".to_string(),
                         Some("0xf223c68952e1f2b6".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         None,
                         vec!["source".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                 ]
             );
@@ -4093,19 +4099,19 @@ type Foo {
                         "deposit".to_string(),
                         Some("0x02".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0x09".to_string()),
                         vec!["source".to_string(), "dest".to_string()],
-                        vec!["amountIn".to_string()],
+                        Some(vec!["amountIn".to_string()]),
                     ),
                     (
                         "extra".to_string(),
                         Some("0xab".to_string()),
                         vec!["payer".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                 ]
             );
@@ -4134,13 +4140,13 @@ type Foo {
                         "deposit".to_string(),
                         Some("0x02".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0x09".to_string()),
                         vec!["source".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                 ]
             );
@@ -4164,13 +4170,13 @@ type Foo {
                         "deposit".to_string(),
                         Some("0xf223c68952e1f2b6".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0xf8c69e91e17587c8".to_string()),
                         vec!["payer".to_string(), "pool".to_string()],
-                        vec!["amount".to_string()],
+                        Some(vec!["amount".to_string()]),
                     ),
                 ]
             );
@@ -4199,13 +4205,13 @@ type Foo {
                         "deposit".to_string(),
                         Some("0x09".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0xdeadbeefdeadbeef".to_string()),
                         Vec::new(),
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                 ]
             );
@@ -4298,7 +4304,7 @@ type Foo {
                     "deposit".to_string(),
                     Some("0x04".to_string()),
                     Vec::new(),
-                    Vec::new(),
+                    Some(Vec::new()),
                 )]
             );
         }
@@ -4338,7 +4344,7 @@ type Foo {
                     "transfer".to_string(),
                     Some("0x03".to_string()),
                     vec!["source".to_string(), "destination".to_string()],
-                    vec!["amount".to_string()],
+                    Some(vec!["amount".to_string()]),
                 )]
             );
         }
@@ -4362,7 +4368,15 @@ type Foo {
                 .into_iter()
                 .filter(|(_, discriminator, ..)| discriminator.is_some())
                 .map(|(name, discriminator, accounts, args)| {
-                    (name, discriminator.unwrap(), accounts.len(), args.len())
+                    // `None` where the row attached no layout at all: the Orca
+                    // and Meteora swaps take every call and leave the payload
+                    // raw, which an empty layout would not do.
+                    (
+                        name,
+                        discriminator.unwrap(),
+                        accounts.len(),
+                        args.map(|a| a.len()),
+                    )
                 })
                 .collect();
 
@@ -4396,40 +4410,60 @@ type Foo {
                             "borrowObligationLiquidity".into(),
                             "0x797f12cc49f5e141".into(),
                             12,
-                            1
+                            Some(1)
                         ),
                         (
                             "depositReserveLiquidityAndObligationCollateral".into(),
                             "0x81c70402de271a2e".into(),
                             14,
-                            1
+                            Some(1)
                         ),
-                        ("fillPerpOrder".into(), "0x0dbcf86786d96af0".into(), 6, 2),
-                        ("liquidatePerp".into(), "0x4b2377f7bf128b02".into(), 6, 3),
-                        ("liquidateSpot".into(), "0x6b00802923e5fb12".into(), 6, 4),
-                        ("placePerpOrder".into(), "0x45a15dca787e4cb9".into(), 3, 1),
+                        (
+                            "fillPerpOrder".into(),
+                            "0x0dbcf86786d96af0".into(),
+                            6,
+                            Some(2)
+                        ),
+                        (
+                            "liquidatePerp".into(),
+                            "0x4b2377f7bf128b02".into(),
+                            6,
+                            Some(3)
+                        ),
+                        (
+                            "liquidateSpot".into(),
+                            "0x6b00802923e5fb12".into(),
+                            6,
+                            Some(4)
+                        ),
+                        (
+                            "placePerpOrder".into(),
+                            "0x45a15dca787e4cb9".into(),
+                            3,
+                            Some(1)
+                        ),
                         (
                             "repayObligationLiquidity".into(),
                             "0x91b20de14cf09348".into(),
                             9,
-                            1
+                            Some(1)
                         ),
-                        ("route".into(), "0xe517cb977ae3ad2a".into(), 9, 5),
-                        ("settlePnl".into(), "0x2b3dea2d0f5f9899".into(), 4, 1),
+                        ("route".into(), "0xe517cb977ae3ad2a".into(), 9, Some(5)),
+                        ("settlePnl".into(), "0x2b3dea2d0f5f9899".into(), 4, Some(1)),
                         (
                             "sharedAccountsRoute".into(),
                             "0xc1209b3341d69c81".into(),
                             13,
-                            6
+                            Some(6)
                         ),
-                        ("swap".into(), "0x09".into(), 18, 2),
-                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, 0),
-                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, 0),
+                        ("swap".into(), "0x09".into(), 18, Some(2)),
+                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, None),
+                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, None),
                         (
                             "withdrawObligationCollateralAndRedeemReserveCollateral".into(),
                             "0x4b5d5ddc2296dac4".into(),
                             14,
-                            1
+                            Some(1)
                         ),
                     ]
                 )
@@ -4454,13 +4488,13 @@ type Foo {
                         "swap".to_string(),
                         Some("0x01".to_string()),
                         Vec::new(),
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "wide".to_string(),
                         Some("0x090909".to_string()),
                         Vec::new(),
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                 ]
             );

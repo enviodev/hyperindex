@@ -422,10 +422,12 @@ struct SvmEventItem {
     /// raw `instruction.accounts[i]` array is still available.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     accounts: Vec<SvmAccountSlotItem>,
-    /// Borsh args layout. `[]` means the runtime won't expose
-    /// `decoded.args`; the raw `instruction.data` hex is still available.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    args: Vec<human_config::svm::ArgDef>,
+    /// Borsh args layout. Absent means no decoder is attached, so the runtime
+    /// won't expose `decoded.args` and every matched call is delivered with
+    /// the raw `instruction.data` hex. Present attaches one, `[]` included:
+    /// a call whose data the layout rejects never reaches a handler.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    args: Option<Vec<human_config::svm::ArgDef>>,
 }
 
 /// One account slot. An unnamed slot carries neither key, so it reaches the
@@ -639,11 +641,9 @@ impl SystemConfig {
                                             .iter()
                                             .map(SvmAccountSlotItem::from)
                                             .collect(),
-                                        args: svm_kind
-                                            .args
-                                            .iter()
-                                            .map(named_field_to_arg_def)
-                                            .collect(),
+                                        args: svm_kind.args.as_ref().map(|args| {
+                                            args.iter().map(named_field_to_arg_def).collect()
+                                        }),
                                     };
                                     (vec![], Some("svmInstruction".to_string()), Some(svm_item))
                                 }

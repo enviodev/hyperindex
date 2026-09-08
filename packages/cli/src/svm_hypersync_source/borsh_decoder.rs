@@ -429,6 +429,22 @@ mod tests {
         );
     }
 
+    /// A declared-but-empty layout is the assertion that the instruction takes
+    /// no arguments, so it accepts exactly the calls that carry nothing past
+    /// the discriminator. Attaching no layout at all is what takes every call.
+    #[test]
+    fn an_empty_layout_accepts_only_a_bare_discriminator() {
+        let schema = schema_of("[]", "{}");
+        assert_eq!(
+            (
+                schema.decode(&[0x01]),
+                schema.decode(&[0x01, 0x00]),
+                schema.decode(&[0x01, 0xde, 0xad])
+            ),
+            (Some(obj(vec![])), None, None)
+        );
+    }
+
     #[test]
     fn short_and_trailing_data_are_rejected() {
         let schema = schema_of(r#"[{"name":"amount","type":"u64"}]"#, "{}");
