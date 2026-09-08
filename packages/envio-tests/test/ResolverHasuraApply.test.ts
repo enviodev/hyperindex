@@ -101,7 +101,7 @@ const APPLIED_EXPORT = {
       definition: {
         handler: HANDLER,
         output_type: "String",
-        ignored_client_headers: IGNORED_CLIENT_HEADERS,
+        ignored_client_headers: [...IGNORED_CLIENT_HEADERS, "x-envio-resolver-secret"],
         type: "query",
         timeout: 6,
         forward_client_headers: true,

@@ -103,8 +103,26 @@ describe("manifest -> Hasura metadata", () => {
             output_type: "String",
             timeout: 6,
             // Private, so the caller's own headers have to reach the service:
-            // the key is checked there, not at Hasura.
+            // the key is checked there, not at Hasura. All but the shared
+            // secret's, which a forwarded header would otherwise displace.
             forward_client_headers: true,
+            ignored_client_headers: [
+              "Content-Length",
+              "Content-MD5",
+              "User-Agent",
+              "Host",
+              "Origin",
+              "Referer",
+              "Accept",
+              "Accept-Encoding",
+              "Accept-Language",
+              "Accept-Datetime",
+              "Cache-Control",
+              "Connection",
+              "DNT",
+              "Content-Type",
+              "x-envio-resolver-secret",
+            ],
           },
         },
       ],
@@ -151,6 +169,50 @@ describe("manifest -> Hasura metadata", () => {
     ).toEqual([
       [30_000, 31],
       [5_000, 6],
+    ]);
+  });
+
+  // Verified against Hasura v2.43.0: with `forward_client_headers` on, a client
+  // header of the same name does not merge with the action's static header --
+  // it replaces it, and the static value is never sent. So any caller could
+  // send `x-envio-resolver-secret` and make the service reject the request as
+  // unauthenticated, denying the six private resolvers to their key holders.
+  // Ignoring the name is what makes the static value win. The rest of the list
+  // is Hasura's own default, restated because supplying the field replaces that
+  // default wholesale rather than adding to it -- dropping `Content-Length`
+  // alone forwards the client's, and every request fails to parse.
+  it("keeps a client from displacing the shared secret on a private action", () => {
+    const actions = buildHasuraMetadata(manifest, {
+      handlerUrl: "http://resolvers:9900/hasura-action",
+      actionSecret: "s3cr3t",
+    }).actions;
+    expect(
+      actions.map((action: any) => [
+        action.name,
+        action.definition.ignored_client_headers,
+      ])
+    ).toEqual([
+      ["accountPnl", undefined],
+      [
+        "referralCodeUpdates",
+        [
+          "Content-Length",
+          "Content-MD5",
+          "User-Agent",
+          "Host",
+          "Origin",
+          "Referer",
+          "Accept",
+          "Accept-Encoding",
+          "Accept-Language",
+          "Accept-Datetime",
+          "Cache-Control",
+          "Connection",
+          "DNT",
+          "Content-Type",
+          "x-envio-resolver-secret",
+        ],
+      ],
     ]);
   });
 
