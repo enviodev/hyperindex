@@ -9,8 +9,6 @@
 // these actions while this service keeps running and Hasura keeps answering
 // that the field does not exist.
 
-import { HASURA_DEFAULT_IGNORED_CLIENT_HEADERS } from "./hasuraMetadata.js";
-
 // Hasura's own defaults, applied when reading its metadata back: `export_metadata`
 // omits whatever matches them, so a comparison against what we sent has to put
 // them back or every read reports drift.
@@ -43,17 +41,6 @@ function normaliseAction(action) {
     headers: (definition.headers ?? [])
       .map((header) => ({ name: header.name.toLowerCase(), value: header.value ?? null }))
       .sort((a, b) => a.name.localeCompare(b.name)),
-    // Which headers a caller may not speak for is part of what makes a private
-    // action safe, so an action still forwarding one it should ignore has to
-    // read as drift. Absent means Hasura's default rather than none, and order
-    // and case are Hasura's to choose: comparing literally would report drift
-    // on every public action forever and rewrite the metadata, once a minute,
-    // to say what it already said.
-    ignored_client_headers: [
-      ...(definition.ignored_client_headers ?? HASURA_DEFAULT_IGNORED_CLIENT_HEADERS),
-    ]
-      .map((header) => header.toLowerCase())
-      .sort(),
     arguments: (definition.arguments ?? []).map((argument) => ({
       name: argument.name,
       type: argument.type,
