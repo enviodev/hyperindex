@@ -9,6 +9,7 @@ import {
   defineType,
   toSDL,
 } from "envio/src/resolvers/manifest.js";
+import { createResolver } from "envio/src/resolvers/index.js";
 
 const BigIntScalar = defineScalar("BigInt", S.string);
 
@@ -170,6 +171,23 @@ describe("resolver manifest", () => {
     expect(() =>
       buildManifest([{ name: "x", args: {}, output: S.string, timeoutMs: 0 }])
     ).toThrow(/positive timeoutMs/);
+  });
+
+  // The gate looks the limit up by the chain's own id, so a key that is not
+  // the canonical decimal spelling of a number matches nothing: the resolver
+  // declares a staleness limit, is told it is valid, and is never gated.
+  it("refuses a maxBlocksBehind key that could never match a chain", () => {
+    const declare = (maxBlocksBehind: unknown) => () =>
+      createResolver({
+        name: "x",
+        output: EnvioS.string,
+        timeoutMs: 1,
+        maxBlocksBehind,
+        handler: async () => "",
+      });
+    expect(declare({ " 1": 100 })).toThrow(/maxBlocksBehind/);
+    expect(declare({ "1e3": 100 })).toThrow(/maxBlocksBehind/);
+    expect(declare({ "0x1": 100 })).toThrow(/maxBlocksBehind/);
   });
 
   it("rejects duplicate and reserved resolver names", () => {
