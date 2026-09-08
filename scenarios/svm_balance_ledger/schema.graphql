@@ -1,0 +1,58 @@
+# Every row is derived from the pre/post token amounts the chain reports on the
+# transaction itself. Nothing here is read back from account state.
+
+type BalanceChange {
+  id: ID! # "${slot}:${txIndex}:${account}"
+  account: String! @index
+  mint: String! @index
+  owner: String!
+  decimals: Int!
+  slot: Int! @index
+  txIndex: Int!
+  txSig: String!
+  preAmount: BigInt!
+  postAmount: BigInt!
+  delta: BigInt!
+  # The balance this ledger carried forward from the previous change. Equal to
+  # preAmount unless a balance-changing transaction was missed.
+  expectedPre: BigInt!
+  continuous: Boolean!
+  isOpening: Boolean!
+}
+
+type TokenAccount {
+  id: ID! # token account pubkey
+  mint: String! @index
+  owner: String!
+  decimals: Int!
+  balance: BigInt!
+  openingBalance: BigInt!
+  openingSlot: Int!
+  lastSlot: Int!
+  lastTxIndex: Int!
+  changeCount: Int!
+  gapCount: Int!
+}
+
+# Per (transaction, mint) sum of every token account delta. `conserving` marks a
+# transaction whose matched instructions were all classic SPL Token transfers,
+# which move tokens between accounts without changing how many exist, so the sum
+# is zero. It folds over the whole transaction rather than per mint, so a mixed
+# transaction marks every mint in it non-conserving.
+type TxMintFlow {
+  id: ID! # "${txSig}:${mint}"
+  txSig: String! @index
+  mint: String! @index
+  slot: Int!
+  sumDelta: BigInt!
+  accountsTouched: Int!
+  conserving: Boolean!
+}
+
+type LedgerStats {
+  id: ID! # "global"
+  lastSlot: Int!
+  changes: BigInt!
+  accounts: BigInt!
+  gaps: BigInt!
+}

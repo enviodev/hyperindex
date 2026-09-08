@@ -1,0 +1,55 @@
+# yaml-language-server: $schema=../../packages/envio/svm.schema.json
+name: svm-balance-ledger
+description: |
+  Solana Balance Ledger: every SPL token account's balance history reconstructed
+  from the pre/post amounts the chain reports on each transaction, with no
+  account-state reads at all. The matched instruction set is the complete set of
+  ways a token account's amount can change, so the reconstruction is auditable:
+  each change carries the balance the ledger expected coming in, and a mismatch
+  is recorded as a gap rather than silently absorbed.
+ecosystem: svm
+chains:
+  - id: solana
+    # Token movement is the highest-volume traffic on Solana, so a backfill here
+    # is deliberately short. Widen the window only against a HyperSync endpoint
+    # you control.
+    start_block: 422300000
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        # The eight instructions below are every way an SPL token account's
+        # `amount` moves. Nothing is decoded from them — the discriminator
+        # selects the transaction, and the balances come from the transaction's
+        # own account activities, so neither `args` nor `accounts` is declared.
+        # `closeAccount` and `syncNative` are here because both change an amount
+        # without transferring or minting.
+        - name: SplToken
+          program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+          instructions:
+            - { name: transfer, discriminator: "0x03" }
+            - { name: mintTo, discriminator: "0x07" }
+            - { name: burn, discriminator: "0x08" }
+            - { name: closeAccount, discriminator: "0x09" }
+            - { name: transferChecked, discriminator: "0x0c" }
+            - { name: mintToChecked, discriminator: "0x0e" }
+            - { name: burnChecked, discriminator: "0x0f" }
+            - { name: syncNative, discriminator: "0x11" }
+        # Token-2022 shares the classic layout for those eight and adds
+        # extension instructions that move amounts of their own: transfer-fee
+        # withdrawals (0x1a) and confidential transfers (0x1b). Both programs
+        # have to be matched together — a token account of either shows up in
+        # the other's transactions, and tracking one alone would read as a gap.
+        - name: Token2022
+          program_id: TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb
+          instructions:
+            - { name: transfer, discriminator: "0x03" }
+            - { name: mintTo, discriminator: "0x07" }
+            - { name: burn, discriminator: "0x08" }
+            - { name: closeAccount, discriminator: "0x09" }
+            - { name: transferChecked, discriminator: "0x0c" }
+            - { name: mintToChecked, discriminator: "0x0e" }
+            - { name: burnChecked, discriminator: "0x0f" }
+            - { name: syncNative, discriminator: "0x11" }
+            - { name: transferFeeExtension, discriminator: "0x1a" }
+            - { name: confidentialTransferExtension, discriminator: "0x1b" }
