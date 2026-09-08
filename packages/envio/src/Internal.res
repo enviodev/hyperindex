@@ -567,17 +567,33 @@ type svmAccountFilter = {
 /** AND-group: every entry must match the same instruction. */
 type svmAccountFilterGroup = array<svmAccountFilter>
 
+/** One positional account slot of an instruction. An `Optional` slot is absent
+ from the payload when the call carries no such slot, or fills it with the id of
+ the program being invoked. `Unnamed` holds a position and surfaces nothing. */
+type svmAccountSlot =
+  | Unnamed
+  | Required(string)
+  | Optional(string)
+
+let svmAccountSlotName = slot =>
+  switch slot {
+  | Unnamed => None
+  | Required(name) | Optional(name) => Some(name)
+  }
+
 type svmInstructionEventConfig = {
   ...eventConfig,
   /** Base58 Solana program id this instruction belongs to. */
   programId: SvmTypes.Pubkey.t,
   /** Hex-encoded discriminator. `None` matches every instruction in the program. */
   discriminator: option<string>,
-  /** Positional account names from the Borsh schema, in declared order.
-   `[]` means no schema is attached for this instruction. */
-  accounts: array<string>,
+  /** Positional account slots in declared order. `[]` means no schema is
+   attached for this instruction. */
+  accounts: array<svmAccountSlot>,
   /** Borsh args layout as `Vec<ArgDef>` JSON (see `human_config::svm::ArgDef`
-   on the Rust side). `JSON.Null` means no schema is attached. */
+   on the Rust side). `JSON.Null` attaches no decoder, so every matched call is
+   delivered with its payload raw. An array attaches one, `[]` included: a call
+   whose data the layout rejects is skipped. */
   args: JSON.t,
   /** Program-level nominal-type registry (`BTreeMap<String, ArgType>` JSON).
    Duplicated on every event of the same program — the runtime dedups by

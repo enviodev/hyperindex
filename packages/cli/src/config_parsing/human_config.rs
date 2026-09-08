@@ -1041,11 +1041,12 @@ pub mod fuel {
 }
 
 pub mod svm {
+    use std::borrow::Cow;
     use std::fmt::Display;
 
     use super::BaseConfig;
-    use schemars::JsonSchema;
-    use serde::{Deserialize, Serialize};
+    use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
+    use serde::{de, Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
@@ -1177,13 +1178,24 @@ pub mod svm {
         pub handler: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional path (relative to config.yaml) to an Anchor IDL JSON file. \
-                           When present, codegen parses the IDL and derives `accounts`/`args` for \
-                           every named instruction. Mutually exclusive with per-instruction \
-                           `accounts`/`args` overrides."
+            description = "Optional path (relative to config.yaml) to an IDL JSON file (Anchor \
+                           0.30+, legacy Anchor, Shank, or Codama). When present, every usable \
+                           instruction is in the catalog and `onInstruction` selects by name. \
+                           Omit YAML `instructions` to take that catalog as-is. A YAML row \
+                           overwrites the IDL instruction of the same name, or adds a name the \
+                           IDL did not declare."
         )]
         pub idl: Option<String>,
-        #[schemars(description = "A list of instructions that should be indexed on this program.")]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schemars(
+            description = "Instructions to index. With `idl:`, omit this list to take the full \
+                           usable IDL catalog. A row whose name the IDL declares replaces that \
+                           instruction, and must spell out `accounts` and `args`; every other row \
+                           adds one. Give `accounts` where you want the slots named — an empty \
+                           list names none, the same as leaving it out. `args` is not the same \
+                           shape: setting it attaches a decoder that also filters, so leaving it \
+                           out and setting it to `[]` are different asks."
+        )]
         pub instructions: Vec<Instruction>,
     }
 
@@ -1195,34 +1207,182 @@ pub mod svm {
                            unique per program."
         )]
         pub name: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Hex-encoded instruction-data prefix used as the discriminator (\"0x\" \
-                           optional), of any whole number of bytes; an 8-byte value matches the \
-                           standard Anchor discriminator. Omit it to match every instruction of \
-                           the program. Every instruction whose prefix an on-chain call carries \
+            description = "0x-prefixed hex instruction-data prefix to dispatch on, of any whole \
+                           number of bytes; an 8-byte value matches the standard Anchor \
+                           discriminator. The empty prefix, written \"0x\", is carried by every \
+                           call, so it is how a row matches every instruction of the program. \
+                           This is the form `instruction.discriminator` reads back, so a config \
+                           value and a handler comparison are the same string. Every instruction \
+                           whose prefix an on-chain call carries \
                            receives it, so a program-wide entry fires alongside a keyed one, and \
                            two entries may share a prefix (say, the layouts before and after a \
                            program upgrade): each decodes with its own `args`, and one whose \
                            layout rejects the data is skipped for that call."
         )]
-        pub discriminator: Option<String>,
+        pub discriminator: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional positional account names. The Nth entry names account slot N \
-                           on the dispatched instruction; surfaces as \
-                           `instruction.accounts.<name>` when `fields.instruction` includes \
-                           `accounts`."
+            description = "Optional positional account slots, in the order the program expects \
+                           them. The Nth entry names account slot N on the dispatched \
+                           instruction; named slots surface as `instruction.accounts.<name>` \
+                           when `fields.instruction` includes `accounts`. The raw slots are \
+                           available either way, so this only adds the names. Required on a row \
+                           that replaces an instruction the IDL declares."
         )]
-        pub accounts: Option<Vec<String>>,
+        pub accounts: Option<Vec<AccountSlot>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Optional Borsh argument schema. Each entry names one arg and gives its \
-                           type; the decoder walks the instruction data after the discriminator \
-                           in declared order. Mutually exclusive with the program-level `idl` \
-                           field."
+            description = "Borsh argument schema. Each entry names one arg and gives its type; \
+                           the decoder walks the instruction data after the discriminator in \
+                           declared order, and a call whose data the layout rejects is skipped. \
+                           Setting it is therefore also a filter: `[]` says the instruction takes \
+                           no arguments, so only calls carrying nothing past the discriminator \
+                           are indexed. Omit it instead to attach no decoder at all — every \
+                           matched call is indexed and the payload stays raw, reachable as \
+                           `instruction.data`. An `idl` always declares the layout of the \
+                           instructions it names, empty included. Required on a row that replaces \
+                           an instruction the IDL declares."
         )]
         pub args: Option<Vec<ArgDef>>,
+    }
+
+    /// One positional account slot of an instruction.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum AccountSlot {
+        /// Holds a position without naming it: never surfaced to a handler,
+        /// never filterable. The slots after it keep their positions.
+        Unnamed,
+        Required(String),
+        /// Absent when the call carries no such slot, or fills it with the id
+        /// of the program being invoked — the convention Anchor and Codama
+        /// both use.
+        Optional(String),
+    }
+
+    impl AccountSlot {
+        pub fn name(&self) -> Option<&str> {
+            match self {
+                Self::Unnamed => None,
+                Self::Required(name) | Self::Optional(name) => Some(name),
+            }
+        }
+
+        pub fn is_optional(&self) -> bool {
+            matches!(self, Self::Optional(_))
+        }
+
+        /// The YAML slot grammar: `payer`, `?authority`, `_`.
+        fn parse(token: &str) -> Result<Self, String> {
+            let name = |name: &str| {
+                let readable = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && name.chars().any(|c| c.is_ascii_alphabetic());
+                if readable {
+                    Ok(name.to_string())
+                } else {
+                    Err(format!(
+                        "account slot '{token}' is not a name: expected letters, digits and \
+                         underscores, at least one of them a letter. Prefix a name with '?' to \
+                         mark the slot optional, or write '_' to hold a position without naming \
+                         it."
+                    ))
+                }
+            };
+            match token {
+                "_" => Ok(Self::Unnamed),
+                "?_" => Err(
+                    "account slot '?_' marks an unnamed slot optional, which nothing can \
+                     observe. Write '_' to hold the position, or name the slot."
+                        .to_string(),
+                ),
+                _ => match token.strip_prefix('?') {
+                    Some(optional) => Ok(Self::Optional(name(optional)?)),
+                    None => Ok(Self::Required(name(token)?)),
+                },
+            }
+        }
+    }
+
+    impl Display for AccountSlot {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            match self {
+                Self::Unnamed => f.write_str("_"),
+                Self::Required(name) => f.write_str(name),
+                Self::Optional(name) => write!(f, "?{name}"),
+            }
+        }
+    }
+
+    impl Serialize for AccountSlot {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.collect_str(self)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for AccountSlot {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct SlotVisitor;
+
+            impl<'de> de::Visitor<'de> for SlotVisitor {
+                type Value = AccountSlot;
+
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("an account name, `?name` for an optional slot, or `_`")
+                }
+
+                fn visit_str<E: de::Error>(self, value: &str) -> Result<AccountSlot, E> {
+                    AccountSlot::parse(value).map_err(de::Error::custom)
+                }
+
+                /// `- ? authority` and the flow-style `[?authority]` are YAML's
+                /// explicit-key syntax, which parses as a one-entry mapping with
+                /// no value rather than as the string a reader sees.
+                fn visit_map<A: de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<AccountSlot, A::Error> {
+                    let Some((name, value)) = map.next_entry::<String, Option<de::IgnoredAny>>()?
+                    else {
+                        return Err(de::Error::custom(
+                            "expected an account name, got an empty mapping",
+                        ));
+                    };
+                    if value.is_some() || map.next_key::<de::IgnoredAny>()?.is_some() {
+                        return Err(de::Error::custom(format!(
+                            "expected an account name, got a mapping. To mark '{name}' optional, \
+                             write \"?{name}\"."
+                        )));
+                    }
+                    AccountSlot::parse(&format!("?{name}")).map_err(de::Error::custom)
+                }
+            }
+
+            deserializer.deserialize_any(SlotVisitor)
+        }
+    }
+
+    impl JsonSchema for AccountSlot {
+        fn schema_name() -> Cow<'static, str> {
+            "SvmAccountSlot".into()
+        }
+
+        fn json_schema(_: &mut SchemaGenerator) -> Schema {
+            json_schema!({
+                "title": "Account slot",
+                "description": "One positional account slot of the instruction.\n\
+                    - `payer` names a slot the call always carries; it surfaces as \
+                    `instruction.accounts.payer`.\n\
+                    - `?authority` names an optional slot: the key is absent from \
+                    `instruction.accounts` when the call leaves the slot out or fills it with \
+                    the program id.\n\
+                    - `_` holds a position without naming it, so the slots after it keep \
+                    theirs. It is never surfaced and never filterable, and the list may not \
+                    end with one.",
+                "type": "string",
+                "pattern": "^(?:_|\\??[A-Za-z0-9_]*[A-Za-z][A-Za-z0-9_]*)$",
+                "examples": ["payer", "?authority", "_"],
+            })
+        }
     }
 
     /// One named argument of an instruction. Mirrors
@@ -1237,21 +1397,102 @@ pub mod svm {
         pub ty: ArgType,
     }
 
+    /// Elements an `array` may declare. The decoder preallocates from this
+    /// length rather than from the bytes on the wire, so an unbounded one is an
+    /// out-of-memory abort on every matched instruction, not a decode failure.
+    pub const MAX_ARRAY_LEN: usize = 65_536;
+
+    /// Borsh selects an enum variant with a one-byte tag, so a variant past
+    /// this many is unreachable.
+    pub const MAX_ENUM_VARIANTS: usize = 256;
+
+    /// The names a bare string may take, in the order they are offered back
+    /// when one is misspelled.
+    const PRIMITIVE_NAMES: &str = "bool, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, \
+                                   f64, string, bytes, pubkey, publicKey";
+    /// The keys a one-key mapping may take. `defined` is deliberately absent;
+    /// see `ArgComposite::Defined`.
+    const COMPOSITE_NAMES: &str = "option, vec, array, struct, enum";
+
     /// User-facing Borsh type grammar. Mirrors
     /// `hypersync_client_solana::decode::FieldType`. The YAML accepts either:
-    /// - A bare string for primitives (`"u64"`, `"pubkey"`, `"bool"`, ...).
-    /// - A tagged object for composites (`{ vec: u8 }`, `{ option: pubkey }`,
-    ///   `{ array: [u8, 32] }`, `{ defined: "DataV2" }`).
-    /// - An object with `kind: struct` or `kind: enum` for nominal types
-    ///   declared inline on this field. Most users will use `defined` and
-    ///   declare the nominal types under the program's `types:` block (Anchor
-    ///   IDL shape) once that lands; for now inline `struct` / `enum` is the
-    ///   only way to express nominal shapes ad-hoc.
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    /// - A bare string for a primitive (`u64`, `pubkey`, `bool`, ...).
+    /// - A one-key mapping for a composite (`{ vec: u8 }`, `{ option: pubkey }`,
+    ///   `{ array: [u8, 32] }`, `{ struct: [...] }`, `{ enum: [...] }`).
+    ///
+    /// A nominal type is declared inline with `struct` / `enum` at the field
+    /// that uses it. There is no way to name one and refer to it: attach an
+    /// `idl` to the program when its types are shared between instructions.
+    #[derive(Debug, Serialize, Clone, PartialEq, JsonSchema)]
     #[serde(untagged)]
     pub enum ArgType {
         Primitive(ArgPrimitive),
         Composite(ArgComposite),
+    }
+
+    /// Hand-written so a misspelled type is answered with the names it could
+    /// have been. `#[serde(untagged)]` would report only that the value
+    /// matched no variant, naming neither the type nor the alternatives.
+    impl<'de> Deserialize<'de> for ArgType {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            deserializer.deserialize_any(ArgTypeVisitor)
+        }
+    }
+
+    struct ArgTypeVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for ArgTypeVisitor {
+        type Value = ArgType;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "a Borsh type")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, name: &str) -> Result<ArgType, E> {
+            let as_primitive: serde::de::value::StrDeserializer<E> =
+                serde::de::IntoDeserializer::into_deserializer(name);
+            ArgPrimitive::deserialize(as_primitive)
+                .map(ArgType::Primitive)
+                .map_err(|_: E| {
+                    E::custom(format!(
+                        "unknown type '{name}', expected one of {PRIMITIVE_NAMES}, or a composite \
+                         such as {{vec: u8}}, {{option: pubkey}}, {{array: [u8, 32]}}, {{struct: \
+                         [...]}}, {{enum: [...]}}"
+                    ))
+                })
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<ArgType, A::Error> {
+            use serde::de::Error;
+            let Some(key) = map.next_key::<String>()? else {
+                return Err(A::Error::custom(format!(
+                    "a composite type needs exactly one of {COMPOSITE_NAMES}"
+                )));
+            };
+            let composite = match key.as_str() {
+                "option" => ArgComposite::Option(map.next_value()?),
+                "vec" => ArgComposite::Vec(map.next_value()?),
+                "array" => {
+                    let (ty, len) = map.next_value::<(Box<ArgType>, usize)>()?;
+                    ArgComposite::Array(ty, len)
+                }
+                "struct" => ArgComposite::Struct(map.next_value()?),
+                "enum" => ArgComposite::Enum(map.next_value()?),
+                "defined" => ArgComposite::Defined(map.next_value()?),
+                other => {
+                    return Err(A::Error::custom(format!(
+                        "unknown composite type '{other}', expected one of {COMPOSITE_NAMES}"
+                    )))
+                }
+            };
+            if let Some(extra) = map.next_key::<String>()? {
+                return Err(A::Error::custom(format!(
+                    "a composite type takes exactly one of {COMPOSITE_NAMES}, got both '{key}' \
+                     and '{extra}'"
+                )));
+            }
+            Ok(ArgType::Composite(composite))
+        }
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -1277,8 +1518,9 @@ pub mod svm {
         PublicKey,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(deny_unknown_fields)]
+    // Deserialized through `ArgTypeVisitor` rather than by serde, so the
+    // variant names here only drive serialization and the JSON schema.
+    #[derive(Debug, Serialize, Clone, PartialEq, JsonSchema)]
     pub enum ArgComposite {
         #[serde(rename = "option")]
         Option(Box<ArgType>),
@@ -1287,17 +1529,21 @@ pub mod svm {
         /// `[ <element type>, <length> ]` — same shape Anchor IDLs use.
         #[serde(rename = "array")]
         Array(Box<ArgType>, usize),
-        /// Reference to a nominal type defined in the program-level
-        /// `defined_types` registry (populated from an Anchor IDL `types:`
-        /// block or the bundled-Metaplex registry).
+        /// Reference into the program-level `defined_types` registry, which
+        /// only an IDL's `types` block ever populates. It exists to carry an
+        /// IDL's nominal types through `internal_config.json`, not as part of
+        /// the config.yaml grammar, so it stays out of the published JSON
+        /// schema and a config naming one is refused.
         #[serde(rename = "defined")]
+        #[schemars(skip)]
         Defined(String),
-        /// Inline-or-registry struct. Used as a nominal type definition in
-        /// the `defined_types` registry; rarely seen at the field level.
+        /// A struct, declared inline at the field that uses it or held in the
+        /// `defined_types` registry.
         #[serde(rename = "struct")]
         Struct(Vec<ArgDef>),
-        /// Inline-or-registry enum. Same role as `Struct`: a nominal type
-        /// definition in the `defined_types` registry.
+        /// An enum, declared inline at the field that uses it or held in the
+        /// `defined_types` registry. Borsh selects a variant by its position
+        /// here, with a one-byte tag.
         #[serde(rename = "enum")]
         Enum(Vec<ArgEnumVariant>),
     }
@@ -1374,6 +1620,28 @@ mod tests {
         assert_eq!(
             npm_schema, actual_schema,
             "Please run 'make update-generated-docs'"
+        );
+    }
+
+    /// The slot text is the config's own surface, so what a writer emits has
+    /// to read back as the same slots.
+    #[test]
+    fn svm_account_slots_round_trip_through_yaml() {
+        use super::svm::AccountSlot;
+
+        let slots = vec![
+            AccountSlot::Required("payer".to_string()),
+            AccountSlot::Optional("authority".to_string()),
+            AccountSlot::Unnamed,
+        ];
+        let yaml = serde_yaml::to_string(&slots).unwrap();
+
+        assert_eq!(
+            (
+                yaml.as_str(),
+                serde_yaml::from_str::<Vec<AccountSlot>>(&yaml).unwrap()
+            ),
+            ("- payer\n- ?authority\n- _\n", slots)
         );
     }
 
@@ -1801,13 +2069,13 @@ chains:
                     instructions: vec![
                         Instruction {
                             name: "CreateMetadataAccountV3".to_string(),
-                            discriminator: Some("0x21".to_string()),
+                            discriminator: "0x21".to_string(),
                             accounts: None,
                             args: None,
                         },
                         Instruction {
                             name: "UpdateMetadataAccountV2".to_string(),
-                            discriminator: Some("0x0f".to_string()),
+                            discriminator: "0x0f".to_string(),
                             accounts: None,
                             args: None,
                         },

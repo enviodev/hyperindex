@@ -41,10 +41,11 @@ use std::{
 };
 
 use hypersync_client_solana::decode::{
-    metaplex_token_metadata, schema_from_anchor_idl_json, EnumVariant as SvmEnumVariant,
-    FieldType as SvmFieldType, InstructionSchema as SvmInstructionSchema,
-    NamedField as SvmNamedField, ProgramSchema as SvmProgramSchema,
+    EnumVariant as SvmEnumVariant, FieldType as SvmFieldType, NamedField as SvmNamedField,
 };
+
+use super::svm_catalog::{instruction_catalog, warn_about_unindexable, ResolvedInstruction};
+use super::svm_idl::{self, ProgramIdl};
 
 type ContractNameKey = String;
 type NetworkIdKey = u64;
@@ -85,7 +86,6 @@ trait ConfigSource {
         bytes_type: BytesType,
     ) -> Result<Schema>;
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
-    fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile>;
 }
 
 struct FilesystemConfigSource<'a> {
@@ -137,16 +137,6 @@ impl ConfigSource for FilesystemConfigSource<'_> {
         let resolved_path =
             path_utils::get_config_path_relative_to_root(self.project_paths, PathBuf::from(path))
                 .context("Failed to resolve file relative to config")?;
-        let raw = fs::read_to_string(&resolved_path)
-            .with_context(|| format!("Failed to read file at \"{path}\""))?;
-        Ok(ResolvedConfigFile {
-            path: resolved_path,
-            raw,
-        })
-    }
-
-    fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
-        let resolved_path = self.project_paths.project_root.join(path);
         let raw = fs::read_to_string(&resolved_path)
             .with_context(|| format!("Failed to read file at \"{path}\""))?;
         Ok(ResolvedConfigFile {
@@ -234,10 +224,6 @@ impl ConfigSource for MemoryConfigSource<'_> {
     }
 
     fn read_config_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
-        self.read_virtual_file(path)
-    }
-
-    fn read_project_relative_file(&self, path: &str) -> Result<ResolvedConfigFile> {
         self.read_virtual_file(path)
     }
 }
@@ -1405,39 +1391,32 @@ impl SystemConfig {
                         .unwrap_or(&[]);
                     let mut chain_contracts = Vec::new();
                     for program in programs {
-                        let svm_abi =
-                            resolve_program_schema(program, source).with_context(|| {
-                                format!(
-                                    "Resolving Borsh schema for program '{}' ({})",
-                                    program.name, program.program_id
-                                )
-                            })?;
-                        let events = program
-                            .instructions
-                            .iter()
-                            .map(|instr| -> Result<Event> {
-                                let normalized_discriminator = instr
-                                    .discriminator
-                                    .as_deref()
-                                    .map(|d| format!("0x{}", d.strip_prefix("0x").unwrap_or(d)));
-                                let (accounts, args) = resolve_instruction_layout(instr, &svm_abi)
-                                    .with_context(|| {
-                                        format!("Layout for instruction '{}'", instr.name)
-                                    })?;
-                                let svm_kind = SvmEventKind {
-                                    discriminator: normalized_discriminator.clone(),
+                        let svm_abi = resolve_program_schema(program, source)
+                            .with_context(|| format!("Program '{}'", program.name))?;
+                        let events = instruction_catalog(program, &svm_abi.idl)?
+                            .into_iter()
+                            .map(|(name, resolved)| {
+                                let ResolvedInstruction {
+                                    discriminator,
                                     accounts,
                                     args,
-                                };
-                                Ok(Event {
-                                    name: instr.name.clone(),
-                                    kind: EventKind::Svm(svm_kind),
-                                    sighash: normalized_discriminator.clone().unwrap_or_default(),
+                                } = resolved;
+                                let normalized_discriminator =
+                                    discriminator.map(|d| format!("0x{}", crate::hex::encode(&d)));
+                                Event {
+                                    name,
+                                    kind: EventKind::Svm(SvmEventKind {
+                                        discriminator: normalized_discriminator.clone(),
+                                        accounts,
+                                        args,
+                                    }),
+                                    sighash: normalized_discriminator.unwrap_or_default(),
                                     event_signature: String::new(),
                                     field_selection: None,
-                                })
+                                }
                             })
-                            .collect::<Result<Vec<_>>>()?;
+                            .collect();
+                        warn_about_unindexable(program, &svm_abi.idl.unusable);
 
                         let contract = Contract::new(
                             program.name.clone(),
@@ -1865,139 +1844,38 @@ impl EvmAbi {
     }
 }
 
-/// Base58 program id for the bundled Metaplex Token Metadata schema. Kept
-/// here (rather than imported from the upstream crate) so a future bundled
-/// schema can be added by appending a row to the `bundled_program_schemas`
-/// table without leaking strings across the module boundary.
-const METAPLEX_TOKEN_METADATA_PROGRAM_ID: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
-
-/// One row in the bundled-programs table: `(program_id, source_name,
-/// accessor returning the upstream `ProgramSchema`)`.
-type BundledProgramRow = (
-    &'static str,
-    &'static str,
-    fn() -> &'static SvmProgramSchema,
-);
-
-/// Table of bundled programs. Lookup by base58 `program_id`. To add a
-/// program: ship a `ProgramSchema` constant in `hypersync_client_solana`,
-/// expose a public accessor, then add a row here.
-fn bundled_program_schemas() -> Vec<BundledProgramRow> {
-    vec![(
-        METAPLEX_TOKEN_METADATA_PROGRAM_ID,
-        "metaplex_token_metadata",
-        metaplex_token_metadata,
-    )]
-}
-
 fn resolve_program_schema(
     program: &human_config::svm::Program,
     source: &dyn ConfigSource,
 ) -> Result<SvmAbi> {
-    let any_instruction_carries_schema = program
-        .instructions
-        .iter()
-        .any(|i| i.accounts.is_some() || i.args.is_some());
-
     if let Some(idl_path) = program.idl.as_deref() {
-        if any_instruction_carries_schema {
-            return Err(anyhow!(
-                "Program '{}': `idl` is mutually exclusive with per-instruction `accounts`/`args` \
-                 overrides. Use one or the other.",
-                program.name
-            ));
-        }
         let resolved = source
-            .read_project_relative_file(idl_path)
+            .read_config_relative_file(idl_path)
             .with_context(|| format!("reading IDL at '{idl_path}'"))?;
-        let schema = schema_from_anchor_idl_json(&resolved.raw)
-            .with_context(|| format!("parsing IDL at '{}'", resolved.path.display()))?;
+        // Reported against the path as the config wrote it, the way an ABI is,
+        // rather than wherever the project happens to be checked out.
+        let path = path_utils::normalize_path(PathBuf::from(idl_path))
+            .display()
+            .to_string();
+        let idl = svm_idl::parse_idl(&path, &resolved.raw)?;
         return Ok(SvmAbi {
             program_id: program.program_id.clone(),
-            instructions: schema.instructions,
-            defined_types: schema.defined_types,
-            source: SvmSchemaSource::AnchorIdl {
-                path: idl_path.to_string(),
-            },
+            idl,
+            source: SvmSchemaSource::AnchorIdl { path },
         });
-    }
-
-    if !any_instruction_carries_schema {
-        if let Some((_, name, getter)) = bundled_program_schemas()
-            .into_iter()
-            .find(|(pid, _, _)| *pid == program.program_id.as_str())
-        {
-            let schema = getter();
-            return Ok(SvmAbi {
-                program_id: program.program_id.clone(),
-                instructions: schema.instructions.clone(),
-                defined_types: schema.defined_types.clone(),
-                source: SvmSchemaSource::Bundled { name },
-            });
-        }
     }
 
     Ok(SvmAbi {
         program_id: program.program_id.clone(),
-        instructions: BTreeMap::new(),
-        defined_types: BTreeMap::new(),
+        idl: ProgramIdl::default(),
         source: SvmSchemaSource::Inline,
     })
 }
 
-/// Resolve per-instruction `(accounts, args)` from one of:
-/// 1. YAML per-instruction `accounts`/`args` overrides (highest priority).
-/// 2. The matching `InstructionSchema` on the program's resolved schema
-///    (bundled OR Anchor IDL), keyed by the YAML `discriminator` bytes.
-/// 3. An empty pair (`accounts: []`, `args: []`) so existing untyped
-///    handlers keep working.
-fn resolve_instruction_layout(
-    instr: &human_config::svm::Instruction,
-    abi: &SvmAbi,
-) -> Result<(Vec<String>, Vec<SvmNamedField>)> {
-    if let (Some(accounts_yaml), Some(args_yaml)) = (&instr.accounts, &instr.args) {
-        let args = args_yaml
-            .iter()
-            .map(yaml_arg_to_named_field)
-            .collect::<Result<Vec<_>>>()?;
-        return Ok((accounts_yaml.clone(), args));
-    }
-    if instr.accounts.is_some() != instr.args.is_some() {
-        return Err(anyhow!(
-            "Instruction '{}': `accounts` and `args` must be provided together (or both omitted \
-             to fall back to a bundled/IDL schema).",
-            instr.name
-        ));
-    }
-
-    if let Some(disc_bytes) = disc_to_bytes(instr.discriminator.as_deref())? {
-        if let Some(ix_schema) = abi.instructions.get(&disc_bytes) {
-            let accounts = ix_schema.accounts.iter().map(|a| a.name.clone()).collect();
-            let args = ix_schema.args.clone();
-            return Ok((accounts, args));
-        }
-    }
-
-    Ok((Vec::new(), Vec::new()))
-}
-
-fn disc_to_bytes(disc: Option<&str>) -> Result<Option<Vec<u8>>> {
-    let Some(s) = disc else { return Ok(None) };
-    let hex = s.strip_prefix("0x").unwrap_or(s);
-    let bytes = (0..hex.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&hex[i..i + 2], 16)
-                .with_context(|| format!("invalid hex byte at offset {i} in discriminator '{s}'"))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok(Some(bytes))
-}
-
-fn yaml_arg_to_named_field(arg: &human_config::svm::ArgDef) -> Result<SvmNamedField> {
+pub(crate) fn yaml_arg_to_named_field(arg: &human_config::svm::ArgDef) -> Result<SvmNamedField> {
     Ok(SvmNamedField {
         name: arg.name.clone(),
-        ty: yaml_type_to_field_type(&arg.ty)
+        ty: arg_type_to_field_type(&arg.ty)
             .with_context(|| format!("translating type for arg '{}'", arg.name))?,
     })
 }
@@ -2057,7 +1935,10 @@ pub fn named_field_to_arg_def(nf: &SvmNamedField) -> human_config::svm::ArgDef {
     }
 }
 
-fn yaml_type_to_field_type(ty: &human_config::svm::ArgType) -> Result<SvmFieldType> {
+/// The YAML/wire-format `ArgType` read back into the runtime's `FieldType`.
+/// Config parsing and the Borsh decoder read it the same way: a type one of
+/// them maps and the other does not passes codegen and then fails to decode.
+pub fn arg_type_to_field_type(ty: &human_config::svm::ArgType) -> Result<SvmFieldType> {
     use human_config::svm::{ArgComposite as C, ArgPrimitive as P, ArgType as T};
     Ok(match ty {
         T::Primitive(p) => match p {
@@ -2079,10 +1960,10 @@ fn yaml_type_to_field_type(ty: &human_config::svm::ArgType) -> Result<SvmFieldTy
             P::Pubkey | P::PublicKey => SvmFieldType::Pubkey,
         },
         T::Composite(c) => match c {
-            C::Option(inner) => SvmFieldType::Option(Box::new(yaml_type_to_field_type(inner)?)),
-            C::Vec(inner) => SvmFieldType::Vec(Box::new(yaml_type_to_field_type(inner)?)),
+            C::Option(inner) => SvmFieldType::Option(Box::new(arg_type_to_field_type(inner)?)),
+            C::Vec(inner) => SvmFieldType::Vec(Box::new(arg_type_to_field_type(inner)?)),
             C::Array(inner, len) => SvmFieldType::Array {
-                ty: Box::new(yaml_type_to_field_type(inner)?),
+                ty: Box::new(arg_type_to_field_type(inner)?),
                 len: *len,
             },
             C::Defined(name) => SvmFieldType::Defined(name.clone()),
@@ -2136,14 +2017,11 @@ pub enum Abi {
 pub struct SvmAbi {
     /// Base58 program id this schema describes.
     pub program_id: String,
-    /// Per-instruction Borsh layout (accounts + args), keyed by full
-    /// discriminator bytes. Populated from an Anchor IDL's `instructions` or the
-    /// bundled-schema registry; empty for inline (per-instruction YAML) schemas.
-    pub instructions: BTreeMap<Vec<u8>, SvmInstructionSchema>,
-    /// Nominal-type registry referenced by `SvmFieldType::Defined`. Populated
-    /// from an Anchor IDL's `types:` block, the bundled-schema registry, or
-    /// empty for hand-written ad-hoc schemas.
-    pub defined_types: BTreeMap<String, SvmFieldType>,
+    /// Every instruction the program declares, by name, with the reason for
+    /// each one this runtime cannot dispatch or decode. Read from the user's
+    /// `idl:` file, and empty for a program whose instructions carry their
+    /// layout in YAML.
+    pub idl: ProgramIdl,
     pub source: SvmSchemaSource,
 }
 
@@ -2151,8 +2029,6 @@ pub struct SvmAbi {
 pub enum SvmSchemaSource {
     /// User-supplied `idl: <path>` parsed at codegen time.
     AnchorIdl { path: String },
-    /// `program_id` matched a bundled `ProgramSchema` (e.g. Metaplex).
-    Bundled { name: &'static str },
     /// Hand-written per-instruction `accounts`/`args` in YAML.
     Inline,
 }
@@ -2187,12 +2063,17 @@ impl Contract {
         abi: Abi,
     ) -> Result<Self> {
         // Every ecosystem builds its contracts through here, unlike
-        // `validate_deserialized_config_yaml`, which only sees EVM configs.
-        validate_names_valid_rescript(std::slice::from_ref(&name), "contract".to_string())?;
-        validate_names_valid_rescript(
-            &events.iter().map(|e| e.name.clone()).collect::<Vec<_>>(),
-            "event".to_string(),
-        )?;
+        // `validate_deserialized_config_yaml`, which only sees EVM configs. Svm
+        // is the exception: it generates no ReScript, and its program and
+        // instruction names are held to the identifier rule in
+        // `validation::validate_deserialized_svm_config_yaml` instead.
+        if !matches!(abi, Abi::Svm(_)) {
+            validate_names_valid_rescript(std::slice::from_ref(&name), "contract".to_string())?;
+            validate_names_valid_rescript(
+                &events.iter().map(|e| e.name.clone()).collect::<Vec<_>>(),
+                "event".to_string(),
+            )?;
+        }
 
         // Codegen keys the generated event modules by name and routing looks
         // events up by name, so two events on one contract can't share a name.
@@ -2290,12 +2171,15 @@ pub struct SvmEventKind {
     /// Hex-encoded discriminator (`0x`-prefixed), or `None` to match every
     /// instruction in the program.
     pub discriminator: Option<String>,
-    /// Positional account names. Empty when the user supplied no schema and
-    /// no bundled/IDL schema applies; in that case `decoded.accounts` is `{}`.
-    pub accounts: Vec<String>,
-    /// Borsh argument layout in declared order. Empty for unknown
-    /// instructions; the raw `instruction.data` is still available.
-    pub args: Vec<SvmNamedField>,
+    /// Positional account slots in declared order. Empty when the user supplied
+    /// no schema and no IDL applies; in that case `decoded.accounts` is `{}`.
+    pub accounts: Vec<human_config::svm::AccountSlot>,
+    /// Borsh argument layout in declared order. `None` when no layout is
+    /// attached, so nothing is decoded and every matched call is delivered
+    /// with `instruction.data` raw. `Some` filters: a call whose data the
+    /// layout rejects is skipped, and an empty layout takes only the calls
+    /// carrying nothing past the discriminator.
+    pub args: Option<Vec<SvmNamedField>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -3863,10 +3747,783 @@ type Foo {
     }
 
     mod svm_translation {
+        use std::collections::HashMap;
+
         use super::SystemConfig;
-        use crate::config_parsing::system_config::{Abi, DataSource, EventKind};
+        use crate::config_parsing::system_config::{Abi, DataSource, EventKind, SvmSchemaSource};
         use crate::project_paths::ParsedProjectPaths;
         use pretty_assertions::assert_eq;
+
+        /// One program reading `idl`, with whatever instruction block the case
+        /// needs. The IDL arrives in memory, so a case is one string here
+        /// rather than a fixture file.
+        fn program_reading_idl(idl: &str, instructions: &str) -> anyhow::Result<SystemConfig> {
+            let instructions_yaml = if instructions.is_empty() {
+                String::new()
+            } else {
+                format!("          instructions:\n{instructions}")
+            };
+            let yaml = format!(
+                "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+                 0\n    experimental:\n      hypersync_config:\n        url: \
+                 https://solana.hypersync.xyz\n      programs:\n        - name: Pool\n          \
+                 program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n          idl: \
+                 idls/pool.json\n{instructions_yaml}"
+            );
+            SystemConfig::parse_yaml(
+                &yaml,
+                Some("type Foo @entity { id: ID! }"),
+                &HashMap::new(),
+                &HashMap::from([("idls/pool.json".to_string(), idl.to_string())]),
+                false,
+            )
+        }
+
+        /// Name, discriminator, account slots as YAML tokens, and the arg
+        /// names of the attached layout — `None` where none is attached.
+        type SvmEvent = (String, Option<String>, Vec<String>, Option<Vec<String>>);
+
+        fn svm_events(config: &SystemConfig) -> Vec<SvmEvent> {
+            config
+                .contracts
+                .values()
+                .flat_map(|c| &c.events)
+                .map(|e| match &e.kind {
+                    EventKind::Svm(k) => (
+                        e.name.clone(),
+                        k.discriminator.clone(),
+                        k.accounts.iter().map(ToString::to_string).collect(),
+                        k.args
+                            .as_ref()
+                            .map(|args| args.iter().map(|a| a.name.clone()).collect()),
+                    ),
+                    other => panic!("expected an Svm event kind, got {other:?}"),
+                })
+                .collect()
+        }
+
+        /// The error a row on an IDL-declared name gets when it leaves fields
+        /// out, as one string so a wording change is one edit.
+        fn overwrite_error(instruction: &str, why: &str, spell_out: &str) -> String {
+            format!(
+                "Program 'Pool', instruction '{instruction}': {why}. Spell out {spell_out}: an \
+                 overwrite takes nothing from the IDL, so a field left out here is absent, not \
+                 inherited."
+            )
+        }
+
+        const DECLARED: &str = "the IDL declares this instruction too, so this row replaces it \
+                                rather than adding to the catalog";
+
+        const LEGACY_ANCHOR_IDL: &str = r#"{
+          "version": "0.1.0",
+          "name": "pool",
+          "instructions": [
+            { "name": "swap",
+              "accounts": [{ "name": "payer" }, { "name": "pool" }],
+              "args": [{ "name": "amount", "type": "u64" }] },
+            { "name": "deposit", "accounts": [{ "name": "vault" }], "args": [] }
+          ]
+        }"#;
+
+        /// The type registry an IDL brings has to reach the runtime, which
+        /// resolves `Defined` references against it once per program at
+        /// startup. It travels in the public config, so a program whose types
+        /// stop being written there decodes every nominal field as unresolved.
+        #[test]
+        fn carries_the_idl_type_registry_into_the_public_config() {
+            let config = program_reading_idl(
+                r#"{
+                  "instructions": [{ "name": "swap", "discriminator": [1], "accounts": [],
+                    "args": [{ "name": "side", "type": { "defined": "Side" } }] }],
+                  "types": [{ "name": "Side", "type": { "kind": "enum",
+                    "variants": [{ "name": "Buy" }, { "name": "Sell" }] } }]
+                }"#,
+                "",
+            )
+            .expect("config");
+
+            let public: serde_json::Value =
+                serde_json::from_str(&config.to_public_config_json(false).expect("public config"))
+                    .expect("json");
+            let contract = &public["svm"]["programs"]["Pool"];
+
+            assert_eq!(
+                (
+                    contract["svmAbi"]["source"].clone(),
+                    contract["svmAbi"]["definedTypes"].clone(),
+                    contract["events"][0]["svm"]["args"].clone(),
+                ),
+                (
+                    serde_json::json!("anchorIdl"),
+                    serde_json::json!({ "Side": { "enum": [{ "name": "Buy" }, { "name": "Sell" }] } }),
+                    serde_json::json!([{ "name": "side", "type": { "defined": "Side" } }]),
+                )
+            );
+        }
+
+        /// The IDL already names the instructions. Repeating them in YAML is
+        /// optional: omit the list and every usable instruction is available
+        /// to `onInstruction`.
+        #[test]
+        fn omits_yaml_instructions_to_expose_the_idl_catalog() {
+            let yaml = "name: svm-idl\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+                 0\n    experimental:\n      hypersync_config:\n        url: \
+                 https://solana.hypersync.xyz\n      programs:\n        - name: Pool\n          \
+                 program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n          idl: \
+                 idls/pool.json\n";
+            let config = SystemConfig::parse_yaml(
+                yaml,
+                Some("type Foo @entity { id: ID! }"),
+                &HashMap::new(),
+                &HashMap::from([("idls/pool.json".to_string(), LEGACY_ANCHOR_IDL.to_string())]),
+                false,
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0xf223c68952e1f2b6".to_string()),
+                        vec!["vault".to_string()],
+                        Some(Vec::new()),
+                    ),
+                    (
+                        "swap".to_string(),
+                        Some("0xf8c69e91e17587c8".to_string()),
+                        vec!["payer".to_string(), "pool".to_string()],
+                        Some(vec!["amount".to_string()]),
+                    ),
+                ]
+            );
+        }
+
+        #[test]
+        fn an_idl_instruction_with_no_prefix_is_program_wide() {
+            let config = program_reading_idl(
+                r#"{ "kind": "rootNode", "program": { "instructions": [{ "name": "swap" }] } }"#,
+                "",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![("swap".to_string(), None, Vec::new(), Some(Vec::new()),)]
+            );
+        }
+
+        /// A YAML-only program whose one instruction declares `accounts` as
+        /// the given YAML, read back as the canonical slot tokens.
+        fn account_slots(accounts: &str) -> anyhow::Result<Vec<String>> {
+            let yaml = format!(
+                "name: svm-slots\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+                 0\n    experimental:\n      hypersync_config:\n        url: \
+                 https://solana.hypersync.xyz\n      programs:\n        - name: Pool\n          \
+                 program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\n          \
+                 instructions:\n            - name: swap\n              discriminator: \
+                 \"0x01\"\n              args: []\n              accounts: {accounts}\n"
+            );
+            let config = SystemConfig::parse_yaml(
+                &yaml,
+                Some("type Foo @entity { id: ID! }"),
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+            )?;
+            Ok(svm_events(&config).remove(0).2)
+        }
+
+        /// The same slots as a block sequence under `accounts:`.
+        fn block_list(slots: &[&str]) -> String {
+            slots
+                .iter()
+                .map(|slot| format!("\n                - {slot}"))
+                .collect()
+        }
+
+        /// `?name` marks a slot optional and `_` holds a position without a
+        /// name. YAML reads a leading `?` as a plain scalar in a block
+        /// sequence, but as its explicit-key indicator in a flow one — where
+        /// the slot arrives as a one-entry mapping with no value instead.
+        #[test]
+        fn reads_optional_and_unnamed_slots_in_either_yaml_style() {
+            let expected = vec![
+                "payer".to_string(),
+                "?authority".to_string(),
+                "_".to_string(),
+                "mint".to_string(),
+            ];
+
+            assert_eq!(
+                vec![
+                    account_slots(&block_list(&["payer", "?authority", "_", "mint"]))
+                        .expect("block"),
+                    account_slots(&block_list(&["payer", "\"?authority\"", "_", "mint"]))
+                        .expect("quoted"),
+                    account_slots(&block_list(&["payer", "? authority", "_", "mint"]))
+                        .expect("explicit key"),
+                    account_slots("[payer, ?authority, _, mint]").expect("flow"),
+                ],
+                vec![
+                    expected.clone(),
+                    expected.clone(),
+                    expected.clone(),
+                    expected
+                ]
+            );
+        }
+
+        #[test]
+        fn rejects_a_slot_the_grammar_has_no_reading_for() {
+            let cases = [
+                ("optional and unnamed", "[payer, ?_, mint]"),
+                ("trailing unnamed", "[payer, _]"),
+                ("duplicate name", "[payer, mint, payer]"),
+                ("no letter in the name", "[payer, _1]"),
+                ("punctuation in the name", "[payer, mint-authority]"),
+                ("a mapping carrying a value", "[payer, ?mint: yes]"),
+            ];
+
+            assert_eq!(
+                cases
+                    .iter()
+                    .map(|(case, accounts)| format!(
+                        "{case}: {:#}",
+                        account_slots(accounts).expect_err(case)
+                    ))
+                    .collect::<Vec<_>>(),
+                vec![
+                    "optional and unnamed: Failed to deserialize config. Visit the docs for more \
+                     information https://docs.envio.dev/docs/configuration-file: \
+                     chains[0].experimental.programs[0].instructions[0].accounts[1]: account slot \
+                     '?_' marks an unnamed slot optional, which nothing can observe. Write '_' to \
+                     hold the position, or name the slot. at line 16 column 33",
+                    "trailing unnamed: Program 'Pool', instruction 'swap': the account list ends \
+                     with '_', a position nothing follows. Drop it.",
+                    "duplicate name: Program 'Pool', instruction 'swap': account 'payer' is \
+                     declared more than once.",
+                    "no letter in the name: Failed to deserialize config. Visit the docs for more \
+                     information https://docs.envio.dev/docs/configuration-file: \
+                     chains[0].experimental.programs[0].instructions[0].accounts[1]: account slot \
+                     '_1' is not a name: expected letters, digits and underscores, at least one \
+                     of them a letter. Prefix a name with '?' to mark the slot optional, or write \
+                     '_' to hold a position without naming it. at line 16 column 33",
+                    "punctuation in the name: Failed to deserialize config. Visit the docs for \
+                     more information https://docs.envio.dev/docs/configuration-file: \
+                     chains[0].experimental.programs[0].instructions[0].accounts[1]: account slot \
+                     'mint-authority' is not a name: expected letters, digits and underscores, at \
+                     least one of them a letter. Prefix a name with '?' to mark the slot \
+                     optional, or write '_' to hold a position without naming it. at line 16 \
+                     column 33",
+                    "a mapping carrying a value: Failed to deserialize config. Visit the docs \
+                     for more information https://docs.envio.dev/docs/configuration-file: \
+                     chains[0].experimental.programs[0].instructions[0].accounts[1]: expected an \
+                     account name, got a mapping. To mark 'mint' optional, write \"?mint\". at \
+                     line 16 column 33",
+                ]
+            );
+        }
+
+        /// A row on a name the IDL declares replaces it, so it says the
+        /// fields that would otherwise read as absent rather than as the
+        /// IDL's. This one leaves out both.
+        #[test]
+        fn rejects_an_overwrite_that_leaves_out_the_whole_layout() {
+            let err = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: swap\n              discriminator: \"0x\"\n",
+            )
+            .expect_err("missing the layout");
+
+            assert_eq!(
+                format!("{err:#}"),
+                overwrite_error("swap", DECLARED, "'accounts' and 'args'")
+            );
+        }
+
+        /// An overwrite says what a row on any other name says: the empty
+        /// prefix is a program-wide match, here replacing the prefix the IDL
+        /// declared for the name.
+        #[test]
+        fn an_overwrite_on_the_empty_prefix_is_program_wide() {
+            let config = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: swap\n              discriminator: \"0x\"\n              \
+                 accounts:\n                - source\n              args: []\n",
+            )
+            .expect("the empty prefix");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0xf223c68952e1f2b6".to_string()),
+                        vec!["vault".to_string()],
+                        Some(Vec::new()),
+                    ),
+                    (
+                        "swap".to_string(),
+                        None,
+                        vec!["source".to_string()],
+                        Some(Vec::new()),
+                    ),
+                ]
+            );
+        }
+
+        /// YAML is not an allowlist. Overwriting `swap` and adding `extra`
+        /// leaves `deposit` in the catalog, with YAML's layout on `swap`.
+        #[test]
+        fn yaml_overwrite_keeps_the_idl_catalog_and_adds_new_names() {
+            let config = program_reading_idl(
+                r#"{ "instructions": [
+                     { "name": "swap", "discriminator": [1],
+                       "accounts": [{ "name": "payer" }, { "name": "pool" }],
+                       "args": [{ "name": "amount", "type": "u64" }] },
+                     { "name": "deposit", "discriminator": [2],
+                       "accounts": [{ "name": "vault" }], "args": [] }] }"#,
+                "            - name: swap\n              discriminator: \"0x09\"\n              \
+                 accounts:\n                - source\n                - dest\n              args:\n                \
+                 - { name: amountIn, type: u64 }\n            - name: extra\n              \
+                 discriminator: \"0xab\"\n              accounts:\n                - payer\n              args: []\n",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0x02".to_string()),
+                        vec!["vault".to_string()],
+                        Some(Vec::new()),
+                    ),
+                    (
+                        "swap".to_string(),
+                        Some("0x09".to_string()),
+                        vec!["source".to_string(), "dest".to_string()],
+                        Some(vec!["amountIn".to_string()]),
+                    ),
+                    (
+                        "extra".to_string(),
+                        Some("0xab".to_string()),
+                        vec!["payer".to_string()],
+                        Some(Vec::new()),
+                    ),
+                ]
+            );
+        }
+
+        /// A YAML instruction replaces the IDL row of the same name. Accounts
+        /// and args are not merged with the IDL definition.
+        #[test]
+        fn yaml_instruction_replaces_the_idl_layout() {
+            let config = program_reading_idl(
+                r#"{ "instructions": [
+                     { "name": "swap", "discriminator": [1],
+                       "accounts": [{ "name": "payer" }, { "name": "pool" }],
+                       "args": [{ "name": "amount", "type": "u64" }] },
+                     { "name": "deposit", "discriminator": [2],
+                       "accounts": [{ "name": "vault" }], "args": [] }] }"#,
+                "            - name: swap\n              discriminator: \"0x09\"\n              \
+                 accounts:\n                - source\n              args: []\n",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0x02".to_string()),
+                        vec!["vault".to_string()],
+                        Some(Vec::new()),
+                    ),
+                    (
+                        "swap".to_string(),
+                        Some("0x09".to_string()),
+                        vec!["source".to_string()],
+                        Some(Vec::new()),
+                    ),
+                ]
+            );
+        }
+
+        /// Hex is hex in either case. The YAML row is a complete overwrite.
+        #[test]
+        fn accepts_a_configured_discriminator_in_either_case() {
+            let config = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: swap\n              discriminator: \"0xF8C69E91E17587C8\"\n              \
+                 accounts:\n                - payer\n                - pool\n              args:\n                \
+                 - { name: amount, type: u64 }\n",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0xf223c68952e1f2b6".to_string()),
+                        vec!["vault".to_string()],
+                        Some(Vec::new()),
+                    ),
+                    (
+                        "swap".to_string(),
+                        Some("0xf8c69e91e17587c8".to_string()),
+                        vec!["payer".to_string(), "pool".to_string()],
+                        Some(vec!["amount".to_string()]),
+                    ),
+                ]
+            );
+        }
+
+        /// A YAML discriminator overwrites the IDL row. Other usable IDL
+        /// instructions stay in the catalog.
+        #[test]
+        fn overwrites_a_declared_idl_discriminator() {
+            let config = program_reading_idl(
+                r#"{ "instructions": [
+                     { "name": "swap",
+                       "discriminator": [1, 2, 3, 4, 5, 6, 7, 8],
+                       "accounts": [], "args": [] },
+                     { "name": "deposit", "discriminator": [9],
+                       "accounts": [{ "name": "vault" }], "args": [] }] }"#,
+                "            - name: swap\n              discriminator: \"0xdeadbeefdeadbeef\"\n              \
+                 accounts: []\n              args: []\n",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0x09".to_string()),
+                        vec!["vault".to_string()],
+                        Some(Vec::new()),
+                    ),
+                    (
+                        "swap".to_string(),
+                        Some("0xdeadbeefdeadbeef".to_string()),
+                        Vec::new(),
+                        Some(Vec::new()),
+                    ),
+                ]
+            );
+        }
+
+        #[test]
+        fn rejects_a_discriminator_only_overwrite_of_an_idl_instruction() {
+            let err = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: swap\n              discriminator: \"0x09\"\n",
+            )
+            .expect_err("discriminator-only");
+
+            assert_eq!(
+                format!("{err:#}"),
+                overwrite_error("swap", DECLARED, "'accounts' and 'args'")
+            );
+        }
+
+        /// The IDL has no name for this row, so it adds an instruction and is
+        /// read like an inline one: the empty prefix matches every call, and
+        /// the layout is the row's own business.
+        #[test]
+        fn a_row_the_idl_does_not_declare_needs_no_layout() {
+            let config = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: anyCall\n              discriminator: \"0x\"\n",
+            )
+            .expect("a row adding a name");
+
+            assert_eq!(
+                svm_events(&config)
+                    .into_iter()
+                    .map(|(name, discriminator, _, _)| (name, discriminator))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0xf223c68952e1f2b6".to_string())
+                    ),
+                    ("swap".to_string(), Some("0xf8c69e91e17587c8".to_string())),
+                    ("anyCall".to_string(), None),
+                ]
+            );
+        }
+
+        /// A row on a name the IDL declares but could not use is still an
+        /// overwrite: the IDL has a definition for it, and the reason it was
+        /// set aside is what the row has to answer.
+        #[test]
+        fn rejects_an_overwrite_of_an_unusable_idl_instruction() {
+            let err = program_reading_idl(
+                r#"{ "instructions": [
+                     { "name": "swap", "discriminator": [1],
+                       "accounts": [], "args": [{ "name": "amount", "type": { "coption": "u64" } }] },
+                     { "name": "deposit", "discriminator": [4],
+                       "accounts": [], "args": [] }] }"#,
+                "            - name: swap\n              discriminator: \"0x\"\n",
+            )
+            .expect_err("a row on a set-aside name");
+
+            assert_eq!(
+                format!("{err:#}"),
+                overwrite_error(
+                    "swap",
+                    "the IDL declares this instruction too, but it cannot be indexed as declared: \
+                     idls/pool.json:2:22: args.amount: `coption` is not Borsh-compatible and \
+                     cannot be decoded",
+                    "'accounts' and 'args'"
+                )
+            );
+        }
+
+        /// Unusable IDL instructions stay out of the catalog. The rest remain.
+        #[test]
+        fn keeps_usable_idl_instructions_when_others_are_unusable() {
+            let config = program_reading_idl(
+                r#"{ "instructions": [
+                     { "name": "swap", "discriminator": [1],
+                       "accounts": [], "args": [{ "name": "amount", "type": { "coption": "u64" } }] },
+                     { "name": "deposit", "discriminator": [4],
+                       "accounts": [], "args": [] }] }"#,
+                "",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![(
+                    "deposit".to_string(),
+                    Some("0x04".to_string()),
+                    Vec::new(),
+                    Some(Vec::new()),
+                )]
+            );
+        }
+
+        /// Codama is what describes the non-Anchor programs — SPL Token among
+        /// them — and reaching it through `idl:` is the whole point of a second
+        /// dialect. The upstream Anchor-only parser rejected such a file.
+        #[test]
+        fn reads_a_codama_idl_through_the_config() {
+            let config = program_reading_idl(
+                r#"{
+                  "kind": "programNode",
+                  "name": "splToken",
+                  "instructions": [{
+                    "kind": "instructionNode",
+                    "name": "transfer",
+                    "accounts": [
+                      { "kind": "instructionAccountNode", "name": "source" },
+                      { "kind": "instructionAccountNode", "name": "destination" }],
+                    "arguments": [
+                      { "kind": "instructionArgumentNode", "name": "tag",
+                        "type": { "kind": "numberTypeNode", "format": "u8" },
+                        "defaultValue": { "kind": "numberValueNode", "number": 3 } },
+                      { "kind": "instructionArgumentNode", "name": "amount",
+                        "type": { "kind": "numberTypeNode", "format": "u64" } }],
+                    "discriminators": [
+                      { "kind": "fieldDiscriminatorNode", "name": "tag", "offset": 0 }]
+                  }]
+                }"#,
+                "",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![(
+                    "transfer".to_string(),
+                    Some("0x03".to_string()),
+                    vec!["source".to_string(), "destination".to_string()],
+                    Some(vec!["amount".to_string()]),
+                )]
+            );
+        }
+
+        /// The real config, over three published IDLs. Omitting YAML
+        /// `instructions` exposes the catalog; this pins the bytes the
+        /// scenario's handlers still name, plus the three inline swaps.
+        #[test]
+        fn derives_the_scenario_config_discriminators_from_its_idls() {
+            let project_paths = ParsedProjectPaths::new(
+                &format!(
+                    "{}/../../scenarios/svm_flow_xray",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                "config.yaml",
+            )
+            .expect("paths");
+            let config = SystemConfig::parse_from_project_files(&project_paths).expect("parse");
+
+            let dispatched: Vec<_> = svm_events(&config)
+                .into_iter()
+                .filter(|(_, discriminator, ..)| discriminator.is_some())
+                .map(|(name, discriminator, accounts, args)| {
+                    // `None` where the row attached no layout at all: the Orca
+                    // and Meteora swaps take every call and leave the payload
+                    // raw, which an empty layout would not do.
+                    (
+                        name,
+                        discriminator.unwrap(),
+                        accounts.len(),
+                        args.map(|a| a.len()),
+                    )
+                })
+                .collect();
+
+            let names = [
+                "borrowObligationLiquidity",
+                "depositReserveLiquidityAndObligationCollateral",
+                "fillPerpOrder",
+                "liquidatePerp",
+                "liquidateSpot",
+                "placePerpOrder",
+                "repayObligationLiquidity",
+                "route",
+                "settlePnl",
+                "sharedAccountsRoute",
+                "swap",
+                "withdrawObligationCollateralAndRedeemReserveCollateral",
+            ];
+            let mut pinned: Vec<_> = dispatched
+                .iter()
+                .filter(|row| names.contains(&row.0.as_str()))
+                .cloned()
+                .collect();
+            pinned.sort();
+
+            assert_eq!(
+                (dispatched.len() > 14, pinned),
+                (
+                    true,
+                    vec![
+                        (
+                            "borrowObligationLiquidity".into(),
+                            "0x797f12cc49f5e141".into(),
+                            12,
+                            Some(1)
+                        ),
+                        (
+                            "depositReserveLiquidityAndObligationCollateral".into(),
+                            "0x81c70402de271a2e".into(),
+                            14,
+                            Some(1)
+                        ),
+                        (
+                            "fillPerpOrder".into(),
+                            "0x0dbcf86786d96af0".into(),
+                            6,
+                            Some(2)
+                        ),
+                        (
+                            "liquidatePerp".into(),
+                            "0x4b2377f7bf128b02".into(),
+                            6,
+                            Some(3)
+                        ),
+                        (
+                            "liquidateSpot".into(),
+                            "0x6b00802923e5fb12".into(),
+                            6,
+                            Some(4)
+                        ),
+                        (
+                            "placePerpOrder".into(),
+                            "0x45a15dca787e4cb9".into(),
+                            3,
+                            Some(1)
+                        ),
+                        (
+                            "repayObligationLiquidity".into(),
+                            "0x91b20de14cf09348".into(),
+                            9,
+                            Some(1)
+                        ),
+                        ("route".into(), "0xe517cb977ae3ad2a".into(), 9, Some(5)),
+                        ("settlePnl".into(), "0x2b3dea2d0f5f9899".into(), 4, Some(1)),
+                        (
+                            "sharedAccountsRoute".into(),
+                            "0xc1209b3341d69c81".into(),
+                            13,
+                            Some(6)
+                        ),
+                        ("swap".into(), "0x09".into(), 18, Some(2)),
+                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, None),
+                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, None),
+                        (
+                            "withdrawObligationCollateralAndRedeemReserveCollateral".into(),
+                            "0x4b5d5ddc2296dac4".into(),
+                            14,
+                            Some(1)
+                        ),
+                    ]
+                )
+            );
+        }
+
+        /// Omitting YAML `instructions` keeps every usable IDL instruction.
+        #[test]
+        fn keeps_a_program_whose_schema_sets_other_instructions_aside() {
+            let config = program_reading_idl(
+                r#"{ "instructions": [
+                     { "name": "swap", "discriminator": [1], "accounts": [], "args": [] },
+                     { "name": "wide", "discriminator": [9, 9, 9], "accounts": [], "args": [] }] }"#,
+                "",
+            )
+            .expect("config");
+
+            assert_eq!(
+                svm_events(&config),
+                vec![
+                    (
+                        "swap".to_string(),
+                        Some("0x01".to_string()),
+                        Vec::new(),
+                        Some(Vec::new()),
+                    ),
+                    (
+                        "wide".to_string(),
+                        Some("0x090909".to_string()),
+                        Vec::new(),
+                        Some(Vec::new()),
+                    ),
+                ]
+            );
+        }
+
+        #[test]
+        fn does_not_attach_a_schema_to_metaplex_by_program_id() {
+            let yaml = "name: metaplex\necosystem: svm\nchains:\n  - id: solana\n    start_block: \
+                 0\n    experimental:\n      hypersync_config:\n        url: \
+                 https://solana.hypersync.xyz\n      programs:\n        - name: TokenMetadata\n          \
+                 program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s\n";
+            let config = SystemConfig::parse_yaml(
+                yaml,
+                Some("type Foo @entity { id: ID! }"),
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+            )
+            .expect("parse");
+
+            let contract = config.contracts.values().next().expect("program");
+            assert_eq!(
+                match &contract.abi {
+                    Abi::Svm(abi) => (&abi.source, svm_events(&config)),
+                    other => panic!("expected Svm abi, got {other:?}"),
+                },
+                (&SvmSchemaSource::Inline, vec![])
+            );
+        }
 
         /// End-to-end: the Metaplex YAML fixture deserializes, validates, and
         /// translates into a single Contract whose two Events carry the
@@ -3880,28 +4537,32 @@ type Foo {
                     .expect("paths");
             let config = SystemConfig::parse_from_project_files(&project_paths).expect("parse");
 
-            // Single chain, single program -> one contract with two events.
             let contracts = config.contracts.values().collect::<Vec<_>>();
-            assert_eq!(contracts.len(), 1);
             let token_metadata = contracts[0];
-            assert_eq!(token_metadata.name, "TokenMetadata");
-            assert!(matches!(token_metadata.abi, Abi::Svm(_)));
-            assert_eq!(token_metadata.events.len(), 2);
-
             let kinds: Vec<_> = token_metadata
                 .events
                 .iter()
                 .map(|e| match &e.kind {
-                    EventKind::Svm(k) => (e.name.as_str(), k.discriminator.as_deref()),
+                    EventKind::Svm(k) => (e.name.clone(), k.discriminator.clone()),
                     _ => panic!("expected Svm event kind, got {:?}", e.kind),
                 })
                 .collect();
             assert_eq!(
-                kinds,
-                vec![
-                    ("CreateMetadataAccountV3", Some("0x21")),
-                    ("UpdateMetadataAccountV2", Some("0x0f")),
-                ],
+                (
+                    contracts.len(),
+                    token_metadata.name.as_str(),
+                    matches!(token_metadata.abi, Abi::Svm(_)),
+                    kinds,
+                ),
+                (
+                    1,
+                    "TokenMetadata",
+                    true,
+                    vec![
+                        ("CreateMetadataAccountV3".into(), Some("0x21".into())),
+                        ("UpdateMetadataAccountV2".into(), Some("0x0f".into())),
+                    ],
+                )
             );
 
             // Chain data carries the program_id on the contract-side address,

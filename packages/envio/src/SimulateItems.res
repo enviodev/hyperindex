@@ -358,15 +358,22 @@ let parse = (
       let path = item.path->Option.getOr([0])
       let programId =
         item.programId->Option.getOr(svmEventConfig.programId->SvmTypes.Pubkey.toString)
+      // `accountArguments` is the list the call carries, so it stands as
+      // written: a short one leaves the later slots absent, the way a
+      // truncated instruction reads from chain. Named accounts speak about
+      // some slots instead, so they go back onto their declared positions and
+      // a slot the item leaves out carries the program id — chain's own
+      // stand-in for an absent account, which reads back as absent for an
+      // optional slot and as the program for a required one.
       let accountArguments = switch item.accountArguments {
       | Some(args) => args
       | None =>
         switch item.accounts {
         | Some(named) =>
-          svmEventConfig.accounts->Array.map(name =>
-            switch named->Dict.get(name) {
-            | Some({address}) => address
-            | None => ""
+          svmEventConfig.accounts->Array.map(slot =>
+            switch slot->Internal.svmAccountSlotName {
+            | None => programId
+            | Some(name) => named->Dict.get(name)->Option.mapOr(programId, ({address}) => address)
             }
           )
         | None => []

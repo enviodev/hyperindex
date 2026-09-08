@@ -477,13 +477,25 @@ pub fn create_view(
         ),
     };
 
+    // The dedup key leads the sort so the rows a `LIMIT 1 BY` group needs
+    // arrive together: the history table is sorted by that key already (or by a
+    // prefix of it, under a custom `orderBy`), so ClickHouse reads in order and
+    // a `LIMIT n` over the view stops after n groups instead of sorting every
+    // version in the table first. Sorting by the checkpoint alone forced that
+    // full sort on every read. The checkpoint stays last and descending, which
+    // is what makes the surviving row per key the latest one.
+    let dedup_sort = format!(
+        "{}, {} DESC",
+        dedup_key.join(", "),
+        quoted(&history.checkpoint_id_column)
+    );
+
     format!(
-        "CREATE VIEW IF NOT EXISTS {db}.{}{} AS\n{with}SELECT {entity_fields}\nFROM (\n  SELECT {entity_fields}, {}\n  FROM {db}.{}\n  WHERE {} <= {marker}\n  ORDER BY {} DESC\n  LIMIT 1 BY {}\n)\nWHERE {} = {}",
+        "CREATE VIEW IF NOT EXISTS {db}.{}{} AS\n{with}SELECT {entity_fields}\nFROM (\n  SELECT {entity_fields}, {}\n  FROM {db}.{}\n  WHERE {} <= {marker}\n  ORDER BY {dedup_sort}\n  LIMIT 1 BY {}\n)\nWHERE {} = {}",
         quoted(&entity.name),
         topology.on_cluster(),
         quoted(&history.change_column),
         quoted(&entity.history_table),
-        quoted(&history.checkpoint_id_column),
         quoted(&history.checkpoint_id_column),
         dedup_key.join(", "),
         quoted(&history.change_column),
@@ -918,7 +930,7 @@ mod tests {
              SELECT `id`, `balance`, `envio_change`\n  \
              FROM `test_db`.`envio_history_Account`\n  \
              WHERE `envio_checkpoint_id` <= (SELECT max(`checkpoint_id`) FROM `test_db`.`envio_chains` FINAL)\n  \
-             ORDER BY `envio_checkpoint_id` DESC\n  \
+             ORDER BY `id`, `envio_checkpoint_id` DESC\n  \
              LIMIT 1 BY `id`\n\
              )\n\
              WHERE `envio_change` = 'SET'"
@@ -950,7 +962,7 @@ mod tests {
              SELECT `id`, `chainId`, `balance`, `envio_change`\n  \
              FROM `test_db`.`envio_history_Account`\n  \
              WHERE `envio_checkpoint_id` <= envio_frontier[`chainId`]\n  \
-             ORDER BY `envio_checkpoint_id` DESC\n  \
+             ORDER BY `id`, `chainId`, `envio_checkpoint_id` DESC\n  \
              LIMIT 1 BY `id`, `chainId`\n\
              )\n\
              WHERE `envio_change` = 'SET'"
@@ -975,8 +987,9 @@ mod tests {
             vec![column("id", "String"), column("chain_id", "ChainId")],
         );
         entity.chain_id_column = Some("chain_id".to_string());
-        assert!(create_view(&entity, "test_db", &history_schema(), plain())
-            .contains("LIMIT 1 BY `id`, `chain_id`"));
+        let sql = create_view(&entity, "test_db", &history_schema(), plain());
+        assert!(sql.contains("ORDER BY `id`, `chain_id`, `envio_checkpoint_id` DESC"));
+        assert!(sql.contains("LIMIT 1 BY `id`, `chain_id`"));
     }
 
     #[test]

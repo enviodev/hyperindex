@@ -178,10 +178,26 @@ let publicConfigChainSchema = S.schema(s =>
   }
 )
 
+type svmAccountSlotItem = {"name": option<string>, "optional": option<bool>}
+
+let svmAccountSlotSchema: S.t<svmAccountSlotItem> = S.schema(s =>
+  {
+    "name": s.matches(S.option(S.string)),
+    "optional": s.matches(S.option(S.bool)),
+  }
+)
+
+let svmAccountSlotFromItem = (slot: svmAccountSlotItem): Internal.svmAccountSlot =>
+  switch (slot["name"], slot["optional"]) {
+  | (None, _) => Unnamed
+  | (Some(name), Some(true)) => Optional(name)
+  | (Some(name), _) => Required(name)
+  }
+
 let svmEventDescriptorSchema = S.schema(s =>
   {
     "discriminator": s.matches(S.option(S.string)),
-    "accounts": s.matches(S.option(S.array(S.string))),
+    "accounts": s.matches(S.option(S.array(svmAccountSlotSchema))),
     "args": s.matches(S.option(S.json(~validate=false))),
   }
 )
@@ -740,7 +756,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
               Utils.magic: _ => {
                 "svm": option<{
                   "discriminator": option<string>,
-                  "accounts": option<array<string>>,
+                  "accounts": option<array<svmAccountSlotItem>>,
                   "args": option<JSON.t>,
                 }>,
               }
@@ -757,7 +773,7 @@ let fromPublic = (publicConfigJson: JSON.t) => {
             ~instructionName=eventName,
             ~programId,
             ~discriminator=svm["discriminator"],
-            ~accounts=svm["accounts"]->Option.getOr([]),
+            ~accounts=svm["accounts"]->Option.getOr([])->Array.map(svmAccountSlotFromItem),
             ~args=svm["args"]->Option.getOr(JSON.Null),
             ~definedTypes=svmDefinedTypes,
           ) :> Internal.eventConfig)

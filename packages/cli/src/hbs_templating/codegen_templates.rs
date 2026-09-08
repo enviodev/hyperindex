@@ -2272,7 +2272,7 @@ type testIndexer = {{
             // SVM programs table: per-program record of per-instruction
             // `{ args, accounts }` shapes. Empty when no SVM programs
             // configured, or when no instruction in any program carries a
-            // resolved schema (bundled / IDL / inline).
+            // resolved schema (IDL / inline).
             //
             // Each instruction emits both `args` (typed from the Borsh
             // schema) and `accounts` (named string slots from the schema).
@@ -2292,19 +2292,22 @@ type testIndexer = {{
                             EventKind::Svm(k) => k,
                             _ => continue,
                         };
-                        // No declared args means nothing to decode; registration
+                        // No declared layout means nothing to decode; registration
                         // rejects selecting the field, and `never` keeps a
-                        // handler from reading it as an object.
-                        let args_ts = if svm_kind.args.is_empty() {
-                            "never".to_string()
-                        } else {
-                            let fields = svm_kind
-                                .args
-                                .iter()
-                                .map(|f| ts_svm_field(f, &svm_abi.defined_types, &mut Vec::new()))
-                                .collect::<Vec<_>>()
-                                .join("; ");
-                            format!("{{ {fields} }}")
+                        // handler from reading it as an object. A declared but
+                        // empty one decodes to `{}`, which is selectable.
+                        let args_ts = match &svm_kind.args {
+                            None => "never".to_string(),
+                            Some(args) => {
+                                let fields = args
+                                    .iter()
+                                    .map(|f| {
+                                        ts_svm_field(f, &svm_abi.idl.defined_types, &mut Vec::new())
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("; ");
+                                format!("{{ {fields} }}")
+                            }
                         };
                         let accounts_ts = if svm_kind.accounts.is_empty() {
                             "Readonly<Record<string, string>>".to_string()
@@ -2312,25 +2315,30 @@ type testIndexer = {{
                             let fields = svm_kind
                                 .accounts
                                 .iter()
-                                .map(|name| {
-                                    format!("readonly {}: string", ts_safe_property_name(name))
+                                .filter_map(|slot| {
+                                    let name = slot.name()?;
+                                    let optional = if slot.is_optional() { "?" } else { "" };
+                                    Some(format!(
+                                        "readonly {}{optional}: string",
+                                        ts_safe_property_name(name)
+                                    ))
                                 })
                                 .collect::<Vec<_>>()
                                 .join("; ");
                             format!("{{ {fields} }}")
                         };
                         instruction_entries.push(format!(
-                            "          \"{instr}\": {{ readonly args: {args}; readonly accounts: \
+                            "          {instr}: {{ readonly args: {args}; readonly accounts: \
                              {accs} }};",
-                            instr = event.name,
+                            instr = ts_string_literal(&event.name),
                             args = args_ts,
                             accs = accounts_ts,
                         ));
                     }
                     if !instruction_entries.is_empty() {
                         program_entries.push(format!(
-                            "        \"{name}\": {{\n{body}\n        }};",
-                            name = contract.name,
+                            "        {name}: {{\n{body}\n        }};",
+                            name = ts_string_literal(&contract.name),
                             body = instruction_entries.join("\n"),
                         ));
                     }
@@ -2729,8 +2737,12 @@ fn ts_safe_property_name(name: &str) -> String {
     }
 }
 
+/// JSON's string grammar is a subset of TypeScript's, so serde does the
+/// escaping. An IDL is a file the program's authors wrote, and its names are
+/// held to no identifier rule: a quote would end the literal early, and a
+/// control character would break the line it sits on.
 fn ts_string_literal(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    serde_json::to_string(value).expect("a string always serializes")
 }
 
 #[cfg(test)]

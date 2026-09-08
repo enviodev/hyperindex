@@ -1259,6 +1259,16 @@ chains:
       programs:
 `
 
+  // One `swap` instruction of one program, with the body under test.
+  let instruction = body =>
+    prefix ++
+    `        - name: Program
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - name: swap
+              discriminator: "0x09"` ++
+    body ++ "\n"
+
   [
     (
       "rejects invalid program ids",
@@ -1290,6 +1300,16 @@ chains:
       "Program \"Program\" declares the instruction \"Transfer\" more than once",
     ),
     (
+      "rejects a discriminator that does not carry the 0x prefix",
+      prefix ++ `
+        - name: Program
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - {name: Transfer, discriminator: "21"}
+`,
+      "instruction \"Transfer\" in program \"Program\": discriminator \"21\" must be written as 0x-prefixed hex. Write \"0x\" to match every instruction of the program",
+    ),
+    (
       "rejects a discriminator with a partial byte",
       prefix ++ `
         - name: Program
@@ -1297,10 +1317,163 @@ chains:
           instructions:
             - {name: Transfer, discriminator: "0x012"}
 `,
-      "instruction \"Transfer\" in program \"Program\": discriminator \"0x012\" must be a whole number of bytes (an even, non-zero count of hex digits after stripping a \`0x\` prefix), got 3 digits",
+      "instruction \"Transfer\" in program \"Program\": discriminator \"0x012\" must be a whole number of bytes (an even count of hex digits after the \`0x\` prefix), got 3 digits. Write \"0x\" to match every instruction of the program.",
+    ),
+    (
+      "rejects a program name that is not an identifier",
+      prefix ++ `
+        - name: my-program
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions: []
+`,
+      "a program name must be an identifier: letters, digits and underscores only, not starting with a digit, got 'my-program'",
+    ),
+    (
+      "rejects an instruction name that is not an identifier",
+      prefix ++ `
+        - name: Program
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - {name: "transfer!", discriminator: "0x0f"}
+`,
+      "Program 'Program': an instruction name must be an identifier: letters, digits and underscores only, not starting with a digit, got 'transfer!'",
+    ),
+    (
+      "rejects `defined`, which has no registry to resolve against",
+      instruction(`
+              accounts: []
+              args:
+                - {name: side, type: {defined: Side}}`),
+      "Program 'Program', instruction 'swap': args.side: 'defined' is not supported in config.yaml: declare the type inline with 'struct' or 'enum', or take the instruction from an 'idl'",
+    ),
+    (
+      "rejects `defined` nested inside a composite",
+      instruction(`
+              accounts: []
+              args:
+                - {name: sides, type: {vec: {option: {defined: Side}}}}`),
+      "Program 'Program', instruction 'swap': args.sides.vec.option: 'defined' is not supported in config.yaml: declare the type inline with 'struct' or 'enum', or take the instruction from an 'idl'",
+    ),
+    (
+      "rejects a nested option, which decodes ambiguously",
+      instruction(`
+              accounts: []
+              args:
+                - {name: maybe, type: {option: {option: u64}}}`),
+      "Program 'Program', instruction 'swap': args.maybe.option: a nested 'option' is not supported: Borsh tags each level with one byte, so Some(None) and None would decode the same",
+    ),
+    (
+      "rejects duplicate arg names",
+      instruction(`
+              accounts: []
+              args:
+                - {name: amount, type: u64}
+                - {name: amount, type: string}`),
+      "Program 'Program', instruction 'swap': args: 'amount' is declared more than once",
+    ),
+    (
+      "rejects duplicate field names inside a struct",
+      instruction(`
+              accounts: []
+              args:
+                - {name: pair, type: {struct: [{name: a, type: u64}, {name: a, type: u64}]}}`),
+      "Program 'Program', instruction 'swap': args.pair.struct: 'a' is declared more than once",
+    ),
+    (
+      "rejects an arg name that is not an identifier",
+      instruction(`
+              accounts: []
+              args:
+                - {name: "a-b", type: u64}`),
+      "Program 'Program', instruction 'swap': args: an arg name must be an identifier: letters, digits and underscores only, not starting with a digit, got 'a-b'",
+    ),
+    (
+      "rejects an empty arg name",
+      instruction(`
+              accounts: []
+              args:
+                - {name: "", type: u64}`),
+      "Program 'Program', instruction 'swap': args: an arg name must be an identifier: letters, digits and underscores only, not starting with a digit, got ''",
+    ),
+    (
+      "rejects an empty enum, which no tag can select",
+      instruction(`
+              accounts: []
+              args:
+                - {name: side, type: {enum: []}}`),
+      "Program 'Program', instruction 'swap': args.side.enum: an enum needs at least one variant",
+    ),
+    (
+      "rejects duplicate enum variant names",
+      instruction(`
+              accounts: []
+              args:
+                - {name: side, type: {enum: [{name: Bid}, {name: Bid}]}}`),
+      "Program 'Program', instruction 'swap': args.side.enum: 'Bid' is declared more than once",
+    ),
+    (
+      "rejects an enum variant name that is not an identifier",
+      instruction(`
+              accounts: []
+              args:
+                - {name: side, type: {enum: [{name: "Bid/Ask"}]}}`),
+      "Program 'Program', instruction 'swap': args.side.enum: a variant name must be an identifier: letters, digits and underscores only, not starting with a digit, got 'Bid/Ask'",
+    ),
+    (
+      "rejects more enum variants than a one-byte tag can address",
+      instruction(
+        `
+              accounts: []
+              args:
+                - {name: side, type: {enum: [` ++
+        Array.make(~length=257, 0)
+        ->Array.mapWithIndex((_, i) => `{name: V${i->Int.toString}}`)
+        ->Array.join(", ") ++ `]}}`,
+      ),
+      "Program 'Program', instruction 'swap': args.side.enum: 257 variants is more than the 256 a one-byte Borsh tag can address",
+    ),
+    (
+      "rejects an array longer than the decoder will preallocate",
+      instruction(`
+              accounts: []
+              args:
+                - {name: big, type: {array: [u64, 65537]}}`),
+      "Program 'Program', instruction 'swap': args.big.array: 65537 elements is more than the 65536 an array may declare",
+    ),
+    (
+      "names the primitive it could not read",
+      instruction(`
+              accounts: []
+              args:
+                - {name: amount, type: u46}`),
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0].instructions[0].args[0].type: unknown type 'u46', expected one of bool, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64, string, bytes, pubkey, publicKey, or a composite such as {vec: u8}, {option: pubkey}, {array: [u8, 32]}, {struct: [...]}, {enum: [...]} at line 18 column 40",
+    ),
+    (
+      "names the composite it could not read",
+      instruction(`
+              accounts: []
+              args:
+                - {name: amount, type: {set: u64}}`),
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0].instructions[0].args[0].type: unknown composite type 'set', expected one of option, vec, array, struct, enum at line 18 column 40",
     ),
   ]->Array.forEach(((name, yaml, message)) => {
     it(name, t => expectParseError(t, yaml, message))
+  })
+
+  // Svm generates no ReScript, so a name only has to be an identifier the
+  // generated TypeScript can carry.
+  it("accepts program and instruction names that ReScript reserves", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=prefix ++
+      `        - name: type
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - {name: switch, discriminator: "0x0f"}
+`,
+    )
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    let contract = chain.contracts->Array.getUnsafe(0)
+    t.expect((contract.name, contract.events->Array.map(e => e.name))).toEqual(("Type", ["switch"]))
   })
 
   it("rejects duplicate program names across chains", t => {
@@ -1995,16 +2168,70 @@ chains:
           idl: idls/program.json
           instructions: []
 `,
-      "Resolving Borsh schema for program 'Program' (metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s): reading IDL at 'idls/program.json': Virtual config file \"idls/program.json\" was not provided",
+      "Program 'Program': reading IDL at 'idls/program.json': Virtual config file \"idls/program.json\" was not provided",
     )
   })
 
-  it("rejects SVM IDL plus inline instruction layouts", t => {
-    expectParseError(
-      t,
-      ~files=Dict.fromArray([("idls/program.json", "{}")]),
-      `
-name: duplicate-svm-schema
+  // `accounts` names the slots the raw `accountArguments` array already
+  // carries, and `args` attaches a decoder. Neither implies the other, and an
+  // empty list means the same as an absent one, so a row asks for whichever it
+  // wants.
+  it("takes SVM inline accounts and args independently", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: independent-svm-layout
+ecosystem: svm
+chains:
+  - id: solana
+    start_block: 0
+    experimental:
+      hypersync_config:
+        url: https://solana.hypersync.xyz
+      programs:
+        - name: Program
+          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+          instructions:
+            - {name: namesOnly, discriminator: "0x01", accounts: [source]}
+            - {name: argsOnly, discriminator: "0x02", args: [{name: amount, type: u64}]}
+            - {name: neither, discriminator: "0x03"}
+            - {name: emptyArgs, discriminator: "0x04", args: []}
+`,
+    )
+    t.expect(
+      firstContract(config).events->Array.map(event => {
+        let svm = event->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+        (svm.name, svm.accounts, svm.args)
+      }),
+    ).toEqual([
+      ("namesOnly", [Internal.Required("source")], JSON.Null),
+      ("argsOnly", [], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
+      ("neither", [], JSON.Null),
+      ("emptyArgs", [], JSON.parseOrThrow("[]")),
+    ])
+  })
+})
+
+describe("SVM IDL catalog", () => {
+  let poolIdl = `{
+    "instructions": [
+      {
+        "name": "swap",
+        "discriminator": [1],
+        "accounts": [{"name": "payer"}, {"name": "pool"}],
+        "args": [{"name": "amount", "type": "u64"}]
+      },
+      {
+        "name": "deposit",
+        "discriminator": [2],
+        "accounts": [{"name": "vault"}],
+        "args": []
+      }
+    ]
+  }`
+  let files = Dict.fromArray([("idls/program.json", poolIdl)])
+  let yaml = instructions =>
+    `
+name: svm-idl-catalog
 ecosystem: svm
 chains:
   - id: solana
@@ -2016,35 +2243,230 @@ chains:
         - name: Program
           program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
           idl: idls/program.json
-          instructions:
-            - name: Transfer
-              accounts: []
-              args: []
+${instructions}
+`
+
+  // Account slots read back as the YAML tokens that declare them, so an
+  // expectation shows optionality and unnamed positions.
+  let slotTokens = (slots: array<Internal.svmAccountSlot>) =>
+    slots->Array.map(slot =>
+      switch slot {
+      | Unnamed => "_"
+      | Required(name) => name
+      | Optional(name) => "?" ++ name
+      }
+    )
+
+  let catalog = (config: Config.t) =>
+    firstContract(config).events->Array.map(event => {
+      let svm = event->(Utils.magic: Internal.eventConfig => Internal.svmInstructionEventConfig)
+      (svm.name, svm.discriminator, svm.accounts->slotTokens, svm.args)
+    })
+
+  // An IDL is a file the program's authors wrote, and nothing holds its names
+  // to the identifier rule config.yaml names are held to. They reach the
+  // generated types as string literals, where an unescaped quote would end the
+  // literal early and leave the rest of the file as syntax.
+  it("escapes an IDL instruction name that carries a quote", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files=Dict.fromArray([
+        (
+          "idls/program.json",
+          `{
+            "instructions": [{
+              "name": "say\\"hi",
+              "discriminator": [7],
+              "accounts": [{"name": "payer"}],
+              "args": [{"name": "amount", "type": "u64"}]
+            }]
+          }`,
+        ),
+      ]),
+      ~configYaml=yaml("          instructions: []\n"),
+      ~handlers=`
+import { indexer } from "envio";
+indexer.onInstruction(
+  { program: "Program", instruction: "say\\"hi", fields: { instruction: ["args", "accounts"] } },
+  async ({ instruction }) => {
+    instruction.args.amount satisfies bigint;
+    instruction.accounts.payer.toString();
+  },
+);
 `,
-      "Resolving Borsh schema for program 'Program' (metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s): Program 'Program': \`idl\` is mutually exclusive with per-instruction \`accounts\`/\`args\` overrides. Use one or the other.",
+    )
+    t.expect(catalog(config)).toEqual([
+      (
+        `say\"hi`,
+        Some("0x07"),
+        ["payer"],
+        JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`),
+      ),
+    ])
+  })
+
+  it("rejects an overwrite that leaves out the whole layout", t => {
+    expectParseError(
+      t,
+      ~files,
+      yaml(`          instructions:
+            - name: swap
+              discriminator: "0x"
+`),
+      "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
   })
 
-  it("requires SVM inline accounts and args together", t => {
+  // The IDL declares this name, so the row is an overwrite even though the
+  // catalog has no entry for it. Read as an addition, it would take the empty
+  // prefix and index every call the program receives, and the warning naming
+  // the reason is suppressed for exactly the names a row mentions.
+  it("rejects an overwrite of an instruction the IDL could not use", t => {
     expectParseError(
       t,
-      `
-name: incomplete-svm-layout
-ecosystem: svm
-chains:
-  - id: solana
-    start_block: 0
-    experimental:
-      hypersync_config:
-        url: https://solana.hypersync.xyz
-      programs:
-        - name: Program
-          program_id: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
-          instructions:
-            - name: Transfer
-              accounts: []
+      ~files=Dict.fromArray([
+        (
+          "idls/program.json",
+          `{
+            "instructions": [{
+              "name": "swap",
+              "discriminator": [1],
+              "accounts": [],
+              "args": [{"name": "amount", "type": {"coption": "u64"}}]
+            }]
+          }`,
+        ),
+      ]),
+      yaml(`          instructions:
+            - name: swap
+              discriminator: "0x"
+`),
+      "Program 'Program', instruction 'swap': the IDL declares this instruction too, but it cannot be indexed as declared: idls/program.json:2:30: args.amount: `coption` is not Borsh-compatible and cannot be decoded. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
+    )
+  })
+
+  // Absence used to mean "every instruction of the program", so a misspelled
+  // name next to an IDL silently became a firehose instead of an error.
+  it("requires a discriminator on every instruction row", t => {
+    expectParseError(
+      t,
+      ~files,
+      yaml(`          instructions:
+            - name: anyCall
+`),
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].experimental.programs[0].instructions[0]: missing field `discriminator` at line 15 column 15",
+    )
+  })
+
+  // Nothing in the catalog carries this name, so the row adds an instruction
+  // and is read like any inline one: the empty prefix matches every call the
+  // program receives.
+  it("adds a program-wide instruction next to an IDL", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files,
+      ~configYaml=yaml(`          instructions:
+            - name: anyCall
+              discriminator: "0x"
+`),
+    )
+    t.expect(catalog(config)).toEqual([
+      ("deposit", Some("0x02"), ["vault"], JSON.parseOrThrow("[]")),
+      ("swap", Some("0x01"), ["payer", "pool"], JSON.parseOrThrow(`[{"name":"amount","type":"u64"}]`)),
+      ("anyCall", None, [], JSON.Null),
+    ])
+  })
+
+  it("keeps the full IDL catalog when YAML overwrites one instruction and adds another", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files,
+      ~schema=ApiTypesFixtures.schema,
+      ~configYaml=yaml(`          instructions:
+            - name: swap
+              discriminator: "0x09"
+              accounts: [source, dest]
+              args:
+                - { name: amountIn, type: u64 }
+            - name: extra
+              discriminator: "0xab"
+              accounts: [payer]
+              args:
+                - { name: tag, type: u8 }
+`),
+      ~handlers=`
+import { indexer } from "envio";
+indexer.onInstruction({ program: "Program", instruction: "deposit" }, async () => {});
+indexer.onInstruction({ program: "Program", instruction: "swap" }, async () => {});
+indexer.onInstruction({ program: "Program", instruction: "extra" }, async () => {});
 `,
-      "Layout for instruction 'Transfer': Instruction 'Transfer': \`accounts\` and \`args\` must be provided together (or both omitted to fall back to a bundled/IDL schema).",
+    )
+    t.expect(catalog(config)).toEqual([
+      ("deposit", Some("0x02"), ["vault"], JSON.parseOrThrow("[]")),
+      (
+        "swap",
+        Some("0x09"),
+        ["source", "dest"],
+        JSON.parseOrThrow(`[{"name":"amountIn","type":"u64"}]`),
+      ),
+      ("extra", Some("0xab"), ["payer"], JSON.parseOrThrow(`[{"name":"tag","type":"u8"}]`)),
+    ])
+  })
+
+  it("overwrites an IDL instruction from YAML without merging accounts or args", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files,
+      ~configYaml=yaml(`          instructions:
+            - name: swap
+              discriminator: "0x09"
+              accounts: [source]
+              args: []
+`),
+    )
+    t.expect(catalog(config)).toEqual([
+      ("deposit", Some("0x02"), ["vault"], JSON.parseOrThrow("[]")),
+      ("swap", Some("0x09"), ["source"], JSON.parseOrThrow("[]")),
+    ])
+  })
+
+  // An overwrite says what a row on any other name says: the empty prefix
+  // matches every instruction of the program, here in place of the prefix the
+  // IDL declared for the name.
+  it("makes an overwrite on the empty prefix program-wide", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~files,
+      ~configYaml=yaml(`          instructions:
+            - name: swap
+              discriminator: "0x"
+              accounts: [source]
+              args: []
+`),
+    )
+    t.expect(catalog(config)).toEqual([
+      ("deposit", Some("0x02"), ["vault"], JSON.parseOrThrow("[]")),
+      ("swap", None, ["source"], JSON.parseOrThrow("[]")),
+    ])
+  })
+
+  it("rejects a discriminator-only YAML row that shadows an IDL instruction", t => {
+    expectParseError(
+      t,
+      ~files,
+      yaml(`          instructions:
+            - name: swap
+              discriminator: "0x09"
+`),
+      "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'accounts' and 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
+    )
+  })
+
+  it("names only the field an overwrite left out", t => {
+    expectParseError(
+      t,
+      ~files,
+      yaml(`          instructions:
+            - name: swap
+              discriminator: "0x09"
+              accounts: [source]
+`),
+      "Program 'Program', instruction 'swap': the IDL declares this instruction too, so this row replaces it rather than adding to the catalog. Spell out 'args': an overwrite takes nothing from the IDL, so a field left out here is absent, not inherited.",
     )
   })
 })
