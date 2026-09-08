@@ -312,13 +312,7 @@ let addOnEventRegistration = (
         ),
       )
     | Svm =>
-      Some(
-        EventConfigBuilder.resolveSvmInlineFieldSelection(
-          fields,
-          ~contractName,
-          ~eventName,
-        ),
-      )
+      Some(EventConfigBuilder.resolveSvmInlineFieldSelection(fields, ~contractName, ~eventName))
     | Fuel =>
       JsError.throwWithMessage(
         `The fields option of the "${eventName}" event registration on contract "${contractName}" is not supported on Fuel. Select the fields in your config instead.`,
@@ -803,9 +797,13 @@ let registerOnBlock = (
 
       if shouldRegister {
         matchedAny := true
-        if range._gte->Option.getOr(chainConfig.startBlock) < chainConfig.startBlock {
+        // Off the same object the predicate above was handed, not off
+        // `chainConfig`: that one still says whatever config.yaml said, and for
+        // `start_block: latest` the resolved head only lives in persisted state.
+        let chainStartBlock = (chainObj->(Utils.magic: unknown => {"startBlock": int}))["startBlock"]
+        if range._gte->Option.getOr(chainStartBlock) < chainStartBlock {
           JsError.throwWithMessage(
-            `The start block for onBlock handler "${name}" is less than the chain start block (${chainConfig.startBlock->Int.toString}). This is not supported yet.`,
+            `The start block for onBlock handler "${name}" is less than the chain start block (${chainStartBlock->Int.toString}). This is not supported yet.`,
           )
         }
         switch chainConfig.endBlock {

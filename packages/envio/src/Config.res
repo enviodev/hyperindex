@@ -26,6 +26,14 @@ type evmRpcConfig = {
   headers: option<dict<string>>,
 }
 
+// Unboxed so the runtime value is exactly what the public config JSON holds -
+// a number, or the string "latest" - which is why `startBlockSchema` only has
+// to validate it rather than convert it.
+@unboxed
+type startBlock =
+  | Block(int)
+  | @as("latest") Latest
+
 type sourceConfig =
   | EvmSourceConfig({hypersync: option<string>, rpcs: array<evmRpcConfig>})
   | FuelSourceConfig({hypersync: string})
@@ -46,7 +54,11 @@ type chain = {
   name: string,
   id: ChainId.t,
   ecosystem: Ecosystem.name,
-  startBlock: int,
+  // What config.yaml says, never rewritten. Once `Latest` is resolved against
+  // the chain's head the block lives in the database
+  // (`envio_chains.start_block`), and that is what every consumer past startup
+  // reads.
+  startBlock: startBlock,
   endBlock?: int,
   maxReorgDepth: int,
   blockLag: int,
@@ -157,10 +169,36 @@ let chainContractSchema = S.schema(s =>
   }
 )
 
+// For everything downstream of `StartBlockResolver`, which rewrites `Latest`
+// into the chain's head before storage is initialized. The throw is an
+// invariant check, not a case a user can reach.
+let startBlockOrThrow = (chain: chain) =>
+  switch chain.startBlock {
+  | Block(startBlock) => startBlock
+  | Latest =>
+    JsError.throwWithMessage(
+      `Chain ${chain.id->ChainId.toString}: the "latest" start block was read before it was resolved. This is a bug in envio - please report it.`,
+    )
+  }
+
+// For the paths that have no chain to read a head from - the test indexer and
+// simulated items - where `Latest` never gets resolved and every simulated
+// block should be in range.
+let startBlockOrZero = (chain: chain) =>
+  switch chain.startBlock {
+  | Block(startBlock) => startBlock
+  | Latest => 0
+  }
+
+let startBlockSchema = S.union([
+  S.int->S.shape(n => Block(n)),
+  S.literal("latest")->S.shape(_ => Latest),
+])
+
 let publicConfigChainSchema = S.schema(s =>
   {
     "id": s.matches(ChainId.schema),
-    "startBlock": s.matches(S.int),
+    "startBlock": s.matches(startBlockSchema),
     "endBlock": s.matches(S.option(S.int)),
     "maxReorgDepth": s.matches(S.option(S.int)),
     "blockLag": s.matches(S.option(S.int)),

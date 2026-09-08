@@ -296,6 +296,11 @@ let make = (
   ~sourceFor=Source.Sync,
   ~pollingInterval=1000,
   ~isWildcard=false,
+  // Pre-configures the standing height answer at construction time, before
+  // the mock is handed to the indexer - needed for a call that happens during
+  // startup itself (e.g. resolving a `latest` start block), which completes
+  // before a test body would ever get a chance to call `setAutoHeight`.
+  ~autoHeight=?,
 ) => {
   let implement = (method: method, fn) => {
     if methods->Array.includes(method) {
@@ -351,7 +356,7 @@ let make = (
     heightSubscriptionCallbacks->Utils.Array.clearInPlace
     heightSubscriptionStatusCallbacks->Utils.Array.clearInPlace
   }
-  let autoHeight = ref(None)
+  let autoHeight = ref(autoHeight)
   let state: mockSourceState = {onEventRegistrationRef: ref(None), isWildcard}
 
   // Answers registered before their call arrived, consumed in order by the

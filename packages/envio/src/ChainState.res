@@ -203,7 +203,9 @@ let makeInternal = (
 
   chainConfig.contracts->Array.forEach(contract => {
     switch contract.startBlock {
-    | Some(startBlock) if startBlock < chainConfig.startBlock =>
+    // Against the resolved `~startBlock`, which came from storage:
+    // `chainConfig.startBlock` still says whatever config.yaml said.
+    | Some(contractStartBlock) if contractStartBlock < startBlock =>
       JsError.throwWithMessage(
         `The start block for contract "${contract.name}" is less than the chain start block. This is not supported yet.`,
       )
@@ -262,68 +264,12 @@ let makeInternal = (
   })
 
   // Create sources lazily here - this is where API token validation happens
-  let chainId = chainConfig.id
-  let sources = switch chainConfig.sourceConfig {
-  | Config.EvmSourceConfig({hypersync, rpcs}) =>
-    let evmRpcs: array<EvmChain.rpc> = rpcs->Array.map((rpc): EvmChain.rpc => {
-      let syncConfig = rpc.syncConfig
-      let ws = rpc.ws
-      let headers = rpc.headers
-      {
-        url: rpc.url,
-        sourceFor: rpc.sourceFor,
-        ?syncConfig,
-        ?ws,
-        ?headers,
-      }
-    })
-    EvmChain.makeSources(
-      ~chainId,
-      ~onEventRegistrations=onEventRegistrations->(
-        Utils.magic: array<Internal.onEventRegistration> => array<Internal.evmOnEventRegistration>
-      ),
-      ~hyperSync=hypersync,
-      ~rpcs=evmRpcs,
-      ~lowercaseAddresses,
-      ~addressStore,
-    )
-  | Config.FuelSourceConfig({hypersync}) => [
-      FuelHyperSyncSource.make({
-        chainId,
-        endpointUrl: hypersync,
-        apiToken: Env.envioApiToken,
-        onEventRegistrations,
-        addressStore,
-      }),
-    ]
-  | Config.SvmSourceConfig({hypersync}) => [
-      SvmHyperSyncSource.make({
-        chainId,
-        endpointUrl: hypersync,
-        apiToken: Env.envioApiToken,
-        onEventRegistrations: onEventRegistrations->(
-          Utils.magic: array<Internal.onEventRegistration> => array<
-            Internal.svmOnEventRegistration,
-          >
-        ),
-        clientTimeoutMillis: Env.hyperSyncClientTimeoutMillis,
-        addressStore,
-      }),
-    ]
-  | Config.SimulateSourceConfig({items, endBlock, ?transactionStore, ?blockStore}) => [
-      SimulateSource.make(
-        ~items,
-        ~endBlock,
-        ~chainId,
-        ~addressStore,
-        ~ecosystem=config.ecosystem.name,
-        ~transactionStore,
-        ~blockStore,
-      ),
-    ]
-  // For tests: use ready-to-use sources directly
-  | Config.CustomSources(sources) => sources
-  }
+  let sources = ChainSources.make(
+    ~chainConfig,
+    ~onEventRegistrations,
+    ~addressStore,
+    ~lowercaseAddresses,
+  )
 
   let blockStore = BlockStore.make(
     ~ecosystem=config.ecosystem.name,

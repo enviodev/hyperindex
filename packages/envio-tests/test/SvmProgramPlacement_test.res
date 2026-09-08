@@ -383,6 +383,6 @@ programs:
 `,
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
-    t.expect((chain.startBlock, chain.endBlock)).toEqual((100, Some(200)))
+    t.expect((chain.startBlock, chain.endBlock)).toEqual((Config.Block(100), Some(200)))
   })
 })

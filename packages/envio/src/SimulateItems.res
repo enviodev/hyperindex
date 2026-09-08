@@ -299,7 +299,7 @@ let parse = (
   ~onEventRegistrations: array<Internal.onEventRegistration>,
 ): parseResult => {
   let chainId = chainConfig.id
-  let startBlock = chainConfig.startBlock
+  let startBlock = chainConfig->Config.startBlockOrZero
   let currentBlock = ref(startBlock)
   let currentLogIndex = ref(0)
 
@@ -702,7 +702,7 @@ let patchConfig = (
           let endBlock: int = raw["endBlock"]->(Utils.magic: 'a => int)
           // Parse with the process's startBlock so items default into the range
           // the source will be queried over; the source now filters by range.
-          let chainConfig = {...chainConfig, startBlock, endBlock}
+          let chainConfig = {...chainConfig, startBlock: Config.Block(startBlock), endBlock}
           let {items, transactionStore, blockStore} = parse(
             ~simulateItems,
             ~config,

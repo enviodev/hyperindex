@@ -53,7 +53,7 @@ chains:
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.name).toBe("in-memory")
     t.expect(config.userEntities->Array.length).toBe(0)
-    t.expect(chain.startBlock).toBe(42)
+    t.expect(chain.startBlock).toEqual(Config.Block(42))
 
     switch chain.sourceConfig {
     | Config.EvmSourceConfig({rpcs}) => {
@@ -544,7 +544,7 @@ chains:
   - id: 1
     start_block: 1_000
 `,
-      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].start_block: invalid type: string \"1_000\", expected u64 at line 5 column 18",
+      "Failed to deserialize config. Visit the docs for more information https://docs.envio.dev/docs/configuration-file: chains[0].start_block: invalid value: string \"1_000\", expected u64 or the string \"latest\" at line 5 column 18",
     ),
     (
       "rejects unknown SVM program fields",
@@ -1007,7 +1007,7 @@ chains:
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.ecosystem.name).toEqual(Ecosystem.Fuel)
-    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("0", 7))
+    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("0", Config.Block(7)))
   })
 
   it("parses a minimal SVM config through the public boundary", t => {
@@ -1023,7 +1023,7 @@ chains:
     )
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.ecosystem.name).toEqual(Ecosystem.Svm)
-    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("7565164", 8))
+    t.expect((chain.id->ChainId.toString, chain.startBlock)).toEqual(("7565164", Config.Block(8)))
   })
 
   it("validates event field selections against only the chain that uses them", t => {
@@ -1093,7 +1093,7 @@ chains:
     let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
     t.expect(config.chainMap->ChainMap.values->Array.length).toBe(1)
     t.expect(chain.id->ChainId.toString).toBe("137")
-    t.expect(chain.startBlock).toBe(2000)
+    t.expect(chain.startBlock).toEqual(Config.Block(2000))
   })
 
   it("normalizes trailing slashes in HyperSync URLs", t => {

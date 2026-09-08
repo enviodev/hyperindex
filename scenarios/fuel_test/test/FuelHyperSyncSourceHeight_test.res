@@ -95,7 +95,11 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`,
     )
   })
 
-  Async.it("Blocks forever on 401 instead of throwing for a retry", async t => {
+  // A rejected token used to park the request on a promise that never settled,
+  // which left the indexer silent and idle. It has to reach the caller instead:
+  // a token can be replaced without restarting, and the retry ramp is what gives
+  // an operator the chance to. The loud line about it is said once per source.
+  Async.it("Throws on 401 so the caller keeps retrying", async t => {
     await withServer((_req, res) => {
       res->writeHead(401)
       res->endWith("Unauthorized")
@@ -107,12 +111,16 @@ Learn more or get a free Envio API token at: https://envio.dev/app/api-tokens`,
         onEventRegistrations: [],
         addressStore,
       })
+      // Generous, so a slow debug build of the native client can't pass this by
+      // failing to answer inside the window.
       let result = await Promise.race([
-        source.getHeightOrThrow()->Promise.thenResolve(_ => "resolved"),
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=300)->Promise.thenResolve(() => "blocked"),
+        source.getHeightOrThrow()
+        ->Promise.thenResolve(_ => "resolved")
+        ->Promise.catch(_ => Promise.resolve("threw")),
+        Time.resolvePromiseAfterDelay(~delayMilliseconds=5000)->Promise.thenResolve(() => "hung"),
       ])
 
-      t.expect(result).toEqual("blocked")
+      t.expect(result).toEqual("threw")
     })
   })
 })

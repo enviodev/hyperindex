@@ -1,11 +1,5 @@
 open Source
 
-// Surfaced by the HyperSync client (Rust) when HyperSync rejects the API
-// token. The corrupted-token test feeds the real server error (from the query
-// endpoint; the edge no longer 401s malformed tokens on /height) through this
-// check so it can't silently drift away from what getHeightOrThrow guards on.
-let isUnauthorizedError = (message: string) => message->String.includes("401 Unauthorized")
-
 type options = {
   chainId: ChainId.t,
   endpointUrl: string,
@@ -36,6 +30,10 @@ let make = (
   }: options,
 ): t => {
   let name = "HyperSync"
+
+  // Per source, so one rejected token is reported once rather than on every
+  // height retry for the life of the process.
+  let unauthorizedWarned = ref(false)
 
   let apiToken = apiToken->HyperSync.requireApiToken
 
@@ -207,15 +205,11 @@ let make = (
       let height = try {
         await client.getHeight()
       } catch {
-      | JsExn(e) =>
-        switch e->JsExn.message {
-        | Some(message) if message->isUnauthorizedError =>
-          Logging.error(`Your ENVIO_API_TOKEN was rejected by HyperSync (401 Unauthorized). The indexer will not be able to fetch events. Update the token and try again using 'envio start' or 'envio dev'. For more info: https://docs.envio.dev/docs/HyperSync/api-tokens`)
-          // Retrying an unauthorized request can never succeed, so block forever
-          let _ = await Promise.make((_, _) => ())
-          0
-        | _ => throw(JsExn(e))
-        }
+      | exn =>
+        exn->HyperSync.rethrowLoggingUnauthorized(
+          ~warned=unauthorizedWarned,
+          ~product="HyperSync",
+        )
       }
       let seconds = timerRef->Performance.secondsSince
       {height, requestStats: [{method: "getHeight", seconds}]}

@@ -1045,7 +1045,6 @@ impl SystemConfig {
 
         match human_config {
             HumanConfig::Evm(ref evm_config) => {
-                // TODO: Add similar validation for Fuel
                 validation::validate_deserialized_config_yaml(evm_config)?;
 
                 let has_rpc_src = evm_config.chains.iter().any(evm_chain_has_rpc_src);
@@ -1215,6 +1214,8 @@ impl SystemConfig {
                 })
             }
             HumanConfig::Fuel(ref fuel_config) => {
+                validation::validate_deserialized_fuel_config_yaml(fuel_config)?;
+
                 //Add all global contracts
                 if let Some(global_contracts) = &fuel_config.contracts {
                     for g_contract in global_contracts {
@@ -1743,7 +1744,7 @@ pub struct Chain {
     pub id: u64,
     pub skip: bool,
     pub sync_source: DataSource,
-    pub start_block: u64,
+    pub start_block: human_config::StartBlock,
     pub end_block: Option<u64>,
     pub max_reorg_depth: Option<u32>,
     pub block_lag: Option<u32>,
@@ -2962,6 +2963,46 @@ mod test {
         let mut ids: Vec<_> = config.chains.keys().copied().collect();
         ids.sort();
         assert_eq!(ids, vec![SOLANA_MAINNET_CHAIN_ID, SOLANA_DEVNET_CHAIN_ID]);
+    }
+
+    // `start_block: latest` has to survive the whole config pipeline on every
+    // ecosystem, not just the one it was written against. The runtime half is
+    // covered in StartBlockResolver_test.
+    #[test]
+    fn latest_start_block_survives_parsing_on_every_ecosystem() {
+        let schema = "type A { id: ID! }";
+        let parse = |yaml: &str| {
+            let config = SystemConfig::parse_yaml(
+                yaml,
+                Some(schema),
+                &HashMap::new(),
+                &HashMap::new(),
+                false,
+            )
+            .expect("config");
+            config
+                .chains
+                .values()
+                .map(|chain| chain.start_block)
+                .collect::<Vec<_>>()
+        };
+
+        let evm = parse(
+            "name: x\nchains:\n  - id: 1\n    rpc: https://rpc.example.test\n    start_block: \
+             latest\n",
+        );
+        let fuel = parse("name: x\necosystem: fuel\nchains:\n  - id: 0\n    start_block: latest\n");
+        // svm names the field for what it indexes; `latest` means the same
+        // thing on it.
+        let svm = parse(
+            "name: x\necosystem: svm\nchains:\n  - id: solana\n    rpc: \
+             https://api.mainnet-beta.solana.com\n    start_slot: latest\n",
+        );
+
+        let latest = vec![super::human_config::StartBlock::Tag(
+            super::human_config::StartBlockTag::Latest,
+        )];
+        assert_eq!((evm, fuel, svm), (latest.clone(), latest.clone(), latest));
     }
 
     #[test]

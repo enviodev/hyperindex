@@ -1917,7 +1917,7 @@ let make = (
         idx,
       ): Persistence.initialChainState => {
         id: chainConfig.id,
-        startBlock: chainConfig.startBlock,
+        startBlock: chainConfig->Config.startBlockOrThrow,
         endBlock: chainConfig.endBlock,
         maxReorgDepth: chainConfig.maxReorgDepth,
         progressBlockNumber: -1,

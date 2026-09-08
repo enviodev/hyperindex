@@ -10,7 +10,7 @@ use crate::{
         entity_parsing::{Entity, Field, GraphQLEnum, IndexField},
         event_parsing::abi_to_rescript_type,
         field_types,
-        human_config::HumanConfig,
+        human_config::{HumanConfig, StartBlock},
         system_config::{
             self, Abi, ChainIdMode, Ecosystem, EventKind, FuelEventKind, SelectedField,
             SystemConfig,
@@ -767,7 +767,7 @@ struct NetworkTemplate {
     pub id: u64,
     max_reorg_depth: Option<u32>,
     block_lag: Option<u32>,
-    start_block: u64,
+    start_block: StartBlock,
     end_block: Option<u64>,
 }
 
