@@ -359,7 +359,7 @@
           ]
         },
         "instructions": {
-          "description": "Instructions to index. With `idl:`, omit this list to take the full usable IDL catalog. A row whose name the IDL declares replaces that instruction, and must spell out `accounts` and `args`; every other row adds one. Give `accounts` or `args` only where you want the names or the decoded payload.",
+          "description": "Instructions to index. With `idl:`, omit this list to take the full usable IDL catalog. A row whose name the IDL declares replaces that instruction, and must spell out `accounts` and `args`; every other row adds one. Give `accounts` where you want the slots named — an empty list names none, the same as leaving it out. `args` is not the same shape: setting it attaches a decoder that also filters, so leaving it out and setting it to `[]` are different asks.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Instruction"

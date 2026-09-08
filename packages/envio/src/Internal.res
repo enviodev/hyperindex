@@ -591,7 +591,9 @@ type svmInstructionEventConfig = {
    attached for this instruction. */
   accounts: array<svmAccountSlot>,
   /** Borsh args layout as `Vec<ArgDef>` JSON (see `human_config::svm::ArgDef`
-   on the Rust side). `JSON.Null` means no schema is attached. */
+   on the Rust side). `JSON.Null` attaches no decoder, so every matched call is
+   delivered with its payload raw. An array attaches one, `[]` included: a call
+   whose data the layout rejects is skipped. */
   args: JSON.t,
   /** Program-level nominal-type registry (`BTreeMap<String, ArgType>` JSON).
    Duplicated on every event of the same program — the runtime dedups by

@@ -67,17 +67,14 @@ fn resolve_yaml_instruction(instr: &human_config::svm::Instruction) -> Result<Re
     let discriminator = (!discriminator.is_empty()).then_some(discriminator);
     let accounts = instr.accounts.clone().unwrap_or_default();
     validate_account_slots(&accounts)?;
-    let args = match &instr.args {
-        Some(args) => {
+    let args = instr
+        .args
+        .as_ref()
+        .map(|args| {
             validate_svm_args(args)?;
-            Some(
-                args.iter()
-                    .map(yaml_arg_to_named_field)
-                    .collect::<Result<Vec<_>>>()?,
-            )
-        }
-        None => None,
-    };
+            args.iter().map(yaml_arg_to_named_field).collect()
+        })
+        .transpose()?;
     Ok(ResolvedInstruction {
         discriminator,
         accounts,

@@ -79,7 +79,7 @@ describe("SVM onInstruction where", () => {
         async () => {},
       ),
     ).toThrowError(
-      \`Invalid "args" field in the fields.instruction option of the "bare" instruction on program "Swapper". The instruction declares no args in config.yaml, so there is nothing to decode. Remove "args" from the selection, or declare the instruction's args.\`,
+      \`Invalid "args" field in the fields.instruction option of the "bare" instruction on program "Swapper". The instruction attaches no args layout in config.yaml, so there is nothing to decode. Remove "args" from the selection, or give the instruction an \\\`args\\\` layout — \\\`args: []\\\` if it takes none.\`,
     );
   });
 
