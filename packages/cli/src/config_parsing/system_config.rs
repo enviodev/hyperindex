@@ -1418,7 +1418,15 @@ impl SystemConfig {
                 for network in &svm_config.chains {
                     let chain_id = network.id.to_u64();
                     let hypersync_endpoint_url = match &network.hypersync_config {
-                        Some(hypersync_config) => hypersync_config.url.clone(),
+                        Some(hypersync_config) => {
+                            parse_url(&hypersync_config.url).ok_or_else(|| {
+                                anyhow!(
+                                    "The HyperSync URL \"{}\" is in incorrect format. The URL \
+                                     needs to start with either http:// or https://",
+                                    hypersync_config.url
+                                )
+                            })?
+                        }
                         None => svm::default_hypersync_endpoint(chain_id).ok_or_else(|| {
                             anyhow!(
                                 "Chain {chain_id} has no default HyperSync endpoint. Set \

@@ -343,24 +343,35 @@ pub fn validate_deserialized_svm_config_yaml(
 
     for program in &svm_config.programs {
         validate_svm_name(&program.name, "a program name")?;
-        let addresses: Vec<&String> = match &program.program_id {
-            ProgramId::Single(address) => vec![address],
+        // A per-chain mapping has one address per chain, so the chain key is
+        // what tells the user which entry to go fix.
+        let addresses: Vec<(Option<&str>, &String)> = match &program.program_id {
+            ProgramId::Single(address) => vec![(None, address)],
             ProgramId::PerChain(by_chain) => by_chain
-                .values()
-                .filter_map(|id| match id {
-                    ChainProgramId::Address(address) => Some(address),
+                .iter()
+                .filter_map(|(chain, id)| match id {
+                    ChainProgramId::Address(address) => Some((Some(chain.as_str()), address)),
                     ChainProgramId::NotDeployed => None,
                 })
                 .collect(),
         };
-        for address in addresses {
+        for (chain, address) in addresses {
             if !is_valid_solana_pubkey(address) {
-                return Err(anyhow!(
-                    "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
-                     32-byte Solana pubkey",
-                    program.name,
-                    address
-                ));
+                return Err(match chain {
+                    Some(chain) => anyhow!(
+                        "Program {:?} has an invalid program_id {:?} for chain {:?}: must be a \
+                         base58-encoded 32-byte Solana pubkey",
+                        program.name,
+                        address,
+                        chain
+                    ),
+                    None => anyhow!(
+                        "Program {:?} has an invalid program_id {:?}: must be a base58-encoded \
+                         32-byte Solana pubkey",
+                        program.name,
+                        address
+                    ),
+                });
             }
         }
         all_program_names.push(program.name.clone());

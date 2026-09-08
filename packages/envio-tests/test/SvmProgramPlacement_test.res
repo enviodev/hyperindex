@@ -260,6 +260,70 @@ programs:
     )
   })
 
+  it("names the chain whose program_id is not a pubkey", t => {
+    expectParseError(
+      t,
+      `
+name: bad-per-chain-id
+ecosystem: svm
+chains:
+  - id: solana
+    start_slot: 0
+  - id: solana-devnet
+    start_slot: 0
+programs:
+  - name: TokenMetadata
+    program_id:
+      solana: ${mainnetPk}
+      solana-devnet: not_a_pubkey
+    instructions: []
+`,
+      "Program \"TokenMetadata\" has an invalid program_id \"not_a_pubkey\" for chain \"solana-devnet\": must be a base58-encoded 32-byte Solana pubkey",
+    )
+  })
+
+  it("rejects a HyperSync url that is not http", t => {
+    expectParseError(
+      t,
+      `
+name: bad-url
+ecosystem: svm
+chains:
+  - id: 42
+    start_slot: 0
+    hypersync_config:
+      url: solana.hypersync.xyz
+programs:
+  - name: TokenMetadata
+    program_id: ${mainnetPk}
+    instructions: []
+`,
+      "The HyperSync URL \"solana.hypersync.xyz\" is in incorrect format. The URL needs to start with either http:// or https://",
+    )
+  })
+
+  it("normalizes a trailing slash on a configured HyperSync url", t => {
+    let {config} = InternalTestIndexer.fromUserApi(
+      ~configYaml=`
+name: trailing-slash
+ecosystem: svm
+chains:
+  - id: 42
+    start_slot: 0
+    hypersync_config:
+      url: https://custom.hypersync.test//
+programs:
+  - name: TokenMetadata
+    program_id: ${mainnetPk}
+    instructions: []
+`,
+    )
+    let chain = config.chainMap->ChainMap.values->Array.getUnsafe(0)
+    t.expect(chain.sourceConfig).toEqual(
+      Config.SvmSourceConfig({hypersync: "https://custom.hypersync.test"}),
+    )
+  })
+
   it("ignores a configured RPC endpoint", t => {
     let {config} = InternalTestIndexer.fromUserApi(
       ~configYaml=`
