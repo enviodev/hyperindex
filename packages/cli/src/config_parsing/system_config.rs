@@ -2063,12 +2063,17 @@ impl Contract {
         abi: Abi,
     ) -> Result<Self> {
         // Every ecosystem builds its contracts through here, unlike
-        // `validate_deserialized_config_yaml`, which only sees EVM configs.
-        validate_names_valid_rescript(std::slice::from_ref(&name), "contract".to_string())?;
-        validate_names_valid_rescript(
-            &events.iter().map(|e| e.name.clone()).collect::<Vec<_>>(),
-            "event".to_string(),
-        )?;
+        // `validate_deserialized_config_yaml`, which only sees EVM configs. Svm
+        // is the exception: it generates no ReScript, and its program and
+        // instruction names are held to the identifier rule in
+        // `validation::validate_deserialized_svm_config_yaml` instead.
+        if !matches!(abi, Abi::Svm(_)) {
+            validate_names_valid_rescript(std::slice::from_ref(&name), "contract".to_string())?;
+            validate_names_valid_rescript(
+                &events.iter().map(|e| e.name.clone()).collect::<Vec<_>>(),
+                "event".to_string(),
+            )?;
+        }
 
         // Codegen keys the generated event modules by name and routing looks
         // events up by name, so two events on one contract can't share a name.
@@ -2169,9 +2174,12 @@ pub struct SvmEventKind {
     /// Positional account slots in declared order. Empty when the user supplied
     /// no schema and no IDL applies; in that case `decoded.accounts` is `{}`.
     pub accounts: Vec<human_config::svm::AccountSlot>,
-    /// Borsh argument layout in declared order. Empty for unknown
-    /// instructions; the raw `instruction.data` is still available.
-    pub args: Vec<SvmNamedField>,
+    /// Borsh argument layout in declared order. `None` when no layout is
+    /// attached, so nothing is decoded and every matched call is delivered
+    /// with `instruction.data` raw. `Some` filters: a call whose data the
+    /// layout rejects is skipped, and an empty layout takes only the calls
+    /// carrying nothing past the discriminator.
+    pub args: Option<Vec<SvmNamedField>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -3771,8 +3779,9 @@ type Foo {
             )
         }
 
-        /// Name, discriminator, account slots as YAML tokens, arg names.
-        type SvmEvent = (String, Option<String>, Vec<String>, Vec<String>);
+        /// Name, discriminator, account slots as YAML tokens, and the arg
+        /// names of the attached layout — `None` where none is attached.
+        type SvmEvent = (String, Option<String>, Vec<String>, Option<Vec<String>>);
 
         fn svm_events(config: &SystemConfig) -> Vec<SvmEvent> {
             config
@@ -3784,12 +3793,27 @@ type Foo {
                         e.name.clone(),
                         k.discriminator.clone(),
                         k.accounts.iter().map(ToString::to_string).collect(),
-                        k.args.iter().map(|a| a.name.clone()).collect(),
+                        k.args
+                            .as_ref()
+                            .map(|args| args.iter().map(|a| a.name.clone()).collect()),
                     ),
                     other => panic!("expected an Svm event kind, got {other:?}"),
                 })
                 .collect()
         }
+
+        /// The error a row on an IDL-declared name gets when it leaves fields
+        /// out, as one string so a wording change is one edit.
+        fn overwrite_error(instruction: &str, why: &str, spell_out: &str) -> String {
+            format!(
+                "Program 'Pool', instruction '{instruction}': {why}. Spell out {spell_out}: an \
+                 overwrite takes nothing from the IDL, so a field left out here is absent, not \
+                 inherited."
+            )
+        }
+
+        const DECLARED: &str = "the IDL declares this instruction too, so this row replaces it \
+                                rather than adding to the catalog";
 
         const LEGACY_ANCHOR_IDL: &str = r#"{
           "version": "0.1.0",
@@ -3864,13 +3888,13 @@ type Foo {
                         "deposit".to_string(),
                         Some("0xf223c68952e1f2b6".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0xf8c69e91e17587c8".to_string()),
                         vec!["payer".to_string(), "pool".to_string()],
-                        vec!["amount".to_string()],
+                        Some(vec!["amount".to_string()]),
                     ),
                 ]
             );
@@ -3886,7 +3910,7 @@ type Foo {
 
             assert_eq!(
                 svm_events(&config),
-                vec![("swap".to_string(), None, Vec::new(), Vec::new(),)]
+                vec![("swap".to_string(), None, Vec::new(), Some(Vec::new()),)]
             );
         }
 
@@ -4002,33 +4026,51 @@ type Foo {
             );
         }
 
-        /// A YAML row next to `idl:` without `discriminator` is not an
-        /// allowlist and is not a program-wide overwrite.
+        /// A row on a name the IDL declares replaces it, so it says the
+        /// fields that would otherwise read as absent rather than as the
+        /// IDL's. This one leaves out both.
         #[test]
-        fn rejects_a_yaml_row_next_to_idl_without_a_discriminator() {
-            let err = program_reading_idl(LEGACY_ANCHOR_IDL, "            - name: swap\n")
-                .expect_err("missing discriminator");
+        fn rejects_an_overwrite_that_leaves_out_the_whole_layout() {
+            let err = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: swap\n              discriminator: \"0x\"\n",
+            )
+            .expect_err("missing the layout");
 
             assert_eq!(
                 format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': a YAML row next to 'idl' must set \
-                 'discriminator' to overwrite the IDL definition, or omit this row."
+                overwrite_error("swap", DECLARED, "'accounts' and 'args'")
             );
         }
 
+        /// An overwrite says what a row on any other name says: the empty
+        /// prefix is a program-wide match, here replacing the prefix the IDL
+        /// declared for the name.
         #[test]
-        fn rejects_an_idl_overwrite_that_sets_layout_without_a_discriminator() {
-            let err = program_reading_idl(
+        fn an_overwrite_on_the_empty_prefix_is_program_wide() {
+            let config = program_reading_idl(
                 LEGACY_ANCHOR_IDL,
-                "            - name: swap\n              accounts:\n                - source\n              \
-                 args: []\n",
+                "            - name: swap\n              discriminator: \"0x\"\n              \
+                 accounts:\n                - source\n              args: []\n",
             )
-            .expect_err("layout without discriminator");
+            .expect("the empty prefix");
 
             assert_eq!(
-                format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': a YAML row next to 'idl' must set \
-                 'discriminator' to overwrite the IDL definition, or omit this row."
+                svm_events(&config),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0xf223c68952e1f2b6".to_string()),
+                        vec!["vault".to_string()],
+                        Some(Vec::new()),
+                    ),
+                    (
+                        "swap".to_string(),
+                        None,
+                        vec!["source".to_string()],
+                        Some(Vec::new()),
+                    ),
+                ]
             );
         }
 
@@ -4057,19 +4099,19 @@ type Foo {
                         "deposit".to_string(),
                         Some("0x02".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0x09".to_string()),
                         vec!["source".to_string(), "dest".to_string()],
-                        vec!["amountIn".to_string()],
+                        Some(vec!["amountIn".to_string()]),
                     ),
                     (
                         "extra".to_string(),
                         Some("0xab".to_string()),
                         vec!["payer".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                 ]
             );
@@ -4098,13 +4140,13 @@ type Foo {
                         "deposit".to_string(),
                         Some("0x02".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0x09".to_string()),
                         vec!["source".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                 ]
             );
@@ -4128,13 +4170,13 @@ type Foo {
                         "deposit".to_string(),
                         Some("0xf223c68952e1f2b6".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0xf8c69e91e17587c8".to_string()),
                         vec!["payer".to_string(), "pool".to_string()],
-                        vec!["amount".to_string()],
+                        Some(vec!["amount".to_string()]),
                     ),
                 ]
             );
@@ -4163,13 +4205,13 @@ type Foo {
                         "deposit".to_string(),
                         Some("0x09".to_string()),
                         vec!["vault".to_string()],
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "swap".to_string(),
                         Some("0xdeadbeefdeadbeef".to_string()),
                         Vec::new(),
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                 ]
             );
@@ -4185,8 +4227,61 @@ type Foo {
 
             assert_eq!(
                 format!("{err:#}"),
-                "Program 'Pool', instruction 'swap': set both 'accounts' and 'args' to \
-                 overwrite the IDL layout."
+                overwrite_error("swap", DECLARED, "'accounts' and 'args'")
+            );
+        }
+
+        /// The IDL has no name for this row, so it adds an instruction and is
+        /// read like an inline one: the empty prefix matches every call, and
+        /// the layout is the row's own business.
+        #[test]
+        fn a_row_the_idl_does_not_declare_needs_no_layout() {
+            let config = program_reading_idl(
+                LEGACY_ANCHOR_IDL,
+                "            - name: anyCall\n              discriminator: \"0x\"\n",
+            )
+            .expect("a row adding a name");
+
+            assert_eq!(
+                svm_events(&config)
+                    .into_iter()
+                    .map(|(name, discriminator, _, _)| (name, discriminator))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (
+                        "deposit".to_string(),
+                        Some("0xf223c68952e1f2b6".to_string())
+                    ),
+                    ("swap".to_string(), Some("0xf8c69e91e17587c8".to_string())),
+                    ("anyCall".to_string(), None),
+                ]
+            );
+        }
+
+        /// A row on a name the IDL declares but could not use is still an
+        /// overwrite: the IDL has a definition for it, and the reason it was
+        /// set aside is what the row has to answer.
+        #[test]
+        fn rejects_an_overwrite_of_an_unusable_idl_instruction() {
+            let err = program_reading_idl(
+                r#"{ "instructions": [
+                     { "name": "swap", "discriminator": [1],
+                       "accounts": [], "args": [{ "name": "amount", "type": { "coption": "u64" } }] },
+                     { "name": "deposit", "discriminator": [4],
+                       "accounts": [], "args": [] }] }"#,
+                "            - name: swap\n              discriminator: \"0x\"\n",
+            )
+            .expect_err("a row on a set-aside name");
+
+            assert_eq!(
+                format!("{err:#}"),
+                overwrite_error(
+                    "swap",
+                    "the IDL declares this instruction too, but it cannot be indexed as declared: \
+                     idls/pool.json:2:22: args.amount: `coption` is not Borsh-compatible and \
+                     cannot be decoded",
+                    "'accounts' and 'args'"
+                )
             );
         }
 
@@ -4209,7 +4304,7 @@ type Foo {
                     "deposit".to_string(),
                     Some("0x04".to_string()),
                     Vec::new(),
-                    Vec::new(),
+                    Some(Vec::new()),
                 )]
             );
         }
@@ -4249,7 +4344,7 @@ type Foo {
                     "transfer".to_string(),
                     Some("0x03".to_string()),
                     vec!["source".to_string(), "destination".to_string()],
-                    vec!["amount".to_string()],
+                    Some(vec!["amount".to_string()]),
                 )]
             );
         }
@@ -4273,7 +4368,15 @@ type Foo {
                 .into_iter()
                 .filter(|(_, discriminator, ..)| discriminator.is_some())
                 .map(|(name, discriminator, accounts, args)| {
-                    (name, discriminator.unwrap(), accounts.len(), args.len())
+                    // `None` where the row attached no layout at all: the Orca
+                    // and Meteora swaps take every call and leave the payload
+                    // raw, which an empty layout would not do.
+                    (
+                        name,
+                        discriminator.unwrap(),
+                        accounts.len(),
+                        args.map(|a| a.len()),
+                    )
                 })
                 .collect();
 
@@ -4307,40 +4410,60 @@ type Foo {
                             "borrowObligationLiquidity".into(),
                             "0x797f12cc49f5e141".into(),
                             12,
-                            1
+                            Some(1)
                         ),
                         (
                             "depositReserveLiquidityAndObligationCollateral".into(),
                             "0x81c70402de271a2e".into(),
                             14,
-                            1
+                            Some(1)
                         ),
-                        ("fillPerpOrder".into(), "0x0dbcf86786d96af0".into(), 6, 2),
-                        ("liquidatePerp".into(), "0x4b2377f7bf128b02".into(), 6, 3),
-                        ("liquidateSpot".into(), "0x6b00802923e5fb12".into(), 6, 4),
-                        ("placePerpOrder".into(), "0x45a15dca787e4cb9".into(), 3, 1),
+                        (
+                            "fillPerpOrder".into(),
+                            "0x0dbcf86786d96af0".into(),
+                            6,
+                            Some(2)
+                        ),
+                        (
+                            "liquidatePerp".into(),
+                            "0x4b2377f7bf128b02".into(),
+                            6,
+                            Some(3)
+                        ),
+                        (
+                            "liquidateSpot".into(),
+                            "0x6b00802923e5fb12".into(),
+                            6,
+                            Some(4)
+                        ),
+                        (
+                            "placePerpOrder".into(),
+                            "0x45a15dca787e4cb9".into(),
+                            3,
+                            Some(1)
+                        ),
                         (
                             "repayObligationLiquidity".into(),
                             "0x91b20de14cf09348".into(),
                             9,
-                            1
+                            Some(1)
                         ),
-                        ("route".into(), "0xe517cb977ae3ad2a".into(), 9, 5),
-                        ("settlePnl".into(), "0x2b3dea2d0f5f9899".into(), 4, 1),
+                        ("route".into(), "0xe517cb977ae3ad2a".into(), 9, Some(5)),
+                        ("settlePnl".into(), "0x2b3dea2d0f5f9899".into(), 4, Some(1)),
                         (
                             "sharedAccountsRoute".into(),
                             "0xc1209b3341d69c81".into(),
                             13,
-                            6
+                            Some(6)
                         ),
-                        ("swap".into(), "0x09".into(), 18, 2),
-                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, 0),
-                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, 0),
+                        ("swap".into(), "0x09".into(), 18, Some(2)),
+                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, None),
+                        ("swap".into(), "0xf8c69e91e17587c8".into(), 0, None),
                         (
                             "withdrawObligationCollateralAndRedeemReserveCollateral".into(),
                             "0x4b5d5ddc2296dac4".into(),
                             14,
-                            1
+                            Some(1)
                         ),
                     ]
                 )
@@ -4365,13 +4488,13 @@ type Foo {
                         "swap".to_string(),
                         Some("0x01".to_string()),
                         Vec::new(),
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                     (
                         "wide".to_string(),
                         Some("0x090909".to_string()),
                         Vec::new(),
-                        Vec::new(),
+                        Some(Vec::new()),
                     ),
                 ]
             );

@@ -20,6 +20,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::config_parsing::field_types::to_snake_case;
+use crate::config_parsing::human_config::svm::MAX_ARRAY_LEN;
 use crate::utils::text::Capitalize;
 
 use super::{
@@ -205,10 +206,14 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
         .ok_or_else(|| anyhow!("{path}: unsupported type {node}"))?;
 
     if let Some(inner) = obj.get("option") {
-        return Ok(FieldType::Option(Box::new(parse_type(
-            inner,
-            &format!("{path}.option"),
-        )?)));
+        let path = format!("{path}.option");
+        let inner = parse_type(inner, &path)?;
+        // Both levels are a one-byte tag, so `Some(None)` decodes to the same
+        // value as `None` and a handler cannot tell them apart.
+        if matches!(inner, FieldType::Option(_)) {
+            bail!("{path}: a nested `option` decodes ambiguously and cannot be indexed");
+        }
+        return Ok(FieldType::Option(Box::new(inner)));
     }
     // An SPL `COption` tags presence with four bytes where Borsh uses one, and
     // the runtime has no four-byte option to decode it with. Reading it as a
@@ -229,9 +234,16 @@ fn parse_type(node: &Value, path: &str) -> Result<FieldType> {
         let len = len
             .as_u64()
             .ok_or_else(|| anyhow!("{path}.array: expected a length, got {len}"))?;
+        let len = usize::try_from(len).unwrap_or(usize::MAX);
+        if len > MAX_ARRAY_LEN {
+            bail!(
+                "{path}.array: {len} elements is more than the {MAX_ARRAY_LEN} an array may \
+                 declare"
+            );
+        }
         return Ok(FieldType::Array {
             ty: Box::new(parse_type(item, &format!("{path}.array"))?),
-            len: len as usize,
+            len,
         });
     }
     if let Some(d) = obj.get("defined") {

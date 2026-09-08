@@ -131,12 +131,16 @@ fn value_to_param(
         | SvmFieldType::U32
         | SvmFieldType::I8
         | SvmFieldType::I16
-        | SvmFieldType::I32 => ParamValue::Num(value.as_f64()?),
-        // The upstream decoder renders a non-finite float as `Null`.
-        SvmFieldType::F32 | SvmFieldType::F64 => match value {
-            Value::Null => ParamValue::Null,
-            value => ParamValue::Num(value.as_f64()?),
-        },
+        | SvmFieldType::I32
+        // Borsh refuses to serialize a NaN, so one on the wire says the bytes
+        // are not the float this layout claims and the instruction is dropped
+        // like any other layout mismatch. The upstream decoder renders every
+        // non-finite float as `Null`, which `as_f64` rejects; that takes a
+        // legitimate infinity with it, which no Solana program is known to
+        // send. Behind an `option` the ambiguity is unreachable: `None` is
+        // `Null` too, and there a non-finite float reads as absent.
+        | SvmFieldType::F32
+        | SvmFieldType::F64 => ParamValue::Num(value.as_f64()?),
         SvmFieldType::U64 | SvmFieldType::U128 => {
             ParamValue::from_u128(value.as_str()?.parse().ok()?)
         }
@@ -404,6 +408,40 @@ mod tests {
         assert_eq!(
             schema.decode(&data),
             Some(obj(vec![("text", ParamValue::Str("hello".to_string()))]))
+        );
+    }
+
+    #[test]
+    fn a_non_finite_float_is_rejected() {
+        let schema = schema_of(r#"[{"name":"ratio","type":"f64"}]"#, "{}");
+        let payload = |bits: f64| {
+            let mut data = vec![0x01];
+            data.extend_from_slice(&bits.to_le_bytes());
+            data
+        };
+        assert_eq!(
+            (
+                schema.decode(&payload(f64::NAN)),
+                schema.decode(&payload(f64::INFINITY)),
+                schema.decode(&payload(1.5)),
+            ),
+            (None, None, Some(obj(vec![("ratio", ParamValue::Num(1.5))])))
+        );
+    }
+
+    /// A declared-but-empty layout is the assertion that the instruction takes
+    /// no arguments, so it accepts exactly the calls that carry nothing past
+    /// the discriminator. Attaching no layout at all is what takes every call.
+    #[test]
+    fn an_empty_layout_accepts_only_a_bare_discriminator() {
+        let schema = schema_of("[]", "{}");
+        assert_eq!(
+            (
+                schema.decode(&[0x01]),
+                schema.decode(&[0x01, 0x00]),
+                schema.decode(&[0x01, 0xde, 0xad])
+            ),
+            (Some(obj(vec![])), None, None)
         );
     }
 

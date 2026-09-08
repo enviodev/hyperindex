@@ -733,7 +733,7 @@ let resolveSvmWhereOrThrow = (
       ) {
       | None if namedAccounts->Utils.Array.isEmpty =>
         invalid(
-          "The instruction has no named accounts to filter on. Add `accounts` and `args` to it in config.yaml, or attach an IDL.",
+          "The instruction has no named accounts to filter on. Add `accounts` to it in config.yaml, or attach an IDL.",
         )
       | None =>
         invalid(
