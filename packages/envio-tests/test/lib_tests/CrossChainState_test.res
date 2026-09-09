@@ -601,8 +601,8 @@ describe("CrossChainState fetch control", () => {
 
       t.expect(
         estimatesByChain,
-        ~message="The follower fetches up to the anchor's 50% line (+10% margin = block 600), not to nothing",
-      ).toEqual(Dict.fromArray([("1", 500), ("2", 80)]))
+        ~message="The follower fetches up to the anchor's 50% line (+20% margin = block 700), not to nothing",
+      ).toEqual(Dict.fromArray([("1", 500), ("2", 180)]))
     },
   )
 
