@@ -95,6 +95,7 @@ let initEffect = (params: contextParams) => {
         input,
         context: effectContext,
         cacheKey: input->S.reverseConvertOrThrow(effect.input)->Utils.Hash.makeOrThrow,
+        chainId: handlerChainId,
         checkpointId: params.checkpointId,
       }
       LoadLayer.loadEffect(
@@ -171,14 +172,16 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
     let prop = prop->(Utils.magic: unknown => string)
 
     let isClickHouseOnly = !params.entityConfig.storage.postgres
+    let scope = params->entityScope
+    let committedCheckpointId = params.indexerState->IndexerState.committedCheckpointIdFor(~scope)
 
     let set = params.isPreload
       ? noopSet
       : (entity: Internal.entity) => {
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
+          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
+            ~committedCheckpointId,
             Set({
               entityId: entity.id->EntityId.unsafeOfString,
               checkpointId: params.checkpointId,
@@ -288,9 +291,9 @@ let entityTraps: Utils.Proxy.traps<entityContextParams> = {
       } else {
         entityId => {
           params.indexerState
-          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope=params->entityScope)
+          ->InMemoryStore.getInMemTable(~entityConfig=params.entityConfig, ~scope)
           ->InMemoryTable.Entity.set(
-            ~committedCheckpointId=params.indexerState->IndexerState.committedCheckpointId,
+            ~committedCheckpointId,
             Delete({
               entityId,
               checkpointId: params.checkpointId,

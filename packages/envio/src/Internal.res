@@ -854,8 +854,10 @@ type effectArgs = {
   input: effectInput,
   context: effectContext,
   cacheKey: string,
-  // The processing checkpoint that referenced this effect; stamped on the
-  // in-memory cache entry so it's evicted once the checkpoint commits.
+  // The processing checkpoint that referenced this effect, on the chain whose
+  // handler ran it; stamped on the in-memory cache entry so it's evicted once
+  // that chain commits the checkpoint.
+  chainId: ChainId.t,
   checkpointId: bigint,
 }
 type effectCacheItem = {id: string, output: effectOutput}

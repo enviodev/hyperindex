@@ -9,9 +9,16 @@ type historySchema = {
   checkpointsTable: string,
   checkpointChainIdColumn: string,
   checkpointBlockNumberColumn: string,
+  chainsTable: string,
+  chainsCheckpointIdColumn: string,
 }
 
-type chainProgressInput = {chainId: string, progressBlockNumber: int}
+type chainProgressInput = {
+  chainId: string,
+  progressBlockNumber: int,
+  // Where the chain's own sequence stands, as Postgres has it committed.
+  committedCheckpointId: string,
+}
 
 type options = {
   url: string,
@@ -62,12 +69,14 @@ type initializeInput = {
   databaseEngine?: string,
 }
 
+// A history table and the column naming the chain its rows belong to. Absent
+// only for a cross-chain entity, which no per-chain sequence can produce.
+type historyTableInput = {name: string, chainIdColumn?: string}
+
 type resumeInput = {
-  checkpointId: string,
+  perChain: bool,
   chainProgress: array<chainProgressInput>,
-  historyTables: array<string>,
-  replicated: bool,
-  databaseEngine?: string,
+  historyTables: array<historyTableInput>,
 }
 
 type registeredTable = {
@@ -116,6 +125,8 @@ let historySchema = (): historySchema => {
   checkpointsTable: InternalTable.Checkpoints.table.tableName,
   checkpointChainIdColumn: (#chain_id: InternalTable.Checkpoints.field :> string),
   checkpointBlockNumberColumn: (#block_number: InternalTable.Checkpoints.field :> string),
+  chainsTable: InternalTable.Chains.table.tableName,
+  chainsCheckpointIdColumn: (#checkpoint_id: InternalTable.Chains.field :> string),
 }
 
 let make = (~url, ~username, ~password, ~database, ~chainIdMode: ChainId.mode, ~onWarning) =>

@@ -41,6 +41,8 @@ type t = {
   // detected reorg either rolls back or is only logged.
   shouldRollbackOnReorg: bool,
   maxReorgDepth: int,
+  // One-way: past it, everything the chain writes can still be rolled back.
+  mutable isInReorgThreshold: bool,
   // Holds this chain's transactions (kept in Rust) keyed by (blockNumber,
   // transactionIndex). Fetch responses merge their page in; entries are pruned
   // as the chain progresses and dropped above the target on rollback.
@@ -126,6 +128,7 @@ let make = (
   ~safeCheckpointTracking=None,
   ~shouldRollbackOnReorg,
   ~maxReorgDepth,
+  ~isInReorgThreshold=false,
   ~numEventsProcessed=0.,
   ~timestampCaughtUpToHeadOrEndblock=None,
   ~isProgressAtHead=false,
@@ -155,6 +158,7 @@ let make = (
     safeCheckpointTracking,
     shouldRollbackOnReorg,
     maxReorgDepth,
+    isInReorgThreshold,
     transactionStore,
     blockStore,
     reorgThresholdReadyTolerance,
@@ -308,6 +312,7 @@ let makeInternal = (
     ~sourceManager=SourceManager.make(~sources, ~isRealtime, ~reducedPollingInterval?),
     ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
     ~maxReorgDepth,
+    ~isInReorgThreshold,
     ~safeCheckpointTracking=SafeCheckpointTracking.make(
       ~maxReorgDepth,
       ~shouldRollbackOnReorg=config.shouldRollbackOnReorg,
@@ -929,8 +934,18 @@ let setEndBlockToFirstEvent = (cs: t, ~blockNumber) =>
   }
 
 // Shrink the fetch buffer by the configured blockLag on entering the reorg threshold.
-let enterReorgThreshold = (cs: t) =>
+let enterReorgThreshold = (cs: t) => {
+  cs.isInReorgThreshold = true
   cs.fetchState = cs.fetchState->FetchState.updateInternal(~blockLag=cs.chainConfig.blockLag)
+}
+
+let isInReorgThreshold = (cs: t) => cs.isInReorgThreshold
+
+// Whether the chain's writes need history: only what a rollback could still
+// reach. A chain with no reorg depth is never rolled back, however far its
+// progress has run.
+let shouldSaveHistory = (cs: t) =>
+  cs.shouldRollbackOnReorg && cs.maxReorgDepth > 0 && cs.isInReorgThreshold
 
 // Snapshot the chain's metadata fields for staging into the chains table.
 let toChainMetadata = (cs: t): InternalTable.Chains.metaFields => {

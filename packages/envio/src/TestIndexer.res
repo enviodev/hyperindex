@@ -279,7 +279,7 @@ let makeInitialState = (
     envioInfo: Some(JSON.Encode.object(Dict.make())),
     cache: Dict.make(),
     chains,
-    checkpointId: InternalTable.Checkpoints.initialCheckpointId,
+    checkpointFrontier: Frontier.empty(),
     reorgCheckpoints: [],
   }
 }
@@ -605,7 +605,6 @@ let makeInMemoryStorage = (~state: testIndexerState): Persistence.storage => {
   writeBatch: async (
     ~batch,
     ~rollback as _,
-    ~isInReorgThreshold as _,
     ~config,
     ~allEntities as _,
     ~updatedEffectsCache as _,

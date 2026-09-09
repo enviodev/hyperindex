@@ -1,9 +1,8 @@
 open Vitest
 
 let makeEffect = (~name, ~rateLimit=Envio.Disable): Internal.effect =>
-  Envio.createEffect(
-    {name, input: S.string, output: S.string, rateLimit},
-    async ({input}) => input,
+  Envio.createEffect({name, input: S.string, output: S.string, rateLimit}, async ({input}) =>
+    input
   )->(Utils.magic: Envio.effect<string, string> => Internal.effect)
 
 describe("EffectState rollback", () => {
@@ -24,7 +23,14 @@ describe("EffectState rollback", () => {
     // Cache-derived fields, all expected to reset.
     table.idsToStore = ["a"]
     table.changesCount = 5.
-    table.dict->Dict.set("a", Set({entityId: "a"->EntityId.unsafeOfString, entity: "out"->Obj.magic, checkpointId: 0n}))
+    table.dict->Dict.set(
+      "a",
+      {
+        output: "out"->(Utils.magic: string => Internal.effectOutput),
+        chainId: 1->ChainId.fromInt,
+        checkpointId: 0n,
+      },
+    )
 
     self->EffectState.resetForRollback
 
@@ -97,14 +103,19 @@ describe("EffectState unregistered cache count", () => {
 
   it("never double-counts: a registered effect drops its unregistered count", t => {
     let self = EffectState.make()
-    self->EffectState.setUnregisteredCacheCount(~effectName="registered", ~scope=CrossChain, ~count=1)
+    self->EffectState.setUnregisteredCacheCount(
+      ~effectName="registered",
+      ~scope=CrossChain,
+      ~count=1,
+    )
     self->EffectState.setUnregisteredCacheCount(~effectName="pending", ~scope=CrossChain, ~count=2)
 
     // Registering "registered" consumes its unregistered count; "pending" stays.
     self->EffectState.getTable(~effect=makeEffect(~name="registered"), ~scope=CrossChain)->ignore
 
     t.expect(
-      (self->EffectState.toMetrics)
+      self
+      ->EffectState.toMetrics
       ->Array.toSorted((a, b) => String.compare(a.effect, b.effect)),
       ~message="one series per effect — the registered effect's table replaces its seed",
     ).toEqual([

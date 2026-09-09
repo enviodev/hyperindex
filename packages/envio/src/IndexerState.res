@@ -58,12 +58,12 @@ type t = {
   mutable entities: EntityTables.t,
   effectState: EffectState.t,
   mutable rollback: option<Persistence.rollback>,
-  // Last checkpoint persisted to the db.
-  mutable committedCheckpointId: Internal.checkpointId,
-  // Processing frontier; runs ahead of committedCheckpointId while writes lag.
-  mutable processedCheckpointId: Internal.checkpointId,
+  // Last checkpoint each chain has persisted to the db.
+  mutable committedFrontier: Frontier.t,
+  // Processing frontier; runs ahead of committedFrontier while writes lag.
+  mutable processedFrontier: Frontier.t,
   // Processed but unwritten. The cycle drains them, splitting each write at a
-  // change in isInReorgThreshold so it never mixes history-saving modes.
+  // change in the history policy so it never mixes history-saving modes.
   mutable processedBatches: array<Batch.t>,
   // Count of processed batches; version-independent progress counter.
   mutable processedBatchesCount: int,
@@ -139,10 +139,9 @@ let make = (
   ~config: Config.t,
   ~persistence: Persistence.t,
   ~chainStates: dict<ChainState.t>,
-  ~isInReorgThreshold: bool,
   ~isRealtime: bool,
   ~targetBufferSize=CrossChainState.calculateTargetBufferSize(),
-  ~committedCheckpointId=Internal.initialCheckpointId,
+  ~committedFrontier=Frontier.empty(),
   ~isDevelopmentMode=false,
   ~shouldUseTui=false,
   ~exitAfterFirstEventBlock=false,
@@ -169,8 +168,8 @@ let make = (
     entities: EntityTables.make(persistence.allEntities->EntityTables.crossChain),
     effectState: EffectState.make(),
     rollback: None,
-    committedCheckpointId,
-    processedCheckpointId: committedCheckpointId,
+    committedFrontier,
+    processedFrontier: committedFrontier->Frontier.copy,
     processedBatches: [],
     processedBatchesCount: 0,
     writeFiber: None,
@@ -181,12 +180,7 @@ let make = (
     chainMetaDirty: false,
     chainMetaThrottler,
     isProcessing: false,
-    crossChainState: CrossChainState.make(
-      ~chainStates,
-      ~isInReorgThreshold,
-      ~isRealtime,
-      ~targetBufferSize,
-    ),
+    crossChainState: CrossChainState.make(~chainStates, ~isRealtime, ~targetBufferSize),
     indexerStartTime: Date.make(),
     indexerStartTimeRef: Performance.now(),
     rollbackState: NoRollback,
@@ -278,10 +272,9 @@ let makeFromDbState = (
     ~config,
     ~persistence,
     ~chainStates,
-    ~isInReorgThreshold,
     ~isRealtime,
     ~targetBufferSize,
-    ~committedCheckpointId=initialState.checkpointId,
+    ~committedFrontier=initialState.checkpointFrontier,
     ~isDevelopmentMode,
     ~shouldUseTui,
     ~exitAfterFirstEventBlock,
@@ -357,19 +350,15 @@ let getChainState = (state: t, ~chainId: ChainId.t): ChainState.t =>
 
 let getSafeCheckpointIdByChain = (state: t) =>
   state.crossChainState->CrossChainState.getSafeCheckpointIdByChain(
-    ~committedCheckpointId=state.committedCheckpointId,
+    ~sequence=state.config.checkpointSequence,
+    ~committedFrontier=state.committedFrontier,
   )
 
-let createBatch = (
-  state: t,
-  ~processedCheckpointId,
-  ~batchSizeTarget: int,
-  ~isRollback: bool,
-): Batch.t =>
+let createBatch = (state: t, ~batchSizeTarget: int): Batch.t =>
   state.crossChainState->CrossChainState.createBatch(
-    ~processedCheckpointId,
+    ~config=state.config,
+    ~frontier=state.processedFrontier,
     ~batchSizeTarget,
-    ~isRollback,
   )
 
 let enterReorgThreshold = (state: t) => state.crossChainState->CrossChainState.enterReorgThreshold
@@ -483,8 +472,13 @@ let eachEntityTable = (
   )
 }
 let effectState = (state: t) => state.effectState
-let committedCheckpointId = (state: t) => state.committedCheckpointId
-let processedCheckpointId = (state: t) => state.processedCheckpointId
+let committedFrontier = (state: t) => state.committedFrontier
+let processedFrontier = (state: t) => state.processedFrontier
+
+// The committed id a scope's in-memory rows compare against.
+let committedCheckpointIdFor = (state: t, ~scope) =>
+  state.config.checkpointSequence->CheckpointSequence.forScope(state.committedFrontier, ~scope)
+
 let processedBatches = (state: t) => state.processedBatches
 let processedBatchesCount = (state: t) => state.processedBatchesCount
 let writeFiber = (state: t) => state.writeFiber
@@ -495,6 +489,7 @@ let chainMetaThrottler = (state: t) => state.chainMetaThrottler
 let crossChainState = (state: t) => state.crossChainState
 let chainStates = (state: t) => state.crossChainState->CrossChainState.chainStates
 let isInReorgThreshold = (state: t) => state.crossChainState->CrossChainState.isInReorgThreshold
+let shouldSaveHistory = (state: t) => state.crossChainState->CrossChainState.shouldSaveHistory
 let isRealtime = (state: t) => state.crossChainState->CrossChainState.isRealtime
 
 // The indexer runs Backfilling → FinalizingIndexes → Ready. This is true only
@@ -758,18 +753,18 @@ let recordRollbackSuccess = (state: t, ~timeSeconds, ~rollbackedProcessedEvents)
 // Queue a processed batch for writing and advance the processing frontier.
 let queueProcessedBatch = (state: t, ~batch: Batch.t) => {
   state.processedBatches->Array.push(batch)->ignore
-  switch batch.checkpointIds->Utils.Array.last {
-  | Some(checkpointId) => state.processedCheckpointId = checkpointId
-  | None => ()
-  }
+  state.processedFrontier = Frontier.mergeMax(
+    state.processedFrontier,
+    batch->Batch.checkpointFrontier,
+  )
 }
 
-// Take the leading run of queued batches sharing isInReorgThreshold as one merged
+// Take the leading run of queued batches sharing a history policy as one merged
 // batch, leaving the rest queued for the next write. Caller guarantees the queue
 // is non-empty.
 let drainBatchRun = (state: t): Batch.t => {
   let all = state.processedBatches
-  let isInReorgThreshold = (all->Array.getUnsafe(0)).isInReorgThreshold
+  let history = (all->Array.getUnsafe(0)).history
 
   let rest = []
   let progressedChainsById = Dict.make()
@@ -783,7 +778,7 @@ let drainBatchRun = (state: t): Batch.t => {
   let registeredAddresses = []
   all->Array.forEach(batch => {
     // Once one batch lands in rest, all later ones follow it, preserving order.
-    if rest->Utils.Array.isEmpty && batch.isInReorgThreshold == isInReorgThreshold {
+    if rest->Utils.Array.isEmpty && batch.history == history {
       batch.progressedChainsById->Utils.Dict.forEachWithKey((chainAfterBatch, key) =>
         progressedChainsById->Dict.set(key, chainAfterBatch)
       )
@@ -805,7 +800,7 @@ let drainBatchRun = (state: t): Batch.t => {
     totalBatchSize: totalBatchSize.contents,
     items,
     progressedChainsById,
-    isInReorgThreshold,
+    history,
     checkpointIds,
     checkpointChainIds,
     checkpointBlockNumbers,
@@ -829,18 +824,30 @@ let takeRollback = (state: t): option<Persistence.rollback> => {
 // committed. A failed write keeps them, and re-inserting a row the database
 // already has is a no-op. Rows staged while the write was in flight belong to
 // later checkpoints — ids only ever grow — so this can't drop one unwritten.
-let markCommitted = (state: t, ~upToCheckpointId) => {
-  state.committedCheckpointId = upToCheckpointId
+let markCommitted = (state: t, ~writtenFrontier) => {
+  state.committedFrontier = Frontier.mergeMax(state.committedFrontier, writtenFrontier)
 }
 
-// Reset the in-memory tables and arm the rollback diff that the next write commits.
+// Reset the in-memory tables and arm the rollback diff that the next write
+// commits. The diff ids start from the committed frontier — a rollback that
+// supersedes an unwritten one takes over its ids along with its rows. A sibling
+// the rollback leaves alone gets no diff row: burning an id on it would leave a
+// hole in its sequence.
 let beginRollbackDiff = (
   state: t,
-  ~diffCheckpointId,
-  ~floors,
+  ~floors: RollbackFloors.t,
   ~progressedChains: array<InternalTable.Chains.progressedChain>,
   ~rolledBackAddresses,
-) => {
+): Frontier.t => {
+  let diffFrontier = {
+    let cursor =
+      state.config.checkpointSequence->CheckpointSequence.cursor(~frontier=state.committedFrontier)
+    floors.checkpointBounds.byChain
+    ->Frontier.chainIds
+    ->Array.map(chainId => (chainId, cursor->CheckpointSequence.next(~chainId)))
+    ->Frontier.fromEntries
+  }
+  state.processedFrontier = Frontier.mergeMax(state.processedFrontier, diffFrontier)
   let perChainEntities = state.allEntities->EntityTables.perChain
   state.entities = EntityTables.make(state.allEntities->EntityTables.crossChain)
   state->chainStates->Utils.Dict.forEach(cs => cs->ChainState.resetEntities(~perChainEntities))
@@ -867,11 +874,19 @@ let beginRollbackDiff = (
   | None => progressedChains
   }
   state.rollback = Some({
-    diffCheckpointId,
+    diffFrontier,
+    diffCheckpoints: diffFrontier
+    ->Frontier.entries
+    ->Array.map(((chainId, checkpointId)): InternalTable.Checkpoints.diffCheckpoint => {
+      chainId,
+      checkpointId,
+      blockNumber: state->getChainState(~chainId)->ChainState.committedProgressBlockNumber,
+    }),
     floors,
     progressedChains,
     rolledBackAddresses,
   })
+  diffFrontier
 }
 
 // Stop the write loop and surface the failure; the error itself goes to onError.

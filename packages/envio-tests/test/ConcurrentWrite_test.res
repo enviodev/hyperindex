@@ -50,7 +50,6 @@ describe("Concurrent batch write and processing", () => {
       writeBatch: (
         ~batch,
         ~rollback,
-        ~isInReorgThreshold,
         ~config,
         ~allEntities,
         ~updatedEffectsCache,
@@ -70,8 +69,7 @@ describe("Concurrent batch write and processing", () => {
           switch await storage.writeBatch(
             ~batch,
             ~rollback,
-            ~isInReorgThreshold,
-            ~config,
+                ~config,
             ~allEntities,
             ~updatedEffectsCache,
             ~updatedEntities,

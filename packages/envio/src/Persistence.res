@@ -43,7 +43,8 @@ type initialState = {
   envioInfo: option<JSON.t>,
   cache: dict<effectCacheRecord>,
   chains: array<initialChainState>,
-  checkpointId: Internal.checkpointId,
+  // Where each chain's checkpoint sequence stands in the database.
+  checkpointFrontier: Frontier.t,
   // Needed to keep reorg detection logic between restarts
   reorgCheckpoints: array<Internal.reorgCheckpoint>,
 }
@@ -59,7 +60,12 @@ type updatedEffectCache = {
 }
 
 type rollback = {
-  diffCheckpointId: Internal.checkpointId,
+  // The id each chain's diff rows are stamped with: the first after what that
+  // chain has committed.
+  diffFrontier: Frontier.t,
+  // The same ids as checkpoint rows, for a sink that resolves current state
+  // through them. Postgres writes the diff to the entity table and ignores these.
+  diffCheckpoints: array<InternalTable.Checkpoints.diffCheckpoint>,
   // How far back the deletes reach on each chain, travelling with the diff so
   // the write leaves an untouched sibling's rows alone.
   floors: RollbackFloors.t,
@@ -75,6 +81,14 @@ type rollback = {
   progressedChains: array<InternalTable.Chains.progressedChain>,
 }
 
+// Where a write leaves each chain's sequence. A rollback's diff rows sit on
+// chains the batch may not have progressed at all, so the write reaches them too.
+let writtenFrontier = (~batch: Batch.t, ~rollback: option<rollback>) =>
+  switch rollback {
+  | Some({diffFrontier}) => Frontier.mergeMax(batch->Batch.checkpointFrontier, diffFrontier)
+  | None => batch->Batch.checkpointFrontier
+  }
+
 // One flush group: the changes an entity accumulated within a single chain
 // scope. A per-chain entity contributes one group per chain, and the scope is
 // what stamps the chain id onto the rows — it's never re-derived downstream.
@@ -82,6 +96,7 @@ type updatedEntity = {
   entityConfig: Internal.entityConfig,
   scope: Internal.chainScope,
   changes: array<Change.t<Internal.entity>>,
+  shouldSaveHistory: bool,
 }
 
 // An id the rollback must delete, together with the scope its row lives in.
@@ -146,13 +161,15 @@ type storage = {
   // Update chain metadata
   setChainMeta: dict<InternalTable.Chains.metaFields> => promise<unknown>,
   // Prune old checkpoints
-  pruneStaleCheckpoints: (~safeCheckpoints: CheckpointBounds.t) => promise<unit>,
+  pruneStaleCheckpoints: (
+    ~safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
+  ) => promise<unit>,
   // Prune stale entity history
   pruneStaleEntityHistory: (
     ~entityName: string,
     ~entityIndex: int,
     ~chainIdColumn: option<string>,
-    ~safeCheckpoints: CheckpointBounds.t,
+    ~safeCheckpoints: CheckpointSequence.checkpointBoundsByChain,
   ) => promise<unit>,
   // Get rollback target checkpoint
   getRollbackTargetCheckpoint: (
@@ -180,7 +197,6 @@ type storage = {
   writeBatch: (
     ~batch: Batch.t,
     ~rollback: option<rollback>,
-    ~isInReorgThreshold: bool,
     ~config: Config.t,
     ~allEntities: array<Internal.entityConfig>,
     ~updatedEffectsCache: array<updatedEffectCache>,

@@ -14,7 +14,6 @@ type t = {
   // but before the deferred schema indexes and `ready_at` are committed. The
   // gap between this and `isRealtime` is the FinalizingIndexes phase.
   mutable isCaughtUp: bool,
-  mutable isInReorgThreshold: bool,
   // Indexer-wide fetch buffer pool (item count), shared across all chains.
   targetBufferSize: int,
 }
@@ -26,18 +25,12 @@ let calculateTargetBufferSize = () =>
   | None => 100_000
   }
 
-let make = (
-  ~chainStates,
-  ~isInReorgThreshold,
-  ~isRealtime,
-  ~targetBufferSize=calculateTargetBufferSize(),
-): t => {
+let make = (~chainStates, ~isRealtime, ~targetBufferSize=calculateTargetBufferSize()): t => {
   {
     chainStates,
     chainIds: chainStates->Dict.valuesToArray->Array.map(cs => (cs->ChainState.chainConfig).id),
     isRealtime,
     isCaughtUp: isRealtime,
-    isInReorgThreshold,
     targetBufferSize,
   }
 }
@@ -52,8 +45,18 @@ let getChainState = (crossChainState: t, chainId) =>
 let chainStates = (crossChainState: t) => crossChainState.chainStates
 let isRealtime = (crossChainState: t) => crossChainState.isRealtime
 let isCaughtUp = (crossChainState: t) => crossChainState.isCaughtUp
-let isInReorgThreshold = (crossChainState: t) => crossChainState.isInReorgThreshold
+// Chains enter the threshold together. It is the run-wide reading; what a
+// write keeps is decided per chain.
+let isInReorgThreshold = (crossChainState: t) => {
+  let chainStates = crossChainState.chainStates->Dict.valuesToArray
+  chainStates->Utils.Array.notEmpty && chainStates->Array.every(ChainState.isInReorgThreshold)
+}
 let targetBufferSize = (crossChainState: t) => crossChainState.targetBufferSize
+
+// Whether each chain's writes still need history, keyed by chain id — what the
+// history policy is built from.
+let shouldSaveHistory = (crossChainState: t) =>
+  crossChainState.chainStates->Utils.Dict.mapValues(ChainState.shouldSaveHistory)
 
 // Ready-to-process items across every chain — the live draw against
 // targetBufferSize, which is a budget of processable events (items stuck behind
@@ -74,14 +77,20 @@ let nextItemIsNone = (crossChainState: t): bool =>
 
 // Each chain's safe checkpoint: the last one a reorg on that chain can no longer
 // reach, or None while it has nothing safe yet. A chain that can't be rolled
-// back (maxReorgDepth = 0) tracks none, and everything it has committed is safe.
-let getSafeCheckpointIdByChain = (crossChainState: t, ~committedCheckpointId) =>
+// back (maxReorgDepth = 0) tracks none, and everything committed is safe from
+// it: under one shared sequence that is the run's highest id, not the chain's
+// own — an idle chain's would hold every other chain's prune back.
+let getSafeCheckpointIdByChain = (
+  crossChainState: t,
+  ~sequence: CheckpointSequence.t,
+  ~committedFrontier,
+) =>
   crossChainState.chainIds->Array.map(chainId => {
     let cs = crossChainState->getChainState(chainId)
     (
       chainId,
       switch cs->ChainState.safeCheckpointTracking {
-      | None => Some(committedCheckpointId)
+      | None => Some(sequence->CheckpointSequence.position(committedFrontier, ~chainId))
       | Some(tracking) =>
         tracking->SafeCheckpointTracking.getSafeCheckpointId(
           ~sourceBlockNumber=cs->ChainState.knownHeight,
@@ -94,18 +103,14 @@ let getSafeCheckpointIdByChain = (crossChainState: t, ~committedCheckpointId) =>
 
 let createBatch = (
   crossChainState: t,
-  ~processedCheckpointId,
+  ~config: Config.t,
+  ~frontier,
   ~batchSizeTarget: int,
-  ~isRollback: bool,
 ): Batch.t => {
   Batch.make(
-    ~isInReorgThreshold=crossChainState.isInReorgThreshold,
-    ~checkpointIdBeforeBatch=processedCheckpointId->BigInt.add(
-      // Since for rollback we have a diff checkpoint id.
-      // This is needed to currectly overwrite old state
-      // in an append-only ClickHouse insert.
-      isRollback ? 1n : 0n,
-    ),
+    ~sequence=config.checkpointSequence,
+    ~history=config->HistoryPolicy.decide(~shouldSaveHistory=crossChainState->shouldSaveHistory),
+    ~frontier,
     ~chainsBeforeBatch=crossChainState.chainStates->Utils.Dict.mapValues(
       ChainState.toChainBeforeBatch,
     ),
@@ -123,8 +128,6 @@ let enterReorgThreshold = (crossChainState: t) => {
     ->getChainState(crossChainState.chainIds->Array.getUnsafe(i))
     ->ChainState.enterReorgThreshold
   }
-
-  crossChainState.isInReorgThreshold = true
 }
 
 // Commit each progressed chain's batch progress, then record whether the whole

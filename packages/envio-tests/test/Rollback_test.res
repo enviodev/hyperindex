@@ -119,6 +119,10 @@ describe("E2E rollback tests", () => {
     ~sourceMock: MockSource.t,
     ~indexer: IndexerRunner.t,
     ~firstHistoryCheckpointId=2n,
+    // How far the id after the rollback sits above the first history one. The
+    // diff takes an id per chain it moves, so a run with a sibling to move
+    // burns one more before the re-index.
+    ~afterRollback=3n,
     ~chainId=1337->ChainId.fromInt,
   ) => {
     t.expect(
@@ -379,7 +383,7 @@ describe("E2E rollback tests", () => {
     ).toEqual((
       [
         {
-          id: firstHistoryCheckpointId->BigInt.add(3n),
+          id: firstHistoryCheckpointId->BigInt.add(afterRollback),
           blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0101")),
           blockNumber: 101,
           chainId,
@@ -398,7 +402,7 @@ describe("E2E rollback tests", () => {
       ],
       [
         Set({
-          checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
+          checkpointId: firstHistoryCheckpointId->BigInt.add(afterRollback),
           entityId: "1"->EntityId.unsafeOfString,
           entity: {
             id: "1",
@@ -406,7 +410,7 @@ describe("E2E rollback tests", () => {
           },
         }),
         Set({
-          checkpointId: firstHistoryCheckpointId->BigInt.add(3n),
+          checkpointId: firstHistoryCheckpointId->BigInt.add(afterRollback),
           entityId: "2"->EntityId.unsafeOfString,
           entity: {
             id: "2",
@@ -910,6 +914,7 @@ describe("E2E rollback tests", () => {
         ~sourceMock=sourceMock2,
         ~indexer,
         ~firstHistoryCheckpointId=3n,
+        ~afterRollback=4n,
         ~chainId=100->ChainId.fromInt,
       )
     },
@@ -1543,14 +1548,14 @@ describe("E2E rollback tests", () => {
           // for chain 1337. After rollback it was removed
           // and replaced with chain id 100.
           {
-            id: 10n,
+            id: 11n,
             eventsProcessed: 2,
             chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0106")),
           },
           {
-            id: 11n,
+            id: 12n,
             eventsProcessed: 0,
             chainId: 100->ChainId.fromInt,
             blockNumber: 111,
@@ -1581,7 +1586,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 10n,
+            checkpointId: 11n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -1945,14 +1950,14 @@ describe("E2E rollback tests", () => {
           // for chain 1337. After rollback it was removed
           // and replaced with chain id 100.
           {
-            id: 10n,
+            id: 11n,
             eventsProcessed: 2,
             chainId: 100->ChainId.fromInt,
             blockNumber: 106,
             blockHash: Js.Null.Value(MockSource.evmBlockHash("0x0106")),
           },
           {
-            id: 11n,
+            id: 12n,
             eventsProcessed: 0,
             chainId: 100->ChainId.fromInt,
             blockNumber: 111,
@@ -1983,7 +1988,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 10n,
+            checkpointId: 11n,
             entityId: "1"->EntityId.unsafeOfString,
             entity: {
               id: "1",
@@ -2011,7 +2016,7 @@ describe("E2E rollback tests", () => {
         ],
         [
           Set({
-            checkpointId: 10n,
+            checkpointId: 11n,
             entityId: "foo"->EntityId.unsafeOfString,
             entity: {
               id: "foo",
@@ -2999,7 +3004,6 @@ describe("E2E rollback tests", () => {
       writeBatch: (
         ~batch,
         ~rollback,
-        ~isInReorgThreshold,
         ~config,
         ~allEntities,
         ~updatedEffectsCache,
@@ -3017,8 +3021,7 @@ describe("E2E rollback tests", () => {
           await storage.writeBatch(
             ~batch,
             ~rollback,
-            ~isInReorgThreshold,
-            ~config,
+                ~config,
             ~allEntities,
             ~updatedEffectsCache,
             ~updatedEntities,
@@ -3246,7 +3249,7 @@ describe("E2E rollback tests", () => {
             },
           }),
           Set({
-            checkpointId: 8n,
+            checkpointId: 9n,
             entityId: "victim"->EntityId.unsafeOfString,
             entity: {
               id: "victim",

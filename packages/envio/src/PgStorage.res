@@ -277,6 +277,10 @@ let makeInitializeTransaction = (
   ~pgSchema,
   ~pgUser,
   ~isHasuraEnabled,
+  // The whole schema's sequence, not one derived from `entities`: those are the
+  // entities Postgres stores, and an entity kept only in a sink still decides
+  // how the run counts its checkpoints.
+  ~checkpointSequence: CheckpointSequence.t,
   ~chainConfigs=[],
   ~entities=[],
   ~enums=[],
@@ -292,7 +296,7 @@ let makeInitializeTransaction = (
     InternalTable.EnvioInfo.table,
     InternalTable.EnvioContracts.table,
     InternalTable.EnvioAddresses.table,
-    InternalTable.Checkpoints.table,
+    InternalTable.Checkpoints.tableFor(checkpointSequence),
     InternalTable.RawEvents.table,
   ]
 
@@ -1042,12 +1046,21 @@ let executeSet = (
   }
 }
 
+// The checkpoints a write inserts: every one the batch made, or those of the
+// chains whose history it keeps.
+type pickedCheckpoints = AllCheckpoints | CheckpointIndexes(array<int>)
+
+let pickCheckpoints = (column, picked) =>
+  switch picked {
+  | AllCheckpoints => column
+  | CheckpointIndexes(indexes) => indexes->Array.map(index => column->Array.getUnsafe(index))
+  }
+
 let rec writeBatch = async (
   sql,
   ~batch: Batch.t,
   ~pgSchema,
   ~rollback: option<Persistence.rollback>,
-  ~isInReorgThreshold,
   ~config: Config.t,
   ~allEntities: array<Internal.entityConfig>,
   ~setEffectCacheOrThrow,
@@ -1061,7 +1074,22 @@ let rec writeBatch = async (
 ) => {
   try {
     let chainIdMode = config.chainIdMode
-    let shouldSaveHistory = config->Config.shouldSaveHistory(~isInReorgThreshold)
+    // A checkpoint anchors the history its chain keeps, so the batch's
+    // decision picks the checkpoints chain by chain.
+    let pickedCheckpoints = {
+      let indexes =
+        batch.checkpointChainIds->Array.filterMapWithIndex((chainId, index) =>
+          batch.history->HistoryPolicy.forChain(chainId) ? Some(index) : None
+        )
+      if indexes->Utils.Array.isEmpty {
+        None
+      } else if indexes->Array.length === batch.checkpointIds->Array.length {
+        Some(AllCheckpoints)
+      } else {
+        Some(CheckpointIndexes(indexes))
+      }
+    }
+    let writtenFrontier = Persistence.writtenFrontier(~batch, ~rollback)
 
     let specificError = ref(None)
 
@@ -1111,7 +1139,12 @@ let rec writeBatch = async (
       }
     }
 
-    let setEntities = updatedEntities->Array.map(({entityConfig, scope, changes}) => {
+    let setEntities = updatedEntities->Array.map(({
+      entityConfig,
+      scope,
+      changes,
+      shouldSaveHistory,
+    }) => {
       let entitiesToSet = []
       let idsToDelete = []
 
@@ -1121,8 +1154,6 @@ let rec writeBatch = async (
       | Internal.CrossChain => None
       | Chain(chainId) => Some(chainId)
       }
-      let shouldSaveHistory =
-        config->Config.shouldSaveHistory(~isInReorgThreshold, ~chainId=?scopeChainId)
       let changes = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
       | (Some(field), Some(chainId)) =>
         changes->Array.map(change =>
@@ -1147,7 +1178,10 @@ let rec writeBatch = async (
 
       // The rollback-diff change is written to the entity table only, never the
       // history table; when present it is an id's oldest change.
-      let diffCheckpointId = rollback->Option.map(r => r.diffCheckpointId)
+      let diffCheckpointId =
+        rollback->Option.flatMap(r =>
+          config.checkpointSequence->CheckpointSequence.findForScope(r.diffFrontier, ~scope)
+        )
 
       // History batches, populated only when saving history.
       let batchSetUpdates = []
@@ -1411,18 +1445,30 @@ let rec writeBatch = async (
             )
           }
 
-          if shouldSaveHistory {
+          if !(writtenFrontier->Utils.Dict.isEmpty) {
             setOperations->Array.push(sql =>
-              sql->InternalTable.Checkpoints.insert(
+              sql->InternalTable.Chains.setCheckpointFrontier(
                 ~pgSchema,
-                ~checkpointIds=batch.checkpointIds,
-                ~checkpointChainIds=batch.checkpointChainIds,
-                ~checkpointBlockNumbers=batch.checkpointBlockNumbers,
-                ~checkpointBlockHashes=batch.checkpointBlockHashes,
-                ~checkpointEventsProcessed=batch.checkpointEventsProcessed,
+                ~frontier=writtenFrontier,
                 ~chainIdMode,
               )
             )
+          }
+
+          switch pickedCheckpoints {
+          | Some(picked) =>
+            setOperations->Array.push(sql =>
+              sql->InternalTable.Checkpoints.insert(
+                ~pgSchema,
+                ~checkpointIds=batch.checkpointIds->pickCheckpoints(picked),
+                ~checkpointChainIds=batch.checkpointChainIds->pickCheckpoints(picked),
+                ~checkpointBlockNumbers=batch.checkpointBlockNumbers->pickCheckpoints(picked),
+                ~checkpointBlockHashes=batch.checkpointBlockHashes->pickCheckpoints(picked),
+                ~checkpointEventsProcessed=batch.checkpointEventsProcessed->pickCheckpoints(picked),
+                ~chainIdMode,
+              )
+            )
+          | None => ()
           }
 
           await setOperations
@@ -1479,7 +1525,6 @@ let rec writeBatch = async (
       ~pgSchema,
       ~setQueryCache,
       ~rollback,
-      ~isInReorgThreshold,
       ~config,
       ~setEffectCacheOrThrow,
       ~updatedEffectsCache,
@@ -1532,7 +1577,7 @@ let makeGetRollbackPreTargetRowsQuery = (
   let keyMatch =
     keyColumns->Array.map(c => `h."${c}" = ${tableRef}."${c}"`)->Array.joinUnsafe(" AND ")
   let bounds =
-    floors.floors->CheckpointBounds.sql(
+    floors.checkpointBounds->CheckpointSequence.sql(
       ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
       ~tableRef,
     )
@@ -1565,7 +1610,7 @@ let makeGetRollbackRemovedIdsQuery = (
   let keyMatch =
     keyColumns->Array.map(c => `h."${c}" = ${tableRef}."${c}"`)->Array.joinUnsafe(" AND ")
   let bounds =
-    floors.floors->CheckpointBounds.sql(
+    floors.checkpointBounds->CheckpointSequence.sql(
       ~chainIdColumn=entityConfig.table->Table.getPgChainIdColumn,
       ~tableRef,
     )
@@ -1856,6 +1901,7 @@ let make = (
     let queries = makeInitializeTransaction(
       ~pgSchema,
       ~pgUser,
+      ~checkpointSequence=CheckpointSequence.fromEntities(entities),
       ~entities=pgEntities,
       ~enums,
       ~chainConfigs,
@@ -1927,7 +1973,7 @@ let make = (
         addressRows: rowsByChain->Array.getUnsafe(idx)->AddressRows.seedRowsOf,
         sourceBlockNumber: 0,
       }),
-      checkpointId: InternalTable.Checkpoints.initialCheckpointId,
+      checkpointFrontier: Frontier.empty(),
     }
   }
 
@@ -2316,32 +2362,36 @@ let make = (
   let resumeInitialState = async (~entities, ~throwIfIncompatible): Persistence.initialState => {
     let (
       cache,
-      chains,
-      checkpointIdResult,
+      (chains, checkpointFrontier),
       reorgCheckpoints,
       (storedEnvioInfo, storedContractMapping),
-    ) = await Promise.all5((
+    ) = await Promise.all4((
       restoreEffectCache(~withUpload=false),
       InternalTable.Chains.getInitialState(
         sql,
         ~pgSchema,
       )->Promise.thenResolve(rawInitialStates => {
-        rawInitialStates->Array.map((rawInitialState): Persistence.initialChainState => {
-          id: rawInitialState.id,
-          startBlock: rawInitialState.startBlock,
-          endBlock: rawInitialState.endBlock->Null.toOption,
-          maxReorgDepth: rawInitialState.maxReorgDepth,
-          firstEventBlockNumber: rawInitialState.firstEventBlockNumber->Null.toOption,
-          timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Null.toOption,
-          numEventsProcessed: rawInitialState.numEventsProcessed,
-          progressBlockNumber: rawInitialState.progressBlockNumber,
-          addressRows: rawInitialState.addressRows,
-          sourceBlockNumber: rawInitialState.sourceBlockNumber,
-        })
+        (
+          rawInitialStates->Array.map((rawInitialState): Persistence.initialChainState => {
+            id: rawInitialState.id,
+            startBlock: rawInitialState.startBlock,
+            endBlock: rawInitialState.endBlock->Null.toOption,
+            maxReorgDepth: rawInitialState.maxReorgDepth,
+            firstEventBlockNumber: rawInitialState.firstEventBlockNumber->Null.toOption,
+            timestampCaughtUpToHeadOrEndblock: rawInitialState.timestampCaughtUpToHeadOrEndblock->Null.toOption,
+            numEventsProcessed: rawInitialState.numEventsProcessed,
+            progressBlockNumber: rawInitialState.progressBlockNumber,
+            addressRows: rawInitialState.addressRows,
+            sourceBlockNumber: rawInitialState.sourceBlockNumber,
+          }),
+          Frontier.fromEntries(
+            rawInitialStates->Array.map(rawInitialState => (
+              rawInitialState.id,
+              rawInitialState.checkpointId->BigInt.fromStringOrThrow,
+            )),
+          ),
+        )
       }),
-      sql
-      ->Postgres.unsafe(InternalTable.Checkpoints.makeCommitedCheckpointIdQuery(~pgSchema))
-      ->(Utils.magic: promise<array<unknown>> => promise<array<{"id": string}>>),
       sql
       ->Postgres.unsafe(InternalTable.Checkpoints.makeGetReorgCheckpointsQuery(~pgSchema))
       ->(
@@ -2372,8 +2422,6 @@ let make = (
 
     await reloadIndexCatalog()
 
-    let checkpointId = (checkpointIdResult->Array.getUnsafe(0))["id"]->BigInt.fromStringOrThrow
-
     // Convert string checkpoint IDs from DB to bigint
     let reorgCheckpoints = Array.map(reorgCheckpoints, (raw): Internal.reorgCheckpoint => {
       checkpointId: raw["id"]->BigInt.fromStringOrThrow,
@@ -2384,7 +2432,7 @@ let make = (
 
     // Resume sink if present - needed to rollback any reorg changes
     switch sink {
-    | Some(sink) => await sink.resume(~checkpointId, ~chains, ~entities)
+    | Some(sink) => await sink.resume(~frontier=checkpointFrontier, ~chains, ~entities)
     | None => ()
     }
 
@@ -2393,7 +2441,7 @@ let make = (
       reorgCheckpoints,
       cache,
       chains,
-      checkpointId,
+      checkpointFrontier,
       contractMapping: storedContractMapping,
       envioInfo: storedEnvioInfo,
     }
@@ -2434,7 +2482,7 @@ let make = (
     InternalTable.Checkpoints.getRollbackProgressDiff(sql, ~pgSchema, ~floors)
 
   let getRollbackData = async (~entityConfig: Internal.entityConfig, ~floors: RollbackFloors.t) => {
-    let params = floors.floors->CheckpointBounds.params
+    let params = floors.checkpointBounds->CheckpointSequence.params
     let (removedIdRows, rollbackRows) = await Promise.all2((
       // Get IDs of entities that should be deleted (created after rollback target with no prior history)
       sql
@@ -2482,7 +2530,6 @@ let make = (
   let writeBatchMethod = async (
     ~batch,
     ~rollback,
-    ~isInReorgThreshold,
     ~config,
     ~allEntities,
     ~updatedEffectsCache,
@@ -2509,7 +2556,14 @@ let make = (
     | Some(sink) => {
         let timerRef = Performance.now()
         Some(
-          sink.writeBatch(~batch, ~updatedEntities=chUpdates)
+          sink.writeBatch(
+            ~batch,
+            ~diffCheckpoints=switch (rollback: option<Persistence.rollback>) {
+            | Some({diffCheckpoints}) => diffCheckpoints
+            | None => []
+            },
+            ~updatedEntities=chUpdates,
+          )
           ->Promise.thenResolve(_ => {
             onWrite(~storage=sink.name, ~timeSeconds=timerRef->Performance.secondsSince)
             None
@@ -2528,7 +2582,6 @@ let make = (
       ~pgSchema,
       ~setQueryCache,
       ~rollback,
-      ~isInReorgThreshold,
       ~config,
       ~allEntities,
       ~setEffectCacheOrThrow,
@@ -2613,6 +2666,7 @@ let makeStorageFromEnv = (
             ~database=database->Option.getUnsafe,
             ~username=username->Option.getUnsafe,
             ~password=password->Option.getUnsafe,
+            ~sequence=config.checkpointSequence,
             ~chainIdMode=config.chainIdMode,
           ),
         )

@@ -19,6 +19,7 @@ use napi_derive::napi;
 
 use crate::config_parsing::system_config::ChainIdMode;
 use ch_type::{ChType, ColumnKind, FieldSpec};
+use ddl::ResumeBounds;
 use row_binary::{Column, ColumnValues, EncodedRows};
 
 const MAX_RETRIES: u32 = 8;
@@ -174,23 +175,36 @@ pub struct RegisteredTable {
     pub nullable: Vec<bool>,
 }
 
-/// How far a chain has been committed, as `envio_chains` records it.
+/// How far a chain has been committed, as `envio_chains` and the checkpoints
+/// Postgres kept record it.
 #[napi(object)]
 pub struct ChainProgressInput {
     /// Decimal digits: chain ids outrun what a JS number holds exactly.
     pub chain_id: String,
     pub progress_block_number: i32,
+    /// The chain's own committed checkpoint id. Under a shared sequence these
+    /// come from one counter, so the highest of them is what the whole resume
+    /// trims to.
+    pub committed_checkpoint_id: String,
+}
+
+/// A history table this schema owns, and the column naming the chain each of
+/// its rows belongs to. Absent only for a cross-chain entity, which a per-chain
+/// sequence can't coexist with.
+#[napi(object)]
+pub struct HistoryTableInput {
+    pub name: String,
+    pub chain_id_column: Option<String>,
 }
 
 #[napi(object)]
 pub struct ResumeInput {
-    pub checkpoint_id: String,
+    /// Whether each chain counts its own checkpoint ids.
+    pub per_chain: bool,
     pub chain_progress: Vec<ChainProgressInput>,
     /// The history tables this schema owns. A table no entity claims is one an
     /// older schema left behind, and a schema change means a resync anyway.
-    pub history_tables: Vec<String>,
-    pub replicated: bool,
-    pub database_engine: Option<String>,
+    pub history_tables: Vec<HistoryTableInput>,
 }
 
 #[napi(object)]
@@ -240,6 +254,11 @@ pub struct ClickHouseSink {
     warn: WarningSink,
     chain_id_mode: ChainIdMode,
     history: ddl::HistorySchema,
+    /// The node that answered the first request. Every later answer has to come
+    /// from it: the write order is only the read order on the node that took
+    /// the writes, so an address that starts balancing across replicas is an
+    /// error, not a slower path.
+    served_by: Mutex<Option<String>>,
 }
 
 type WarningSink = Arc<dyn Fn(&str) + Send + Sync>;
@@ -338,6 +357,7 @@ impl ClickHouseSink {
             warn,
             chain_id_mode,
             history: options.history,
+            served_by: Mutex::new(None),
         })
     }
 
@@ -625,20 +645,30 @@ impl ClickHouseSink {
             topology,
         ))
         .await?;
+        let chain_id_type = checkpoint_columns
+            .iter()
+            .find(|(name, _)| name == &self.history.checkpoint_chain_id_column)
+            .map(|(_, ch_type)| ch_type)
+            .with_context(|| {
+                format!(
+                    "ClickHouse table `{}` has no `{}` column",
+                    self.history.checkpoints_table, self.history.checkpoint_chain_id_column
+                )
+            })?;
+        self.post_statement(ddl::create_chains_table(
+            chain_id_type,
+            &self.database,
+            &self.history,
+            topology,
+        ))
+        .await?;
 
-        // The client pools HTTP connections, so consecutive statements may reach
-        // different replicas, while a Replicated database applies DDL from its
-        // Keeper log asynchronously. A CREATE VIEW is analyzed against the
-        // node's local metadata and can land on a replica that hasn't applied
-        // the table creates yet, failing with UNKNOWN_TABLE. Block until every
-        // replica has caught up first. ON CLUSTER must precede the database name
-        // in this command's grammar.
-        if has_replicated_engine {
-            self.post_statement(format!(
-                "SYSTEM SYNC DATABASE REPLICA ON CLUSTER '{{cluster}}' {database_ident}"
-            ))
-            .await?;
-        }
+        self.post_statement(ddl::create_chains_materialized_view(
+            &self.database,
+            &self.history,
+            topology,
+        ))
+        .await?;
 
         futures_util::future::try_join_all(entities.iter().map(|entity| {
             self.post_statement(ddl::create_view(
@@ -666,65 +696,109 @@ impl ClickHouseSink {
         })
     }
 
-    /// The checkpoint a resume keeps everything up to.
+    /// The checkpoint each chain keeps everything up to.
     ///
     /// A checkpoint is Postgres-committed if either witness says so: it is at or
-    /// below the committed checkpoint id, or it is at or below its chain's
-    /// recorded progress. The second witness is the one that matters outside the
-    /// reorg threshold, where Postgres saves no checkpoint at all — the
-    /// committed id is then the one meaning "nothing committed" while ClickHouse
-    /// holds every row of the backfill, and the chains restart from their
-    /// progress instead of replaying it. Progress and checkpoints are written in
-    /// the same transaction, so a checkpoint its chain's progress has passed is
-    /// one whose rows a replay will not write again.
-    async fn safe_checkpoint_id(
+    /// below its chain's committed checkpoint id, or it is at or below its
+    /// chain's recorded progress. The second witness is the one that matters
+    /// outside the reorg threshold, where Postgres saves no checkpoint at all —
+    /// the committed id is then the one meaning "nothing committed" while
+    /// ClickHouse holds every row of the backfill, and the chains restart from
+    /// their progress instead of replaying it. Progress and checkpoints are
+    /// written in the same transaction, so a checkpoint its chain's progress has
+    /// passed is one whose rows a replay will not write again.
+    async fn resume_bounds(
         &self,
-        committed: &str,
+        per_chain: bool,
         chain_progress: &[ChainProgressInput],
-    ) -> Result<String> {
-        let committed: u64 = committed.parse()?;
-        if chain_progress.is_empty() {
-            return Ok(committed.to_string());
+    ) -> Result<ResumeBounds> {
+        let mut committed_by_chain: Vec<(String, u64)> = Vec::with_capacity(chain_progress.len());
+        for chain in chain_progress {
+            digits_only(&chain.chain_id, "a chain id")?;
+            digits_only(&chain.committed_checkpoint_id, "a checkpoint id")?;
+            committed_by_chain.push((
+                chain.chain_id.clone(),
+                chain.committed_checkpoint_id.parse()?,
+            ));
         }
+        // Under a shared sequence every chain counts from the same run of the
+        // counter, so the highest committed id is where the whole resume trims.
+        let committed = committed_by_chain
+            .iter()
+            .map(|(_, committed)| *committed)
+            .max()
+            .unwrap_or_default();
         let covered = chain_progress
             .iter()
             .map(|chain| {
-                digits_only(&chain.chain_id, "a chain id")?;
-                Ok(format!(
+                format!(
                     "({} = {} AND {} <= {})",
                     quoted(&self.history.checkpoint_chain_id_column),
                     chain.chain_id,
                     quoted(&self.history.checkpoint_block_number_column),
                     chain.progress_block_number
-                ))
+                )
             })
-            .collect::<Result<Vec<_>>>()?
+            .collect::<Vec<_>>()
             .join(" OR ");
         let id = quoted(&self.history.id_column);
+        let aggregates = format!("minIf({id}, NOT ({covered})), max({id})");
+        let table = format!(
+            "{}.{}",
+            quoted(&self.database),
+            quoted(&self.history.checkpoints_table)
+        );
+
+        if !per_chain {
+            let answer = self
+                .post_statement(format!(
+                    "SELECT {aggregates} FROM {table} FORMAT TabSeparated"
+                ))
+                .await?;
+            let (first_uncovered, highest) = read_aggregates(&answer);
+            return Ok(ResumeBounds::SharedAcrossChains(
+                safe_of(first_uncovered, highest, committed).to_string(),
+            ));
+        }
+
+        // One read for every chain: the group-by narrows `covered` to the chain
+        // whose rows the group holds, so each chain's own progress decides it.
+        let chain_column = quoted(&self.history.checkpoint_chain_id_column);
         let answer = self
             .post_statement(format!(
-                "SELECT minIf({id}, NOT ({covered})), max({id}) FROM {}.{} FORMAT TabSeparated",
-                quoted(&self.database),
-                quoted(&self.history.checkpoints_table)
+                "SELECT {chain_column}, {aggregates} FROM {table} GROUP BY {chain_column} FORMAT \
+                 TabSeparated"
             ))
             .await?;
-        // Both aggregates answer 0 over no rows, and ids start at 1 — so a
-        // checkpoint nobody's progress covers means every checkpoint is covered,
-        // and the highest of them is the frontier. It is the highest rather than
-        // "no trim" so that history rows left above the checkpoints by an
-        // interrupted resume still go.
-        let mut columns = answer.trim().split('\t').map(|column| {
-            let column: u64 = column.trim().parse().unwrap_or_default();
-            column
-        });
-        let first_uncovered = columns.next().unwrap_or_default();
-        let highest = columns.next().unwrap_or_default();
-        Ok(match first_uncovered {
-            0 => highest,
-            first => first - 1,
+        let mut answered: HashMap<&str, (u64, u64)> = HashMap::new();
+        for line in answer
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
+            let mut columns = line.split('\t');
+            let chain_id = columns
+                .next()
+                .with_context(|| format!("Unexpected safe checkpoint answer {line:?}"))?
+                .trim();
+            let rest = columns.collect::<Vec<_>>().join("\t");
+            answered.insert(chain_id, read_aggregates(&rest));
         }
-        .max(committed)
-        .to_string())
+        Ok(ResumeBounds::PerChain(
+            committed_by_chain
+                .into_iter()
+                .map(|(chain_id, committed)| {
+                    // A chain the checkpoints table says nothing about holds
+                    // nothing to trim beyond what Postgres already committed.
+                    let (first_uncovered, highest) = answered
+                        .get(chain_id.as_str())
+                        .copied()
+                        .unwrap_or((0, committed));
+                    let safe = safe_of(first_uncovered, highest, committed).to_string();
+                    (chain_id, safe)
+                })
+                .collect::<Vec<_>>(),
+        ))
     }
 
     /// Code 81 is the database itself being gone, 60 one of its tables. No
@@ -749,43 +823,65 @@ impl ClickHouseSink {
 
     async fn resume_inner(&self, input: ResumeInput) -> Result<()> {
         let ResumeInput {
-            checkpoint_id,
+            per_chain,
             chain_progress,
             history_tables,
-            replicated,
-            database_engine,
         } = input;
-        digits_only(&checkpoint_id, "a checkpoint id")?;
-        let checkpoint_id = &self
-            .safe_checkpoint_id(&checkpoint_id, &chain_progress)
-            .await?;
+        // No chain, no rows to hold to anything. Postgres inserts every chain's
+        // row in the transaction that creates the schema, so an empty list here
+        // means a config without chains, never a row that went missing with a
+        // frontier still to lower. Every trim below is an `ALTER ... DELETE`,
+        // and on replicated storage it is run unconditionally and waited on
+        // across replicas — not worth one per table here.
+        if chain_progress.is_empty() {
+            return Ok(());
+        }
+        let bounds = self.resume_bounds(per_chain, &chain_progress).await?;
 
-        // A read answers for the replica it lands on, and the client's pool
-        // spreads consecutive statements across replicas. A replica still
-        // fetching the parts the last run wrote would answer "nothing above the
-        // checkpoint" for rows that are there, so replicated storage trims
-        // every table regardless: `mutations_sync = 2` waits on all replicas.
-        let holding = if replicated || has_replicated_engine(database_engine.as_deref()) {
-            history_tables
-                .iter()
-                .chain(std::iter::once(&self.history.checkpoints_table))
-                .cloned()
-                .collect()
-        } else {
-            self.tables_holding_rows_above(&history_tables, checkpoint_id)
-                .await?
-        };
+        // Before any trim: from here nothing above the id is readable, whether
+        // or not the trims below get to run.
+        let frontier_rows =
+            bounds.frontier_rows(chain_progress.iter().map(|chain| chain.chain_id.as_str()));
+        self.post_statement(ddl::set_chains_frontier(
+            &self.database,
+            &self.history,
+            &frontier_rows,
+        ))
+        .await?;
+
+        let histories_above = history_tables
+            .iter()
+            .map(|table| -> Result<(String, String)> {
+                Ok((
+                    table.name.clone(),
+                    bounds.above(
+                        table.chain_id_column.as_deref(),
+                        &self.history.checkpoint_id_column,
+                    )?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let checkpoints_above = bounds.above(
+            Some(&self.history.checkpoint_chain_id_column),
+            &self.history.id_column,
+        )?;
+
+        let above_by_table: Vec<(String, String)> = histories_above
+            .iter()
+            .cloned()
+            .chain(std::iter::once((
+                self.history.checkpoints_table.clone(),
+                checkpoints_above.clone(),
+            )))
+            .collect();
+        let holding = self.tables_holding_rows_above(&above_by_table).await?;
+
         futures_util::future::try_join_all(
-            history_tables
+            histories_above
                 .iter()
-                .filter(|table| holding.contains(table.as_str()))
-                .map(|table| {
-                    self.post_statement(ddl::trim_history_table(
-                        &self.database,
-                        table,
-                        &self.history,
-                        checkpoint_id,
-                    ))
+                .filter(|(table, _)| holding.contains(table.as_str()))
+                .map(|(table, above)| {
+                    self.post_statement(ddl::trim_history_table(&self.database, table, above))
                 }),
         )
         .await?;
@@ -796,7 +892,7 @@ impl ClickHouseSink {
             self.post_statement(ddl::trim_checkpoints(
                 &self.database,
                 &self.history,
-                checkpoint_id,
+                &checkpoints_above,
             ))
             .await?;
         }
@@ -810,15 +906,12 @@ impl ClickHouseSink {
     /// table to skip: a skipped trim leaves rolled-back rows visible.
     async fn tables_holding_rows_above(
         &self,
-        history_tables: &[String],
-        checkpoint_id: &str,
+        above_by_table: &[(String, String)],
     ) -> Result<HashSet<String>> {
         let answer = self
             .post_statement(ddl::holds_rows_above_checkpoint(
                 &self.database,
-                history_tables,
-                &self.history,
-                checkpoint_id,
+                above_by_table,
             ))
             .await?;
         let answered: HashMap<&str, bool> = answer
@@ -837,10 +930,9 @@ impl ClickHouseSink {
                 Ok((table.trim(), holds))
             })
             .collect::<Result<_>>()?;
-        history_tables
+        above_by_table
             .iter()
-            .chain(std::iter::once(&self.history.checkpoints_table))
-            .filter_map(|table| match answered.get(table.as_str()) {
+            .filter_map(|(table, _)| match answered.get(table.as_str()) {
                 Some(true) => Some(Ok(table.clone())),
                 Some(false) => None,
                 None => Some(Err(anyhow!("No row count answered for table {table}"))),
@@ -893,12 +985,41 @@ impl ClickHouseSink {
             .send()
             .await
             .context("ClickHouse request failed")?;
+        self.check_served_by(&response)?;
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         if !status.is_success() {
             bail!("ClickHouse returned {status}: {text}");
         }
         Ok(text)
+    }
+
+    /// ClickHouse names the node that answered in every response. The first
+    /// one is the node this run is pinned to; an answer from any other means
+    /// the address in front is balancing, and the next read could land on a
+    /// replica still fetching what was just written. A response without the
+    /// header (a proxy that strips it) leaves the pin unchecked.
+    fn check_served_by(&self, response: &reqwest::Response) -> Result<()> {
+        let Some(node) = response
+            .headers()
+            .get("X-ClickHouse-Server-Display-Name")
+            .and_then(|value| value.to_str().ok())
+        else {
+            return Ok(());
+        };
+        let mut served_by = self.served_by.lock().unwrap();
+        match served_by.as_deref() {
+            None => {
+                *served_by = Some(node.to_string());
+                Ok(())
+            }
+            Some(pinned) if pinned == node => Ok(()),
+            Some(pinned) => bail!(
+                "ClickHouse answered from node \"{node}\" after earlier answers came from \
+                 \"{pinned}\". The indexer has to read and write one replica: point \
+                 ENVIO_CLICKHOUSE_HOST at a single node rather than a load balancer."
+            ),
+        }
     }
 
     async fn insert_staged(&self, staged: Staged) -> Result<()> {
@@ -1011,6 +1132,12 @@ impl ClickHouseSink {
                 });
             }
         };
+        if let Err(error) = self.check_served_by(&response) {
+            return Err(InsertFailure {
+                retry: Retry::Never,
+                error,
+            });
+        }
         let status = response.status();
         if status.is_success() {
             return Ok(());
@@ -1131,17 +1258,43 @@ fn retry_for(status: reqwest::StatusCode, body: &str) -> Retry {
     }
 }
 
-/// The code out of a ClickHouse error body. A proxy in front of the server can
-/// quote a `Code:` of its own, so the marker ClickHouse puts in every exception
-/// it writes is what makes the number the server's own verdict rather than
-/// someone else's.
+/// `minIf, max` off a TabSeparated answer. Both aggregates answer 0 over no
+/// rows, and an unreadable column reads as 0 — which `safe_of` treats as "every
+/// checkpoint is covered".
+fn read_aggregates(answer: &str) -> (u64, u64) {
+    let mut columns = answer
+        .trim()
+        .split('\t')
+        .map(|column| column.trim().parse::<u64>().unwrap_or_default());
+    (
+        columns.next().unwrap_or_default(),
+        columns.next().unwrap_or_default(),
+    )
+}
+
+/// Ids start at 1, so a first-uncovered of 0 means no checkpoint is uncovered —
+/// and the highest of them is then the frontier. It is the highest rather than
+/// "no trim" so that history rows left above the checkpoints by an interrupted
+/// resume still go.
+fn safe_of(first_uncovered: u64, highest: u64, committed: u64) -> u64 {
+    match first_uncovered {
+        0 => highest,
+        first => first - 1,
+    }
+    .max(committed)
+}
+
 /// A Replicated database engine only replicates data when its tables use the
-/// ReplicatedMergeTree engine, so it implies replicated mode even when
+/// ReplicatedMergeTree engine, so it implies replicated DDL even when
 /// ENVIO_CLICKHOUSE_REPLICATED is unset.
 fn has_replicated_engine(database_engine: Option<&str>) -> bool {
     database_engine.map(ddl::database_engine_name) == Some("Replicated")
 }
 
+/// The code out of a ClickHouse error body. A proxy in front of the server can
+/// quote a `Code:` of its own, so the marker ClickHouse puts in every exception
+/// it writes is what makes the number the server's own verdict rather than
+/// someone else's.
 fn clickhouse_error_code(body: &str) -> Option<u32> {
     if !body.contains("DB::Exception") {
         return None;
@@ -1265,23 +1418,277 @@ mod tests {
     }
 
     fn resume_input(
-        checkpoint_id: String,
         chain_progress: Vec<ChainProgressInput>,
         history_tables: Vec<String>,
     ) -> ResumeInput {
         ResumeInput {
-            checkpoint_id,
+            per_chain: false,
             chain_progress,
-            history_tables,
-            replicated: false,
-            database_engine: None,
+            history_tables: history_tables
+                .into_iter()
+                .map(|name| HistoryTableInput {
+                    name,
+                    chain_id_column: Some("chain_id".to_string()),
+                })
+                .collect(),
         }
+    }
+
+    /// The per-chain counterpart of `resume_answers`: the safe-checkpoint read
+    /// groups by chain, so it answers one `chain<TAB>first_uncovered<TAB>max`
+    /// per chain.
+    fn per_chain_resume_answers(
+        safe_by_chain: &[(&str, &str, &str)],
+        holds: &[(&str, u8)],
+    ) -> Arc<mock_server::StatementFn> {
+        let safe = safe_by_chain
+            .iter()
+            .map(|(chain, first_uncovered, highest)| {
+                format!("{chain}\t{first_uncovered}\t{highest}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let holds = holds
+            .iter()
+            .map(|(table, above)| format!("{table}\t{above}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Arc::new(move |statement: &str| {
+            if statement.contains("minIf(") {
+                (200, safe.clone())
+            } else if statement.contains("_envio_holds") {
+                (200, holds.clone())
+            } else {
+                (200, String::new())
+            }
+        })
+    }
+
+    fn committed(
+        chain_id: &str,
+        progress_block_number: i32,
+        committed: &str,
+    ) -> ChainProgressInput {
+        ChainProgressInput {
+            chain_id: chain_id.to_string(),
+            progress_block_number,
+            committed_checkpoint_id: committed.to_string(),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_per_chain_resume_trims_each_chain_to_its_own_checkpoint() {
+        let server = mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(
+            // Chain 1 has a checkpoint its progress doesn't cover at id 6, so
+            // it keeps 5; chain 137 has none, so its highest (9) is the
+            // frontier.
+            &[("1", "6", "8"), ("137", "0", "9")],
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(ResumeInput {
+            per_chain: true,
+            chain_progress: vec![committed("1", 100, "5"), committed("137", 200, "9")],
+            ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
+        })
+        .await
+        .unwrap();
+
+        let trims: Vec<String> = server
+            .statements_seen()
+            .into_iter()
+            .filter(|statement| statement.starts_with("ALTER") || statement.starts_with("DELETE"))
+            .collect();
+        assert_eq!(
+            trims,
+            vec![
+                "ALTER TABLE `mock`.`envio_history_a` DELETE WHERE (`chain_id` = 1 AND \
+                 `envio_checkpoint_id` > 5) OR (`chain_id` = 137 AND `envio_checkpoint_id` > 9) \
+                 SETTINGS mutations_sync = 1"
+                    .to_string(),
+                "DELETE FROM `mock`.`envio_checkpoints` WHERE (`chain_id` = 1 AND `id` > 5) OR \
+                 (`chain_id` = 137 AND `id` > 9) SETTINGS lightweight_deletes_sync = 1"
+                    .to_string(),
+            ]
+        );
+    }
+
+    // Readers hold every chain to the frontier table, so the resume lowers it to
+    // the id it trims back to before a single row goes: nothing above the id is
+    // readable while the trims run, or if they never finish.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_sets_each_chains_frontier_before_it_trims() {
+        let server = mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(
+            &[("1", "6", "8"), ("137", "0", "9")],
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(ResumeInput {
+            per_chain: true,
+            chain_progress: vec![committed("1", 100, "5"), committed("137", 200, "9")],
+            ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
+        })
+        .await
+        .unwrap();
+
+        let statements = server.statements_seen();
+        let frontier = statements
+            .iter()
+            .position(|statement| statement.starts_with("INSERT INTO `mock`.`envio_chains`"));
+        let first_trim = statements.iter().position(|statement| {
+            statement.starts_with("ALTER") || statement.starts_with("DELETE")
+        });
+        assert_eq!(
+            (frontier.map(|index| statements[index].clone()), frontier < first_trim),
+            (
+                Some(
+                    "INSERT INTO `mock`.`envio_chains` (`chain_id`, `checkpoint_id`) VALUES (1, 5), \
+                     (137, 9)"
+                        .to_string()
+                ),
+                true
+            ),
+            "got: {statements:?}"
+        );
+    }
+
+    // The write order is only the read order on the node that took the writes.
+    // A second node answering means the address balances across replicas, and
+    // the run stops rather than read a replica that may be behind.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_answer_from_a_second_node_fails_the_statement() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0",
+            &[("envio_history_a", 0), ("envio_checkpoints", 0)],
+        ))
+        .await;
+        server.serve_as("node-a");
+        let sink = sink_for(&server, 4);
+        let input = || {
+            resume_input(
+                vec![committed("1", 100, "42")],
+                vec!["envio_history_a".to_string()],
+            )
+        };
+
+        sink.resume(input()).await.unwrap();
+        server.serve_as("node-b");
+        let err = sink.resume(input()).await.unwrap_err();
+
+        assert!(
+            err.reason.contains("node \"node-b\"") && err.reason.contains("\"node-a\""),
+            "got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_insert_answered_by_a_second_node_fails_without_retrying() {
+        let server = mock_server::MockClickHouse::start(0).await;
+        server.serve_as("node-a");
+        let sink = sink_for(&server, 4);
+        write(&sink, stage_ids(&sink, &["a"])).await.unwrap();
+
+        server.serve_as("node-b");
+        let err = write(&sink, stage_ids(&sink, &["b"])).await.unwrap_err();
+
+        assert_eq!(
+            (server.inserts_seen(), err.reason.contains("\"node-b\"")),
+            (2, true),
+            "got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_per_chain_resume_keeps_a_chain_the_checkpoints_say_nothing_about_at_its_committed_id(
+    ) {
+        let server = mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(
+            &[("1", "0", "8")],
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(ResumeInput {
+            per_chain: true,
+            chain_progress: vec![committed("1", 100, "5"), committed("137", 200, "3")],
+            ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            server
+                .statements_seen()
+                .into_iter()
+                .any(|statement| statement
+                    .contains("(`chain_id` = 137 AND `envio_checkpoint_id` > 3)")),
+            "chain 137 should be trimmed to the id Postgres committed"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_resume_with_no_chains_trims_nothing_under_either_sequence() {
+        let server =
+            mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(&[], &[]))
+                .await;
+        let sink = sink_for(&server, 4);
+
+        for per_chain in [true, false] {
+            sink.resume(ResumeInput {
+                per_chain,
+                chain_progress: Vec::new(),
+                ..resume_input(Vec::new(), vec!["envio_history_a".to_string()])
+            })
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(
+            server.statements_seen(),
+            Vec::<String>::new(),
+            "a bound no row can be above is not worth an ALTER ... DELETE per table"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_per_chain_resume_refuses_a_history_table_with_no_chain_column() {
+        let server = mock_server::MockClickHouse::answering_statements(per_chain_resume_answers(
+            &[("1", "0", "8")],
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        let err = sink
+            .resume(ResumeInput {
+                per_chain: true,
+                chain_progress: vec![committed("1", 100, "5")],
+                history_tables: vec![HistoryTableInput {
+                    name: "envio_history_a".to_string(),
+                    chain_id_column: None,
+                }],
+            })
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.reason.contains("no chain-id column"),
+            "unexpected error: {}",
+            err.reason
+        );
     }
 
     fn progress(chain_id: &str, progress_block_number: i32) -> ChainProgressInput {
         ChainProgressInput {
             chain_id: chain_id.to_string(),
             progress_block_number,
+            committed_checkpoint_id: "0".to_string(),
         }
     }
 
@@ -1295,7 +1702,7 @@ mod tests {
         .unwrap();
 
         let err = unreachable
-            .resume(resume_input("42".to_string(), Vec::new(), Vec::new()))
+            .resume(resume_input(vec![committed("1", 100, "0")], Vec::new()))
             .await
             .unwrap_err();
 
@@ -1319,7 +1726,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume(resume_input("42".to_string(), Vec::new(), Vec::new()))
+            .resume(resume_input(vec![committed("1", 100, "0")], Vec::new()))
             .await
             .unwrap_err();
 
@@ -1347,7 +1754,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume(resume_input("42".to_string(), Vec::new(), Vec::new()))
+            .resume(resume_input(vec![committed("1", 100, "0")], Vec::new()))
             .await
             .unwrap_err();
 
@@ -1377,7 +1784,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         let err = sink
-            .resume(resume_input("42".to_string(), Vec::new(), Vec::new()))
+            .resume(resume_input(vec![committed("1", 100, "0")], Vec::new()))
             .await
             .unwrap_err();
 
@@ -1396,62 +1803,6 @@ mod tests {
     /// The read that spares a clean restart its mutations answers for one
     /// replica; another may still be fetching what the last run wrote.
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_replicated_resume_trims_every_table_without_asking_which_hold_rows() {
-        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
-            "0",
-            &[
-                ("envio_history_a", 0),
-                ("envio_history_b", 0),
-                ("envio_checkpoints", 0),
-            ],
-        ))
-        .await;
-        let sink = sink_for(&server, 4);
-
-        sink.resume(ResumeInput {
-            database_engine: Some("Replicated('/clickhouse/{shard}', '{replica}')".to_string()),
-            ..resume_input(
-                "42".to_string(),
-                Vec::new(),
-                vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
-            )
-        })
-        .await
-        .unwrap();
-
-        let statements = server.statements_seen();
-        let mut mutations: Vec<&String> = statements
-            .iter()
-            .filter(|statement| statement.starts_with("ALTER") || statement.starts_with("DELETE"))
-            .collect();
-        mutations.sort();
-        assert_eq!(
-            (
-                statements
-                    .iter()
-                    .filter(|statement| statement.contains("_envio_holds"))
-                    .count(),
-                mutations,
-            ),
-            (
-                0,
-                vec![
-                    &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 42 \
-                      SETTINGS mutations_sync = 2"
-                        .to_string(),
-                    &"ALTER TABLE `mock`.`envio_history_b` DELETE WHERE `envio_checkpoint_id` > 42 \
-                      SETTINGS mutations_sync = 2"
-                        .to_string(),
-                    &"DELETE FROM `mock`.`envio_checkpoints` WHERE `id` > 42 \
-                      SETTINGS lightweight_deletes_sync = 2"
-                        .to_string(),
-                ]
-            ),
-            "replicated storage should trim blind, got: {statements:?}"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn a_resume_trims_every_history_table_and_then_the_checkpoints() {
         let server = mock_server::MockClickHouse::answering_statements(resume_answers(
             "0",
@@ -1465,8 +1816,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         sink.resume(resume_input(
-            "42".to_string(),
-            Vec::new(),
+            vec![committed("1", 100, "42")],
             vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
         ))
         .await
@@ -1484,18 +1834,48 @@ mod tests {
             (
                 vec![
                     "ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 42 \
-                     SETTINGS mutations_sync = 2"
+                     SETTINGS mutations_sync = 1"
                         .to_string(),
                     "ALTER TABLE `mock`.`envio_history_b` DELETE WHERE `envio_checkpoint_id` > 42 \
-                     SETTINGS mutations_sync = 2"
+                     SETTINGS mutations_sync = 1"
                         .to_string(),
                 ],
                 Some(
                     "DELETE FROM `mock`.`envio_checkpoints` WHERE `id` > 42 \
-                     SETTINGS lightweight_deletes_sync = 2"
+                     SETTINGS lightweight_deletes_sync = 1"
                         .to_string()
                 )
             )
+        );
+    }
+
+    /// Under a shared sequence every chain counts from the same run of the
+    /// counter, so the id the resume trims to is the highest any chain has
+    /// committed — read off the chain progress rather than taken as a separate
+    /// number that can disagree with it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_shared_resume_trims_to_the_highest_committed_chain() {
+        let server = mock_server::MockClickHouse::answering_statements(resume_answers(
+            "0\t0",
+            &[("envio_history_a", 1), ("envio_checkpoints", 1)],
+        ))
+        .await;
+        let sink = sink_for(&server, 4);
+
+        sink.resume(resume_input(
+            vec![committed("1", 100, "5"), committed("137", 200, "42")],
+            vec!["envio_history_a".to_string()],
+        ))
+        .await
+        .unwrap();
+
+        assert!(
+            server
+                .statements_seen()
+                .into_iter()
+                .any(|statement| statement.contains("`envio_checkpoint_id` > 42")),
+            "the trim should follow the highest committed chain, got: {:?}",
+            server.statements_seen()
         );
     }
 
@@ -1509,7 +1889,6 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         sink.resume(resume_input(
-            "42".to_string(),
             Vec::new(),
             vec!["envio_history_a".to_string()],
         ))
@@ -1541,8 +1920,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         sink.resume(resume_input(
-            "42".to_string(),
-            Vec::new(),
+            vec![committed("1", 100, "42")],
             vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
         ))
         .await
@@ -1572,8 +1950,7 @@ mod tests {
 
         let err = sink
             .resume(resume_input(
-                "42".to_string(),
-                Vec::new(),
+                vec![committed("1", 100, "0")],
                 vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
             ))
             .await
@@ -1610,8 +1987,7 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         sink.resume(resume_input(
-            "42".to_string(),
-            Vec::new(),
+            vec![committed("1", 100, "42")],
             vec!["envio_history_a".to_string(), "envio_history_b".to_string()],
         ))
         .await
@@ -1627,7 +2003,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 42 \
-                  SETTINGS mutations_sync = 2"
+                  SETTINGS mutations_sync = 1"
                     .to_string()
             ],
             "only the table holding rows should be trimmed, got: {statements:?}"
@@ -1645,7 +2021,6 @@ mod tests {
 
         // What Postgres commits during backfill: no checkpoint at all.
         sink.resume(resume_input(
-            "0".to_string(),
             vec![progress("1", 10), progress("137", -1)],
             vec!["envio_history_a".to_string()],
         ))
@@ -1671,7 +2046,7 @@ mod tests {
                 ),
                 Some(
                     &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 6 \
-                      SETTINGS mutations_sync = 2"
+                      SETTINGS mutations_sync = 1"
                         .to_string()
                 ),
             ),
@@ -1692,7 +2067,6 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         sink.resume(resume_input(
-            "42".to_string(),
             vec![progress("1", 10)],
             vec!["envio_history_a".to_string()],
         ))
@@ -1706,7 +2080,7 @@ mod tests {
                 .find(|statement| statement.starts_with("ALTER")),
             Some(
                 &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 98 \
-                  SETTINGS mutations_sync = 2"
+                  SETTINGS mutations_sync = 1"
                     .to_string()
             )
         );
@@ -1723,7 +2097,6 @@ mod tests {
         let sink = sink_for(&server, 4);
 
         sink.resume(resume_input(
-            "0".to_string(),
             vec![progress("1", 500)],
             vec!["envio_history_a".to_string()],
         ))
@@ -1737,7 +2110,7 @@ mod tests {
                 .find(|statement| statement.starts_with("ALTER")),
             Some(
                 &"ALTER TABLE `mock`.`envio_history_a` DELETE WHERE `envio_checkpoint_id` > 12 \
-                  SETTINGS mutations_sync = 2"
+                  SETTINGS mutations_sync = 1"
                     .to_string()
             )
         );

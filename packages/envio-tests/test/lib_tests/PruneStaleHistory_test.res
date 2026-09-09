@@ -6,17 +6,25 @@ let makeEntityConfig = (~name, ~postgres=true, ~clickhouse=false): Internal.enti
     "index": 0,
     "storage": {"postgres": postgres, "clickhouse": clickhouse},
   }->(
-    Utils.magic: {"name": string, "index": int, "storage": {"postgres": bool, "clickhouse": bool}} => Internal.entityConfig
+    Utils.magic: {
+      "name": string,
+      "index": int,
+      "storage": {"postgres": bool, "clickhouse": bool},
+    } => Internal.entityConfig
   )
 
-let toNames = (targets: PruneStaleHistory.targets) => {
-  "concurrent": targets.concurrent->Array.map(entityConfig => entityConfig.name),
-  "forced": targets.forced->Array.map(entityConfig => entityConfig.name),
-}
+let toNames = (targets: PruneStaleHistory.targets) =>
+  {
+    "concurrent": targets.concurrent->Array.map(entityConfig => entityConfig.name),
+    "forced": targets.forced->Array.map(entityConfig => entityConfig.name),
+  }
 
 let intervalMillis = 1000.
 let nowMillis = 100_000.
-let safeCheckpoints = CheckpointBounds.EveryChain(100n)
+let safeCheckpoints = {
+  CheckpointSequence.sequence: SharedAcrossChains,
+  byChain: Frontier.fromEntries([(1->ChainId.fromInt, 100n)]),
+}
 
 describe("PruneStaleHistory.selectFrom", () => {
   it("Selects up to 5 overdue entities oldest-first, excluding ones written in the batch", t => {
@@ -30,8 +38,8 @@ describe("PruneStaleHistory.selectFrom", () => {
     ])
 
     let targets = PruneStaleHistory.selectFrom(
-      ~allEntities=["recent", "written", "never", "oldA", "oldB", "oldC", "oldD"]->Array.map(name =>
-        makeEntityConfig(~name)
+      ~allEntities=["recent", "written", "never", "oldA", "oldB", "oldC", "oldD"]->Array.map(
+        name => makeEntityConfig(~name),
       ),
       ~lastPrunedAtMillis,
       ~writtenEntityNames=Utils.Set.fromArray(["written"]),
@@ -52,34 +60,37 @@ describe("PruneStaleHistory.selectFrom", () => {
     })
   })
 
-  it("Caps concurrent at 5 and force-prunes starved entities, even ones written in the batch", t => {
-    let lastPrunedAtMillis = Dict.fromArray([
-      ("e2", 10_000.),
-      ("e3", 20_000.),
-      ("e4", 30_000.),
-      ("e5", 40_000.),
-      ("e6", 50_000.),
-      ("e7", 60_000.),
-      ("e8", 70_000.),
-    ])
+  it(
+    "Caps concurrent at 5 and force-prunes starved entities, even ones written in the batch",
+    t => {
+      let lastPrunedAtMillis = Dict.fromArray([
+        ("e2", 10_000.),
+        ("e3", 20_000.),
+        ("e4", 30_000.),
+        ("e5", 40_000.),
+        ("e6", 50_000.),
+        ("e7", 60_000.),
+        ("e8", 70_000.),
+      ])
 
-    let targets = PruneStaleHistory.selectFrom(
-      ~allEntities=["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"]->Array.map(name =>
-        makeEntityConfig(~name)
-      ),
-      ~lastPrunedAtMillis,
-      ~writtenEntityNames=Utils.Set.fromArray(["e1", "e2"]),
-      ~isRollback=false,
-      ~nowMillis,
-      ~intervalMillis,
-      ~safeCheckpoints,
-    )
+      let targets = PruneStaleHistory.selectFrom(
+        ~allEntities=["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"]->Array.map(
+          name => makeEntityConfig(~name),
+        ),
+        ~lastPrunedAtMillis,
+        ~writtenEntityNames=Utils.Set.fromArray(["e1", "e2"]),
+        ~isRollback=false,
+        ~nowMillis,
+        ~intervalMillis,
+        ~safeCheckpoints,
+      )
 
-    t.expect(targets->toNames).toEqual({
-      "concurrent": ["e3", "e4", "e5", "e6", "e7"],
-      "forced": ["e1", "e2", "e8"],
-    })
-  })
+      t.expect(targets->toNames).toEqual({
+        "concurrent": ["e3", "e4", "e5", "e6", "e7"],
+        "forced": ["e1", "e2", "e8"],
+      })
+    },
+  )
 
   it("Selects no concurrent prunes for a rollback write, but keeps forced ones", t => {
     let lastPrunedAtMillis = Dict.fromArray([
@@ -93,8 +104,8 @@ describe("PruneStaleHistory.selectFrom", () => {
     ])
 
     let targets = PruneStaleHistory.selectFrom(
-      ~allEntities=["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"]->Array.map(name =>
-        makeEntityConfig(~name)
+      ~allEntities=["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"]->Array.map(
+        name => makeEntityConfig(~name),
       ),
       ~lastPrunedAtMillis,
       ~writtenEntityNames=Utils.Set.make(),

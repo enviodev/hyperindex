@@ -69,17 +69,7 @@ and processNextBatch = async (state: IndexerState.t, ~scheduleFetch): unit => {
   let isInReorgThresholdBeforeUpdate = state->IndexerState.isInReorgThreshold
   let isRealtimeBeforeUpdate = state->IndexerState.isRealtime
 
-  let isRollbackBatch = switch state->IndexerState.rollbackState {
-  | RollbackReady(_) => true
-  | _ => false
-  }
-
-  let batch =
-    state->IndexerState.createBatch(
-      ~processedCheckpointId=state->IndexerState.processedCheckpointId,
-      ~batchSizeTarget=(state->IndexerState.config).batchSize,
-      ~isRollback=isRollbackBatch,
-    )
+  let batch = state->IndexerState.createBatch(~batchSizeTarget=(state->IndexerState.config).batchSize)
 
   let progressedChainsById = batch.progressedChainsById
 

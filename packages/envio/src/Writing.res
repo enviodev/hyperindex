@@ -42,12 +42,10 @@ let snapshotEffects = (state: IndexerState.t, ~cache): array<Persistence.updated
     switch idsToStore {
     | [] => ()
     | ids =>
-      let items = ids->Array.filterMap((id): option<Internal.effectCacheItem> =>
-        switch dict->Dict.getUnsafe(id) {
-        | Set({entity: output}) => Some({id, output})
-        | Delete(_) => None
-        }
-      )
+      let items = ids->Array.map((id): Internal.effectCacheItem => {
+        id,
+        output: (dict->Dict.getUnsafe(id)).output,
+      })
       let effectName = effect.name
       let tableName = table.tableName
       let effectCacheRecord = switch cache->Utils.Dict.dangerouslyGetNonOption(tableName) {
@@ -101,22 +99,34 @@ let runOneWrite = async (state: IndexerState.t) => {
     | None => ()
     }
   | _ =>
-    let committedCheckpointId = state->IndexerState.committedCheckpointId
     let batch = state->IndexerState.drainBatchRun
-    // The run's last checkpoint; entity changes above it stay queued for the next write.
-    let upToCheckpointId = switch batch.checkpointIds->Utils.Array.last {
-    | Some(checkpointId) => checkpointId
-    | None => committedCheckpointId
-    }
 
     let rollback = state->IndexerState.takeRollback
+
+    // Entity changes above it stay queued for the next write.
+    let writtenFrontier = Persistence.writtenFrontier(~batch, ~rollback)
 
     let updatedEntities = []
     state->IndexerState.eachEntityTable((~entityConfig, ~scope, ~table) => {
       let changes =
-        table->InMemoryTable.Entity.snapshotChanges(~committedCheckpointId, ~upToCheckpointId)
+        table->InMemoryTable.Entity.snapshotChanges(
+          ~committedCheckpointId=state->IndexerState.committedCheckpointIdFor(~scope),
+          ~upToCheckpointId=config.checkpointSequence->CheckpointSequence.forScope(
+            writtenFrontier,
+            ~scope,
+          ),
+        )
       if changes->Utils.Array.notEmpty {
-        updatedEntities->Array.push(({entityConfig, scope, changes}: Persistence.updatedEntity))
+        updatedEntities->Array.push(
+          (
+            {
+              entityConfig,
+              scope,
+              changes,
+              shouldSaveHistory: batch.history->HistoryPolicy.forScope(~scope),
+            }: Persistence.updatedEntity
+          ),
+        )
       }
     })
     let updatedEffectsCache = snapshotEffects(state, ~cache)
@@ -142,7 +152,6 @@ let runOneWrite = async (state: IndexerState.t) => {
       persistence.storage.writeBatch(
         ~batch,
         ~rollback,
-        ~isInReorgThreshold=batch.isInReorgThreshold,
         ~config,
         ~allEntities=persistence.allEntities,
         ~updatedEntities,
@@ -155,7 +164,7 @@ let runOneWrite = async (state: IndexerState.t) => {
       PruneStaleHistory.runConcurrent(state, ~targets=pruneTargets),
     ))
 
-    state->IndexerState.markCommitted(~upToCheckpointId)
+    state->IndexerState.markCommitted(~writtenFrontier)
 
     switch rollback {
     | Some({progressedChains}) if RollbackCommit.callbacks->Utils.Array.notEmpty =>
@@ -218,14 +227,19 @@ let commitBatch = (state: IndexerState.t, ~batch: Batch.t) => {
 // Drops committed entity and effect entries across all tables. With
 // keepLoadedFromDb, entries seeded from a db read are spared.
 let dropCommitted = (state: IndexerState.t, ~keepLoadedFromDb) => {
-  let committedCheckpointId = state->IndexerState.committedCheckpointId
-  state->IndexerState.eachEntityTable((~entityConfig as _, ~scope as _, ~table) =>
-    table->InMemoryTable.Entity.dropCommittedChanges(~committedCheckpointId, ~keepLoadedFromDb)
+  state->IndexerState.eachEntityTable((~entityConfig as _, ~scope, ~table) =>
+    table->InMemoryTable.Entity.dropCommittedChanges(
+      ~committedCheckpointId=state->IndexerState.committedCheckpointIdFor(~scope),
+      ~keepLoadedFromDb,
+    )
   )
   state
   ->IndexerState.effectState
   ->EffectState.forEach(inMemTable =>
-    inMemTable->InMemoryStore.dropCommittedEffects(~committedCheckpointId, ~keepLoadedFromDb)
+    inMemTable->InMemoryStore.dropCommittedEffects(
+      ~committedFrontier=state->IndexerState.committedFrontier,
+      ~keepLoadedFromDb,
+    )
   )
 }
 
