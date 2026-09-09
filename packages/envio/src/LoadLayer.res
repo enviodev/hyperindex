@@ -69,8 +69,6 @@ let loadById = (
       let entity = dbEntities->Array.getUnsafe(idx)
       entitiesMap->Dict.set(entity.id, entity)
     }
-    // Read once for the whole load: a cross-chain scope folds the frontier to
-    // reach it, and nothing here moves it between rows.
     let committedCheckpointId = indexerState->IndexerState.committedCheckpointIdFor(~scope)
     idsToLoad->Array.forEach(entityId => {
       inMemTable->InMemoryTable.Entity.initValue(

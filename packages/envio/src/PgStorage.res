@@ -1089,13 +1089,7 @@ let rec writeBatch = async (
         Some(CheckpointIndexes(indexes))
       }
     }
-    // Where the write moves each chain's sequence: the chains the batch handed
-    // ids to, and those a rollback's diff ids sit on — which the batch may not
-    // have progressed at all.
-    let movedFrontier = switch rollback {
-    | Some({diffFrontier}) => Frontier.mergeMax(batch->Batch.checkpointFrontier, diffFrontier)
-    | None => batch->Batch.checkpointFrontier
-    }
+    let movedFrontier = Persistence.writtenFrontier(~batch, ~rollback)
 
     let specificError = ref(None)
 
@@ -1155,7 +1149,6 @@ let rec writeBatch = async (
       | Internal.CrossChain => None
       | Chain(chainId) => Some(chainId)
       }
-      let shouldSaveHistory = keepsHistory
       let changes = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
       | (Some(field), Some(chainId)) =>
         changes->Array.map(change =>
@@ -1206,7 +1199,7 @@ let rec writeBatch = async (
           orderedIds->Array.push(entityId)
         }
         latestChangeById->Dict.set(entityKey, change)
-        if shouldSaveHistory {
+        if keepsHistory {
           if Some(change->Change.getCheckpointId) === diffCheckpointId {
             idsWithDiff->Utils.Set.add(entityKey)->ignore
           } else {
@@ -1229,7 +1222,7 @@ let rec writeBatch = async (
         }
 
         // An id needs a history backfill iff none of its changes is the diff.
-        if shouldSaveHistory && !(idsWithDiff->Utils.Set.has(entityKey)) {
+        if keepsHistory && !(idsWithDiff->Utils.Set.has(entityKey)) {
           backfillHistoryIds->Utils.Set.add(entityId)->ignore
         }
       })
@@ -1243,7 +1236,7 @@ let rec writeBatch = async (
         try {
           let promises = []
 
-          if shouldSaveHistory {
+          if keepsHistory {
             if backfillHistoryIds->Utils.Set.size !== 0 {
               // This must run before updating entity or entity history tables
               await EntityHistory.backfillHistory(

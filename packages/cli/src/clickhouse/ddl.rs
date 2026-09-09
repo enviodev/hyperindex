@@ -70,6 +70,20 @@ pub enum ResumeBounds {
 }
 
 impl ResumeBounds {
+    /// One `(chain_id, checkpoint_id)` row per chain: a shared bound holds
+    /// every chain to the same id.
+    pub fn frontier_rows<'a>(
+        &self,
+        chain_ids: impl Iterator<Item = &'a str>,
+    ) -> Vec<(String, String)> {
+        match self {
+            ResumeBounds::Shared(checkpoint_id) => chain_ids
+                .map(|chain_id| (chain_id.to_string(), checkpoint_id.clone()))
+                .collect(),
+            ResumeBounds::PerChain(bounds) => bounds.clone(),
+        }
+    }
+
     /// The predicate matching the rows above the bound in a table whose chain
     /// column is `chain_column`. Per-chain bounds need that column: without it
     /// a row can't be attributed to the sequence its id came from.

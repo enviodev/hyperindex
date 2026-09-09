@@ -90,13 +90,7 @@ let getSafeCheckpointIdByChain = (
     (
       chainId,
       switch cs->ChainState.safeCheckpointTracking {
-      | None =>
-        Some(
-          switch sequence {
-          | Global => committedFrontier->Frontier.max
-          | PerChain => committedFrontier->Frontier.get(chainId)
-          },
-        )
+      | None => Some(sequence->CheckpointSequence.position(committedFrontier, ~chainId))
       | Some(tracking) =>
         tracking->SafeCheckpointTracking.getSafeCheckpointId(
           ~sourceBlockNumber=cs->ChainState.knownHeight,

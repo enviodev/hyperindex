@@ -24,25 +24,11 @@ let make = (
   floors: CheckpointSequence.bounds(
     sequence,
     switch sequence {
-    | Global => Frontier.make(~chainIds, ~checkpointId=floorCheckpointId)
+    | Global => chainIds->Array.map(chainId => (chainId, floorCheckpointId))->Frontier.fromEntries
     | PerChain => Frontier.fromEntries([(reorgChainId, floorCheckpointId)])
     },
   ),
   forkBlockNumberByChain: Dict.fromArray([(reorgChainId->ChainId.toString, forkBlockNumber)]),
-}
-
-let mergeForkBlocks = (pending: dict<int>, next: dict<int>) => {
-  let merged = pending->Dict.copy
-  next->Utils.Dict.forEachWithKey((blockNumber, key) =>
-    merged->Dict.set(
-      key,
-      switch merged->Utils.Dict.dangerouslyGetNonOption(key) {
-      | Some(pending) => Pervasives.min(pending, blockNumber)
-      | None => blockNumber
-      },
-    )
-  )
-  merged
 }
 
 let merge = (pending: t, next: t) => {
@@ -50,9 +36,10 @@ let merge = (pending: t, next: t) => {
     next.floors.sequence,
     Frontier.mergeMin(pending.floors.byChain, next.floors.byChain),
   ),
-  forkBlockNumberByChain: mergeForkBlocks(
+  forkBlockNumberByChain: Utils.Dict.mergeWith(
     pending.forkBlockNumberByChain,
     next.forkBlockNumberByChain,
+    Pervasives.min,
   ),
 }
 

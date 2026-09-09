@@ -3,12 +3,6 @@ type t = dict<Internal.checkpointId>
 
 let empty = (): t => Dict.make()
 
-let make = (~chainIds: array<ChainId.t>, ~checkpointId): t => {
-  let frontier = Dict.make()
-  chainIds->Array.forEach(chainId => frontier->ChainId.Dict.set(chainId, checkpointId))
-  frontier
-}
-
 let fromEntries = (entries: array<(ChainId.t, Internal.checkpointId)>): t => {
   let frontier = Dict.make()
   entries->Array.forEach(((chainId, checkpointId)) =>
@@ -35,13 +29,13 @@ let find = (frontier: t, chainId): option<Internal.checkpointId> =>
 
 let set = (frontier: t, chainId, checkpointId) => frontier->ChainId.Dict.set(chainId, checkpointId)
 
-let chainIds = (frontier: t): array<ChainId.t> =>
-  frontier->Dict.keysToArray->Array.map(ChainId.normalizeOrThrow)
-
 let entries = (frontier: t): array<(ChainId.t, Internal.checkpointId)> =>
   frontier
   ->Dict.toArray
   ->Array.map(((key, checkpointId)) => (key->ChainId.normalizeOrThrow, checkpointId))
+
+let chainIds = (frontier: t): array<ChainId.t> =>
+  frontier->Dict.keysToArray->Array.map(ChainId.normalizeOrThrow)
 
 // The two parallel arrays an `unnest($1, $2) AS ...(chain_id, checkpoint_id)`
 // relation reads positionally.
@@ -75,25 +69,8 @@ let max = (frontier: t) =>
 let min = (frontier: t) =>
   frontier->fold(Pervasives.min)->Option.getOr(Internal.initialCheckpointId)
 
-// Combines two frontiers chain by chain, keeping every chain either names.
-%%private(
-  let merge = (a: t, b: t, pick) => {
-    let merged = a->copy
-    b->Utils.Dict.forEachWithKey((checkpointId, key) =>
-      merged->Dict.set(
-        key,
-        switch merged->Utils.Dict.dangerouslyGetNonOption(key) {
-        | Some(existing) => pick(existing, checkpointId)
-        | None => checkpointId
-        },
-      )
-    )
-    merged
-  }
-)
-
-let mergeMin = (a: t, b: t) => merge(a, b, Pervasives.min)
-let mergeMax = (a: t, b: t) => merge(a, b, Pervasives.max)
+let mergeMin = (a: t, b: t): t => Utils.Dict.mergeWith(a, b, Pervasives.min)
+let mergeMax = (a: t, b: t): t => Utils.Dict.mergeWith(a, b, Pervasives.max)
 
 let equals = (a: t, b: t) => {
   let same = (a: t, b: t) =>

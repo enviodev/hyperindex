@@ -840,13 +840,8 @@ impl ClickHouseSink {
 
         // Before any trim: from here nothing above the id is readable, whether
         // or not the trims below get to run.
-        let frontier_rows: Vec<(String, String)> = match &bounds {
-            ddl::ResumeBounds::Shared(checkpoint_id) => chain_progress
-                .iter()
-                .map(|chain| (chain.chain_id.clone(), checkpoint_id.clone()))
-                .collect(),
-            ddl::ResumeBounds::PerChain(bounds) => bounds.clone(),
-        };
+        let frontier_rows =
+            bounds.frontier_rows(chain_progress.iter().map(|chain| chain.chain_id.as_str()));
         self.post_statement(ddl::set_chains_frontier(
             &self.database,
             &self.history,
@@ -854,7 +849,7 @@ impl ClickHouseSink {
         ))
         .await?;
 
-        let above_by_table = history_tables
+        let histories_above = history_tables
             .iter()
             .map(|table| -> Result<(String, String)> {
                 Ok((
@@ -865,23 +860,24 @@ impl ClickHouseSink {
                     )?,
                 ))
             })
-            .chain(std::iter::once(Ok::<(String, String), anyhow::Error>((
-                self.history.checkpoints_table.clone(),
-                bounds.above(
-                    Some(&self.history.checkpoint_chain_id_column),
-                    &self.history.id_column,
-                )?,
-            ))))
             .collect::<Result<Vec<_>>>()?;
+        let checkpoints_above = bounds.above(
+            Some(&self.history.checkpoint_chain_id_column),
+            &self.history.id_column,
+        )?;
 
+        let above_by_table: Vec<(String, String)> = histories_above
+            .iter()
+            .cloned()
+            .chain(std::iter::once((
+                self.history.checkpoints_table.clone(),
+                checkpoints_above.clone(),
+            )))
+            .collect();
         let holding = self.tables_holding_rows_above(&above_by_table).await?;
 
-        let (checkpoints, histories): (Vec<_>, Vec<_>) = above_by_table
-            .iter()
-            .partition(|(table, _)| table == &self.history.checkpoints_table);
-
         futures_util::future::try_join_all(
-            histories
+            histories_above
                 .iter()
                 .filter(|(table, _)| holding.contains(table.as_str()))
                 .map(|(table, above)| {
@@ -892,11 +888,13 @@ impl ClickHouseSink {
 
         // Last, so that a resume interrupted before this point still has the
         // checkpoints proving which history rows the next one must remove.
-        for (table, above) in checkpoints {
-            if holding.contains(table.as_str()) {
-                self.post_statement(ddl::trim_checkpoints(&self.database, &self.history, above))
-                    .await?;
-            }
+        if holding.contains(self.history.checkpoints_table.as_str()) {
+            self.post_statement(ddl::trim_checkpoints(
+                &self.database,
+                &self.history,
+                &checkpoints_above,
+            ))
+            .await?;
         }
         Ok(())
     }

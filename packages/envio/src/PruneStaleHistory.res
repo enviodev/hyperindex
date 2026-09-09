@@ -35,8 +35,7 @@ let selectSafeCheckpoints = (state: IndexerState.t) => {
       checkpointId->Option.map(checkpointId => (chainId, checkpointId))
     )
   // Under one shared sequence the bound is the lowest of them, which only
-  // exists once every chain has one; the rendering takes that minimum, so the
-  // frontier handed over is the same shape either way.
+  // exists once every chain has one.
   let hasBound = switch sequence {
   | PerChain => safe->Utils.Array.notEmpty
   | Global => safe->Array.length === byChain->Array.length

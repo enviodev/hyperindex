@@ -11,6 +11,14 @@ type t =
 let fromEntities = (entities: array<Internal.entityConfig>) =>
   entities->Array.some(entityConfig => entityConfig.crossChain) ? Global : PerChain
 
+// Where a chain stands: under one shared counter that is wherever the counter
+// got to, whichever chain moved it last.
+let position = (sequence: t, frontier: Frontier.t, ~chainId) =>
+  switch sequence {
+  | Global => frontier->Frontier.max
+  | PerChain => frontier->Frontier.get(chainId)
+  }
+
 // The committed (or processed) id a scope's rows compare against. A chain scope
 // reads its own. A cross-chain scope spans every chain: under one shared
 // sequence the highest id is exactly how far the scope has got, while per-chain
@@ -49,11 +57,7 @@ type cursor = {sequence: t, frontier: Frontier.t}
 let cursor = (sequence: t, ~frontier: Frontier.t) => {sequence, frontier: frontier->Frontier.copy}
 
 let next = (cursor, ~chainId): Internal.checkpointId => {
-  let checkpointId =
-    switch cursor.sequence {
-    | Global => cursor.frontier->Frontier.max
-    | PerChain => cursor.frontier->Frontier.get(chainId)
-    }->BigInt.add(1n)
+  let checkpointId = cursor.sequence->position(cursor.frontier, ~chainId)->BigInt.add(1n)
   cursor.frontier->Frontier.set(chainId, checkpointId)
   checkpointId
 }

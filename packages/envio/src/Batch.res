@@ -184,15 +184,10 @@ let addReorgCheckpoints = (
   }
 }
 
-// A chain's checkpoint ids ascend as its items are walked in block order, so
-// within a chain a higher id always means a later block. Rollback preserves
-// that: it deletes the chain's ids above its target before any higher one is
-// allocated, so the ids the re-indexed blocks get are above everything the
-// chain still holds. Both rollback shapes lean on the invariant — they delete
-// by `id > target`, per chain or across every chain, which is only the stale
-// suffix if ids and blocks agree on order within each chain. Under one shared
-// sequence ids interleave freely *across* chains, which is exactly why an
-// isolated rollback can't take the id bound alone.
+// Within a chain, ids ascend with block order, and rollback preserves that by
+// deleting the chain's ids above its target before any higher one is allocated.
+// Every rollback deletes by `id > target`, which is only the stale suffix while
+// ids and blocks agree on order within each chain.
 let make = (
   ~sequence: CheckpointSequence.t,
   ~frontier: Frontier.t,

@@ -829,14 +829,10 @@ let markCommitted = (state: t, ~upToFrontier) => {
 }
 
 // Reset the in-memory tables and arm the rollback diff that the next write
-// commits. Returns the ids the diff rows are stamped with: one per chain the
-// rollback moves, from the same allocator a batch's checkpoints come from, so
-// under one shared sequence they are distinct across chains. They start from
-// the committed frontier — a rollback that supersedes an unwritten one takes
-// over its ids along with its rows — and move the processing frontier past
-// them, so the batch that replaces the diff rows starts above them. A sibling
-// the rollback leaves alone gets no diff row, and burning an id on it would
-// leave a hole in its sequence.
+// commits. The diff ids start from the committed frontier — a rollback that
+// supersedes an unwritten one takes over its ids along with its rows. A sibling
+// the rollback leaves alone gets no diff row: burning an id on it would leave a
+// hole in its sequence.
 let beginRollbackDiff = (
   state: t,
   ~floors: RollbackFloors.t,

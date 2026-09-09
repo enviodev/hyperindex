@@ -81,6 +81,14 @@ type rollback = {
   progressedChains: array<InternalTable.Chains.progressedChain>,
 }
 
+// Where a write leaves each chain's sequence. A rollback's diff rows sit on
+// chains the batch may not have progressed at all, so the write reaches them too.
+let writtenFrontier = (~batch: Batch.t, ~rollback: option<rollback>) =>
+  switch rollback {
+  | Some({diffFrontier}) => Frontier.mergeMax(batch->Batch.checkpointFrontier, diffFrontier)
+  | None => batch->Batch.checkpointFrontier
+  }
+
 // One flush group: the changes an entity accumulated within a single chain
 // scope. A per-chain entity contributes one group per chain, and the scope is
 // what stamps the chain id onto the rows — it's never re-derived downstream.
