@@ -539,20 +539,19 @@ let targetBlock = (cs: t, ~chainTargetItems: float) => {
   }
 }
 
-// Block range that cross-chain progress alignment maps fractions over: from
-// the chain's startBlock to the last block it can fetch right now. The lower
-// bound is deliberately static - anchoring it at firstEventBlock would make
-// two chains sitting at the same block read different progress fractions
-// depending on whether each has discovered its first event yet, so the
-// anchor's line could map below a follower's own frontier and stall it.
+// Block range the cross-chain fetch priority measures progress over: from the
+// chain's startBlock to the last block it can fetch right now. The lower bound
+// is deliberately static - anchoring it at firstEventBlock would make two
+// chains sitting at the same block read different progress fractions depending
+// on whether each has discovered its first event yet.
 let progressRange = (cs: t) => {
   let fetchState = cs.fetchState
   (fetchState.startBlock, cs->fetchCeiling)
 }
 
 // A degenerate range (chain already at or past its last block) maps to 1 so it
-// never constrains the other chains. Clamped at 0 for the initial -1 fetch
-// frontier - the only possible blockNumber below the range's lower bound.
+// sorts last for budget. Clamped at 0 for the initial -1 fetch frontier - the
+// only possible blockNumber below the range's lower bound.
 let progressAtBlock = (cs: t, ~blockNumber) => {
   let (lower, upper) = cs->progressRange
   upper <= lower
@@ -563,35 +562,23 @@ let progressAtBlock = (cs: t, ~blockNumber) => {
       )
 }
 
-let blockAtProgress = (cs: t, ~progress) => {
-  let (lower, upper) = cs->progressRange
-  lower + Math.ceil(progress *. (upper - lower)->Int.toFloat)->Float.toInt
-}
-
-// The fetch frontier as a fraction of the alignable range - what the
-// cross-chain waterfall aligns other chains against. Based on blocks actually
-// fetched, so it holds up even while this chain's queries are in flight.
+// The fetch frontier as a fraction of its range - what the cross-chain
+// waterfall orders chains by. Based on blocks actually fetched, so it holds up
+// even while this chain's queries are in flight.
 let frontierProgress = (cs: t) =>
   cs->progressAtBlock(~blockNumber=cs.fetchState->FetchState.bufferBlockNumber)
 
 // Propose queries sized against this chain's target block. Called by
 // CrossChainState's waterfall, furthest-behind chain first, with
-// chainTargetItems set to whatever budget remains at that point and
-// maxTargetBlock set to the most-behind chain's progress mapped onto this
-// chain, so a chain with budget can't run further ahead than the chain the
-// whole pool is prioritizing.
-let getNextQuery = (cs: t, ~chainTargetItems: float, ~maxTargetBlock=?) => {
+// chainTargetItems set to whatever budget remains at that point.
+let getNextQuery = (cs: t, ~chainTargetItems: float) => {
   let chainTargetBlock = cs->targetBlock(~chainTargetItems)
-  let chainTargetBlock = switch maxTargetBlock {
-  | Some(maxTargetBlock) => Pervasives.min(chainTargetBlock, maxTargetBlock)
-  | None => chainTargetBlock
-  }
-  // When the target block is clamped (head/endBlock/cross-chain alignment) a
-  // known-density chain can't use the whole handed budget - cap the fresh part
-  // at what the clamped range actually costs (in-flight reservations stay on
-  // top: they're already accounted and shouldn't crowd out new partitions), so
-  // the waterfall's leftover flows to the next chain in the same tick instead
-  // of being held by an oversized probe.
+  // When the target block is clamped (head/endBlock) a known-density chain
+  // can't use the whole handed budget - cap the fresh part at what the clamped
+  // range actually costs (in-flight reservations stay on top: they're already
+  // accounted and shouldn't crowd out new partitions), so the waterfall's
+  // leftover flows to the next chain in the same tick instead of being held by
+  // an oversized probe.
   let chainTargetItems = switch cs->effectiveDensity {
   | Some(density) if density > 0. =>
     let rangeCost =

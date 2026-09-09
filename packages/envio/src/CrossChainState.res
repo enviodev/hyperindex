@@ -227,11 +227,10 @@ let markReady = (crossChainState: t, ~readyAt) => {
 
 // Chains ordered furthest-behind first by fetch-frontier progress, so the
 // shared buffer pool goes to the chains with the most fetchable backfill work
-// before the rest — and the same metric that sets the alignment line also
-// decides who draws budget first, so the anchor is served before any chain it
-// clamps. (Batch ordering keeps its own getProgressPercentage measure.) A chain
-// with no known height reads 100% here and sorts last, which is fine: it can't
-// fetch until its first block lands regardless of when it's visited.
+// before the rest. (Batch ordering keeps its own getProgressPercentage
+// measure.) A chain with no known height reads 100% here and sorts last, which
+// is fine: it can't fetch until its first block lands regardless of when it's
+// visited.
 let priorityOrder = (crossChainState: t) =>
   crossChainState.chainStates
   ->Dict.valuesToArray
@@ -251,12 +250,11 @@ let totalReservedSize = (crossChainState: t) => {
   total.contents
 }
 
-// Action for a chain that was handed budget but emitted no query (its budget
-// went to more-behind chains, or the alignment clamp cut its range to
-// nothing). A chain is genuinely idle — and correctly left undispatched —
-// when it is caught up to its head/endblock, still draining in-flight
-// queries, or holding ready items that batch processing will drain and
-// re-schedule from. Any other chain must keep polling for new blocks instead
+// Action for a chain that was handed budget but emitted no query, because its
+// budget went to more-behind chains. A chain is genuinely idle — and correctly
+// left undispatched — when it is caught up to its head/endblock, still draining
+// in-flight queries, or holding ready items that batch processing will drain
+// and re-schedule from. Any other chain must keep polling for new blocks instead
 // of going silent: NothingToQuery isn't dispatched, and with the pool
 // unsaturated nothing else guarantees a tick that would revisit it, so its
 // head tracking would freeze.
@@ -266,10 +264,6 @@ let idleOrWaitAction = (cs: ChainState.t) =>
   cs->ChainState.bufferReadyCount > 0
     ? FetchState.NothingToQuery
     : FetchState.WaitingForNewBlock
-
-// How far past the alignment anchor's frontier progress a follower may fetch,
-// as a fraction of its own alignable range.
-let alignmentMargin = 0.2
 
 // Dispatch a fetch tick across the whole indexer from one shared pool of
 // ~targetBufferSize ready events, as a waterfall: visit chains furthest-behind
@@ -282,14 +276,9 @@ let alignmentMargin = 0.2
 // automatically. Starting a new query requires at least 10% of the target pool
 // to be free. A chain visited after the budget falls below that admission unit
 // doesn't query this round — reservations release as responses land, so the
-// next tick redistributes. Every other chain is additionally capped at the
-// lowest-frontier-progress chain's progress mapped onto its own range, so no
-// chain runs ahead of the chain the pool is prioritizing — including on ticks
-// where that chain is mid-fetch and emits no new query. A chain with no known
-// height can't anchor this line (there's no range to measure against), a chain
-// caught up to its fetchable head reads 100% and so never anchors while another
-// is behind, and once the whole indexer has caught up (isRealtime) the clamp is
-// dropped — chains at head only trail each other by real-time block production.
+// next tick redistributes. Priority order is the only thing holding chains
+// together: a chain ahead of the others is not capped in block space, so it
+// keeps fetching whenever the chains before it leave budget behind.
 let checkAndFetch = async (
   crossChainState: t,
   ~dispatchChain: (~chainId: ChainId.t, ~action: FetchState.nextQuery) => promise<unit>,
@@ -317,19 +306,6 @@ let checkAndFetch = async (
 
   let prioritizedChainStates = crossChainState->priorityOrder
 
-  // Alignment anchor: the first known-height chain in priority order — which,
-  // since that order sorts by frontier progress, is the chain furthest behind
-  // by the very metric the clamp maps other chains against. Anchoring on the
-  // frontier (not on the target of whichever chain happens to query this tick)
-  // keeps the line in place while the anchor's queries are still in flight. A
-  // chain caught up to its fetchable head reads 100% and sorts past any behind
-  // chain, so it never anchors while another chain is behind.
-  let alignment = crossChainState.isRealtime
-    ? None
-    : prioritizedChainStates
-      ->Array.find(cs => cs->ChainState.knownHeight != 0)
-      ->Option.map(cs => ((cs->ChainState.chainConfig).id, cs->ChainState.frontierProgress))
-
   let actionByChain = Dict.make()
   prioritizedChainStates->Array.forEach(cs => {
     let chainId = (cs->ChainState.chainConfig).id
@@ -353,23 +329,11 @@ let checkAndFetch = async (
       let chainTargetItems =
         (isCold ? Pervasives.min(remaining.contents, coldChainBudget) : remaining.contents) +.
         cs->ChainState.pendingBudget
-      let maxTargetBlock = switch alignment {
-      // 20% margin past the anchor's line: chains whose progress tracks the
-      // anchor closely would otherwise flap in and out of the clamp on every
-      // small frontier move, stalling their pipeline every other tick. The
-      // margin is also the headroom a follower keeps buffered while the anchor
-      // is mid-fetch, so it has to outlast a slow anchor response, not just
-      // absorb frontier jitter.
-      | Some((anchorChainId, progress)) if anchorChainId !== chainId =>
-        Some(cs->ChainState.blockAtProgress(~progress=progress +. alignmentMargin))
-      | _ => None
-      }
-      switch cs->ChainState.getNextQuery(~chainTargetItems, ~maxTargetBlock?) {
+      switch cs->ChainState.getNextQuery(~chainTargetItems) {
       | WaitingForNewBlock as action => actionByChain->ChainId.Dict.set(chainId, action)
       | NothingToQuery =>
         // A chain below its head can emit no query when its budget went to
-        // more-behind chains or the cross-chain alignment clamped its range to
-        // nothing — idleOrWaitAction keeps it polling for new blocks.
+        // more-behind chains — idleOrWaitAction keeps it polling for new blocks.
         actionByChain->ChainId.Dict.set(chainId, idleOrWaitAction(cs))
       | Ready(queries) => {
           let consumed =
