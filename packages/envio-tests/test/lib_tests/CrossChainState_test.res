@@ -422,7 +422,7 @@ describe("CrossChainState fetch control", () => {
   // consumption is capped by that range, far below whatever share of the
   // 3000-item pool the waterfall would otherwise hand it. Returns each
   // chain's dispatched itemsEst total and pendingBudget.
-  let runShortRangeWaterfall = async () => {
+  let runShortRangeWaterfall = async (~isRealtime) => {
       let normalSelection = {FetchState.dependsOnAddresses: false, onEventRegistrations: []}
       let address1 = "0x1111111111111111111111111111111111111111"->Address.unsafeFromString
       let partition1: FetchState.partition = {
@@ -486,7 +486,7 @@ describe("CrossChainState fetch control", () => {
         ~chainDensity=Some(10.),
       )
 
-      let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=3000)
+      let cm = makeCrossChainState(~chainStatesList=[a, b], ~isRealtime, ~targetBufferSize=3000)
 
       let dispatchedItemsByChain = Dict.make()
       await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
@@ -509,18 +509,30 @@ describe("CrossChainState fetch control", () => {
       )
   }
 
-  Async.it("the waterfall hands the next chain what the most-behind chain can't use", async t => {
+  Async.it(
+    "checkAndFetch's waterfall clamps the next chain to the most-behind chain's frontier during backfill",
+    async t => {
+      t.expect(
+        await runShortRangeWaterfall(~isRealtime=false),
+        ~message="Chain 1's real range caps it at its honest 200-item estimate, which is also what pendingBudget reserves; chain 2's frontier is already past the alignment line anchored at chain 1's frontier, so it waits instead of draining the pool",
+      ).toEqual((Some(200.), Some(0.), 200., 0.))
+    },
+  )
+
+  Async.it("checkAndFetch drops the alignment clamp in realtime", async t => {
     t.expect(
-      await runShortRangeWaterfall(),
-      ~message="Chain 1's real range caps it at its honest 200-item estimate, which is also what pendingBudget reserves; chain 2 takes the rest of the pool",
+      await runShortRangeWaterfall(~isRealtime=true),
+      ~message="Chain 1 is sized to its honest 200-item range estimate, which pendingBudget also reserves; chain 2 is unclamped at realtime and gets the rest",
     ).toEqual((Some(200.), Some(2800.), 200., 2800.))
   })
 
   Async.it(
-    "checkAndFetch skips a chain with no known height without claiming budget",
+    "checkAndFetch skips a chain with no known height without claiming leadership or budget",
     async t => {
       // Chain 1 has no height yet (its source hasn't reported): it must wait
-      // for a new block rather than go silent.
+      // for a new block instead of setting the alignment line from a
+      // degenerate progress range and letting every other chain run
+      // unconstrained on a stale line.
       let a = makeFetchingChainState(~chainId=1->ChainId.fromInt, ~knownHeight=0, ~latestFetchedBlock=0)
       let b = makeFetchingChainState(~chainId=2->ChainId.fromInt, ~knownHeight=1000, ~latestFetchedBlock=500)
       let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=3000)
@@ -544,8 +556,53 @@ describe("CrossChainState fetch control", () => {
 
       t.expect(
         actionsByChain,
-        ~message="Chain 1 waits for its first block; cold chain 2 gets one admission unit",
+        ~message="Chain 1 waits for its first block; cold chain 2 gets one admission unit without being constrained by chain 1",
       ).toEqual(Dict.fromArray([("1", "waitingForNewBlock"), ("2", "ready:300")]))
+    },
+  )
+
+  Async.it(
+    "checkAndFetch aligns progress against the currently reachable end block",
+    async t => {
+      // The anchor's endBlock (1e9) is far past its head (1000). Its frontier
+      // progress must be measured against the reachable range (500/1000 = 50%),
+      // not the raw endBlock (500/1e9 ≈ 0%) — the latter would clamp the
+      // follower below its own frontier and stall it.
+      let anchor = makeFetchingChainState(
+        ~chainId=1->ChainId.fromInt,
+        ~knownHeight=1000,
+        ~latestFetchedBlock=500,
+        ~endBlock=Some(1_000_000_000),
+        ~chainDensity=Some(1.),
+      )
+      let follower = makeFetchingChainState(
+        ~chainId=2->ChainId.fromInt,
+        ~knownHeight=1000,
+        ~latestFetchedBlock=520,
+        ~chainDensity=Some(1.),
+      )
+      let cm = makeCrossChainState(
+        ~chainStatesList=[anchor, follower],
+        ~targetBufferSize=3000,
+      )
+
+      let estimatesByChain = Dict.make()
+      await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+        estimatesByChain->ChainId.Dict.set(
+          chainId,
+          switch action {
+          | Ready(queries) =>
+            queries->Array.reduce(0, (total, query: FetchState.query) => total + query.itemsEst)
+          | _ => 0
+          },
+        )
+        Promise.resolve()
+      })
+
+      t.expect(
+        estimatesByChain,
+        ~message="The follower fetches up to the anchor's 50% line (+20% margin = block 700), not to nothing",
+      ).toEqual(Dict.fromArray([("1", 500), ("2", 180)]))
     },
   )
 
@@ -668,6 +725,122 @@ describe("ChainState cold start", () => {
     t.expect(cs->ChainState.targetBlock(~chainTargetItems=1000.)).toBe(5_000)
   })
 
+  Async.it("cold most-behind chain still anchors the alignment line at its frontier", async t => {
+    // Chain 1 is cold and most behind. Its target is a guess, but its frontier
+    // is a real measurement — chain 2 must not run ahead of it just because
+    // chain 1 hasn't produced a density signal yet.
+    let a = makeFetchingChainState(~chainId=1->ChainId.fromInt, ~knownHeight=1_000_000, ~latestFetchedBlock=0)
+    let b = makeFetchingChainState(
+      ~chainId=2->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=500,
+      ~chainDensity=Some(10.),
+    )
+    let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=10_000)
+
+    let dispatchedItemsByChain = Dict.make()
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+      dispatchedItemsByChain->ChainId.Dict.set(
+        chainId,
+        switch action {
+        | Ready(queries) =>
+          queries->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
+        | _ => 0.
+        },
+      )
+      Promise.resolve()
+    })
+
+    t.expect(
+      dispatchedItemsByChain,
+      ~message="Cold chain 1 gets its bounded probe; chain 2 (already past the line anchored at chain 1's 0% frontier) waits",
+    ).toEqual(Dict.fromArray([("1", 1000.), ("2", 0.)]))
+  })
+
+  Async.it("most-behind chain anchors the alignment line even when it emits no query", async t => {
+    // Chain 1 is most behind but produces no new query this tick (its buffer
+    // holds a ready item that batch processing will drain). Before frontier
+    // anchoring, such a tick left the line unset and chain 2 ran unclamped to
+    // its head; now chain 2 stays held at chain 1's frontier (+10% margin).
+    let a = makeChainState(
+      ~chainId=1->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~frontier=100,
+      ~firstEventBlock=0,
+      ~bufferBlocks=[100],
+    )
+    let b = makeFetchingChainState(
+      ~chainId=2->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=500,
+      ~chainDensity=Some(10.),
+    )
+    let cm = makeCrossChainState(~chainStatesList=[a, b], ~targetBufferSize=10_000)
+
+    let actionsByChain = Dict.make()
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+      actionsByChain->ChainId.Dict.set(
+        chainId,
+        switch action {
+        | WaitingForNewBlock => "waitingForNewBlock"
+        | NothingToQuery => "nothingToQuery"
+        | Ready(queries) =>
+          "ready:" ++
+          queries
+          ->Array.reduce(0., (acc, q: FetchState.query) => acc +. q.itemsEst->Int.toFloat)
+          ->Float.toString
+        },
+      )
+      Promise.resolve()
+    })
+
+    t.expect(
+      actionsByChain->Dict.get("2"),
+      ~message="Chain 2's frontier (500) is past chain 1's line (10% + 10% margin = block 200), so it waits instead of fetching to head",
+    ).toEqual(Some("waitingForNewBlock"))
+  })
+
+  Async.it("realtime indexer drops the alignment clamp", async t => {
+    // Same shape as the anchoring test above, but the indexer is realtime:
+    // chain 2 must be free to fetch to its head regardless of chain 1.
+    let a = makeChainState(
+      ~chainId=1->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~frontier=100,
+      ~firstEventBlock=0,
+      ~bufferBlocks=[100],
+    )
+    let b = makeFetchingChainState(
+      ~chainId=2->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=500,
+      ~chainDensity=Some(10.),
+    )
+    let cm = makeCrossChainState(
+      ~chainStatesList=[a, b],
+      ~isRealtime=true,
+      ~targetBufferSize=10_000,
+    )
+
+    let dispatchedItemsByChain = Dict.make()
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+      dispatchedItemsByChain->ChainId.Dict.set(
+        chainId,
+        switch action {
+        | Ready(queries) =>
+          queries->Array.reduce(0, (acc, q: FetchState.query) => acc + q.itemsEst)
+        | _ => 0
+        },
+      )
+      Promise.resolve()
+    })
+
+    t.expect(
+      dispatchedItemsByChain->Dict.get("2"),
+      ~message="Chain 2 fetches its full 500-block range to head at density 10",
+    ).toEqual(Some(5000))
+  })
+
   Async.it("gives a cold chain one 10% admission unit", async t => {
     let probeSize = async (~targetBufferSize) => {
       let cs = makeFetchingChainState(~chainId=1->ChainId.fromInt, ~knownHeight=1_000_000, ~latestFetchedBlock=0)
@@ -703,6 +876,69 @@ describe("ChainState cold start", () => {
       ~blockLag=200,
     )
     t.expect(cs->ChainState.frontierProgress).toBe(1.)
+  })
+
+  Async.it("a chain with no discovered first event never becomes a dead anchor", async t => {
+    // Chain 1 has found no events yet (firstEventBlock=None) but has already
+    // scanned to 90% of its range. FetchState.getProgressPercentage reports it
+    // at 0% (its priority rank), yet its fetch frontier is far ahead. The
+    // alignment anchor must be chain 2 (furthest behind by frontier progress),
+    // so chain 3 (just ahead of chain 2) is held near chain 2's line instead of
+    // racing to head on chain 1's non-clamping frontier.
+    let scanning = makeFetchingChainState(
+      ~chainId=1->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=900,
+      ~chainDensity=Some(10.),
+      ~firstEventBlock=None,
+    )
+    let behind = makeFetchingChainState(
+      ~chainId=2->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=300,
+      ~chainDensity=Some(10.),
+    )
+    let slightlyAhead = makeFetchingChainState(
+      ~chainId=3->ChainId.fromInt,
+      ~knownHeight=1000,
+      ~latestFetchedBlock=310,
+      ~chainDensity=Some(10.),
+    )
+    let cm = makeCrossChainState(
+      ~chainStatesList=[scanning, behind, slightlyAhead],
+      ~targetBufferSize=100_000,
+    )
+
+    let itemsByChain = Dict.make()
+    await cm->CrossChainState.checkAndFetch(~dispatchChain=(~chainId, ~action) => {
+      itemsByChain->ChainId.Dict.set(
+        chainId,
+        switch action {
+        | Ready(queries) => queries->Array.reduce(0, (acc, q: FetchState.query) => acc + q.itemsEst)
+        | _ => 0
+        },
+      )
+      Promise.resolve()
+    })
+
+    let items = chainId =>
+      itemsByChain->ChainId.Dict.dangerouslyGetNonOption(chainId->ChainId.fromInt)->Option.getOr(0)
+    // Structural, not exact: chain 1 (scanning, firstEventBlock=None) must set
+    // no line and idle; chain 2 (lowest frontier progress) anchors and fetches
+    // freely; chain 3 stays clamped near chain 2's line — far below what it
+    // would fetch if chain 1's near-head frontier were the anchor.
+    t.expect(
+      {
+        "scanningChainIdle": items(1) == 0,
+        "anchorFetchesFreely": items(2) > items(3),
+        "followerHeldFarBelowAnchor": items(3) > 0 && items(3) * 3 < items(2),
+      },
+      ~message="The genuinely-behind chain 2 anchors the line; chain 3 is held near it instead of racing to head on the scanning chain's non-clamping frontier",
+    ).toEqual({
+      "scanningChainIdle": true,
+      "anchorFetchesFreely": true,
+      "followerHeldFarBelowAnchor": true,
+    })
   })
 })
 
