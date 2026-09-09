@@ -1,60 +1,43 @@
-// Whether a write keeps entity history. Decided once, where the chain states
-// are in reach, and carried on the batch and on each flush group — so the
-// storage layer writes what it is handed instead of re-deriving the rule.
-type keep =
-  | Keep
-  | Skip
-
-// History is only ever kept for what a rollback could reach. Under one shared
-// sequence any chain's rollback reaches every chain's rows, so the run decides
-// together; with a counter per chain only the group's own chain can reach its
-// rows, and each chain decides for itself.
-type t =
-  | Shared(keep)
-  | ByChain(dict<keep>)
+// Whether each chain's rows get history on a write, keyed by chain id. History
+// is only ever kept for what a rollback could reach: under one shared sequence
+// any chain's rollback reaches every chain's rows, so the run decides together;
+// with a counter per chain only the group's own chain can reach its rows.
+type t = dict<bool>
 
 %%private(
   let anyChainKeeps = (keepsHistory: dict<bool>) =>
     keepsHistory->Dict.valuesToArray->Array.some(keeps => keeps)
 )
 
-// `save_full_history` keeps everything regardless. Everything else follows
-// `keepsHistory` per chain — whether a rollback can still reach what that chain
-// writes.
 let decide = (config: Config.t, ~keepsHistory: dict<bool>): t =>
   if config.shouldSaveFullHistory {
-    Shared(Keep)
+    keepsHistory->Utils.Dict.mapValues(_ => true)
   } else {
     switch config.checkpointSequence {
-    | Global => Shared(keepsHistory->anyChainKeeps ? Keep : Skip)
-    | PerChain => ByChain(keepsHistory->Utils.Dict.mapValues(keeps => keeps ? Keep : Skip))
+    | Global =>
+      let keeps = keepsHistory->anyChainKeeps
+      keepsHistory->Utils.Dict.mapValues(_ => keeps)
+    | PerChain => keepsHistory
     }
   }
 
-// The decision for one chain: its checkpoints, and its flush group. Every
-// chain the run indexes was decided for, so an absent one is a bug — answering
-// `Skip` for it would silently leave the chain with nothing to roll back to.
-let forChain = (t: t, chainId: ChainId.t): keep =>
-  switch t {
-  | Shared(keep) => keep
-  | ByChain(byChain) =>
-    switch byChain->ChainId.Dict.dangerouslyGetNonOption(chainId) {
-    | Some(keep) => keep
-    | None =>
-      JsError.throwWithMessage(
-        `Internal error: no history decision for chain ${chainId->ChainId.toString}. The policy is decided for every chain the run indexes.`,
-      )
-    }
-  }
-
-let forScope = (t: t, ~scope: Internal.chainScope): keep =>
-  switch (scope, t) {
-  | (Chain(chainId), _) => t->forChain(chainId)
-  | (CrossChain, Shared(keep)) => keep
-  | (CrossChain, ByChain(_)) =>
+// Every chain the run indexes was decided for, so an absent one is a bug —
+// answering `false` for it would silently leave the chain with nothing to roll
+// back to.
+let forChain = (t: t, chainId: ChainId.t): bool =>
+  switch t->ChainId.Dict.dangerouslyGetNonOption(chainId) {
+  | Some(keeps) => keeps
+  | None =>
     JsError.throwWithMessage(
-      "Internal error: a cross-chain flush group can't exist under per-chain checkpoint sequences. A cross-chain entity is what makes the sequence shared.",
+      `Internal error: no history decision for chain ${chainId->ChainId.toString}. The policy is decided for every chain the run indexes.`,
     )
+  }
+
+// A cross-chain group's rows are reachable by any chain's rollback.
+let forScope = (t: t, ~scope: Internal.chainScope): bool =>
+  switch scope {
+  | Chain(chainId) => t->forChain(chainId)
+  | CrossChain => t->anyChainKeeps
   }
 
 // Whether a run has stale history to prune at all: history it keeps but doesn't

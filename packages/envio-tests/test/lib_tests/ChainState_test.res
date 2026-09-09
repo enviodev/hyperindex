@@ -194,8 +194,7 @@ describe("ChainState chain density EMA (per batch)", () => {
       )
       d
     },
-    history: Shared(Skip),
-    checkpointFrontier: Frontier.empty(),
+    history: Dict.make(),
     checkpointIds: [],
     checkpointChainIds: [],
     checkpointBlockNumbers: [],

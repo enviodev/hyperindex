@@ -23,6 +23,7 @@ let keepsHistory: t => dict<bool>
 let nextItemIsNone: t => bool
 let getSafeCheckpointIdByChain: (
   t,
+  ~sequence: CheckpointSequence.t,
   ~committedFrontier: Frontier.t,
 ) => array<(ChainId.t, option<Internal.checkpointId>)>
 

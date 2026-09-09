@@ -350,19 +350,14 @@ let getChainState = (state: t, ~chainId: ChainId.t): ChainState.t =>
 
 let getSafeCheckpointIdByChain = (state: t) =>
   state.crossChainState->CrossChainState.getSafeCheckpointIdByChain(
+    ~sequence=state.config.checkpointSequence,
     ~committedFrontier=state.committedFrontier,
   )
 
 let createBatch = (state: t, ~batchSizeTarget: int): Batch.t =>
   state.crossChainState->CrossChainState.createBatch(
     ~config=state.config,
-    // A pending rollback has already claimed an id on every chain it moved, and
-    // its diff rows have to be outranked by whatever replaces them — so the
-    // batch starts above both the processing frontier and those ids.
-    ~frontier=switch state.rollback {
-    | Some({diffFrontier}) => Frontier.mergeMax(state.processedFrontier, diffFrontier)
-    | None => state.processedFrontier
-    },
+    ~frontier=state.processedFrontier,
     ~batchSizeTarget,
   )
 
@@ -484,20 +479,6 @@ let processedFrontier = (state: t) => state.processedFrontier
 let committedCheckpointIdFor = (state: t, ~scope) =>
   state.config.checkpointSequence->CheckpointSequence.forScope(state.committedFrontier, ~scope)
 
-// What a rollback stamps on the diff rows it stages, taken from the same
-// allocator a batch's checkpoints come from: under one shared sequence the ids
-// are then distinct across chains and above every committed id, rather than
-// each chain's own committed id plus one — which two chains can share. Only the
-// chains the rollback moves: a sibling it leaves alone gets no diff row, and
-// burning an id on it would leave a hole in its sequence.
-let rollbackDiffFrontier = (state: t, ~floors: RollbackFloors.t) => {
-  let cursor =
-    state.config.checkpointSequence->CheckpointSequence.cursor(~frontier=state.committedFrontier)
-  floors.floors.byChain
-  ->Frontier.chainIds
-  ->Array.map(chainId => (chainId, cursor->CheckpointSequence.next(~chainId)))
-  ->Frontier.fromEntries
-}
 let processedBatches = (state: t) => state.processedBatches
 let processedBatchesCount = (state: t) => state.processedBatchesCount
 let writeFiber = (state: t) => state.writeFiber
@@ -772,7 +753,10 @@ let recordRollbackSuccess = (state: t, ~timeSeconds, ~rollbackedProcessedEvents)
 // Queue a processed batch for writing and advance the processing frontier.
 let queueProcessedBatch = (state: t, ~batch: Batch.t) => {
   state.processedBatches->Array.push(batch)->ignore
-  state.processedFrontier = Frontier.mergeMax(state.processedFrontier, batch.checkpointFrontier)
+  state.processedFrontier = Frontier.mergeMax(
+    state.processedFrontier,
+    batch->Batch.checkpointFrontier,
+  )
 }
 
 // Take the leading run of queued batches sharing a history policy as one merged
@@ -781,7 +765,6 @@ let queueProcessedBatch = (state: t, ~batch: Batch.t) => {
 let drainBatchRun = (state: t): Batch.t => {
   let all = state.processedBatches
   let history = (all->Array.getUnsafe(0)).history
-  let checkpointFrontier = ref((all->Array.getUnsafe(0)).checkpointFrontier)
 
   let rest = []
   let progressedChainsById = Dict.make()
@@ -796,7 +779,6 @@ let drainBatchRun = (state: t): Batch.t => {
   all->Array.forEach(batch => {
     // Once one batch lands in rest, all later ones follow it, preserving order.
     if rest->Utils.Array.isEmpty && batch.history == history {
-      checkpointFrontier := batch.checkpointFrontier
       batch.progressedChainsById->Utils.Dict.forEachWithKey((chainAfterBatch, key) =>
         progressedChainsById->Dict.set(key, chainAfterBatch)
       )
@@ -819,7 +801,6 @@ let drainBatchRun = (state: t): Batch.t => {
     items,
     progressedChainsById,
     history,
-    checkpointFrontier: checkpointFrontier.contents,
     checkpointIds,
     checkpointChainIds,
     checkpointBlockNumbers,
@@ -847,14 +828,30 @@ let markCommitted = (state: t, ~upToFrontier) => {
   state.committedFrontier = Frontier.mergeMax(state.committedFrontier, upToFrontier)
 }
 
-// Reset the in-memory tables and arm the rollback diff that the next write commits.
+// Reset the in-memory tables and arm the rollback diff that the next write
+// commits. Returns the ids the diff rows are stamped with: one per chain the
+// rollback moves, from the same allocator a batch's checkpoints come from, so
+// under one shared sequence they are distinct across chains. They start from
+// the committed frontier — a rollback that supersedes an unwritten one takes
+// over its ids along with its rows — and move the processing frontier past
+// them, so the batch that replaces the diff rows starts above them. A sibling
+// the rollback leaves alone gets no diff row, and burning an id on it would
+// leave a hole in its sequence.
 let beginRollbackDiff = (
   state: t,
-  ~diffFrontier,
-  ~floors,
+  ~floors: RollbackFloors.t,
   ~progressedChains: array<InternalTable.Chains.progressedChain>,
   ~rolledBackAddresses,
-) => {
+): Frontier.t => {
+  let diffFrontier = {
+    let cursor =
+      state.config.checkpointSequence->CheckpointSequence.cursor(~frontier=state.committedFrontier)
+    floors.floors.byChain
+    ->Frontier.chainIds
+    ->Array.map(chainId => (chainId, cursor->CheckpointSequence.next(~chainId)))
+    ->Frontier.fromEntries
+  }
+  state.processedFrontier = Frontier.mergeMax(state.processedFrontier, diffFrontier)
   let perChainEntities = state.allEntities->EntityTables.perChain
   state.entities = EntityTables.make(state.allEntities->EntityTables.crossChain)
   state->chainStates->Utils.Dict.forEach(cs => cs->ChainState.resetEntities(~perChainEntities))
@@ -893,6 +890,7 @@ let beginRollbackDiff = (
     progressedChains,
     rolledBackAddresses,
   })
+  diffFrontier
 }
 
 // Stop the write loop and surface the failure; the error itself goes to onError.

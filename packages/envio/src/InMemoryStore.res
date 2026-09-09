@@ -128,16 +128,11 @@ let dropCommittedEffects = (
 let prepareRollbackDiff = async (
   state: IndexerState.t,
   ~floors: RollbackFloors.t,
-  ~diffFrontier: Frontier.t,
   ~progressedChains,
   ~rolledBackAddresses,
 ) => {
-  state->IndexerState.beginRollbackDiff(
-    ~diffFrontier,
-    ~floors,
-    ~progressedChains,
-    ~rolledBackAddresses,
-  )
+  let diffFrontier =
+    state->IndexerState.beginRollbackDiff(~floors, ~progressedChains, ~rolledBackAddresses)
   let persistence = state->IndexerState.persistence
   let sequence = (state->IndexerState.config).checkpointSequence
   let diffCheckpointId = scope =>

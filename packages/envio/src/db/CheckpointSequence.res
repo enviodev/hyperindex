@@ -44,37 +44,27 @@ let findForScope = (
 // chain. Under `Global` the ids come from a single run of the counter, so they
 // interleave across chains in allocation order; under `PerChain` each chain
 // continues its own.
-type cursor = {sequence: t, mutable highest: Internal.checkpointId, frontier: Frontier.t}
+type cursor = {sequence: t, frontier: Frontier.t}
 
-let cursor = (sequence: t, ~frontier: Frontier.t) => {
-  sequence,
-  highest: frontier->Frontier.max,
-  frontier: frontier->Frontier.copy,
-}
+let cursor = (sequence: t, ~frontier: Frontier.t) => {sequence, frontier: frontier->Frontier.copy}
 
 let next = (cursor, ~chainId): Internal.checkpointId => {
   let checkpointId =
     switch cursor.sequence {
-    | Global => cursor.highest
+    | Global => cursor.frontier->Frontier.max
     | PerChain => cursor.frontier->Frontier.get(chainId)
     }->BigInt.add(1n)
-  cursor.highest = Pervasives.max(cursor.highest, checkpointId)
   cursor.frontier->Frontier.set(chainId, checkpointId)
   checkpointId
 }
 
-let cursorFrontier = cursor => cursor.frontier
-
 // The ids a query compares each chain's rows against, together with the
-// sequence that decides how they narrow. Built in one place from a frontier, so
-// a bound can't hold ids from one sequence and be read as the other.
+// sequence that decides how they narrow.
 type bounds = {sequence: t, byChain: Frontier.t}
 
 let bounds = (sequence: t, byChain: Frontier.t) => {sequence, byChain}
 
-// The pieces a query splices in to read its bound as `checkpointId`: a SELECT
-// joins the bounds next to its table with `join`, a DELETE names them with
-// `using` and matches the chain with `usingMatch` in its WHERE.
+// The pieces a query splices in to read its bound as `checkpointId`.
 type sql = {
   join: string,
   using: string,
@@ -110,12 +100,5 @@ let params = (bounds: bounds): unknown =>
   switch bounds.sequence {
   | Global =>
     [bounds.byChain->Frontier.min->BigInt.toString]->(Utils.magic: array<string> => unknown)
-  | PerChain =>
-    let entries = bounds.byChain->Frontier.entries
-    [
-      entries->Array.map(((chainId, _)) => chainId)->(Utils.magic: array<ChainId.t> => unknown),
-      entries
-      ->Array.map(((_, checkpointId)) => checkpointId->BigInt.toString)
-      ->(Utils.magic: array<string> => unknown),
-    ]->(Utils.magic: array<unknown> => unknown)
+  | PerChain => bounds.byChain->Frontier.unnestParams->(Utils.magic: Frontier.unnestParams => unknown)
   }

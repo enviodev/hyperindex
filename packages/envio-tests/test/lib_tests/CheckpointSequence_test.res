@@ -76,7 +76,7 @@ describe("CheckpointSequence.cursor", () => {
   it("Hands two chains distinct ids above every committed one under a shared sequence", t => {
     let cursor = CheckpointSequence.Global->CheckpointSequence.cursor(~frontier)
     let ids = [chain1, chain137]->Array.map(chainId => cursor->CheckpointSequence.next(~chainId))
-    t.expect((ids, cursor->CheckpointSequence.cursorFrontier->Frontier.entries)).toEqual((
+    t.expect((ids, cursor.frontier->Frontier.entries)).toEqual((
       [10n, 11n],
       [(chain1, 10n), (chain137, 11n)],
     ))

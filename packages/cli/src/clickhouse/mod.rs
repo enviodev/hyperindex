@@ -1284,7 +1284,7 @@ fn safe_of(first_uncovered: u64, highest: u64, committed: u64) -> u64 {
 }
 
 /// A Replicated database engine only replicates data when its tables use the
-/// ReplicatedMergeTree engine, so it implies replicated mode even when
+/// ReplicatedMergeTree engine, so it implies replicated DDL even when
 /// ENVIO_CLICKHOUSE_REPLICATED is unset.
 fn has_replicated_engine(database_engine: Option<&str>) -> bool {
     database_engine.map(ddl::database_engine_name) == Some("Replicated")

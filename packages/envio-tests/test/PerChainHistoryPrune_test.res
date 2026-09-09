@@ -82,6 +82,28 @@ let crossChainLaggingFirstScenario = Scenario.make(
   ~configYaml=makeConfigYaml("per-chain-prune-cross-chain-lagging-first", ~laggingChainId=5),
 )
 
+// A chain with no reorg depth can't be rolled back, so everything it committed
+// is safe. Under the shared sequence a cross-chain entity brings, its own last
+// id is not the bound — an idle chain's would hold every other chain's prune
+// back for as long as it stays idle.
+let crossChainZeroDepthScenario = Scenario.make(
+  ~schema=crossChainSchema,
+  ~configYaml=`
+name: per-chain-prune-cross-chain-zero-depth
+rollback_on_reorg: true
+disable_default_cross_chain: true
+contracts:
+  - name: Token
+    events:
+      - event: Transfer()
+chains:${chainYaml(100, ~startBlock=110, ~maxReorgDepth=15)}${chainYaml(
+      1337,
+      ~startBlock=1,
+      ~maxReorgDepth=0,
+    )}
+`,
+)
+
 // Every chain reaches a safe checkpoint of its own, so the prune carries a bound
 // per chain. Three of them rather than two: a pair of bounds can be crossed and
 // still look right, while three cannot.
@@ -224,6 +246,26 @@ describe("Per-chain history pruning", () => {
           counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
         ],
         [(1n, 100), (2n, 100), (3n, 1337), (4n, 1337), (5n, 100), (6n, 100)],
+      ))
+    },
+  )
+
+  crossChainZeroDepthScenario->Scenario.it(
+    "Prunes past an idle chain with no reorg depth under a shared sequence",
+    ~sources=[{chain: 100, methods}, {chain: 1337, methods}],
+    ~reorgThresholdReadyTolerance=0,
+    async (~t, ~indexer, ~source) => {
+      await driveChain100Ahead(~t, ~indexer, ~source100=source(100), ~lagging=source(1337))
+
+      t.expect(
+        await Promise.all2((counterHistory(indexer), checkpointsByChain(indexer))),
+        ~message="Chain 1337 holds nothing back, so every chain pruned to chain 100's safe checkpoint, keeping its anchor",
+      ).toEqual((
+        [
+          counterSet(~checkpointId=4n, ~chain=100, ~count=2n),
+          counterSet(~checkpointId=5n, ~chain=100, ~count=3n),
+        ],
+        [(4n, 100), (5n, 100), (6n, 100)],
       ))
     },
   )

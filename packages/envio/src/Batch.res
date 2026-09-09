@@ -37,8 +37,6 @@ type t = {
   // Whether the batch's rows get history. Writes never merge across a change in
   // it, so a single write can't mix the two.
   history: HistoryPolicy.t,
-  // Where the batch leaves each chain's checkpoint sequence.
-  checkpointFrontier: Frontier.t,
   // Unnest-like checkpoint fields:
   checkpointIds: array<bigint>,
   checkpointChainIds: array<ChainId.t>,
@@ -326,7 +324,6 @@ let make = (
       ~progressBlockNumberPerChain=mutProgressBlockNumberPerChain,
     ),
     history,
-    checkpointFrontier: cursor->CheckpointSequence.cursorFrontier,
     checkpointIds,
     checkpointChainIds,
     checkpointBlockNumbers,
@@ -334,6 +331,16 @@ let make = (
     checkpointEventsProcessed,
     registeredAddresses: [],
   }
+}
+
+// Where the batch leaves each chain it handed ids to. Ids ascend within a
+// chain, so the last one seen per chain is its highest.
+let checkpointFrontier = (batch: t): Frontier.t => {
+  let frontier = Frontier.empty()
+  batch.checkpointChainIds->Array.forEachWithIndex((chainId, index) =>
+    frontier->Frontier.set(chainId, batch.checkpointIds->Array.getUnsafe(index))
+  )
+  frontier
 }
 
 let findFirstEventBlockNumber = (batch: t, ~chainId) => {

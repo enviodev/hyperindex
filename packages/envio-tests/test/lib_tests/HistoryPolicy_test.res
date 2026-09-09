@@ -69,7 +69,7 @@ describe("HistoryPolicy", () => {
     let config = config(~schema)
     t.expect((config.checkpointSequence, config->decisions(~keepsHistory=onlyChain1))).toEqual((
       PerChain,
-      (Keep, Skip),
+      (true, false),
     ))
   })
 
@@ -79,7 +79,7 @@ describe("HistoryPolicy", () => {
     let config = config(~schema=crossChainSchema)
     t.expect((config.checkpointSequence, config->decisions(~keepsHistory=onlyChain1))).toEqual((
       Global,
-      (Keep, Keep),
+      (true, true),
     ))
   })
 
@@ -89,7 +89,7 @@ describe("HistoryPolicy", () => {
       config(~schema=crossChainSchema)->decisions(
         ~keepsHistory=keepsHistory([(chain1, false), (chain137, false)]),
       ),
-    )).toEqual(((Skip, Skip), (Skip, Skip)))
+    )).toEqual(((false, false), (false, false)))
   })
 
   it("Keeps everything with save_full_history, reachable or not", t => {
@@ -97,17 +97,7 @@ describe("HistoryPolicy", () => {
       config(~schema, ~extra="\nsave_full_history: true")->decisions(
         ~keepsHistory=keepsHistory([(chain1, false), (chain137, false)]),
       ),
-    ).toEqual((Keep, Keep))
-  })
-
-  // A cross-chain entity is what makes the sequence shared, so a cross-chain
-  // group under per-chain sequences is a state the config can't produce.
-  it("Refuses a cross-chain flush group under per-chain sequences", t => {
-    let policy = config(~schema)->HistoryPolicy.decide(~keepsHistory=onlyChain1)
-    t->toThrowErrorEqual(
-      () => policy->HistoryPolicy.forScope(~scope=CrossChain),
-      "Internal error: a cross-chain flush group can't exist under per-chain checkpoint sequences. A cross-chain entity is what makes the sequence shared.",
-    )
+    ).toEqual((true, true))
   })
 
   // The policy is decided for every chain the run indexes, so a chain it
@@ -127,6 +117,6 @@ describe("HistoryPolicy", () => {
       perChain->HistoryPolicy.forScope(~scope=Chain(chain137)),
       shared->HistoryPolicy.forScope(~scope=Chain(chain137)),
       shared->HistoryPolicy.forScope(~scope=CrossChain),
-    )).toEqual((Skip, Keep, Keep))
+    )).toEqual((false, true, true))
   })
 })

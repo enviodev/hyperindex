@@ -1,7 +1,4 @@
-// Where each chain stands in its checkpoint sequence: one id per chain, always.
-// Committed and processed progress, resume state, prune bounds and rollback
-// floors are all this shape, so nothing downstream has to ask whether a
-// position is one id or many.
+// Where each chain stands in its checkpoint sequence.
 type t = dict<Internal.checkpointId>
 
 let empty = (): t => Dict.make()
@@ -38,9 +35,6 @@ let find = (frontier: t, chainId): option<Internal.checkpointId> =>
 
 let set = (frontier: t, chainId, checkpointId) => frontier->ChainId.Dict.set(chainId, checkpointId)
 
-// A dict key is the chain id's decimal string, which is the same key a chain id
-// indexes by — but it is not the id itself, and these hand ids back to callers
-// that compare and encode them rather than only look them up.
 let chainIds = (frontier: t): array<ChainId.t> =>
   frontier->Dict.keysToArray->Array.map(ChainId.normalizeOrThrow)
 
@@ -48,6 +42,20 @@ let entries = (frontier: t): array<(ChainId.t, Internal.checkpointId)> =>
   frontier
   ->Dict.toArray
   ->Array.map(((key, checkpointId)) => (key->ChainId.normalizeOrThrow, checkpointId))
+
+// The two parallel arrays an `unnest($1, $2) AS ...(chain_id, checkpoint_id)`
+// relation reads positionally.
+type unnestParams = (array<ChainId.t>, array<string>)
+
+let unnestParams = (frontier: t): unnestParams => {
+  let chainIds = []
+  let checkpointIds = []
+  frontier->Utils.Dict.forEachWithKey((checkpointId, key) => {
+    chainIds->Array.push(key->ChainId.normalizeOrThrow)
+    checkpointIds->Array.push(checkpointId->BigInt.toString)
+  })
+  (chainIds, checkpointIds)
+}
 
 %%private(
   let fold = (frontier: t, pick) =>

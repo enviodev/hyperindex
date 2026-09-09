@@ -45,10 +45,8 @@ let getChainState = (crossChainState: t, chainId) =>
 let chainStates = (crossChainState: t) => crossChainState.chainStates
 let isRealtime = (crossChainState: t) => crossChainState.isRealtime
 let isCaughtUp = (crossChainState: t) => crossChainState.isCaughtUp
-// Chains enter the threshold together, but a chain with no reorg depth has no
-// lag to shed and reads as inside it from the start — so the run has entered
-// once every chain has. It is the run-wide reading; what a write keeps is
-// decided per chain.
+// Chains enter the threshold together. It is the run-wide reading; what a
+// write keeps is decided per chain.
 let isInReorgThreshold = (crossChainState: t) => {
   let chainStates = crossChainState.chainStates->Dict.valuesToArray
   chainStates->Utils.Array.notEmpty && chainStates->Array.every(ChainState.isInReorgThreshold)
@@ -79,14 +77,26 @@ let nextItemIsNone = (crossChainState: t): bool =>
 
 // Each chain's safe checkpoint: the last one a reorg on that chain can no longer
 // reach, or None while it has nothing safe yet. A chain that can't be rolled
-// back (maxReorgDepth = 0) tracks none, and everything it has committed is safe.
-let getSafeCheckpointIdByChain = (crossChainState: t, ~committedFrontier) =>
+// back (maxReorgDepth = 0) tracks none, and everything committed is safe from
+// it: under one shared sequence that is the run's highest id, not the chain's
+// own — an idle chain's would hold every other chain's prune back.
+let getSafeCheckpointIdByChain = (
+  crossChainState: t,
+  ~sequence: CheckpointSequence.t,
+  ~committedFrontier,
+) =>
   crossChainState.chainIds->Array.map(chainId => {
     let cs = crossChainState->getChainState(chainId)
     (
       chainId,
       switch cs->ChainState.safeCheckpointTracking {
-      | None => Some(committedFrontier->Frontier.get(chainId))
+      | None =>
+        Some(
+          switch sequence {
+          | Global => committedFrontier->Frontier.max
+          | PerChain => committedFrontier->Frontier.get(chainId)
+          },
+        )
       | Some(tracking) =>
         tracking->SafeCheckpointTracking.getSafeCheckpointId(
           ~sourceBlockNumber=cs->ChainState.knownHeight,

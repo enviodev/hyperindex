@@ -332,8 +332,10 @@ let stageCheckpointsOrThrow = (
       let builders = table.columns->Array.map(ClickHouseSink.makeBuilder(_, ~rows))
       builders->Array.forEachWithIndex((builder, index) => {
         let column = checkpointColumns->Array.getUnsafe(index)
-        let columnValues =
-          column.valuesOf(batch)->Array.concat(column.diffValuesOf(diffCheckpoints))
+        let columnValues = switch diffCheckpoints {
+        | [] => column.valuesOf(batch)
+        | _ => column.valuesOf(batch)->Array.concat(column.diffValuesOf(diffCheckpoints))
+        }
         for row in 0 to rows - 1 {
           builder->ClickHouseSink.writeValue(~row, columnValues->Array.getUnsafe(row))
         }

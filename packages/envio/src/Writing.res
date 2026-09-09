@@ -109,8 +109,8 @@ let runOneWrite = async (state: IndexerState.t) => {
     // the next write. A rollback's diff rows sit on chains the batch may not
     // have progressed at all, so the write has to reach them too.
     let upToFrontier = switch rollback {
-    | Some({diffFrontier}) => Frontier.mergeMax(batch.checkpointFrontier, diffFrontier)
-    | None => batch.checkpointFrontier
+    | Some({diffFrontier}) => Frontier.mergeMax(batch->Batch.checkpointFrontier, diffFrontier)
+    | None => batch->Batch.checkpointFrontier
     }
 
     let updatedEntities = []
@@ -130,7 +130,7 @@ let runOneWrite = async (state: IndexerState.t) => {
               entityConfig,
               scope,
               changes,
-              history: batch.history->HistoryPolicy.forScope(~scope),
+              keepsHistory: batch.history->HistoryPolicy.forScope(~scope),
             }: Persistence.updatedEntity
           ),
         )

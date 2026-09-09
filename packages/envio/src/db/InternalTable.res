@@ -507,14 +507,10 @@ WHERE "${table.tableName}"."${(#id: field :> string)}" = envio_frontier.chain_id
     ~frontier: Frontier.t,
     ~chainIdMode: ChainId.mode=Int32,
   ) => {
-    let entries = frontier->Frontier.entries
     sql
     ->Postgres.preparedUnsafe(
       makeSetCheckpointFrontierQuery(~pgSchema, ~chainIdMode),
-      (
-        entries->Array.map(((chainId, _)) => chainId),
-        entries->Array.map(((_, checkpointId)) => checkpointId->BigInt.toString),
-      )->(Utils.magic: ((array<ChainId.t>, array<string>)) => unknown),
+      frontier->Frontier.unnestParams->(Utils.magic: Frontier.unnestParams => unknown),
     )
     ->Utils.Promise.ignoreValue
   }

@@ -20,8 +20,6 @@ struct State {
     seen: usize,
     queries: usize,
     heads: Vec<String>,
-    /// Sent back as the node's display name when set, the way a real server
-    /// names itself in every response.
     display_name: Option<String>,
 }
 
@@ -111,7 +109,6 @@ impl MockClickHouse {
         self.state.lock().unwrap().statements_seen.clone()
     }
 
-    /// Answers every following request as the node named `display_name`.
     pub fn serve_as(&self, display_name: &str) {
         self.state.lock().unwrap().display_name = Some(display_name.to_string());
     }

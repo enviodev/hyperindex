@@ -1075,30 +1075,26 @@ let rec writeBatch = async (
   try {
     let chainIdMode = config.chainIdMode
     // A checkpoint anchors the history its chain keeps, so the batch's
-    // decision picks the checkpoints chain by chain. Under one shared sequence
-    // that is all of them or none.
-    let pickedCheckpoints = switch batch.history {
-    | Shared(Keep) => batch.checkpointIds->Utils.Array.notEmpty ? Some(AllCheckpoints) : None
-    | Shared(Skip) => None
-    | ByChain(_) =>
+    // decision picks the checkpoints chain by chain.
+    let pickedCheckpoints = {
       let indexes =
         batch.checkpointChainIds->Array.filterMapWithIndex((chainId, index) =>
-          batch.history->HistoryPolicy.forChain(chainId) === Keep ? Some(index) : None
+          batch.history->HistoryPolicy.forChain(chainId) ? Some(index) : None
         )
-      indexes->Utils.Array.notEmpty ? Some(CheckpointIndexes(indexes)) : None
-    }
-    // Where the write moves each chain's sequence: only the chains the batch
-    // handed ids to, and those a rollback's diff ids sit on — which the batch
-    // may not have progressed at all.
-    let movedFrontier = {
-      let moved = Frontier.empty()
-      batch.checkpointChainIds->Array.forEach(chainId =>
-        moved->Frontier.set(chainId, batch.checkpointFrontier->Frontier.get(chainId))
-      )
-      switch rollback {
-      | Some({diffFrontier}) => Frontier.mergeMax(moved, diffFrontier)
-      | None => moved
+      if indexes->Utils.Array.isEmpty {
+        None
+      } else if indexes->Array.length === batch.checkpointIds->Array.length {
+        Some(AllCheckpoints)
+      } else {
+        Some(CheckpointIndexes(indexes))
       }
+    }
+    // Where the write moves each chain's sequence: the chains the batch handed
+    // ids to, and those a rollback's diff ids sit on — which the batch may not
+    // have progressed at all.
+    let movedFrontier = switch rollback {
+    | Some({diffFrontier}) => Frontier.mergeMax(batch->Batch.checkpointFrontier, diffFrontier)
+    | None => batch->Batch.checkpointFrontier
     }
 
     let specificError = ref(None)
@@ -1149,7 +1145,7 @@ let rec writeBatch = async (
       }
     }
 
-    let setEntities = updatedEntities->Array.map(({entityConfig, scope, changes, history}) => {
+    let setEntities = updatedEntities->Array.map(({entityConfig, scope, changes, keepsHistory}) => {
       let entitiesToSet = []
       let idsToDelete = []
 
@@ -1159,7 +1155,7 @@ let rec writeBatch = async (
       | Internal.CrossChain => None
       | Chain(chainId) => Some(chainId)
       }
-      let shouldSaveHistory = history === HistoryPolicy.Keep
+      let shouldSaveHistory = keepsHistory
       let changes = switch (entityConfig.table->Table.getChainIdField, scopeChainId) {
       | (Some(field), Some(chainId)) =>
         changes->Array.map(change =>
@@ -1451,7 +1447,7 @@ let rec writeBatch = async (
             )
           }
 
-          if movedFrontier->Frontier.entries->Utils.Array.notEmpty {
+          if !(movedFrontier->Utils.Dict.isEmpty) {
             setOperations->Array.push(sql =>
               sql->InternalTable.Chains.setCheckpointFrontier(
                 ~pgSchema,

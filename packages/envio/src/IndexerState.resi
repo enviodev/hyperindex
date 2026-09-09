@@ -79,7 +79,6 @@ let effectState: t => EffectState.t
 let committedFrontier: t => Frontier.t
 let processedFrontier: t => Frontier.t
 let committedCheckpointIdFor: (t, ~scope: Internal.chainScope) => Internal.checkpointId
-let rollbackDiffFrontier: (t, ~floors: RollbackFloors.t) => Frontier.t
 let processedBatches: t => array<Batch.t>
 let processedBatchesCount: t => int
 let writeFiber: t => option<promise<unit>>
@@ -137,11 +136,10 @@ let takeRollback: t => option<Persistence.rollback>
 let markCommitted: (t, ~upToFrontier: Frontier.t) => unit
 let beginRollbackDiff: (
   t,
-  ~diffFrontier: Frontier.t,
   ~floors: RollbackFloors.t,
   ~progressedChains: array<InternalTable.Chains.progressedChain>,
   ~rolledBackAddresses: array<AddressRows.key>,
-) => unit
+) => Frontier.t
 let recordWriteFailure: (t, exn) => unit
 let beginWriteFiber: (t, promise<unit>) => unit
 let endWriteFiber: t => unit

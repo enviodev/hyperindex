@@ -216,7 +216,6 @@ and executeRollback = async (
 
   let diff = await state->InMemoryStore.prepareRollbackDiff(
     ~floors,
-    ~diffFrontier=state->IndexerState.rollbackDiffFrontier(~floors),
     ~progressedChains=rolledBackChains,
     ~rolledBackAddresses,
   )

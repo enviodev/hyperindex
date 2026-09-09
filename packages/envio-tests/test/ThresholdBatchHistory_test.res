@@ -49,17 +49,13 @@ let setEntity = (~block, ~value, ~onHandled=() => ()): MockSource.itemMock => {
   },
 }
 
-let showKeep = (keep: HistoryPolicy.keep) =>
-  switch keep {
-  | Keep => "Keep"
-  | Skip => "Skip"
-  }
+let showKeep = keeps => keeps ? "keep" : "skip"
 
 let showPolicy = (policy: HistoryPolicy.t) =>
-  switch policy {
-  | Shared(keep) => `Shared(${keep->showKeep})`
-  | ByChain(_) => "ByChain"
-  }
+  policy
+  ->Dict.toArray
+  ->Array.map(((chainId, keeps)) => `${chainId}:${keeps->showKeep}`)
+  ->Array.join(",")
 
 // The stall is driven from the test body but installed by `mapStorage`, which
 // is an argument to the test rather than part of its body — so the handles live
@@ -106,7 +102,7 @@ describe("A batch keeps the history decision it was created with", () => {
         writes
         ->Array.push(
           `${batch.history->showPolicy}/${updatedEntities
-            ->Array.map(updated => updated.history->showKeep)
+            ->Array.map(updated => updated.keepsHistory->showKeep)
             ->Array.join(",")}`,
         )
         ->ignore
@@ -177,7 +173,7 @@ describe("A batch keeps the history decision it was created with", () => {
       t.expect(
         writes->Array.join(" | "),
         ~message="A batch that keeps no checkpoints writes no entity history either, whatever the threshold has since become",
-      ).toEqual("Shared(Skip)/Skip | Shared(Skip)/Skip")
+      ).toEqual("1337:skip/skip | 1337:skip/skip")
     },
   )
 })
