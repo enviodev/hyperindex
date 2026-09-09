@@ -827,9 +827,12 @@ impl ClickHouseSink {
             chain_progress,
             history_tables,
         } = input;
-        // No chain, no rows to hold to anything. Every trim below is an
-        // `ALTER ... DELETE`, and on replicated storage it is run unconditionally
-        // and waited on across replicas — not worth one per table here.
+        // No chain, no rows to hold to anything. Postgres inserts every chain's
+        // row in the transaction that creates the schema, so an empty list here
+        // means a config without chains, never a row that went missing with a
+        // frontier still to lower. Every trim below is an `ALTER ... DELETE`,
+        // and on replicated storage it is run unconditionally and waited on
+        // across replicas — not worth one per table here.
         if chain_progress.is_empty() {
             return Ok(());
         }
